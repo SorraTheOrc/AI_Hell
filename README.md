@@ -114,7 +114,7 @@ You just opened the worklog plugin in herdr. This is where you and the agent wil
 
   IMPORTANT: you need to have configured Pi to work with a model for this to work, we will be firing off LLM requests. See the first FIXME in the Initialize the Proxy section above for an important caveat.
 
-We will start by creating a `docs/Game Design Document.md` that will have our initial design for the game. Note, however, we will not start by immediately writing the document, instead we will create a work item to track its creattion. This is important as the worklog becomes the systems memory. If we simply create the document agents will know the file exists and will read it. But they will not know the decision making process that led to the file looking as it does. Knowing this history is important as it avoids repeating errors or asking the same question muiltiple times.
+We will start by creating the `docs/Game Design Document.md` that will have our initial design for the game. Note, however, we will not start by immediately writing the document, instead we will create a work item to track its creation. This is important as the worklog becomes the systems memory. If we simply create the document agents will know the file exists and will read it. But they will not know the decision making process that led to the file looking as it does. Knowing this history is important as it avoids repeating errors or asking the same question multiple times.
 
 A work item goes through four or five stages, depending on how it is initially created. These are:
 
@@ -135,7 +135,7 @@ There's the potential for human review between (and even during) each stage. The
 The Idea stage can easily be skipped if you have time to go through the intake process. However, sometimes you will want to quickly record an idea without slowing yourself down, for example during testing. We aren't going to do this right now, so don't actually run the command below, but if we were to want to do so you would run the following command:
 
 ```
-wl create -t "Write a complete Game Design Document for AI Hell" -d "We need a fully detailed Game Design Document for a game with the working title of AI Hell. This will be a 2D bullet hell game loosely based on the classic arcade game Galaxians." 
+wl create -t "Game Design Document for AI_Hell" -d "A fully detailed Game Design Document for the AI_Hell game — a 2D bullet hell loosely based on Galaxians." 
 ```
 
 There are many more command line parameters that can be provided, us `wl create --help` to list them.
@@ -158,7 +158,7 @@ There is something important to note about this process. The system doesn't just
 Potentially related docs/paths: (none exist yet — this is the first artifact)
  - README.md — Informs the GDD: the game is "a classic Bullet Hell game written to demonstrate
    the use of the Context Hub AI framework," built "by humans for a technical target
-   audience," and the GDD location is planned as docs/Game Design Document.md. It also states
+   audience," and the GDD is located at docs/Game Design Document.md. It also states
    the workflow stage chain (Idea → Intake → Plan → In Review → Release).
 ```
 
@@ -176,7 +176,7 @@ If you zoomed the LLM pane unzoom it now (`prefix + z`) and move focus to the Co
 
 At the time of writing the detail view does not auto-update if edits are made. HIt `esc` to go back to the selection list and hit enter again to review the changed. 
 
-Once you are happy with the bried we can move on. Focus on the LLM pane and type `/quit <enter>` to close it.
+Once you are happy with the brief we can move on. Focus on the LLM pane and type `/quit <enter>` to close it.
 
 ### Work Item Planning
 
