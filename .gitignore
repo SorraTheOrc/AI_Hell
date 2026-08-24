@@ -13,4 +13,7 @@ Worklog Specific Ignores
 # opencode temporary files
 .opencode/tmp/
 
+# implement skill state file
+.implement_state.json
+
 ### End of Worklog Specific Ignores
