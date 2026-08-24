@@ -58,6 +58,14 @@ npm link
 wl init
 ```
 
+`wl` uses git to sync its database across instances of the project. For this reason it is necessary to have a remote setup for the git repo. This can be public or private, just as long as there is a remote configured. Below we will create a public repo using the `gh` CLI.
+
+```bash
+git add .
+git commit -m "Initial worklog configuration"
+gh repo create SorraTheOrc/AI_Hell --public --push --source .
+```
+
 This asks a few questions. We will reply with:
 
 * Project Name: AI Hell
@@ -136,10 +144,6 @@ There are many more command line parameters that can be provided, us `wl create 
 
 Since we have time right now we will skip the idea step and go straight to the work item intake. To do this we will ensure the Herdr Workload plugin has focus and press `c` for create new. 
 
-```
-c
-```
-
 This will open a simple form in which you can enter the description of the work item you want to create. You don't need to create a title as this is going to be fed to an LLM so that the intake skill will be run against it. In this form you can also set a priority (critical, high, medium, low), this can be done in the cli with the `--priority` parameter.
 
 Type the same description as we used in the previous section into the form and hit enter.
@@ -172,3 +176,48 @@ If you zoomed the LLM pane unzoom it now (`prefix + z`) and move focus to the Co
 
 At the time of writing the detail view does not auto-update if edits are made. HIt `esc` to go back to the selection list and hit enter again to review the changed. 
 
+Once you are happy with the bried we can move on. Focus on the LLM pane and type `/quit <enter>` to close it.
+
+### Work Item Planning
+
+Sometimes an intake is sufficiently detailed to allow implementation to occur straight away. This is especially true for small work items with minimal risk (notice that the LLM has identified the size of the work and the risk it presents). If you wanted to skip ahead to implementation you could hit `i` at this point, the system will evaluate whether the intake is sufficient and, if it feels it has enough information, will proceed straight to implementation (the next section). However, given that this is a core document in our game design journey we are not going to let the AI rush ahead. We will hit `p` for plan.
+
+As before an LLM pane will open and the plan skill will be executed. This is a similar process to the intake but it focuses more on the "How?" and less on the "What?" and "Why?". Like the intake skill it will ask questions if there are any ambiguities in the intake. Again, answer them as fully as possible. Don't be afraid to ask the AI for quidance if you are unsure, you can even delegate a decision to the AI if you want to.
+
+Note that for items that carry medium or higher risk, or are larger than small effort, the AI will ask for your approval of the outline plan. This is your opportunity to ask for high level changes to the plan. You will get another, more detailed, review opportunity when this phase is complete.
+
+### Reviewing the Plan
+
+As with the Intake the AI will output a summary of the plan when it is complete. If this is enough detail for you to proceed you can simply close this pane (`/quit`). If you want to review in more detail then move the focus to the selection list. If the planning phase created child work items you can expand the root item by hitting `tab`. You can inspect the details of each item by highlighting them and hitting `enter` as before.
+
+You can ask the AI to make any edits you want to the plan using the LLM pane chat inteface. Once you are happy we can move on to implementation.
+
+### Work Item Implementation
+
+You may have noticed that work items are grouped in the selection list in Herdr. This grouping is file based. When two work items are predicted to touch the same file they will be placed into different groups. If you work with multiple agents this helps minimize conflicts between them. That is, assign agents work from different groups and they should not be working on the same file. Of course, agents will also use Git worktrees and will resolve any merge conflicts, but it never hurts to provide a helping hand like this.
+
+Implementation is now as simple as selecting the parent work item and hitting `i`. You can, if you prefer, implement children one at a time, but there is no need to do so, especially on small, low risk work items. 
+
+The quality of the results depends on how well you did the two previous steps. At the start of a project, when there is no history for the agent to work from, it is important to provide as much detail as possible. Hopefully the interview stages of the previous steps will have made the plan sufficiently detailed. But as with all aspects you have an opportunity to review before proceeding.
+
+When the LLM has completed implementation a summary will be provided and the work item will be placed into the 'in_review' stage. You can decide whether you want to review in detail, or simply move on.
+
+### Work Item Audits
+
+During implementation the agents perform an audit. This checks to see if the work done actually matches the Acceptance Criteria defined during intake and planning. Theoretically this can always be trusted. In practice we find it makes sense to conduct a second, independent audit and, if necessary, a human audit too.
+
+To have the agents perform a full review hit `a a` (audit - automatic) when focused on the item in the selection list. This will run the audit over the parent and children.  If it passes a green tick will be shown in the audit meta-data of the item. If it fails a red cross will be shown. In either case a full audit report is stored in the item. If the audit feels a producer review is warranted it will add a red cross under "reviewed" otherwise a green tick will be placed there. That is, if a producer review is required it assumes the producer has not reviewed, but if the agent believes there is no need it assumes the producer has reviewed. The producer can always record their own review using `a r` for 'audit reject' (a form will allow them to record the reason for the rejection). Or `a y` for `audit yes`.
+
+Since the GDD is critical to the project and there is no executable code for us to run it is imperitive we review the document and make any edits necessary. The document is now a file on disk so you can use your favourite editor. In this case it is a markdown document so you can review it right inside Herdr by openeing the detail view for the work item and selecting the document at the top of the view and hitting `enter`.
+
+We could, if we so desired, edit the GDD directly. However, this is discouraged because it does not provide any history of the change. LLMs are simply token predictors. If the LLM predicted a set of tokens that we need to change there is a strong chance that it will make the same prediction unless we guide it away from that result. This is where the Context Hub comes in.
+
+When an agent is working on a work item it will consult documentation, code and other work items to prepare. So, imagine that the LLM had created a design for a level that does not fit your vision for the game. Rather than simply editing the GDD you should create a work item that describes what you do not like about it and, optionally, suggest an alternative (if you don't provide an alternative the AI will do so). In the future if you ask it to design a new level there is a reduced chance that it will use the same design principle that you already rejected.
+
+This works for code too. If you see something you don't like about coding style or an implementation detail then create a work item describing the issue and requiring the AI to correct it. In fact, sometimes this will happen automatically for you as agents are instructed to look for refactoring smells and automatically file work items to correct them. There is also a refactoring skill which will do a full project review and create work items for you. The system will also automatically create work items for tests that are flaky and other similar work.
+
+This isn't foolproof, of course, but we have found it to be very effective and certainly worth the effort. There's another added bonus too. At a later date you might decide it is a good idea to create a level design document that contains best practices and anti-patterns. If you keep all your guidance in work items then this becomes a relatively trivial excercise.
+
+A little work up-front can pay off multiple times as the work progresses.
+
+Once you are happy with the implementation we can move on to 
