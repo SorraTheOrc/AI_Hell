@@ -12,6 +12,28 @@ This document is written for Linux, everything should work on other platforms, b
 
 Need help? Join us on [Discord](https://discord.gg/CXn2j2nZJf).
 
+## Run the game
+
+The game is a Phaser 4 + TypeScript web app built with Vite (GDD §6.3 web distribution model). To run it locally:
+
+```bash
+npm install
+npm run dev
+```
+
+`npm run dev` starts the Vite dev server and opens a browser window rendering the game. At present this is just the boot scene — gameplay arrives with the gym scenes (see the game's worklog).
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Start the dev server (opens a browser window) |
+| `npm run build` | Type-check and produce a deployable bundle in `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run test` | Run the Vitest test suite once |
+| `npm run test:watch` | Run Vitest in watch mode |
+| `npm run typecheck` | Type-check the project without emitting |
+
+The source layout follows the GDD §6.4 module breakdown: `src/core/Game.ts` is the game boot/entry point and owns scene management, `src/core/constants.ts` holds shared game constants, and `src/scenes/` contains the scenes (e.g. `BootScene`). Future entity, bullet, wave, power-up and UI modules will land under their GDD §6.4 directories as their work items are implemented.
+
 ## Initial Setup
 
 ### Install the Tooling

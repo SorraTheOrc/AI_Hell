@@ -13,6 +13,20 @@ Worklog Specific Ignores
 # opencode temporary files
 .opencode/tmp/
 
+# Node / build artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Vite dev server
+*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # implement skill state file
 .implement_state.json
 
