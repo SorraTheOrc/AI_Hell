@@ -39,7 +39,7 @@
 ### 2.3 Combat Mechanics
 
 - **Auto-fire**: The player ship fires continuously without any input. The fire rate is fixed and consistent.
-- **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. With 3 lives per run (§3.1), a hit costs one life and the run continues until the lives run out.
+- **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **P8 – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
@@ -82,8 +82,8 @@ The following rules govern how enemy entities interact with each other and with 
 |---------|-------|-------|
 | **Levels** | 5 | Levels 1–3: enemies-as-bullets formations; Level 4: enemies fire bullets; Level 5: fewer enemies, predictable bullet patterns |
 | **Boss encounters** | 1 | Final boss after Level 5 |
-| **Lives** | 3 | Per-run; no continue mechanic |
-| **Power-up types** | ≥ 6 | Distinct types (see §4.4) |
+| **Lives** | 3 (up to 5 with P8) | Per-run; no continue mechanic. P8 Extra Life grants +1 life, capped at 5. |
+| **Power-up types** | ≥ 7 | Distinct types (see §4.4) |
 | **Leaderboard** | Local storage | localStorage-based, single-machine |
 | **Difficulty scaling** | **Out of scope** | Not implemented in MVP |
 | **Multiplayer** | **Out of scope** | Single-player only in MVP |
@@ -171,7 +171,7 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 
 ### 4.4 Power-Ups
 
-The player collects power-ups dropped by destroyed enemies (random chance, ~15–20% per enemy). There are **6+ distinct types**:
+The player collects power-ups dropped by destroyed enemies (random chance, ~15–20% per enemy for standard power-ups). There are **7+ distinct types** (note: P8 Extra Life has a reduced drop rate of ~5%, see below):
 
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
@@ -182,6 +182,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
 | P7 | **Teleport** *(collectable)* | Press Space to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
+| P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
 
 > **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
 
@@ -207,7 +208,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 ### 4.6 Level Progression Mechanics
 
 - Beating a level advances to the next level automatically.
-- If the player runs out of lives (3 total), the game ends and the **final score** is submitted to the local leaderboard.
+- If the player runs out of lives (3 starting; up to 5 with P8 Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.
 
