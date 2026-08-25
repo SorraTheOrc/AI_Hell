@@ -29,7 +29,7 @@
 | **A / Arrow Left** | Move left |
 | **D / Arrow Right** | Move right |
 | **Auto-fire** | Continuous (always active) |
-| **Space** | Activate movement power-up (dash/teleport away from nearest threat) |
+| **Space** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
 
 ### 2.2 Movement
 
@@ -44,7 +44,7 @@
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
 - **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
-- **Power-ups**: Collected by flying over them. They provide temporary or permanent abilities. **Space bar** activates the movement-type power-up (see §4.4).
+- **Power-ups**: Collected by flying over them. They provide temporary abilities. **Space bar** activates the teleport power-up (§4.4) while the player holds at least one Teleport power-up.
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
 ### 2.4 The "Enemies Are the Bullets" Design
@@ -181,11 +181,11 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
-| P7 | **Dash** *(Space-activated, permanent)* | Press Space to dash/teleport away from the nearest enemy in the opposite direction; 3-second cooldown | Dash/teleport symbol |
+| P7 | **Teleport** *(collectable)* | Press Space to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
 
 > **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
 
-> **P7 (Dash)** is unique: it is always available and activated by the **Space bar**. It is not a temporary power-up but a core ability that is always active. It may be visually enhanced by collecting other power-ups (e.g., Speed Boost increases dash distance), but the base ability is always present.
+> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when Space is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
 
 ### 4.5 Scoring System
 
@@ -293,7 +293,7 @@ src/
 │   ├── Bomb.ts          — P4
 │   ├── SpeedBoost.ts    — P5
 │   ├── PhaseShift.ts    — P6
-│   └── Dash.ts          — P7 (always active)
+│   └── Teleport.ts      — P7 (collectable teleport power-up)
 ├── waves/
 │   ├── WaveManager.ts   — Wave spawning and management
 │   └── Formations.ts    — Formation movement patterns
@@ -438,7 +438,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Category | Event | Sound Character | Volume | Lead Time |
 |----------|-------|-----------------|--------|-----------|
 | **Interactions** | Power-up pickup | Bright, ascending blip | Medium-high | Immediate |
-| **Interactions** | Dash activate (Space) | Short swoosh / whoosh | Medium | Immediate |
+| **Interactions** | Teleport activate (Space) | Short whoosh + portal effect | Medium | Immediate |
 | **Impacts** | Player hit (life lost) | Low, jarring zap | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
@@ -499,7 +499,7 @@ All clarifying questions and their answers from the intake process are captured 
 4. **Engine selected** — Phaser (TypeScript/HTML5) is the locked engine choice. The engine policy bans UI-heavy engines (Godot/Unity); Phaser satisfies the code-first constraint.
 5. **Living document** — The GDD is not rigid; it may be edited during development with worklog-tracked changes.
 6. **Local leaderboard** — Simple `localStorage` for the MVP; no backend required.
-7. **Controls** — WASD/Arrow keys, auto-fire, Space for dash power-up.
+7. **Controls** — WASD/Arrow keys, auto-fire, Space for teleport power-up.
 8. **Tron-inspired neon vector aesthetic** — Confirmed.
 
 ---
