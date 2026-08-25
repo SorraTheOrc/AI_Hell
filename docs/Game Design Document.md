@@ -60,6 +60,18 @@ This creates a unique gameplay tension: the player must manage both their own sh
 
 ---
 
+### 2.6 Enemy Interaction Rules
+
+The following rules govern how enemy entities interact with each other and with bullets. These rules are universal across all levels and enemy types.
+
+- **Enemy pass-through**: Enemies **do not collide with or block** other enemies at any time. All enemy types pass freely through one another regardless of formation, wave, or level. This applies to all enemy types (E1–E5) and all wave configurations (Line, V-Formation, Circle, Wall, Dive Bomb, Orbital). There is no special "shielding" or "blocking" behavior between enemy types.
+
+- **Bullet–enemy interaction**: A single player bullet is **consumed** (destroyed) when it hits and destroys an enemy. The first enemy hit by a bullet is destroyed; the bullet does not pass through. There is no multi-hit bullet, no shield layer, and no piercing behavior. Each enemy requires exactly one bullet to destroy (see also §4.1 for enemy health).
+
+- **The Wall wave (density challenge)**: Level 3's Wall wave is a **density challenge, not a blocking mechanic**. The Wall consists of a dense horizontal line of enemies that advances slowly. Enemies in the Wall pass through each other freely. To create a gap through which the player can advance or through which bullets can reach enemies behind the Wall, the player must destroy each Wall enemy individually — one bullet per enemy. There is no special "Wall shielding" that blocks bullets from reaching enemies behind the line; bullets simply pass through gaps created by destroyed enemies.
+
+---
+
 ## 3. MVP Vertical-Slice Content
 
 ### 3.1 Scope Summary
@@ -132,7 +144,7 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 | **Line** | Enemies fly across in a horizontal or diagonal line | 1, 2 |
 | **V-Formation** | Classic V-shape advancing across the screen | 1, 2, 3 |
 | **Circle** | Enemies form a rotating circle, occasionally breaking out | 2, 3 |
-| **Wall** | Dense horizontal line of enemies that advances slowly | 3 |
+| **Wall** | Dense horizontal line of enemies that advances slowly; a density challenge — each enemy consumes one bullet (see §2.6) | 3 |
 | **Dive Bomb** | Enemies alternate between formation flight and diving toward the player | 3, 4 |
 | **Orbital** | Enemies in fixed orbital paths around a central point (Level 5) | 5 |
 | **Boss Phases** | The boss cycles through 3–4 distinct attack patterns | Boss |
