@@ -1,6 +1,6 @@
 # Game Design Document — AI_Hell
 
-> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-24.
+> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-25.
 
 ---
 
@@ -39,10 +39,10 @@
 ### 2.3 Combat Mechanics
 
 - **Auto-fire**: The player ship fires continuously without any input. The fire rate is fixed and consistent.
-- **Collision model**:
-  - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy destroys the player ship (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
-  - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. The enemies remain as collision threats as well.
-  - **Boss level**: Boss fires complex bullet patterns; enemies may also fire.
+- **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. With 3 lives per run (§3.1), a hit costs one life and the run continues until the lives run out.
+  - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
+  - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
+  - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
 - **Power-ups**: Collected by flying over them. They provide temporary or permanent abilities. **Space bar** activates the movement-type power-up (see §4.4).
 
 ### 2.4 The "Enemies Are the Bullets" Design
@@ -180,10 +180,8 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | Destroy Boss Phase 3 | 3000 |
 | Destroy Boss Phase 4 | 5000 |
 | Time bonus (per level) | 50 × seconds remaining |
-| Combo bonus | +10% per consecutive enemy destroyed without being hit (stacks up to 5×) |
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
-- **Combo indicator**: Neon bar or counter in the top-left that fills with consecutive kills.
 
 ### 4.6 Level Progression Mechanics
 
@@ -332,7 +330,6 @@ interface Player {
   speed: number;
   fireRate: number;         // ms between shots
   score: number;
-  combo: number;
   effects: PlayerEffect[];
 }
 
