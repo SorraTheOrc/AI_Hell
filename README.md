@@ -256,16 +256,6 @@ The way it works is that it queries the proxy to understand how busy the local L
 
 If you don't want the system automatically performing work then you can simply hit the `d` key and the information line at the top of the selection list will switch to saying "Downtime Off", which means no work will be scheduled.
 
-### Ship It
-
-Once all the work items we created during review have been resolved we will have a complete and approved Game Design Document. This is a good time to tag a release. So lets do it, using the `Ship` skill.
-
-The ship skill will ensure all work items that are in_review have been fully audited and have been signed off by a producer. If any problems are discovered during this process they will be handled automatically or raised for producer attention, depending on the issue type and severity. It will also ensure that no critical work item is outstanding. Once the checks are complete a release is cut, pushed to git and tagged. Version numbers are increased and we can start work on the next sprint.
-
-To run a release hit `S`, a dialog will appear asking you to confirm the intention is to ship (by typing `ship`). Alternatively, as with all actions carried out from the Context Hub, you can ask your agents in chat with somethiung like "Ship It".
-
-Once the ship process starts the project is put into a code freeze mode. The scheduler will no longer scheduler implementation work, though intakes and planning work items will still be dispatched. This means that while the (sometimes time consuming) QA processes are running we can continue to add work items for the development of the game. 
-
 ## Complete Workflow
 
 Once the GDD is ready we have a structure against which to build. At this point it may be tempting to simply tell the AI to "build this" and point to the GDD. If you are using a frontier model it will probably do a pretty good job. But that's not what we want. We want to be in control of what is built. We want to play it and refine the gameplay as we progress. We want to "find the fun" and that means taking it slowly and trying things out before committing to a particular path.
@@ -318,32 +308,36 @@ You'll also notice that they are broken into groups. The first set of groups are
 
 The one exception to this rule is the Critical group. Any items marked as critical priority and not yet implemented will appear here (at the top) regardless of their stage. You should always address critical items first. 
 
-Note that blocked items (that are not critical) will not appear in these 
+Note that blocked items (that are not critical) will not appear in the Context Hub, but items that block other items will appear in an appropriate ordering, for example, a medium work item that blocks a high priority item will appear higher than a medium that is not blocking anything.
 
-In the previous sections
+In the previous sections we created a number of ideas and performed an intake for the player gym scene. We didn't specify a priority, so these will all be marked as medium. However, the Bootsrapping item is on the critical path and thus will appear first in the list. We can run that through the intake, plan and implement phases now. While it is working we can run intake on the enemy gym scenes work item.
 
-FIXME: explain the dependency and critical pri impact of the second item
+This intake will create another bunch of work items, one for each of the enemy gym scenes. The refactor work-tem, when intake is complete, will be marked high priority and be blocked on the first three enemy gym scenes. This will mean the first three gym scenes are guaranteed to be prioritised above the others. In addition, since the refactor is high priority and the remaining gym scenes are medium the refactor work item will be placed higher in the priority, once unblocked, than the remaining work items.
+
+This orderting will be true for both the producer and Context Hub when dispatching work, though the human can override if they feel it is appropriate. In other words, I could go to bed at this point and when I wake up the project will have progressed nicely.
 
 ### How much work per sprint?
 
-You can also control how many work items are displayed, which we find is a convenient way of defining the deliverables in a sprint. This doesn't use story points and is not optimal if your goal is to release on a predictable schedule, but we like the approach and so that's what we have (though there are effort and risk estimates so it would be "trivial" to do time based sprint planning).
+You can control how many work items are displayed in the Context Hub, which we find is a convenient way of defining the deliverables in a sprint. This approach doesn't use story points or similar metrics, and thus is not optimal if your goal is to release on a predictable schedule. However, we like the approach and so it's what we have (though it is worth noting that the system does have effort and risk estimates which means it would be "trivial" to do time estimated sprint planning).
 
 Note that regardless of how many items you configure to display if there are any critical items they will always be displayed. So you may sometimes find more than the configured number. 
 
-The way we work is to implement all the items that appear in the selection list and then run the ship skill. This skill does all the things you would expect, it audits all items not yet audited, runs tests, lints the code and more. Then it merges to main and tags the release.
+### Ship It!
 
-## Leveraging the Proxy
+Once all the work items in a sprint have been implemented we have an optimal time to create a release. So lets do it, using the `Ship` skill.
 
-The proxy has a number of important features for manaing local vs remote work. The goal is to bring as much work as possible to the local LLM, while also enabling the use of remote LLMs to keep things moving at a pace. Some of the key features are:
+The ship skill will ensure all work items that are in_review have been fully audited and have been signed off by a producer. If any problems are discovered during this process they will be handled automatically or raised for producer attention, depending on the issue type and severity. It will also ensure that no critical work item is outstanding. Once the checks are complete a release is cut, pushed to git and tagged. Version numbers are increased and we can start work on the next sprint.
 
-- **OpenAI-compatible API**: passthrough endpoints that route automatically to the correct backend.
-- **Local + remote backends**: serves local models via llama-server and proxies remote models to external APIs
-- **Fallback model routing**: single model name can route to a list of models with the each falling back to the next based on availability/time/budget.
-- **Start local, move remote**: work can be routed to local LLMs as a priority and then moved to remote when context grows too large for the local model. 
-- **Router mode**: multi-model routing with automatic model loading, fallback models, and a router status indicator in the UI.
-- **Automatic Config Switching**: switch local model modes to keep more traffic local (cheaper, slower) or push remote (more costly, faster) based on time.
-- **Web UI**: Essential information and test tooling available, including local slot status
+To run a release hit `S`, a dialog will appear asking you to confirm the intention is to ship (by typing `ship`). Alternatively, as with all actions carried out from the Context Hub, you can ask your agents in chat with somethiung like "Ship It".
 
-The most important one, for many users, is the ability to route traffic dynamically to local (cheap and slow) models or remote (fast and more expensive). There are many mechanisms for doing this, each of which inter-operates with the others. The primary levers are:
+Once the ship process starts the project is put into a code freeze mode. The scheduler will no longer scheduler implementation work, though intakes and planning work items will still be dispatched. This means that while the (sometimes time consuming) QA processes are running we can continue to add work items for the development of the game. 
+
+## Local versus Remote LLM
+
+Local LLMs (for most of us) are slower but cheaper, remote LLMs are more expensive, but faster. I find that many people believe their AIs need to be super responsive, but I disagree (which is handy because I can't afford big AI bills). However, I do want them to be faster when I'm actively working with them. When I'm asleep I want them working, but I'm not as worried about speed. This means that I can save money with slower local LLMs overnight while leveraging paid models alongside the local LLMS during the day.
+
+This is where the LLM Manager proxy comes in. The proxy has a number of important features for managing local vs remote work. The goal is to bring as much work as possible to the local LLM, while also enabling the use of remote LLMs to keep things moving at a pace. 
+
+The most important feature in this regard is the ability to route traffic dynamically to local (cheap and slow) models or remote (fast and more expensive). By dynamically I mean the proxy, with the help of the context hub, adapts to circumstances. For example, if the system detects that there is no human working with the AIs right now it will reconfigure things to 
 
 - **Mode Switching**: Since the Context Hub will schedule work automatically
