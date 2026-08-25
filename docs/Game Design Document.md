@@ -233,41 +233,20 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 - **Code-first game engine libraries are encouraged** — the game should be built primarily through code, not through visual editors or scene builders.
 - The game must **run on the web** and be **distributable as a Windows binary**.
 
-### 6.2 Engine Options
+### 6.2 Selected Engine: Phaser (TypeScript / HTML5)
 
-#### Option A: Phaser (TypeScript / HTML5) — **Recommended**
+The selected engine for AI_Hell is **Phaser (TypeScript / HTML5)**. This decision was made to balance rapid development with robust feature availability, fitting the tutorial/demonstration context.
 
 | Aspect | Details |
 |--------|---------|
-| **Pros** | Mature 2D game framework with built-in scenes, physics (Arcade or Matter), tweening, input handling, and asset management. Large ecosystem, extensive documentation, and active community. Fast to scaffold a playable prototype. Ideal for a tutorial project where time is limited. |
+| **Type** | Mature 2D game framework with built-in scenes, physics (Arcade or Matter), tweening, input handling, and asset management |
+| **Pros** | Large ecosystem, extensive documentation, and active community. Fast to scaffold a playable prototype. Ideal for a tutorial project where time is limited. Built-in audio (Web Audio API), input handling, and scene management align well with the GDD's requirements. |
 | **Cons** | Opinionated framework layer over the raw game loop; some abstraction to learn. Less "from scratch" educational value for AI-framework demonstration. |
 | **Best for** | Rapid development with a robust feature set; best balance of speed and capability for a tutorial/demonstration project. |
 
-#### Option B: PixiJS + Hand-Written Game Loop (TypeScript)
+**Why Phaser:** The tutorial context prioritizes getting a playable game quickly. Phaser satisfies the "code-first" constraint — the game is built through TypeScript code, not a visual editor. Its built-in features (scenes, tweens, input, audio) reduce boilerplate and let the team focus on game mechanics and AI-framework integration.
 
-| Aspect | Details |
-|--------|---------|
-| **Pros** | Rendering-focused WebGL library — maximum control over the game loop, entity systems, and architecture. Excellent for teaching game development fundamentals and AI-framework integration. Minimal abstraction. |
-| **Cons** | No built-in scene management, physics, collision detection, or audio — all must be hand-rolled. More boilerplate and development time. |
-| **Best for** | Maximum architectural control and didactic value; teaching the game loop and entity systems by hand. |
-
-#### Option C: Plain HTML5 Canvas + TypeScript (No Game Library)
-
-| Aspect | Details |
-|--------|---------|
-| **Pros** | Zero external game-library dependencies. Maximum didactic value — every aspect (input, game loop, rendering, collision, audio) is hand-rolled. Perfect for an AI-framework tutorial where the code itself is the demonstration. |
-| **Cons** | Slowest to build. Input handling, game loop timing, collision detection, and rendering all require custom implementation. No built-in asset management or scene system. |
-| **Best for** | Maximum educational value and minimum dependencies; the code is the product. |
-
-#### Recommendation
-
-**Option A (Phaser)** is recommended for the MVP because:
-- The tutorial context prioritizes getting a playable game quickly.
-- Phaser's built-in features (scenes, tweens, input) align well with the GDD's requirements.
-- It still satisfies the "code-first" constraint — the game is built through TypeScript code, not a visual editor.
-- If the team later decides to refactor for more educational value, Phaser can be replaced with Option B or C.
-
-> **Final engine selection is an implementor decision.** This GDD presents the options and recommendation but does not lock in the choice. The selected engine must still satisfy the web + Windows binary constraint.
+> **Engine locked:** Phaser is the definitive engine for this project. The engine must still satisfy the web + Windows binary constraint (see §6.3). |
 
 ### 6.3 Distribution: Web and Windows
 
@@ -410,7 +389,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Performance on web** — Many bullets and enemies on screen simultaneously could cause FPS drops. | High | Optimize collision detection (grid-based); limit concurrent bullet count; use object pooling. |
 | **Pattern design complexity** — Creating 5 distinct, balanced levels of bullet patterns is time-consuming. | Medium | Start with simple patterns; iterate based on playtesting; reuse pattern primitives. |
 | **Neon aesthetic consistency** — Achieving a cohesive Tron-inspired look requires careful color and glow management. | Medium | Define a limited neon color palette early; use a single post-processing glow effect if available. |
-| **Engine selection lock-in** — Choosing Phaser may make a later refactor harder if the team wants more control. | Low | Keep game logic decoupled from engine-specific code; abstract core systems (input, rendering, game loop) behind interfaces. |
+| **Phaser abstraction** — If the team later wants more architectural control, refactoring away from Phaser requires decoupling game logic from engine-specific code. | Low | Keep game logic decoupled from engine-specific code; abstract core systems (input, rendering, game loop) behind interfaces. |
 | **Windows distribution** — Packaging requires a build step (Tauri/Electron) not all developers may have set up. | Low | Document the packaging steps in README; provide a build script. |
 
 ---
@@ -471,7 +450,7 @@ All clarifying questions and their answers from the intake process are captured 
 1. **Full 2D movement** — Not lane-based. The player has free movement in all directions.
 2. **5 levels** — Expanded from the initial 3; Levels 1–3 are formation-based, Level 4 adds enemy fire, Level 5 has fewer enemies with predictable bullet patterns.
 3. **Pre-boss wave** — Level 5 is explicitly an enemy-fired-projectile level with fewer enemies and predictable patterns.
-4. **Code-first engines allowed** — The engine policy bans UI-heavy engines (Godot/Unity) but encourages code-first libraries (Phaser, PixiJS, plain Canvas).
+4. **Engine selected** — Phaser (TypeScript/HTML5) is the locked engine choice. The engine policy bans UI-heavy engines (Godot/Unity); Phaser satisfies the code-first constraint.
 5. **Living document** — The GDD is not rigid; it may be edited during development with worklog-tracked changes.
 6. **Local leaderboard** — Simple `localStorage` for the MVP; no backend required.
 7. **Controls** — WASD/Arrow keys, auto-fire, Space for dash power-up.
@@ -488,7 +467,7 @@ All clarifying questions and their answers from the intake process are captured 
 | **AC3** — Core gameplay loop (formation waves, 2D movement, auto-fire, power-up, pre-boss wave) | ✅ | §2 |
 | **AC4** — MVP content (5 levels, 1 boss, 3 lives, 6+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
 | **AC5** — Content catalogs (enemies, waves, boss, power-ups, scoring, progression) | ✅ | §4 |
-| **AC6** — Technical architecture (2–3 engine options, pros/cons, module breakdown, data model, save design, risks) | ✅ | §6 |
+| **AC6** — Technical architecture (selected engine, module breakdown, data model, save design, risks) | ✅ | §6 |
 
 ---
 
