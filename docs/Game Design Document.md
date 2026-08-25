@@ -507,6 +507,12 @@ All clarifying questions and their answers from the intake process are captured 
 6. **Local leaderboard** — Simple `localStorage` for the MVP; no backend required.
 7. **Controls** — WASD/Arrow keys, auto-fire, Space for teleport power-up.
 8. **Tron-inspired neon vector aesthetic** — Confirmed.
+9. **Magnet power-up (P9)** — Confirmed via interactive intake for AH-0MT7VE4SX0005A8V:
+   - **Duration/stacking model** (Q: "Temporary timed effect or permanent upgrade?") — Answer: **permanent**; each pickup permanently increases the attraction radius for the rest of the run.
+   - **Scope of attraction** (Q: "Attract all power-up types on screen, or only standard types?") — Answer: **all** — including rare types such as P8 Extra Life.
+   - **Base radius** (Q: "Any preference on base radius or propose defaults?") — Answer: **2× the player ship size**.
+   - **Per-stack increment and cap** (planned defaults, per planning for AH-0MT7VE4SX0005A8V): **+50% radius per stack**, capped at **5 stacks**. Operator may override at review.
+   - **Attraction speed** — **slower than the ship's movement speed**, so the player must still move toward the power-up (or remain stationary for it to drift in) to collect it.
 
 ---
 
