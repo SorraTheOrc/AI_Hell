@@ -220,4 +220,23 @@ This isn't foolproof, of course, but we have found it to be very effective and c
 
 A little work up-front can pay off multiple times as the work progresses.
 
-Once you are happy with the implementation we can move on to 
+Assuming you created some work items to improve the GDD you should now work through each one in the same way as we did above. Alternatively, you can go for a walk or go to bed and let the Context Hub orchestrator progress the items for you. At the time of writing this only works with local LLMs, but it is relatively trivial to make it work with remote LLMs too, reach out to us and lets talk through a design.
+
+## Building AI Hell v0.0.1
+
+Once the GDD is ready we have a structure against which to build. At this point it may be tempting to simply tell the AI to "build this" and point to the GDD. If you are using a frontier model it will probably do a pretty good job. But that's not what we want. We want to be in control of what is built. We want to play it and refine the gameplay as we progress. We want to "find the fun".
+
+### The Player
+
+The first thing in any game design is to ensure that the thing the player does the most is fun. In a game like this the player does nothing but move. So lets start by creating our player and have them move around the screen. Nothing more. No menu's, no enemies, no powerups nothing. Just the player and the WASD/Arrow keys. The ships movement needs to be enjoyable in its own right.
+
+It's also a good idea to create a "gym", a collection of scenes designed to allow easy testing of key mechanics. We will start the gym for this game now.
+
+Earlier we hit `c` to open the create form and typed in the work item description. We could do the same again, but at the time of writing the editor in these forms is quite limited. So we will do it a different way this time. The `c` command simply creates a Pi session and injects the appropriate command. We can open a Pi session using `P n` (Pi new). 
+
+To run the intake skill we use `/skill:intake` followed by the description of what you want in the work item. We will use "Create the first scene gym scene. This scene should contain nothing but the player ship. The player is able to move around the screen using the control keys. Movement should feel natural and simulate space movement. That is, when the player presses a direction key thrusters will fire to direct the ship in the chosen direction. It will take a short moment to slow and reverse any existing movement. This should not make the ship feel sluggish, but it should be enough to force the player to think ahead with respect to their movement. Asteroids is a good example of a game that does this."
+
+While the AI is working on that we can define other work items. The level of granularity you want to work at is entirely up to you. You could ask the AI to break the GDD down into a series of work items or you could work through the GDD yourself creating logical work items. Personally I like to hand craft the first few work items as this allows me time to establish working practices within the project. Such as defining creating gym scenes for key mechanics.
+
+
+
