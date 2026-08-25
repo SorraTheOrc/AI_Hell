@@ -43,6 +43,7 @@
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
+- **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
 - **Power-ups**: Collected by flying over them. They provide temporary or permanent abilities. **Space bar** activates the movement-type power-up (see §4.4).
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
@@ -109,30 +110,35 @@ The following rules govern how enemy entities interact with each other and with 
 #### E1 — Scout (Basic Formation)
 - **Behavior**: Flies in a standard V-formation or line across the screen.
 - **Appearance**: Small, angular neon shape (e.g., triangle or chevron).
+- **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Low (early levels only).
 - **Fires**: No (Levels 1–3); yes, aimed shot (Level 4+).
 
 #### E2 — Diver
 - **Behavior**: Dives toward the player in a curved trajectory, then returns to formation.
 - **Appearance**: Medium, dart-shaped neon entity.
+- **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.
 - **Fires**: No (Levels 1–3); yes, short-burst spread (Level 4+).
 
 #### E3 — Tank
 - **Behavior**: Slow, deliberate formation movement; holds position longer than other types.
 - **Appearance**: Larger, hexagonal or blocky neon shape.
+- **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium–High (acts as an immovable obstacle in formations).
 - **Fires**: No (Levels 1–3); yes, radial burst (Level 4+).
 
 #### E4 — Phaser (Level 5 exclusive)
 - **Behavior**: Moves slowly in a fixed orbital path; fires in predictable, repeating cycles.
 - **Appearance**: Circular neon ring with a central core.
+- **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium (but high pattern-based challenge).
 - **Fires**: Yes — predictable radial or aimed patterns with clear tell animations and an advance audio cue (≥ 500 ms lead time) before each firing cycle begins.
 
 #### E5 — Swarm
 - **Behavior**: Moves in tight, fast-moving clusters; changes direction suddenly.
 - **Appearance**: Small, diamond-shaped neon entities in groups.
+- **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: High (positional threat in dense formations).
 - **Fires**: No (Levels 1–3); yes, coordinated burst (Level 4).
 
@@ -172,10 +178,12 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P1 | **Spread Shot** | Fires 3 bullets in a fan pattern for 10 seconds | Triple-line neon arc |
 | P2 | **Rapid Fire** | Doubles fire rate for 10 seconds | Firing-rate waveform |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
-| P4 | **Bomb** | Clears all on-screen bullets and deals damage to enemies | Exploding circle |
+| P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
 | P7 | **Dash** *(Space-activated, permanent)* | Press Space to dash/teleport away from the nearest enemy in the opposite direction; 3-second cooldown | Dash/teleport symbol |
+
+> **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
 
 > **P7 (Dash)** is unique: it is always available and activated by the **Space bar**. It is not a temporary power-up but a core ability that is always active. It may be visually enhanced by collecting other power-ups (e.g., Speed Boost increases dash distance), but the base ability is always present.
 
@@ -340,7 +348,7 @@ interface Enemy {
   y: number;
   width: number;
   height: number;
-  health: number;
+  health: number;       // All regular enemies: health = 1 (one-hit kill); Boss handled by phase system
   scoreValue: number;
   behavior: FormationBehavior | DiveBehavior;
   canFire: boolean;
