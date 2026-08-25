@@ -1,4 +1,2 @@
 {"__worklog_sync__":{"kind":"delta","version":1}}
-{"data":{"auditedAt":"2026-08-25T22:00:07.260Z","author":"rgardler","rawOutput":null,"readyToClose":true,"summary":"Approved by manual review","workItemId":"AH-0MT7O8KCY0059RA5"},"type":"audit_result"}
-{"data":{"auditedAt":"2026-08-25T21:59:54.765Z","author":"rgardler","rawOutput":null,"readyToClose":true,"summary":"Approved by manual review","workItemId":"AH-0MT7UY5UR002LD5U"},"type":"audit_result"}
-{"data":{"auditedAt":"2026-08-25T21:59:56.964Z","author":"rgardler","rawOutput":null,"readyToClose":true,"summary":"Approved by manual review","workItemId":"AH-0MT7VE4SX0005A8V"},"type":"audit_result"}
+{"data":{"auditedAt":"2026-08-25T22:00:35.427Z","author":"rgardler","rawOutput":null,"readyToClose":true,"summary":"Approved by manual review","workItemId":"AH-0MT7UX8LE0072MR3"},"type":"audit_result"}
