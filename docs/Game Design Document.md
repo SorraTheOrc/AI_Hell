@@ -44,6 +44,7 @@
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
 - **Power-ups**: Collected by flying over them. They provide temporary or permanent abilities. **Space bar** activates the movement-type power-up (see §4.4).
+- **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
 ### 2.4 The "Enemies Are the Bullets" Design
 
@@ -127,7 +128,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Behavior**: Moves slowly in a fixed orbital path; fires in predictable, repeating cycles.
 - **Appearance**: Circular neon ring with a central core.
 - **Threat level**: Medium (but high pattern-based challenge).
-- **Fires**: Yes — predictable radial or aimed patterns with clear tell animations.
+- **Fires**: Yes — predictable radial or aimed patterns with clear tell animations and an advance audio cue (≥ 500 ms lead time) before each firing cycle begins.
 
 #### E5 — Swarm
 - **Behavior**: Moves in tight, fast-moving clusters; changes direction suddenly.
@@ -293,7 +294,7 @@ src/
 │   ├── Menu.ts          — Main menu, game-over screen
 │   └── Leaderboard.ts   — Leaderboard display and input
 ├── audio/
-│   └── AudioManager.ts  — Sound effects and music
+│   └── AudioManager.ts  — Sound effects (procedural Web Audio API synthesis)
 ├── data/
 │   ├── enemyData.ts     — Enemy stat definitions
 │   ├── bossData.ts      — Boss phase definitions
@@ -303,7 +304,7 @@ src/
     └── math.ts          — Helper math functions
 assets/
 ├── images/              — Neon vector graphics (placeholder_ prefix)
-└── audio/               — Sound effects and music
+└── audio/               — No external audio assets (all SFX are procedural; see §7.3)
 docs/
 └── Game Design Document.md
 ```
@@ -377,7 +378,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Key | Content |
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
-| `ai_hell_settings` | Sound volume, control bindings |
+| `ai_hell_settings` | Sound volume (0.0–1.0), SFX mute toggle, control bindings |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.
@@ -390,6 +391,8 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Pattern design complexity** — Creating 5 distinct, balanced levels of bullet patterns is time-consuming. | Medium | Start with simple patterns; iterate based on playtesting; reuse pattern primitives. |
 | **Neon aesthetic consistency** — Achieving a cohesive Tron-inspired look requires careful color and glow management. | Medium | Define a limited neon color palette early; use a single post-processing glow effect if available. |
 | **Phaser abstraction** — If the team later wants more architectural control, refactoring away from Phaser requires decoupling game logic from engine-specific code. | Low | Keep game logic decoupled from engine-specific code; abstract core systems (input, rendering, game loop) behind interfaces. |
+| **Browser autoplay policy** — AudioContext cannot start before a user gesture; SFX will be silent until the user interacts (e.g., clicking Start/Play). | Medium | Initialize audio on first input or menu interaction; fall back silently until then; document the gesture requirement. |
+| **SFX rate limiting** — High-frequency events (auto-fire, fast bullet hits) could overlap into cacophony. | Medium | Per-sound rate limiting/throttle; modest volume levels; avoid stacking more than 3–4 concurrent SFX instances. |
 | **Windows distribution** — Packaging requires a build step (Tauri/Electron) not all developers may have set up. | Low | Document the packaging steps in README; provide a build script. |
 
 ---
@@ -418,11 +421,46 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 - **Animations**: Smooth, fluid motion for formations; sharp, precise motion for bullets.
 - **Particle effects**: Minimal — use for explosions (enemy destruction) and power-up collection.
 
-### 7.3 Audio Direction (Out of Scope for MVP, Noted for Future)
+### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
-- **Music**: Synthwave / retro electronic, low-tempo, atmospheric.
-- **SFX**: Neon-inspired — crisp, digital sounds (blips, zaps, hums).
-- **Out of scope for MVP**: Audio is a nice-to-have but not required for the initial vertical slice. Visual feedback (screen shake, flash) can substitute temporarily.
+**Approach**: All sound effects use **procedural synthesis via the Web Audio API** (zero external audio assets). Sound is code-generated — crisp, digital, neon-style "blips, zaps, and hums" consistent with the Tron-inspired aesthetic. Phaser's built-in Web Audio support is available but the spec remains engine-agnostic.
+
+#### SFX Event Catalog
+
+| Category | Event | Sound Character | Volume | Lead Time |
+|----------|-------|-----------------|--------|-----------|
+| **Interactions** | Power-up pickup | Bright, ascending blip | Medium-high | Immediate |
+| **Interactions** | Dash activate (Space) | Short swoosh / whoosh | Medium | Immediate |
+| **Impacts** | Player hit (life lost) | Low, jarring zap | High | Immediate |
+| **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
+| **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
+| **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
+| **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
+| **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
+| **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
+
+#### Advance Telegraphing (≥ 500 ms Lead Time)
+
+Key events are announced by an **advance audio cue** with a minimum 500 ms lead time before the visual event:
+
+- **Boss entrance** — Low rumble before boss appears
+- **Boss phase transitions** — Rising tone before new attack pattern
+- **Level 4–5 enemy fire** — Short warning tone before bullets fire
+- **Level 5 Phaser firing cycles** — Ascending beep before each cycle (see §4.1)
+- **Wave spawns** — Subtle chime before enemies appear
+- **Power-up spawns** — Brief chime before power-up appears
+
+#### Background Music
+
+Background music is explicitly a **nice-to-have** and **out of scope for the MVP**. Simple SFX only. If music is added later, it would be a separate work item.
+
+#### Browser Autoplay Policy
+
+AudioContext must be created and resumed only after a user gesture (e.g., clicking Start/Play). Audio is silent until the user interacts with the game. This is documented in §6.7 (risk entry).
+
+#### SFX Rate Limiting
+
+To prevent cacophony from high-frequency events, SFX instances are rate-limited (maximum 3–4 concurrent sounds). Auto-fire and rapid bullet hits use short, low-volume sounds to minimize overlap impact. See §6.7 (risk entry).
 
 ---
 
@@ -436,7 +474,7 @@ The following are explicitly **out of scope** for the MVP but should be tracked 
 | **Online leaderboard** | Backend service for persistent, cross-machine leaderboards. |
 | **Additional levels** | Levels 6–10+ with new enemy types and pattern variations. |
 | **Online multiplayer** | Co-op or competitive play over network. |
-| **Sound and music** | Full audio implementation. |
+| **Background music** | Synthwave / retro electronic soundtrack (SFX is in scope for MVP per §7.3). |
 | **Save/load game state** | Pause and resume functionality. |
 | **Achievements** | Unlockable challenges and rewards. |
 | **Mobile support** | Touch controls for mobile devices. |
