@@ -44,7 +44,7 @@
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
 - **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
-- **Power-ups**: Collected by flying over them. They provide temporary abilities. **Space bar** activates the teleport power-up (§4.4) while the player holds at least one Teleport power-up.
+- **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with Space), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **Space bar** activates the teleport power-up while the player holds at least one Teleport power-up.
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
 ### 2.4 The "Enemies Are the Bullets" Design
@@ -83,7 +83,7 @@ The following rules govern how enemy entities interact with each other and with 
 | **Levels** | 5 | Levels 1–3: enemies-as-bullets formations; Level 4: enemies fire bullets; Level 5: fewer enemies, predictable bullet patterns |
 | **Boss encounters** | 1 | Final boss after Level 5 |
 | **Lives** | 3 (up to 5 with P8) | Per-run; no continue mechanic. P8 Extra Life grants +1 life, capped at 5. |
-| **Power-up types** | ≥ 7 | Distinct types (see §4.4) |
+| **Power-up types** | ≥ 9 | Distinct types (see §4.4) |
 | **Leaderboard** | Local storage | localStorage-based, single-machine |
 | **Difficulty scaling** | **Out of scope** | Not implemented in MVP |
 | **Multiplayer** | **Out of scope** | Single-player only in MVP |
@@ -171,7 +171,7 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 
 ### 4.4 Power-Ups
 
-The player collects power-ups dropped by destroyed enemies (random chance, ~15–20% per enemy for standard power-ups). There are **7+ distinct types** (note: P8 Extra Life has a reduced drop rate of ~5%, see below):
+The player collects power-ups dropped by destroyed enemies (random chance, ~15–20% per enemy for standard power-ups). There are **9+ distinct types** (note: P8 Extra Life has a reduced drop rate of ~5%, see below):
 
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
@@ -183,10 +183,13 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
 | P7 | **Teleport** *(collectable)* | Press Space to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
+| P9 | **Magnet** *(permanent, passive)* | Collecting this power-up permanently attracts **all power-up drops on screen** — including rare types such as P8 Extra Life — toward the player ship, making pickups easier to grab during dense bullet patterns. It is a **permanent** effect for the rest of the run (no activation key required, nothing is consumed), unlike the timed P1–P6 effects. Collecting additional Magnets **stacks**, increasing the attraction radius by **+50% per stack**, starting from a **base radius of 2× the player ship size**, up to a **cap of 5 stacks**. The attraction speed is **slower than the ship's movement speed**, so the player must still move toward the power-up — or remain stationary for it to drift in — to collect it. | Horseshoe magnet with neon glow |
 
 > **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
 
 > **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when Space is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
+
+> **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
 
 ### 4.5 Scoring System
 
@@ -294,7 +297,9 @@ src/
 │   ├── Bomb.ts          — P4
 │   ├── SpeedBoost.ts    — P5
 │   ├── PhaseShift.ts    — P6
-│   └── Teleport.ts      — P7 (collectable teleport power-up)
+│   ├── Teleport.ts      — P7 (collectable teleport power-up)
+│   ├── ExtraLife.ts     — P8 (passive, rare)
+│   └── Magnet.ts        — P9 (permanent attraction power-up)
 ├── waves/
 │   ├── WaveManager.ts   — Wave spawning and management
 │   └── Formations.ts    — Formation movement patterns
@@ -512,7 +517,7 @@ All clarifying questions and their answers from the intake process are captured 
 | **AC1** — Document exists at `docs/Game Design Document.md` | ✅ | This document |
 | **AC2** — Game identity section (title, genre, pitch, audience, aesthetic) | ✅ | §1 |
 | **AC3** — Core gameplay loop (formation waves, 2D movement, auto-fire, power-up, pre-boss wave) | ✅ | §2 |
-| **AC4** — MVP content (5 levels, 1 boss, 3 lives, 6+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
+| **AC4** — MVP content (5 levels, 1 boss, 3 lives, 9+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
 | **AC5** — Content catalogs (enemies, waves, boss, power-ups, scoring, progression) | ✅ | §4 |
 | **AC6** — Technical architecture (selected engine, module breakdown, data model, save design, risks) | ✅ | §6 |
 
