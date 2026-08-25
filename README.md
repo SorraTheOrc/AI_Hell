@@ -224,34 +224,7 @@ A little work up-front can pay off multiple times as the work progresses.
 
 Assuming you created some work items to improve the GDD you should now work through each one in the same way as we did above. Alternatively, you can go for a walk or go to bed and let the Context Hub orchestrator progress the items for you. At the time of writing this only works with local LLMs, but it is relatively trivial to make it work with remote LLMs too, reach out to us and lets talk through a design.
 
-## Building AI Hell v0.0.1
-
-Once the GDD is ready we have a structure against which to build. At this point it may be tempting to simply tell the AI to "build this" and point to the GDD. If you are using a frontier model it will probably do a pretty good job. But that's not what we want. We want to be in control of what is built. We want to play it and refine the gameplay as we progress. We want to "find the fun".
-
-### The Player
-
-The first thing in any game design is to ensure that the thing the player does the most is fun. In a game like this the player does nothing but move. So lets start by creating our player and have them move around the screen. Nothing more. No menu's, no enemies, no powerups nothing. Just the player and the WASD/Arrow keys. The ships movement needs to be enjoyable in its own right.
-
-It's also a good idea to create a "gym", a collection of scenes designed to allow easy testing of key mechanics. We will start the gym for this game now.
-
-Earlier we hit `c` to open the create form and typed in the work item description. We could do the same again, but at the time of writing the editor in these forms is quite limited. So we will do it a different way this time. The `c` command simply creates a Pi session and injects the appropriate command. We can open a Pi session using `P n` (Pi new). 
-
-To run the intake skill we use `/skill:intake` followed by the description of what you want in the work item. We will use "Create the first scene gym scene. This scene should contain nothing but the player ship. The player is able to move around the screen using the control keys. Movement should feel natural and simulate space movement. That is, when the player presses a direction key thrusters will fire to direct the ship in the chosen direction. It will take a short moment to slow and reverse any existing movement. This should not make the ship feel sluggish, but it should be enough to force the player to think ahead with respect to their movement. Asteroids is a good example of a game that does this."
-
-While the AI is working on that we can define other work items. The level of granularity you want to work at is entirely up to you. You could ask the AI to break the GDD down into a series of work items or you could work through the GDD yourself creating logical work items. Personally I like to hand craft the first few work items as this allows me time to establish working practices within the project. Such as defining creating gym scenes for key mechanics.
-
-
-### Managing Sprints and Releases
-
-The worklog CLI took has a handy command `wl next` (use `wl next --help`) which drives the selection list in the Herdr UI. This uses a complex algorithm to decide which n work items should be worked on next. It takes into account priorty, dependencies, age and much more. What this means is that the work items listed in your selection list in Herdr are the ones that should be worked on next.
-
-You can also control how many work items are displayed, which we find is a convenient way of defining the deliverables in a sprint. This doesn't use story points and is not optimal if your goal is to release on a predictable schedule, but we like the approach and so that's what we have (though there are effort and risk estimates so it would be "trivial" to do time based sprint planning).
-
-Note that regardless of how many items you configure to display if there are any critical items they will always be displayed. So you may sometimes find more than the configured number. 
-
-The way we work is to implement all the items that appear in the selection list and then run the ship skill. This skill does all the things you would expect, it audits all items not yet audited, runs tests, lints the code and more. Then it merges to main and tags the release.
-
-## Automated Building
+### Automated Building
 
 The Herdr plugin has a feature that will automatically run work items through this process. At the time of writing this only works if you have local LLMs setup using the proxy. There's no reason why we couldn't make it work with only remote, but one of our current design goals is to keep costs down by utilizing loal LLMs. We also don't want the LLM rushing forward with work items that are too large to be implemented unattended or introduce risk into the system. Therefore only a work items that match a defined size and risk tolerance will be automatically scheduled.
 
@@ -261,8 +234,94 @@ The way it works is that it queries the proxy to understand how busy the local L
 
 If you don't want the system automatically performing work then you can simply hit the `d` key and the information line at the top of the selection list will switch to saying "Downtime Off", which means no work will be scheduled.
 
+### Ship It
+
+Once all the work items we created during review have been resolved we will have a complete and approved Game Design Document. This is a good time to tag a release. So lets do it, using the `Ship` skill.
+
+The ship skill will ensure all work items that are in_review have been fully audited and have been signed off by a producer. If any problems are discovered during this process they will be handled automatically or raised for producer attention, depending on the issue type and severity. It will also ensure that no critical work item is outstanding. Once the checks are complete a release is cut, pushed to git and tagged. Version numbers are increased and we can start work on the next sprint.
+
+To run a release hit `S`, a dialog will appear asking you to confirm the intention is to ship (by typing `ship`). Alternatively, as with all actions carried out from the Context Hub, you can ask your agents in chat with somethiung like "Ship It".
+
+Once the ship process starts the project is put into a code freeze mode. The scheduler will no longer scheduler implementation work, though intakes and planning work items will still be dispatched. This means that while the (sometimes time consuming) QA processes are running we can continue to add work items for the development of the game. 
+
+## Complete Workflow
+
+Once the GDD is ready we have a structure against which to build. At this point it may be tempting to simply tell the AI to "build this" and point to the GDD. If you are using a frontier model it will probably do a pretty good job. But that's not what we want. We want to be in control of what is built. We want to play it and refine the gameplay as we progress. We want to "find the fun" and that means taking it slowly and trying things out before committing to a particular path.
+
+The previous sections stepped through an entire workflow but there is more to it than that. We can use the Context Hub to coordinate entire sprints, each of which will culminate in a fully tested release.
+
+### Defining The First Code Deliverable
+
+The first thing in any game design is to ensure that the thing the player does the most is fun. In a game like this the player does nothing but move. So lets start by creating our player and have them move around the screen. Nothing more. No menu's, no enemies, no powerups nothing. Just the player and the WASD/Arrow keys. The ships movement needs to be enjoyable in its own right.
+
+It's also a good idea to create a "gym", a collection of scenes designed to allow easy testing of key mechanics. We will start the gym for this game now.
+
+Earlier we hit `c` to open the create form and typed in the work item description. We could do the same again, but at the time of writing the editor in these forms is quite limited. So we will do it a different way this time. The `c` command simply creates a Pi session and injects the appropriate command. We can open a Pi session using `P n` (Pi new). 
+
+To run the intake skill we use `/skill:intake` followed by the description of what you want in the work item. We will use "Create the first scene gym scene. This scene should contain nothing but the player ship. The player is able to move around the screen using the control keys. Movement should feel natural and simulate space movement. That is, when the player presses a direction key thrusters will fire to direct the ship in the chosen direction. It will take a short moment to slow and reverse any existing movement. This should not make the ship feel sluggish, but it should be enough to force the player to think ahead with respect to their movement. Asteroids is a good example of a game that does this."
+
+When I ran this the AI pointed out that since there was no code in the project yet this work item would also include a project bootstrapping step. I told it that this should be a separate work item What it created for me was the requested item and a bootstrap work item. The player one was blocked by the bootstrap one.
+
+### Managing Sprints and Releases
+
+We will want to create the same kind of gym scenes for each of the enemies, we will also want to be able to test the power ups and ensure that we can actually collect them. We could do this within the game itself, as it comes together, or we could do it in gym scenes. While the AI is working on both the release and the player movement scene intake, lets give it something else to do. We will define a whole load of work items that can logically make up a single development sprint.
+
+You could do the same as we did above, directly create a `/skill:intake` request for each. However, we don't want to fire up too many LLM requests all at once. If you are using local models this will clog up the model and slow it down, potentially falling back to paid models if you are using our proxy. If you are using remote models, or falling back to them when the local model is busy this can quickly rack up a big bill. You might want to go a little slower. To do this we will create idea work items using the CLI. These do not make LLM calls.
+
+#### Enemy Gym scenes
+
+```bash
+wl create -t "Create Enemy Gym Scene work items" -d "Create a gym scene for each of the enemies in the GDD. The scene should clearly demonstrate the formation, movement, sprites, sounds etc. for the enemies. Each scene should have buttons to explode a random enemy (simulating it being shot) and another to toggle shoot behaviour on and off (for those that can shoot in later levels). Each scene should have its own work item. The first three enemies will be high priority items, the others will be medium."
+```
+
+#### Refactoring
+
+```bash
+wl create -t "Refactor Enemy Gym Scenes" -d "Create a work item to refactor the code produced for the first three enemy gym scenes. This refactoring will identify opportunities for code reuse accross the scenes and will create work items, of high priority, for extracting this reusable code into core libraries. Each gym scene will be rewritten to use the core libraries. A new document ENEMY_DESIGN_AND_IMPLEMENTATION.md will be created which will contain best practive recommendations for using these libraries. The remaining work items to create enemy gym scenes will be updated to adhere to these best practices. This refactor work item will be dependent on the first three enemy gym scenes and will be critical priority."
+```  
+
+#### Gym Index
+
+```bash
+wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. This work item will be dependent upon the completion of the first enemy scene. It should be the entry page for the game when run in dev mode."
+```
+
+### Prioritizing work
+
+At this point we have a number of work items. How do we know which to work on first, and how will the AI decide which to dispatch in downtime?
+
+The worklog CLI has a handy command `wl next` (use `wl next --help`) which drives the selection list in the Herdr UI. This uses a complex algorithm to decide which n work items should be worked on next. It takes into account item stage, priority, dependencies, age and much more. What this means is that the work items listed in your selection list in Herdr are the ones that should be worked on next and, generally speaking, the ones at the top of the list should be done first. 
+
+You'll also notice that they are broken into groups. The first set of groups are items that are plan or intake complete. These are broken into sub-groups. Generally speaking it is safe to work on one item in each sub-group. There's no guarantee of no conflict, but the AI does its best to avoid problems. The next group is the "idea" group, these are items the AI is not yet able to place into an implementation group, they must go through the intake process first. Finally there is the "In Review" group, these are waiting to be audited and approved by the producer, ready for release.
+
+The one exception to this rule is the Critical group. Any items marked as critical priority and not yet implemented will appear here (at the top) regardless of their stage. You should always address critical items first. 
+
+Note that blocked items (that are not critical) will not appear in these 
+
+In the previous sections
+
+FIXME: explain the dependency and critical pri impact of the second item
+
+### How much work per sprint?
+
+You can also control how many work items are displayed, which we find is a convenient way of defining the deliverables in a sprint. This doesn't use story points and is not optimal if your goal is to release on a predictable schedule, but we like the approach and so that's what we have (though there are effort and risk estimates so it would be "trivial" to do time based sprint planning).
+
+Note that regardless of how many items you configure to display if there are any critical items they will always be displayed. So you may sometimes find more than the configured number. 
+
+The way we work is to implement all the items that appear in the selection list and then run the ship skill. This skill does all the things you would expect, it audits all items not yet audited, runs tests, lints the code and more. Then it merges to main and tags the release.
+
 ## Leveraging the Proxy
 
-The proxy has a number of important features for manaing local vs remote work. The goal is to bring as much work as possible to the local LLM, while also enabling the use of remote LLMs to keep things moving at a pace. The key features are:
+The proxy has a number of important features for manaing local vs remote work. The goal is to bring as much work as possible to the local LLM, while also enabling the use of remote LLMs to keep things moving at a pace. Some of the key features are:
 
-  FIXME: I've asked the LLM to write this content in the llm-manager README, lets bring it here.
+- **OpenAI-compatible API**: passthrough endpoints that route automatically to the correct backend.
+- **Local + remote backends**: serves local models via llama-server and proxies remote models to external APIs
+- **Fallback model routing**: single model name can route to a list of models with the each falling back to the next based on availability/time/budget.
+- **Start local, move remote**: work can be routed to local LLMs as a priority and then moved to remote when context grows too large for the local model. 
+- **Router mode**: multi-model routing with automatic model loading, fallback models, and a router status indicator in the UI.
+- **Automatic Config Switching**: switch local model modes to keep more traffic local (cheaper, slower) or push remote (more costly, faster) based on time.
+- **Web UI**: Essential information and test tooling available, including local slot status
+
+The most important one, for many users, is the ability to route traffic dynamically to local (cheap and slow) models or remote (fast and more expensive). There are many mechanisms for doing this, each of which inter-operates with the others. The primary levers are:
+
+- **Mode Switching**: Since the Context Hub will schedule work automatically
