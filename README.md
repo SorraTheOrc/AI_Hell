@@ -373,6 +373,8 @@ The first enemy gym scene (Create E1 Scout gym scene) is a standalone Phaser sce
 
 The scene is reachable from the gym index ("Scout" entry) and returns to it via the "← INDEX" button — it is a gym testbed (no player ship, no HUD, no power-ups, no other enemies). Coverage: `src/entities/Scout.test.ts` + `src/scenes/gym/GymScout.test.ts` verify formation geometry, movement, explosion, shoot toggle and aimed-bullet behaviour.
 
+> **Graphics style gotcha (browser rendering):** Phaser `Graphics` is command-buffered, and `clear()` wipes any styles (line/fill) queued before it — it only re-applies the default white 1px stroke. Entity bodies must therefore call `lineStyle()` **after** `clear()` inside `_drawBody()`; the original Scout code styled before clearing, so the chevrons stroked with the default style and rendered invisible in a real browser (no console error, and headless tests stayed green). `src/entities/Scout.test.ts` regression-tests the stroke style ordering via the command buffer; visual confirmation is a manual `npm run dev` step (formation should show as neon-green chevrons).
+
 ### Prioritizing work
 
 At this point we have a number of work items. How do we know which to work on first, and how will the AI decide which to dispatch in downtime?

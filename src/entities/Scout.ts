@@ -81,9 +81,9 @@ export class Scout extends Phaser.GameObjects.Container {
       scene.scale.height - 40,
     );
 
-    // Body — small angular neon-green chevron pointing "down".
+    // Body — small angular neon-green chevron pointing "down". The stroke
+    // style is applied inside _drawBody() AFTER clear() (see note there).
     this.bodyGraphics = scene.add.graphics();
-    this.bodyGraphics.lineStyle(2, SCOUT_COLOR, 1);
     this._drawBody();
     this.bodyGraphics.setDepth(1);
     this.add(this.bodyGraphics);
@@ -99,6 +99,14 @@ export class Scout extends Phaser.GameObjects.Container {
   private _drawBody(): void {
     this.bodyGraphics.clear();
     const half = SCOUT_SIZE / 2;
+
+    // Style must be set AFTER clear(): Graphics is command-buffered and
+    // clear() wipes any styles queued before it (it only re-applies the
+    // default white 1px stroke). The original code called lineStyle()
+    // before clear(), so the chevron was stroked with the default style
+    // and rendered invisible in a real browser (headless tests cannot
+    // see pixels, so the suite stayed green).
+    this.bodyGraphics.lineStyle(2, SCOUT_COLOR, 1);
 
     // Angular chevron pointing down (inverted player-ship silhouette).
     this.bodyGraphics.beginPath();

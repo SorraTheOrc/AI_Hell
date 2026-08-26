@@ -87,6 +87,47 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(SCOUT_COLOR).toBe(0x00ff00); // neon green per GDD §4.1
   });
 
+  it('strokes the chevron with the GDD green style applied AFTER the buffer clear (browser render regression)', async () => {
+    // Graphics is command-buffered: `clear()` wipes any styles queued
+    // before it (re-applying only the default white 1px stroke). The
+    // original code called `lineStyle()` before `clear()`, so in a real
+    // browser the chevrons were stroked with the default style and
+    // rendered invisible — the operator saw buttons but no scouts, with
+    // no console error (headless tests cannot see pixels, so the suite
+    // stayed green). Assert the effective stroke for the body path is
+    // SCOUT_COLOR at width 2, i.e. queued AFTER the last clear.
+    // Phaser Graphics command ids (src/gameobjects/graphics/Commands.js).
+    const LINE_STYLE = 6;
+    const STROKE_PATH = 9;
+
+    booted = await bootScene([HarnessScene]);
+    const scout = makeScout(100, 100);
+
+    // The body is the container child whose buffer contains a stroked
+    // path (the explosion layer's buffer is empty until a destruction).
+    const children = (scout as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    const body = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics &&
+        c.commandBuffer.includes(STROKE_PATH),
+    );
+    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+
+    const buf: number[] = body!.commandBuffer as number[];
+    const strokeIdx = buf.lastIndexOf(STROKE_PATH);
+    let lineStyleIdx = -1;
+    for (let i = strokeIdx - 1; i >= 0; i--) {
+      if (buf[i] === LINE_STYLE) {
+        lineStyleIdx = i;
+        break;
+      }
+    }
+    expect(lineStyleIdx).toBeGreaterThanOrEqual(0);
+    // LINE_STYLE layout: [id, lineWidth, color, alpha].
+    expect(buf[lineStyleIdx + 1]).toBe(2);
+    expect(buf[lineStyleIdx + 2]).toBe(SCOUT_COLOR);
+  });
+
   it('fires an aimed bullet only when shoot mode is enabled and the interval has elapsed', async () => {
     booted = await bootScene([HarnessScene]);
     const scout = makeScout(100, 100);
