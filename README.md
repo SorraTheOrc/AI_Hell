@@ -12,28 +12,6 @@ This document is written for Linux, everything should work on other platforms, b
 
 Need help? Join us on [Discord](https://discord.gg/CXn2j2nZJf).
 
-## Run the game
-
-The game is a Phaser 4 + TypeScript web app built with Vite (GDD §6.3 web distribution model). To run it locally:
-
-```bash
-npm install
-npm run dev
-```
-
-`npm run dev` starts the Vite dev server and opens a browser window rendering the game. At present this is just the boot scene — gameplay arrives with the gym scenes (see the game's worklog).
-
-| Command | Purpose |
-|---------|---------|
-| `npm run dev` | Start the dev server (opens a browser window) |
-| `npm run build` | Type-check and produce a deployable bundle in `dist/` |
-| `npm run preview` | Serve the production build locally |
-| `npm run test` | Run the Vitest test suite once |
-| `npm run test:watch` | Run Vitest in watch mode |
-| `npm run typecheck` | Type-check the project without emitting |
-
-The source layout follows the GDD §6.4 module breakdown: `src/core/Game.ts` is the game boot/entry point and owns scene management, `src/core/constants.ts` holds shared game constants, and `src/scenes/` contains the scenes (e.g. `BootScene`). Future entity, bullet, wave, power-up and UI modules will land under their GDD §6.4 directories as their work items are implemented.
-
 ## Initial Setup
 
 ### Install the Tooling
@@ -114,11 +92,84 @@ This may ask if you want to overwrite `~/.pi/agent/settings.json`, if this is a 
 
 #### Initialize the Proxy
 
+  NOTE: This is the part of the code that is most likely to break for you, but the good news is that it is optional. It is built for specific hardware (GMKTek Evo X2) and as such may need adjusting for your hardware. That said, we are using mature and popular tooling at all the critical points, e.g. llama.cpp, and all our builds are fully scripted. So you should, in theory, be able to point your AI at our scripts and say "adapt this for my hardware". If you do improve the code and add support for other hardware please contribute.
+
 The proxy is a smart routing system that will help you optimize local vs remote LLMs. It's not absolutely necessary, in fact if you intend to work with a single remote model then you may as well skip this step. If you are working with multiple remote models it can provide some useful features, but we recommend skipping it at first. However, if you are using a local LLM alongside remote LLMs it's highly recommended for many reasons (model fallback when busy, error recovery, automatic switching between fast and cheap modes and much more).
 
-  FIXME: As things stand in the herdr plugin right now model names in the shortcuts are assumed to be plan, audit and code. It is unlikely someone working without the proxy will have these setup. We either need a config in the herdr plugin or instructions to use and configure the proxy. For now, users can manually edit the models defined in `packages/herdr/src/shortcuts.json`
+##### Compile llama-server (ROCm/HIP build)
 
-  FIXME: Complete the Proxy setup instructions
+Use the rebuild script — it clones llama.cpp master, builds with HIP for the gfx1151 iGPU, stops any running
+server, deploys the binary + shared libs to ~/llama.cpp/build/bin/llama-server, and patches the
+RUNPATH:
+
+```bash
+  scripts/rebuild-llama.sh                  # clone → cmake → build → deploy → verify
+```
+
+  - Build flags: -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1151 -DGGML_HIP_ROCWMMA_FATTN=ON -DLLAMA_OPENSSL=ON
+  - Requires git, cmake, patchelf on the host.
+  - The deployed path must match llama_server_bin: in proxy/config.yaml (it does by default).
+  - A new build may need the MTP spec flags — see scripts/rebuild-and-restart-mtp.sh for that flow.
+
+##### Configure models
+
+The repo contains models.ini and proxy/config.yaml that provide access to the models I use. These will need to be changed
+
+**models.ini** — how llama-server (router mode) loads models. This is standard Llama Server config
+  - [global] → ngl = 99 (GPU layers), slot-save-path.
+  - One [ModelName] section per model: hf-repo = <org>/<model>:<quant> (the :quant suffix sets quantization),
+    ctx-size, plus flags like flash-attn, swa-full, cache-type-k/v, reasoning-format.
+  - Existing presets: [Qwen3], [Qwen3-MTP], [Qwen3-Coder-Next], [gpt120], [mxbai-embed].
+
+**proxy/config.yaml** (or config-fast.yaml/config-cheap.yaml — if using multiple modea (see below)). This is how the proxy routes
+ requests:
+ - models: → each model has an ordered providers: chain: type: local with llama_model: <preset-name> first
+   (local Qwen3), then type: remote fallbacks (endpoint, api_key_env, model), plus aliases:.
+ - server: → llama_router_mode: true, llama_server_bin:, llama_server_port: 8080, llama_start_script:
+   start-llama.sh, TTS on 8081.
+
+  Note that the names of models used in the Herdr Context Hub extension needs to match the names provided in the proxy config. 
+  It is therefore easiest to stick with the fallback model names in the config.yaml (e.g. plan, code, audit) provided in the 
+  git repo. You can, of course, change the local and remote models you have in thhose fallback chains. You also change the 
+  names used in the Context Hub extension by editing `packages/herdr/src/shortcuts.json`.
+
+Changes take effect on restart; new local models need a matching case block in start-llama.sh (lowercase
+name) and sometimes a models.ini section — see proxy/MODEL_ADD.md for the full recipe. Models auto-download
+from Hugging Face on first load (-hf flag).
+
+##### Run the proxy
+
+```bash
+  ./install_proxy.sh                       # one-time: venv + deps + vendored tokenizer
+  nohup bash scripts/start-proxy.sh --restart &>/tmp/proxy-startup.log &
+```
+
+  --restart kills stale proxy / llama-server / TTS processes first. The script:
+  - resolves API keys from env or ~/.pi/agent/auth.json
+  - launches the proxy (uvicorn) on port 8000
+  - spawns llama-server (router, port 8080) via start-llama.sh and the TTS server (port 8081)
+
+ Verify:
+
+ ```bash
+   sleep 30
+   curl -s http://localhost:8000/health | python3 -m json.tool
+   curl -sS http://localhost:8080/models | jq .          # router model list
+   curl -sS -X POST http://localhost:8080/models/load \
+     -H "Content-Type: application/json" -d '{"model":"Qwen3"}' -v
+ ```
+
+ Health should show status: healthy, llama_server_running: true, tts_server_running: true. If degraded, tail
+ -30 /tmp/proxy-startup.log. REST API is OpenAI-compatible at http://localhost:8000/v1/... (web dashboard at
+ /).
+
+ Quick checks / useful commands
+
+ ```bash
+   ./start-llama.sh router          # run llama-server router manually (port 8080)
+   ./start-llama.sh qwen3           # run a single model directly (debug)
+   LLAMA_NGL=0 ./start-llama.sh router   # CPU-only fallback (ngl=0)
+ ```
 
 ## Basic Workflow
 
@@ -348,6 +399,6 @@ Local LLMs (for most of us) are slower but cheaper, remote LLMs are more expensi
 
 This is where the LLM Manager proxy comes in. The proxy has a number of important features for managing local vs remote work. The goal is to bring as much work as possible to the local LLM, while also enabling the use of remote LLMs to keep things moving at a pace. 
 
-The most important feature in this regard is the ability to route traffic dynamically to local (cheap and slow) models or remote (fast and more expensive). By dynamically I mean the proxy, with the help of the context hub, adapts to circumstances. For example, if the system detects that there is no human working with the AIs right now it will reconfigure things to 
+The most important feature in this regard is the ability to route traffic dynamically to local (cheap and slow) models or remote (fast and more expensive). By dynamically I mean the proxy, with the help of the context hub, adapts to circumstances. For example, if the system detects that there is no human working with the AIs right now it will reconfigure things to send more work to the proxy, e.g. it will reduce the number of slots available, therefore allowing a larger context, therefore reducing the number of work items that fall back to remote LLMs. If the system detects a human is present, e.g. a human manually enters a command into the Context Hub, then the proxy will switch to a faster mode that has more local slots, but with smaller contexts. This results in more simultaneous jobs, but with more frequent fallback to remote LLMS.
 
-- **Mode Switching**: Since the Context Hub will schedule work automatically
+Once the proxy is configured you get all this for free, and more. For example, you can define fallback chains of models that will seek the cheapest available remote model for you. Control of what models are available and when is provided through a number of mechanisms, such as they can be timed, so you can take advantage of off-peak charging available from some providers or token budget based.
