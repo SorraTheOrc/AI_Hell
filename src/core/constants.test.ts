@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
+import { DEFAULT_CONFIG } from './config';
+import {
+  GAME_BACKGROUND_COLOR,
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  MAX_SPEED,
+  SHIP_COLOR,
+  SHIP_SIZE,
+  THRUST_ACCELERATION,
+  THRUST_FLAME_COLOR,
+  THRUST_FLAME_INNER_COLOR,
+  THRUST_FLAME_LENGTH,
+} from './constants';
 
 describe('core game constants (GDD §6.4 scaffold)', () => {
   it('declares a 16:9 canvas resolution', () => {
@@ -15,5 +27,15 @@ describe('core game constants (GDD §6.4 scaffold)', () => {
 
   it('declares a background colour in Phaser hex format', () => {
     expect(GAME_BACKGROUND_COLOR).toMatch(/^#[0-9a-fA-F]{6}$/);
+  });
+
+  it('re-exports ship tuning constants from the config module', () => {
+    expect(THRUST_ACCELERATION).toBe(DEFAULT_CONFIG.thrustAcceleration);
+    expect(MAX_SPEED).toBe(DEFAULT_CONFIG.maxSpeed);
+    expect(SHIP_SIZE).toBe(DEFAULT_CONFIG.shipSize);
+    expect(THRUST_FLAME_LENGTH).toBe(DEFAULT_CONFIG.thrustFlameLength);
+    expect(SHIP_COLOR).toBe(DEFAULT_CONFIG.shipColor);
+    expect(THRUST_FLAME_COLOR).toBe(DEFAULT_CONFIG.thrustFlameColor);
+    expect(THRUST_FLAME_INNER_COLOR).toBe(DEFAULT_CONFIG.thrustFlameInnerColor);
   });
 });

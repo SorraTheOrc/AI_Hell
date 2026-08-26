@@ -6,6 +6,10 @@
  * one display-list object; physics is delegated to the pure movement
  * model in `utils/movement.ts`.
  *
+ * Ship tuning values (size, colours, flame, thrust, max speed) come from
+ * the config module (`core/config.ts`) — either injected at construction
+ * or loaded from saved config — and can be live-updated via `setConfig`.
+ *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
  * until added to the scene.
@@ -13,15 +17,7 @@
 
 import Phaser from 'phaser';
 
-import {
-  SHIP_COLOR,
-  SHIP_SIZE,
-  THRUST_ACCELERATION,
-  THRUST_FLAME_COLOR,
-  THRUST_FLAME_INNER_COLOR,
-  THRUST_FLAME_LENGTH,
-  MAX_SPEED,
-} from '../core/constants';
+import { loadShipConfig, ShipConfig } from '../core/config';
 
 import {
   isThrusting,
@@ -34,6 +30,8 @@ import {
 export interface PlayerConfig {
   x: number;
   y: number;
+  /** Ship tuning values; defaults to the saved config when omitted. */
+  config?: ShipConfig;
 }
 
 /**
@@ -45,14 +43,34 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _movementState: MovementState;
   private readonly _input: MovementInput;
   private _flameVisible = false;
-  private readonly _config: MovementConfig;
+  private _config: MovementConfig;
+
+  // Visual tuning — runtime-updatable (constructor or setConfig).
+  private _shipSize: number;
+  private _shipColor: number;
+  private _flameColor: number;
+  private _flameInnerColor: number;
+  private _flameLength: number;
 
   constructor(scene: Phaser.Scene, config: PlayerConfig) {
     super(scene, { x: config.x, y: config.y });
 
     this._movementState = { x: config.x, y: config.y, vx: 0, vy: 0 };
     this._input = { up: false, down: false, left: false, right: false };
-    this._config = { thrust: THRUST_ACCELERATION, maxSpeed: MAX_SPEED };
+
+    // Use the injected config, else fall back to the saved config
+    // (which itself falls back to the built-in defaults).
+    const ship = config.config ?? loadShipConfig();
+
+    this._shipSize = ship.shipSize;
+    this._shipColor = ship.shipColor;
+    this._flameColor = ship.thrustFlameColor;
+    this._flameInnerColor = ship.thrustFlameInnerColor;
+    this._flameLength = ship.thrustFlameLength;
+    this._config = {
+      thrust: ship.thrustAcceleration,
+      maxSpeed: ship.maxSpeed,
+    };
 
     this._redraw();
   }
@@ -60,13 +78,13 @@ export class Player extends Phaser.GameObjects.Graphics {
   // ── Drawing helpers ──────────────────────────────────────────────
 
   private _half(multiplier: number): number {
-    return (SHIP_SIZE / 2) * multiplier;
+    return (this._shipSize / 2) * multiplier;
   }
 
   /** Redraws the whole ship (body, plus flame if currently thrusting). */
   private _redraw(): void {
     this.clear();
-    this.lineStyle(2, SHIP_COLOR, 1);
+    this.lineStyle(2, this._shipColor, 1);
 
     // Chevron pointing up: nose at top, indent at bottom
     const half = this._half(1);
@@ -91,7 +109,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     const nx = -dir.dx / len;
     const ny = -dir.dy / len;
 
-    const flameLen = SHIP_SIZE * THRUST_FLAME_LENGTH;
+    const flameLen = this._shipSize * this._flameLength;
     const tipX = nx * flameLen;
     const tipY = ny * flameLen;
 
@@ -99,7 +117,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     const px = -ny * this._half(0.6);
     const py = nx * this._half(0.6);
 
-    this.lineStyle(2, THRUST_FLAME_COLOR, 1);
+    this.lineStyle(2, this._flameColor, 1);
     this.beginPath();
     this.moveTo(px, py);
     this.lineTo(tipX, tipY);
@@ -114,7 +132,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     const ipx = -ny * this._half(0.4) * innerScale;
     const ipy = nx * this._half(0.4) * innerScale;
 
-    this.lineStyle(1, THRUST_FLAME_INNER_COLOR, 1);
+    this.lineStyle(1, this._flameInnerColor, 1);
     this.beginPath();
     this.moveTo(ipx, ipy);
     this.lineTo(itipX, itipY);
@@ -134,6 +152,26 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   getInput(): MovementInput {
     return { ...this._input };
+  }
+
+  // ── Config ───────────────────────────────────────────────────────
+
+  /**
+   * Live-updates the ship's tuning values: physics (thrust, max speed)
+   * and rendering (size, colours, flame length), re-drawing immediately.
+   */
+  setConfig(config: ShipConfig): void {
+    this._shipSize = config.shipSize;
+    this._shipColor = config.shipColor;
+    this._flameColor = config.thrustFlameColor;
+    this._flameInnerColor = config.thrustFlameInnerColor;
+    this._flameLength = config.thrustFlameLength;
+    this._config = {
+      thrust: config.thrustAcceleration,
+      maxSpeed: config.maxSpeed,
+    };
+
+    this._redraw();
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────

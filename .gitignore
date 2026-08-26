@@ -14,6 +14,7 @@ Worklog Specific Ignores
 .opencode/tmp/
 
 # Node / build artifacts
+node_modules
 node_modules/
 dist/
 *.tsbuildinfo
