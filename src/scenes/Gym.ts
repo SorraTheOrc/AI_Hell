@@ -4,23 +4,22 @@
  * Renders exactly one entity (the player ship) with thrust-based Newtonian
  * drift movement (GDD §2.2 revision). No enemies, no bullets, no HUD,
  * no power-ups — just the ship and space-style movement.
+ *
+ * Input is polled level-triggered each frame (key.isDown) so a held key
+ * applies continuous thrust, and diagonals combine when two perpendicular
+ * keys are held simultaneously.
  */
 
 import Phaser from 'phaser';
 
 import { Player } from '../entities/Player';
-import {
-  MovementInput,
-} from '../utils/movement';
-import {
-  GAME_WIDTH,
-  GAME_HEIGHT,
-} from '../core/constants';
+import { keysToInput, WasdKeysLike } from '../utils/input';
+import { GAME_WIDTH, GAME_HEIGHT } from '../core/constants';
 
 export class GymScene extends Phaser.Scene {
   private player: Player | null = null;
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: Record<string, Phaser.Input.Keyboard.Key> | undefined;
+  private wasd: WasdKeysLike | undefined;
 
   constructor() {
     super({ key: 'GymScene' });
@@ -32,31 +31,34 @@ export class GymScene extends Phaser.Scene {
       y: GAME_HEIGHT / 2,
     });
 
-    // ── Input handling ─────────────────────────────────────────────
+    // ── Input keys ─────────────────────────────────────────────────
+    // cursor keys (arrows) + WASD via a comma-separated key string,
+    // per the Phaser KeyboardPlugin API.
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys(
-      ['W', 'A', 'S', 'D'],
-    ) as Record<string, Phaser.Input.Keyboard.Key>;
+      'W,A,S,D',
+    ) as WasdKeysLike | undefined;
 
-    this.input.keyboard?.on('keydown', () => this._updateInput());
-    this.input.keyboard?.on('keyup', () => this._updateInput());
+    if (!this.cursors || !this.wasd) {
+      // No keyboard input available — the ship just drifts idle.
+      return;
+    }
   }
 
-  private _updateInput(): void {
-    if (!this.player || !this.cursors || !this.wasd) return;
-
-    const input: MovementInput = {
-      up: Phaser.Input.Keyboard.JustDown(this.cursors.up) || Phaser.Input.Keyboard.JustDown(this.wasd.W),
-      down: Phaser.Input.Keyboard.JustDown(this.cursors.down) || Phaser.Input.Keyboard.JustDown(this.wasd.S),
-      left: Phaser.Input.Keyboard.JustDown(this.cursors.left) || Phaser.Input.Keyboard.JustDown(this.wasd.A),
-      right: Phaser.Input.Keyboard.JustDown(this.cursors.right) || Phaser.Input.Keyboard.JustDown(this.wasd.D),
-    };
-
-    this.player.setInput(input);
+  /**
+   * Reads the current held-key state into a MovementInput.
+   * Level-triggered per frame: a key that is held down returns true
+   * every frame until released, so thrust accumulates continuously.
+   */
+  private _readInput() {
+    return keysToInput(this.cursors, this.wasd);
   }
 
   update(_time: number, delta: number): void {
     if (!this.player) return;
+
+    const input = this._readInput();
+    if (input) this.player.setInput(input);
 
     const dt = delta / 1000;
     const width = this.scale.width;
