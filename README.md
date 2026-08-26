@@ -298,6 +298,16 @@ wl create -t "Refactor Enemy Gym Scenes" -d "Create a work item to refactor the 
 wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. This work item will be dependent upon the completion of the first enemy scene. It should be the entry page for the game when run in dev mode."
 ```
 
+#### E1 Scout Gym Scene
+
+The first enemy gym scene (Create E1 Scout gym scene) is a standalone Phaser scene demonstrating the E1 Scout (GDD §4.1):
+
+- `src/entities/Scout.ts` — the Scout entity: a small neon-green chevron (`#00ff00`) that flies in a V-formation, fires aimed shots at a target position when shoot mode is enabled (simulating its level 4+ behaviour), and plays an explosion animation on destruction. Scouts are 1 HP and never collide with each other (GDD §2.6) — no collision system is installed.
+- `src/scenes/gym/GymScout.ts` — the gym scene: spawns a 6-scout V-formation that advances across the screen, with two on-screen controls: `EXPLODE` (destroys a random scout) and `SHOOT: ON/OFF` (toggles aimed firing at the bottom-centre of the screen, standing in for the player).
+- `src/audio/effects.ts` — procedural WebAudio sound cues (spawn blip, destruction burst), safe no-ops when no audio context exists (e.g. headless tests).
+
+The scene is not wired into the main game config — it is a gym testbed (no player ship, no HUD, no power-ups, no other enemies). The Gym index scene will link to it once built. Coverage: `src/entities/Scout.test.ts` + `src/scenes/gym/GymScout.test.ts` verify formation geometry, movement, explosion, shoot toggle and aimed-bullet behaviour.
+
 ### Prioritizing work
 
 At this point we have a number of work items. How do we know which to work on first, and how will the AI decide which to dispatch in downtime?
