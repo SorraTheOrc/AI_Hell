@@ -1,9 +1,16 @@
 /**
- * Gym scene — the bare-bones testbed for player movement.
+ * Gym scene — the bare-bones testbed for player movement and ship tuning.
  *
  * Renders exactly one entity (the player ship) with thrust-based Newtonian
  * drift movement (GDD §2.2 revision). No enemies, no bullets, no HUD,
- * no power-ups — just the ship and space-style movement.
+ * no power-ups — just the ship, space-style movement, and a control panel
+ * for tuning the ship configuration values live.
+ *
+ * The control panel is a plain-DOM overlay (beside the canvas) so it can
+ * be asserted with document.querySelector in happy-dom tests:
+ * - one slider per numeric config value (thrust, max speed, size, flame),
+ * - colour inputs for the ship/flame colours,
+ * - a Save button that persists the current values via `saveShipConfig`.
  *
  * Input is polled level-triggered each frame (key.isDown) so a held key
  * applies continuous thrust, and diagonals combine when two perpendicular
@@ -15,11 +22,43 @@ import Phaser from 'phaser';
 import { Player } from '../entities/Player';
 import { keysToInput, WasdKeysLike } from '../utils/input';
 import { GAME_WIDTH, GAME_HEIGHT } from '../core/constants';
+import {
+  loadShipConfig,
+  saveShipConfig,
+  ShipConfig,
+} from '../core/config';
+
+/** Slider ranges for the numeric ship config values. */
+const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
+  thrustAcceleration: { min: 0, max: 1200, step: 10 },
+  maxSpeed: { min: 0, max: 500, step: 5 },
+  shipSize: { min: 4, max: 60, step: 1 },
+  thrustFlameLength: { min: 0.1, max: 2, step: 0.05 },
+};
+
+/** Colour config values (rendered with `<input type="color">`). */
+const COLOR_FIELDS = ['shipColor', 'thrustFlameColor', 'thrustFlameInnerColor'];
+
+/** Panel element ids. */
+export const PANEL_ID = 'gym-config-panel';
+export const SAVE_BUTTON_ID = 'gym-save-config';
+export const STATUS_ID = 'gym-save-status';
+
+/** Converts a Phaser hex colour number to a "#rrggbb" string. */
+export function colorToHex(value: number): string {
+  return `#${value.toString(16).padStart(6, '0')}`;
+}
+
+/** Converts a "#rrggbb" string to a Phaser hex colour number. */
+export function hexToColor(value: string): number {
+  return parseInt(value.replace('#', ''), 16);
+}
 
 export class GymScene extends Phaser.Scene {
   private player: Player | null = null;
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
+  private panel: HTMLDivElement | null = null;
 
   constructor() {
     super({ key: 'GymScene' });
@@ -42,9 +81,174 @@ export class GymScene extends Phaser.Scene {
       'W,A,S,D',
     ) as WasdKeysLike | undefined;
 
+    this._buildPanel();
+
+    // ── Config panel ───────────────────────────────────────────────
+    // Seed the controls from the persisted config, apply it to the ship,
+    // then remove the panel when the scene shuts down (e.g. tests).
+    const config = loadShipConfig();
+    this._applyPanelValues(config);
+    this.player.setConfig(config);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.panel?.remove();
+      this.panel = null;
+    });
+
     if (!this.cursors || !this.wasd) {
       // No keyboard input available — the ship just drifts idle.
       return;
+    }
+  }
+
+  // ── Control panel ────────────────────────────────────────────────
+
+  /** Builds the plain-DOM tuning panel beside the canvas. */
+  private _buildPanel(): void {
+    const host = document.querySelector('#game-container') ?? document.body;
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+
+    // Numeric sliders.
+    for (const [field, range] of Object.entries(SLIDER_RANGES)) {
+      panel.appendChild(this._sliderRow(field, range));
+    }
+
+    // Colour inputs.
+    for (const field of COLOR_FIELDS) {
+      panel.appendChild(this._colorRow(field));
+    }
+
+    // Save button + status.
+    const save = document.createElement('button');
+    save.id = SAVE_BUTTON_ID;
+    save.type = 'button';
+    save.textContent = 'Save';
+    save.addEventListener('click', () => this._onSave());
+
+    const status = document.createElement('span');
+    status.id = STATUS_ID;
+
+    const actions = document.createElement('div');
+    actions.className = 'gym-panel-actions';
+    actions.append(save, status);
+    panel.appendChild(actions);
+
+    host.appendChild(panel);
+    this.panel = panel;
+  }
+
+  private _sliderRow(
+    field: string,
+    range: { min: number; max: number; step: number },
+  ): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'gym-panel-row';
+
+    const label = document.createElement('span');
+    label.textContent = field;
+    label.className = 'gym-panel-label';
+
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.dataset['config'] = field;
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.step = String(range.step);
+    input.addEventListener('input', () => this._onControlInput());
+
+    const value = document.createElement('output');
+    value.dataset['configValue'] = field;
+
+    row.append(label, input, value);
+    return row;
+  }
+
+  private _colorRow(field: string): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'gym-panel-row';
+
+    const label = document.createElement('span');
+    label.textContent = field;
+    label.className = 'gym-panel-label';
+
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.dataset['config'] = field;
+    input.addEventListener('input', () => this._onControlInput());
+
+    row.append(label, input);
+    return row;
+  }
+
+  /** Reads all controls into a ShipConfig. */
+  private _readPanelValues(): ShipConfig {
+    const source = loadShipConfig();
+    for (const field of Object.keys(SLIDER_RANGES)) {
+      const input = this.panel?.querySelector<HTMLInputElement>(
+        `input[data-config="${field}"]`,
+      );
+      if (input) source[field as keyof ShipConfig] = Number(input.value);
+    }
+    for (const field of COLOR_FIELDS) {
+      const input = this.panel?.querySelector<HTMLInputElement>(
+        `input[data-config="${field}"]`,
+      );
+      if (input) source[field as keyof ShipConfig] = hexToColor(input.value);
+    }
+    return source;
+  }
+
+  /** Sets control values (and labels) from a ShipConfig without firing events. */
+  private _applyPanelValues(config: ShipConfig): void {
+    if (!this.panel) return;
+    for (const field of Object.keys(SLIDER_RANGES)) {
+      const input = this.panel.querySelector<HTMLInputElement>(
+        `input[data-config="${field}"]`,
+      );
+      const value = this.panel.querySelector<HTMLElement>(
+        `output[data-config-value="${field}"]`,
+      );
+      if (input) input.value = String(config[field as keyof ShipConfig]);
+      if (value) value.textContent = String(config[field as keyof ShipConfig]);
+    }
+    for (const field of COLOR_FIELDS) {
+      const input = this.panel.querySelector<HTMLInputElement>(
+        `input[data-config="${field}"]`,
+      );
+      if (input) {
+        input.value = colorToHex(config[field as keyof ShipConfig] as number);
+      }
+    }
+  }
+
+  /** Any slider/colour change applies the merged config to the player live. */
+  private _onControlInput(): void {
+    if (!this.player) return;
+    const config = this._readPanelValues();
+    this.player.setConfig(config);
+    this._updateValueLabels(config);
+  }
+
+  /** Keeps the output labels in sync with the current control values. */
+  private _updateValueLabels(config: ShipConfig): void {
+    for (const field of Object.keys(SLIDER_RANGES)) {
+      const value = this.panel?.querySelector<HTMLElement>(
+        `output[data-config-value="${field}"]`,
+      );
+      if (value) value.textContent = String(config[field as keyof ShipConfig]);
+    }
+  }
+
+  /** Persists the current control values and shows a status message. */
+  private _onSave(): void {
+    const status = this.panel?.querySelector<HTMLElement>(`#${STATUS_ID}`);
+    try {
+      const config = this._readPanelValues();
+      saveShipConfig(config);
+      if (status) status.textContent = 'Saved';
+    } catch (err) {
+      if (status) status.textContent = `Save failed: ${String(err)}`;
     }
   }
 

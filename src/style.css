@@ -10,3 +10,65 @@ body {
   width: 100%;
   height: 100%;
 }
+
+/* ── Gym scene ship-config panel ────────────────────────────────── */
+/* Top-left overlay beside the canvas (gym testbed UI). */
+#gym-config-panel {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(10, 10, 10, 0.85);
+  border: 1px solid #333;
+  border-radius: 6px;
+  font: 12px/1.4 system-ui, sans-serif;
+  color: #ccc;
+  min-width: 220px;
+}
+
+#gym-config-panel .gym-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#gym-config-panel .gym-panel-label {
+  flex: 0 0 130px;
+  text-align: right;
+}
+
+#gym-config-panel input[type='range'] {
+  flex: 1;
+  min-width: 90px;
+}
+
+#gym-config-panel output {
+  flex: 0 0 34px;
+  font-family: monospace;
+  color: #ff8c00;
+}
+
+#gym-config-panel .gym-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+#gym-config-panel #gym-save-config {
+  background: #ff8c00;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 14px;
+  color: #000;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#gym-config-panel #gym-save-status {
+  color: #7fdb8a;
+}
