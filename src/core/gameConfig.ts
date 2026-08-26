@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-import { BootScene } from '../scenes/BootScene';
+import { GymScene } from '../scenes/Gym';
 import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
 
 /**
@@ -17,7 +17,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [BootScene],
+    scene: [GymScene],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

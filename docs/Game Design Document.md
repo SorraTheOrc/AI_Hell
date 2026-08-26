@@ -1,6 +1,6 @@
 # Game Design Document — AI_Hell
 
-> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-25.
+> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-26.
 
 ---
 
@@ -33,8 +33,17 @@
 
 ### 2.2 Movement
 
-- **Full 2D movement** on a 2D plane (not lane-based). The player ship can move freely in all directions within the screen bounds.
-- Movement speed is constant; acceleration and deceleration are smooth but responsive.
+- **Thrust-based Newtonian drift** — pure space physics with zero friction and zero damping. The player ship moves on a 2D plane (not lane-based) with velocity changing only via thrust input.
+- **Thrust acceleration:** Holding a direction key applies continuous acceleration in that direction (8 directions supported — W/A/S/D and arrows, including diagonals). The ship's velocity increases each frame while thrust is held.
+- **Zero-friction drift:** Releasing all keys preserves the current velocity — the ship coasts at constant speed in its current direction. There is no deceleration; stopping or reversing requires applying thrust in the opposite direction.
+- **Maximum speed cap:** Velocity is clamped to a maximum speed to prevent unbounded acceleration. Tunable constants (thrust acceleration, max speed) live in a single configuration module so the feel can be adjusted without digging through scene code.
+- **Responsive feel:** Tuning targets are designed so the ship reaches meaningful speed quickly and decelerates/reverses within a "short moment" of holding the opposite key — the ship should feel agile but never sluggish.
+- **Screen-edge wrap-around:** The ship wraps across all four screen edges (leaves left → reappears right, etc.), matching the classic Asteroids model. No hard walls or clamping.
+- **Thruster feedback:** Visual thrust flames appear on the opposite side of the ship when a direction key is held, making movement input legible without racing the physics.
+- **Tunable constants** (exposed in `src/core/constants.ts`):
+  - `THRUST_ACCELERATION` (px/s²): acceleration applied each second when thrust is held.
+  - `MAX_SPEED` (px/s): absolute speed cap.
+  - Tuning targets: ship reaches ~80% of max speed in under 1 second of continuous thrust; reversing from full speed to opposite direction takes under 1.5 seconds.
 
 ### 2.3 Combat Mechanics
 
