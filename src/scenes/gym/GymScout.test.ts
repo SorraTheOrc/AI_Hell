@@ -40,6 +40,14 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
     expect(scene.sys.isActive()).toBe(true);
     expect(scene.formationScouts.length).toBe(SCOUT_FORMATION_COUNT);
     expect(scene.aliveCount).toBe(SCOUT_FORMATION_COUNT);
+
+    // Every scout must be on the scene display list, otherwise it would
+    // never render in a real browser (regression: fix for the missing
+    // `this.add.existing(scout)` — headless tests cannot see pixels).
+    const allOnDisplayList = scene.formationScouts.every((s) =>
+      scene.children.list.includes(s),
+    );
+    expect(allOnDisplayList).toBe(true);
     const allVisible = scene.formationScouts.every((s) => s.bodyVisible);
     expect(allVisible).toBe(true);
   });

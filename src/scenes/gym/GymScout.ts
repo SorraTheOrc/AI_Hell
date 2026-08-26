@@ -59,6 +59,9 @@ export class GymScout extends Phaser.Scene {
         y: this.formationBaseY + offset.row * SCOUT_FORMATION_SPACING_Y,
         formationOffset: offset,
       });
+      // Containers are not auto-added to the display list — without this
+      // the scouts would never render (project convention, see Gym.ts).
+      this.add.existing(scout);
       this.scouts.push(scout);
     }
     playSpawnSound();
