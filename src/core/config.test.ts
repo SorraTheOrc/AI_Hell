@@ -14,8 +14,8 @@ describe('ship configuration module', () => {
   });
 
   it('exposes default values matching the current hard-coded constants', () => {
-    expect(DEFAULT_CONFIG.thrustAcceleration).toBe(600);
-    expect(DEFAULT_CONFIG.maxSpeed).toBe(350);
+    expect(DEFAULT_CONFIG.thrustAcceleration).toBe(300);
+    expect(DEFAULT_CONFIG.maxSpeed).toBe(175);
     expect(DEFAULT_CONFIG.shipSize).toBe(20);
     expect(DEFAULT_CONFIG.thrustFlameLength).toBe(0.75);
     expect(DEFAULT_CONFIG.shipColor).toBe(0x00ffff);

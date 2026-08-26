@@ -41,8 +41,8 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     // Start at centre y=270. Thrust up for 1 second.
-    // maxSpeed=350: velocity clamps to 350 in 1 tick.
-    // Position: 270 - 350 = -80 → wrap → 540 + (-80) = 460.
+    // maxSpeed=175: velocity clamps to 175 in 1 tick.
+    // Position: 270 - 175 = 95 (no wrap).
     const startY = player.y;
     player.setInput({ up: true, down: false, left: false, right: false });
     player.physicsTick(1, scene!.scale.width, scene!.scale.height);
@@ -50,8 +50,8 @@ describe('Player ship entity', () => {
     const yAfterThrust = player.y;
     expect(yAfterThrust).not.toBe(startY);
 
-    // With default maxSpeed=350 the ship should wrap to ~460.
-    expect(yAfterThrust).toBeCloseTo(460, 0);
+    // With default maxSpeed=175 the ship should land at ~95.
+    expect(yAfterThrust).toBeCloseTo(95, 0);
 
     game.destroy();
   });
@@ -69,7 +69,7 @@ describe('Player ship entity', () => {
     // Reset to centre (zero velocity from game start).
     player.setPosition(480, 270);
 
-    // setConfig to a very low maxSpeed.
+    // Set a very low maxSpeed.
     const lowConfig: ShipConfig = { ...DEFAULT_CONFIG, maxSpeed: 50 };
     player.setConfig(lowConfig);
 
@@ -79,18 +79,18 @@ describe('Player ship entity', () => {
     const yLowSpeed = player.y;
     expect(yLowSpeed).toBeCloseTo(220, 0);
 
-    // setConfig back to default maxSpeed=350.
+    // setConfig back to default maxSpeed=175.
     player.setConfig(DEFAULT_CONFIG);
 
-    // Thrust up 1 second again. With maxSpeed=350: vy=-350, y=220-350=-130
-    // → wrap → 540 - 130 = 410.
+    // Thrust up 1 second again. With maxSpeed=175: vy=-175,
+    // y=220-175=45 (no wrap).
     player.physicsTick(1, scene!.scale.width, scene!.scale.height);
     const yDefaultSpeed = player.y;
-    expect(yDefaultSpeed).toBeCloseTo(410, 0);
+    expect(yDefaultSpeed).toBeCloseTo(45, 0);
 
-    // The ship moved much more upward at default maxSpeed (wrapped to
-    // a higher y), confirming setConfig changed the physics config.
-    expect(yDefaultSpeed).toBeGreaterThan(yLowSpeed);
+    // The ship moved further upward (lower y) at default maxSpeed than
+    // at the low maxSpeed, confirming setConfig changed the physics.
+    expect(yDefaultSpeed).toBeLessThan(yLowSpeed);
 
     game.destroy();
   });

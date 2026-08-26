@@ -30,8 +30,8 @@ export interface ShipConfig {
 
 /** Built-in defaults — the current hard-coded tuning values. */
 export const DEFAULT_CONFIG: ShipConfig = {
-  thrustAcceleration: 600,
-  maxSpeed: 350,
+  thrustAcceleration: 300,
+  maxSpeed: 175,
   shipSize: 20,
   thrustFlameLength: 0.75,
   shipColor: 0x00ffff,
