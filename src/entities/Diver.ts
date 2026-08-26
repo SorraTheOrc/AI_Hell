@@ -137,6 +137,13 @@ export class Diver extends Phaser.GameObjects.Container {
 
   private _drawBody(): void {
     this.bodyGraphics.clear();
+    // Style must be set AFTER clear(): Graphics is command-buffered and
+    // clear() wipes any styles queued before it (it only re-applies the
+    // default white 1px stroke). The original code called lineStyle()
+    // before clear(), so the dart was stroked with the default style
+    // and rendered invisible in a real browser (headless tests cannot
+    // see pixels, so the suite stayed green).
+    this.bodyGraphics.lineStyle(2, DIVER_COLOR, 1);
     const half = DIVER_SIZE / 2;
 
     // Dart shape — elongated chevron pointing "down" (toward player).
