@@ -139,20 +139,6 @@ export class Player extends Phaser.GameObjects.Container {
     return { ...this._input };
   }
 
-  // ── Physics ──────────────────────────────────────────────────────
-
-  /** Returns a copy of the current movement state. */
-  get movementState(): MovementState {
-    return { ...this._movementState };
-  }
-
-  /** Update position from a new state (without modifying physics). */
-  updatePosition(x: number, y: number): void {
-    this._movementState.x = x;
-    this._movementState.y = y;
-    super.setPosition(x, y);
-  }
-
   // ── Scene lifecycle ──────────────────────────────────────────────
 
   update(): void {
