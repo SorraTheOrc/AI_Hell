@@ -1,8 +1,14 @@
 /**
- * Player ship entity — neon chevron drawn on a graphics object.
+ * Player ship entity — a single Graphics object rendering the neon
+ * chevron ship and (while thrusting) a flame on the opposite side.
  *
- * Handles visual rendering (ship + thrust flame) but delegates physics
- * to the pure movement model in `utils/movement.ts`.
+ * Rendering is delegated to Phaser.GameObjects.Graphics so the ship is
+ * one display-list object; physics is delegated to the pure movement
+ * model in `utils/movement.ts`.
+ *
+ * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
+ * GameObjects, a Graphics built via `new` is not on the display list
+ * until added to the scene.
  */
 
 import Phaser from 'phaser';
@@ -11,6 +17,8 @@ import {
   SHIP_COLOR,
   SHIP_SIZE,
   THRUST_ACCELERATION,
+  THRUST_FLAME_COLOR,
+  THRUST_FLAME_INNER_COLOR,
   THRUST_FLAME_LENGTH,
   MAX_SPEED,
 } from '../core/constants';
@@ -31,34 +39,22 @@ export interface PlayerConfig {
 /**
  * The player ship renders as a cyan chevron (pointing "up").
  * When thrust is applied in a direction, an orange flame appears
- * on the opposite side.
+ * on the opposite side of the ship.
  */
-export class Player extends Phaser.GameObjects.Container {
-  private readonly shipGraphics: Phaser.GameObjects.Graphics;
-  private readonly flameGraphics: Phaser.GameObjects.Graphics;
+export class Player extends Phaser.GameObjects.Graphics {
   private _movementState: MovementState;
   private readonly _input: MovementInput;
   private _flameVisible = false;
   private readonly _config: MovementConfig;
 
   constructor(scene: Phaser.Scene, config: PlayerConfig) {
-    super(scene, config.x, config.y);
+    super(scene, { x: config.x, y: config.y });
 
     this._movementState = { x: config.x, y: config.y, vx: 0, vy: 0 };
     this._input = { up: false, down: false, left: false, right: false };
     this._config = { thrust: THRUST_ACCELERATION, maxSpeed: MAX_SPEED };
 
-    // Ship body — neon cyan chevron
-    this.shipGraphics = scene.add.graphics();
-    this.shipGraphics.lineStyle(2, SHIP_COLOR, 1);
-    this._drawShip();
-    this.shipGraphics.setDepth(1);
-    this.add(this.shipGraphics);
-
-    // Thrust flame — orange/yellow triangle behind the ship
-    this.flameGraphics = scene.add.graphics();
-    this.flameGraphics.setDepth(0);
-    this.add(this.flameGraphics);
+    this._redraw();
   }
 
   // ── Drawing helpers ──────────────────────────────────────────────
@@ -67,32 +63,35 @@ export class Player extends Phaser.GameObjects.Container {
     return (SHIP_SIZE / 2) * multiplier;
   }
 
-  // ── Drawing ──────────────────────────────────────────────────────
-
-  private _drawShip(): void {
-    this.shipGraphics.clear();
-    const half = this._half(1);
+  /** Redraws the whole ship (body, plus flame if currently thrusting). */
+  private _redraw(): void {
+    this.clear();
+    this.lineStyle(2, SHIP_COLOR, 1);
 
     // Chevron pointing up: nose at top, indent at bottom
-    this.shipGraphics.beginPath();
-    this.shipGraphics.moveTo(0, -half);
-    this.shipGraphics.lineTo(half, half * 0.4);
-    this.shipGraphics.lineTo(0, half * 0.2);
-    this.shipGraphics.lineTo(-half, half * 0.4);
-    this.shipGraphics.closePath();
-    this.shipGraphics.strokePath();
+    const half = this._half(1);
+    this.beginPath();
+    this.moveTo(0, -half);
+    this.lineTo(half, half * 0.4);
+    this.lineTo(0, half * 0.2);
+    this.lineTo(-half, half * 0.4);
+    this.closePath();
+    this.strokePath();
+
+    if (this._flameVisible) {
+      this._drawFlame();
+    }
   }
 
-  private _drawFlame(direction: { dx: number; dy: number }): void {
-    this.flameGraphics.clear();
+  /** Draws the thrust flame opposite to the current thrust direction. */
+  private _drawFlame(): void {
+    const dir = this._dirFromInput();
+    const len = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
+    // Flame points AWAY from the thrust direction (behind the ship).
+    const nx = -dir.dx / len;
+    const ny = -dir.dy / len;
+
     const flameLen = SHIP_SIZE * THRUST_FLAME_LENGTH;
-
-    // Normalise direction
-    const len = Math.sqrt(direction.dx * direction.dx + direction.dy * direction.dy) || 1;
-    const nx = -direction.dx / len;
-    const ny = -direction.dy / len;
-
-    // Points: base at ship rear, tip behind flame length
     const tipX = nx * flameLen;
     const tipY = ny * flameLen;
 
@@ -100,12 +99,13 @@ export class Player extends Phaser.GameObjects.Container {
     const px = -ny * this._half(0.6);
     const py = nx * this._half(0.6);
 
-    this.flameGraphics.beginPath();
-    this.flameGraphics.moveTo(px, py);
-    this.flameGraphics.lineTo(tipX, tipY);
-    this.flameGraphics.lineTo(-px, -py);
-    this.flameGraphics.closePath();
-    this.flameGraphics.strokePath();
+    this.lineStyle(2, THRUST_FLAME_COLOR, 1);
+    this.beginPath();
+    this.moveTo(px, py);
+    this.lineTo(tipX, tipY);
+    this.lineTo(-px, -py);
+    this.closePath();
+    this.strokePath();
 
     // Inner flame — slightly smaller, brighter
     const innerScale = 0.6;
@@ -114,16 +114,13 @@ export class Player extends Phaser.GameObjects.Container {
     const ipx = -ny * this._half(0.4) * innerScale;
     const ipy = nx * this._half(0.4) * innerScale;
 
-    this.flameGraphics.beginPath();
-    this.flameGraphics.moveTo(ipx, ipy);
-    this.flameGraphics.lineTo(itipX, itipY);
-    this.flameGraphics.lineTo(-ipx, -ipy);
-    this.flameGraphics.closePath();
-    this.flameGraphics.strokePath();
-  }
-
-  private _clearFlame(): void {
-    this.flameGraphics.clear();
+    this.lineStyle(1, THRUST_FLAME_INNER_COLOR, 1);
+    this.beginPath();
+    this.moveTo(ipx, ipy);
+    this.lineTo(itipX, itipY);
+    this.lineTo(-ipx, -ipy);
+    this.closePath();
+    this.strokePath();
   }
 
   // ── Input ────────────────────────────────────────────────────────
@@ -141,21 +138,17 @@ export class Player extends Phaser.GameObjects.Container {
 
   // ── Scene lifecycle ──────────────────────────────────────────────
 
+  /** Called by Phaser each frame (Player is on the scene update list). */
   update(): void {
     const thrusting = isThrusting(this._input);
 
     if (thrusting !== this._flameVisible) {
       this._flameVisible = thrusting;
-      if (thrusting) {
-        const dir = this._dirFromInput();
-        this._drawFlame(dir);
-      } else {
-        this._clearFlame();
-      }
+      this._redraw();
     }
   }
 
-  /** Returns the thrust direction vector from current input (for flame rendering). */
+  /** Returns the thrust direction vector from current input. */
   private _dirFromInput(): { dx: number; dy: number } {
     let dx = 0, dy = 0;
     if (this._input.left)  dx -= 1;
@@ -175,12 +168,6 @@ export class Player extends Phaser.GameObjects.Container {
       height,
       this._config,
     );
-    super.setPosition(this._movementState.x, this._movementState.y);
-  }
-
-  destroy(fromScene?: boolean): void {
-    this.shipGraphics.destroy();
-    this.flameGraphics.destroy();
-    super.destroy(fromScene);
+    this.setPosition(this._movementState.x, this._movementState.y);
   }
 }

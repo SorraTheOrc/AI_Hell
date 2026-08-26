@@ -30,6 +30,9 @@ export class GymScene extends Phaser.Scene {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
     });
+    // A Graphics built via `new` is not on the scene display list until
+    // added — without this the ship is never rendered.
+    this.add.existing(this.player);
 
     // ── Input keys ─────────────────────────────────────────────────
     // cursor keys (arrows) + WASD via a comma-separated key string,
@@ -65,6 +68,6 @@ export class GymScene extends Phaser.Scene {
     const height = this.scale.height;
 
     this.player.physicsTick(dt, width, height);
-    this.player.update();
+    // Player.update() is invoked by Phaser's update list (add.existing).
   }
 }
