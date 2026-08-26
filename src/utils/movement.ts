@@ -33,8 +33,8 @@ export interface MovementConfig {
 }
 
 const DEFAULT_CONFIG: MovementConfig = {
-  thrust: 600,
-  maxSpeed: 350,
+  thrust: 300,
+  maxSpeed: 175,
 };
 
 /**
