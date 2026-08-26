@@ -67,3 +67,8 @@ export function playSpawnSound(): void {
 export function playDestructionSound(): void {
   blip(440, 60, 0.28, 'sawtooth', 0.15);
 }
+
+/** A heavier, lower destruction cue — for Tank enemies. */
+export function playTankDestructionSound(): void {
+  blip(220, 30, 0.45, 'sawtooth', 0.2);
+}
