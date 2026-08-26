@@ -15,6 +15,11 @@
 
 import Phaser from 'phaser';
 
+import { FormationOffset } from '../utils/formations';
+
+export type { FormationOffset } from '../utils/formations';
+
+export { buildRectFormationOffsets } from '../utils/formations';
 // ── Visual / behaviour tuning (per GDD §4.1) ────────────────────────
 
 /** Orange body colour per GDD §4.1 art direction. */
@@ -43,13 +48,6 @@ export const TANK_HOLD_POSITION_SECONDS = 2.5;
 
 /** Formation drift speed — slower than Scout (40 px/s). */
 export const TANK_FORMATION_DRIFT_SPEED = 18;
-
-export interface FormationOffset {
-  /** Formation row — 0 is the front. */
-  row: number;
-  /** Formation column. */
-  col: number;
-}
 
 export interface TankConfig {
   x: number;
@@ -263,27 +261,4 @@ export class Tank extends Phaser.GameObjects.Container {
     this.explosionGraphics.destroy();
     super.destroy(fromScene);
   }
-}
-
-// ── Formation helpers ─────────────────────────────────────────────────
-
-/**
- * Builds a rectangular grid formation of tanks.
- * Returns offsets in row-major order (row 0 = front, col spreads outward).
- */
-export function buildRectFormationOffsets(count: number): FormationOffset[] {
-  const offsets: FormationOffset[] = [];
-  if (count <= 0) return offsets;
-
-  // Use a compact grid: 3 columns × ceil(count/3) rows.
-  const cols = 3;
-  const rows = Math.ceil(count / cols);
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      if (offsets.length < count) {
-        offsets.push({ row, col: col - Math.floor(cols / 2) });
-      }
-    }
-  }
-  return offsets;
 }

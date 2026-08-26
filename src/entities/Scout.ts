@@ -13,6 +13,12 @@
 
 import Phaser from 'phaser';
 
+import { FormationOffset } from '../utils/formations';
+
+export type { FormationOffset } from '../utils/formations';
+
+export { buildVFormationOffsets } from '../utils/formations';
+
 // ── Visual / behaviour tuning (per GDD §4.1) ────────────────────────
 
 /** Neon-green body colour per GDD §4.1 art direction. */
@@ -32,13 +38,6 @@ export const SCOUT_BULLET_SPEED = 200;
 
 /** Milliseconds a scout waits between aimed shots. */
 export const SCOUT_FIRE_INTERVAL = 1200;
-
-export interface FormationOffset {
-  /** Formation row — 0 is the apex (front scout). */
-  row: number;
-  /** Formation column — negative values hug the left wing. */
-  col: number;
-}
 
 export interface ScoutConfig {
   x: number;
@@ -252,27 +251,3 @@ export class Scout extends Phaser.GameObjects.Container {
   }
 }
 
-// ── Formation helpers (pure, unit-testable) ─────────────────────────
-
-/**
- * Builds the V-formation offsets for `count` scouts: row 0 has one scout
- * (the apex), row 1 two scouts, row 2 three — wing columns spread outward
- * symmetrically. Returns rows in ascending order (apex first).
- */
-export function buildVFormationOffsets(count: number): FormationOffset[] {
-  const offsets: FormationOffset[] = [];
-  if (count <= 0) return offsets;
-
-  let remaining = count;
-  let row = 0;
-  while (remaining > 0) {
-    const rowWidth = Math.min(remaining, row + 1);
-    const startCol = -row;
-    for (let col = 0; col < rowWidth; col++) {
-      offsets.push({ row, col: startCol + col * 2 });
-    }
-    remaining -= rowWidth;
-    row += 1;
-  }
-  return offsets;
-}

@@ -15,6 +15,11 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT } from '../core/constants';
+import { FormationOffset } from '../utils/formations';
+
+export type { FormationOffset } from '../utils/formations';
+
+export { buildDiverFormationOffsets } from '../utils/formations';
 
 // ── Visual / behaviour tuning (per GDD §4.1 + §4.2) ─────────────────
 
@@ -54,12 +59,6 @@ export const DIVER_DIVE_APEX_FRACTION = 0.3;
 /** Formation drift speed — slightly faster than Tank. */
 export const DIVER_FORMATION_DRIFT_SPEED = 30;
 
-export interface FormationOffset {
-  /** Formation row — 0 is the front. */
-  row: number;
-  /** Formation column. */
-  col: number;
-}
 
 export interface DiverConfig {
   x: number;
@@ -429,43 +428,4 @@ export class Diver extends Phaser.GameObjects.Container {
     this.explosionGraphics.destroy();
     super.destroy(fromScene);
   }
-}
-
-// ── Formation helpers (pure, unit-testable) ─────────────────────────
-
-/**
- * Builds a compact diamond/chevron formation for divers.
- * The formation is wider than tall, with a point at the top —
- * suggesting an attack vector.
- */
-export function buildDiverFormationOffsets(count: number): FormationOffset[] {
-  const offsets: FormationOffset[] = [];
-  if (count <= 0) return offsets;
-
-  // Diamond-ish: 1, 2, 3, 2, 1... pattern.
-  const halfRows = Math.ceil(count / 2);
-  let remaining = count;
-
-  // Top half (including middle row if odd).
-  for (let row = 0; row < halfRows && remaining > 0; row++) {
-    const rowWidth = Math.min(remaining, row + 1);
-    const startCol = -(rowWidth - 1) / 2;
-    for (let col = 0; col < rowWidth; col++) {
-      offsets.push({ row, col: startCol + col });
-      remaining--;
-    }
-  }
-
-  // Bottom half.
-  for (let row = halfRows; row < halfRows + Math.floor(count / 2) && remaining > 0; row++) {
-    const rowWidth = Math.min(remaining, halfRows - row + halfRows - 1);
-    const clampedWidth = Math.min(rowWidth, halfRows);
-    const startCol = -(clampedWidth - 1) / 2;
-    for (let col = 0; col < clampedWidth; col++) {
-      offsets.push({ row, col: startCol + col });
-      remaining--;
-    }
-  }
-
-  return offsets;
 }
