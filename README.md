@@ -349,6 +349,20 @@ wl create -t "Refactor Enemy Gym Scenes" -d "Create a work item to refactor the 
 wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. This work item will be dependent upon the completion of the first enemy scene. It should be the entry page for the game when run in dev mode."
 ```
 
+#### Gym Index Entry Scene
+
+The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **entry scene** for the project: `npm run dev` / `npm run preview` boot straight into it (it is the sole scene registered in `src/core/gameConfig.ts`). It lists every gym scene for isolated testing:
+
+- **Discovery is directory-dynamic (AC3):** the index enumerates `src/scenes/gym/` via Vite's `import.meta.glob` (see `src/utils/gymDiscovery.ts`) — there is no hard-coded scene list. Drop a new `Gym<Name>.ts` file into the folder and it appears on the index automatically (picked up on dev-server restart/HMR or rebuild, since `import.meta.glob` resolves at build time). `.test.ts` files are excluded, and the index itself lives outside the folder (`src/scenes/`) so it is never listed.
+- **Labels & ordering (AC4):** each entry's label strips the leading `Gym` from the file/class name (`GymScout` → `Scout`, `GymPlayer` → `Player`) and entries are sorted alphabetically. Selecting an entry starts that scene immediately by its class-name key (`this.scene.start('GymScout')`).
+- **Back to the list (AC5):** every gym scene shows a shared "← INDEX" button (`src/utils/gymNavigation.ts`) that switches back to `GymIndex` — no reload needed.
+
+#### Adding a New Gym Scene (convention)
+
+1. Create `src/scenes/gym/Gym<Name>.ts` with `export class Gym<Name> extends Phaser.Scene` (key `Gym<Name>`). No registry edit needed — the index discovers it automatically.
+2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index.
+3. Add a `Gym<Name>.test.ts` next to it (excluded from the index automatically).
+
 #### E1 Scout Gym Scene
 
 The first enemy gym scene (Create E1 Scout gym scene) is a standalone Phaser scene demonstrating the E1 Scout (GDD §4.1):
@@ -357,7 +371,7 @@ The first enemy gym scene (Create E1 Scout gym scene) is a standalone Phaser sce
 - `src/scenes/gym/GymScout.ts` — the gym scene: spawns a 6-scout V-formation that advances across the screen, with two on-screen controls: `EXPLODE` (destroys a random scout) and `SHOOT: ON/OFF` (toggles aimed firing at the bottom-centre of the screen, standing in for the player).
 - `src/audio/effects.ts` — procedural WebAudio sound cues (spawn blip, destruction burst), safe no-ops when no audio context exists (e.g. headless tests).
 
-The scene is not wired into the main game config — it is a gym testbed (no player ship, no HUD, no power-ups, no other enemies). The Gym index scene will link to it once built. Coverage: `src/entities/Scout.test.ts` + `src/scenes/gym/GymScout.test.ts` verify formation geometry, movement, explosion, shoot toggle and aimed-bullet behaviour.
+The scene is reachable from the gym index ("Scout" entry) and returns to it via the "← INDEX" button — it is a gym testbed (no player ship, no HUD, no power-ups, no other enemies). Coverage: `src/entities/Scout.test.ts` + `src/scenes/gym/GymScout.test.ts` verify formation geometry, movement, explosion, shoot toggle and aimed-bullet behaviour.
 
 ### Prioritizing work
 

@@ -10,6 +10,7 @@ import {
   SCOUT_FORMATION_DRIFT_SPEED,
 } from './GymScout';
 import { SCOUT_BULLET_SPEED } from '../../entities/Scout';
+import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label (observable via scene children). */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -143,6 +144,11 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
       // Default aim target sits below the formation ⇒ shots travel downward.
       expect(bullet.vy).toBeGreaterThan(0);
     }
+  });
+
+  it('AC5 — shows the shared ← INDEX back button', async () => {
+    const scene = await bootGym();
+    expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
 
   it('AC5 — disabling shooting stops new aimed shots', async () => {

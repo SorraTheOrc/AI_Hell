@@ -285,6 +285,14 @@ src/
 │   ├── Game.ts          — Main game class, scene management
 │   ├── GameState.ts     — Game state (lives, score, level)
 │   └── Input.ts         — Input handling (keyboard, auto-fire)
+├── scenes/
+│   ├── GymIndex.ts      — Dev-mode gym entry scene (sole scene in gameConfig):
+│   │                      discovers + lists gym scenes from scenes/gym/ (import.meta.glob)
+│   └── gym/
+│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
+│       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
+│       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
+│       └── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
 ├── entities/
 │   ├── Player.ts        — Player ship
 │   ├── Enemy.ts         — Base enemy class
@@ -315,6 +323,7 @@ src/
 ├── ui/
 │   ├── HUD.ts           — Heads-up display (score, lives)
 │   ├── Menu.ts          — Main menu, game-over screen
+│   │                      (distinct from the dev-only gym index; shipped-game UI)
 │   └── Leaderboard.ts   — Leaderboard display and input
 ├── audio/
 │   └── AudioManager.ts  — Sound effects (procedural Web Audio API synthesis)
@@ -324,7 +333,9 @@ src/
 │   └── scoring.ts       — Scoring constants
 └── utils/
     ├── collision.ts     — Collision detection
-    └── math.ts          — Helper math functions
+    ├── math.ts          — Helper math functions
+    ├── gymDiscovery.ts  — Gym-scene discovery (import.meta.glob, .test.ts filter, labels, sort)
+    └── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
 assets/
 ├── images/              — Neon vector graphics (placeholder_ prefix)
 └── audio/               — No external audio assets (all SFX are procedural; see §7.3)

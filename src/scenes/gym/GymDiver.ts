@@ -22,6 +22,7 @@ import Phaser from 'phaser';
 import { Diver, DiverBullet, buildDiverFormationOffsets } from '../../entities/Diver';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { playSpawnSound, playDestructionSound } from '../../audio/effects';
+import { addBackToIndexButton } from '../../utils/gymNavigation';
 
 /** How many divers spawn in the diamond formation. */
 export const DIVER_FORMATION_COUNT = 6;
@@ -93,6 +94,9 @@ export class GymDiver extends Phaser.Scene {
       fontSize: '12px',
       color: '#555555',
     }).setOrigin(0.5);
+
+    // ── Back to gym index (AC5) ───────────────────────────────────
+    addBackToIndexButton(this);
   }
 
   // ── Button helpers ───────────────────────────────────────────────

@@ -21,6 +21,7 @@ import Phaser from 'phaser';
 import { Tank, TankBullet, buildRectFormationOffsets } from '../../entities/Tank';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { playSpawnSound, playDestructionSound } from '../../audio/effects';
+import { addBackToIndexButton } from '../../utils/gymNavigation';
 
 /** How many tanks spawn in the rectangular formation. */
 export const TANK_FORMATION_COUNT = 6;
@@ -92,6 +93,9 @@ export class GymTank extends Phaser.Scene {
       fontSize: '12px',
       color: '#555555',
     }).setOrigin(0.5);
+
+    // ── Back to gym index (AC5) ───────────────────────────────────
+    addBackToIndexButton(this);
   }
 
   // ── Button helpers ───────────────────────────────────────────────

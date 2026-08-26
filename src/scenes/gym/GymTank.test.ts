@@ -13,6 +13,7 @@ import {
   TANK_BULLET_SPEED,
   TANK_BURST_COUNT,
 } from '../../entities/Tank';
+import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label. */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -212,5 +213,10 @@ describe('GymTank — E3 Tank gym scene (AC1-AC6)', () => {
         0,
       );
     }
+  });
+
+  it('AC5 — shows the shared ← INDEX back button', async () => {
+    const scene = await bootGym();
+    expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
 });

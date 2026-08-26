@@ -10,6 +10,7 @@ import {
   DIVER_FORMATION_DRIFT_SPEED,
 } from './GymDiver';
 import { DIVER_COLOR } from '../../entities/Diver';
+import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label. */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -239,5 +240,10 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
       expect(diver.bodyVisible).toBe(true);
       expect(diver.alive).toBe(true);
     }
+  });
+
+  it('AC5 — shows the shared ← INDEX back button', async () => {
+    const scene = await bootGym();
+    expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
 });

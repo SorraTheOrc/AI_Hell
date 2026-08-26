@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 
 import { Game } from './Game';
 
-describe('Game (gym scene, AC1-AC10)', () => {
+describe('Game (gym index entry, AC2)', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
   });
@@ -14,12 +14,12 @@ describe('Game (gym scene, AC1-AC10)', () => {
 
   const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
 
-  it('boots the GymScene, renders a canvas and ticks the game loop', async () => {
+  it('boots the GymIndex scene, renders a canvas and ticks the game loop', async () => {
     const game = new Game();
 
     await tick();
 
-    const scene = game.phaser.scene.getScene('GymScene');
+    const scene = game.phaser.scene.getScene('GymIndex');
     expect(scene).toBeDefined();
 
     let ticks = 0;
@@ -40,27 +40,13 @@ describe('Game (gym scene, AC1-AC10)', () => {
     expect(document.querySelector('#game-container canvas')).toBeNull();
   });
 
-  it('renders the player ship on the GymScene display list', async () => {
+  it('makes GymIndex the sole default entry scene (no other scene auto-starts)', async () => {
     const game = new Game();
 
     await tick();
 
-    const scene = game.phaser.scene.getScene('GymScene');
-    expect(scene).toBeDefined();
-
-    // The player ship must be an actual display-list entry — a Graphics
-    // constructed via `new` is invisible until added to the scene.
-    const children = (scene!.sys.displayList as Phaser.GameObjects.DisplayList).getChildren();
-    const ship = children.find(
-      (child) => child instanceof Phaser.GameObjects.Graphics,
-    );
-    expect(ship).toBeDefined();
-    expect(ship!.active).toBe(true);
-    expect(ship!.visible).toBe(true);
-
-    // Positioned at the centre of the 960x540 canvas.
-    expect(ship!.x).toBeCloseTo(480);
-    expect(ship!.y).toBeCloseTo(270);
+    const running = game.phaser.scene.getScenes(true);
+    expect(running.map((s) => (s as Phaser.Scene).scene.key)).toEqual(['GymIndex']);
 
     game.destroy();
   });

@@ -1,5 +1,5 @@
 /**
- * Tests for the GymScene ship-config control panel (sliders + colour
+ * Tests for the GymPlayer ship-config control panel (sliders + colour
  * inputs + Save button). The panel is a plain-DOM overlay beside the
  * canvas, so tests assert via document.querySelector in happy-dom.
  */
@@ -7,22 +7,28 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import Phaser from 'phaser';
 
-import { Game } from '../core/Game';
+import { bootScene, BootedGame } from '../../test/gameHarness';
 import {
   CONFIG_STORAGE_KEY,
   DEFAULT_CONFIG,
   loadShipConfig,
   type ShipConfig,
-} from '../core/config';
-import { Player } from '../entities/Player';
+} from '../../core/config';
+import { Player } from '../../entities/Player';
+import { GymPlayer } from './GymPlayer';
+import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
-describe('GymScene ship config panel', () => {
+describe('GymPlayer ship config panel', () => {
+  let booted: BootedGame | null = null;
+
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
     window.localStorage.clear();
   });
 
   afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
     document.body.innerHTML = '';
   });
 
@@ -36,9 +42,13 @@ describe('GymScene ship config panel', () => {
       `input[data-config="${name}"]`,
     ) as HTMLInputElement;
 
-  const playerOf = async (game: Game) => {
-    const scene = game.phaser.scene.getScene('GymScene') as Phaser.Scene;
-    const children = scene!.sys.displayList.getChildren();
+  async function bootPlayer(): Promise<Phaser.Scene> {
+    booted = await bootScene([GymPlayer]);
+    return booted!.scene;
+  }
+
+  const playerOf = (scene: Phaser.Scene) => {
+    const children = scene.sys.displayList.getChildren();
     return children.find((c) => c instanceof Player) as Player | undefined;
   };
 
@@ -51,8 +61,8 @@ describe('GymScene ship config panel', () => {
   // ── Rendering ────────────────────────────────────────────────────
 
   it('renders a slider per numeric config value, colour inputs, and a Save button', async () => {
-    const game = new Game();
-    await tick();
+    const scene = await bootPlayer();
+    expect(scene.sys.isActive()).toBe(true);
 
     const p = panel();
     expect(p).not.toBeNull();
@@ -70,8 +80,28 @@ describe('GymScene ship config panel', () => {
     }
 
     expect(p!.querySelector('#gym-save-config')).not.toBeNull();
+  });
 
-    game.destroy();
+  // ── Render ──────────────────────────────────────────────────────
+
+  it('renders the player ship on the display list at the canvas centre', async () => {
+    const scene = await bootPlayer();
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    expect(player!.active).toBe(true);
+    expect(player!.visible).toBe(true);
+    expect(player!.x).toBeCloseTo(480);
+    expect(player!.y).toBeCloseTo(270);
+  });
+
+  it('AC5 — shows the shared ← INDEX back button', async () => {
+    const scene = await bootPlayer();
+    const found = scene.children.list.find(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.text === BACK_TO_INDEX_LABEL,
+    );
+    expect(found).toBeDefined();
   });
 
   // ── Initial values ───────────────────────────────────────────────
@@ -85,23 +115,20 @@ describe('GymScene ship config panel', () => {
     };
     window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(saved));
 
-    const game = new Game();
-    await tick();
+    await bootPlayer();
 
     expect(control('maxSpeed').value).toBe('120');
     expect(control('shipSize').value).toBe('35');
     expect(control('shipColor').value).toBe('#ff0000');
-
-    game.destroy();
   });
 
   // ── Live update ──────────────────────────────────────────────────
 
   it('applies slider changes to the player live via setConfig', async () => {
-    const game = new Game();
+    const scene = await bootPlayer();
     await tick();
 
-    const player = await playerOf(game);
+    const player = playerOf(scene);
     expect(player).toBeDefined();
 
     // Drag the maxSpeed slider to 50.
@@ -113,15 +140,12 @@ describe('GymScene ship config panel', () => {
     player!.physicsTick(1, 960, 540);
 
     expect(player!.y).toBeCloseTo(220, 0);
-
-    game.destroy();
   });
 
   // ── Save ─────────────────────────────────────────────────────────
 
   it('persists the current control values when Save is pressed', async () => {
-    const game = new Game();
-    await tick();
+    await bootPlayer();
 
     setControl('maxSpeed', '90');
     setControl('shipSize', '28');
@@ -139,7 +163,5 @@ describe('GymScene ship config panel', () => {
     // Status feedback rendered.
     const status = panel()!.querySelector('#gym-save-status');
     expect(status!.textContent).toMatch(/saved/i);
-
-    game.destroy();
   });
 });

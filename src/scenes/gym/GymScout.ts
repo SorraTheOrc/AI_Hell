@@ -20,6 +20,7 @@ import Phaser from 'phaser';
 import { Scout, ScoutBullet, buildVFormationOffsets } from '../../entities/Scout';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { playSpawnSound, playDestructionSound } from '../../audio/effects';
+import { addBackToIndexButton } from '../../utils/gymNavigation';
 
 /** How many scouts spawn in the V-formation. */
 export const SCOUT_FORMATION_COUNT = 6;
@@ -93,6 +94,9 @@ export class GymScout extends Phaser.Scene {
       fontSize: '12px',
       color: '#555555',
     }).setOrigin(0.5);
+
+    // ── Back to gym index (AC5) ───────────────────────────────────
+    addBackToIndexButton(this);
   }
 
   // ── Button helpers ───────────────────────────────────────────────

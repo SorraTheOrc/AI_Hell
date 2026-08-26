@@ -1,5 +1,6 @@
 /**
- * Gym scene — the bare-bones testbed for player movement and ship tuning.
+ * Gym scene — the bare-bones testbed for player movement and ship tuning
+ * (listed as `Player` on the gym index; AC1 rename, convention `Gym<Name>`).
  *
  * Renders exactly one entity (the player ship) with thrust-based Newtonian
  * drift movement (GDD §2.2 revision). No enemies, no bullets, no HUD,
@@ -15,18 +16,22 @@
  * Input is polled level-triggered each frame (key.isDown) so a held key
  * applies continuous thrust, and diagonals combine when two perpendicular
  * keys are held simultaneously.
+ *
+ * A shared "← INDEX" back button (AC5) lets the tester return to the gym
+ * index without reloading the page.
  */
 
 import Phaser from 'phaser';
 
-import { Player } from '../entities/Player';
-import { keysToInput, WasdKeysLike } from '../utils/input';
-import { GAME_WIDTH, GAME_HEIGHT } from '../core/constants';
+import { Player } from '../../entities/Player';
+import { keysToInput, WasdKeysLike } from '../../utils/input';
+import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import {
   loadShipConfig,
   saveShipConfig,
   ShipConfig,
-} from '../core/config';
+} from '../../core/config';
+import { addBackToIndexButton } from '../../utils/gymNavigation';
 
 /** Slider ranges for the numeric ship config values. */
 const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -54,14 +59,14 @@ export function hexToColor(value: string): number {
   return parseInt(value.replace('#', ''), 16);
 }
 
-export class GymScene extends Phaser.Scene {
+export class GymPlayer extends Phaser.Scene {
   private player: Player | null = null;
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
   private panel: HTMLDivElement | null = null;
 
   constructor() {
-    super({ key: 'GymScene' });
+    super({ key: 'GymPlayer' });
   }
 
   create(): void {
@@ -69,6 +74,9 @@ export class GymScene extends Phaser.Scene {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
     });
+
+    // Shared "← INDEX" button so the tester can return to the gym index.
+    addBackToIndexButton(this);
     // A Graphics built via `new` is not on the scene display list until
     // added — without this the ship is never rendered.
     this.add.existing(this.player);
