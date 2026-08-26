@@ -70,11 +70,18 @@ export function discoverGymScenes(modules: Record<string, unknown>): GymSceneEnt
  * e.g. `GymScout.ts` → `{ GymScout, SCOUT_FORMATION_COUNT, ... }`). The
  * scene class is recovered by name via `sceneClassFromModule`. The index
  * scene lives outside the folder, so it is never matched here.
+ *
+ * `.test.ts` files are excluded **at the pattern level** (negative glob)
+ * so Vitest's runtime never enters the browser bundle — bundling test
+ * modules eagerly crashed `npm run dev` (Vitest's initSuite executing
+ * client-side). The runtime `isTestModulePath` filter remains as a
+ * defensive second layer.
  */
 export function loadGymSceneModules(): Record<string, unknown> {
-  return import.meta.glob('../scenes/gym/*.ts', {
-    eager: true,
-  });
+  return import.meta.glob(
+    ['../scenes/gym/*.ts', '!../scenes/gym/*.test.ts'],
+    { eager: true },
+  );
 }
 
 /**

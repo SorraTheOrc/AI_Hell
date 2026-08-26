@@ -14,11 +14,25 @@ import {
   discoverGymScenes,
   displayLabelFromKey,
   isTestModulePath,
+  loadGymSceneModules,
   sceneClassFromModule,
   sceneKeyFromPath,
 } from './gymDiscovery';
 
 describe('gymDiscovery', () => {
+  describe('loadGymSceneModules (pattern-level .test.ts exclusion)', () => {
+    it('AC1 — the eager glob result contains no .test.ts modules', () => {
+      const modules = loadGymSceneModules();
+      const keys = Object.keys(modules);
+      // The real gym folder is on disk: at least the four Gym scenes.
+      expect(keys.length).toBeGreaterThanOrEqual(4);
+      // The negative glob pattern keeps test modules out of the bundle.
+      expect(keys.some((k) => k.includes('.test.'))).toBe(false);
+      // And the player scene (renamed in AC1 of the parent item) is present.
+      expect(keys.some((k) => k.includes('GymPlayer.ts'))).toBe(true);
+    });
+  });
+
   describe('sceneKeyFromPath', () => {
     it('derives the scene key from the file basename without the .ts extension', () => {
       expect(sceneKeyFromPath('/src/scenes/gym/GymScout.ts')).toBe('GymScout');
