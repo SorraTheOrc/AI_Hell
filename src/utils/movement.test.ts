@@ -115,6 +115,27 @@ describe('applyThrust', () => {
     expect(speedOf(result)).toBeCloseTo(Math.max(0, speed - 50));
   });
 
+  it('decay rate scales with the friction value', () => {
+    const state = { vx: 300, vy: 0 };
+    const low = applyThrust(
+      state,
+      input(),
+      { thrust: 300, maxSpeed: 175, friction: 50 },
+      1,
+    );
+    const high = applyThrust(
+      state,
+      input(),
+      { thrust: 300, maxSpeed: 175, friction: 200 },
+      1,
+    );
+    // Expected speeds: 300 - 50 = 250 and 300 - 200 = 100 respectively.
+    expect(speedOf(low)).toBeCloseTo(250);
+    expect(speedOf(high)).toBeCloseTo(100);
+    // Higher friction must decay velocity faster.
+    expect(speedOf(high)).toBeLessThan(speedOf(low));
+  });
+
   it('reaches exactly zero velocity (no overshoot)', () => {
     const state = { vx: 30, vy: 0 };
     const cfg = { thrust: 300, maxSpeed: 175, friction: 100 };
@@ -140,6 +161,26 @@ describe('applyThrust', () => {
     const originalAngle = Math.atan2(state.vy, state.vx);
     const resultAngle = Math.atan2(result.vy, result.vx);
     expect(resultAngle).toBeCloseTo(originalAngle);
+  });
+
+  it('thrusting is unaffected by the friction value', () => {
+    const state = { vx: 0, vy: 0 };
+    const withFriction = { thrust: 400, maxSpeed: 1000, friction: 100 };
+    const withoutFriction = { thrust: 400, maxSpeed: 1000, friction: 0 };
+    const thrustedWithFriction = applyThrust(
+      state,
+      input(false, false, false, true),
+      withFriction,
+      1,
+    );
+    const thrustedWithoutFriction = applyThrust(
+      state,
+      input(false, false, false, true),
+      withoutFriction,
+      1,
+    );
+    // Same thrust input → identical velocity regardless of friction
+    expect(thrustedWithFriction).toEqual(thrustedWithoutFriction);
   });
 
   it('applies thrust in the right direction', () => {
