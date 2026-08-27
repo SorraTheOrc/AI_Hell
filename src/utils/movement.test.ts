@@ -101,6 +101,7 @@ describe('applyThrust', () => {
     const result = applyThrust(state, input(false, false, true, false), {
       thrust: 600,
       maxSpeed: 1000,
+      friction: 100,
     });
     expect(result.vx).toBeCloseTo(-600);
     expect(result.vy).toBeCloseTo(0);
@@ -108,7 +109,7 @@ describe('applyThrust', () => {
 
   it('builds up velocity over successive calls', () => {
     let state = { vx: 0, vy: 0 };
-    const cfg = { thrust: 100, maxSpeed: 1000 };
+    const cfg = { thrust: 100, maxSpeed: 1000, friction: 100 };
     for (let i = 0; i < 5; i++) {
       state = applyThrust(state, input(false, false, false, true), cfg);
     }
@@ -117,7 +118,7 @@ describe('applyThrust', () => {
 
   it('respects max speed cap', () => {
     let state = { vx: 0, vy: 0 };
-    const cfg = { thrust: 100, maxSpeed: 150 };
+    const cfg = { thrust: 100, maxSpeed: 150, friction: 100 };
     for (let i = 0; i < 10; i++) {
       state = applyThrust(state, input(false, false, false, true), cfg);
     }
@@ -129,6 +130,7 @@ describe('applyThrust', () => {
     state = applyThrust(state, input(false, false, true, false), {
       thrust: 600,
       maxSpeed: 1000,
+      friction: 100,
     });
     expect(state.vx).toBeLessThan(200);
   });
@@ -138,6 +140,7 @@ describe('applyThrust', () => {
     state = applyThrust(state, input(false, false, true, false), {
       thrust: 600,
       maxSpeed: 1000,
+      friction: 100,
     });
     expect(state.vx).toBeLessThan(0);
   });

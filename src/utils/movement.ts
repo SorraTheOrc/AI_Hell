@@ -30,11 +30,14 @@ export interface MovementConfig {
   thrust: number;
   /** Absolute speed cap in px/s. */
   maxSpeed: number;
+  /** Linear deceleration rate (px/s²) when no input is held; 0 = zero friction. */
+  friction: number;
 }
 
 const DEFAULT_CONFIG: MovementConfig = {
   thrust: 300,
   maxSpeed: 175,
+  friction: 100,
 };
 
 /**

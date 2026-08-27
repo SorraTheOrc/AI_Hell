@@ -38,3 +38,6 @@ export const THRUST_FLAME_COLOR = DEFAULT_CONFIG.thrustFlameColor;
 
 /** Inner flame colour — bright yellow. */
 export const THRUST_FLAME_INNER_COLOR = DEFAULT_CONFIG.thrustFlameInnerColor;
+
+/** Linear deceleration rate when no thrust is applied (px/s²). */
+export const FRICTION_DECELERATION = DEFAULT_CONFIG.frictionDeceleration;

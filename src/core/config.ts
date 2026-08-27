@@ -26,6 +26,8 @@ export interface ShipConfig {
   thrustFlameColor: number;
   /** Inner flame colour — bright yellow. */
   thrustFlameInnerColor: number;
+  /** Linear deceleration rate (px/s²) when no direction keys are held; 0 = zero friction. */
+  frictionDeceleration: number;
 }
 
 /** Built-in defaults — the current hard-coded tuning values. */
@@ -37,6 +39,7 @@ export const DEFAULT_CONFIG: ShipConfig = {
   shipColor: 0x00ffff,
   thrustFlameColor: 0xff8c00,
   thrustFlameInnerColor: 0xffff00,
+  frictionDeceleration: 100,
 };
 
 /** localStorage key under which the ship config JSON is persisted. */

@@ -21,6 +21,7 @@ describe('ship configuration module', () => {
     expect(DEFAULT_CONFIG.shipColor).toBe(0x00ffff);
     expect(DEFAULT_CONFIG.thrustFlameColor).toBe(0xff8c00);
     expect(DEFAULT_CONFIG.thrustFlameInnerColor).toBe(0xffff00);
+    expect(DEFAULT_CONFIG.frictionDeceleration).toBe(100);
   });
 
   it('falls back to defaults when nothing has been saved', () => {
@@ -53,6 +54,7 @@ describe('ship configuration module', () => {
       shipColor: 0x112233,
       thrustFlameColor: 0x445566,
       thrustFlameInnerColor: 0x778899,
+      frictionDeceleration: 50,
     };
     saveShipConfig(custom);
 

@@ -85,6 +85,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._config = {
       thrust: ship.thrustAcceleration,
       maxSpeed: ship.maxSpeed,
+      friction: ship.frictionDeceleration,
     };
 
     this._redraw();
@@ -186,6 +187,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._config = {
       thrust: config.thrustAcceleration,
       maxSpeed: config.maxSpeed,
+      friction: config.frictionDeceleration,
     };
 
     this._redraw();
