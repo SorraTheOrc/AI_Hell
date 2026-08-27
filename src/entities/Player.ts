@@ -14,9 +14,13 @@
  * The engine flames are animated per port: each flame grows from length 0
  * toward its component-scaled max `shipSize × thrustFlameLength × scale`
  * at a rate proportional to `thrustAcceleration`, and decays at 4× that
- * rate when its engine stops firing. The animation is driven per-frame
- * from the delta time in `preUpdate` (pure model in `utils/flame.ts`),
- * so it is framerate-independent and re-targets the current config live.
+ * rate when its engine stops firing. A change of the pressed keys while
+ * still thrusting (e.g. turning) restarts every flame as a fresh burst
+ * from length 0 so a direction change is immediately legible; releasing
+ * all keys keeps the decay path so the flames shrink away naturally.
+ * The animation is driven per-frame from the delta time in `preUpdate`
+ * (pure model in `utils/flame.ts`), so it is framerate-independent and
+ * re-targets the current config live.
  *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
@@ -245,12 +249,28 @@ export class Player extends Phaser.GameObjects.Graphics {
   // ── Input ────────────────────────────────────────────────────────
 
   setInput(input: MovementInput): void {
+    const prev = { ...this._input };
+
     this._input.up = input.up;
     this._input.down = input.down;
     this._input.left = input.left;
     this._input.right = input.right;
+
     // Boolean keys take over from any fractional component thrust.
     this._componentThrust = null;
+
+    // A change in the set of pressed keys restarts the thrust flames as
+    // a fresh burst from length 0 — but only while the ship is still
+    // thrusting afterwards (a new direction is held). Releasing all
+    // keys keeps the decay path so the flames shrink away naturally.
+    const keysChanged =
+      prev.up !== this._input.up ||
+      prev.down !== this._input.down ||
+      prev.left !== this._input.left ||
+      prev.right !== this._input.right;
+    if (keysChanged && selectEngines(this._input).length > 0) {
+      for (const port of ENGINE_PORTS) this._flameLens[port.port] = 0;
+    }
   }
 
   getInput(): MovementInput {

@@ -541,4 +541,104 @@ describe('Player ship entity', () => {
     // The length changed (→ 0), so the final redraw erased the flame.
     expect(clearSpy).toHaveBeenCalled();
   });
+
+  // ── Fresh burst on key change ───────────────────────────────────
+
+  it('resets the flame to 0 when the pressed keys change while thrusting (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Grow to full with Up held.
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 500);
+    expect(player!.getFlameLength()).toBeCloseTo(15, 2);
+
+    // Switching to Left while still thrusting → fresh burst from 0.
+    player!.setInput({ up: false, down: false, left: true, right: false });
+    player!.preUpdate(0, 0); // zero-delta change frame → exactly 0
+    expect(player!.getFlameLength()).toBe(0);
+
+    // Regrows from 0 in the new direction: 20ms × 500 px/s = 10px.
+    player!.preUpdate(0, 20);
+    expect(player!.getFlameLength()).toBeCloseTo(10, 1);
+    expect(player!.getFlameLength()).toBeLessThan(15);
+  });
+
+  it('regrows from 0 at a rate proportional to thrustAcceleration after a key change (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Force a fresh burst (key change), then measure regrowth over dtMs.
+    const regrow = (thrustAcceleration: number, dtMs: number) => {
+      player!.setConfig({ ...DEFAULT_CONFIG, thrustAcceleration });
+
+      // Alternate keys so each call is a real key change → fresh burst.
+      player!.setInput({ up: false, down: false, left: true, right: false });
+      player!.preUpdate(0, 0);
+      player!.setInput({ up: true, down: false, left: false, right: false });
+      player!.preUpdate(0, 0); // change frame → exactly 0
+      player!.preUpdate(0, dtMs);
+      return player!.getFlameLength();
+    };
+
+    // Same dt, higher thrust → longer flame: 10ms at 500 vs 1000 px/s.
+    const slow = regrow(300, 10); // ≈5px
+    const fast = regrow(600, 10); // ≈10px
+    expect(slow).toBeCloseTo(5, 1);
+    expect(fast).toBeCloseTo(10, 1);
+    expect(fast).toBeGreaterThan(slow);
+  });
+
+  it('releasing all keys still decays instead of resetting to 0 instantly (AC3)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 500); // full 15px
+    expect(player!.getFlameLength()).toBeCloseTo(15, 2);
+
+    // Release all keys → decay path (not an instant reset): a short
+    // frame leaves a partial flame shrinking at 4× growth (2000 px/s).
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    player!.preUpdate(0, 4); // 4ms × 2000 px/s = 8px removed → ~7px remain
+    const mid = player!.getFlameLength();
+    expect(mid).toBeGreaterThan(0);
+    expect(mid).toBeLessThan(15);
+
+    // Fully decayed afterwards.
+    player!.preUpdate(0, 100);
+    expect(player!.getFlameLength()).toBe(0);
+  });
+
+  it('does not reset the flame while the same keys are held (AC4)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 0); // change frame → 0
+    player!.preUpdate(0, 10);
+    const first = player!.getFlameLength();
+
+    // Same keys held → continues growing, never reset back to 0.
+    player!.preUpdate(0, 10);
+    const second = player!.getFlameLength();
+    expect(second).toBeGreaterThan(first);
+    expect(second).toBeLessThan(15);
+
+    player!.preUpdate(0, 10);
+    const third = player!.getFlameLength();
+    expect(third).toBeGreaterThan(second);
+  });
 });
