@@ -1,6 +1,7 @@
 /**
  * Player ship entity — a single Graphics object rendering the neon
- * chevron ship and (while thrusting) a flame on the opposite side.
+ * direction-neutral hexagon hull and (while thrusting) flames on the
+ * engines opposing the thrust.
  *
  * Rendering is delegated to Phaser.GameObjects.Graphics so the ship is
  * one display-list object; physics is delegated to the pure movement
@@ -47,9 +48,11 @@ export interface PlayerConfig {
 }
 
 /**
- * The player ship renders as a cyan chevron (pointing "up").
- * When thrust is applied in a direction, an orange flame appears
- * on the opposite side of the ship.
+ * The player ship renders as a cyan hexagon (flat top/bottom, centred
+ * at its origin): a regular hexagon is invariant under 60° rotation,
+ * so the hull never implies a heading (GDD §7.2 — geometric, angular
+ * shapes; direction-neutral so thrust direction is read from the
+ * engines' flames, not the silhouette).
  */
 export class Player extends Phaser.GameObjects.Graphics {
   private _movementState: MovementState;
@@ -102,13 +105,21 @@ export class Player extends Phaser.GameObjects.Graphics {
     this.clear();
     this.lineStyle(2, this._shipColor, 1);
 
-    // Chevron pointing up: nose at top, indent at bottom
-    const half = this._half(1);
+    // Direction-neutral hexagon with flat top/bottom, centred at the
+    // origin — invariant under 60° rotation. Circumradius = shipSize / 2
+    // (the same half-size the chevron used), preserving `shipSize`
+    // semantics for physics-adjacent callers.
+    const r = this._half(1);
+    const sx = (r * Math.sqrt(3)) / 2; // r·cos(30°) — half-width
+    const sy = r / 2; // r·sin(30°) — corner y-offset
     this.beginPath();
-    this.moveTo(0, -half);
-    this.lineTo(half, half * 0.4);
-    this.lineTo(0, half * 0.2);
-    this.lineTo(-half, half * 0.4);
+    this.moveTo(0, -r);
+    this.lineTo(sx, -sy);
+    this.lineTo(sx, sy);
+    this.lineTo(0, r);
+    this.lineTo(-sx, sy);
+    this.lineTo(-sx, -sy);
+    this.lineTo(0, -r); // explicit closing edge back to the top vertex
     this.closePath();
     this.strokePath();
 

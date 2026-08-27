@@ -42,6 +42,88 @@ describe('Player ship entity', () => {
     return children.find((c) => c instanceof Player) as Player | undefined;
   };
 
+  // ── Body shape (direction-neutral hexagon) ─────────────────────
+
+  it('draws a direction-neutral hexagon hull: 6 edges at circumradius shipSize/2 (AC1+AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Capture the body path vertices as the renderer issues them.
+    // Idle (no input) → only the hull is drawn, no flame commands.
+    const moveTo = { x: 0, y: 0 };
+    const vertices: Array<{ x: number; y: number }> = [];
+    const moveToSpy = vi
+      .spyOn(player!, 'moveTo')
+      .mockImplementation((x: number, y: number) => {
+        moveTo.x = x;
+        moveTo.y = y;
+        return player!;
+      });
+    const lineToSpy = vi
+      .spyOn(player!, 'lineTo')
+      .mockImplementation((x: number, y: number) => {
+        vertices.push({ x, y });
+        return player!;
+      });
+
+    // A redraw of the body: setConfig always re-draws immediately.
+    player!.setConfig(DEFAULT_CONFIG);
+
+    // Hexagon → exactly 6 edge segments (the old chevron had 4);
+    // no flame is drawn while idle, so 6 is the whole hull.
+    expect(lineToSpy).toHaveBeenCalledTimes(6);
+
+    // AC2 — circumradius equals shipSize / 2 (default 20 → 10): every
+    // vertex lies on a circle of radius 10 around the hull centre.
+    // The explicit closing edge returns to the start vertex, so dedupe.
+    const half = DEFAULT_CONFIG.shipSize / 2;
+    const all: Array<{ x: number; y: number }> = [];
+    for (const v of [{ x: moveTo.x, y: moveTo.y }, ...vertices]) {
+      if (!all.some((p) => p.x === v.x && p.y === v.y)) all.push(v);
+    }
+    expect(all).toHaveLength(6);
+    for (const v of all) {
+      expect(Math.hypot(v.x, v.y)).toBeCloseTo(half, 5);
+    }
+
+    // AC1 — direction-neutral: a regular hexagon's vertices are spaced
+    // exactly 60° apart, so the shape is invariant under 60° rotation
+    // (and trivially under the required 90°).
+    const angles = all
+      .map((v) => Math.atan2(v.y, v.x))
+      .sort((a, b) => a - b);
+    for (let i = 1; i < angles.length; i++) {
+      expect(angles[i] - angles[i - 1]).toBeCloseTo(Math.PI / 3, 5);
+    }
+
+    moveToSpy.mockRestore();
+    lineToSpy.mockRestore();
+  });
+
+  it('keeps the hull colour config-driven via setConfig (AC4)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const lineStyleSpy = vi.spyOn(player!, 'lineStyle');
+    const recoloured = { ...DEFAULT_CONFIG, shipColor: 0xff00ff };
+    player!.setConfig(recoloured);
+
+    // The ship body is stroked with the new shipColor (lineStyle called
+    // with width 2, the configured colour, alpha 1 — same neon style as
+    // the chevron, no fill).
+    expect(lineStyleSpy).toHaveBeenCalledWith(
+      2,
+      recoloured.shipColor,
+      1,
+    );
+  });
+
   // ── Physics via config ───────────────────────────────────────────
 
   it('uses the loaded config for physics by default', async () => {
