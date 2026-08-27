@@ -1,5 +1,5 @@
 /**
- * Ship configuration module (GDD §2.2 Newtonian-drift model).
+ * Ship configuration module (GDD §2.2 Newtonian movement model).
  *
  * Single source of truth for ship tuning values. Values are persisted as a
  * JSON blob in the browser's localStorage (browser-native, GDD §6.3 web

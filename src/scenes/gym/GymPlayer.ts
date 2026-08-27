@@ -3,13 +3,15 @@
  * (listed as `Player` on the gym index; AC1 rename, convention `Gym<Name>`).
  *
  * Renders exactly one entity (the player ship) with thrust-based Newtonian
- * drift movement (GDD §2.2 revision). No enemies, no bullets, no HUD,
- * no power-ups — just the ship, space-style movement, and a control panel
- * for tuning the ship configuration values live.
+ * movement with tunable deceleration on release (GDD §2.2 revision). No
+ * enemies, no bullets, no HUD, no power-ups — just the ship, space-style
+ * movement, and a control panel for tuning the ship configuration values
+ * live.
  *
  * The control panel is a plain-DOM overlay (beside the canvas) so it can
  * be asserted with document.querySelector in happy-dom tests:
- * - one slider per numeric config value (thrust, max speed, size, flame),
+ * - one slider per numeric config value (thrust, max speed, size, flame,
+ *   deceleration),
  * - colour inputs for the ship/flame colours,
  * - a Save button that persists the current values via `saveShipConfig`.
  *
@@ -105,7 +107,7 @@ export class GymPlayer extends Phaser.Scene {
     });
 
     if (!this.cursors || !this.wasd) {
-      // No keyboard input available — the ship just drifts idle.
+      // No keyboard input available — the ship just sits idle.
       return;
     }
   }

@@ -1,9 +1,10 @@
 /**
  * Pure Newtonian movement model (GDD §2.2).
  *
- * Zero friction, acceleration via thrust in 8 directions, max-speed cap,
- * and wrap-around position logic. All functions are side-effect free and
- * fully unit-testable.
+ * Acceleration via thrust in 8 directions, tunable linear deceleration
+ * (friction) when no input is held, max-speed cap, and wrap-around
+ * position logic. All functions are side-effect free and fully
+ * unit-testable.
  */
 
 export interface Position {
