@@ -39,6 +39,7 @@ const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> 
   maxSpeed: { min: 0, max: 500, step: 5 },
   shipSize: { min: 4, max: 60, step: 1 },
   thrustFlameLength: { min: 0.1, max: 2, step: 0.05 },
+  frictionDeceleration: { min: 0, max: 400, step: 5 },
 };
 
 /** Colour config values (rendered with `<input type="color">`). */

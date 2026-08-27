@@ -68,10 +68,20 @@ describe('GymPlayer ship config panel', () => {
     expect(p).not.toBeNull();
 
     const sliders = p!.querySelectorAll('input[type="range"][data-config]');
-    expect(sliders.length).toBe(4);
-    for (const name of ['thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength']) {
+    expect(sliders.length).toBe(5);
+    for (const name of ['thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength', 'frictionDeceleration']) {
       expect(p!.querySelector(`input[data-config="${name}"]`)).not.toBeNull();
     }
+
+    // Deceleration slider range: 0–400 px/s², min 0.
+    const decel = p!.querySelector(
+      'input[data-config="frictionDeceleration"]',
+    ) as HTMLInputElement;
+    expect(decel.min).toBe('0');
+    expect(decel.max).toBe('400');
+    expect(decel.step).toBe('5');
+    // Default value matches the config default (100 px/s²).
+    expect(decel.value).toBe('100');
 
     const colours = p!.querySelectorAll('input[type="color"][data-config]');
     expect(colours.length).toBe(3);
@@ -149,6 +159,7 @@ describe('GymPlayer ship config panel', () => {
 
     setControl('maxSpeed', '90');
     setControl('shipSize', '28');
+    setControl('frictionDeceleration', '250');
 
     const saveButton = panel()!.querySelector(
       '#gym-save-config',
@@ -159,9 +170,47 @@ describe('GymPlayer ship config panel', () => {
     const persisted = loadShipConfig();
     expect(persisted.maxSpeed).toBe(90);
     expect(persisted.shipSize).toBe(28);
+    expect(persisted.frictionDeceleration).toBe(250);
 
     // Status feedback rendered.
     const status = panel()!.querySelector('#gym-save-status');
     expect(status!.textContent).toMatch(/saved/i);
+  });
+
+  // ── Deceleration slider ─────────────────────────────────────────
+
+  it('applies deceleration slider changes live to the ship movement', async () => {
+    const scene = await bootPlayer();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Build up velocity with thrust (right) to the max-speed cap, then
+    // release all inputs so the ship drifts freely.
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    for (let i = 0; i < 5; i++) {
+      player!.physicsTick(1 / 60, 960, 540);
+    }
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    const xAtRelease = player!.x;
+
+    // With friction = 0 the ship keeps drifting (preserves velocity).
+    setControl('frictionDeceleration', '0');
+    for (let i = 0; i < 120; i++) {
+      player!.physicsTick(1 / 60, 960, 540);
+    }
+    const driftDistance = player!.x - xAtRelease;
+    expect(driftDistance).toBeGreaterThan(100);
+
+    // With friction = 400 the ship decelerates to a stop quickly, so the
+    // same number of ticks covers far less distance.
+    setControl('frictionDeceleration', '400');
+    for (let i = 0; i < 120; i++) {
+      player!.physicsTick(1 / 60, 960, 540);
+    }
+    const decelDistance = player!.x - xAtRelease - driftDistance;
+    expect(decelDistance).toBeLessThan(driftDistance);
+    expect(decelDistance).toBeLessThan(100);
   });
 });
