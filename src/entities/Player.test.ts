@@ -124,6 +124,60 @@ describe('Player ship entity', () => {
     );
   });
 
+  // ── Engine ports at the cardinal hull points (AC1+AC2) ─────────
+
+  it('draws four small engine ports at the cardinal hull points (AC1+AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const arcSpy = vi.spyOn(player!, 'arc');
+    player!.setConfig(DEFAULT_CONFIG); // full redraw of body + ports
+
+    // AC1 — exactly four port indicators, one per cardinal point.
+    expect(arcSpy).toHaveBeenCalledTimes(4);
+
+    // Port positions use the hull radius (= shipSize / 2):
+    // top (0, -r), bottom (0, +r), left (-r, 0), right (+r, 0).
+    const r = DEFAULT_CONFIG.shipSize / 2;
+    const centers = arcSpy.mock.calls.map((c) => ({ x: c[0], y: c[1] }));
+    expect(centers).toContainEqual({ x: 0, y: -r });
+    expect(centers).toContainEqual({ x: 0, y: r });
+    expect(centers).toContainEqual({ x: -r, y: 0 });
+    expect(centers).toContainEqual({ x: r, y: 0 });
+  });
+
+  // ── Flame originates from the opposing engine port (AC3) ─────────
+
+  it('anchors the flame at the engine port opposing the thrust, not the hull centre (AC3)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const calls: Array<{ x: number; y: number }> = [];
+    vi.spyOn(player!, 'moveTo').mockImplementation(
+      (x: number, y: number) => {
+        calls.push({ x, y });
+        return player!;
+      },
+    );
+
+    // Thrust right → the LEFT engine fires: its port sits at (-r, 0),
+    // i.e. x = -10 with the default shipSize=20.
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.preUpdate(0, 500); // grow the flame → redraw draws it
+
+    const r = DEFAULT_CONFIG.shipSize / 2;
+    // Outer flame wing vertices sit at the port x-offset (-r), never at
+    // the hull centre (x = 0). Exact vertex: (-r, -r*0.6)=(-10,-6).
+    expect(calls).toContainEqual({ x: -r, y: -r * 0.6 });
+    expect(calls.some((c) => c.x > -r - 0.001 && c.x < 0 && c.y === 0)).toBe(false);
+  });
+
   // ── Physics via config ───────────────────────────────────────────
 
   it('uses the loaded config for physics by default', async () => {

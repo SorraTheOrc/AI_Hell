@@ -39,6 +39,7 @@ import {
   tick,
 } from '../utils/movement';
 import { updateFlameLength } from '../utils/flame';
+import { EnginePort, selectEngines } from '../utils/engineSelection';
 
 export interface PlayerConfig {
   x: number;
@@ -46,6 +47,34 @@ export interface PlayerConfig {
   /** Ship tuning values; defaults to the saved config when omitted. */
   config?: ShipConfig;
 }
+
+/**
+ * The four cardinal engine ports on the hull. Positions are expressed as
+ * unit offsets from the hull centre (scaled by `r = shipSize / 2` at draw
+ * time); `nx`/`ny` is the port's outward normal — the direction its flame
+ * shoots, which is opposite the thrust that fires it.
+ * `arcStart`/`arcEnd` are the Phaser arc angles (radians, 0 = right,
+ * positive = clockwise) of the small quarter-circle indicator drawn at
+ * the port, centred on the outward direction.
+ */
+const ENGINE_PORTS: ReadonlyArray<{
+  port: EnginePort;
+  dx: number;
+  dy: number;
+  nx: number;
+  ny: number;
+  arcStart: number;
+  arcEnd: number;
+}> = [
+  // top port — outward normal (0, -1): fires when thrusting down
+  { port: 'top', dx: 0, dy: -1, nx: 0, ny: -1, arcStart: -Math.PI * 0.75, arcEnd: -Math.PI * 0.25 },
+  // bottom port — outward normal (0, +1): fires when thrusting up
+  { port: 'bottom', dx: 0, dy: 1, nx: 0, ny: 1, arcStart: Math.PI * 0.25, arcEnd: Math.PI * 0.75 },
+  // left port — outward normal (-1, 0): fires when thrusting right
+  { port: 'left', dx: -1, dy: 0, nx: -1, ny: 0, arcStart: Math.PI * 0.75, arcEnd: Math.PI * 1.25 },
+  // right port — outward normal (+1, 0): fires when thrusting left
+  { port: 'right', dx: 1, dy: 0, nx: 1, ny: 0, arcStart: -Math.PI * 0.25, arcEnd: Math.PI * 0.25 },
+];
 
 /**
  * The player ship renders as a cyan hexagon (flat top/bottom, centred
@@ -123,24 +152,48 @@ export class Player extends Phaser.GameObjects.Graphics {
     this.closePath();
     this.strokePath();
 
+    // Four small engine ports at the cardinal hull points (top, bottom,
+    // left, right). Each is a quarter-circle arc facing outward — the
+    // visual socket that engine flames originate from (AC2). Port radius
+    // ≈ shipSize × 0.08 (small but visible at default shipSize=20 → ~1.6px).
+    const portR = this._shipSize * 0.08;
+    for (const p of ENGINE_PORTS) {
+      this.arc(p.dx * r, p.dy * r, portR, p.arcStart, p.arcEnd, false);
+    }
+
     if (this._flameLen > 0) {
       this._drawFlame();
     }
   }
 
-  /** Draws the thrust flame opposite to the current thrust direction. */
+  /**
+   * Draws the thrust flame from the engine port opposing the thrust.
+   *
+   * The flame is anchored at the firing engine's port on the hull
+   * perimeter (never the hull centre) and shoots along the port's outward
+   * normal — i.e. away from the ship, opposite the thrust. (Per-engine
+   * flames for all firing engines, scaled by thrust component, arrive in
+   * AH-0MTBOLP3Z005VRR9; this interim version draws one flame from the
+   * first firing engine.)
+   */
   private _drawFlame(): void {
-    const dir = this._dirFromInput();
-    const len = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
-    // Flame points AWAY from the thrust direction (behind the ship).
-    const nx = -dir.dx / len;
-    const ny = -dir.dy / len;
+    const firing = selectEngines(this._input);
+    if (firing.length === 0) return; // no thrust → no flame
+    const port = ENGINE_PORTS.find((p) => p.port === firing[0].engine);
+    if (!port) return;
+
+    // Flame origin = the port position on the hull perimeter.
+    const r = this._half(1);
+    const ox = port.dx * r;
+    const oy = port.dy * r;
+    const nx = port.nx;
+    const ny = port.ny;
 
     // Animated length — grows toward shipSize × thrustFlameLength while
     // thrusting and decays 4× as fast when thrust stops.
     const flameLen = this._flameLen;
-    const tipX = nx * flameLen;
-    const tipY = ny * flameLen;
+    const tipX = ox + nx * flameLen;
+    const tipY = oy + ny * flameLen;
 
     // Perpendicular for wing spread
     const px = -ny * this._half(0.6);
@@ -148,24 +201,24 @@ export class Player extends Phaser.GameObjects.Graphics {
 
     this.lineStyle(2, this._flameColor, 1);
     this.beginPath();
-    this.moveTo(px, py);
+    this.moveTo(ox + px, oy + py);
     this.lineTo(tipX, tipY);
-    this.lineTo(-px, -py);
+    this.lineTo(ox - px, oy - py);
     this.closePath();
     this.strokePath();
 
     // Inner flame — slightly smaller, brighter
     const innerScale = 0.6;
-    const itipX = nx * flameLen * innerScale;
-    const itipY = ny * flameLen * innerScale;
+    const itipX = ox + nx * flameLen * innerScale;
+    const itipY = oy + ny * flameLen * innerScale;
     const ipx = -ny * this._half(0.4) * innerScale;
     const ipy = nx * this._half(0.4) * innerScale;
 
     this.lineStyle(1, this._flameInnerColor, 1);
     this.beginPath();
-    this.moveTo(ipx, ipy);
+    this.moveTo(ox + ipx, oy + ipy);
     this.lineTo(itipX, itipY);
-    this.lineTo(-ipx, -ipy);
+    this.lineTo(ox - ipx, oy - ipy);
     this.closePath();
     this.strokePath();
   }
