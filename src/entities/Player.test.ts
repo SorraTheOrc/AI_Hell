@@ -178,6 +178,100 @@ describe('Player ship entity', () => {
     expect(calls.some((c) => c.x > -r - 0.001 && c.x < 0 && c.y === 0)).toBe(false);
   });
 
+  // ── Per-engine flames (AH-0MTBOLP3Z005VRR9 AC1–AC5) ─────────────
+
+  it('fires exactly the opposing engine on cardinal thrust (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Thrust right → the LEFT engine opposes it: it is the only port
+    // with a flame, grown to the full default max (15px) after 0.5s.
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.preUpdate(0, 500);
+
+    const lens = player!.getFlameLengths();
+    expect(lens.left).toBeCloseTo(15, 2);
+    expect(lens.right).toBe(0);
+    expect(lens.top).toBe(0);
+    expect(lens.bottom).toBe(0);
+  });
+
+  it('fires the two opposing engines on diagonal thrust (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Up+right → bottom (opposing up) and left (opposing right) both
+    // fire at full component scale.
+    player!.setInput({ up: true, down: false, left: false, right: true });
+    player!.preUpdate(0, 500);
+
+    const lens = player!.getFlameLengths();
+    expect(lens.bottom).toBeCloseTo(15, 2);
+    expect(lens.left).toBeCloseTo(15, 2);
+    expect(lens.top).toBe(0);
+    expect(lens.right).toBe(0);
+  });
+
+  it('draws no flames from any port when no thrust key is held (AC3)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.preUpdate(0, 500);
+    expect(player!.getFlameLengths()).toEqual({
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+    });
+  });
+
+  it('decays the old engine and grows the new one when turning at full flame', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 500);
+    expect(player!.getFlameLengths().bottom).toBeCloseTo(15, 2);
+
+    // Turn to thrusting right: the bottom flame must fully decay and the
+    // left flame grow — no lingering flame at the old port.
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.preUpdate(0, 500);
+
+    const lens = player!.getFlameLengths();
+    expect(lens.bottom).toBe(0);
+    expect(lens.left).toBeCloseTo(15, 2);
+  });
+
+  it('targets each engine max at shipSize × thrustFlameLength × component scale (AC5)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Full component scale (1.0) → max = 20 × 1 × 1 = 20px for the left
+    // engine (fractional component scales are unit-tested in
+    // engineSelection.test.ts; here the wiring multiplies them in).
+    player!.setConfig({ ...DEFAULT_CONFIG, shipSize: 20, thrustFlameLength: 1 });
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.preUpdate(0, 500);
+
+    expect(player!.getFlameLengths().left).toBeCloseTo(20, 2);
+  });
+
   // ── Physics via config ───────────────────────────────────────────
 
   it('uses the loaded config for physics by default', async () => {

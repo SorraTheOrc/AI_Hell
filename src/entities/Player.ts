@@ -32,7 +32,6 @@ import Phaser from 'phaser';
 import { loadShipConfig, ShipConfig } from '../core/config';
 
 import {
-  isThrusting,
   MovementInput,
   MovementState,
   MovementConfig,
@@ -57,7 +56,16 @@ export interface PlayerConfig {
  * positive = clockwise) of the small quarter-circle indicator drawn at
  * the port, centred on the outward direction.
  */
-const ENGINE_PORTS: ReadonlyArray<{
+/**
+ * Geometry of one cardinal engine port on the hull. Positions are
+ * expressed as unit offsets from the hull centre (scaled by
+ * `r = shipSize / 2` at draw time); `nx`/`ny` is the port's outward
+ * normal — the direction its flame shoots, which is opposite the thrust
+ * that fires it. `arcStart`/`arcEnd` are the Phaser arc angles (radians,
+ * 0 = right, positive = clockwise) of the small quarter-circle indicator
+ * drawn at the port, centred on the outward direction.
+ */
+interface EnginePortDef {
   port: EnginePort;
   dx: number;
   dy: number;
@@ -65,7 +73,9 @@ const ENGINE_PORTS: ReadonlyArray<{
   ny: number;
   arcStart: number;
   arcEnd: number;
-}> = [
+}
+
+const ENGINE_PORTS: ReadonlyArray<EnginePortDef> = [
   // top port — outward normal (0, -1): fires when thrusting down
   { port: 'top', dx: 0, dy: -1, nx: 0, ny: -1, arcStart: -Math.PI * 0.75, arcEnd: -Math.PI * 0.25 },
   // bottom port — outward normal (0, +1): fires when thrusting up
@@ -86,10 +96,13 @@ const ENGINE_PORTS: ReadonlyArray<{
 export class Player extends Phaser.GameObjects.Graphics {
   private _movementState: MovementState;
   private readonly _input: MovementInput;
-  /** Current animated flame length in px (0 = no flame drawn). */
-  private _flameLen = 0;
-  /** Last drawn thrust direction — redraw when it changes at full flame. */
-  private _flameDir: { dx: number; dy: number } = { dx: 0, dy: 0 };
+  /** Animated flame length per engine port in px (0 = no flame drawn). */
+  private _flameLens: Record<EnginePort, number> = {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  };
   private _config: MovementConfig;
 
   // Visual tuning — runtime-updatable (constructor or setConfig).
@@ -161,37 +174,36 @@ export class Player extends Phaser.GameObjects.Graphics {
       this.arc(p.dx * r, p.dy * r, portR, p.arcStart, p.arcEnd, false);
     }
 
-    if (this._flameLen > 0) {
-      this._drawFlame();
-    }
+    this._drawFlame();
   }
 
   /**
-   * Draws the thrust flame from the engine port opposing the thrust.
+   * Draws a flame from every engine port that is currently firing, each
+   * animated length scaled by its thrust component (AC2/AC5).
    *
-   * The flame is anchored at the firing engine's port on the hull
-   * perimeter (never the hull centre) and shoots along the port's outward
-   * normal — i.e. away from the ship, opposite the thrust. (Per-engine
-   * flames for all firing engines, scaled by thrust component, arrive in
-   * AH-0MTBOLP3Z005VRR9; this interim version draws one flame from the
-   * first firing engine.)
+   * Each flame is anchored at its engine's port on the hull perimeter
+   * (never the hull centre) and shoots along the port's outward normal —
+   * i.e. away from the ship, opposite the thrust that fires it. Only
+   * ports with a visible animated length draw anything, so no thrust
+   * input means no flames at all (AC3).
    */
   private _drawFlame(): void {
-    const firing = selectEngines(this._input);
-    if (firing.length === 0) return; // no thrust → no flame
-    const port = ENGINE_PORTS.find((p) => p.port === firing[0].engine);
-    if (!port) return;
+    for (const port of ENGINE_PORTS) {
+      const flameLen = this._flameLens[port.port];
+      if (flameLen > 0) {
+        this._drawPortFlame(port, flameLen);
+      }
+    }
+  }
 
-    // Flame origin = the port position on the hull perimeter.
+  /** Draws one engine's flame (outer + inner triangle) at a port. */
+  private _drawPortFlame(port: EnginePortDef, flameLen: number): void {
     const r = this._half(1);
     const ox = port.dx * r;
     const oy = port.dy * r;
     const nx = port.nx;
     const ny = port.ny;
 
-    // Animated length — grows toward shipSize × thrustFlameLength while
-    // thrusting and decays 4× as fast when thrust stops.
-    const flameLen = this._flameLen;
     const tipX = ox + nx * flameLen;
     const tipY = oy + ny * flameLen;
 
@@ -262,56 +274,74 @@ export class Player extends Phaser.GameObjects.Graphics {
   /**
    * Called by Phaser's UpdateList each frame (Phaser 4 invokes
    * `preUpdate(time, delta)` — not `update()` — for update-list
-   * members; `delta` is in milliseconds). Advances the flame animation
-   * with the frame delta so growth/shrink is framerate-independent.
+   * members; `delta` is in milliseconds). Advances each engine's flame
+   * animation with the frame delta so growth/shrink is
+   * framerate-independent (AC4).
+   *
+   * Each engine whose port opposes the current thrust grows toward its
+   * component-scaled max length (`shipSize × thrustFlameLength × scale`,
+   * AC5); an engine that stops firing decays at 4× the growth rate, so
+   * turning leaves no flame behind at the old port.
    */
   preUpdate(_time: number, delta: number): void {
     const dt = delta / 1000;
-    const maxLength = this._shipSize * this._flameLength;
-    const prevLen = this._flameLen;
 
-    const nextLen = updateFlameLength(
-      prevLen,
-      {
-        thrusting: isThrusting(this._input),
-        maxLength,
-        thrustAcceleration: this._config.thrust,
-      },
-      dt,
-    );
+    // Engines the current thrust fires, with their component scales.
+    const firing = selectEngines(this._input);
+    const scales: Record<EnginePort, number> = {
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+    };
+    for (const f of firing) scales[f.engine] = f.scale;
 
-    const dir = this._dirFromInput();
-    const dirChanged =
-      dir.dx !== this._flameDir.dx || dir.dy !== this._flameDir.dy;
+    let changed = false;
+    const baseMax = this._shipSize * this._flameLength;
+    for (const port of ENGINE_PORTS) {
+      const scale = scales[port.port];
+      // While firing, the flame animates toward the component-scaled max
+      // (AC5); when not firing, it decays toward 0 at 4× the growth rate
+      // (maxLength = baseMax so the decay rate matches a full-strength
+      // flame and never stalls at maxLength 0).
+      const maxLength = scale > 0 ? baseMax * scale : baseMax;
+      const nextLen = updateFlameLength(
+        this._flameLens[port.port],
+        {
+          thrusting: scale > 0,
+          maxLength,
+          thrustAcceleration: this._config.thrust,
+        },
+        dt,
+      );
+      if (nextLen !== this._flameLens[port.port]) changed = true;
+      this._flameLens[port.port] = nextLen;
+    }
 
-    this._flameLen = nextLen;
-
-    // Redraw only when the visual could have changed: the length moved
-    // (growing or decaying), or the flame's direction changed while a
-    // flame is visible (e.g. turning at full length).
-    if (nextLen !== prevLen || (nextLen > 0 && dirChanged)) {
-      this._flameDir = dir;
+    // Redraw only when the visual could have changed: an engine length
+    // moved (growing or decaying). Turning at full flame changes which
+    // engines fire, so the affected lengths move on the next frame.
+    if (changed) {
       this._redraw();
     }
   }
 
   /**
-   * Current animated flame length in px (0 = no flame). Exposed as
-   * observable state so tests can verify the animation without
-   * pixel-level rendering assertions.
+   * Largest current animated flame length across all engines in px
+   * (0 = no flame drawn). Kept for backward compatibility with the
+   * single-flame API; prefer {@link getFlameLengths} for per-engine state.
    */
   getFlameLength(): number {
-    return this._flameLen;
+    return Math.max(...Object.values(this._flameLens));
   }
 
-  /** Returns the thrust direction vector from current input. */
-  private _dirFromInput(): { dx: number; dy: number } {
-    let dx = 0, dy = 0;
-    if (this._input.left)  dx -= 1;
-    if (this._input.right) dx += 1;
-    if (this._input.up)    dy -= 1;
-    if (this._input.down)  dy += 1;
-    return { dx, dy };
+  /**
+   * Current animated flame length per engine port in px (0 = no flame).
+   * Exposed as observable state so tests can verify per-engine
+   * animation (and per-component scaling) without pixel assertions.
+   */
+  getFlameLengths(): Record<EnginePort, number> {
+    return { ...this._flameLens };
   }
 
   /** Apply a physics tick and update the transform. */
