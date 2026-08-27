@@ -81,17 +81,17 @@ describe('updateFlameLength', () => {
   // ── AC1: animates from 0, grows monotonically to the max ─────────
 
   it('grows from 0 toward the max length while thrust is held (AC1)', () => {
-    const first = updateFlameLength(0, thrustUpdate(), 0.1);
+    const first = updateFlameLength(0, thrustUpdate(), 0.02);
     expect(first).toBeGreaterThan(0);
     expect(first).toBeLessThan(MAX);
 
-    const second = updateFlameLength(first, thrustUpdate(), 0.1);
+    const second = updateFlameLength(first, thrustUpdate(), 0.02);
     expect(second).toBeGreaterThan(first);
     expect(second).toBeLessThanOrEqual(MAX);
   });
 
   it('clamps at the max length while held (no overshoot, no oscillation)', () => {
-    // Default time-to-full is 0.125 s; 10 s ≫ that.
+    // Default time-to-full is 0.03 s; 10 s ≫ that.
     const full = updateFlameLength(0, thrustUpdate(), 10);
     expect(full).toBe(MAX);
 
@@ -103,7 +103,7 @@ describe('updateFlameLength', () => {
   // ── AC2: rate ∝ thrustAcceleration ──────────────────────────────
 
   it('reaches full length faster at higher thrustAcceleration (AC2)', () => {
-    // Actual time-to-full: t = 0.125 s × (300 / accel).
+    // Actual time-to-full: t = 0.03 s × (300 / accel).
     expect(updateFlameLength(0, thrustUpdate({ thrustAcceleration: 600 }), 0.25)).toBe(MAX);
     expect(updateFlameLength(0, thrustUpdate({ thrustAcceleration: 150 }), 1)).toBe(MAX);
 
@@ -121,22 +121,22 @@ describe('updateFlameLength', () => {
   // ── AC3: 4× decay, resume-from-current, clamp at 0 ───────────────
 
   it('decays at 4× the growth rate when thrust stops (AC3)', () => {
-    // Growth rate at default = 15 / 0.125 = 120 px/s; decay = 480 px/s.
-    // From full 15px: 0.03125 s of decay → exactly 0.
-    expect(updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.03125)).toBe(0);
+    // Growth rate at default = 15 / 0.03 = 500 px/s; decay = 2000 px/s.
+    // From full 15px: 0.0075 s of decay → exactly 0.
+    expect(updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.0075)).toBe(0);
 
     // Half that time leaves roughly half the flame.
-    const half = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.03125 / 2);
+    const half = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.00375);
     expect(half).toBeCloseTo(MAX / 2, 5);
   });
 
   it('resumes growth from the current length when re-thrusting mid-decay (AC3)', () => {
-    const decayed = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.01);
+    const decayed = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.002);
     expect(decayed).toBeGreaterThan(0);
     expect(decayed).toBeLessThan(MAX);
 
     // Re-apply thrust: growth continues from `decayed`, not from 0.
-    const regrown = updateFlameLength(decayed, thrustUpdate(), 0.01);
+    const regrown = updateFlameLength(decayed, thrustUpdate(), 0.002);
     expect(regrown).toBeGreaterThan(decayed);
     expect(regrown).toBeLessThanOrEqual(MAX);
   });
@@ -148,19 +148,19 @@ describe('updateFlameLength', () => {
   // ── AC4: dt-based & config-live max ──────────────────────────────
 
   it('is delta-time based: equal total time gives equal length (framerate-independent) (AC4)', () => {
-    const oneBigStep = updateFlameLength(0, thrustUpdate(), 0.04);
+    const oneBigStep = updateFlameLength(0, thrustUpdate(), 0.02);
 
     let accumulated = 0;
     for (let i = 0; i < 4; i++) {
-      accumulated = updateFlameLength(accumulated, thrustUpdate(), 0.01);
+      accumulated = updateFlameLength(accumulated, thrustUpdate(), 0.005);
     }
 
     expect(accumulated).toBeCloseTo(oneBigStep, 10);
   });
 
   it('grows toward the current (config-live) max, including a larger max mid-growth (AC4)', () => {
-    // 0.05 s of growth toward the old 15px max → 6px.
-    const grown = updateFlameLength(0, thrustUpdate(), 0.05);
+    // 0.02 s of growth toward the old 15px max → 10px.
+    const grown = updateFlameLength(0, thrustUpdate(), 0.02);
     expect(grown).toBeLessThan(MAX);
 
     // The config changes mid-growth (e.g. gym slider): max becomes

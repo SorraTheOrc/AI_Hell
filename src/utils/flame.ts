@@ -25,7 +25,7 @@ export interface FlameUpdate {
 /** Reference thrust acceleration at which FLAME_GROWTH_TIME_AT_REF applies. */
 export const FLAME_REF_THRUST = 300;
 /** Seconds to grow from 0 to maxLength at FLAME_REF_THRUST (feel tuning). */
-export const FLAME_GROWTH_TIME_AT_REF = 0.125;
+export const FLAME_GROWTH_TIME_AT_REF = 0.03;
 /** Flame decay speed while thrust is off = this × growth rate. */
 export const FLAME_SHRINK_MULTIPLIER = 4;
 

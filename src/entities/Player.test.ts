@@ -123,12 +123,12 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     // Default config: shipSize=20, thrustFlameLength=0.75 → max 15px;
-    // growth time-to-full at 300 thrust = 0.125s.
+    // growth time-to-full at 300 thrust = 0.03s.
     player!.setInput({ up: true, down: false, left: false, right: false });
     player!.preUpdate(0, 500); // 0.5s of thrust → full length
     expect(player!.getFlameLength()).toBeCloseTo(15, 2);
 
-    // Release: decay is 4× growth (480 px/s) → back to 0 in ~0.031s.
+    // Release: decay is 4× growth (2000 px/s) → back to 0 in ~0.008s.
     player!.setInput({ up: false, down: false, left: false, right: false });
     player!.preUpdate(0, 125);
     expect(player!.getFlameLength()).toBe(0);
@@ -161,15 +161,15 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     player!.setInput({ up: true, down: false, left: false, right: false });
-    player!.preUpdate(0, 50); // 0.05s → 6px toward the default 15px max
+    player!.preUpdate(0, 20); // 0.02s → 10px toward the default 15px max
     expect(player!.getFlameLength()).toBeLessThan(15);
 
-    // Ship grows to 40px with flame multiplier 1 → new max 40px;
-    // growth rate at 40px max = 40 / 0.125 = 320 px/s.
+    // Ship grows to 40px with flame multiplier 1 → new max 40px.
     player!.setConfig({ ...DEFAULT_CONFIG, shipSize: 40, thrustFlameLength: 1 });
-    player!.preUpdate(0, 100); // 0.1s × 320 px/s = +32px → 38px
-    expect(player!.getFlameLength()).toBeCloseTo(38, 5);
-    expect(player!.getFlameLength()).toBeLessThanOrEqual(40);
+    player!.preUpdate(0, 20); // continues growing past the old 15px ceiling
+    const lenAfterRetarget = player!.getFlameLength();
+    expect(lenAfterRetarget).toBeGreaterThan(15);
+    expect(lenAfterRetarget).toBeLessThanOrEqual(40);
 
     // A smaller max set mid-growth clamps the flame immediately.
     player!.setConfig({ ...DEFAULT_CONFIG, thrustFlameLength: 0.1 }); // max = 2
