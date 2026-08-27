@@ -38,7 +38,7 @@ import {
   tick,
 } from '../utils/movement';
 import { updateFlameLength } from '../utils/flame';
-import { EnginePort, selectEngines } from '../utils/engineSelection';
+import { EnginePort, enginesForThrust, selectEngines } from '../utils/engineSelection';
 
 export interface PlayerConfig {
   x: number;
@@ -103,6 +103,13 @@ export class Player extends Phaser.GameObjects.Graphics {
     left: 0,
     right: 0,
   };
+  /**
+   * Optional fractional thrust components (dx positive = right, dy
+   * positive = down), set via {@link setThrustComponents} for
+   * analog/partial input. When null, the boolean {@link _input} drives
+   * engine selection (scale 1.0 per held axis).
+   */
+  private _componentThrust: { dx: number; dy: number } | null = null;
   private _config: MovementConfig;
 
   // Visual tuning — runtime-updatable (constructor or setConfig).
@@ -242,10 +249,23 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._input.down = input.down;
     this._input.left = input.left;
     this._input.right = input.right;
+    // Boolean keys take over from any fractional component thrust.
+    this._componentThrust = null;
   }
 
   getInput(): MovementInput {
     return { ...this._input };
+  }
+
+  /**
+   * Feeds fractional thrust components so each flame scales by its
+   * component (e.g. up 0.5 + right 1.0 → a half-length bottom flame and
+   * a full-length left flame). Maps to the same engine-firing rule as
+   * {@link setInput} (the engine whose outward normal opposes each
+   * component fires). A subsequent {@link setInput} call takes over.
+   */
+  setThrustComponents(dx: number, dy: number): void {
+    this._componentThrust = { dx, dy };
   }
 
   // ── Config ───────────────────────────────────────────────────────
@@ -286,8 +306,11 @@ export class Player extends Phaser.GameObjects.Graphics {
   preUpdate(_time: number, delta: number): void {
     const dt = delta / 1000;
 
-    // Engines the current thrust fires, with their component scales.
-    const firing = selectEngines(this._input);
+    // Engines the current thrust fires, with their component scales
+    // (fractional components when set, else the boolean keys at 1.0).
+    const firing = this._componentThrust
+      ? enginesForThrust(this._componentThrust.dx, this._componentThrust.dy)
+      : selectEngines(this._input);
     const scales: Record<EnginePort, number> = {
       top: 0,
       bottom: 0,

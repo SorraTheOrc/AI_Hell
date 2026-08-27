@@ -272,6 +272,85 @@ describe('Player ship entity', () => {
     expect(player!.getFlameLengths().left).toBeCloseTo(20, 2);
   });
 
+  // ── Child AH-0MTBOMP93002AC25: AC1/AC2/AC5 structural coverage ──
+  // was provided inline by children 2–4 (hexagon 6-edge test,
+  // 4-port arc test, no-thrust test above) to avoid duplicating them.
+  // This child adds the remaining AC3/AC4 location assertions, the
+  // fractional-component scaling test (AC6), and the setConfig
+  // regression test (AC7).
+
+  it('positions diagonal flames at the two opposing engine ports (AC4 location)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const calls: Array<{ x: number; y: number }> = [];
+    vi.spyOn(player!, 'moveTo').mockImplementation(
+      (x: number, y: number) => {
+        calls.push({ x, y });
+        return player!;
+      },
+    );
+
+    // Up+right → bottom and left engines fire. The outer flame wing
+    // vertices sit at the bottom port (−r·0.6, r) and the left port
+    // (−r, −r·0.6).
+    player!.setInput({ up: true, down: false, left: false, right: true });
+    player!.preUpdate(0, 500);
+
+    const r = DEFAULT_CONFIG.shipSize / 2;
+    expect(calls).toContainEqual({ x: -r * 0.6, y: r });
+    expect(calls).toContainEqual({ x: -r, y: -r * 0.6 });
+  });
+
+  it('scales diagonal flames by mixed components — up 0.5, right 1.0 (AC6)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Fractional thrust: dx=1 (right) and dy=−0.5 (up). The bottom
+    // engine (opposing up) grows toward half the max length, the left
+    // engine (opposing right) toward the full length.
+    player!.setThrustComponents(1, -0.5);
+    player!.preUpdate(0, 500);
+
+    const lens = player!.getFlameLengths();
+    expect(lens.left).toBeCloseTo(15, 2); // component 1.0 → full max
+    expect(lens.bottom).toBeCloseTo(7.5, 2); // component 0.5 → half max
+    expect(lens.top).toBe(0);
+    expect(lens.right).toBe(0);
+  });
+
+  it('setConfig re-draws the hexagon body, ports, and flame colours live (AC7)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const lineToSpy = vi.spyOn(player!, 'lineTo');
+    const arcSpy = vi.spyOn(player!, 'arc');
+    const lineStyleSpy = vi.spyOn(player!, 'lineStyle');
+
+    const retuned = {
+      ...DEFAULT_CONFIG,
+      shipColor: 0x00ff00,
+      thrustFlameColor: 0xff0000,
+      shipSize: 30,
+    };
+    player!.setConfig(retuned);
+
+    // Body re-drawn with the new shipColor (6-edge hexagon, no fill)
+    // and the four engine ports still present.
+    expect(lineToSpy.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(arcSpy).toHaveBeenCalledTimes(4);
+    expect(lineStyleSpy).toHaveBeenCalledWith(2, retuned.shipColor, 1);
+  });
+
   // ── Physics via config ───────────────────────────────────────────
 
   it('uses the loaded config for physics by default', async () => {
