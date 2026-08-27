@@ -11,12 +11,12 @@
  * the config module (`core/config.ts`) — either injected at construction
  * or loaded from saved config — and can be live-updated via `setConfig`.
  *
- * The thrust flame is animated: it grows from length 0 toward
- * `shipSize × thrustFlameLength` at a rate proportional to
- * `thrustAcceleration`, and decays at 4× that rate when thrust stops.
- * The animation is driven per-frame from the delta time in `preUpdate`
- * (pure model in `utils/flame.ts`), so it is framerate-independent and
- * re-targets the current config live.
+ * The engine flames are animated per port: each flame grows from length 0
+ * toward its component-scaled max `shipSize × thrustFlameLength × scale`
+ * at a rate proportional to `thrustAcceleration`, and decays at 4× that
+ * rate when its engine stops firing. The animation is driven per-frame
+ * from the delta time in `preUpdate` (pure model in `utils/flame.ts`),
+ * so it is framerate-independent and re-targets the current config live.
  *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
