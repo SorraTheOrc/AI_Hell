@@ -90,10 +90,56 @@ describe('clampSpeed', () => {
 // ── applyThrust ─────────────────────────────────────────────────────
 
 describe('applyThrust', () => {
-  it('preserves velocity when no thrust (zero friction drift)', () => {
+  it('preserves velocity when no thrust and friction = 0', () => {
+    const state = { vx: 100, vy: 50 };
+    const result = applyThrust(
+      state,
+      input(),
+      { thrust: 300, maxSpeed: 175, friction: 0 },
+    );
+    expect(result).toEqual(state);
+  });
+
+  it('reduces velocity toward zero when no thrust (default friction)', () => {
     const state = { vx: 100, vy: 50 };
     const result = applyThrust(state, input());
-    expect(result).toEqual(state);
+    const speed = speedOf(result);
+    expect(speed).toBeLessThan(speedOf(state));
+  });
+
+  it('reduces velocity by friction × dt each call', () => {
+    const state = { vx: 100, vy: 0 };
+    const speed = speedOf(state);
+    const cfg = { thrust: 300, maxSpeed: 175, friction: 50 };
+    const result = applyThrust(state, input(), cfg, 1);
+    expect(speedOf(result)).toBeCloseTo(Math.max(0, speed - 50));
+  });
+
+  it('reaches exactly zero velocity (no overshoot)', () => {
+    const state = { vx: 30, vy: 0 };
+    const cfg = { thrust: 300, maxSpeed: 175, friction: 100 };
+    const result = applyThrust(state, input(), cfg, 1);
+    expect(speedOf(result)).toBeCloseTo(0);
+    expect(result.vx).toBeCloseTo(0);
+    expect(result.vy).toBeCloseTo(0);
+  });
+
+  it('clamps velocity at zero when friction would overshoot', () => {
+    const state = { vx: 5, vy: 5 };
+    const cfg = { thrust: 300, maxSpeed: 175, friction: 1000 };
+    const result = applyThrust(state, input(), cfg, 1);
+    expect(speedOf(result)).toBeCloseTo(0);
+    expect(result.vx).toBeCloseTo(0);
+    expect(result.vy).toBeCloseTo(0);
+  });
+
+  it('preserves velocity direction during deceleration', () => {
+    const state = { vx: 60, vy: 80 };
+    const cfg = { thrust: 300, maxSpeed: 175, friction: 50 };
+    const result = applyThrust(state, input(), cfg, 1);
+    const originalAngle = Math.atan2(state.vy, state.vx);
+    const resultAngle = Math.atan2(result.vy, result.vx);
+    expect(resultAngle).toBeCloseTo(originalAngle);
   });
 
   it('applies thrust in the right direction', () => {
@@ -207,9 +253,28 @@ describe('tick', () => {
     expect(result.y).toBeGreaterThan(270);
   });
 
-  it('drifts without input (zero friction)', () => {
+  it('applies deceleration when no input (default friction)', () => {
     const state = { x: 480, y: 270, vx: 100, vy: 50 };
     const result = tick(state, input(), 1, WIDTH, HEIGHT);
+    // With default friction=100, speed ~111.8, reduction=100, new speed ~11.8
+    expect(speedOf({ vx: result.vx, vy: result.vy })).toBeLessThan(
+      speedOf({ vx: 100, vy: 50 }),
+    );
+    // Position advances with reduced velocity
+    expect(result.x).toBeGreaterThan(480);
+    expect(result.y).toBeGreaterThan(270);
+  });
+
+  it('drifts without input when friction = 0', () => {
+    const state = { x: 480, y: 270, vx: 100, vy: 50 };
+    const result = tick(
+      state,
+      input(),
+      1,
+      WIDTH,
+      HEIGHT,
+      { thrust: 300, maxSpeed: 175, friction: 0 },
+    );
     expect(result.vx).toBeCloseTo(100);
     expect(result.vy).toBeCloseTo(50);
     expect(result.x).toBeCloseTo(580);

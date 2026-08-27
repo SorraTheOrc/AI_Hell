@@ -63,16 +63,27 @@ export function thrustDirection(input: MovementInput): Velocity {
 
 /**
  * Applies thrust to the current velocity, clamping to the speed cap.
+ * When no thrust is applied, applies linear deceleration (friction)
+ * toward zero velocity — reduced by `friction × dt` per call, clamped at zero.
+ * With friction = 0, velocity is preserved (zero-friction drift).
  * Pure function — does not mutate inputs.
  */
 export function applyThrust(
   state: Velocity,
   input: MovementInput,
   config: MovementConfig = DEFAULT_CONFIG,
+  dt: number = 1,
 ): Velocity {
   if (!input.up && !input.down && !input.left && !input.right) {
-    // No thrust — velocity unchanged (zero friction / drift).
-    return clampSpeed(state, config.maxSpeed);
+    // No thrust — apply linear friction toward zero velocity.
+    const speed = speedOf(state);
+    if (speed === 0) return { vx: 0, vy: 0 };
+    const friction = config.friction ?? 0;
+    if (friction === 0) return clampSpeed(state, config.maxSpeed);
+    const reduction = friction * dt;
+    if (reduction >= speed) return { vx: 0, vy: 0 };
+    const factor = (speed - reduction) / speed;
+    return { vx: state.vx * factor, vy: state.vy * factor };
   }
 
   const dir = thrustDirection(input);
@@ -146,7 +157,7 @@ export function tick(
   height: number,
   config: MovementConfig = DEFAULT_CONFIG,
 ): MovementState {
-  const newVel = applyThrust(state, input, config);
+  const newVel = applyThrust(state, input, config, dt);
   return step(
     { ...state, vx: newVel.vx, vy: newVel.vy },
     dt,
