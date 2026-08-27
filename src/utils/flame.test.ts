@@ -91,7 +91,7 @@ describe('updateFlameLength', () => {
   });
 
   it('clamps at the max length while held (no overshoot, no oscillation)', () => {
-    // Default time-to-full is 0.5 s; 10 s ≫ that.
+    // Default time-to-full is 0.125 s; 10 s ≫ that.
     const full = updateFlameLength(0, thrustUpdate(), 10);
     expect(full).toBe(MAX);
 
@@ -103,13 +103,13 @@ describe('updateFlameLength', () => {
   // ── AC2: rate ∝ thrustAcceleration ──────────────────────────────
 
   it('reaches full length faster at higher thrustAcceleration (AC2)', () => {
-    // Actual time-to-full: t = 0.5 s × (300 / accel).
+    // Actual time-to-full: t = 0.125 s × (300 / accel).
     expect(updateFlameLength(0, thrustUpdate({ thrustAcceleration: 600 }), 0.25)).toBe(MAX);
     expect(updateFlameLength(0, thrustUpdate({ thrustAcceleration: 150 }), 1)).toBe(MAX);
 
-    // Same elapsed time: higher thrust produced more length.
-    const slow = updateFlameLength(0, thrustUpdate({ thrustAcceleration: 150 }), 0.5);
-    const fast = updateFlameLength(0, thrustUpdate({ thrustAcceleration: 600 }), 0.5);
+    // Same elapsed time (short enough not to clamp): more thrust → more length.
+    const slow = updateFlameLength(0, thrustUpdate({ thrustAcceleration: 150 }), 0.05);
+    const fast = updateFlameLength(0, thrustUpdate({ thrustAcceleration: 600 }), 0.05);
     expect(fast).toBeGreaterThan(slow);
   });
 
@@ -121,22 +121,22 @@ describe('updateFlameLength', () => {
   // ── AC3: 4× decay, resume-from-current, clamp at 0 ───────────────
 
   it('decays at 4× the growth rate when thrust stops (AC3)', () => {
-    // Growth rate at default = 15 / 0.5 = 30 px/s; decay = 120 px/s.
-    // From full 15px: 0.125 s of decay → exactly 0.
-    expect(updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.125)).toBe(0);
+    // Growth rate at default = 15 / 0.125 = 120 px/s; decay = 480 px/s.
+    // From full 15px: 0.03125 s of decay → exactly 0.
+    expect(updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.03125)).toBe(0);
 
     // Half that time leaves roughly half the flame.
-    const half = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.125 / 2);
+    const half = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.03125 / 2);
     expect(half).toBeCloseTo(MAX / 2, 5);
   });
 
   it('resumes growth from the current length when re-thrusting mid-decay (AC3)', () => {
-    const decayed = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.06);
+    const decayed = updateFlameLength(MAX, thrustUpdate({ thrusting: false }), 0.01);
     expect(decayed).toBeGreaterThan(0);
     expect(decayed).toBeLessThan(MAX);
 
     // Re-apply thrust: growth continues from `decayed`, not from 0.
-    const regrown = updateFlameLength(decayed, thrustUpdate(), 0.06);
+    const regrown = updateFlameLength(decayed, thrustUpdate(), 0.01);
     expect(regrown).toBeGreaterThan(decayed);
     expect(regrown).toBeLessThanOrEqual(MAX);
   });
@@ -148,26 +148,26 @@ describe('updateFlameLength', () => {
   // ── AC4: dt-based & config-live max ──────────────────────────────
 
   it('is delta-time based: equal total time gives equal length (framerate-independent) (AC4)', () => {
-    const oneBigStep = updateFlameLength(0, thrustUpdate(), 0.4);
+    const oneBigStep = updateFlameLength(0, thrustUpdate(), 0.04);
 
     let accumulated = 0;
     for (let i = 0; i < 4; i++) {
-      accumulated = updateFlameLength(accumulated, thrustUpdate(), 0.1);
+      accumulated = updateFlameLength(accumulated, thrustUpdate(), 0.01);
     }
 
     expect(accumulated).toBeCloseTo(oneBigStep, 10);
   });
 
   it('grows toward the current (config-live) max, including a larger max mid-growth (AC4)', () => {
-    // 0.4 s of growth toward the old 15px max → 12px.
-    const grown = updateFlameLength(0, thrustUpdate(), 0.4);
+    // 0.05 s of growth toward the old 15px max → 6px.
+    const grown = updateFlameLength(0, thrustUpdate(), 0.05);
     expect(grown).toBeLessThan(MAX);
 
     // The config changes mid-growth (e.g. gym slider): max becomes
     // shipSize=40 × thrustFlameLength=1.5 = 60px. Growth continues past
     // the old ceiling toward the new one.
     const biggerMax = 40 * 1.5;
-    const extended = updateFlameLength(grown, thrustUpdate({ maxLength: biggerMax }), 0.1);
+    const extended = updateFlameLength(grown, thrustUpdate({ maxLength: biggerMax }), 0.02);
     expect(extended).toBeGreaterThan(MAX);
     expect(extended).toBeLessThanOrEqual(biggerMax);
   });
