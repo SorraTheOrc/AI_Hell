@@ -280,6 +280,7 @@ export class GymPlayer extends Phaser.Scene {
     const height = this.scale.height;
 
     this.player.physicsTick(dt, width, height);
-    // Player.update() is invoked by Phaser's update list (add.existing).
+    // Player.preUpdate() is invoked by Phaser's update list (add.existing)
+    // and advances the thrust-flame animation with the same delta.
   }
 }

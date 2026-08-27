@@ -39,7 +39,7 @@
 - **Maximum speed cap:** Velocity is clamped to a maximum speed to prevent unbounded acceleration. Tunable constants (thrust acceleration, max speed) live in a single configuration module so the feel can be adjusted without digging through scene code.
 - **Responsive feel:** Tuning targets are designed so the ship reaches meaningful speed quickly and decelerates/reverses within a "short moment" of holding the opposite key — the ship should feel agile but never sluggish.
 - **Screen-edge wrap-around:** The ship wraps across all four screen edges (leaves left → reappears right, etc.), matching the classic Asteroids model. No hard walls or clamping.
-- **Thruster feedback:** Visual thrust flames appear on the opposite side of the ship when a direction key is held, making movement input legible without racing the physics.
+- **Thruster feedback:** Visual thrust flames appear on the opposite side of the ship when a direction key is held, making movement input legible without racing the physics. The flame is animated: it grows from length 0 toward `shipSize × thrustFlameLength` at a rate proportional to `thrustAcceleration` (higher thrust springs it to full size faster; at 0 thrust it stays invisible), and decays back to 0 at 4× the growth rate when the key is released. Growth/shrink is delta-time based so the animation is framerate-independent and re-targets the current config live.
 - **Tunable constants** (exposed in `src/core/constants.ts`):
   - `THRUST_ACCELERATION` (px/s²): acceleration applied each second when thrust is held.
   - `MAX_SPEED` (px/s): absolute speed cap.

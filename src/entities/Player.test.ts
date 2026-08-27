@@ -8,7 +8,7 @@
  * gym scene (`GymPlayer`) is booted directly so the ship entity is on
  * the display list.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Phaser from 'phaser';
 
@@ -97,5 +97,138 @@ describe('Player ship entity', () => {
     // The ship moved further upward (lower y) at default maxSpeed than
     // at the low maxSpeed, confirming setConfig changed the physics.
     expect(yDefaultSpeed).toBeLessThan(yLowSpeed);
+  });
+
+  // ── Thrust flame animation ───────────────────────────────────────
+
+  it('starts with no flame (length 0), and idle frames do not animate it', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    expect(player!.getFlameLength()).toBe(0);
+
+    // Idle frames with no input must not grow a flame.
+    player!.preUpdate(0, 16);
+    expect(player!.getFlameLength()).toBe(0);
+  });
+
+  it('grows the flame while thrusting and decays it at release (AC1 + AC3)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Default config: shipSize=20, thrustFlameLength=0.75 → max 15px;
+    // growth time-to-full at 300 thrust = 0.5s.
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 500); // 0.5s of thrust → full length
+    expect(player!.getFlameLength()).toBeCloseTo(15, 2);
+
+    // Release: decay is 4× growth (120 px/s) → back to 0 in ~0.125s.
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    player!.preUpdate(0, 125);
+    expect(player!.getFlameLength()).toBe(0);
+  });
+
+  it('reaches the full length with enough thrust, regardless of frame rate (AC4)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Growth is dt-based, so the frame rate does not matter: 0.5s of
+    // thrust spread over many small frames reaches the same full length
+    // (default config → max 15px) as a single 0.5s step.
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    for (let i = 0; i < 32; i++) player!.preUpdate(0, 16); // 512 ms total
+    expect(player!.getFlameLength()).toBeCloseTo(15, 2);
+
+    // Held at full length: flame stays at max (no flicker/overshoot).
+    player!.preUpdate(0, 16);
+    expect(player!.getFlameLength()).toBe(15);
+  });
+
+  it('targets the current setConfig max length mid-growth (AC4)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 200); // 0.2s → 6px toward the default 15px max
+    expect(player!.getFlameLength()).toBeLessThan(15);
+
+    // Ship grows to 40px with flame multiplier 1 → new max 40px.
+    player!.setConfig({ ...DEFAULT_CONFIG, shipSize: 40, thrustFlameLength: 1 });
+    player!.preUpdate(0, 100); // 0.1s × 80 px/s = +8px → 14px
+    expect(player!.getFlameLength()).toBeCloseTo(14, 10);
+    expect(player!.getFlameLength()).toBeLessThanOrEqual(40);
+
+    // A smaller max set mid-growth clamps the flame immediately.
+    player!.setConfig({ ...DEFAULT_CONFIG, thrustFlameLength: 0.1 }); // max = 2
+    player!.preUpdate(0, 5);
+    expect(player!.getFlameLength()).toBeLessThanOrEqual(2);
+  });
+
+  it('redraws while the flame animates and skips redraws when nothing changes (AC5)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const clearSpy = vi.spyOn(player!, 'clear');
+
+    // Idle: length stays 0 → no redraw churn.
+    player!.preUpdate(0, 16);
+    expect(clearSpy).not.toHaveBeenCalled();
+
+    // Thrust: the flame appears mid-growth (not toggle-drawn at full
+    // length only), so a redraw happens immediately.
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 16);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+
+    // Not yet full length? still redraws while growing.
+    player!.preUpdate(0, 16);
+    expect(clearSpy).toHaveBeenCalledTimes(2);
+
+    // At full length with unchanged direction → no further redraws.
+    player!.preUpdate(0, 5000);
+    clearSpy.mockClear();
+    player!.preUpdate(0, 16);
+    expect(clearSpy).not.toHaveBeenCalled();
+
+    // Direction change at full length → redraw exactly once.
+    player!.setInput({ up: false, down: false, left: true, right: false });
+    player!.preUpdate(0, 16);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the flame on full decay (final redraw at length 0)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    const clearSpy = vi.spyOn(player!, 'clear');
+
+    // Grow to full, then release and fully decay in one big step.
+    player!.setInput({ up: true, down: false, left: false, right: false });
+    player!.preUpdate(0, 500);
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    clearSpy.mockClear();
+    player!.preUpdate(0, 125);
+
+    expect(player!.getFlameLength()).toBe(0);
+    // The length changed (→ 0), so the final redraw erased the flame.
+    expect(clearSpy).toHaveBeenCalled();
   });
 });

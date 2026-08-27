@@ -10,9 +10,20 @@
  * the config module (`core/config.ts`) — either injected at construction
  * or loaded from saved config — and can be live-updated via `setConfig`.
  *
+ * The thrust flame is animated: it grows from length 0 toward
+ * `shipSize × thrustFlameLength` at a rate proportional to
+ * `thrustAcceleration`, and decays at 4× that rate when thrust stops.
+ * The animation is driven per-frame from the delta time in `preUpdate`
+ * (pure model in `utils/flame.ts`), so it is framerate-independent and
+ * re-targets the current config live.
+ *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
  * until added to the scene.
+ *
+ * Per-frame updates use `preUpdate(time, delta)`: Phaser 4's UpdateList
+ * invokes `preUpdate` (not `update`) on update-list members, and
+ * `add.existing` only registers objects that define `preUpdate`.
  */
 
 import Phaser from 'phaser';
@@ -26,6 +37,7 @@ import {
   MovementConfig,
   tick,
 } from '../utils/movement';
+import { updateFlameLength } from '../utils/flame';
 
 export interface PlayerConfig {
   x: number;
@@ -42,7 +54,10 @@ export interface PlayerConfig {
 export class Player extends Phaser.GameObjects.Graphics {
   private _movementState: MovementState;
   private readonly _input: MovementInput;
-  private _flameVisible = false;
+  /** Current animated flame length in px (0 = no flame drawn). */
+  private _flameLen = 0;
+  /** Last drawn thrust direction — redraw when it changes at full flame. */
+  private _flameDir: { dx: number; dy: number } = { dx: 0, dy: 0 };
   private _config: MovementConfig;
 
   // Visual tuning — runtime-updatable (constructor or setConfig).
@@ -81,7 +96,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     return (this._shipSize / 2) * multiplier;
   }
 
-  /** Redraws the whole ship (body, plus flame if currently thrusting). */
+  /** Redraws the whole ship (body, plus flame when one is visible). */
   private _redraw(): void {
     this.clear();
     this.lineStyle(2, this._shipColor, 1);
@@ -96,7 +111,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     this.closePath();
     this.strokePath();
 
-    if (this._flameVisible) {
+    if (this._flameLen > 0) {
       this._drawFlame();
     }
   }
@@ -109,7 +124,9 @@ export class Player extends Phaser.GameObjects.Graphics {
     const nx = -dir.dx / len;
     const ny = -dir.dy / len;
 
-    const flameLen = this._shipSize * this._flameLength;
+    // Animated length — grows toward shipSize × thrustFlameLength while
+    // thrusting and decays 4× as fast when thrust stops.
+    const flameLen = this._flameLen;
     const tipX = nx * flameLen;
     const tipY = ny * flameLen;
 
@@ -176,14 +193,49 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   // ── Scene lifecycle ──────────────────────────────────────────────
 
-  /** Called by Phaser each frame (Player is on the scene update list). */
-  update(): void {
-    const thrusting = isThrusting(this._input);
+  /**
+   * Called by Phaser's UpdateList each frame (Phaser 4 invokes
+   * `preUpdate(time, delta)` — not `update()` — for update-list
+   * members; `delta` is in milliseconds). Advances the flame animation
+   * with the frame delta so growth/shrink is framerate-independent.
+   */
+  preUpdate(_time: number, delta: number): void {
+    const dt = delta / 1000;
+    const maxLength = this._shipSize * this._flameLength;
+    const prevLen = this._flameLen;
 
-    if (thrusting !== this._flameVisible) {
-      this._flameVisible = thrusting;
+    const nextLen = updateFlameLength(
+      prevLen,
+      {
+        thrusting: isThrusting(this._input),
+        maxLength,
+        thrustAcceleration: this._config.thrust,
+      },
+      dt,
+    );
+
+    const dir = this._dirFromInput();
+    const dirChanged =
+      dir.dx !== this._flameDir.dx || dir.dy !== this._flameDir.dy;
+
+    this._flameLen = nextLen;
+
+    // Redraw only when the visual could have changed: the length moved
+    // (growing or decaying), or the flame's direction changed while a
+    // flame is visible (e.g. turning at full length).
+    if (nextLen !== prevLen || (nextLen > 0 && dirChanged)) {
+      this._flameDir = dir;
       this._redraw();
     }
+  }
+
+  /**
+   * Current animated flame length in px (0 = no flame). Exposed as
+   * observable state so tests can verify the animation without
+   * pixel-level rendering assertions.
+   */
+  getFlameLength(): number {
+    return this._flameLen;
   }
 
   /** Returns the thrust direction vector from current input. */
