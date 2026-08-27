@@ -1,6 +1,6 @@
 # Game Design Document — AI_Hell
 
-> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-26.
+> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-27.
 
 ---
 
@@ -33,17 +33,20 @@
 
 ### 2.2 Movement
 
-- **Thrust-based Newtonian drift** — pure space physics with zero friction and zero damping. The player ship moves on a 2D plane (not lane-based) with velocity changing only via thrust input.
+- **Thrust-based Newtonian movement** — space physics with thrust input and tunable linear deceleration (friction). The player ship moves on a 2D plane (not lane-based); velocity changes via thrust input and, when no direction key is held, decays toward zero.
 - **Thrust acceleration:** Holding a direction key applies continuous acceleration in that direction (8 directions supported — W/A/S/D and arrows, including diagonals). The ship's velocity increases each frame while thrust is held.
-- **Zero-friction drift:** Releasing all keys preserves the current velocity — the ship coasts at constant speed in its current direction. There is no deceleration; stopping or reversing requires applying thrust in the opposite direction.
-- **Maximum speed cap:** Velocity is clamped to a maximum speed to prevent unbounded acceleration. Tunable constants (thrust acceleration, max speed) live in a single configuration module so the feel can be adjusted without digging through scene code.
+- **Deceleration on release:** Releasing all direction keys applies **linear deceleration (friction)** at a tunable rate in px/s², slowing the ship to a full stop. The velocity decays evenly (direction preserved) and clamps at exactly zero — no overshoot, no residual drift. Stopping or reversing faster can be achieved by thrusting in the opposite direction.
+- **Tunable deceleration rate:** The deceleration rate is configurable from **0 to 400 px/s²** (default **100 px/s²**) via the Gym scene ship-tuning sliders, and persists with the rest of the ship configuration. A value of **0 restores the original zero-friction drift** (velocity preserved when no key is held) for experimentation. As a reference point, the default 100 px/s² brings the ship from max speed (~175 px/s) to rest in roughly 1.75 s.
+- **Deceleration applies only when no direction key is held** — while thrusting, the deceleration rate has no effect and thrust behaviour is unchanged.
+- **Maximum speed cap:** Velocity is clamped to a maximum speed to prevent unbounded acceleration. Tunable constants (thrust acceleration, deceleration, max speed) live in a single configuration module so the feel can be adjusted without digging through scene code.
 - **Responsive feel:** Tuning targets are designed so the ship reaches meaningful speed quickly and decelerates/reverses within a "short moment" of holding the opposite key — the ship should feel agile but never sluggish.
 - **Screen-edge wrap-around:** The ship wraps across all four screen edges (leaves left → reappears right, etc.), matching the classic Asteroids model. No hard walls or clamping.
 - **Thruster feedback:** Visual thrust flames appear on the opposite side of the ship when a direction key is held, making movement input legible without racing the physics. The flame is animated: it grows from length 0 toward `shipSize × thrustFlameLength` at a rate proportional to `thrustAcceleration` (higher thrust springs it to full size faster; at 0 thrust it stays invisible), and decays back to 0 at 4× the growth rate when the key is released. Growth/shrink is delta-time based so the animation is framerate-independent and re-targets the current config live.
 - **Tunable constants** (exposed in `src/core/constants.ts`):
   - `THRUST_ACCELERATION` (px/s²): acceleration applied each second when thrust is held.
+  - `FRICTION_DECELERATION` (px/s²): linear deceleration applied each second when no direction key is held; 0 disables friction (original drift behaviour).
   - `MAX_SPEED` (px/s): absolute speed cap.
-  - Tuning targets: ship reaches ~80% of max speed in under 1 second of continuous thrust; reversing from full speed to opposite direction takes under 1.5 seconds.
+  - Tuning targets: ship reaches ~80% of max speed in under 1 second of continuous thrust; from full speed with default deceleration, the ship comes to rest in under 2 seconds of no input; reversing from full speed to opposite direction takes under 1.5 seconds.
 
 ### 2.3 Combat Mechanics
 
