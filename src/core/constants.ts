@@ -58,3 +58,14 @@ export const POWER_UP_COLLECTION_THRESHOLD = 3;
 
 /** Interval between spawns in a round-robin cycle (seconds). */
 export const POWER_UP_SPAWN_INTERVAL = 5;
+
+// ── P9 Magnet (GDD §4.4) ────────────────────────────────────────────
+
+/** Base magnet radius as a multiple of the ship size (2×). */
+export const MAGNET_RADIUS_BASE_MULTIPLIER = 2;
+
+/** Each magnet stack adds this fraction of the base radius (+50%). */
+export const MAGNET_RADIUS_PER_STACK = 0.5;
+
+/** Speed (px/s) at which the magnet pulls on-screen drops toward the ship. */
+export const MAGNET_ATTRACTION_SPEED = 120;
