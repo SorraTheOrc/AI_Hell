@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDiverFormationOffsets,
   buildRectFormationOffsets,
+  buildSwarmClusterOffsets,
   buildVFormationOffsets,
 } from './formations';
 
@@ -21,6 +22,7 @@ describe('formation-offset builders (shared geometry, GDD §4.1)', () => {
       expect(buildVFormationOffsets(count).length).toBe(count);
       expect(buildDiverFormationOffsets(count).length).toBe(count);
       expect(buildRectFormationOffsets(count).length).toBe(count);
+      expect(buildSwarmClusterOffsets(count).length).toBe(count);
     }
   });
 
@@ -68,6 +70,28 @@ describe('formation-offset builders (shared geometry, GDD §4.1)', () => {
       }
       // A proper chevron has a single apex row (row 0 width 1).
       expect(colsByRow.get(0)!.length).toBe(1);
+    });
+  });
+
+  describe('buildSwarmClusterOffsets (loose 3–5 packs, E5)', () => {
+    it('packs enemies into a small number of tight clusters', () => {
+      const offsets = buildSwarmClusterOffsets(10);
+      // 10 enemies ≈ 2–3 clusters of 3–5; the max row spread stays small
+      // relative to the base spacing so packs read as one swarm.
+      const rows = offsets.map((o) => o.row);
+      expect(Math.max(...rows) - Math.min(...rows)).toBeLessThan(4);
+      expect(offsets.length).toBe(10);
+    });
+
+    it('keeps cluster members close while clusters are separated', () => {
+      const offsets = buildSwarmClusterOffsets(12);
+      // Cluster 0's members share the same centre (row/col rounded to the
+      // nearest tenth), so intra-cluster spread is small (< 1 slot).
+      const cluster0 = offsets.filter((o) => o.row < 1);
+      const cols = cluster0.map((o) => o.col);
+      expect(Math.max(...cols) - Math.min(...cols)).toBeLessThan(2);
+      const rows = cluster0.map((o) => o.row);
+      expect(Math.max(...rows) - Math.min(...rows)).toBeLessThan(1.5);
     });
   });
 
