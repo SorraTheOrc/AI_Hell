@@ -15,7 +15,6 @@ import {
   PHASER_BULLET_SPEED,
   PHASER_FIRE_INTERVAL,
   PHASER_ADVANCE_CUE_DURATION,
-  PHASER_ORBITAL_SPEED,
 } from '../../entities/Phaser';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 

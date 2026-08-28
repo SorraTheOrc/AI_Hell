@@ -44,8 +44,8 @@ export const SWARM_BURST_INTERVAL = 900;
 /** How many distinct clusters to divide a swarm into. */
 export const SWARM_CLUSTER_COUNT = 3;
 
-/** Maximum cluster-drift displacement in formation slots (controls spread). */
-const CLUSTER_MAX_SPREAD = 2.5;
+/** Maximum cluster-drift bias in formation slots (controls spread). */
+const CLUSTER_MAX_SPREAD = 1.25;
 
 /** Cluster-direction-change frequency (radians per second on the phase). */
 const CLUSTER_PHASE_SPEED = 0.7;
@@ -88,9 +88,6 @@ export class Swarm extends Phaser.GameObjects.Container {
   private readonly clusterPhase: number;
   // Randomised direction-change bias so clusters split/rejoin organically.
   private clusterBias: number;
-  // Current cluster drift offset (applied on top of the base formation position).
-  private clusterDriftX = 0;
-  private clusterDriftY = 0;
   private clusterDriftPhase = 0;
   // When this member's cluster will next split/rejoin (seconds).
   private nextSplitTime = 1 + Math.random() * 2;
@@ -244,8 +241,8 @@ export class Swarm extends Phaser.GameObjects.Container {
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;
     const baseAngle = Math.atan2(dy, dx);
-    // Spread angle: ±15° around the aim direction for a tight burst.
-    const spread = (Math.random() - 0.5) * 0.3; // ±~17°
+    // Spread angle: ±~17° around the aim direction for a tight burst.
+    const spread = (Math.random() - 0.5) * 0.3;
     const angle = baseAngle + spread;
 
     const graphics = this.scene.add.graphics();
@@ -288,7 +285,6 @@ export class Swarm extends Phaser.GameObjects.Container {
     // Phase advances each frame; the sine wave produces smooth
     // oscillation that causes the cluster to weave back and forth.
     this.clusterDriftPhase += dt * CLUSTER_PHASE_SPEED;
-
     // Split/rejoin: every so often the cluster "decides" to drift
     // further from or closer to its neighbours.
     if (this.nextSplitTime <= 0) {
@@ -300,28 +296,26 @@ export class Swarm extends Phaser.GameObjects.Container {
 
     // Sinusoidal drift: x and y oscillate at slightly different
     // frequencies to produce chaotic-looking (but deterministic) paths.
+    // Amplitudes are a fraction of the slot spacing so members stay a
+    // tight pack while still visibly weaving (GDD §4.1 "tight, fast-moving
+    // clusters").
     const driftX =
       Math.sin(this.clusterDriftPhase + this.clusterPhase) *
-      CLUSTER_MAX_SPREAD *
-      spacingX *
-      0.5 +
-      this.clusterBias * spacingX * 0.3;
+        spacingX *
+        0.3 +
+      this.clusterBias * spacingX * 0.2;
     const driftY =
       Math.cos(this.clusterDriftPhase * 1.37 + this.clusterPhase) *
-      CLUSTER_MAX_SPREAD *
       spacingY *
-      0.3;
-
-    this.clusterDriftX = driftX;
-    this.clusterDriftY = driftY;
+      0.25;
 
     // ── Final position ────────────────────────────────────────────
-    const x = baseX + baseOffsetCol * spacingX + this.clusterDriftX;
-    const y = baseY + baseOffsetRow * spacingY + this.clusterDriftY;
+    const x = baseX + baseOffsetCol * spacingX + driftX;
+    const y = baseY + baseOffsetRow * spacingY + driftY;
     this.setPosition(x, y);
 
     // Diamond rotation: slight tilt based on movement direction.
-    this.bodyGraphics.rotation = Math.atan2(this.clusterDriftY, this.clusterDriftX) * 0.15;
+    this.bodyGraphics.rotation = Math.atan2(driftY, driftX) * 0.15;
   }
 
   destroy(fromScene?: boolean): void {

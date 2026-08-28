@@ -161,6 +161,7 @@ for reference implementations (the base class drives them).
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) |
 | `GymDiver` | `Diver` | diamond/chevron | spread burst (array) |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) |
+| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) |
 
 ---
 
@@ -223,8 +224,10 @@ When a new enemy needs the base scene to behave differently:
   `Container` entity + stub bullets exercise spawn, HUD, drift/respawn,
   explode, shoot toggle, bullet advance, and off-screen removal.
 - **Per-scene** (`src/scenes/gym/GymScout.test.ts`, `GymDiver.test.ts`,
-  `GymTank.test.ts`) — behaviour-preserving tests that must pass unchanged
-  after a refactor; they are the regression net for the scene rewrites.
+  `GymTank.test.ts`, `GymSwarm.test.ts`) — behaviour-preserving tests that
+  must pass unchanged after a refactor; they are the regression net for the
+  scene rewrites. `GymSwarm.test.ts` additionally asserts cluster drift
+  bounds and the pass-through (no-collision) invariant (GDD §2.6).
 - **Browser smoke test** — run `npm run dev`, open the gym index, and
   confirm formations render with the correct neon colours (headless tests
   cannot see pixels; this is a manual step).

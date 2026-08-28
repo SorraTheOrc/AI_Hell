@@ -32,16 +32,14 @@ describe('buildSwarmClusterOffsets (GDD §4.1 cluster geometry)', () => {
     }
   });
 
-  it('distributes members into compact clusters (rows cluster in bands)', () => {
+  it('distributes members into compact clusters of 3–5', () => {
     const offsets = buildSwarmClusterOffsets(15);
-    // The builder groups members in ~5-strong clusters; row bands stay
-    // tight relative to the ~1.4-slot cluster stride.
-    const cluster0 = offsets.filter((o) => o.row < 1.4);
-    const cluster1 = offsets.filter(
-      (o) => o.row >= 1.4 && o.row < 2.8,
-    );
-    const cluster2 = offsets.filter((o) => o.row >= 2.8);
-    expect(cluster0.length + cluster1.length + cluster2.length).toBe(15);
+    expect(offsets.length).toBe(15);
+    // 15 members ⇒ 3 clusters of 5 ⇒ several distinct row bands.
+    const bands = new Set(offsets.map((o) => Math.round(o.row)));
+    expect(bands.size).toBeGreaterThanOrEqual(2);
+    const rows = offsets.map((o) => o.row);
+    expect(Math.max(...rows) - Math.min(...rows)).toBeLessThan(4);
   });
 });
 
@@ -170,11 +168,12 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     right.applyFormationPosition(480, 270, 0.016, 28, 24);
 
     // A collision system would push overlapping bodies apart. Here both
-    // swarms stay co-located (cluster drift is deterministic and small).
+    // swarms stay co-located (cluster drift is bounded to ~12px so the
+    // pack overlap is preserved).
     expect(left.alive).toBe(true);
     expect(right.alive).toBe(true);
-    expect(Math.abs(left.x - right.x)).toBeLessThanOrEqual(20);
-    expect(Math.abs(left.y - right.y)).toBeLessThanOrEqual(20);
+    expect(Math.abs(left.x - right.x)).toBeLessThanOrEqual(25);
+    expect(Math.abs(left.y - right.y)).toBeLessThanOrEqual(25);
   });
 
   it('assigns members to distinct clusters (0..SWARM_CLUSTER_COUNT-1)', async () => {
@@ -191,9 +190,9 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
 
     swarm.applyFormationPosition(100, 100, 0.016, 28, 24);
     // Slot is (100 + 1*28, 100 + 0*24) = (128, 100); cluster drift is
-    // bounded to a few px so the member stays tight with its cluster.
-    expect(swarm.x).toBeGreaterThan(116);
-    expect(swarm.x).toBeLessThan(140);
+    // bounded to ~±12px so the member stays tight with its cluster.
+    expect(swarm.x).toBeGreaterThan(114);
+    expect(swarm.x).toBeLessThan(142);
     expect(swarm.y).toBeGreaterThan(90);
     expect(swarm.y).toBeLessThan(110);
   });

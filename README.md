@@ -375,6 +375,16 @@ The scene is reachable from the gym index ("Scout" entry) and returns to it via 
 
 > **Graphics style gotcha (browser rendering):** Phaser `Graphics` is command-buffered, and `clear()` wipes any styles (line/fill) queued before it — it only re-applies the default white 1px stroke. Entity bodies must therefore call `lineStyle()` **after** `clear()` inside `_drawBody()`; the original Scout code styled before clearing, so the chevrons stroked with the default style and rendered invisible in a real browser (no console error, and headless tests stayed green). `src/entities/Scout.test.ts` regression-tests the stroke style ordering via the command buffer; visual confirmation is a manual `npm run dev` step (formation should show as neon-green chevrons).
 
+#### E5 Swarm Gym Scene
+
+The E5 Swarm gym scene (Create E5 Swarm gym scene) is a standalone Phaser scene demonstrating the E5 Swarm (GDD §4.1) — the fast-moving, unpredictable cluster attacker. It builds on the shared `GymFormationScene` core library and the cluster offset builder in `src/utils/formations.ts`:
+
+- `src/entities/Swarm.ts` — the Swarm entity: a small diamond-shaped neon-blue (`#0066ff`) entity that moves in tight, fast-moving clusters with sudden direction changes. Members weave around their formation slot with a bounded per-cluster drift (clusters of 3–5, GDD §4.1), so packs stay together but can split and rejoin. At Level 4+ (shoot mode) members fire coordinated burst volleys toward the bottom-centre target; 1 HP, explosion on destruction, no collisions (GDD §2.6).
+- `src/scenes/gym/GymSwarm.ts` — the gym scene: a thin `GymFormationScene` subclass spawning a 15-member swarm in ~3 clusters, with the standard `EXPLODE` and `SHOOT: ON/OFF` controls.
+- `src/utils/formations.ts` — `buildSwarmClusterOffsets` (and the `SWARM_CLUSTER_ROW_STRIDE` constant) generate the deterministic cluster geometry for 3–5-member packs.
+
+The scene is reachable from the gym index ("Swarm" entry) and returns to it via the "← INDEX" button. Coverage: `src/entities/Swarm.test.ts` + `src/scenes/gym/GymSwarm.test.ts` verify cluster geometry, drift bounds, pass-through (no collision), explode, shoot toggle and coordinated burst speed.
+
 ### Prioritizing work
 
 At this point we have a number of work items. How do we know which to work on first, and how will the AI decide which to dispatch in downtime?

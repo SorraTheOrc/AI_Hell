@@ -30,7 +30,11 @@ import Phaser from 'phaser';
 
 import { Swarm, SwarmBullet, SWARM_CLUSTER_COUNT } from '../../entities/Swarm';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
-import { buildSwarmClusterOffsets, FormationOffset } from '../../utils/formations';
+import {
+  buildSwarmClusterOffsets,
+  FormationOffset,
+  SWARM_CLUSTER_ROW_STRIDE,
+} from '../../utils/formations';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -65,11 +69,12 @@ const SWARM_CONFIG: EnemyFormationConfig<Swarm, SwarmBullet> = {
     y: number,
     formationOffset: FormationOffset,
   ): Swarm => {
-    // Assign clusters: members are distributed across SWARM_CLUSTER_COUNT
-    // clusters based on their spawn index.
-    const swarmIndex = SWARM_CONFIG.buildOffsets(SWARM_FORMATION_COUNT)
-      .findIndex((o) => o.row === formationOffset.row && o.col === formationOffset.col);
-    const clusterIndex = (swarmIndex % SWARM_CLUSTER_COUNT);
+    // Derive the member's cluster from its offset row band: the builder
+    // places cluster c's members around row c * SWARM_CLUSTER_ROW_STRIDE.
+    const clusterIndex = Math.min(
+      SWARM_CLUSTER_COUNT - 1,
+      Math.max(0, Math.round(formationOffset.row / SWARM_CLUSTER_ROW_STRIDE)),
+    );
     return new Swarm(scene, { x, y, formationOffset }, clusterIndex);
   },
   collectBullets: (swarm, now): SwarmBullet[] => {
