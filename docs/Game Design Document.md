@@ -203,6 +203,8 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
 
+> **Implemented in the GymPowerUps gym (§6.4, `src/scenes/gym/GymPowerUps.ts`):** P5/P8/P9 are implemented with their full §4.4 behaviour in the non-combat gym scene (`GymPowerUps`), verified by the `src/powerups/` module tests. Two operator-decided refinements match the code: **re-collecting an active P5 refreshes its 10 s timer to the full duration** (never additive, never ignored — `src/powerups/effects.ts`), and the P8 lives counter starts at **3** and caps at **5** (excess pickups ignored) as displayed by the standalone HUD (`src/ui/HUD.ts`). The P9 magnet radius formula is `2 × shipSize × (1 + 0.5 × stacks)` with a stack cap of 5.
+
 ### 4.5 Scoring System
 
 | Action | Points |
@@ -295,7 +297,9 @@ src/
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
 │       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
-│       └── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
+│       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
+│       └── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
+│                            round-robin P5/P8/P9 spawning, collection, standalone HUD
 ├── entities/
 │   ├── Player.ts        — Player ship
 │   ├── Enemy.ts         — Base enemy class
@@ -310,21 +314,20 @@ src/
 │   ├── EnemyBullet.ts   — Enemy-fired projectiles
 │   └── BulletPattern.ts — Bullet pattern definitions
 ├── powerups/
-│   ├── PowerUp.ts       — Base power-up class
-│   ├── SpreadShot.ts    — P1
-│   ├── RapidFire.ts     — P2
-│   ├── Shield.ts        — P3
-│   ├── Bomb.ts          — P4
-│   ├── SpeedBoost.ts    — P5
-│   ├── PhaseShift.ts    — P6
-│   ├── Teleport.ts      — P7 (collectable teleport power-up)
-│   ├── ExtraLife.ts     — P8 (passive, rare)
-│   └── Magnet.ts        — P9 (permanent attraction power-up)
+│   ├── PowerUp.ts       — Base power-up drop class: grow/hold/shrink/despawn lifecycle,
+│   │                      delta-time driven (framerate-independent), round-robin spawner;
+│   │                      collection gated at >3% full-size scale
+│   ├── types.ts         — Power-up catalogue (id, name, type, duration/stack semantics per §4.4)
+│   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed multiplier, P9 magnet
+│   │                      radius/attraction); engine-agnostic, consumed by the HUD and scenes
+│   └── icons.ts         — Code-drawn neon power-up icons (shared by field drops and the HUD)
 ├── waves/
 │   ├── WaveManager.ts   — Wave spawning and management
 │   └── Formations.ts    — Formation movement patterns
 ├── ui/
-│   ├── HUD.ts           — Heads-up display (score, lives)
+│   ├── HUD.ts           — Standalone power-up HUD (implemented): Phaser Container attachable to any
+│   │                      scene, renders above gameplay; per-active-effect rows (icon, name,
+│   │                      remaining-seconds timer or stack count) + lives counter
 │   ├── Menu.ts          — Main menu, game-over screen
 │   │                      (distinct from the dev-only gym index; shipped-game UI)
 │   └── Leaderboard.ts   — Leaderboard display and input
