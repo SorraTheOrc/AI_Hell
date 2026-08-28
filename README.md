@@ -407,7 +407,7 @@ The ship skill will ensure all work items that are in_review have been fully aud
 
 To run a release hit `S`, a dialog will appear asking you to confirm the intention is to ship (by typing `ship`). Alternatively, as with all actions carried out from the Context Hub, you can ask your agents in chat with somethiung like "Ship It".
 
-Once the ship process starts the project is put into a code freeze mode. The scheduler will no longer scheduler implementation work, though intakes and planning work items will still be dispatched. This means that while the (sometimes time consuming) QA processes are running we can continue to add work items for the development of the game. 
+Once the ship process starts the project is put into a code freeze mode. The scheduler will no longer schedule implementation work, though intakes and planning work items will still be dispatched. This means that while the (sometimes time consuming) QA processes are running we can continue to add work items for the development of the game. 
 
 ## Local versus Remote LLM
 
