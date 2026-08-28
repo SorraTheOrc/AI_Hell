@@ -50,16 +50,18 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
   it('AC3+AC4 — discovers the gym folder, excludes .test.ts, sorts alphabetically by label', async () => {
     const scene = await bootIndex();
 
-    // GymPlayer, GymScout, GymTank, GymDiver are on disk. Labels strip the
-    // leading "Gym" and are sorted alphabetically.
+    // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver are on disk. Labels
+    // strip the leading "Gym" and are sorted alphabetically.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Diver',
+      'Phaser',
       'Player',
       'Scout',
       'Tank',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymDiver',
+      'GymPhaser',
       'GymPlayer',
       'GymScout',
       'GymTank',
