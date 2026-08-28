@@ -103,6 +103,31 @@ describe('power-up catalogue (types)', () => {
 
 // ── Round-robin spawner AC1: spawn order ────────────────────────────
 
+describe('round-robin spawner AC2: spawn cadence', () => {
+  it('produces exactly one spawn per interval slot', () => {
+    expect(roundRobinSpawner(1)).toHaveLength(1);
+    expect(roundRobinSpawner(2)).toHaveLength(2);
+    expect(roundRobinSpawner(5)).toHaveLength(5);
+  });
+
+  it('spawn interval equals drop lifetime — the next spawn coincides with the previous despawn (exactly one drop on screen)', () => {
+    // One spawn every 5 s, 5 s lifetime → at every spawn tick the previous
+    // drop has just finished fading, so at most one drop exists at a time.
+    expect(POWER_UP_SPAWN_INTERVAL).toBe(POWER_UP_LIFECYCLE_TOTAL_LIFETIME);
+  });
+
+  it('a drop spawned at t=0 despawns exactly when the next spawn fires', () => {
+    const lifespan = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    lifespan.advance(POWER_UP_SPAWN_INTERVAL);
+    expect(lifespan.state).toBe(PowerUpState.DESPAWNED);
+
+    // Just before the spawn tick the drop is still alive (not yet removed).
+    const nearlyDone = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    nearlyDone.advance(POWER_UP_SPAWN_INTERVAL - 0.001);
+    expect(nearlyDone.state).not.toBe(PowerUpState.DESPAWNED);
+  });
+});
+
 describe('round-robin spawner AC1: spawn order', () => {
   it('cycles P5 → P8 → P9 in ascending GDD order', () => {
     const order = roundRobinSpawner(3);
