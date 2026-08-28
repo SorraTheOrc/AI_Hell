@@ -116,6 +116,15 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _componentThrust: { dx: number; dy: number } | null = null;
   private _config: MovementConfig;
 
+  /**
+   * Nominal movement config (pre-multiplier). P5 Speed Boost scales
+   * thrust + max-speed about these values via {@link setSpeedMultiplier}.
+   */
+  private _baseConfig: MovementConfig;
+
+  /** Current live speed multiplier (1 = normal, 1.5 = P5 boosted). */
+  private _speedMultiplier = 1;
+
   // Visual tuning — runtime-updatable (constructor or setConfig).
   private _shipSize: number;
   private _shipColor: number;
@@ -138,11 +147,12 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._flameColor = ship.thrustFlameColor;
     this._flameInnerColor = ship.thrustFlameInnerColor;
     this._flameLength = ship.thrustFlameLength;
-    this._config = {
+    this._baseConfig = {
       thrust: ship.thrustAcceleration,
       maxSpeed: ship.maxSpeed,
       friction: ship.frictionDeceleration,
     };
+    this._config = { ...this._baseConfig };
 
     this._redraw();
   }
@@ -300,13 +310,41 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._flameColor = config.thrustFlameColor;
     this._flameInnerColor = config.thrustFlameInnerColor;
     this._flameLength = config.thrustFlameLength;
-    this._config = {
+    this._baseConfig = {
       thrust: config.thrustAcceleration,
       maxSpeed: config.maxSpeed,
       friction: config.frictionDeceleration,
     };
+    this._applySpeedMultiplier();
 
     this._redraw();
+  }
+
+  /**
+   * Applies a live movement multiplier (P5 Speed Boost: +50%): thrust and
+   * max-speed scale by `multiplier` about the nominal config; friction and
+   * rendering are untouched. 1 = normal speed. Applied to physics only.
+   */
+  setSpeedMultiplier(multiplier: number): void {
+    if (this._speedMultiplier === multiplier) return;
+    this._speedMultiplier = multiplier;
+    this._applySpeedMultiplier();
+  }
+
+  /**
+   * Current effective movement config (multiplier applied). Exposed for
+   * tests and the scene's magnet/speed integrations.
+   */
+  getMovementConfig(): MovementConfig {
+    return { ...this._config };
+  }
+
+  private _applySpeedMultiplier(): void {
+    this._config = {
+      thrust: this._baseConfig.thrust * this._speedMultiplier,
+      maxSpeed: this._baseConfig.maxSpeed * this._speedMultiplier,
+      friction: this._baseConfig.friction,
+    };
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────

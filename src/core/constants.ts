@@ -59,6 +59,9 @@ export const POWER_UP_COLLECTION_THRESHOLD = 3;
 /** Interval between spawns in a round-robin cycle (seconds). */
 export const POWER_UP_SPAWN_INTERVAL = 5;
 
+/** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. */
+export const POWER_UP_DROP_SIZE = 16;
+
 // ── P9 Magnet (GDD §4.4) ────────────────────────────────────────────
 
 /** Base magnet radius as a multiple of the ship size (2×). */
