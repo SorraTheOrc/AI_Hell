@@ -69,3 +69,8 @@ export const MAGNET_RADIUS_PER_STACK = 0.5;
 
 /** Speed (px/s) at which the magnet pulls on-screen drops toward the ship. */
 export const MAGNET_ATTRACTION_SPEED = 120;
+
+// ── UI ───────────────────────────────────────────────────────────────
+
+/** Render depth of the standalone HUD — above gameplay objects. */
+export const HUD_DEPTH = 1000;
