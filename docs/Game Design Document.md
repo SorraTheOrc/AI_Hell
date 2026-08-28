@@ -50,7 +50,7 @@
 
 ### 2.3 Combat Mechanics
 
-- **Auto-fire**: The player ship fires continuously without any input. The fire rate is fixed and consistent.
+- **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). The fire rate and shot pattern depend on the **equipped weapon** (§4.4): the default **Cannon** fires a single bullet straight ahead every ~400 ms; weapon power-ups (Spread/Dual/Rapid) replace it persistently with their own pattern and rate before returning to the Cannon via the **Reset** power-up.
 - **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **P8 – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
@@ -187,8 +187,8 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
-| P1 | **Spread Shot** | Fires 3 bullets in a fan pattern for 10 seconds | Triple-line neon arc |
-| P2 | **Rapid Fire** | Doubles fire rate for 10 seconds | Firing-rate waveform |
+| P1 | **Spread Shot** | Fires a 3-bullet fan (-30°/0°/+30° relative to heading) **until replaced** (persistent, no timer) | Triple-line neon arc |
+| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) **until replaced** (persistent, no timer) | Firing-rate waveform |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
@@ -203,7 +203,9 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
 
-> **Implemented in the GymPowerUps gym (§6.4, `src/scenes/gym/GymPowerUps.ts`):** P5/P8/P9 are implemented with their full §4.4 behaviour in the non-combat gym scene (`GymPowerUps`), verified by the `src/powerups/` module tests. Two operator-decided refinements match the code: **re-collecting an active P5 refreshes its 10 s timer to the full duration** (never additive, never ignored — `src/powerups/effects.ts`), and the P8 lives counter starts at **3** and caps at **5** (excess pickups ignored) as displayed by the standalone HUD (`src/ui/HUD.ts`). The P9 magnet radius formula is `2 × shipSize × (1 + 0.5 × stacks)` with a stack cap of 5.
+> **P1 / P2 (Weapon Power-Ups) — Persistent until replaced:** Weapon power-ups (P1 Spread Shot, P2 Rapid Fire, plus the new Dual and Reset drops) are **persistent** — they remain equipped **indefinitely** until the player collects a different weapon power-up. This is a **deviation from the original timed (10 s) semantics** defined above; the operator decided that weapon power-ups should persist like the P9 Magnet, making weapon selection meaningful rather than fleeting. A fourth power-up drop, **Reset**, returns the ship to the default Cannon.
+
+> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **persistent** (non-timed) semantics per operator decision, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and instant weapon switching on collection. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the weapon slot + fire cooldown and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
 
 ### 4.5 Scoring System
 
@@ -294,14 +296,20 @@ src/
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (sole scene in gameConfig):
 │   │                      discovers + lists gym scenes from scenes/gym/ (import.meta.glob)
 │   └── gym/
-│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
-│       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
+│       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
+│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
+│       ├── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
+│       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
+│       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
+│       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
 │       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
-│       └── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
-│                            round-robin P5/P8/P9 spawning, collection, standalone HUD
+│       └── GymWeapons.ts — weapon power-up gym (key GymWeapons, label "Weapons"):
+│                           auto-fire ship + round-robin Spread/Dual/Rapid/Reset
+│                           drops (7 s lifetime, persistent weapon switching)
 ├── entities/
-│   ├── Player.ts        — Player ship
+│   ├── Player.ts        — Player ship (auto-fire, weapon slot)
+│   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, off-screen cull)
 │   ├── Enemy.ts         — Base enemy class
 │   ├── Scout.ts         — E1 Scout
 │   ├── Diver.ts         — E2 Diver

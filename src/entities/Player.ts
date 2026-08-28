@@ -22,6 +22,14 @@
  * (pure model in `utils/flame.ts`), so it is framerate-independent and
  * re-targets the current config live.
  *
+ * Weapon system: the ship auto-fires its equipped weapon (GDD §2.3) in
+ * the direction of movement — the current velocity heading, or the most
+ * recent non-zero heading when stationary. Weapons are persistent
+ * (no timer) until replaced by another weapon power-up (GDD §4.4). The
+ * heading + bullet-pattern math lives in `utils/weapons.ts`; the Player
+ * exposes `getHeading()`, `equipWeapon()`, `resetWeapon()`, and a fire
+ * cooldown the scene gates bullet emission with.
+ *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
  * until added to the scene.
@@ -43,6 +51,12 @@ import {
 } from '../utils/movement';
 import { updateFlameLength } from '../utils/flame';
 import { EnginePort, enginesForThrust, selectEngines } from '../utils/engineSelection';
+import {
+  WeaponId,
+  WEAPON_CATALOGUE,
+  getWeaponById,
+  computeHeading,
+} from '../utils/weapons';
 
 export interface PlayerConfig {
   x: number;
@@ -51,15 +65,6 @@ export interface PlayerConfig {
   config?: ShipConfig;
 }
 
-/**
- * The four cardinal engine ports on the hull. Positions are expressed as
- * unit offsets from the hull centre (scaled by `r = shipSize / 2` at draw
- * time); `nx`/`ny` is the port's outward normal — the direction its flame
- * shoots, which is opposite the thrust that fires it.
- * `arcStart`/`arcEnd` are the Phaser arc angles (radians, 0 = right,
- * positive = clockwise) of the small quarter-circle indicator drawn at
- * the port, centred on the outward direction.
- */
 /**
  * Geometry of one cardinal engine port on the hull. Positions are
  * expressed as unit offsets from the hull centre (scaled by
@@ -124,6 +129,17 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   /** Current live speed multiplier (1 = normal, 1.5 = P5 boosted). */
   private _speedMultiplier = 1;
+
+  // ── Weapon system (AC1, AC2) ────────────────────────────────────
+
+  /** Currently equipped weapon ID (defaults to cannon). */
+  private _equippedWeapon: WeaponId = 'cannon';
+  /** Most-recent heading in radians (fallback when stationary). */
+  private _lastHeading: number | null = null;
+  /** Fire cooldown in milliseconds before the next shot is allowed. */
+  private _fireCooldown = 0;
+  /** Default heading in radians when the ship has never moved (0 = right). */
+  private _defaultHeading = 0;
 
   // Visual tuning — runtime-updatable (constructor or setConfig).
   private _shipSize: number;
@@ -345,6 +361,109 @@ export class Player extends Phaser.GameObjects.Graphics {
       maxSpeed: this._baseConfig.maxSpeed * this._speedMultiplier,
       friction: this._baseConfig.friction,
     };
+  }
+
+  // ── Heading ──────────────────────────────────────────────────────
+
+  /**
+   * Returns the ship's current heading in radians (0 = right,
+   * positive = clockwise), derived from the current velocity vector.
+   * When the ship is stationary (speed ≈ 0), falls back to the most
+   * recent non-zero heading so auto-fire keeps pointing in a known
+   * direction (AC1, GDD §2.3).
+   *
+   * @returns Heading in radians.
+   */
+  getHeading(): number {
+    this._lastHeading = computeHeading(
+      this._movementState.vx,
+      this._movementState.vy,
+      this._lastHeading,
+      this._defaultHeading,
+    );
+    return this._lastHeading;
+  }
+
+  // ── Weapon slot (AC1, AC2) ──────────────────────────────────────
+
+  /**
+   * Equips the given weapon.  The weapon persists (no timer) until
+   * replaced by another weapon power-up (AC2).
+   *
+   * @param weaponId — The weapon to equip.
+   */
+  equipWeapon(weaponId: WeaponId): void {
+    if (!WEAPON_CATALOGUE[weaponId]) {
+      return;
+    }
+    this._equippedWeapon = weaponId;
+    this._readyFire();
+  }
+
+  /**
+   * Resets the equipped weapon to the starting Cannon (AC2 — Reset
+   * power-up).  Called by the Reset power-up on collection.
+   */
+  resetWeapon(): void {
+    this._equippedWeapon = 'cannon';
+    this._readyFire();
+  }
+
+  /** Returns the currently equipped weapon ID. */
+  getEquippedWeapon(): WeaponId {
+    return this._equippedWeapon;
+  }
+
+  /**
+   * Returns the weapon definition for the currently equipped weapon.
+   */
+  getWeaponDef(): ReturnType<typeof getWeaponById> {
+    return getWeaponById(this._equippedWeapon);
+  }
+
+  // ── Auto-fire emission (AC1) ────────────────────────────────────
+
+  /** Returns true if the weapon is ready to fire (cooldown elapsed). */
+  isFireReady(): boolean {
+    return this._fireCooldown <= 0;
+  }
+
+  /** Returns the current fire cooldown in milliseconds (0 = ready). */
+  getFireCooldown(): number {
+    return this._fireCooldown;
+  }
+
+  /**
+   * Advances the fire cooldown by `dtMs` milliseconds, clamping at 0.
+   *
+   * @param dtMs — Delta time in milliseconds.
+   */
+  tickFireCooldown(dtMs: number): void {
+    if (this._fireCooldown > 0) {
+      this._fireCooldown = Math.max(0, this._fireCooldown - dtMs);
+    }
+  }
+
+  /**
+   * Attempts to fire the equipped weapon given `dt` seconds have elapsed.
+   * Decrements the cooldown; when the cooldown has fully elapsed, sets
+   * it to the weapon's fire rate and returns `true` — the caller emits
+   * the bullet pattern this frame.
+   *
+   * @param dt — Delta time in seconds since the last call.
+   * @returns true if a shot was ready to fire this frame.
+   */
+  tryFire(dt: number): boolean {
+    const fireRateMs = this.getWeaponDef().fireRateMs;
+    this._fireCooldown -= dt * 1000;
+    if (this._fireCooldown > 0) return false;
+    this._fireCooldown = fireRateMs;
+    return true;
+  }
+
+  /** Resets the fire cooldown to zero, allowing an immediate next shot. */
+  private _readyFire(): void {
+    this._fireCooldown = 0;
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────

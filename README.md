@@ -398,6 +398,18 @@ The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collect
 
 The scene is reachable from the gym index ("PowerUps" entry). It is reused as the shared power-up lifecycle/HUD foundation by the combat power-up gym. Coverage: `src/powerups/*.test.ts` + `src/scenes/gym/GymPowerUps.test.ts` (+ `HUD.test.ts`) verify lifecycle timing, round-robin order, threshold, effect semantics, HUD model and scene behaviour.
 
+#### GymWeapons Gym Scene
+
+The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire and weapon gym scene) gives the player ship its first real weapon — auto-fire (GDD §2.3) plus three weapon power-ups and a Reset (GDD §4.4, persistent semantics per operator):
+
+- `src/utils/weapons.ts` — pure, unit-testable weapon catalogue: `cannon` (single bullet), `spread` (3-bullet fan at -30°/0°/+30°), `dual` (2 bullets perpendicular to heading), `rapid` (single bullets at a markedly higher rate) — each with its own fire rate, bullet colour/shape — plus heading math (`headingFromVelocity`, `absoluteAngle`, `computeHeading` — most-recent-heading fallback when stationary) and scene-facing helpers (`createBulletsFromHeading`, `angleToVelocity`).
+- `src/entities/Player.ts` — auto-fire weapon slot on the ship: `equipWeapon(id)` / `resetWeapon()` (**persistent** — no timer, AC2), `getHeading()`, fire cooldown (`tryFire`).
+- `src/entities/PlayerBullet.ts` — Graphics-drawn player bullet (`vx`/`vy`, filled circle), created via `createPlayerBullet` and culled off-screen via `advanceAndCull` (no physics bodies, matching the ScoutBullet precedent).
+- `src/powerups/icons.ts` — distinctive code-drawn weapon icons (fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset); `src/audio/effects.ts` — spawn/despawn/collection/weapon-change cues (Web Audio synthesis, safe no-op fallback).
+- `src/scenes/gym/GymWeapons.ts` — the scene: ship + auto-fire + round-robin weapon-drop spawner (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime — parameterised via `WEAPON_DROP_LIFETIME`, sharing the `PowerUp` grow/hold/shrink lifecycle with the 5 s non-combat gym), collection gated at ≥3% scale, persistent weapon switching, and the shared "← INDEX" back button.
+
+The scene is reachable from the gym index ("Weapons" entry). Coverage: `src/utils/weapons.test.ts` (pattern math, fire rates, round-robin order, heading fallback) + `src/scenes/gym/GymWeapons.test.ts` (auto-discovery, ship presence, auto-fire, persistent switching/reset, round-robin, grow/shrink, collection gating) + `src/entities/Player.test.ts` (heading/equip/auto-fire behaviours).
+
 ### Prioritizing work
 
 At this point we have a number of work items. How do we know which to work on first, and how will the AI decide which to dispatch in downtime?
