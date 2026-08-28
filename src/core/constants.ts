@@ -41,3 +41,20 @@ export const THRUST_FLAME_INNER_COLOR = DEFAULT_CONFIG.thrustFlameInnerColor;
 
 /** Linear deceleration rate when no thrust is applied (px/s²). */
 export const FRICTION_DECELERATION = DEFAULT_CONFIG.frictionDeceleration;
+
+// ── Power-up lifecycle (GDD §4.4, GymPowerUps gym) ─────────────────
+
+/** Time in seconds for a power-up drop to grow from scale 0 to full size. */
+export const POWER_UP_GROW_DURATION = 0.5;
+
+/** Time in seconds for a power-up drop to shrink from full size to 0. */
+export const POWER_UP_SHRINK_DURATION = 0.5;
+
+/** Total lifetime of a power-up drop from spawn to despawn (seconds). */
+export const POWER_UP_LIFETIME = 5;
+
+/** Collection threshold: drops are collectible only above this percentage of full size (3). */
+export const POWER_UP_COLLECTION_THRESHOLD = 3;
+
+/** Interval between spawns in a round-robin cycle (seconds). */
+export const POWER_UP_SPAWN_INTERVAL = 5;
