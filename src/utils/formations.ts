@@ -79,6 +79,40 @@ export function buildDiverFormationOffsets(count: number): FormationOffset[] {
 }
 
 /**
+ * Builds loose cluster offsets for swarms (E5, GDD §4.1).
+ *
+ * Offsets are 2D Gaussian-ish clusters around a few local centres rather
+ * than a strict grid, so the swarm reads as several tight packs that can
+ * slide past one another. Returns offsets in spawn order (cluster 0 first).
+ */
+export function buildSwarmClusterOffsets(count: number): FormationOffset[] {
+  const offsets: FormationOffset[] = [];
+  if (count <= 0) return offsets;
+
+  const clusters = Math.max(1, Math.round(count / 4)); // 3–5 per pack
+  let remaining = count;
+  let spawn = 0;
+  for (let c = 0; c < clusters && remaining > 0; c++) {
+    const packSize = Math.min(remaining, Math.max(2, Math.round(count / clusters)));
+    // Local centre of this cluster (each cluster drifts independently).
+    const centreRow = c * 1.4;
+    const centreCol = c * 1.8;
+    for (let m = 0; m < packSize; m++) {
+      // Squareish scatter around the centre (deterministic, seeded by index).
+      const spread = m % 2 === 0 ? 0.7 : -0.7;
+      const drift2 = Math.floor(m / 2) - Math.floor(packSize / 2);
+      offsets.push({
+        row: centreRow + Math.round(spread * 100) / 100,
+        col: centreCol + Math.round(drift2 * 0.9 * 100) / 100,
+      });
+      remaining--;
+      spawn++;
+    }
+  }
+  return offsets;
+}
+
+/**
  * Builds a rectangular grid formation of tanks.
  * Returns offsets in row-major order (row 0 = front, col spreads outward).
  */
