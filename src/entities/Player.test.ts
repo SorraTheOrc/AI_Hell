@@ -641,4 +641,181 @@ describe('Player ship entity', () => {
     const third = player!.getFlameLength();
     expect(third).toBeGreaterThan(second);
   });
+
+  // ── Weapon system: heading, equip, auto-fire ─────────────────────
+
+  it('starts equipped with the cannon weapon (AC1, AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+  });
+
+  it('getHeading returns 0° (right) when stationary with no prior movement', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    // Ship starts at centre with zero velocity.
+    player!.setPosition(480, 270);
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    expect(player!.getHeading()).toBe(0);
+  });
+
+  it('getHeading derives heading from velocity when moving', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.setPosition(480, 270);
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.physicsTick(1, scene.scale.width, scene.scale.height);
+
+    // Moving right → heading should be 0°.
+    expect(player!.getHeading()).toBe(0);
+  });
+
+  it('getHeading falls back to most-recent heading when stationary (AC7)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.setPosition(480, 270);
+
+    // Move right first → heading = 0°.
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.physicsTick(1, scene.scale.width, scene.scale.height);
+    expect(player!.getHeading()).toBe(0);
+
+    // Stop moving → heading should still be 0° (most-recent fallback).
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    player!.physicsTick(0.5, scene.scale.width, scene.scale.height);
+    expect(player!.getHeading()).toBe(0);
+  });
+
+  it('equipWeapon swaps to the given weapon (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+
+    player!.equipWeapon('spread');
+    expect(player!.getEquippedWeapon()).toBe('spread');
+
+    player!.equipWeapon('rapid');
+    expect(player!.getEquippedWeapon()).toBe('rapid');
+  });
+
+  it('resetWeapon returns to cannon (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('spread');
+    expect(player!.getEquippedWeapon()).toBe('spread');
+
+    player!.resetWeapon();
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+  });
+
+  it('getWeaponDef returns the correct definition for the equipped weapon', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+
+    // Cannon: single bullet, 400 ms fire rate.
+    expect(player!.getWeaponDef().id).toBe('cannon');
+    expect(player!.getWeaponDef().offsets).toEqual([0]);
+    expect(player!.getWeaponDef().fireRateMs).toBe(400);
+
+    player!.equipWeapon('rapid');
+    expect(player!.getWeaponDef().id).toBe('rapid');
+    expect(player!.getWeaponDef().offsets).toEqual([0]);
+    expect(player!.getWeaponDef().fireRateMs).toBe(125);
+  });
+
+  it('tryFire fires once then blocks until cooldown elapses (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('cannon'); // 400 ms fire rate
+
+    // First call: ready to fire.
+    const fired1 = player!.tryFire(0.5); // 500 ms > 400 ms → fires
+    expect(fired1).toBe(true);
+
+    // Second call immediately: cooldown not elapsed.
+    const fired2 = player!.tryFire(0.1); // 100 ms < 400 ms → blocked
+    expect(fired2).toBe(false);
+
+    // After remaining cooldown: fires again.
+    const fired3 = player!.tryFire(0.35); // 350 ms more → 450 ms total ≥ 400 ms
+    expect(fired3).toBe(true);
+  });
+
+  it('tryFire with rapid weapon fires much faster (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('rapid'); // 125 ms fire rate
+
+    // At 125 ms intervals, should fire every time.
+    expect(player!.tryFire(0.125)).toBe(true);
+    expect(player!.tryFire(0.125)).toBe(true);
+    expect(player!.tryFire(0.125)).toBe(true);
+  });
+
+  it('tryFire with spread weapon blocks between shots (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('spread'); // 600 ms fire rate
+
+    // First shot at 600 ms.
+    expect(player!.tryFire(0.6)).toBe(true);
+    // Next shot blocked at 100 ms.
+    expect(player!.tryFire(0.1)).toBe(false);
+    // After 500 ms more (total 1100 ms ≥ 600 ms), fires again.
+    expect(player!.tryFire(0.5)).toBe(true);
+  });
+
+  it('tickFireCooldown decrements the cooldown (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('cannon');
+
+    // Fire once to set cooldown.
+    player!.tryFire(0.5);
+    expect(player!.getFireCooldown()).toBeGreaterThan(0);
+
+    // Tick cooldown forward.
+    player!.tickFireCooldown(100);
+    expect(player!.getFireCooldown()).toBeLessThanOrEqual(300);
+  });
+
+  it('isFireReady returns true when cooldown has elapsed', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player!.isFireReady()).toBe(true);
+
+    player!.tryFire(0.5);
+    expect(player!.isFireReady()).toBe(false);
+
+    player!.tickFireCooldown(500);
+    expect(player!.isFireReady()).toBe(true);
+  });
 });

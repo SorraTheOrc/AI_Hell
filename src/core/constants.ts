@@ -77,3 +77,28 @@ export const MAGNET_ATTRACTION_SPEED = 120;
 
 /** Render depth of the standalone HUD — above gameplay objects. */
 export const HUD_DEPTH = 1000;
+
+// ── Weapon power-ups (GDD §4.4, GymWeapons gym) ────────────────────
+
+/**
+ * Total lifetime of a weapon power-up drop from spawn to despawn
+ * (seconds).  Longer than non-combat drops (7 s vs 5 s) to give
+ * the player more time to see and collect weapon patterns.
+ */
+export const WEAPON_DROP_LIFETIME = 7;
+
+/** Collection threshold percentage — weapon drops are collectible
+ * only above this percentage of full size (3).
+ */
+export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
+
+/** Base radius of a weapon drop on the field (px), scaled by lifecycle.
+ * Same as non-combat drops.
+ */
+export const WEAPON_DROP_SIZE = POWER_UP_DROP_SIZE;
+
+/** Bullet speed in px/s for player weapons. */
+export const PLAYER_BULLET_SPEED = 350;
+
+/** Bullet radius in px for all player weapons. */
+export const PLAYER_BULLET_RADIUS = 3;

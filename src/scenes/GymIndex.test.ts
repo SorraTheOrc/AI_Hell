@@ -50,8 +50,9 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
   it('AC3+AC4 — discovers the gym folder, excludes .test.ts, sorts alphabetically by label', async () => {
     const scene = await bootIndex();
 
-    // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver, GymSwarm are on
-    // disk. Labels strip the leading "Gym" and are sorted alphabetically.
+    // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver, GymSwarm,
+    // GymPowerUps, GymWeapons are on disk. Labels strip the leading
+    // "Gym" and are sorted alphabetically.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Diver',
       'Phaser',
@@ -60,6 +61,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Scout',
       'Swarm',
       'Tank',
+      'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymDiver',
@@ -69,6 +71,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymScout',
       'GymSwarm',
       'GymTank',
+      'GymWeapons',
     ]);
 
     // No .test.ts module leaks into the list, and the index itself is not
