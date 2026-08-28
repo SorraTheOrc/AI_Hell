@@ -202,6 +202,25 @@ describe('GymPowerUps AC4: shared back button + HUD presence', () => {
     expect(found).toBeDefined();
   });
 
+  it('the ← INDEX back button navigates back to the gym index', async () => {
+    // Boot the gym scene with the index registered alongside it.
+    booted = await bootScene([GymPowerUps, GymIndex]);
+    const scene = booted!.scene as GymPowerUps;
+    expect(scene.sys.isActive()).toBe(true);
+
+    const button = scene.children.list.find(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.text === BACK_TO_INDEX_LABEL,
+    );
+    expect(button).toBeDefined();
+
+    button!.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
+  });
+
   it('attaches the standalone HUD rendering above gameplay', async () => {
     booted = await bootScene([GymPowerUps]);
     const scene = booted!.scene as GymPowerUps;
