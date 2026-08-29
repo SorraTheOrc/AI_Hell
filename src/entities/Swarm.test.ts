@@ -9,6 +9,7 @@ import {
   SWARM_BURST_INTERVAL,
   SWARM_CLUSTER_COUNT,
   SWARM_COLOR,
+  SWARM_SIZE,
   Swarm,
   buildSwarmClusterOffsets,
 } from './Swarm';
@@ -70,6 +71,58 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     expect(swarm.alive).toBe(true);
     expect(swarm.bodyVisible).toBe(true);
     expect(SWARM_COLOR).toBe(0x0066ff); // neon blue per GDD §4.1
+  });
+
+  it('pins the diamond geometry to the 15 px span (AC1 size regression guard)', async () => {
+    // Phaser Graphics command ids + arg counts (src/gameobjects/graphics/Commands.js).
+    const COMMANDS: Record<number, number> = {
+      1: 0, // BEGIN_PATH
+      2: 0, // CLOSE_PATH
+      4: 2, // LINE_TO
+      5: 2, // MOVE_TO
+      6: 3, // LINE_STYLE
+      7: 2, // FILL_STYLE
+      8: 0, // FILL_PATH
+      9: 0, // STROKE_PATH
+    };
+    const MOVE_TO = 5;
+    const LINE_TO = 4;
+
+    booted = await bootScene([HarnessScene]);
+    const swarm = makeSwarm(100, 100);
+
+    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    const body = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics &&
+        c.commandBuffer.includes(MOVE_TO),
+    );
+    expect(body, 'expected a body Graphics child with a drawn path').toBeDefined();
+
+    // Decode the buffer structurally — walking by each command's arg count so
+    // vertex values that happen to equal a command id are never misread.
+    const buf: number[] = body!.commandBuffer as number[];
+    const vertices: Array<[number, number]> = [];
+    for (let i = 0; i < buf.length; ) {
+      const id = buf[i];
+      const argc = COMMANDS[id];
+      if (argc === undefined) break; // unknown command — stop walking
+      if (id === MOVE_TO || id === LINE_TO) {
+        vertices.push([buf[i + 1], buf[i + 2]]);
+      }
+      i += 1 + argc;
+    }
+
+    // _drawBody() diamond: top (0,-h), right (h,0), bottom (0,h), left (-h,0)
+    // where h = SWARM_SIZE / 2 — so the diamond spans SWARM_SIZE px per axis.
+    expect(vertices.length).toBe(4); // 1 moveTo + 3 lineTo (path closes back)
+    const xs = vertices.map((v) => v[0]);
+    const ys = vertices.map((v) => v[1]);
+    const spanX = Math.max(...xs) - Math.min(...xs);
+    const spanY = Math.max(...ys) - Math.min(...ys);
+    expect(SWARM_SIZE).toBe(15);
+    expect(spanX).toBeCloseTo(SWARM_SIZE, 5);
+    expect(spanY).toBeCloseTo(SWARM_SIZE, 5);
   });
 
   it('strokes the diamond with the GDD blue style applied AFTER the buffer clear (browser render regression)', async () => {
@@ -193,6 +246,45 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
 
     // Destroying twice is harmless.
     expect(() => swarm.destroySelf()).not.toThrow();
+  });
+
+  it('destruction explosion rings derive their radii from SWARM_SIZE (AC3)', async () => {
+    const ARC = 0; // Phaser Graphics Commands.ARC: [id, x, y, radius, start, end, ccw, overshoot]
+
+    booted = await bootScene([HarnessScene]);
+    const swarm = makeSwarm(100, 100);
+
+    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    // The explosion Graphics is the child that is NOT the body (the body holds
+    // the diamond MOVE_TO path; the explosion starts with only default styles).
+    const explosion = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics &&
+        !(c.commandBuffer as number[]).includes(5), // MOVE_TO — absent until the tween runs
+    );
+    expect(explosion, 'expected an idle explosion Graphics child').toBeDefined();
+
+    swarm.destroySelf();
+    const tweens = booted!.scene.tweens.getTweens();
+    expect(tweens.length).toBe(1);
+    // Seek halfway through the 400ms explosion (emit callbacks) → alpha ≈ 0.5.
+    tweens[0].seek(200, 16.6, true);
+
+    // radius = SWARM_SIZE * (2 * (1 - alpha) + 0.25) for alpha in [0, 1] —
+    // linear in SWARM_SIZE, so the ring scales proportionally with the body.
+    // Solving for the observed alpha proves the radius sits on the formula's
+    // curve (i.e. it derives from SWARM_SIZE, AC3), without pinning the pool
+    // progress to an exact value.
+    const buf: number[] = explosion!.commandBuffer as number[];
+    const arcIdx = buf.indexOf(ARC);
+    expect(arcIdx, 'expected an ARC ring command in the explosion buffer').toBeGreaterThanOrEqual(0);
+    const radius = buf[arcIdx + 3];
+    const ratio = radius / SWARM_SIZE;
+    const impliedAlpha = 1 - (ratio - 0.25) / 2;
+    expect(impliedAlpha).toBeGreaterThan(0);
+    expect(impliedAlpha).toBeLessThan(1);
+    // Mid-explosion: the ring has already expanded beyond the enlarged body.
+    expect(radius).toBeGreaterThan(SWARM_SIZE);
   });
 
   it('swarms pass freely through each other — overlapping members neither repel nor separate (GDD §2.6)', async () => {

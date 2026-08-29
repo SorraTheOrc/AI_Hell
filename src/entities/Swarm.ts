@@ -26,8 +26,8 @@ export { buildSwarmClusterOffsets } from '../utils/formations';
 /** Neon-blue body colour per GDD §4.1 art direction. */
 export const SWARM_COLOR = 0x0066ff;
 
-/** Half-size of the diamond (the diamond spans SWARM_SIZE px). */
-export const SWARM_SIZE = 10;
+/** Full corner-to-corner span of the diamond in px (drawing uses ±SWARM_SIZE/2 offsets). */
+export const SWARM_SIZE = 15;
 
 /** Coordinated-burst bullet colour (cyan, distinct from the blue body). */
 export const SWARM_BULLET_COLOR = 0x00ccff;
