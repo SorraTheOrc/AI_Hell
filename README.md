@@ -369,7 +369,7 @@ The first enemy gym scene (Create E1 Scout gym scene) is a standalone Phaser sce
 
 - `src/entities/Scout.ts` — the Scout entity: a small neon-green chevron (`#00ff00`) that flies in a V-formation, fires aimed shots at a target position when shoot mode is enabled (simulating its level 4+ behaviour), and plays an explosion animation on destruction. Scouts are 1 HP and never collide with each other (GDD §2.6) — no collision system is installed.
 - `src/scenes/gym/GymScout.ts` — the gym scene: spawns a 6-scout V-formation that advances across the screen, with two on-screen controls: `EXPLODE` (destroys a random scout) and `SHOOT: ON/OFF` (toggles aimed firing at the bottom-centre of the screen, standing in for the player).
-- `src/audio/effects.ts` — procedural WebAudio sound cues (spawn blip, destruction burst), safe no-ops when no audio context exists (e.g. headless tests).
+- `src/audio/effects.ts` — procedural WebAudio sound cues (spawn blip, destruction burst, Scout-specific fire sound and a ≥ 500 ms firing advance cue), all safe no-ops when no audio context exists (e.g. headless tests). Scout fires announce each aimed shot with a per-entity advance cue ≥ 500 ms before the shot, then play the Scout fire sound at firing; destruction reuses the shared destruction sound played by the base `GymFormationScene` (no double-play).
 
 The scene is reachable from the gym index ("Scout" entry) and returns to it via the "← INDEX" button — it is a gym testbed (no player ship, no HUD, no power-ups, no other enemies). Coverage: `src/entities/Scout.test.ts` + `src/scenes/gym/GymScout.test.ts` verify formation geometry, movement, explosion, shoot toggle and aimed-bullet behaviour.
 
