@@ -16,10 +16,30 @@
 
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT, GAME_WIDTH } from '../../../core/constants';
+import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  PLAYER_BULLET_RADIUS,
+  PLAYER_BULLET_SPEED,
+} from '../../../core/constants';
 import { playDestructionSound, playSpawnSound } from '../../../audio/effects';
 import { addBackToIndexButton } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
+import { Player } from '../../../entities/Player';
+import {
+  PlayerBullet,
+  advanceAndCull,
+  createPlayerBullet,
+} from '../../../entities/PlayerBullet';
+import {
+  angleToVelocity,
+  createBulletsFromHeading,
+} from '../../../utils/weapons';
+import {
+  WasdKeysLike,
+  keysToInput,
+} from '../../../utils/input';
+import { MovementInput } from '../../../utils/movement';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -54,6 +74,19 @@ export interface FormationSceneBullet {
   vy: number;
 }
 
+/**
+ * Optional player component for a formation scene. When present, the
+ * scene spawns the keyboard-controlled `Player` ship (arrows + WASD)
+ * at this position and auto-fires its equipped weapon toward the
+ * direction of travel — see `EnemyFormationConfig.player`.
+ */
+export interface PlayerFormationConfig {
+  /** Initial spawn x (px). */
+  x: number;
+  /** Initial spawn y (px). */
+  y: number;
+}
+
 /** Per-scene configuration for a formation gym scene. */
 export interface EnemyFormationConfig<
   TEntity extends FormationSceneEntity,
@@ -79,6 +112,12 @@ export interface EnemyFormationConfig<
   statusLabel: string;
   /** Bottom hint line, e.g. `E1 Scout gym — V-formation demo`. */
   hintText: string;
+  /**
+   * Optional player spawn — when set, the scene adds a keyboard-
+   * controlled `Player` ship (arrows + WASD) with auto-fire in the
+   * direction of travel. Omit to keep the scene enemy-only.
+   */
+  player?: PlayerFormationConfig;
   /** Creates one enemy at the given absolute position with its offset. */
   createEntity(
     scene: Phaser.Scene,
@@ -112,9 +151,18 @@ export class GymFormationScene<
   protected entities: TEntity[] = [];
   protected bullets: TBullet[] = [];
 
+  /** Keyboard-controlled player ship (null unless `config.player` set). */
+  protected player: Player | null = null;
+  /** Player bullets in flight (auto-fired toward the direction of travel). */
+  protected playerBullets: PlayerBullet[] = [];
+
   protected formationBaseX: number;
   protected formationBaseY: number;
   private shootEnabled = false;
+
+  // Arrow-key (cursor) and WASD bindings for the player ship.
+  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
+  private wasd: WasdKeysLike | undefined;
 
   // UI toggles
   protected shootButton!: Phaser.GameObjects.Text;
@@ -146,6 +194,20 @@ export class GymFormationScene<
       this.entities.push(entity);
     }
     playSpawnSound();
+
+    // ── Player ship (optional per-scene opt-in) ────────────────────
+    if (config.player) {
+      this.player = new Player(this, {
+        x: config.player.x,
+        y: config.player.y,
+      });
+      // Graphics objects are not auto-added to the display list either.
+      this.add.existing(this.player);
+      this.cursors = this.input.keyboard?.createCursorKeys();
+      this.wasd = this.input.keyboard?.addKeys(
+        'W,A,S,D',
+      ) as WasdKeysLike | undefined;
+    }
 
     // ── Controls (top-left HUD, minimal) ────────────────────────────
     this.explodeButton = this._addButton(10, 10, 'EXPLODE', LABEL_STYLE);
@@ -240,10 +302,41 @@ export class GymFormationScene<
     return this.formationBaseY;
   }
 
+  /** The player ship (null when the config omitted `player`). */
+  getPlayer(): Player | null {
+    return this.player;
+  }
+
+  /** Player bullets currently in flight. */
+  getPlayerBullets(): PlayerBullet[] {
+    return this.playerBullets.slice();
+  }
+
+  /** Arrow-key bindings for the player (undefined when no keyboard). */
+  getCursors(): Phaser.Types.Input.Keyboard.CursorKeys | undefined {
+    return this.cursors;
+  }
+
+  /** WASD bindings for the player (undefined when no keyboard). */
+  getWasd(): WasdKeysLike | undefined {
+    return this.wasd;
+  }
+
   // ── Scene update loop ────────────────────────────────────────────
 
+  /** Phaser per-frame hook — delegates to the deterministic `tick`. */
   update(_time: number, delta: number): void {
-    const dt = delta / 1000;
+    this.tick(delta / 1000);
+  }
+
+  /**
+   * One deterministic simulation step (seconds). Drives the formation
+   * drift, per-entity positioning, enemy bullet lifecycle, and (when
+   * `config.player` is set) the player ship: input → thrust, auto-fire
+   * in the direction of travel, and player-bullet lifecycle. Called by
+   * Phaser's `update` and by tests.
+   */
+  tick(dt: number): void {
     const { config } = this;
 
     // Advance the formation base; when the whole formation has crossed
@@ -277,6 +370,61 @@ export class GymFormationScene<
         this.bullets.splice(i, 1);
       }
     }
+
+    // ── Player ship: input → thrust, auto-fire, bullet lifecycle ──
+    if (this.player) {
+      const input = this._readPlayerInput();
+      if (input) this.player.setInput(input);
+      this.player.physicsTick(dt, this.scale.width, this.scale.height);
+      this._autoFire(dt);
+      this._advancePlayerBullets(dt);
+    }
+  }
+
+  /** Reads the held arrow/WASD keys into the MovementInput contract. */
+  private _readPlayerInput(): MovementInput | null {
+    if (!this.cursors || !this.wasd) return null;
+    return keysToInput(this.cursors, this.wasd);
+  }
+
+  /**
+   * Auto-fires the equipped weapon toward the direction of travel when
+   * its cooldown has elapsed (mirrors GymWeapons' auto-fire).
+   */
+  private _autoFire(dt: number): void {
+    if (!this.player) return;
+    if (!this.player.tryFire(dt)) return;
+
+    const headingDeg = (this.player.getHeading() * 180) / Math.PI;
+    const weaponDef = this.player.getWeaponDef();
+    const bulletDescs = createBulletsFromHeading(
+      weaponDef,
+      headingDeg,
+      this.player.x,
+      this.player.y,
+    );
+
+    for (const bd of bulletDescs) {
+      const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
+      this.playerBullets.push(
+        createPlayerBullet(
+          this,
+          bd.x,
+          bd.y,
+          bd.color,
+          PLAYER_BULLET_RADIUS,
+          vel.vx,
+          vel.vy,
+        ),
+      );
+    }
+  }
+
+  /** Advances player bullets and removes any that leave the screen. */
+  private _advancePlayerBullets(dt: number): void {
+    this.playerBullets = this.playerBullets.filter((b) =>
+      advanceAndCull(b, dt, this.scale.width, this.scale.height),
+    );
   }
 
   protected _bulletOffScreen(g: Phaser.GameObjects.Graphics): boolean {

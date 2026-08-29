@@ -3,6 +3,11 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../../core/constants';
+import {
+  PLAYER_BULLET_RADIUS,
+  PLAYER_BULLET_SPEED,
+} from '../../../core/constants';
+import { Player } from '../../../entities/Player';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import {
@@ -81,9 +86,10 @@ function vOffsets(count: number): FormationOffset[] {
 /** Builds a config-less scene class (harness instantiates with `new`). */
 function makeStubScene(
   collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
+  player?: { x: number; y: number },
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
-    sceneKey: 'StubFormation',
+    sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
     count: FORMATION_COUNT,
     spacingX: SPACING_X,
     spacingY: SPACING_Y,
@@ -92,6 +98,7 @@ function makeStubScene(
     startY: START_Y,
     statusLabel: 'stubs',
     hintText: 'stub gym — formation demo',
+    player,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
       const enemy = new StubEnemy(scene, offset);
@@ -119,8 +126,9 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
 
   async function bootGym(
     collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
+    player?: { x: number; y: number },
   ): Promise<BootedScene> {
-    booted = await bootScene([makeStubScene(collect)]);
+    booted = await bootScene([makeStubScene(collect, player)]);
     return booted!.scene as BootedScene;
   }
 
@@ -249,5 +257,210 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
     // The fast bullet exits the screen well inside the wait window; the
     // base class must have removed it (not left it in flight forever).
     expect(scene.activeBullets.length).toBe(0);
+  });
+});
+
+describe('GymFormationScene — player spawn (core scene AC1)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(
+    collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
+  ): Promise<BootedScene> {
+    booted = await bootScene([makeStubScene(collect)]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('spawns the configured Player entity and adds it to the display list', async () => {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 200, y: 300 }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player).not.toBeNull();
+    // The player is part of the scene (display list) so it renders.
+    expect(scene.children.list).toContain(player!);
+    expect(player!.x).toBeCloseTo(200, 5);
+    expect(player!.y).toBeCloseTo(300, 5);
+  });
+
+  it('spawns no player when the config omits `player` (backward compatible)', async () => {
+    const scene = await bootGym();
+    expect(scene.getPlayer()).toBeNull();
+    // Existing formation behaviour is untouched.
+    expect(scene.formationEntities.length).toBe(FORMATION_COUNT);
+  });
+
+  it('instantiates the player in create() while the formation is also present', async () => {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 480 }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    expect(scene.getPlayer()).toBeInstanceOf(Player);
+    // The formation is unaffected by the player's presence.
+    expect(scene.formationEntities.length).toBe(FORMATION_COUNT);
+  });
+});
+
+describe('GymFormationScene — player keyboard input (core scene AC2)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWithPlayer(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('binds the arrow keys (cursors) to the player', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    const yBefore = player.y;
+    const xBefore = player.x;
+
+    // Hold the up arrow key: the scene maps cursors → player thrust.
+    scene.getCursors()!.up.isDown = true;
+    scene.tick(0.25);
+
+    expect(player.y).toBeLessThan(yBefore); // moved up
+    expect(player.x).toBe(xBefore);
+    scene.getCursors()!.up.isDown = false;
+  });
+
+  it('binds the WASD keys to the player', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    const xBefore = player.x;
+    const yBefore = player.y;
+
+    // Hold the D key (WASD → right via keysToInput).
+    scene.getWasd()!.D.isDown = true;
+    scene.tick(0.25);
+
+    expect(player.x).toBeGreaterThan(xBefore);
+    expect(player.y).toBe(yBefore);
+    scene.getWasd()!.D.isDown = false;
+  });
+
+  it('drives movement in the direction of travel while a key is held', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    const xBefore = player.x;
+
+    scene.getCursors()!.right.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    expect(player.x - xBefore).toBeGreaterThan(40);
+    scene.getCursors()!.right.isDown = false;
+  });
+});
+
+describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWithPlayer(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('auto-fires bullets in the direction of travel', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Move right to establish a heading, then keep firing while moving.
+    scene.getCursors()!.right.isDown = true;
+    scene.tick(0.5);
+
+    const bullets = scene.getPlayerBullets();
+    expect(bullets.length).toBeGreaterThan(0);
+    // Fired in direction of travel (right → positive vx).
+    expect(bullets.every((b) => b.vx > 0)).toBe(true);
+    expect(bullets.every((b) => Math.abs(b.vy) < 1)).toBe(true);
+    scene.getCursors()!.right.isDown = false;
+  });
+
+  it('fires in the direction of upward travel (vy < 0)', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    const before = scene.getPlayerBullets();
+    scene.getCursors()!.up.isDown = true;
+    scene.tick(0.5);
+
+    const after = scene.getPlayerBullets();
+    const fresh = after.filter((b) => !before.includes(b));
+    expect(fresh.length).toBeGreaterThan(0);
+    expect(fresh.every((b) => b.vy < 0)).toBe(true);
+    scene.getCursors()!.up.isDown = false;
+  });
+
+  it('respects the weapon fire rate (no new bullets before the cooldown elapses)', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    const before = scene.getPlayerBullets().length;
+    scene.getCursors()!.right.isDown = true;
+    scene.tick(0.05); // well under the cannon cooldown
+    expect(scene.getPlayerBullets()).toHaveLength(before);
+
+    scene.tick(0.4); // past the cooldown → fires
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(before);
+    scene.getCursors()!.right.isDown = false;
+  });
+
+  it('uses the shared player-bullet contract (PlayerBullet graphics, PLAYER_BULLET_SPEED)', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.getCursors()!.right.isDown = true;
+    scene.tick(0.5);
+
+    const playerBullets = scene.getPlayerBullets();
+    expect(playerBullets.length).toBeGreaterThan(0);
+    for (const bullet of playerBullets) {
+      expect(bullet.radius).toBe(PLAYER_BULLET_RADIUS);
+      expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
+        PLAYER_BULLET_SPEED,
+        5,
+      );
+      expect(scene.children.list).toContain(bullet);
+    }
+    scene.getCursors()!.right.isDown = false;
+  });
+
+  it('culls player bullets that leave the screen', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.getCursors()!.right.isDown = true;
+    scene.tick(0.5);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+
+    // 350 px/s × 4 s = 1,400 px → well past the right edge (960).
+    scene.tick(4.0);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    scene.getCursors()!.right.isDown = false;
   });
 });
