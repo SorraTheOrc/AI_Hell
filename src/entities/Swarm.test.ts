@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   SWARM_BULLET_COLOR,
   SWARM_BULLET_SPEED,
@@ -140,6 +141,35 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     const bullet = swarm.tryFireBurstBullet(1_000_000 + SWARM_BURST_INTERVAL)!;
     const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
     expect(speed).toBeCloseTo(SWARM_BULLET_SPEED, 1);
+  });
+
+  it('setAimTarget retargets the coordinated burst to the player’s live position (replacing the stand-in)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const swarm = makeSwarm(480, 400);
+
+    // Default aim is the bottom-centre stand-in.
+    const standIn = swarm.aimTarget;
+    expect(standIn.x).toBe(GAME_WIDTH / 2);
+    expect(standIn.y).toBe(GAME_HEIGHT - 40);
+
+    // Live aim: player directly BENEATH this swarm member (top of the
+    // screen). The coordinated burst must now fly up-and-right.
+    const live = { x: GAME_WIDTH / 2, y: 100 };
+    swarm.setAimTarget(live.x, live.y);
+    const target = swarm.aimTarget;
+    expect(target.x).toBe(live.x);
+    expect(target.y).toBe(live.y);
+
+    swarm.shootEnabled = true;
+    // Pin the random burst spread to zero for a deterministic direction.
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const bullet = swarm.tryFireBurstBullet(1_000_000)!;
+    randomSpy.mockRestore();
+
+    // Velocity points straight at the live player position (up from
+    // (480,400) to (480,100)) — the stand-in arc never points up.
+    expect(bullet.vx).toBeCloseTo(0, 5);
+    expect(bullet.vy).toBeLessThan(0);
   });
 
   it('does not fire once destroyed', async () => {

@@ -218,6 +218,20 @@ export class Diver extends Phaser.GameObjects.Container {
     return this._state;
   }
 
+  /** The position aimed at when diving (defaults to the bottom-centre stand-in). */
+  get aimTarget(): Phaser.Math.Vector2 {
+    return this.target.clone();
+  }
+
+  /**
+   * Live aim tracking: retargets the dive to the player's current position.
+   * The dive snapshots this position at dive start (`_startDive`), so aim
+   * changes mid-dive do not alter an in-flight dive.
+   */
+  setAimTarget(x: number, y: number): void {
+    this.target.set(x, y);
+  }
+
   /** Speed at which this diver's formation drifts (px/s). */
   get driftSpeed(): number {
     return DIVER_FORMATION_DRIFT_SPEED;

@@ -67,6 +67,14 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
     spacingX: number,
     spacingY: number,
   ): void;
+  /**
+   * Optional: receives the player's live world position so aimed fire
+   * (Scout shots, Diver dives, Swarm bursts, Phaser patterns) targets the
+   * player each frame instead of the fixed bottom-centre stand-in.
+   * Entities that don't aim (e.g. Tank, test stubs) simply omit it — the
+   * scene skips the call via optional chaining.
+   */
+  setAimTarget?(x: number, y: number): void;
 }
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
@@ -447,7 +455,14 @@ export class GymFormationScene<
         config.spacingY,
       );
 
-      // Collect any bullets the entity fired this frame.
+      // Live aim tracking: when a player is on screen, push its current
+      // position so aimed enemies target the player this frame (instead of
+      // the fixed stand-in). Entities without the seam are skipped.
+      if (this.player) {
+        entity.setAimTarget?.(this.player.x, this.player.y);
+      }
+
+      // Collect any bullets the entity fired this frame (uses the fresh aim).
       this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 

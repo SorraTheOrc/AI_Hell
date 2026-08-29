@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   buildVFormationOffsets,
   SCOUT_ADVANCE_CUE_DURATION,
@@ -321,5 +322,41 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(() => scout.tryFireAimedBullet(t0)).not.toThrow();
     expect(() => scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toThrow();
     expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).toBeNull(); // within interval
+  });
+
+  it('setAimTarget retargets aimed shots to the player’s live position (replacing the stand-in)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = new Scout(booted.scene, {
+      x: 100,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+    });
+
+    // Default aim is the bottom-centre stand-in.
+    const standIn = scout.aimTarget;
+    expect(standIn.x).toBe(GAME_WIDTH / 2);
+    expect(standIn.y).toBe(GAME_HEIGHT - 40);
+
+    // Live player position (top-right of the scout): the shot must now
+    // travel toward the player, not the stand-in.
+    scout.setAimTarget(700, 120);
+    const live = scout.aimTarget;
+    expect(live.x).toBe(700);
+    expect(live.y).toBe(120);
+
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(1_000_000)).toBeNull(); // tell
+    const bullet = scout.tryFireAimedBullet(1_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
+
+    const dist = Math.sqrt((live.x - scout.x) ** 2 + (live.y - scout.y) ** 2);
+    const expectedVx = ((live.x - scout.x) / dist) * SCOUT_BULLET_SPEED;
+    const expectedVy = ((live.y - scout.y) / dist) * SCOUT_BULLET_SPEED;
+    expect(bullet.vx).toBeCloseTo(expectedVx, 5);
+    expect(bullet.vy).toBeCloseTo(expectedVy, 5);
+
+    // The shot flies up-and-right towards the player — the opposite arc
+    // of the bottom-centre stand-in (which would fly down-and-right).
+    expect(bullet.vy).toBeLessThan(0);
+    expect(bullet.vx).toBeGreaterThan(0);
   });
 });

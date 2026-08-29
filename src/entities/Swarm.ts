@@ -210,6 +210,19 @@ export class Swarm extends Phaser.GameObjects.Container {
     return { ...this.formationOffset };
   }
 
+  /** The position aimed at when firing (defaults to the bottom-centre stand-in). */
+  get aimTarget(): Phaser.Math.Vector2 {
+    return this.target.clone();
+  }
+
+  /**
+   * Live aim tracking: retargets the coordinated burst to the player's
+   * current position (replaces the fixed bottom-centre stand-in default).
+   */
+  setAimTarget(x: number, y: number): void {
+    this.target.set(x, y);
+  }
+
   get clusterIndex(): number {
     return this.clusterIdx;
   }

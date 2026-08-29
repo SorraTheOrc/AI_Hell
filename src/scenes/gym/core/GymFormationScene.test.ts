@@ -60,6 +60,15 @@ class StubBullet implements FormationSceneBullet {
   }
 }
 
+/** Stub that implements the optional live-aim seam and records every push. */
+class AimStubEnemy extends StubEnemy {
+  aimCalls: Array<{ x: number; y: number }> = [];
+
+  setAimTarget(x: number, y: number): void {
+    this.aimCalls.push({ x, y });
+  }
+}
+
 const FORMATION_COUNT = 6;
 const SPACING_X = 26;
 const SPACING_Y = 22;
@@ -89,6 +98,7 @@ function makeStubScene(
   collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
   player?: { x: number; y: number },
   collision?: { entityHitRadius?: number; bulletHitRadius?: number },
+  entityType: typeof StubEnemy = StubEnemy,
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
     sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
@@ -105,7 +115,7 @@ function makeStubScene(
     bulletHitRadius: collision?.bulletHitRadius,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
-      const enemy = new StubEnemy(scene, offset);
+      const enemy = new entityType(scene, offset);
       enemy.setPosition(x, y);
       return enemy;
     },
@@ -702,5 +712,108 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(player.alpha).toBe(1);
     expect(statusLabels()).toEqual(labelsBefore);
     expect(scene.aliveCount).toBe(enemiesBefore);
+  });
+});
+
+describe('GymFormationScene — enemy live aim tracking (parent AC1–AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  // Upper-area spawn, far from the bottom-centre stand-in.
+  const PLAYER_AIM_SPAWN = { x: 700, y: 120 };
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(
+    player?: { x: number; y: number },
+  ): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], player, undefined, AimStubEnemy),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC1 — pushes the LIVE player position to every entity each frame (not the bottom-centre stand-in)', async () => {
+    const scene = await bootGym(PLAYER_AIM_SPAWN);
+    const player = scene.getPlayer()!;
+    const entities = scene.formationEntities as unknown as AimStubEnemy[];
+
+    // Boot ticks may already have pushed the spawn position; reset the
+    // ledger so only our deterministic ticks count.
+    for (const e of entities) e.aimCalls = [];
+
+    // Player rests at spawn: the aim pushed this frame is the player's
+    // live position (top-right), never the bottom-centre stand-in.
+    scene.tick(0.25);
+    const expected = { x: PLAYER_AIM_SPAWN.x, y: PLAYER_AIM_SPAWN.y };
+    expect(player.x).toBeCloseTo(expected.x, 5);
+    expect(player.y).toBeCloseTo(expected.y, 5);
+    for (const e of entities) {
+      expect(e.aimCalls).toHaveLength(1);
+      expect(e.aimCalls[0]).toEqual(expected);
+    }
+    expect(expected).not.toEqual({ x: GAME_WIDTH / 2, y: GAME_HEIGHT - 40 });
+  });
+
+  it('AC2 — tracks the player after live movement (aim updated each frame)', async () => {
+    const scene = await bootGym(PLAYER_AIM_SPAWN);
+    const player = scene.getPlayer()!;
+    const entities = scene.formationEntities as unknown as AimStubEnemy[];
+    for (const e of entities) e.aimCalls = [];
+
+    // Hold course and fly for several frames — the aim must follow the
+    // player's changing world position frame by frame.
+    scene.getCursors()!.right.isDown = true;
+    const seen: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < 4; i++) {
+      seen.push({ x: player.x, y: player.y });
+      scene.tick(0.25);
+    }
+    scene.getCursors()!.right.isDown = false;
+
+    expect(player.x).toBeGreaterThan(PLAYER_AIM_SPAWN.x + 10); // really moved
+    for (const e of entities) {
+      expect(e.aimCalls).toHaveLength(4);
+      for (let i = 0; i < 4; i++) {
+        expect(e.aimCalls[i]).toEqual(seen[i]);
+      }
+    }
+  });
+
+  it('AC3 — relocation between frames is picked up on the next tick (live position each frame)', async () => {
+    const scene = await bootGym(PLAYER_AIM_SPAWN);
+    const player = scene.getPlayer()!;
+    const entities = scene.formationEntities as unknown as AimStubEnemy[];
+    for (const e of entities) e.aimCalls = [];
+
+    // Deterministic teleport-style relocation (respawn seam); the aim
+    // must reflect the new position on the very next frame.
+    player.respawn(300, 450);
+    scene.tick(0.25);
+    for (const e of entities) {
+      expect(e.aimCalls.at(-1)).toEqual({ x: 300, y: 450 });
+    }
+  });
+
+  it('AC6 — backward compatible: no player means no aim push at all', async () => {
+    const scene = await bootGym();
+    const entities = scene.formationEntities as unknown as AimStubEnemy[];
+    for (const e of entities) e.aimCalls = [];
+
+    scene.tick(0.25);
+    scene.tick(0.25);
+    for (const e of entities) expect(e.aimCalls).toEqual([]);
+    // The scene still ticks normally without a player.
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('AC6 — a plain entity without the seam never breaks the tick when a player IS present', async () => {
+    booted = await bootScene([makeStubScene(() => [], PLAYER_AIM_SPAWN)]);
+    const scene = booted!.scene as BootedScene;
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(() => scene.tick(0.25)).not.toThrow();
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
   });
 });

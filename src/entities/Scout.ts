@@ -213,6 +213,14 @@ export class Scout extends Phaser.GameObjects.Container {
     return this.target.clone();
   }
 
+  /**
+   * Live aim tracking: retargets aimed shots to the player's current
+   * position (replaces the fixed bottom-centre stand-in used as default).
+   */
+  setAimTarget(x: number, y: number): void {
+    this.target.set(x, y);
+  }
+
   // ── Behaviour ────────────────────────────────────────────────────
 
   /**
