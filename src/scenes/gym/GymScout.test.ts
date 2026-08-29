@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import * as effectsModule from '../../audio/effects';
 import {
   GymScout,
   SCOUT_FORMATION_COUNT,
@@ -28,6 +29,7 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    vi.clearAllMocks();
   });
 
   async function bootGym(): Promise<GymScout> {
@@ -171,5 +173,38 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
     await new Promise((r) => setTimeout(r, 400));
     const later = scene.activeBullets.length;
     expect(later).toBeLessThanOrEqual(countAfter);
+  });
+
+  // ── Audio orchestration (per-entity advance cue + fire sound) ──────
+
+  it('AC6 — fires and plays the Scout fire sound during real timed firing (safe no-op in headless)', async () => {
+    vi.spyOn(effectsModule, 'playScoutFireSound');
+
+    const scene = await bootGym();
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    shoot.emit('pointerdown'); // ON
+
+    // Each scout's first shot lands after the advance-cue tell (~600 ms).
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(scene.activeBullets.length).toBeGreaterThan(0);
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalled();
+    // One fire sound per aimed shot — never a burst per entity per frame.
+    const shots = scene.activeBullets.length;
+    const calls = vi.mocked(effectsModule.playScoutFireSound).mock.calls.length;
+    expect(calls).toBeGreaterThanOrEqual(shots);
+    expect(calls).toBeLessThanOrEqual(scene.formationScouts.length * 2);
+  });
+
+  it('AC6 — destroying a scout plays the shared destruction sound exactly once (no entity double-play)', async () => {
+    vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const scene = await bootGym();
+    const explode = findButton(scene, 'EXPLODE');
+
+    explode.emit('pointerdown'); // destroys one scout
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(1);
+
+    explode.emit('pointerdown'); // destroys another
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(2);
   });
 });

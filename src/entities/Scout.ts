@@ -9,11 +9,19 @@
  * 1 HP — destroyed by a single bullet, plays an explosion animation, and
  * is removed. Scouts never collide with each other (GDD §2.6): the scene
  * does not install any collision between scouts.
+ *
+ * Audio (GDD §7.3): each aimed shot is telegraphed by a ≥ 500 ms advance
+ * cue (two-phase tell) followed by a sharp Scout fire sound at the shot;
+ * destruction audio is owned by the base scene (`playDestructionSound()`),
+ * not by this entity (no double-play). Both helpers live in
+ * `src/audio/effects.ts` and degrade to safe no-ops without an
+ * AudioContext.
  */
 
 import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
+import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -38,6 +46,15 @@ export const SCOUT_BULLET_SPEED = 200;
 
 /** Milliseconds a scout waits between aimed shots. */
 export const SCOUT_FIRE_INTERVAL = 1200;
+
+/**
+ * Advance audio cue duration (ms) — the per-entity tell before each
+ * aimed shot. At least 500 ms lead time per GDD §7.3 and at most the
+ * fire interval so cues never overlap shots. Mirrors the Phaser tell
+ * (PHASER_ADVANCE_CUE_DURATION = 600) and matches playScoutAdvanceCue()
+ * in src/audio/effects.ts (declare both 600).
+ */
+export const SCOUT_ADVANCE_CUE_DURATION = 600;
 
 export interface ScoutConfig {
   x: number;
@@ -67,6 +84,8 @@ export class Scout extends Phaser.GameObjects.Container {
   private _alive = true;
   private _shootEnabled = false;
   private _lastFireTime = 0;
+  private _tellStartTime = 0;
+  private _isTelling = false;
   private _wigglePhase = Math.random() * Math.PI * 2;
 
   // ── Construction ─────────────────────────────────────────────────
@@ -121,6 +140,11 @@ export class Scout extends Phaser.GameObjects.Container {
    * Plays the destruction animation: expanding, fading rings.
    * The body is hidden immediately and the explosion graphics are
    * cleaned up when the tween completes.
+   *
+   * NOTE: intentionally plays NO destruction sound here — the shared
+   * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
+   * and is already called once per destruction (design doc §7 no-double-play
+   * rule). Adding a call here would double-play.
    */
   playExplosion(): void {
     const scene = this.scene as Phaser.Scene;
@@ -165,10 +189,19 @@ export class Scout extends Phaser.GameObjects.Container {
     return this._shootEnabled;
   }
 
+  /** Whether the scout is currently in its firing tell (advance cue) state. */
+  get isTelling(): boolean {
+    return this._isTelling;
+  }
+
   /** Enable/disable aimed firing (simulates Level 4+ behaviour). */
   set shootEnabled(value: boolean) {
     this._shootEnabled = value;
-    if (!value) this._lastFireTime = 0;
+    if (!value) {
+      this._lastFireTime = 0;
+      this._isTelling = false;
+      this._tellStartTime = 0;
+    }
   }
 
   get offset(): FormationOffset {
@@ -198,11 +231,32 @@ export class Scout extends Phaser.GameObjects.Container {
    * is alive, and the fire interval has elapsed. Returns the bullet on
    * success, null otherwise (no shot) — lets the scene stay unaware of
    * firing policy.
+   *
+   * Two-phase tell (mirrors the Phaser entity, GDD §7.3): once the fire
+   * interval elapses the first call STARTS the tell — plays the ≥ 500 ms
+   * advance audio cue and returns no bullet; a later call made after the
+   * tell duration completes fires the shot and plays the Scout fire sound
+   * exactly once. This telegraphes aimed shots so players can react.
    */
   tryFireAimedBullet(now: number): ScoutBullet | null {
     if (!this._shootEnabled || !this._alive) return null;
     if (now - this._lastFireTime < SCOUT_FIRE_INTERVAL) return null;
-    this._lastFireTime = now;
+
+    if (this._isTelling) {
+      // Still inside the tell window — the shot has not been announced
+      // for the full ≥ 500 ms lead yet; wait for the cue to complete.
+      if (now - this._tellStartTime < SCOUT_ADVANCE_CUE_DURATION) return null;
+      // Tell complete → fire this shot now.
+      this._isTelling = false;
+      this._tellStartTime = 0;
+      this._lastFireTime = now;
+    } else {
+      // Interval elapsed, not telling — start the tell (advance cue).
+      this._isTelling = true;
+      this._tellStartTime = now;
+      playScoutAdvanceCue();
+      return null;
+    }
 
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;
@@ -213,6 +267,8 @@ export class Scout extends Phaser.GameObjects.Container {
     graphics.fillCircle(0, 0, SCOUT_BULLET_SIZE);
     graphics.setPosition(this.x, this.y);
     graphics.setDepth(3);
+
+    playScoutFireSound();
 
     return {
       graphics,

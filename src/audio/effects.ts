@@ -187,3 +187,25 @@ export function playSwarmBurstSound(): void {
   whoosh.start(ctx.currentTime);
   whoosh.stop(ctx.currentTime + 0.2);
 }
+
+// ── Scout enemy cues (GDD §4.1 — E1 Scout) ─────────────────────────
+
+/**
+ * A sharp laser-like blip — E1 Scout fire sound.
+ * A short high square-wave sweep, distinct from the destruction burst
+ * and the Swarm buzz, fired exactly once per aimed shot (GDD §7.3).
+ */
+export function playScoutFireSound(): void {
+  blip(1400, 700, 0.12, 'square', 0.12);
+}
+
+/**
+ * Rising warning blip — E1 Scout firing advance cue.
+ * A rising sine mirroring the Phaser tell but pitched higher to stay
+ * distinct. Plays at the start of the per-entity tell, ≥ 500 ms before
+ * the aimed shot (GDD §7.3); duration must stay ≤ SCOUT_FIRE_INTERVAL
+ * in src/entities/Scout.ts (600 ms tell, 1200 ms fire interval).
+ */
+export function playScoutAdvanceCue(): void {
+  blip(880, 1320, 0.6, 'sine', 0.08);
+}
