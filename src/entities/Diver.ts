@@ -2,8 +2,11 @@
  * Diver enemy entity (GDD §4.2 — E2 Diver).
  *
  * Renders as a medium, dart-shaped neon-yellow entity. Periodically breaks
- * from formation, follows a curved (parabolic) trajectory toward the player
- * position (bottom-centre of screen), then returns to its formation slot.
+ * from formation and dives straight down (x locked at its formation slot)
+ * along a parabolic vertical arc toward the player position (bottom-centre
+ * of screen), then returns smoothly to its current formation slot — ending
+ * exactly on the slot as it exists when the return completes, so the diver
+ * rejoins the drifting formation without a horizontal snap.
  *
  * 1 HP — destroyed by a single bullet, plays an explosion animation, and
  * is removed. Divers never collide with each other (GDD §2.6).
@@ -104,9 +107,9 @@ export class Diver extends Phaser.GameObjects.Container {
   private _diveTargetY = 0;
   private _diveApexX = 0;
   private _diveApexY = 0;
+  private _diveCol = 0;
+  private _diveRow = 0;
   private _returnProgress = 0;
-  private _returnOriginX = 0;
-  private _returnOriginY = 0;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -302,7 +305,8 @@ export class Diver extends Phaser.GameObjects.Container {
 
   /**
    * Updates the diver's position based on its current state.
-   * Handles formation hold, diving (parabolic arc), and returning.
+   * Handles formation hold, diving (vertical parabolic arc), and returning
+   * (smooth re-entry onto the current formation slot).
    */
   applyFormationPosition(
     baseX: number,
@@ -325,7 +329,7 @@ export class Diver extends Phaser.GameObjects.Container {
         break;
 
       case DiverState.RETURNING:
-        this._handleReturn(dt);
+        this._handleReturn(baseX, baseY, spacingX, spacingY, dt);
         break;
     }
   }
@@ -370,9 +374,10 @@ export class Diver extends Phaser.GameObjects.Container {
     this._diveApexX = (this._diveStartX + this._diveTargetX) / 2;
     this._diveApexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
 
-    // Remember original formation position for return.
-    this._returnOriginX = formationPos.x;
-    this._returnOriginY = formationPos.y;
+    // Remember which formation slot we dove from. The return re-enters this
+    // slot at its CURRENT (drifted) position so there is no snap on re-entry.
+    this._diveCol = this.formationOffset.col;
+    this._diveRow = this.formationOffset.row;
   }
 
   private _handleDive(dt: number): void {
@@ -393,7 +398,10 @@ export class Diver extends Phaser.GameObjects.Container {
       this._diveTargetY,
       this._divePhase,
     );
-    this.setPosition(point.x, point.y);
+    // AC1: the dive is a straight vertical drop — x stays locked at the
+    // formation slot the diver dove from; only y follows the parabolic arc.
+    // The horizontal target/apex coordinates are intentionally unused here.
+    this.setPosition(this._diveStartX, point.y);
 
     // Fire spread shots during the dive if shoot mode is enabled.
     if (this._shootEnabled) {
@@ -404,23 +412,40 @@ export class Diver extends Phaser.GameObjects.Container {
     }
   }
 
-  private _handleReturn(dt: number): void {
+  /**
+   * Returns the diver to its formation slot, ending exactly on the slot's
+   * CURRENT position (the formation kept drifting while the diver was away).
+   * Both x and y ease smoothly toward the current slot so the diver rejoins
+   * the formation without a horizontal snap when the return completes.
+   */
+  private _handleReturn(
+    baseX: number,
+    baseY: number,
+    spacingX: number,
+    spacingY: number,
+    dt: number,
+  ): void {
     this._returnProgress += dt * 1.2; // slightly faster return
+    const t = Math.min(this._returnProgress, 1);
+
+    // The slot we must re-enter is its current position (base + offset).
+    const slotX = baseX + this._diveCol * spacingX;
+    const slotY = baseY + this._diveRow * spacingY;
+
+    // Glide from the dive-end position onto the current slot. Evaluating the
+    // slot each frame absorbs the formation drift, so at t=1 the diver lands
+    // exactly on the slot and the next formation update continues seamlessly.
+    this.setPosition(
+      this._diveStartX + (slotX - this._diveStartX) * t,
+      this._diveTargetY + (slotY - this._diveTargetY) * t,
+    );
+
     if (this._returnProgress >= 1) {
       this._returnProgress = 1;
       this._state = DiverState.FORMATION;
       this._holdTimer = 0;
-      return;
+      this.setPosition(slotX, slotY);
     }
-
-    // Lerp from the dive target back to the original formation position.
-    const t = this._returnProgress;
-    const endX = this._returnOriginX;
-    const endY = this._returnOriginY;
-    this.setPosition(
-      this._diveTargetX + (endX - this._diveTargetX) * t,
-      this._diveTargetY + (endY - this._diveTargetY) * t,
-    );
   }
 
   destroy(fromScene?: boolean): void {

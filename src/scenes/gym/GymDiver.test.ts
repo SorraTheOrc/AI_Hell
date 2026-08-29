@@ -9,7 +9,7 @@ import {
   DIVER_FORMATION_SPACING_Y,
   DIVER_FORMATION_DRIFT_SPEED,
 } from './GymDiver';
-import { DIVER_COLOR } from '../../entities/Diver';
+import { DIVER_COLOR, DiverState } from '../../entities/Diver';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label. */
@@ -65,6 +65,98 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
     expect(allOnDisplayList).toBe(true);
     const allVisible = scene.formationDivers.every((d) => d.bodyVisible);
     expect(allVisible).toBe(true);
+  });
+
+  // ── AC1: No horizontal movement during dive ──────────────────────
+
+  it('AC1 — diver x-coordinate remains constant during the dive phase (vertical drop)', { timeout: 15000 }, async () => {
+    const scene = await bootGym();
+
+    // Wait for divers to start diving (hold is 3 seconds).
+    await waitMs(3500);
+
+    // Find a diver that is currently diving.
+    const divingDivers = scene.formationDivers.filter(
+      (d) => d.behaviourState === DiverState.DIVING,
+    );
+    expect(divingDivers.length).toBeGreaterThan(0);
+
+    const diver = divingDivers[0];
+    const startX = diver.x;
+    const startY = diver.y;
+
+    // Sample x while the diver remains in the DIVING state (we joined the
+    // 2s dive part-way through). Sampling beyond the dive would capture the
+    // smooth return glide, which legitimately moves x toward the drifted
+    // slot — this test must only cover the dive itself.
+    const samples: number[] = [];
+    for (let i = 0; i < 20 && diver.behaviourState === DiverState.DIVING; i++) {
+      await waitMs(100);
+      samples.push(diver.x);
+    }
+    expect(samples.length).toBeGreaterThanOrEqual(5);
+
+    // AC1: x must stay locked at the dive-start x — a straight vertical drop.
+    const maxDelta = Math.max(...samples.map((sx) => Math.abs(sx - startX)));
+    expect(maxDelta).toBeLessThanOrEqual(2);
+
+    // The dive is vertical, not frozen: y must have changed substantially.
+    expect(Math.abs(diver.y - startY)).toBeGreaterThan(10);
+  });
+
+  // ── AC2: Returns to formation & continues moving ─────────────────
+
+  it('AC2 — diver returns to its current formation slot and continues moving with the formation', { timeout: 20000 }, async () => {
+    const scene = await bootGym();
+    const diver = scene.formationDivers[0];
+    const { col, row } = diver.offset;
+
+    // Wait out hold (3s) + dive (2s) + return (~0.83s at 1.2x speed).
+    await waitMs(6200);
+
+    // The diver has completed a dive-and-return cycle and is back in formation.
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+
+    // AC2: it sits on its CURRENT formation slot — the formation kept
+    // drifting (~30 px/s) while the diver was away, so the slot it returns
+    // to is the drifted slot, not the stale dive-start x. Tolerance covers
+    // the idle wiggle (±1.5 px) and a frame of drift.
+    const slotX = scene.formationX + col * DIVER_FORMATION_SPACING_X;
+    const slotY = scene.formationY + row * DIVER_FORMATION_SPACING_Y;
+    expect(Math.abs(diver.x - slotX)).toBeLessThanOrEqual(3);
+    expect(Math.abs(diver.y - slotY)).toBeLessThanOrEqual(3);
+
+    // AC2: the diver continues moving with the formation drift rightward.
+    const xBefore = diver.x;
+    await waitMs(500);
+    expect(diver.x - xBefore).toBeGreaterThan(5);
+  });
+
+  // ── AC3: No jump on return ───────────────────────────────────────
+
+  it('AC3 — diver re-enters formation smoothly without a horizontal jump', { timeout: 20000 }, async () => {
+    const scene = await bootGym();
+    const diver = scene.formationDivers[0];
+
+    // Wait for the diver to start diving (hold = 3s).
+    await waitMs(3500);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Sample x every 100ms through the rest of the dive (2s) and the full
+    // return (~0.83s). A snap would appear as a large step between two
+    // consecutive samples (~85 px for the drift while the diver was away);
+    // the fixed behaviour glides smoothly (dive: 0 px; return: ~13 px/100ms;
+    // formation drift: ~3 px/100ms), so a 25 px cap cleanly separates the two.
+    let maxStep = 0;
+    for (let i = 0; i < 35; i++) {
+      const prevX = diver.x;
+      await waitMs(100);
+      maxStep = Math.max(maxStep, Math.abs(diver.x - prevX));
+    }
+
+    expect(maxStep).toBeLessThanOrEqual(25);
+    // The diver completed the return within the window.
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
   // ── AC3: Dive-and-return movement ────────────────────────────────

@@ -2,8 +2,9 @@
  * Gym scene — E2 Diver testbed (GDD §4.2).
  *
  * Renders a diamond-formation of Diver enemies that advance across the
- * screen. Each diver periodically breaks from formation, follows a curved
- * (parabolic) trajectory toward the player position, then returns to its
+ * screen. Each diver periodically breaks from formation, dives straight
+ * down (x locked at its formation slot) along a parabolic vertical arc
+ * toward the player position, then returns smoothly to its current
  * formation slot. Two on-screen controls drive the demonstration:
  *
  * - **Explode** — destroys a random surviving diver with an explosion
@@ -57,7 +58,7 @@ const DIVER_CONFIG: EnemyFormationConfig<Diver, DiverBullet> = {
   startX: DIVER_FORMATION_START_X,
   startY: DIVER_FORMATION_START_Y,
   statusLabel: 'divers',
-  hintText: 'E2 Diver gym — curved-dive demo',
+  hintText: 'E2 Diver gym — vertical-dive demo',
   createEntity: (
     scene: Phaser.Scene,
     x: number,
