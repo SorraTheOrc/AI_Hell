@@ -26,7 +26,7 @@
 import Phaser from 'phaser';
 
 import { Tank, TankBullet } from '../../entities/Tank';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { buildRectFormationOffsets } from '../../utils/formations';
 import { FormationOffset } from '../../utils/formations';
 import {
@@ -55,6 +55,7 @@ const TANK_CONFIG: EnemyFormationConfig<Tank, TankBullet> = {
   driftSpeed: TANK_FORMATION_DRIFT_SPEED,
   startX: TANK_FORMATION_START_X,
   startY: TANK_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'tanks',
   hintText: 'E3 Tank gym — slow formation demo',
   createEntity: (

@@ -25,7 +25,7 @@
 import Phaser from 'phaser';
 
 import { Scout, ScoutBullet } from '../../entities/Scout';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { buildVFormationOffsets } from '../../utils/formations';
 import { FormationOffset } from '../../utils/formations';
 import {
@@ -54,6 +54,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
   driftSpeed: SCOUT_FORMATION_DRIFT_SPEED,
   startX: SCOUT_FORMATION_START_X,
   startY: SCOUT_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'scouts',
   hintText: 'E1 Scout gym — V-formation demo',
   createEntity: (

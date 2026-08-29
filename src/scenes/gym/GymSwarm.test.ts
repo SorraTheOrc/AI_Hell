@@ -9,8 +9,18 @@ import {
   SWARM_FORMATION_SPACING_X,
   SWARM_FORMATION_SPACING_Y,
 } from './GymSwarm';
-import { SWARM_BULLET_SPEED } from '../../entities/Swarm';
+import { SWARM_BULLET_SPEED, SWARM_BURST_INTERVAL } from '../../entities/Swarm';
+import { Player } from '../../entities/Player';
+import { PLAYER_SPAWN } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
+
+/** Wraps an angle difference into [-π, π]. */
+function angleDelta(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}
 
 /** Finds an on-screen text button by label (observable via scene children). */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -244,4 +254,115 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
   // NOTE: Advance-cue removed per operator feedback — fire sound now
   // plays at the point of shooting, not as a warning. See GymSwarm.ts
   // update override comment and Swarm.ts tryFireBurstBullet doc.
+});
+
+describe('GymSwarm — player in the gym (epic per-scene AC1-AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymSwarm> {
+    booted = await bootScene([GymSwarm]);
+    return booted!.scene as GymSwarm;
+  }
+
+  it('AC1 — spawns the keyboard-controlled player ship at PLAYER_SPAWN', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player!.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player!.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.aliveCount).toBe(SWARM_FORMATION_COUNT);
+  });
+
+  it('AC1 — the player responds to the cursor keys', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+    const x0 = player.x;
+    const y0 = player.y;
+
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+
+    expect(player.y - y0).toBeGreaterThan(40);
+    expect(player.x).toBe(x0);
+  });
+
+  it('AC2 — the burst volley aims at the live player (up-right), not the old stand-in', async () => {
+    const scene = await bootGym();
+    scene.toggleShooting();
+    scene.time.now += SWARM_BURST_INTERVAL + 500;
+    scene.tick(0.05); // every member fires its burst at the live player
+
+    const bullets = scene.activeBullets;
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+      expect(speed).toBeCloseTo(SWARM_BULLET_SPEED, 1);
+    }
+
+    // The mean burst direction points at the player from the formation
+    // centre (up-right). The old bottom-centre stand-in would point
+    // downward instead.
+    const meanVx = bullets.reduce((a, b) => a + b.vx, 0) / bullets.length;
+    const meanVy = bullets.reduce((a, b) => a + b.vy, 0) / bullets.length;
+    expect(meanVx).toBeGreaterThan(0);
+    expect(meanVy).toBeLessThan(0);
+    const expected = Math.atan2(
+      PLAYER_SPAWN.y - scene.formationY,
+      PLAYER_SPAWN.x - scene.formationX,
+    );
+    const actual = Math.atan2(meanVy, meanVx);
+    expect(Math.abs(angleDelta(actual, expected))).toBeLessThan(0.35);
+  });
+
+  it('AC3 — a player bullet destroys a swarm member; a swarm shot hitting the player respawns it', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+
+    // Park a player bullet on the first member — destroyed + bullet consumed.
+    const victim = scene.formationSwarms[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.05);
+    expect(victim.alive).toBe(false);
+    expect(scene.aliveCount).toBe(SWARM_FORMATION_COUNT - 1);
+
+    // Remaining members fire bursts aimed at the live player; the centre
+    // bullet of each burst travels exactly toward the ship.
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    scene.toggleShooting();
+    scene.time.now += SWARM_BURST_INTERVAL + 500;
+    scene.tick(0.05); // bursts fired, aimed at the player at PLAYER_SPAWN
+
+    // The nearest aimed bullet reaches the ship within ~3s; allow 8s.
+    const hitsBefore = scene.getPlayerHitCount();
+    for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+    expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+  });
+
+  it('AC4 — regression: EXPLODE/SHOOT/formation drift still work with the player present', async () => {
+    const scene = await bootGym();
+    const before = scene.aliveCount;
+    scene.explodeRandom();
+    expect(scene.aliveCount).toBe(before - 1);
+
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(true);
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(false);
+
+    const fx = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeGreaterThan(fx);
+  });
 });

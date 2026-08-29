@@ -29,7 +29,7 @@
 import Phaser from 'phaser';
 
 import { Swarm, SwarmBullet, SWARM_CLUSTER_COUNT } from '../../entities/Swarm';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import {
   buildSwarmClusterOffsets,
   FormationOffset,
@@ -62,6 +62,7 @@ const SWARM_CONFIG: EnemyFormationConfig<Swarm, SwarmBullet> = {
   driftSpeed: SWARM_FORMATION_DRIFT_SPEED,
   startX: SWARM_FORMATION_START_X,
   startY: SWARM_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'swarms',
   hintText: 'E5 Swarm gym — tight-cluster movement demo',
   createEntity: (

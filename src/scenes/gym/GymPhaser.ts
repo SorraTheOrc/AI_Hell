@@ -30,7 +30,7 @@ import {
   PHASER_BULLET_SPEED,
   PHASER_COLOR,
 } from '../../entities/Phaser';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { FormationOffset } from '../../utils/formations';
 import {
   EnemyFormationConfig,
@@ -80,6 +80,7 @@ const PHASER_CONFIG: EnemyFormationConfig<PhaserEntity, PhaserBullet> = {
   driftSpeed: PHASER_FORMATION_DRIFT_SPEED,
   startX: PHASER_FORMATION_START_X,
   startY: PHASER_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'phasers',
   hintText: 'E4 Phaser gym — orbital path demo',
   createEntity: (

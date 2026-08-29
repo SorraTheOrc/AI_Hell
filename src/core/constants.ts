@@ -105,3 +105,11 @@ export const PLAYER_BULLET_RADIUS = 3;
 
 /** Seconds the player stays invulnerable (and blinks) after respawning from a hit. */
 export const PLAYER_RESPAWN_INVULNERABLE = 1.5;
+
+/**
+ * Default spawn position for the keyboard-controlled player in the
+ * Enemy Gym scenes: top-right corner, clear of every formation and
+ * firing rightward off-screen so boot-time auto-fire never interferes
+ * with formation or wait-based tests.
+ */
+export const PLAYER_SPAWN = { x: 920, y: 30 } as const;

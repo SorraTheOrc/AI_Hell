@@ -28,7 +28,7 @@
 import Phaser from 'phaser';
 
 import { Diver, DiverBullet, DiverState } from '../../entities/Diver';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { buildDiverFormationOffsets } from '../../utils/formations';
 import { FormationOffset } from '../../utils/formations';
 import {
@@ -57,6 +57,7 @@ const DIVER_CONFIG: EnemyFormationConfig<Diver, DiverBullet> = {
   driftSpeed: DIVER_FORMATION_DRIFT_SPEED,
   startX: DIVER_FORMATION_START_X,
   startY: DIVER_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'divers',
   hintText: 'E2 Diver gym — vertical-dive demo',
   createEntity: (

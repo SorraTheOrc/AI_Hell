@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -9,7 +9,10 @@ import {
   DIVER_FORMATION_SPACING_Y,
   DIVER_FORMATION_DRIFT_SPEED,
 } from './GymDiver';
-import { DIVER_COLOR, DiverState } from '../../entities/Diver';
+import { DIVER_COLOR, DiverState, DIVER_FIRE_INTERVAL } from '../../entities/Diver';
+import { Player } from '../../entities/Player';
+import * as effectsModule from '../../audio/effects';
+import { PLAYER_SPAWN } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label. */
@@ -337,5 +340,114 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
   it('AC5 — shows the shared ← INDEX back button', async () => {
     const scene = await bootGym();
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
+  });
+});
+
+describe('GymDiver — player in the gym (epic per-scene AC1-AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymDiver> {
+    booted = await bootScene([GymDiver]);
+    return booted!.scene as GymDiver;
+  }
+
+  it('AC1 — spawns the keyboard-controlled player ship at PLAYER_SPAWN', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player!.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player!.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.aliveCount).toBe(DIVER_FORMATION_COUNT);
+  });
+
+  it('AC1 — the player responds to the cursor keys', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+    const x0 = player.x;
+    const y0 = player.y;
+
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+
+    expect(player.y - y0).toBeGreaterThan(40);
+    expect(player.x).toBe(x0);
+  });
+
+  it('AC2 — the dive targets the live player (high in the sky), not the old stand-in', async () => {
+    const scene = await bootGym();
+
+    // Formation hold is 3s of scene ticks, then the dive starts. Drive
+    // it deterministically: 6×0.5s hold + 3×0.5s dive (phase 0.75).
+    for (let i = 0; i < 6; i++) scene.tick(0.5);
+    const diving = scene.formationDivers.filter(
+      (d) => d.behaviourState === DiverState.DIVING,
+    );
+    expect(diving.length).toBeGreaterThan(0);
+
+    const diver = diving[0];
+    // Run the dive to phase 0.75 (3×0.5s of a 2s dive).
+    for (let i = 0; i < 3; i++) scene.tick(0.5);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Deep into the dive the ship is barely below the top of the screen:
+    // the parabola targets the player at y=30 (the old bottom-centre
+    // stand-in would put the diver around y=350+ here).
+    expect(diver.y).toBeLessThan(120);
+  });
+
+  it('AC3 — a player bullet destroys a diver; a diver spread shot hitting the player respawns it', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+
+    // Park a player bullet on the first diver — destroyed + bullet consumed.
+    const victim = scene.formationDivers[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.05);
+    expect(victim.alive).toBe(false);
+    expect(scene.aliveCount).toBe(DIVER_FORMATION_COUNT - 1);
+
+    // Park the player directly under a surviving diver so its straight-
+    // down spread burst reaches the ship.
+    const laneDiver = scene.formationDivers.find((d) => d.alive)!;
+    const laneX = laneDiver.x;
+    const laneY = laneDiver.y + 80;
+    player.respawn(laneX, laneY);
+
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    scene.toggleShooting();
+    scene.time.now += DIVER_FIRE_INTERVAL + 200;
+    scene.tick(0.05); // burst fired straight down from each diver
+
+    const hitsBefore = scene.getPlayerHitCount();
+    for (let i = 0; i < 40 && scene.getPlayerHitCount() === hitsBefore; i++) scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+    expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+  });
+
+  it('AC4 — regression: EXPLODE/SHOOT/formation drift still work with the player present', async () => {
+    const scene = await bootGym();
+    const before = scene.aliveCount;
+    scene.explodeRandom();
+    expect(scene.aliveCount).toBe(before - 1);
+
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(true);
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(false);
+
+    const fx = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeGreaterThan(fx);
   });
 });
