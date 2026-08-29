@@ -152,17 +152,25 @@ for reference implementations (the base class drives them).
    - the `← INDEX` button exists.
 6. **Audio + navigation.** `playSpawnSound()` / `playDestructionSound()`
    and `addBackToIndexButton()` are handled by the base class — do not
-   re-add them.
+   re-add them. Entity-specific fire/advance sounds go in `src/audio/effects.ts`
+   and are orchestrated by the entity (per-entity advance cue) or scene
+   (volley-level burst sound for Swarm).
+
+7. **Destruction sound ownership.** The base class `GymFormationScene.explodeRandom()`
+   plays `playDestructionSound()` for all enemies. Entity classes should
+   NOT call `playDestructionSound()` in their `playExplosion()` — doing so
+   would double-play the sound. This is a design decision per GDD §7.3
+   and the core-library best practices.
 
 ### 3.2 Existing scenes (reference implementations)
 
-| Scene | Entity | Formation | Fire pattern |
-|-------|--------|-----------|--------------|
-| `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) |
-| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) |
-| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) |
-| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) |
-| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) |
+| Scene | Entity | Formation | Fire pattern | Audio |
+|-------|--------|-----------|--------------|-------+-------|
+| `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | none |
+| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | none |
+| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | none |
+| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | advance cue (per-entity, ≥ 500 ms lead) + volley burst sound (scene-level, once per volley) |
+| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | none |
 
 ---
 

@@ -146,3 +146,82 @@ export function playWeaponChangeSound(): void {
     osc.stop(ctx.currentTime + t + 0.1);
   }
 }
+
+// ── Swarm enemy cues (GDD §4.1 — E5 Swarm) ─────────────────────────
+
+/**
+ * A buzzing / whoosh — Swarm coordinated-burst volley sound.
+ * A rapid low-frequency pulse layered with a sweeping whoosh to evoke
+ * a swarm of insects charging forward.
+ */
+export function playSwarmBurstSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  // Low buzzing pulse (simulates insect swarm).
+  const buzz = ctx.createOscillator();
+  const buzzGain = ctx.createGain();
+  buzz.type = 'sawtooth';
+  buzz.frequency.setValueAtTime(120, ctx.currentTime);
+  buzz.frequency.linearRampToValueAtTime(80, ctx.currentTime + 0.15);
+  buzzGain.gain.setValueAtTime(0.1, ctx.currentTime);
+  buzzGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
+  buzz.connect(buzzGain).connect(ctx.destination);
+  buzz.start(ctx.currentTime);
+  buzz.stop(ctx.currentTime + 0.22);
+
+  // Sweeping whoosh on top.
+  const whoosh = ctx.createOscillator();
+  const whooshGain = ctx.createGain();
+  whoosh.type = 'sine';
+  whoosh.frequency.setValueAtTime(200, ctx.currentTime);
+  whoosh.frequency.exponentialRampToValueAtTime(
+    600,
+    ctx.currentTime + 0.15,
+  );
+  whooshGain.gain.setValueAtTime(0.06, ctx.currentTime);
+  whooshGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+  whoosh.connect(whooshGain).connect(ctx.destination);
+  whoosh.start(ctx.currentTime);
+  whoosh.stop(ctx.currentTime + 0.2);
+}
+
+/**
+ * A rising chirp — Swarm firing advance cue (≥ 500 ms before the burst).
+ * Two quick ascending tones that signal "swarm about to fire".
+ */
+export function playSwarmAdvanceCue(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  // First chirp: quick ascending tone.
+  const osc1 = ctx.createOscillator();
+  const gain1 = ctx.createGain();
+  osc1.type = 'square';
+  osc1.frequency.setValueAtTime(440, ctx.currentTime);
+  osc1.frequency.exponentialRampToValueAtTime(
+    880,
+    ctx.currentTime + 0.12,
+  );
+  gain1.gain.setValueAtTime(0.06, ctx.currentTime);
+  gain1.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+  osc1.connect(gain1).connect(ctx.destination);
+  osc1.start(ctx.currentTime);
+  osc1.stop(ctx.currentTime + 0.17);
+
+  // Second chirp: slightly after, higher.
+  const osc2 = ctx.createOscillator();
+  const gain2 = ctx.createGain();
+  osc2.type = 'square';
+  osc2.frequency.setValueAtTime(550, ctx.currentTime + 0.1);
+  osc2.frequency.exponentialRampToValueAtTime(
+    1100,
+    ctx.currentTime + 0.22,
+  );
+  gain2.gain.setValueAtTime(0, ctx.currentTime + 0.1);
+  gain2.gain.linearRampToValueAtTime(0.06, ctx.currentTime + 0.12);
+  gain2.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+  osc2.connect(gain2).connect(ctx.destination);
+  osc2.start(ctx.currentTime + 0.1);
+  osc2.stop(ctx.currentTime + 0.27);
+}

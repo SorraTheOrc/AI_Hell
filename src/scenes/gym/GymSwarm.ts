@@ -39,6 +39,7 @@ import {
   EnemyFormationConfig,
   GymFormationScene,
 } from './core/GymFormationScene';
+import { playSwarmBurstSound } from '../../audio/effects';
 
 /** How many swarm members spawn. */
 export const SWARM_FORMATION_COUNT = 15;
@@ -86,6 +87,27 @@ const SWARM_CONFIG: EnemyFormationConfig<Swarm, SwarmBullet> = {
 export class GymSwarm extends GymFormationScene<Swarm, SwarmBullet> {
   constructor() {
     super(SWARM_CONFIG);
+  }
+
+  // ── Scene update loop (overridden for volley-level audio orchestration) ──
+
+  /**
+   * Overrides the base update to play the Swarm volley-level burst sound
+   * exactly once per frame where any swarm member fires a bullet.
+   *
+   * The base class calls `collectBullets` per entity; when the total bullet
+   * count increases (one or more entities fired), we play the swarm burst
+   * sound exactly once to represent the coordinated volley.
+   */
+  override update(_time: number, delta: number): void {
+    const bulletCountBefore = this.bullets.length;
+    super.update(_time, delta);
+    const bulletCountAfter = this.bullets.length;
+
+    // If new bullets appeared this frame, play the volley-level sound once.
+    if (bulletCountAfter > bulletCountBefore) {
+      playSwarmBurstSound();
+    }
   }
 
   // ── Public test accessors (thin wrappers over the base class) ───
