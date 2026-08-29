@@ -15,7 +15,6 @@
 
 import Phaser from 'phaser';
 
-import { playSwarmAdvanceCue } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
 
 export type { FormationOffset } from '../utils/formations';
@@ -51,9 +50,6 @@ const CLUSTER_MAX_SPREAD = 1.25;
 /** Cluster-direction-change frequency (radians per second on the phase). */
 const CLUSTER_PHASE_SPEED = 0.7;
 
-/** Advance-cue duration before each coordinated burst (≥ 500 ms, per GDD §7.3). */
-export const SWARM_ADVANCE_CUE_DURATION = 600;
-
 export interface SwarmConfig {
   x: number;
   y: number;
@@ -86,13 +82,6 @@ export class Swarm extends Phaser.GameObjects.Container {
   private _alive = true;
   private _shootEnabled = false;
   private _lastBurstTime = 0;
-
-  // Advance-cue state (mirrors the Phaser two-phase tell pattern).
-  // When shoot is enabled and the burst interval has elapsed, the swarm
-  // enters an advance-cue phase (≥ 500 ms) before firing — giving players
-  // a warning that a coordinated burst is imminent.
-  private _advanceCueActive = false;
-  private _advanceCueStartTime = 0;
 
   // Per-cluster phase — each cluster drifts with a different angular phase
   // so members weave around each other naturally.
@@ -244,73 +233,33 @@ export class Swarm extends Phaser.GameObjects.Container {
    * volley (toward the target position), so the "coordinated burst"
    * is a set of bullets fanning slightly from each emitter position.
    *
-   * Two-phase firing: on the first eligible call after the burst interval
-   * elapses, the swarm enters an advance-cue state (plays an audio warning
-   * ≥ 500 ms before firing). On the next call after the cue duration has
-   * elapsed, the swarm fires its burst bullet.
+   * The bullet is created immediately once the burst interval elapses;
+   * the scene plays the volley-level burst sound at the point of shooting.
    */
   tryFireBurstBullet(now: number): SwarmBullet | null {
     if (!this._shootEnabled || !this._alive) return null;
+    if (now - this._lastBurstTime < SWARM_BURST_INTERVAL) return null;
+    this._lastBurstTime = now;
 
-    const timeSinceLastBurst = now - this._lastBurstTime;
+    const dx = this.target.x - this.x;
+    const dy = this.target.y - this.y;
+    const baseAngle = Math.atan2(dy, dx);
+    // Spread angle: ±~17° around the aim direction for a tight burst.
+    const spread = (Math.random() - 0.5) * 0.3;
+    const angle = baseAngle + spread;
 
-    // If the burst interval has NOT elapsed, reset advance-cue state.
-    if (timeSinceLastBurst < SWARM_BURST_INTERVAL) {
-      this._advanceCueActive = false;
-      this._advanceCueStartTime = 0;
-      return null;
-    }
+    const graphics = this.scene.add.graphics();
+    graphics.fillStyle(SWARM_BULLET_COLOR, 1);
+    graphics.fillCircle(0, 0, SWARM_BULLET_SIZE);
+    graphics.setPosition(this.x, this.y);
+    graphics.setDepth(3);
 
-    // Phase 1 — not yet in advance cue: start it.
-    if (!this._advanceCueActive) {
-      this._advanceCueActive = true;
-      this._advanceCueStartTime = now;
-      this._playAdvanceCue();
-      return null; // Wait for cue to complete.
-    }
-
-    // Phase 2 — advance cue has elapsed long enough: fire.
-    if (now - this._advanceCueStartTime >= SWARM_ADVANCE_CUE_DURATION) {
-      this._advanceCueActive = false;
-      this._advanceCueStartTime = 0;
-      this._lastBurstTime = now;
-
-      const dx = this.target.x - this.x;
-      const dy = this.target.y - this.y;
-      const baseAngle = Math.atan2(dy, dx);
-      // Spread angle: ±~17° around the aim direction for a tight burst.
-      const spread = (Math.random() - 0.5) * 0.3;
-      const angle = baseAngle + spread;
-
-      const graphics = this.scene.add.graphics();
-      graphics.fillStyle(SWARM_BULLET_COLOR, 1);
-      graphics.fillCircle(0, 0, SWARM_BULLET_SIZE);
-      graphics.setPosition(this.x, this.y);
-      graphics.setDepth(3);
-
-      return {
-        graphics,
-        color: SWARM_BULLET_COLOR,
-        vx: Math.cos(angle) * SWARM_BULLET_SPEED,
-        vy: Math.sin(angle) * SWARM_BULLET_SPEED,
-      };
-    }
-
-    // Still in advance cue — return null.
-    return null;
-  }
-
-  /**
-   * Plays the advance audio cue (≥ 500 ms before the coordinated burst).
-   * A two-tone chirp that warns the player of an imminent swarm volley.
-   */
-  private _playAdvanceCue(): void {
-    playSwarmAdvanceCue();
-  }
-
-  /** Whether the swarm is currently in its advance-cue (warning) phase. */
-  get isAdvancing(): boolean {
-    return this._advanceCueActive;
+    return {
+      graphics,
+      color: SWARM_BULLET_COLOR,
+      vx: Math.cos(angle) * SWARM_BULLET_SPEED,
+      vy: Math.sin(angle) * SWARM_BULLET_SPEED,
+    };
   }
 
   /**

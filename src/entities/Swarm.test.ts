@@ -2,9 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
-import * as effectsModule from '../audio/effects';
 import {
-  SWARM_ADVANCE_CUE_DURATION,
   SWARM_BULLET_COLOR,
   SWARM_BULLET_SPEED,
   SWARM_BURST_INTERVAL,
@@ -105,7 +103,7 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     expect(buf[lineStyleIdx + 2]).toBe(SWARM_COLOR);
   });
 
-  it('fires a burst bullet only when shoot mode is enabled and the interval has elapsed (two-phase advance-cue)', async () => {
+  it('fires a burst bullet only when shoot mode is enabled and the interval has elapsed', async () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
     const t0 = 1_000_000;
@@ -114,55 +112,32 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     swarm.shootEnabled = false;
     expect(swarm.tryFireBurstBullet(t0)).toBeNull();
 
-    // Enabled — first call enters advance-cue phase (returns null).
+    // Enable shooting — with _lastBurstTime=0, the interval has long elapsed
+    // so the first call fires immediately. Then test the interval.
     swarm.shootEnabled = true;
-    expect(swarm.isAdvancing).toBe(false); // Not yet in advance cue.
-    const firstCall = swarm.tryFireBurstBullet(t0);
-    expect(swarm.isAdvancing).toBe(true); // Advance cue started.
-    expect(firstCall).toBeNull();
+    const bullet1 = swarm.tryFireBurstBullet(t0);
+    expect(bullet1).not.toBeNull();
+    expect(bullet1!.color).toBe(SWARM_BULLET_COLOR);
 
-    // Within the advance-cue duration — still advancing.
-    expect(
-      swarm.tryFireBurstBullet(t0 + SWARM_ADVANCE_CUE_DURATION - 1),
-    ).toBeNull();
-    expect(swarm.isAdvancing).toBe(true);
-
-    // After the advance-cue duration elapses — fires bullet.
-    const bullet = swarm.tryFireBurstBullet(
-      t0 + SWARM_ADVANCE_CUE_DURATION + 1,
-    );
-    expect(bullet).not.toBeNull();
-    expect(bullet!.color).toBe(SWARM_BULLET_COLOR);
-
-    // The last burst time is now t0 + ADVANCE + 1.
-    const lastBurstTime = t0 + SWARM_ADVANCE_CUE_DURATION + 1;
+    // The last burst time is now t0.
+    const lastBurstTime = t0;
 
     // Within the burst interval — refuses to fire again.
     expect(
       swarm.tryFireBurstBullet(lastBurstTime + SWARM_BURST_INTERVAL - 1),
     ).toBeNull();
 
-    // After the burst interval elapses (≥ SWARM_BURST_INTERVAL since last burst)
-    // — the advance-cue phase starts.
-    swarm.tryFireBurstBullet(lastBurstTime + SWARM_BURST_INTERVAL);
-    expect(swarm.isAdvancing).toBe(true);
-
-    // Next call after advance cue completes fires again.
-    const nextBulletTime = lastBurstTime + SWARM_BURST_INTERVAL + SWARM_ADVANCE_CUE_DURATION + 1;
-    expect(swarm.tryFireBurstBullet(nextBulletTime)).not.toBeNull();
+    // After the burst interval elapses — fires again.
+    expect(swarm.tryFireBurstBullet(lastBurstTime + SWARM_BURST_INTERVAL)).not.toBeNull();
   });
 
-  it('fires bullets at the coordinated burst speed (after advance cue)', async () => {
+  it('fires bullets at the coordinated burst speed', async () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
     swarm.shootEnabled = true;
 
-    // First call starts advance-cue phase.
-    swarm.tryFireBurstBullet(1_000_000);
-    // Second call (after advance-cue duration) fires the bullet.
-    const bullet = swarm.tryFireBurstBullet(
-      1_000_000 + SWARM_ADVANCE_CUE_DURATION + 1,
-    )!;
+    // First eligible call fires immediately.
+    const bullet = swarm.tryFireBurstBullet(1_000_000 + SWARM_BURST_INTERVAL)!;
     const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
     expect(speed).toBeCloseTo(SWARM_BULLET_SPEED, 1);
   });
@@ -228,49 +203,13 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     expect(swarm.y).toBeLessThan(110);
   });
 
-  // ── Audio behaviour (AC4) ──────────────────────────────────────────
+  // ── Audio behaviour (fire sound at shooting moment; louder destruction) ──
 
   // NOTE: Destruction sound (AC1) is played by the base class
   // `GymFormationScene.explodeRandom()`, not by the entity itself.
   // This avoids double-play with the scene-level call, per design doc §6.
-
-  it('advance-cue sound fires before burst bullet (AC4 ordering)', async () => {
-    vi.spyOn(effectsModule, 'playSwarmAdvanceCue');
-
-    booted = await bootScene([HarnessScene]);
-    const swarm = makeSwarm(100, 100);
-    swarm.shootEnabled = true;
-
-    // First call starts advance cue.
-    swarm.tryFireBurstBullet(1_000_000);
-    expect(effectsModule.playSwarmAdvanceCue).toHaveBeenCalledTimes(1);
-
-    // Advance cue completes — fires bullet (no additional advance sound).
-    swarm.tryFireBurstBullet(1_000_000 + SWARM_ADVANCE_CUE_DURATION + 1);
-    expect(effectsModule.playSwarmAdvanceCue).toHaveBeenCalledTimes(1);
-  });
-
-  it('advance-cue sound fires once per volley cycle (AC4)', async () => {
-    vi.spyOn(effectsModule, 'playSwarmAdvanceCue');
-
-    booted = await bootScene([HarnessScene]);
-    const swarm = makeSwarm(100, 100);
-    swarm.shootEnabled = true;
-
-    // First volley: advance cue at t0.
-    swarm.tryFireBurstBullet(1_000_000);
-    expect(effectsModule.playSwarmAdvanceCue).toHaveBeenCalledTimes(1);
-    swarm.tryFireBurstBullet(1_000_000 + SWARM_ADVANCE_CUE_DURATION + 1);
-
-    // Second volley: advance cue starts after burst interval.
-    const lastBurstTime = 1_000_000 + SWARM_ADVANCE_CUE_DURATION + 1;
-    swarm.tryFireBurstBullet(lastBurstTime + SWARM_BURST_INTERVAL);
-    expect(effectsModule.playSwarmAdvanceCue).toHaveBeenCalledTimes(2);
-
-    // Advance cue completes — still only 2 advance sounds.
-    swarm.tryFireBurstBullet(
-      lastBurstTime + SWARM_BURST_INTERVAL + SWARM_ADVANCE_CUE_DURATION + 1,
-    );
-    expect(effectsModule.playSwarmAdvanceCue).toHaveBeenCalledTimes(2);
-  });
+  //
+  // The fire sound is NOT an advance cue — it plays at the point of
+  // shooting (handled by GymSwarm.update() at scene level).
+  // No advance-cue sound is used per operator feedback.
 });

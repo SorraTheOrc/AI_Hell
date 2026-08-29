@@ -93,7 +93,9 @@ export class GymSwarm extends GymFormationScene<Swarm, SwarmBullet> {
 
   /**
    * Overrides the base update to play the Swarm volley-level burst sound
-   * exactly once per frame where any swarm member fires a bullet.
+   * exactly once at the point of shooting — in the same frame (and same
+   * tick) any swarm member fires a bullet. No pre-warning cue: the audio
+   * is tied to the firing event itself.
    *
    * The base class calls `collectBullets` per entity; when the total bullet
    * count increases (one or more entities fired), we play the swarm burst
@@ -104,7 +106,8 @@ export class GymSwarm extends GymFormationScene<Swarm, SwarmBullet> {
     super.update(_time, delta);
     const bulletCountAfter = this.bullets.length;
 
-    // If new bullets appeared this frame, play the volley-level sound once.
+    // New bullets this frame = firing happened this frame: play the
+    // volley-level sound once, at the moment of shooting.
     if (bulletCountAfter > bulletCountBefore) {
       playSwarmBurstSound();
     }

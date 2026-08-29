@@ -152,9 +152,9 @@ for reference implementations (the base class drives them).
    - the `← INDEX` button exists.
 6. **Audio + navigation.** `playSpawnSound()` / `playDestructionSound()`
    and `addBackToIndexButton()` are handled by the base class — do not
-   re-add them. Entity-specific fire/advance sounds go in `src/audio/effects.ts`
-   and are orchestrated by the entity (per-entity advance cue) or scene
-   (volley-level burst sound for Swarm).
+   re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
+   and are orchestrated by the scene (volley-level burst sound for Swarm
+   at the point of shooting) — no per-entity advance cue is used.
 
 7. **Destruction sound ownership.** The base class `GymFormationScene.explodeRandom()`
    plays `playDestructionSound()` for all enemies. Entity classes should
@@ -169,7 +169,7 @@ for reference implementations (the base class drives them).
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | none |
 | `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | none |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | none |
-| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | advance cue (per-entity, ≥ 500 ms lead) + volley burst sound (scene-level, once per volley) |
+| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (scene-level, once per volley, at point of shooting) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | none |
 
 ---

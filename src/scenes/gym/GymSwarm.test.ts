@@ -203,7 +203,7 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
 
-  // ── Audio orchestration (AC2, AC3, AC4) ────────────────────────────
+  // ── Audio orchestration (AC2, AC3; fire at point of shooting) ──────
 
   it('AC2 — plays a Swarm-specific burst sound in effects.ts', async () => {
     vi.spyOn(effectsModule, 'playSwarmBurstSound');
@@ -212,7 +212,8 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
     const shoot = findButton(scene, 'SHOOT: OFF');
     shoot.emit('pointerdown'); // ON
 
-    // Advance through advance-cue phases and wait for bullets.
+    // Wait for bullets to fire (shoot enabled → immediate fire on first
+    // eligible interval).
     await new Promise((r) => setTimeout(r, 2000));
     expect(effectsModule.playSwarmBurstSound).toHaveBeenCalled();
   });
@@ -224,7 +225,7 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
     const shoot = findButton(scene, 'SHOOT: OFF');
     shoot.emit('pointerdown'); // ON
 
-    // Wait for one volley cycle (advance cue + burst).
+    // Wait for one volley cycle.
     await new Promise((r) => setTimeout(r, 2000));
 
     // Count how many volley sounds were played.
@@ -240,17 +241,7 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
     expect(callCount).toBeLessThan(scene.formationSwarms.length);
   });
 
-  it('AC4 — advance-cue ordering in scene: advance sound before burst', async () => {
-    vi.spyOn(effectsModule, 'playSwarmAdvanceCue');
-
-    const scene = await bootGym();
-    const shoot = findButton(scene, 'SHOOT: OFF');
-    shoot.emit('pointerdown'); // ON
-
-    // Wait for at least one advance-cue + burst cycle.
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // Advance cue should have been called (per-entity advance cues).
-    expect(effectsModule.playSwarmAdvanceCue).toHaveBeenCalled();
-  });
+  // NOTE: Advance-cue removed per operator feedback — fire sound now
+  // plays at the point of shooting, not as a warning. See GymSwarm.ts
+  // update override comment and Swarm.ts tryFireBurstBullet doc.
 });
