@@ -21,6 +21,8 @@ import {
   GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
+  PLAYER_RESPAWN_INVULNERABLE,
+  SHIP_SIZE,
 } from '../../../core/constants';
 import { playDestructionSound, playSpawnSound } from '../../../audio/effects';
 import { addBackToIndexButton } from '../../../utils/gymNavigation';
@@ -43,6 +45,9 @@ import { MovementInput } from '../../../utils/movement';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
+  /** World-space position (set via `applyFormationPosition`/`setPosition`). */
+  x: number;
+  y: number;
   /** False once the entity is destroyed (explosion playing). */
   readonly alive: boolean;
   /** Whether the entity currently fires (Level 4+ behaviour toggle). */
@@ -118,6 +123,17 @@ export interface EnemyFormationConfig<
    * direction of travel. Omit to keep the scene enemy-only.
    */
   player?: PlayerFormationConfig;
+  /**
+   * Hit radius (px) of each enemy entity used for player-bullet vs
+   * entity collisions. Defaults to {@link DEFAULT_ENTITY_HIT_RADIUS}.
+   */
+  entityHitRadius?: number;
+  /**
+   * Hit radius (px) of enemy bullets used for bullet-vs-bullet and
+   * bullet-vs-player collisions. Defaults to
+   * {@link DEFAULT_BULLET_HIT_RADIUS}.
+   */
+  bulletHitRadius?: number;
   /** Creates one enemy at the given absolute position with its offset. */
   createEntity(
     scene: Phaser.Scene,
@@ -138,6 +154,15 @@ const LABEL_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   padding: { x: 8, y: 4 },
 };
 
+/** Default hit radius (px) of an enemy entity when no config is given. */
+const DEFAULT_ENTITY_HIT_RADIUS = 20;
+
+/** Default hit radius (px) of an enemy bullet when no config is given. */
+const DEFAULT_BULLET_HIT_RADIUS = 6;
+
+/** Blink half-period (s) while the player is invulnerable after a hit. */
+const PLAYER_BLINK_INTERVAL = 0.1;
+
 /**
  * Generic formation gym scene. Parameterised by entity + bullet types so
  * concrete scenes keep fully-typed accessors (`formationScouts` etc.).
@@ -155,6 +180,16 @@ export class GymFormationScene<
   protected player: Player | null = null;
   /** Player bullets in flight (auto-fired toward the direction of travel). */
   protected playerBullets: PlayerBullet[] = [];
+
+  // Player hit/respawn state (only meaningful when `config.player` set).
+  private playerSpawnX = 0;
+  private playerSpawnY = 0;
+  private playerHitCount = 0;
+  /** Seconds of invulnerability remaining after a hit (blinks while > 0). */
+  private playerInvulnerable = 0;
+  private playerBlinkPhase = 0;
+  /** Active player-explosion VFX graphics (for observation in tests). */
+  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
 
   protected formationBaseX: number;
   protected formationBaseY: number;
@@ -201,6 +236,8 @@ export class GymFormationScene<
         x: config.player.x,
         y: config.player.y,
       });
+      this.playerSpawnX = config.player.x;
+      this.playerSpawnY = config.player.y;
       // Graphics objects are not auto-added to the display list either.
       this.add.existing(this.player);
       this.cursors = this.input.keyboard?.createCursorKeys();
@@ -322,6 +359,60 @@ export class GymFormationScene<
     return this.wasd;
   }
 
+  /** Number of times the player ship has been hit (informational only). */
+  getPlayerHitCount(): number {
+    return this.playerHitCount;
+  }
+
+  /** True while the player is invulnerable (blinking) after a respawn. */
+  isPlayerInvulnerable(): boolean {
+    return this.playerInvulnerable > 0;
+  }
+
+  /** Seconds of invulnerability remaining (0 once the blink ends). */
+  getPlayerInvulnerableRemaining(): number {
+    return Math.max(0, this.playerInvulnerable);
+  }
+
+  /** Active player-explosion VFX graphics (empty once the tweens end). */
+  getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
+    return this.playerExplosions.slice();
+  }
+
+  /** Hit radius (px) used for player-bullet vs entity collisions. */
+  getEntityHitRadius(): number {
+    return this.config.entityHitRadius ?? DEFAULT_ENTITY_HIT_RADIUS;
+  }
+
+  /** Hit radius (px) used for enemy-bullet collision checks. */
+  getBulletHitRadius(): number {
+    return this.config.bulletHitRadius ?? DEFAULT_BULLET_HIT_RADIUS;
+  }
+
+  /**
+   * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s.
+   * Used by `_autoFire` and by tests to place bullets deterministically.
+   */
+  spawnPlayerBullet(
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    color = 0x00ffff,
+  ): PlayerBullet {
+    const bullet = createPlayerBullet(
+      this,
+      x,
+      y,
+      color,
+      PLAYER_BULLET_RADIUS,
+      vx,
+      vy,
+    );
+    this.playerBullets.push(bullet);
+    return bullet;
+  }
+
   // ── Scene update loop ────────────────────────────────────────────
 
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */
@@ -378,6 +469,10 @@ export class GymFormationScene<
       this.player.physicsTick(dt, this.scale.width, this.scale.height);
       this._autoFire(dt);
       this._advancePlayerBullets(dt);
+
+      // Collisions + post-hit invulnerability blink (player component only).
+      this._handleCollisions();
+      this._updatePlayerInvulnerability(dt);
     }
   }
 
@@ -406,17 +501,7 @@ export class GymFormationScene<
 
     for (const bd of bulletDescs) {
       const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-      this.playerBullets.push(
-        createPlayerBullet(
-          this,
-          bd.x,
-          bd.y,
-          bd.color,
-          PLAYER_BULLET_RADIUS,
-          vel.vx,
-          vel.vy,
-        ),
-      );
+      this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
     }
   }
 
@@ -434,6 +519,180 @@ export class GymFormationScene<
       g.y < -20 ||
       g.y > GAME_HEIGHT + 20
     );
+  }
+
+  /**
+   * Circle-vs-circle collision test using manual distance checks
+   * (`Math.hypot <= rA + rB`), consistent with `GymWeapons._overlapsShip`.
+   */
+  private _collide(
+    ax: number,
+    ay: number,
+    aRadius: number,
+    bx: number,
+    by: number,
+    bRadius: number,
+  ): boolean {
+    return Math.hypot(ax - bx, ay - by) <= aRadius + bRadius;
+  }
+
+  /**
+   * Resolves player-component collisions (only runs when `config.player`
+   * is set, so enemy-only scenes behave exactly as before):
+   * player bullets vs enemies, player bullets vs enemy bullets, and
+   * enemy bullets vs the player ship (hit → respawn + invulnerability).
+   */
+  private _handleCollisions(): void {
+    if (!this.player) return;
+
+    const entityHitRadius = this.getEntityHitRadius();
+    const bulletHitRadius = this.getBulletHitRadius();
+    const playerHull = SHIP_SIZE / 2;
+
+    // 1. Player bullets vs enemy entities: destroy the enemy, consume
+    //    the bullet. Rebuild the list so consumed bullets are dropped.
+    const keptPlayerBullets: PlayerBullet[] = [];
+    for (const pb of this.playerBullets) {
+      let spent = false;
+      for (const entity of this.entities) {
+        if (!entity.alive) continue;
+        if (
+          this._collide(
+            pb.x,
+            pb.y,
+            PLAYER_BULLET_RADIUS,
+            entity.x,
+            entity.y,
+            entityHitRadius,
+          )
+        ) {
+          entity.destroySelf();
+          playDestructionSound();
+          pb.destroy();
+          spent = true;
+          break;
+        }
+      }
+      if (!spent) keptPlayerBullets.push(pb);
+    }
+    this.playerBullets = keptPlayerBullets;
+
+    // 2. Player bullets vs enemy bullets: both are destroyed.
+    const destroyedEnemyBullets: TBullet[] = [];
+    const keptPlayerBullets2: PlayerBullet[] = [];
+    for (const pb of this.playerBullets) {
+      let spent = false;
+      for (const eb of this.bullets) {
+        if (
+          this._collide(
+            pb.x,
+            pb.y,
+            PLAYER_BULLET_RADIUS,
+            eb.graphics.x,
+            eb.graphics.y,
+            bulletHitRadius,
+          )
+        ) {
+          eb.graphics.destroy();
+          destroyedEnemyBullets.push(eb);
+          pb.destroy();
+          spent = true;
+          break;
+        }
+      }
+      if (!spent) keptPlayerBullets2.push(pb);
+    }
+    this.playerBullets = keptPlayerBullets2;
+    this.bullets = this.bullets.filter(
+      (b) => !destroyedEnemyBullets.includes(b),
+    );
+
+    // 3. Enemy bullets vs player: hit → explosion VFX/SFX + respawn at
+    //    spawn point + invulnerability blink. The player is never
+    //    destroyed (infinite lives, no score/game-over changes).
+    const keptEnemyBullets: TBullet[] = [];
+    for (const eb of this.bullets) {
+      if (
+        this.playerInvulnerable <= 0 &&
+        this._collide(
+          eb.graphics.x,
+          eb.graphics.y,
+          bulletHitRadius,
+          this.player.x,
+          this.player.y,
+          playerHull,
+        )
+      ) {
+        this._hitPlayer();
+        eb.graphics.destroy();
+      } else {
+        keptEnemyBullets.push(eb);
+      }
+    }
+    this.bullets = keptEnemyBullets;
+  }
+
+  /**
+   * Player hit: records the hit, plays the destruction sound, spawns the
+   * explosion VFX at the ship position, respawns the player at the spawn
+   * point with a short invulnerability window, and resets the blink phase.
+   */
+  private _hitPlayer(): void {
+    if (!this.player) return;
+    this.playerHitCount += 1;
+    playDestructionSound();
+    this._spawnPlayerExplosion(this.player.x, this.player.y);
+    this.player.respawn(this.playerSpawnX, this.playerSpawnY);
+    this.playerInvulnerable = PLAYER_RESPAWN_INVULNERABLE;
+    this.playerBlinkPhase = 0;
+    this.player.setAlpha(1);
+  }
+
+  /**
+   * Counts down invulnerability and blinks the ship's alpha every
+   * half blink-interval; restores full alpha once the window ends.
+   */
+  private _updatePlayerInvulnerability(dt: number): void {
+    if (!this.player || this.playerInvulnerable <= 0) return;
+    this.playerInvulnerable = Math.max(0, this.playerInvulnerable - dt);
+    this.playerBlinkPhase += dt;
+    const visible =
+      Math.floor(this.playerBlinkPhase / PLAYER_BLINK_INTERVAL) % 2 === 0;
+    this.player.setAlpha(visible ? 1 : 0.3);
+    if (this.playerInvulnerable <= 0) this.player.setAlpha(1);
+  }
+
+  /**
+   * Spawns a tweened expanding-ring explosion at (x, y) — the player
+   * equivalent of `Scout.playExplosion`. Tracked in `playerExplosions`
+   * so tests can observe the VFX without pixel assertions.
+   */
+  private _spawnPlayerExplosion(x: number, y: number): void {
+    const gfx = this.add.graphics({ x, y });
+    this.playerExplosions.push(gfx);
+    this.tweens.add({
+      targets: gfx,
+      alpha: { from: 1, to: 0 },
+      duration: 400,
+      onUpdate: () => {
+        const t = gfx.alpha;
+        const radius = 8 + 24 * (1 - t);
+        gfx.clear();
+        gfx.lineStyle(2, 0x00ffff, t);
+        gfx.strokeCircle(0, 0, radius);
+        gfx.beginPath();
+        gfx.moveTo(-radius, 0);
+        gfx.lineTo(radius, 0);
+        gfx.moveTo(0, -radius);
+        gfx.lineTo(0, radius);
+        gfx.strokePath();
+      },
+      onComplete: () => {
+        gfx.destroy();
+        const idx = this.playerExplosions.indexOf(gfx);
+        if (idx >= 0) this.playerExplosions.splice(idx, 1);
+      },
+    });
   }
 
   /** x-coordinate that puts the whole formation off the left edge. */

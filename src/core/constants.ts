@@ -102,3 +102,6 @@ export const PLAYER_BULLET_SPEED = 350;
 
 /** Bullet radius in px for all player weapons. */
 export const PLAYER_BULLET_RADIUS = 3;
+
+/** Seconds the player stays invulnerable (and blinks) after respawning from a hit. */
+export const PLAYER_RESPAWN_INVULNERABLE = 1.5;

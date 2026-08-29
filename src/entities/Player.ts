@@ -556,4 +556,14 @@ export class Player extends Phaser.GameObjects.Graphics {
     );
     this.setPosition(this._movementState.x, this._movementState.y);
   }
+
+  /**
+   * Relocates the ship to (x, y) with zero velocity and no flame — the
+   * respawn behaviour used by scenes after the player takes a hit.
+   */
+  respawn(x: number, y: number): void {
+    this._movementState = { x, y, vx: 0, vy: 0 };
+    this.setPosition(x, y);
+    for (const port of ENGINE_PORTS) this._flameLens[port.port] = 0;
+  }
 }

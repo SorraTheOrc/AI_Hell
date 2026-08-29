@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as effectsModule from '../../../audio/effects';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
@@ -87,6 +88,7 @@ function vOffsets(count: number): FormationOffset[] {
 function makeStubScene(
   collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
   player?: { x: number; y: number },
+  collision?: { entityHitRadius?: number; bulletHitRadius?: number },
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
     sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
@@ -99,6 +101,8 @@ function makeStubScene(
     statusLabel: 'stubs',
     hintText: 'stub gym — formation demo',
     player,
+    entityHitRadius: collision?.entityHitRadius,
+    bulletHitRadius: collision?.bulletHitRadius,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
       const enemy = new StubEnemy(scene, offset);
@@ -462,5 +466,241 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
     scene.tick(4.0);
     expect(scene.getPlayerBullets()).toHaveLength(0);
     scene.getCursors()!.right.isDown = false;
+  });
+});
+
+describe('GymFormationScene — collision detection and player hit/respawn (core scene AC1–AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Player spawn far from the formation so auto-fire bullets never
+   *  interfere with collision assertions (bullets fly right/off-screen,
+   *  away from the formation at x ≈ 240–360). */
+  const PLAYER_SPAWN = { x: 920, y: 30 };
+
+  /**
+   * Boots a scene with a one-shot enemy-bullet "parking" collect: only
+   * when `armed` is set does the collect emit a single stationary bullet
+   * at `parkAt`. All tests below run entirely synchronously (no
+   * real-time waits), so bullet placement is fully deterministic.
+   */
+  async function bootParked(
+    collide?: { entityHitRadius?: number; bulletHitRadius?: number },
+  ): Promise<{
+    scene: BootedScene;
+    parkAt: { x: number; y: number };
+    armed: () => void;
+    parked: () => StubBullet | null;
+  }> {
+    let armedFlag = false;
+    let parkedBullet: StubBullet | null = null;
+    const parkAt = { x: 0, y: 0 };
+
+    const collect = (enemy: StubEnemy): StubBullet[] => {
+      if (!armedFlag) return [];
+      armedFlag = false; // one-shot
+      const b = new StubBullet(enemy.scene, 0, 0);
+      b.graphics.setPosition(parkAt.x, parkAt.y);
+      parkedBullet = b;
+      return [b];
+    };
+
+    booted = await bootScene([
+      makeStubScene(collect, PLAYER_SPAWN, collide),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    return {
+      scene,
+      parkAt,
+      armed: () => {
+        armedFlag = true;
+      },
+      parked: () => parkedBullet,
+    };
+  }
+
+  it('AC1 — a player bullet overlapping an enemy destroys it via destroySelf and is consumed', async () => {
+    const { scene } = await bootParked();
+    const target = scene.formationEntities[0];
+    expect(target.alive).toBe(true);
+
+    const pb = scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05); // formation drifts ~2 px — well inside hit radius
+
+    // The enemy dies via the standard destroySelf/explosion path and the
+    // bullet is consumed (not left in flight).
+    expect(target.alive).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
+    expect(scene.getPlayerBullets()).not.toContain(pb);
+  });
+
+  it('AC1 — bullets that miss an enemy stay in flight (no false positives)', async () => {
+    const { scene } = await bootParked();
+    const target = scene.formationEntities[0];
+
+    // Spawn a bullet with zero velocity, but offset it horizontally so it
+    // never reaches the enemy (hit radius 20 + bullet radius 3 = 23 px).
+    const pb = scene.spawnPlayerBullet(target.x - 60, target.y, 0, 0);
+    for (let i = 0; i < 5; i++) scene.tick(0.05);
+
+    expect(target.alive).toBe(true);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.getPlayerBullets()).toContain(pb);
+  });
+
+  it('AC2 — a player bullet destroys an enemy bullet (both consumed)', async () => {
+    const { scene, parkAt, armed, parked } = await bootParked();
+    // Far from both the formation (x ≈ 240+) and the player (920, 30).
+    parkAt.x = 120;
+    parkAt.y = 100;
+
+    const pb = scene.spawnPlayerBullet(parkAt.x, parkAt.y, 0, 0);
+    armed();
+    scene.tick(0.05);
+
+    expect(parked()).not.toBeNull();
+    expect(scene.activeBullets).not.toContain(parked());
+    expect(scene.getPlayerBullets()).not.toContain(pb);
+    // The player is nowhere near the exchange: no player hit.
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('AC5 — hit test uses the summed radii boundary (rA + rB, inclusive <=)', async () => {
+    const { scene } = await bootParked({ entityHitRadius: 10 });
+    const target = scene.formationEntities[0];
+
+    // 10 (entity) + 3 (PLAYER_BULLET_RADIUS) = 13 px. Ensure no formation
+    // drift (>0.04 px at dt=0.001) flips the boundary case.
+    // 10 (entity) + 3 (PLAYER_BULLET_RADIUS) = 13 px. The enemy drifts
+    // 0.04 px right during dt=0.001, so a bullet exactly 13 px left sits
+    // at 13.04 (a clean miss); 12.9 px lands at 12.94 — just inside.
+    const outside = scene.spawnPlayerBullet(target.x - 13, target.y, 0, 0);
+    scene.tick(0.001);
+    expect(target.alive).toBe(true); // outside
+    expect(scene.getPlayerBullets()).toContain(outside);
+
+    const inside = scene.spawnPlayerBullet(target.x - 12.9, target.y, 0, 0);
+    scene.tick(0.001);
+    expect(target.alive).toBe(false); // inside (inclusive <= boundary)
+    expect(scene.getPlayerBullets()).not.toContain(inside);
+  });
+
+  it('AC5 — hit test uses Euclidean distance (hypot), not rectilinear', async () => {
+    const { scene } = await bootParked({ entityHitRadius: 10 });
+    const target = scene.formationEntities[0];
+
+    // (±9, ±9) → hypot ≈ 12.73 ≤ 13 → hits, while a rectilinear check
+    // (|dx|+|dy| = 18) would wrongly report a miss.
+    const diag = scene.spawnPlayerBullet(
+      target.x - 9,
+      target.y - 9,
+      0,
+      0,
+    );
+    scene.tick(0.001);
+    expect(target.alive).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(diag);
+  });
+
+  it('AC5 — bullets just outside the summed radii do not hit', async () => {
+    const { scene } = await bootParked({ entityHitRadius: 10 });
+    const target = scene.formationEntities[0];
+
+    // (±14, ±14) → hypot ≈ 19.8 > 13 → miss.
+    const outside = scene.spawnPlayerBullet(
+      target.x - 14,
+      target.y - 14,
+      0,
+      0,
+    );
+    for (let i = 0; i < 5; i++) scene.tick(0.001);
+    expect(target.alive).toBe(true);
+    expect(scene.getPlayerBullets()).toContain(outside);
+  });
+
+  it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + respawn + invulnerability blink', async () => {
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const { scene, parkAt, armed } = await bootParked();
+    const player = scene.getPlayer()!;
+
+    // Move the ship away from spawn so respawn is observable.
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+    expect(player.y).toBeGreaterThan(PLAYER_SPAWN.y + 10);
+
+    // Park an enemy bullet exactly on the ship.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    armed();
+    scene.tick(0.05);
+
+    // Hit: VFX/SFX fired, hit counter incremented, respawned at spawn.
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(
+      callsBefore,
+    );
+    expect(player.x).toBe(PLAYER_SPAWN.x);
+    expect(player.y).toBe(PLAYER_SPAWN.y);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
+
+    // Blink: after 0.11s of invulnerability the alpha is < 1 (hidden
+    // phase of the blink), then back to fully visible.
+    scene.tick(0.11);
+    expect(player.alpha).toBeLessThan(1);
+    scene.tick(0.11);
+    expect(player.alpha).toBe(1);
+  });
+
+  it('AC4 — invulnerability prevents a second hit, then expires; the player is never destroyed and the score never changes', async () => {
+    const { scene, parkAt, armed } = await bootParked();
+    const player = scene.getPlayer()!;
+
+    const statusLabels = (): string[] =>
+      scene.children.list
+        .filter((c) => c instanceof Phaser.GameObjects.Text)
+        .map((t) => (t as Phaser.GameObjects.Text).text);
+    const labelsBefore = statusLabels();
+    const enemiesBefore = scene.aliveCount;
+
+    // First hit: parked bullet directly on the spawn position.
+    parkAt.x = PLAYER_SPAWN.x;
+    parkAt.y = PLAYER_SPAWN.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // Same-spot bullet while invulnerable: no second hit — the bullet is
+    // left in flight, untouched.
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // Wait out the invulnerability window (pure tick time). Once it
+    // expires the parked bullet from above hits again — exactly one more
+    // hit (the new invulnerability window re-engages and the consumed
+    // bullet is gone, so no third hit).
+    for (let i = 0; i < 20; i++) scene.tick(0.2); // 4s total
+    expect(scene.getPlayerHitCount()).toBe(2);
+    expect(scene.getPlayerInvulnerableRemaining()).toBe(0); // window expired again
+
+    // Infinite respawns: the player object is never destroyed, the ship
+    // returns to spawn, and the HUD/score line never changes.
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(player.x).toBe(PLAYER_SPAWN.x);
+    expect(player.y).toBe(PLAYER_SPAWN.y);
+    expect(player.alpha).toBe(1);
+    expect(statusLabels()).toEqual(labelsBefore);
+    expect(scene.aliveCount).toBe(enemiesBefore);
   });
 });
