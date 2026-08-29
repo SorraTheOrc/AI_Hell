@@ -51,9 +51,10 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     const scene = await bootIndex();
 
     // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver, GymSwarm,
-    // GymPowerUps, GymWeapons are on disk. Labels strip the leading
-    // "Gym" and are sorted alphabetically.
+    // GymPowerUps, GymWeapons, GymBoss are on disk. Labels strip the
+    // leading "Gym" and are sorted alphabetically.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
+      'Boss',
       'Diver',
       'Phaser',
       'Player',
@@ -64,6 +65,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
+      'GymBoss',
       'GymDiver',
       'GymPhaser',
       'GymPlayer',

@@ -410,6 +410,17 @@ The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire a
 
 The scene is reachable from the gym index ("Weapons" entry). Coverage: `src/utils/weapons.test.ts` (pattern math, fire rates, round-robin order, heading fallback) + `src/scenes/gym/GymWeapons.test.ts` (auto-discovery, ship presence, auto-fire, persistent switching/reset, round-robin, grow/shrink, collection gating) + `src/entities/Player.test.ts` (heading/equip/auto-fire behaviours).
 
+#### Boss (Central AI) Gym Scene
+
+The Boss gym scene (Create Boss (Central AI) gym scene) is a standalone Phaser scene demonstrating the Boss — "The Central AI" from GDD §4.3: the final-challenge multi-phase enemy with a large neon hexagonal body, a pulsing central core, a 4-phase health bar, and distinct attack patterns per phase. It composes the shared `GymFormationScene` core library with a single-entity `Boss`:
+
+- `src/entities/Boss.ts` — the Boss entity (extends `Phaser.GameObjects.Container`): a 100 px neon-red hexagon with a pulsing yellow core and glow ring, a screen-fixed 4-segment health bar, and a telegraph → attack state machine. Four phases (`BossPhase`): **Spread** (wide arc volley), **Spiral** (rotating outward volley), **Pulse** (expanding screen ring + aimed fan at the player's last known position), and **Desperation** (spread + spiral + aimed + ring combined at ~1.6× bullet speed). Each attack telegraphs for **600 ms** (`BOSS_TELEGRAPH_MS`, ≥ 500 ms per GDD) with a brightened core pulse and an audio cue before firing. Phase transitions play a sound and recolor the health bar (green → yellow → orange → red); at phase 4 the core visibly exposes/glows brighter as the desperation cue. The Boss is **multi-hit** (4 HP, one segment per phase).
+- `src/scenes/gym/GymBoss.ts` — the gym scene: a thin `GymFormationScene` subclass spawning the single Boss centred on screen, reusing the standard HUD plus a **DAMAGE** button (beside SHOOT) that deals one segment of damage, advancing the health bar and phase. The status line reports the current phase (e.g. `Phase 2/4`).
+
+Because the Boss is a multi-phase boss, it deviates from the 1-HP rule that applies to the other enemies (documented in `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). To exercise the Boss's own `update` state machine (telegraph → attack), `GymFormationScene` members used by `GymBoss` (`formationBaseX/Y`, `shootButton`, `statusText`, `_addButton`, `_bulletOffScreen`) were widened from `private` to `protected`.
+
+The scene is reachable from the gym index ("Boss" entry). Coverage: `src/scenes/gym/GymBoss.test.ts` verifies scene/entity presence, visual style, health-bar segments, phase transitions via the DAMAGE button, all four phase attack patterns (including desperation combining patterns), telegraph timing ≥ 500 ms, and destruction/explosion.
+
 ### Prioritizing work
 
 At this point we have a number of work items. How do we know which to work on first, and how will the AI decide which to dispatch in downtime?

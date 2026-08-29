@@ -20,7 +20,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
-| Boss | The Central AI | §4.3 | 3–4 attack phases, multi-hit health | (per GDD) | complex patterns per phase |
+| Boss | The Central AI | §4.3 | 4 attack phases, multi-hit health (4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
 All enemies are **1 HP** (single bullet destroys them, except the Boss which is
 multi-hit) and **never collide with each other** (GDD §2.6) — no collision
@@ -162,6 +162,7 @@ for reference implementations (the base class drives them).
 | `GymDiver` | `Diver` | diamond/chevron | spread burst (array) |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) |
+| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) |
 
 ---
 

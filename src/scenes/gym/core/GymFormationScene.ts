@@ -112,14 +112,14 @@ export class GymFormationScene<
   protected entities: TEntity[] = [];
   protected bullets: TBullet[] = [];
 
-  private formationBaseX: number;
-  private formationBaseY: number;
+  protected formationBaseX: number;
+  protected formationBaseY: number;
   private shootEnabled = false;
 
   // UI toggles
-  private shootButton!: Phaser.GameObjects.Text;
-  private explodeButton!: Phaser.GameObjects.Text;
-  private statusText!: Phaser.GameObjects.Text;
+  protected shootButton!: Phaser.GameObjects.Text;
+  protected explodeButton!: Phaser.GameObjects.Text;
+  protected statusText!: Phaser.GameObjects.Text;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -178,7 +178,7 @@ export class GymFormationScene<
 
   // ── Button helpers ───────────────────────────────────────────────
 
-  private _addButton(
+  protected _addButton(
     x: number,
     y: number,
     label: string,
@@ -279,7 +279,7 @@ export class GymFormationScene<
     }
   }
 
-  private _bulletOffScreen(g: Phaser.GameObjects.Graphics): boolean {
+  protected _bulletOffScreen(g: Phaser.GameObjects.Graphics): boolean {
     return (
       g.x < -20 ||
       g.x > GAME_WIDTH + 20 ||
