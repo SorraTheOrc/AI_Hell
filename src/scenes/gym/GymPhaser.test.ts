@@ -61,25 +61,27 @@ describe('GymPhaser — E4 Phaser gym scene (AC1-AC11)', () => {
   it('AC3 — Phasers move in orbital paths around the formation centre', async () => {
     const scene = await bootGym();
 
-    // Record the formation base before waiting.
+    // Record the formation base and each Phaser's position before moving.
     const baseBefore = scene.formationX;
+    const positionsBefore = scene.formationPhasers.map((p) => ({
+      x: p.x,
+      y: p.y,
+    }));
 
-    // Wait for orbital movement (the game loop advances positions).
-    await new Promise((r) => setTimeout(r, 500));
+    // Drive the game loop deterministically (GymScout-style): advance the
+    // game clock so the orbital phase sweeps, then step the simulation so
+    // the base drifts and each Phaser repositions. Wall-clock setTimeout
+    // waits are avoided — under CI load / headless timer throttling the
+    // game clock advances less than the wall clock, making displacement
+    // land just under the absolute threshold (the observed flake).
+    scene.time.now += 1000; // 1.0 s of game clock → orbital phase sweeps 0.4 rad
+    scene.tick(1.0);        // one deterministic 1.0 s step: drift + orbital motion
 
     // The formation base should have drifted right (base scene update).
     const baseAfter = scene.formationX;
     expect(baseAfter).toBeGreaterThan(baseBefore);
 
     // Positions should have changed (orbital + drift movement).
-    const positionsBefore = scene.formationPhasers.map((p) => ({
-      x: p.x,
-      y: p.y,
-    }));
-
-    // Wait a bit more for additional movement.
-    await new Promise((r) => setTimeout(r, 300));
-
     const positionsAfter = scene.formationPhasers.map((p) => ({
       x: p.x,
       y: p.y,
@@ -88,7 +90,9 @@ describe('GymPhaser — E4 Phaser gym scene (AC1-AC11)', () => {
     for (let i = 0; i < positionsBefore.length; i++) {
       const dx = positionsAfter[i].x - positionsBefore[i].x;
       const dy = positionsAfter[i].y - positionsBefore[i].y;
-      // Combined drift + orbital movement should produce noticeable displacement.
+      // Combined drift + orbital movement should produce noticeable
+      // displacement. Deterministic: the minimum over any orbital phase is
+      // ~1.79 px at this step size, comfortably above the 1.5 px threshold.
       const dist = Math.sqrt(dx * dx + dy * dy);
       expect(dist).toBeGreaterThan(1.5);
     }
