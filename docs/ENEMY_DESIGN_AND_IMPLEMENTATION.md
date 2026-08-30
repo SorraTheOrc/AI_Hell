@@ -342,3 +342,50 @@ Deterministic combat loops stop on the first `getPlayerHitCount()` increment
 The Boss gym work item (`AH-0MT99QBDW001O7PE`) is **out of scope** for this
 convention and will follow it when built: spawn the player via the same
 `player` config seam and reuse the live-combat collision/respawn machinery.
+
+---
+
+## Audio Best Practices
+
+All enemy audio functions live in
+[`src/audio/effects.ts`](../src/audio/effects.ts) — the **single source of
+truth**; never inline an audio call anywhere else. The audio event catalog and
+default sound characters are defined in
+[GDD §7.3](Game%20Design%20Document.md); per-enemy audio characters are decided
+**at implementation time** and may deviate from the catalog defaults (see §3.1
+checklist item 6). Scope rules matter — base-class-owned sounds are played
+**once by the base scene** and must never be re-played by entities.
+
+### Spawn
+
+- **Function:** `playSpawnSound()`
+- **When:** during entity creation, from the base class spawn loop.
+- **Scope:** the base class `GymFormationScene` owns spawn sound — the spawn
+  loop calls `playSpawnSound()` once when the formation is created (see §3.1
+  checklist item 5). Entity constructors must **not** call it.
+
+### Shoot / fire (per enemy type)
+
+| Enemy | Advance cue | Fire sound | Scope & timing |
+|-------|-------------|------------|----------------|
+| E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
+| E2 Diver | none | none | no audio today (see §3.2 table) |
+| E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **scene-level**, one cue+thump pair per radial burst at the point of shooting — the cue flows with **no gap** into the thump |
+| E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **scene-level** volley burst, once per volley at the point of shooting |
+| Boss | none | none | no audio today (see §3.2 table) |
+
+Orchestration rule: entity-specific fire sounds are invoked **where the shots
+are produced** — the scene's `collectBullets` callback for scene-level sounds
+(Swarm, Tank), or the entity's own fire/tell logic for entity-level sounds
+(Scout) — never re-added in a thin scene class.
+
+### Explode / destruction
+
+- **Function:** `playDestructionSound()`
+- **When:** during entity destruction.
+- **Ownership rule (critical):** the base class `GymFormationScene` owns the
+destruction sound — `explodeRandom()` and the player-bullet collision handler
+call `playDestructionSound()` once per destroyed enemy. Entities must **NOT**
+call `playDestructionSound()` in their own `playExplosion()` — doing so
+double-plays the sound (see §3.1 checklist item 7; regression-tested in
+`src/entities/Scout.test.ts`).
