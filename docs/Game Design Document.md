@@ -488,6 +488,18 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
 
+#### Per-Enemy Audio Character
+
+Audio-character decisions for individual enemies are made **per-enemy at
+implementation time** and may deliberately deviate from the generic catalog
+entries above — the catalog defines the default character, not a straitjacket.
+Example: the E3 Tank (gym scene `GymTank`) uses a rising mechanical-whine
+advance cue flowing with **no gap** into a heavy low cannon thump, one
+cue+thump pair per radial burst, instead of the generic "short zap". See
+`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` for the per-enemy audio decisions
+and the implementation best practices (which audio is owned by the base
+scene, where entity-specific sounds are orchestrated, and the no-gap pattern).
+
 #### Advance Telegraphing (≥ 500 ms Lead Time)
 
 Key events are announced by an **advance audio cue** with a minimum 500 ms lead time before the visual event:

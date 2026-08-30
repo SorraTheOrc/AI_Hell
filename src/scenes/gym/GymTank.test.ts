@@ -223,6 +223,67 @@ describe('GymTank — E3 Tank gym scene (AC1-AC6)', () => {
     const scene = await bootGym();
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
+
+  // ── Audio orchestration (scene-level cue+thump pair per burst) ──────
+
+  it('AC — plays one Tank advance-cue + cannon-thump pair per radial burst, cue first', { timeout: 15000 }, async () => {
+    vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const scene = await bootGym();
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    shoot.emit('pointerdown'); // ON
+
+    // Wait longer than one fire interval (2400 ms) so a burst fires.
+    await waitMs(2600);
+    expect(scene.activeBullets.length).toBeGreaterThan(0);
+    expect(effectsModule.playTankAdvanceCue).toHaveBeenCalled();
+    expect(effectsModule.playTankFireSound).toHaveBeenCalled();
+
+    // The advance cue must precede the fire thump (cue → thump, no gap).
+    const cueOrder = vi.mocked(effectsModule.playTankAdvanceCue).mock
+      .invocationCallOrder[0];
+    const thumpOrder = vi.mocked(effectsModule.playTankFireSound).mock
+      .invocationCallOrder[0];
+    expect(cueOrder).toBeLessThan(thumpOrder);
+
+    // One cue per thump — the pair travels together (never a cue or thump
+    // without its partner, and never per projectile).
+    const cueCalls = vi.mocked(effectsModule.playTankAdvanceCue).mock.calls.length;
+    const thumpCalls = vi.mocked(effectsModule.playTankFireSound).mock.calls.length;
+    expect(cueCalls).toBe(thumpCalls);
+    // Scene-level orchestration: a single synchronized burst is one call,
+    // not one per tank (6 tanks) and not one per projectile (10/burst).
+    expect(cueCalls).toBeLessThan(scene.formationTanks.length);
+
+    // The whine duration itself provides the ≥ 500 ms advance lead (GDD §7.3).
+    expect(effectsModule.TANK_ADVANCE_CUE_DURATION).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('AC — destroying a tank plays the shared destruction sound exactly once (no tank-specific double-play)', async () => {
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    vi.spyOn(effectsModule, 'playTankDestructionSound');
+
+    const scene = await bootGym();
+    const explode = findButton(scene, 'EXPLODE');
+
+    // The Tank must NOT wire its own destruction cue — the base scene owns
+    // the single shared destruction sound (design doc §7 rule).
+    explode.emit('pointerdown');
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playTankDestructionSound).not.toHaveBeenCalled();
+
+    explode.emit('pointerdown');
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(2);
+    expect(effectsModule.playTankDestructionSound).not.toHaveBeenCalled();
+  });
+
+  it('AC — new Tank audio helpers degrade to safe no-ops without an AudioContext', () => {
+    // happy-dom provides no Web Audio API: calling the helpers directly must
+    // not throw and returns undefined (the effects.ts headless contract).
+    expect(effectsModule.playTankAdvanceCue()).toBeUndefined();
+    expect(effectsModule.playTankFireSound()).toBeUndefined();
+  });
 });
 
 describe('GymTank — player in the gym (epic per-scene AC1-AC4)', () => {
