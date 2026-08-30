@@ -13,9 +13,11 @@
  *   when on, divers periodically fire short-burst spread shots (3–5
  *   projectiles at slight angles) during their dive trajectory.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD,
- * no power-ups. Divers pass freely through one another — no collision
- * is installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy divers, and diver shots hitting the ship
+ * trigger explosion + respawn (infinite lives). No other enemy types, no
+ * HUD, no power-ups. Divers pass freely through one another — no
+ * collision is installed (GDD §2.6).
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn/UI/update/bullet-lifecycle boilerplate lives in the shared core

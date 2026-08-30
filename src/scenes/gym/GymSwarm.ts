@@ -6,17 +6,19 @@
  * changes. Clusters of 3–5 enemies weave together, split and rejoin —
  * creating the unpredictable, chaotic movement that defines the E5 Swarm.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD, no
- * power-ups. Swarms pass freely through one another — no collision is
- * installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy swarms, and swarms shots hitting the
+ * ship trigger explosion + respawn (infinite lives). No other enemy
+ * types, no HUD, no power-ups. Swarms pass freely through one another — no
+ * collision is installed (GDD §2.6).
  *
  * Two on-screen controls:
  *
  * - **Explode** — destroys a random surviving swarm member with an
  *   explosion animation.
  * - **Shoot**  — toggles coordinated burst firing (simulates Level 4+
- *   behaviour): when on, swarm members fire cyan burst shots toward the
- *   bottom-centre target.
+ *   behaviour): when on, swarm members fire cyan burst shots that track
+ *   the player's live position.
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn / UI / update / bullet-lifecycle boilerplate lives in the shared

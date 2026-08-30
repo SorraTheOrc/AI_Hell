@@ -6,9 +6,11 @@
  * with a central core. Phasers fire predictable radial bursts with clear
  * tell animations (≥ 500 ms advance cue) before each firing cycle.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD, no
- * power-ups. Phasers pass freely through one another — no collision is
- * installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy phasers, and phasers shots hitting the
+ * ship trigger explosion + respawn (infinite lives). No other enemy
+ * types, no HUD, no power-ups. Phasers pass freely through one another — no
+ * collision is installed (GDD §2.6).
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn/UI/update/bullet-lifecycle boilerplate lives in the shared core

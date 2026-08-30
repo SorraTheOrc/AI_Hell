@@ -11,9 +11,11 @@
  *   behaviour): when on, tanks periodically fire 10-projectile radial
  *   bursts; when off, tanks only hold formation.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD,
- * no power-ups. Tanks pass freely through one another — no collision
- * is installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy tanks, and tank shots hitting the ship trigger
+ * explosion + respawn (infinite lives). No other enemy types, no HUD, no
+ * power-ups. Tanks pass freely through one another — no collision is
+ * installed (GDD §2.6).
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn/UI/update/bullet-lifecycle boilerplate lives in the shared core

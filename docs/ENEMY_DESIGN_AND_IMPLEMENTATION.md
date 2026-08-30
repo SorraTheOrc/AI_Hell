@@ -65,6 +65,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
   driftSpeed: SCOUT_FORMATION_DRIFT_SPEED,
   startX: SCOUT_FORMATION_START_X,
   startY: SCOUT_FORMATION_START_Y,
+  player: PLAYER_SPAWN,        // spawn the Player ship here (see §7)
   statusLabel: 'scouts',          // status line: "SCORE: n/a — scouts: 6"
   hintText: 'E1 Scout gym — V-formation demo',
   createEntity: (scene, x, y, formationOffset) =>
@@ -85,6 +86,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
 | `hintText` | Bottom hint line. |
 | `createEntity` | Factory for one enemy at an absolute position + its formation offset. |
 | `collectBullets` | Called per entity per frame; returns any bullets that entity fired (empty array if none). |
+| `player` | *Optional* player spawn position `{x, y}` — when present the scene spawns the keyboard-controlled Player ship there with live combat interaction (see §7). |
 
 ### 2.3 Entity & bullet contracts
 
@@ -98,6 +100,9 @@ interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
   readonly offset: FormationOffset;
   destroySelf(): void;
   applyFormationPosition(baseX, baseY, dt, spacingX, spacingY): void;
+  /** Optional live-aim seam: update the fire/dive target to the player's
+   *  current position. The base scene pushes this each frame (see §7). */
+  setAimTarget?(x: number, y: number): void;
 }
 ```
 
@@ -137,7 +142,9 @@ for reference implementations (the base class drives them).
    - Add test accessors matching this project's convention
      (`formation<Name>s`, `aliveCount`, `shootingEnabled`,
      `activeBullets`, `formationX`, `formationY` — the latter five come
-     from the base class).
+     from the base class). Player accessors also come from the base
+     (`getPlayer`, `getCursors`, `getPlayerHitCount`,
+     `isPlayerInvulnerable`, `toggleShooting`).
 4. **Discovery.** Put the scene at `src/scenes/gym/Gym<Name>.ts` — the gym
    index auto-discovers it (no registry edit). Put any shared/helper code in
    a **subfolder** (`src/scenes/gym/core/`, or `src/utils/` for pure
@@ -149,7 +156,10 @@ for reference implementations (the base class drives them).
    - drift over time,
    - EXPLODE destroys one random alive enemy, no-op at zero,
    - SHOOT toggles off→on→off and gates new bullets,
-   - the `← INDEX` button exists.
+   - the `← INDEX` button exists,
+   - the player spawns at the scene's `player` config position, responds
+     to the cursor keys, fights (player bullet ↔ enemy / enemy bullet →
+     ship respawn), and live enemy aim tracks it (see §7).
 6. **Audio + navigation.** `playSpawnSound()` / `playDestructionSound()`
    and `addBackToIndexButton()` are handled by the base class — do not
    re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
@@ -235,10 +245,93 @@ When a new enemy needs the base scene to behave differently:
   `Container` entity + stub bullets exercise spawn, HUD, drift/respawn,
   explode, shoot toggle, bullet advance, and off-screen removal.
 - **Per-scene** (`src/scenes/gym/GymScout.test.ts`, `GymDiver.test.ts`,
-  `GymTank.test.ts`, `GymSwarm.test.ts`) — behaviour-preserving tests that
-  must pass unchanged after a refactor; they are the regression net for the
-  scene rewrites. `GymSwarm.test.ts` additionally asserts cluster drift
-  bounds and the pass-through (no-collision) invariant (GDD §2.6).
+  `GymTank.test.ts`, `GymPhaser.test.ts`, `GymSwarm.test.ts`) —
+  behaviour-preserving tests that must pass unchanged after a refactor;
+  they are the regression net for the scene rewrites and each also
+  asserts the player-in-the-gym convention (spawn, keyboard, live aim,
+  combat, respawn — see §7). `GymSwarm.test.ts` additionally asserts
+  cluster drift bounds and the pass-through (no-collision) invariant
+  (GDD §2.6).
 - **Browser smoke test** — run `npm run dev`, open the gym index, and
   confirm formations render with the correct neon colours (headless tests
   cannot see pixels; this is a manual step).
+
+---
+
+## 7. Player in the enemy gym — live combat convention
+
+Every enemy gym scene now includes the **real, keyboard-controlled Player
+ship** (`src/entities/Player.ts`) with live combat interaction, so enemy
+behaviour is demonstrated against an actual target and the scenes double as
+combat testbeds.
+
+### 7.1 Spawn & input
+
+- **Config seam:** a scene opts in by setting `player: {x, y}` in its
+  `EnemyFormationConfig` (an optional, backward-compatible extension —
+  scenes without it spawn no ship, e.g. the future Boss gym until built).
+  All five enemy gyms use `PLAYER_SPAWN` from `src/core/constants.ts`
+  (`{x: 920, y: 30}` — top-right, so auto-fire heads right across the
+  screen away from the formations).
+- **Input:** the base scene binds the cursor keys (arrows) AND `W/A/S/D`,
+  clamped to the game bounds; `maxSpeed` 175 px/s.
+- **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
+  `PlayerBullet`s toward its current heading.
+
+### 7.2 Collisions & respawn
+
+Resolved in the base class `GymFormationScene._handleCollisions` each tick:
+
+1. Player bullets → enemies (hit radius 20): enemy destroyed (`alive=false`,
+   1 HP) + explosion SFX; the bullet is consumed.
+2. Player bullets → enemy bullets (radii 3 + 6): both consumed (mutual
+   destruction — bullets pass through *aliens* per GDD §2.6, but not each
+   other).
+3. Enemy bullets → player hull (`SHIP_SIZE/2` = 10 + bullet 6): ship
+   explosion + SFX, `getPlayerHitCount()` increments, the ship respawns at
+   its spawn position with short invulnerability; **infinite lives** — the
+   demonstration never ends.
+
+### 7.3 Live aim tracking
+
+The base scene pushes the player's live position into every alive enemy each
+frame (`entity.setAimTarget?.(player.x, player.y)` — an optional seam,
+forward-compatible with entities that have no target concept) **before**
+collecting bullets, so that frame's shots use the current position:
+
+- **Scout / Swarm** — retarget `target`/burst aim continuously; bullets arc
+  toward the player's live position at fire time.
+- **Phaser** — rotates its 8-spoke radial pattern so one spoke points at the
+  live player; telegraph rules (two-phase tell ≥ 600 ms advance cue, then
+  the volley) are unchanged.
+- **Diver** — **snapshots the target at dive start** (recorded seam
+  decision): a mid-dive aim change does not alter the in-flight dive arc.
+  Dives are x-locked at the formation slot.
+- **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
+  is untouched (no aim seam).
+
+### 7.4 Testing the convention
+
+Per-scene test files carry a `player in the gym (epic per-scene AC1-AC4)`
+block:
+
+1. **spawn** — player is a `Player` at the scene's `player` config position
+   and the formation is undisturbed;
+2. **keyboard** — hold a cursor key across `tick(dt)` calls and assert
+   displacement (deterministic — no real waits);
+3. **aim/combat** — fire gates are advanced by mutating `scene.time.now`
+   between `tick()` calls (enemy fire/tell gates read the clock), then
+   assert: aimed bullets track the live position, a parked
+   `spawnPlayerBullet(x, y, 0, 0)` destroys an enemy, and the volley hits
+   the ship (`getPlayerHitCount() > 0`) with respawn + invulnerability;
+4. **regression** — EXPLODE/SHOOT toggling and formation drift still work
+   with the player present.
+
+Deterministic combat loops stop on the first `getPlayerHitCount()` increment
+(a hit-count guard) so post-hit invulnerability can be asserted.
+
+### 7.5 Boss gym
+
+The Boss gym work item (`AH-0MT99QBDW001O7PE`) is **out of scope** for this
+convention and will follow it when built: spawn the player via the same
+`player` config seam and reuse the live-combat collision/respawn machinery.

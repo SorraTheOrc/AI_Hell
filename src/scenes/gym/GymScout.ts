@@ -7,10 +7,12 @@
  * - **Explode** — destroys a random surviving scout with an explosion
  *   animation.
  * - **Shoot**  — toggles aimed firing (simulates Level 4+ behaviour):
- *   when on, scouts periodically fire red shots aimed at a default target
- *   position (bottom-centre of the screen, standing in for the player).
+ *   when on, scouts periodically fire red aimed shots that track the
+ *   player's live position.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD, no
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy scouts, and scout shots hitting the ship trigger
+ * explosion + respawn (infinite lives). No other enemy types, no HUD, no
  * power-ups. Scouts pass freely through one another — no collision is
  * installed (GDD §2.6).
  *
