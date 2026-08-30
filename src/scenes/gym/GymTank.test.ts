@@ -91,10 +91,16 @@ describe('GymTank — E3 Tank gym scene (AC1-AC6)', () => {
   it('AC3 — the formation advances slowly across the screen (slower than scouts)', async () => {
     const scene = await bootGym();
     const baseBefore = scene.formationX;
-    await waitMs(350);
+
+    // Drive 350 ms of drift deterministically via accumulated tick dt — no
+    // wall-clock wait. The background Phaser loop's real-frame timing varies
+    // under parallel CPU load, so a real-time wait flaked outside the drift
+    // band (mirrors the GymDiver AC1 fix, commit c2aaa54).
+    for (let i = 0; i < 7; i++) scene.tick(0.05);
     const baseAfter = scene.formationX;
 
-    // The base moves right at the configured drift speed.
+    // The base moves right at the configured drift speed: 7 ticks × 0.05 s
+    // × 18 px/s = exactly 6.3 px, inside [18×0.25, 18×0.5] px.
     expect(baseAfter).toBeGreaterThan(baseBefore);
     // Tanks drift at 18 px/s — Scouts at 40 px/s.
     expect(baseAfter - baseBefore).toBeGreaterThan(

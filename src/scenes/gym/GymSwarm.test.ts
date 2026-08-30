@@ -332,16 +332,19 @@ describe('GymSwarm — player in the gym (epic per-scene AC1-AC4)', () => {
     expect(victim.alive).toBe(false);
     expect(scene.aliveCount).toBe(SWARM_FORMATION_COUNT - 1);
 
-    // Remaining members fire bursts aimed at the live player; the centre
-    // bullet of each burst travels exactly toward the ship.
+    // Remaining members fire bursts aimed at the live player. Each burst
+    // applies an independent random spread (±0.15 rad per bullet), so a
+    // single volley can all-miss the ship entirely (measured ~12% of volleys
+    // at full-suite load). Never rely on one volley's luck: poll with bounded
+    // quarter-interval clock steps so the swarm re-fires fresh aimed volleys
+    // until one lands (mirrors the GymScout AC2 poll idiom, commit e48b046).
     vi.spyOn(effectsModule, 'playDestructionSound');
     scene.toggleShooting();
-    scene.time.now += SWARM_BURST_INTERVAL + 500;
-    scene.tick(0.05); // bursts fired, aimed at the player at PLAYER_SPAWN
-
-    // The nearest aimed bullet reaches the ship within ~3s; allow 8s.
     const hitsBefore = scene.getPlayerHitCount();
-    for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) scene.tick(0.05);
+    for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) {
+      scene.time.now += SWARM_BURST_INTERVAL / 4;
+      scene.tick(0.05);
+    }
 
     expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
     expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
