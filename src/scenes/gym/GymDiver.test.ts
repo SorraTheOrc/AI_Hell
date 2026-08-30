@@ -72,11 +72,19 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
 
   // ── AC1: No horizontal movement during dive ──────────────────────
 
-  it('AC1 — diver x-coordinate remains constant during the dive phase (vertical drop)', { timeout: 15000 }, async () => {
+  it('AC1 — diver x-coordinate remains constant during the dive phase (vertical drop)', async () => {
     const scene = await bootGym();
 
-    // Wait for divers to start diving (hold is 3 seconds).
-    await waitMs(3500);
+    // Advance the 3 s hold phase deterministically via accumulated tick dt
+    // until divers enter the DIVING state — no wall-clock waits, so the
+    // test cannot flake under parallel load.
+    for (
+      let i = 0;
+      i < 80 && !scene.formationDivers.some((d) => d.behaviourState === DiverState.DIVING);
+      i++
+    ) {
+      scene.tick(0.05);
+    }
 
     // Find a diver that is currently diving.
     const divingDivers = scene.formationDivers.filter(
@@ -89,12 +97,12 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
     const startY = diver.y;
 
     // Sample x while the diver remains in the DIVING state (we joined the
-    // 2s dive part-way through). Sampling beyond the dive would capture the
-    // smooth return glide, which legitimately moves x toward the drifted
-    // slot — this test must only cover the dive itself.
+    // 2 s dive part-way through). Sampling beyond the dive would capture
+    // the smooth return glide, which legitimately moves x toward the
+    // drifted slot — this test must only cover the dive itself.
     const samples: number[] = [];
-    for (let i = 0; i < 20 && diver.behaviourState === DiverState.DIVING; i++) {
-      await waitMs(100);
+    for (let i = 0; i < 60 && diver.behaviourState === DiverState.DIVING; i++) {
+      scene.tick(0.05);
       samples.push(diver.x);
     }
     expect(samples.length).toBeGreaterThanOrEqual(5);
