@@ -39,9 +39,12 @@ import {
 } from '../../../utils/weapons';
 import {
   WasdKeysLike,
-  keysToInput,
 } from '../../../utils/input';
-import { MovementInput } from '../../../utils/movement';
+import {
+  AsteroidsInputHandler,
+  ControlInput,
+  FourDirectionalInputHandler,
+} from '../../../utils/movementModel';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -206,6 +209,9 @@ export class GymFormationScene<
   // Arrow-key (cursor) and WASD bindings for the player ship.
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
+  /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
+  private fourDirHandler = new FourDirectionalInputHandler();
+  private asteroidsHandler = new AsteroidsInputHandler();
 
   // UI toggles
   protected shootButton!: Phaser.GameObjects.Text;
@@ -491,10 +497,19 @@ export class GymFormationScene<
     }
   }
 
-  /** Reads the held arrow/WASD keys into the MovementInput contract. */
-  private _readPlayerInput(): MovementInput | null {
-    if (!this.cursors || !this.wasd) return null;
-    return keysToInput(this.cursors, this.wasd);
+  /**
+   * Reads the held arrow/WASD keys into the scheme-appropriate
+   * `ControlInput` contract, keyed off the player's saved control scheme
+   * (mirrors GymPlayer._readInput — parent AC3). An asteroids-scheme
+   * player receives `{ forward, turnLeft, turnRight }`; a
+   * 4-directional-scheme player receives `{ up, down, left, right }`.
+   */
+  private _readPlayerInput(): ControlInput | null {
+    if (!this.player || !this.cursors || !this.wasd) return null;
+    const raw = { cursors: this.cursors, wasd: this.wasd };
+    return this.player.getScheme() === 'asteroids'
+      ? this.asteroidsHandler.mapInput(raw)
+      : this.fourDirHandler.mapInput(raw);
   }
 
   /**

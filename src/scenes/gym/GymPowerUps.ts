@@ -30,9 +30,13 @@ import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { PowerUpId } from '../../powerups/types';
-import { keysToInput, WasdKeysLike } from '../../utils/input';
+import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton } from '../../utils/gymNavigation';
-import { MovementInput } from '../../utils/movement';
+import {
+  AsteroidsInputHandler,
+  ControlInput,
+  FourDirectionalInputHandler,
+} from '../../utils/movementModel';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
@@ -72,6 +76,9 @@ export class GymPowerUps extends Phaser.Scene {
   private hud: HUD | null = null;
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
+  /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
+  private fourDirHandler = new FourDirectionalInputHandler();
+  private asteroidsHandler = new AsteroidsInputHandler();
 
   constructor() {
     super({ key: 'GymPowerUps' });
@@ -235,16 +242,34 @@ export class GymPowerUps extends Phaser.Scene {
 
   // ── Input ─────────────────────────────────────────────────────────
 
-  /** Reads the current held-key state (null when no keyboard available). */
-  private _readInput(): MovementInput | null {
-    if (!this.cursors || !this.wasd) return null;
-    return keysToInput(this.cursors, this.wasd);
+  /**
+   * Reads the current held-key state into the scheme-appropriate
+   * `ControlInput`, keyed off the player's saved control scheme (mirrors
+   * GymPlayer._readInput — parent AC3). Returns null when no keyboard is
+   * available or the player is absent.
+   */
+  private _readInput(): ControlInput | null {
+    if (!this.player || !this.cursors || !this.wasd) return null;
+    const raw = { cursors: this.cursors, wasd: this.wasd };
+    return this.player.getScheme() === 'asteroids'
+      ? this.asteroidsHandler.mapInput(raw)
+      : this.fourDirHandler.mapInput(raw);
   }
 
   // ── Public test accessors ─────────────────────────────────────────
 
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  /** Arrow-key bindings for the player (undefined when no keyboard). */
+  getCursors(): Phaser.Types.Input.Keyboard.CursorKeys | undefined {
+    return this.cursors;
+  }
+
+  /** WASD bindings for the player (undefined when no keyboard). */
+  getWasd(): WasdKeysLike | undefined {
+    return this.wasd;
   }
 
   getEffectsRegistry(): EffectsRegistry {

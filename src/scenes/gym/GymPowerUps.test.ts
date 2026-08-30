@@ -12,6 +12,7 @@ import { HUD } from '../../ui/HUD';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
+import { Player } from '../../entities/Player';
 import { GymPowerUps } from './GymPowerUps';
 
 describe('GymPowerUps AC1: gym index discovery', () => {
@@ -258,5 +259,106 @@ describe('GymPowerUps spawn cadence (parent AC2 via the scene)', () => {
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
     expect(drops[0].powerUp.id).toBe('P8');
+  });
+});
+
+describe('GymPowerUps — scheme-aware input routing (parent AC1/AC2/AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootPowerUps(): Promise<GymPowerUps> {
+    booted = await bootScene([GymPowerUps]);
+    return booted!.scene as GymPowerUps;
+  }
+
+  /** Re-installs a fresh AsteroidsModel with facing reset to 0. */
+  function resetToAsteroids(player: Player): void {
+    player.setScheme('fourDirectional');
+    player.setScheme('asteroids');
+  }
+
+  it('asteroids: Up arrow / W = forward thrust — the ship moves in its facing direction, never upward (regression: asteroids player never receives 4-directional input)', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setScheme('asteroids');
+    player.setPosition(480, 270);
+    const x0 = player.x;
+    const y0 = player.y;
+
+    // Up arrow → forward. Facing starts at 0 (right), so forward thrust
+    // moves the ship rightward — never upward (a 4-directional-shape input
+    // would be ignored entirely by the AsteroidsModel).
+    scene.getCursors()!.up.isDown = true;
+    scene.tick(0.25);
+    scene.getCursors()!.up.isDown = false;
+    expect(player.x).toBeGreaterThan(x0); // forward thrust applied
+    expect(player.y).toBeCloseTo(y0, 5); // NOT upward — no 4-directional shape
+
+    // W key → forward as well (WASD path).
+    const x1 = player.x;
+    scene.getWasd()!.W.isDown = true;
+    scene.tick(0.25);
+    scene.getWasd()!.W.isDown = false;
+    expect(player.x).toBeGreaterThan(x1);
+    expect(player.y).toBeCloseTo(y0, 5);
+  });
+
+  it('asteroids: A/Left = turnLeft and S/Right = turnRight — the ship rotates', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setScheme('asteroids');
+    expect(player.getHeading()).toBe(0);
+
+    // WASD path: A → turnLeft (CCW, wraps to 2π−0.75); S → turnRight (+0.75).
+    scene.getWasd()!.A.isDown = true;
+    scene.tick(0.25);
+    scene.getWasd()!.A.isDown = false;
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+
+    resetToAsteroids(player);
+    scene.getWasd()!.S.isDown = true;
+    scene.tick(0.25);
+    scene.getWasd()!.S.isDown = false;
+    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+
+    // Arrow path: Left → turnLeft; Right → turnRight.
+    resetToAsteroids(player);
+    scene.getCursors()!.left.isDown = true;
+    scene.tick(0.25);
+    scene.getCursors()!.left.isDown = false;
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+
+    resetToAsteroids(player);
+    scene.getCursors()!.right.isDown = true;
+    scene.tick(0.25);
+    scene.getCursors()!.right.isDown = false;
+    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+  });
+
+  it('routes input by the player scheme at read time — the same held Up arrow maps differently per scheme (AC2/AC3)', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Asteroids: Up arrow = forward → thrust in the facing direction (right).
+    player.setScheme('asteroids');
+    const x0 = player.x;
+    scene.getCursors()!.up.isDown = true;
+    scene.tick(0.25);
+    scene.getCursors()!.up.isDown = false;
+    expect(player.x).toBeGreaterThan(x0);
+    expect(player.y).toBeCloseTo(270, 5);
+
+    // 4-directional: the same Up arrow moves the ship up (backward compatible).
+    player.setScheme('fourDirectional');
+    const y1 = player.y;
+    scene.getCursors()!.up.isDown = true;
+    scene.tick(0.25);
+    scene.getCursors()!.up.isDown = false;
+    expect(player.y).toBeLessThan(y1);
   });
 });
