@@ -293,21 +293,60 @@ export function playSwarmBurstSound(): void {
 // ── Scout enemy cues (GDD §4.1 — E1 Scout) ─────────────────────────
 
 /**
- * A sharp laser-like blip — E1 Scout fire sound.
- * A short high square-wave sweep, distinct from the destruction burst
- * and the Swarm buzz, fired exactly once per aimed shot (GDD §7.3).
+ * Duration (seconds) of the Scout advance-cue rising blip.
+ *
+ * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playScoutFireSound()` can
+ * schedule its shot to start exactly at the cue's end time, flowing
+ * back-to-back with no dead gap between warning and shot.
  */
-export function playScoutFireSound(): void {
-  blip(1400, 700, 0.12, 'square', 0.12);
-}
+export const SCOUT_ADVANCE_CUE_DURATION = 0.6;
 
 /**
  * Rising warning blip — E1 Scout firing advance cue.
+ *
  * A rising sine mirroring the Phaser tell but pitched higher to stay
  * distinct. Plays at the start of the per-entity tell, ≥ 500 ms before
  * the aimed shot (GDD §7.3); duration must stay ≤ SCOUT_FIRE_INTERVAL
  * in src/entities/Scout.ts (600 ms tell, 1200 ms fire interval).
+ *
+ * Called immediately before `playScoutFireSound()` in the same tick:
+ * no dead gap between warning and shot (the fire sound is scheduled
+ * to start at `currentTime + SCOUT_ADVANCE_CUE_DURATION`, i.e. exactly
+ * as the cue ends). Safe no-op without an AudioContext.
  */
 export function playScoutAdvanceCue(): void {
-  blip(880, 1320, 0.6, 'sine', 0.08);
+  blip(880, 1320, SCOUT_ADVANCE_CUE_DURATION, 'sine', 0.08);
+}
+
+/**
+ * Sharp laser-like blip — E1 Scout fire sound (GDD §7.3).
+ *
+ * A short high square-wave sweep, distinct from the destruction burst
+ * and the Swarm buzz, fired exactly once per aimed shot. The blip is
+ * scheduled at `currentTime + SCOUT_ADVANCE_CUE_DURATION` (the cue's
+ * end time) so that, when called back-to-back with `playScoutAdvanceCue()`
+ * in the same tick, it lands exactly as the cue ends — flowing into the
+ * shot with no dead gap. Safe no-op without an AudioContext.
+ */
+export function playScoutFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime + SCOUT_ADVANCE_CUE_DURATION;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(1400, t);
+  osc.frequency.exponentialRampToValueAtTime(
+    Math.max(1, 700),
+    t + 0.12,
+  );
+
+  gain.gain.setValueAtTime(0.12, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.14);
 }

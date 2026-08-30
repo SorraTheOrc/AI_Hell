@@ -11,11 +11,13 @@
  * does not install any collision between scouts.
  *
  * Audio (GDD §7.3): each aimed shot is telegraphed by a ≥ 500 ms advance
- * cue (two-phase tell) followed by a sharp Scout fire sound at the shot;
- * destruction audio is owned by the base scene (`playDestructionSound()`),
- * not by this entity (no double-play). Both helpers live in
- * `src/audio/effects.ts` and degrade to safe no-ops without an
- * AudioContext.
+ * cue (two-phase tell); the cue flows directly into the sharp Scout fire
+ * sound with no dead gap — both are scheduled at tell start, with the
+ * fire sound landing exactly at the cue's end (Tank-style no-gap
+ * treatment). Destruction audio is owned by the base scene
+ * (`playDestructionSound()`), not by this entity (no double-play).
+ * Both helpers live in `src/audio/effects.ts` and degrade to safe no-ops
+ * without an AudioContext.
  */
 
 import Phaser from 'phaser';
@@ -51,8 +53,10 @@ export const SCOUT_FIRE_INTERVAL = 1200;
  * Advance audio cue duration (ms) — the per-entity tell before each
  * aimed shot. At least 500 ms lead time per GDD §7.3 and at most the
  * fire interval so cues never overlap shots. Mirrors the Phaser tell
- * (PHASER_ADVANCE_CUE_DURATION = 600) and matches playScoutAdvanceCue()
- * in src/audio/effects.ts (declare both 600).
+ * (PHASER_ADVANCE_CUE_DURATION = 600) and the Scout analog in
+ * src/audio/effects.ts (`SCOUT_ADVANCE_CUE_DURATION = 0.6` s, used by
+ * `playScoutAdvanceCue()` and to schedule the fire sound at the cue's
+ * end — keep both at 600 ms / 0.6 s).
  */
 export const SCOUT_ADVANCE_CUE_DURATION = 600;
 
@@ -260,9 +264,13 @@ export class Scout extends Phaser.GameObjects.Container {
       this._lastFireTime = now;
     } else {
       // Interval elapsed, not telling — start the tell (advance cue).
+      // Schedule cue + fire sound back-to-back: the fire sound is
+      // scheduled at currentTime + SCOUT_ADVANCE_CUE_DURATION so it
+      // lands exactly as the cue ends, flowing with no dead gap.
       this._isTelling = true;
       this._tellStartTime = now;
       playScoutAdvanceCue();
+      playScoutFireSound();
       return null;
     }
 
@@ -275,8 +283,6 @@ export class Scout extends Phaser.GameObjects.Container {
     graphics.fillCircle(0, 0, SCOUT_BULLET_SIZE);
     graphics.setPosition(this.x, this.y);
     graphics.setDepth(3);
-
-    playScoutFireSound();
 
     return {
       graphics,

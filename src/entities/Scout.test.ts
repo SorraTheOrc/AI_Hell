@@ -225,7 +225,7 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
   });
 
-  it('plays the advance cue once at tell start and the fire sound exactly once at the shot — cue precedes shot', async () => {
+  it('plays the advance cue and fire sound back-to-back at tell start — no gap between cue and shot sound', async () => {
     booted = await bootScene([HarnessScene]);
     vi.spyOn(effectsModule, 'playScoutAdvanceCue');
     vi.spyOn(effectsModule, 'playScoutFireSound');
@@ -234,26 +234,29 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     const t0 = 1_000_000;
     scout.shootEnabled = true;
 
-    // Tell starts: the advance cue plays once, no shot, no fire sound.
+    // Tell starts: the advance cue and fire sound both play back-to-back.
     expect(scout.tryFireAimedBullet(t0)).toBeNull();
     expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
-    expect(effectsModule.playScoutFireSound).not.toHaveBeenCalled();
-
-    // Still telling one millisecond before the cue completes — no shot.
-    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION - 1)).toBeNull();
-    expect(effectsModule.playScoutFireSound).not.toHaveBeenCalled();
-
-    // Tell completes: the shot fires and the fire sound plays exactly once.
-    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
     expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(1);
-    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
 
-    // Ordering: the advance cue played before the fire sound.
+    // Ordering: the advance cue was called before the fire sound.
     const cueOrder = vi.mocked(effectsModule.playScoutAdvanceCue).mock
       .invocationCallOrder[0];
     const fireOrder = vi.mocked(effectsModule.playScoutFireSound).mock
       .invocationCallOrder[0];
     expect(cueOrder).toBeLessThan(fireOrder);
+
+    // Still telling one millisecond before the cue completes — no shot.
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION - 1)).toBeNull();
+    // Counts unchanged: both sounds were already played at tell start.
+    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(1);
+
+    // Tell completes: the shot fires, NO additional audio (both sounds
+    // were already played at tell start, back-to-back, no gap).
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
 
     // A second cycle repeats the pattern exactly (one cue, one fire sound).
     const t1 = t0 + SCOUT_ADVANCE_CUE_DURATION + SCOUT_FIRE_INTERVAL;

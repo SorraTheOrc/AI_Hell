@@ -165,15 +165,16 @@ for reference implementations (the base class drives them).
    re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
    and are orchestrated where the shots are produced: Swarm plays a
    scene-level volley burst sound at the point of shooting (no warning
-   cue); Scout and Phaser use a per-entity two-phase tell — an advance
-   cue (≥ 500 ms lead) at tell start, then the fire sound at the shot;
-   Tank plays a scene-level mechanical-whine advance cue flowing with
-   **no gap** into a heavy cannon-thump fire sound, one cue+thump pair
-   per radial burst at the point of shooting (the whine's ≥ 500 ms
-   duration provides the advance lead). Audio-character decisions are
-   made **per-enemy at implementation time** and may deviate from the
-   GDD §7.3 catalog defaults (e.g. Tank's heavy thump vs the generic
-   "short zap") — see the GDD §7.3 note.
+   cue); Scout uses a per-entity two-phase tell — an advance cue (≥ 500 ms
+   lead) at tell start, with the fire sound scheduled to start exactly at
+   the cue's end so the two flow back-to-back with no dead gap; Phaser
+   uses the same two-phase tell pattern; Tank plays a scene-level
+   mechanical-whine advance cue flowing with **no gap** into a heavy
+   cannon-thump fire sound, one cue+thump pair per radial burst at the
+   point of shooting (the whine's ≥ 500 ms duration provides the advance
+   lead). Audio-character decisions are made **per-enemy at implementation
+   time** and may deviate from the GDD §7.3 catalog defaults (e.g. Tank's
+   heavy thump vs the generic "short zap") — see the GDD §7.3 note.
 
 7. **Destruction sound ownership.** The base class `GymFormationScene.explodeRandom()`
    plays `playDestructionSound()` for all enemies. Entity classes should
@@ -185,7 +186,7 @@ for reference implementations (the base class drives them).
 
 | Scene | Entity | Formation | Fire pattern | Audio |
 |-------|--------|-----------|--------------|-------+-------|
-| `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound (entity-level, per aimed shot) |
+| `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
 | `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | none |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (scene-level, one cue+thump pair per burst, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (scene-level, once per volley, at point of shooting) |
