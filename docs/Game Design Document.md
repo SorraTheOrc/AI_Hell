@@ -31,6 +31,15 @@
 | **Auto-fire** | Continuous (always active) |
 | **Space** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
 
+> **Control schemes:** the ship honours the player's **saved control scheme**,
+> applied in every gym scene (enemy, power-up and weapons) via
+> `player.getScheme()`-keyed input handlers (`FourDirectionalInputHandler` and
+> `AsteroidsInputHandler` in `src/utils/movementModel.ts`). The table above
+> describes the **4-directional scheme (default)**. Under the **Asteroids
+> scheme** the movement keys are re-mapped: `W`/Arrow Up = **forward thrust**
+> (in the current facing direction), `A`/Arrow Left = **turn left**, `S`/Arrow
+> Right = **turn right** (rotation 3 rad/s) — never 4-directional movement.
+
 ### 2.2 Movement
 
 - **Thrust-based Newtonian movement** — space physics with thrust input and tunable linear deceleration (friction). The player ship moves on a 2D plane (not lane-based); velocity changes via thrust input and, when no direction key is held, decays toward zero.

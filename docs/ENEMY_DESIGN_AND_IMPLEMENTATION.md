@@ -282,7 +282,25 @@ combat testbeds.
   (`{x: 920, y: 30}` — top-right, so auto-fire heads right across the
   screen away from the formations).
 - **Input:** the base scene binds the cursor keys (arrows) AND `W/A/S/D`,
-  clamped to the game bounds; `maxSpeed` 175 px/s.
+  clamped to the game bounds; `maxSpeed` 175 px/s. The bound keys are
+  routed through the player's **saved control scheme** — keyed off
+  `player.getScheme()` inside `GymFormationScene._readPlayerInput`, which
+  dispatches to `FourDirectionalInputHandler` (default) or
+  `AsteroidsInputHandler` (both in `src/utils/movementModel.ts`):
+  - **4-directional scheme (default):** arrows and `W/A/S/D` move the ship
+    up / down / left / right as before.
+  - **Asteroids scheme:** `W`/Arrow Up thrust the ship **forward** (in its
+    current facing direction), `A`/Arrow Left turn it **left**, and
+    `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
+  `GymPowerUps` and `GymWeapons` implement the same scheme-aware routing in
+  their own `_readInput` methods.
+
+  > **Supersession:** the per-scene wiring described in this §7 (including
+  > the input routing above) is superseded by the Enemy Design tooling
+  > (AH-0MTFP7EIC004F1MN): enemy configuration moves to a JSON file loaded
+  > at runtime by a single config-driven scene, with a gym UI for tuning
+  > enemy parameters. Until that tooling lands, this per-scene wiring is the
+  > source of truth.
 - **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
   `PlayerBullet`s toward its current heading.
 
