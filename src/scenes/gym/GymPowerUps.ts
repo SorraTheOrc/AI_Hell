@@ -29,6 +29,7 @@ import { Player } from '../../entities/Player';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { RoundRobinSpawner } from '../../powerups/spawner';
 import { PowerUpId } from '../../powerups/types';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton } from '../../utils/gymNavigation';
@@ -46,8 +47,8 @@ import {
   MAGNET_ATTRACTION_SPEED,
 } from '../../core/constants';
 
-/** Round-robin spawn order, ascending by GDD ID (P5 → P8 → P9). */
-const ROUND_ROBIN: readonly PowerUpId[] = ['P5', 'P8', 'P9'];
+/** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9). */
+const NON_COMBAT_ORDER: readonly PowerUpId[] = ['P5', 'P8', 'P9'];
 
 /** Deterministic spawn positions (cycling) — never under the ship start. */
 const SPAWN_POSITIONS: readonly { x: number; y: number }[] = [
@@ -70,6 +71,9 @@ export class GymPowerUps extends Phaser.Scene {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
+  /** Per-scene round-robin spawner (fresh index per scene instance). */
+  private roundRobinSpawner = new RoundRobinSpawner(NON_COMBAT_ORDER);
+  /** Index into the deterministic spawn positions. */
   private spawnIndex = 0;
   /** Countdown to the next round-robin spawn (starts at 0 → immediate first drop). */
   private spawnTimer = 0;
@@ -153,7 +157,7 @@ export class GymPowerUps extends Phaser.Scene {
 
   /** Spawns the next round-robin drop (P5 → P8 → P9) at the next position. */
   private _spawnRoundRobin(): void {
-    const id = ROUND_ROBIN[this.spawnIndex % ROUND_ROBIN.length];
+    const id = this.roundRobinSpawner.next();
     const pos = SPAWN_POSITIONS[this.spawnIndex % SPAWN_POSITIONS.length];
     this.spawnIndex += 1;
     this.drops.push({ powerUp: new PowerUp(id), x: pos.x, y: pos.y });

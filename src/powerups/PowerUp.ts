@@ -1,10 +1,12 @@
 /**
- * Power-up base class and round-robin spawner (GDD §4.4, GDD §6.4).
+ * Power-up base class — lifecycle management (GDD §4.4, GDD §6.4).
  *
  * Provides a reusable lifecycle (grow → hold → shrink → despawn) with
- * delta-time-driven animation, a configurable collection threshold, and
- * a round-robin spawner that cycles through the non-combat power-up
- * catalogue (P5 → P8 → P9).
+ * delta-time-driven animation and a configurable collection threshold.
+ *
+ * Spawning strategy has been extracted into the pluggable spawner module
+ * (`./spawner`): `RoundRobinSpawner` for deterministic gym scenes and
+ * `WeightedRandomSpawner` for the main game's semi-random drops.
  *
  * This module is engine-agnostic enough to be reused by:
  * - The GymPowerUps gym scene (AH-0MTC0QPS60005MNT)
@@ -26,6 +28,16 @@ import {
 // Re-export for convenience.
 export { getPowerUpById };
 export type { PowerUpId };
+
+// Re-export spawner interface and implementations from the dedicated module.
+export {
+  RoundRobinSpawner,
+  WeightedRandomSpawner,
+  NON_COMBAT_SPAWN_ORDER,
+  spawnOrder,
+  roundRobinSpawner,
+} from './spawner';
+export type { PowerUpSpawner } from './spawner';
 
 // Tunable constants — canonical values live in src/core/constants.ts
 // (F5 AC5) so other modules import from a single location.
@@ -81,35 +93,6 @@ export interface PowerUpEffect {
   stacks?: number;
   /** Additional effect data (e.g. life increment). */
   data?: Record<string, unknown>;
-}
-
-// ── Round-robin spawner ─────────────────────────────────────────────
-
-/**
- * The fixed spawn order for non-combat power-ups, ascending by GDD ID.
- */
-const SPAWN_ORDER: readonly string[] = ['P5', 'P8', 'P9'];
-
-/**
- * Returns a new array with the fixed spawn order (P5 → P8 → P9).
- */
-export function spawnOrder(): string[] {
-  return [...SPAWN_ORDER];
-}
-
-/**
- * Generates a round-robin spawn sequence of the given length.
- * Cycles through the catalogue order: P5 → P8 → P9 → P5 → …
- *
- * @param count - Total number of spawns to generate.
- * @returns An array of power-up IDs in spawn order.
- */
-export function roundRobinSpawner(count: number): string[] {
-  const result: string[] = [];
-  for (let i = 0; i < count; i++) {
-    result.push(SPAWN_ORDER[i % SPAWN_ORDER.length]);
-  }
-  return result;
 }
 
 // ── PowerUp class ───────────────────────────────────────────────────

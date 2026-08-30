@@ -332,8 +332,10 @@ src/
 │   └── BulletPattern.ts — Bullet pattern definitions
 ├── powerups/
 │   ├── PowerUp.ts       — Base power-up drop class: grow/hold/shrink/despawn lifecycle,
-│   │                      delta-time driven (framerate-independent), round-robin spawner;
-│   │                      collection gated at >3% full-size scale
+│   │                      delta-time driven (framerate-independent), collection gated at >3% full-size scale
+│   ├── spawner.ts       — Pluggable spawner strategy layer: PowerUpSpawner interface,
+│   │                      RoundRobinSpawner (deterministic gym drops),
+│   │                      WeightedRandomSpawner (semi-random in-game drops with mid-run weight tuning)
 │   ├── types.ts         — Power-up catalogue (id, name, type, duration/stack semantics per §4.4)
 │   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed multiplier, P9 magnet
 │   │                      radius/attraction); engine-agnostic, consumed by the HUD and scenes

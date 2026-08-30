@@ -389,12 +389,13 @@ The scene is reachable from the gym index ("Swarm" entry) and returns to it via 
 
 The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups P5 Speed Boost, P8 Extra Life and P9 Magnet (GDD §4.4):
 
-- `src/powerups/PowerUp.ts` — base drop class: delta-time grow → hold → shrink → despawn lifecycle, round-robin spawner (P5 → P8 → P9), collection gated at **>3%** of full-size scale.
+- `src/powerups/PowerUp.ts` — base drop class: delta-time grow → hold → shrink → despawn lifecycle, collection gated at **>3%** of full-size scale.
+- `src/powerups/spawner.ts` — pluggable spawner strategy layer: `PowerUpSpawner` interface, `RoundRobinSpawner` (deterministic gym behaviour: P5 → P8 → P9) and `WeightedRandomSpawner` (semi-random in-game drops; per-ID weights tunable mid-run).
 - `src/powerups/types.ts` — power-up catalogue (id, name, type, duration/stack semantics) for P5/P8/P9.
 - `src/powerups/effects.ts` — engine-agnostic active-effects registry: P5 timed +50% speed (refresh on re-collect, never additive), P8 lives (start 3, cap 5), P9 permanent magnet stacks (cap 5; radius `2× ship size + 50% per stack`; attraction at `MAGNET_ATTRACTION_SPEED`, slower than ship max speed).
 - `src/powerups/icons.ts` — code-drawn neon icons shared by field drops and the HUD (no external art assets).
 - `src/ui/HUD.ts` — **standalone HUD** (Phaser Container, depth above gameplay) attachable to any scene: per-effect rows (icon, name, remaining-seconds timer or `xN` stack count) plus a lives counter.
-- `src/scenes/gym/GymPowerUps.ts` — the scene: round-robin spawning (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), overlap collection gated at >3% scale, magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
+- `src/scenes/gym/GymPowerUps.ts` — the scene: round-robin spawning via `RoundRobinSpawner` (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), overlap collection gated at >3% scale, magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
 
 The scene is reachable from the gym index ("PowerUps" entry). It is reused as the shared power-up lifecycle/HUD foundation by the combat power-up gym. Coverage: `src/powerups/*.test.ts` + `src/scenes/gym/GymPowerUps.test.ts` (+ `HUD.test.ts`) verify lifecycle timing, round-robin order, threshold, effect semantics, HUD model and scene behaviour.
 

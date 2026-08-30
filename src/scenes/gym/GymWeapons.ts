@@ -69,12 +69,13 @@ import {
   SHIP_SIZE,
 } from '../../core/constants';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { RoundRobinSpawner } from '../../powerups/spawner';
 
 /** A weapon-drop type: one of the three weapons, or 'reset'. */
 type DropType = WeaponId | 'reset';
 
 /** Round-robin spawn order (AC3): Spread → Dual → Rapid → Reset. */
-const ROUND_ROBIN: readonly DropType[] = ['spread', 'dual', 'rapid', 'reset'];
+const ROUND_ROBIN_ORDER: readonly DropType[] = ['spread', 'dual', 'rapid', 'reset'];
 
 /** Deterministic spawn position — always the same spot for predictability. */
 const SPAWN_POSITION = { x: GAME_WIDTH / 2, y: 100 };
@@ -98,8 +99,8 @@ interface ActiveDrop {
 export class GymWeapons extends Phaser.Scene {
   private player: Player | null = null;
   private drops: ActiveDrop[] = [];
-  /** Index into the round-robin drop order. */
-  private spawnIndex = 0;
+  /** Per-scene round-robin spawner (fresh index per scene instance). */
+  private roundRobinSpawner = new RoundRobinSpawner<DropType>(ROUND_ROBIN_ORDER);
   /** Countdown to the next round-robin spawn (starts at 0 → immediate first drop). */
   private spawnTimer = 0;
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
@@ -227,8 +228,7 @@ export class GymWeapons extends Phaser.Scene {
 
   /** Spawns the next round-robin drop (Spread → Dual → Rapid → Reset). */
   private _spawnRoundRobin(): void {
-    const weaponType = ROUND_ROBIN[this.spawnIndex % ROUND_ROBIN.length];
-    this.spawnIndex += 1;
+    const weaponType = this.roundRobinSpawner.next();
     this._spawnDrop(weaponType, SPAWN_POSITION.x, SPAWN_POSITION.y);
   }
 
