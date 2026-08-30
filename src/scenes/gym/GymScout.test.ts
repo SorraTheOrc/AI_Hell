@@ -10,7 +10,7 @@ import {
   SCOUT_FORMATION_SPACING_Y,
   SCOUT_FORMATION_DRIFT_SPEED,
 } from './GymScout';
-import { SCOUT_BULLET_SPEED, SCOUT_FIRE_INTERVAL, SCOUT_ADVANCE_CUE_DURATION } from '../../entities/Scout';
+import { SCOUT_BULLET_SPEED, SCOUT_FIRE_INTERVAL, SCOUT_ADVANCE_CUE_DURATION, ScoutBullet } from '../../entities/Scout';
 import { Player } from '../../entities/Player';
 import { PLAYER_SPAWN } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -256,14 +256,20 @@ describe('GymScout — player in the gym (epic per-scene AC1-AC4)', () => {
     const scene = await bootGym();
     scene.toggleShooting();
 
-    // Drive the two-phase tell deterministically by advancing the clock:
-    // first past the fire interval (tell starts), then past the cue.
+    // Start the two-phase tell (fire interval elapses), then advance in
+    // small, bounded steps until the volley has actually fired. Polling in
+    // quarter-cue steps (rather than one exact-boundary jump) keeps the
+    // test deterministic under real-clock drift on loaded machines — the
+    // single 600 ms boundary could otherwise be missed and assert 0 bullets.
     scene.time.now += SCOUT_FIRE_INTERVAL;
-    scene.tick(0.05);
-    scene.time.now += SCOUT_ADVANCE_CUE_DURATION;
-    scene.tick(0.05);
+    scene.tick(0.05); // tell starts
+    let bullets: ScoutBullet[] = [];
+    for (let i = 0; i < 40 && bullets.length === 0; i++) {
+      scene.time.now += SCOUT_ADVANCE_CUE_DURATION / 4;
+      scene.tick(0.05);
+      bullets = scene.activeBullets;
+    }
 
-    const bullets = scene.activeBullets;
     expect(bullets.length).toBeGreaterThan(0);
     for (const bullet of bullets) {
       const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
