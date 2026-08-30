@@ -9,12 +9,16 @@
  * 1 HP — destroyed by a single bullet, plays an explosion animation, and
  * is removed. Phasers never collide with each other (GDD §2.6): the scene
  * does not install any collision between Phasers.
+ *
+ * Audio (GDD §7.3): destruction audio is owned by the base scene
+ * (`playDestructionSound()`), not by this entity (no double-play). The
+ * helper lives in `src/audio/effects.ts` and degrades to a safe no-op
+ * without an AudioContext.
  */
 
 import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
-import { playDestructionSound } from '../audio/effects';
 
 // ── Visual / behaviour tuning (per GDD §4.1) ────────────────────────
 
@@ -158,10 +162,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
    * Plays the destruction animation: expanding, fading rings.
    * The body is hidden immediately and the explosion graphics are
    * cleaned up when the tween completes.
+   *
+   * NOTE: intentionally plays NO destruction sound here — the shared
+   * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
+   * and is already called once per destruction (design doc §7 no-double-play
+   * rule). Adding a call here would double-play.
    */
   playExplosion(): void {
-    playDestructionSound();
-
     const scene = this.scene as Phaser.Scene;
     scene.tweens.add({
       targets: this.explosionGraphics,

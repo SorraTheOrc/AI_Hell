@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FormationOffset } from '../utils/formations';
 import {
@@ -97,6 +98,19 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
         Math.abs(b.vy + PHASER_BULLET_SPEED) < 1e-6,
     );
     expect(up).toBeDefined();
+  });
+
+  it('destruction plays NO entity-level sound — the base scene owns playDestructionSound (no double-play)', async () => {
+    booted = await bootScene([HarnessScene]);
+    vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const phaser = makePhaser(100, 100);
+    phaser.destroySelf();
+
+    // The entity's explosion path must stay silent: GymFormationScene
+    // .explodeRandom() plays playDestructionSound() exactly once per
+    // destruction (design doc §7). An entity call here would double-play.
+    expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
   });
 
   it('AC5 — the fire interval still gates repeating cycles while aiming', async () => {
