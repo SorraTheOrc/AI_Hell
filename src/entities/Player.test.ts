@@ -819,3 +819,175 @@ describe('Player ship entity', () => {
     expect(player!.isFireReady()).toBe(true);
   });
 });
+
+// ── Asteroids control scheme (AC1, AC2, AC3, AC5) ───────────────────
+
+describe('Player — Asteroids control scheme', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+  async function bootPlayerScene(): Promise<Phaser.Scene> {
+    booted = await bootScene([GymPlayer]);
+    return booted!.scene;
+  }
+
+  const playerOf = (scene: Phaser.Scene) => {
+    const children = scene.sys.displayList.getChildren();
+    return children.find((c) => c instanceof Player) as Player | undefined;
+  };
+
+  async function bootAsteroidsPlayer(): Promise<Player> {
+    const scene = await bootPlayerScene();
+    await tick();
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.setScheme('asteroids');
+    return player as Player;
+  }
+
+  it('setScheme swaps the pluggable movement model (AC5)', async () => {
+    const player = await bootAsteroidsPlayer();
+    expect(player.getScheme()).toBe('asteroids');
+
+    player.setScheme('fourDirectional');
+    expect(player.getScheme()).toBe('fourDirectional');
+  });
+
+  it('draws three engine ports on the hull when in Asteroids mode (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    const arcSpy = vi.spyOn(player, 'arc');
+    player.setConfig({ ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+
+    // Three engines: main rear + two forward-side thrusters.
+    expect(arcSpy).toHaveBeenCalledTimes(3);
+
+    // Port radius = shipSize × 0.08 × size. Default shipSize 20:
+    // main 1.6px; forward-side thrusters 20 × 0.08 × 0.7 = 1.12px (70%).
+    const radii = arcSpy.mock.calls.map((call) => call[2] as number);
+    expect(Math.max(...radii)).toBeCloseTo(1.6, 5);
+    const small = radii.filter((r) => r < 1.6);
+    expect(small).toHaveLength(2);
+    for (const r of small) expect(r).toBeCloseTo(1.12, 5);
+  });
+
+  it('rotates by rotationSpeed while a turn key is held (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Default rotationSpeed 3 rad/s → 1s turn right = 3 rad.
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(1, 960, 540);
+
+    expect(player.getHeading()).toBeCloseTo(3, 5);
+    expect(player.rotation).toBeCloseTo(3, 5);
+
+    // Turn left 1s back toward 0.
+    player.setInput({ forward: false, turnLeft: true, turnRight: false });
+    player.physicsTick(1, 960, 540);
+    expect(player.getHeading()).toBeCloseTo(0, 3);
+  });
+
+  it('wraps the rotation speed via the config slider (AC3)', async () => {
+    const player = await bootAsteroidsPlayer();
+    player.setConfig({
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsRotationSpeed: 6,
+    });
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(1, 960, 540);
+    expect(player.getHeading()).toBeCloseTo(6, 5);
+  });
+
+  it('thrusts in the facing direction when forward is held (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // No rotation → facing 0 (right).
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    const x0 = player.x;
+    player.physicsTick(1, 960, 540);
+    expect(player.x).toBeGreaterThan(x0); // moved right
+    expect(player.y).toBeCloseTo(270); // no vertical motion
+  });
+
+  it('accelerates along the current facing after turning (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Turn right for 0.5s → facing ≈ 1.5 rad; then thrust forward 1s.
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(0.5, 960, 540);
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.physicsTick(1, 960, 540);
+
+    // Velocity direction matches the facing angle (screen coords).
+    const { vx, vy } = player.getMovementState();
+    const heading = Math.atan2(vy, vx);
+    expect(heading).toBeCloseTo(1.5, 2);
+    expect(player.getHeading()).toBeCloseTo(1.5, 2);
+  });
+
+  it('fires all three engines while forward thrust is held (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    expect(player.getFlameLengths()).toEqual({
+      main: 0,
+      leftSide: 0,
+      rightSide: 0,
+    });
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    // Main rear fires at full size; the two forward-side thrusters are
+    // 70% size → their flame max is 70% of the main (AC2).
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.leftSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.rightSide).toBeCloseTo(15 * 0.7, 2);
+  });
+
+  it('shows no flames while coasting and decays them on release (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 500);
+    expect(player.getFlameLengths().main).toBeGreaterThan(0);
+
+    // Release: flames decay to zero.
+    player.setInput({ forward: false, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 5000);
+    expect(player.getFlameLengths().main).toBe(0);
+  });
+
+  it('respawn resets position, velocity, rotation and flames (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: true });
+    player.physicsTick(1, 960, 540);
+    player.preUpdate(0, 500);
+
+    player.respawn(100, 100);
+    expect(player.x).toBe(100);
+    expect(player.y).toBe(100);
+    expect(player.getMovementState().vx).toBe(0);
+    expect(player.getMovementState().vy).toBe(0);
+    expect(player.rotation).toBe(0);
+    expect(player.getFlameLengths()).toEqual({
+      main: 0,
+      leftSide: 0,
+      rightSide: 0,
+    });
+  });
+});
