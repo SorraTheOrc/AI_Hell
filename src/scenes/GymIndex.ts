@@ -76,7 +76,7 @@ export class GymIndex extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // ── Scene entries (alphabetical, clickable) ──────────────────────
+    // ── Two-column layout ──────────────────────────────────────────
     const entryStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: 'monospace',
       fontSize: '18px',
@@ -84,26 +84,28 @@ export class GymIndex extends Phaser.Scene {
       backgroundColor: '#1a1a1a',
       padding: { x: 10, y: 6 },
     };
-
-    const nonEnemyRows = this.entries.length;
-    const enemyRows = this.enemyEntries.length;
-    const startYNonEnemy = 150;
     const rowGap = 42;
-    // Allocate section headers + rows; enemy block follows non-enemy block
-    // with a small gap and an optional header.
+    const startY = 150;
+    // Left column = non-enemy scenes; right column = enemy entries.
+    // Centre-left / centre-right of the screen, vertically aligned.
+    const leftColX = GAME_WIDTH * 0.33;
+    const rightColX = GAME_WIDTH * 0.67;
+
+    // Left column — scene entries (alphabetical).
     this.entries.forEach((entry, index) => {
       const row = this.add
-        .text(GAME_WIDTH / 2, startYNonEnemy + index * rowGap, entry.label, entryStyle)
+        .text(leftColX, startY + index * rowGap, entry.label, entryStyle)
         .setOrigin(0.5);
       row.setInteractive({ useHandCursor: true });
       row.on('pointerdown', () => this.scene.start(entry.key));
     });
 
-    // Enemy section header + entries (if any).
-    const enemyStartY = startYNonEnemy + nonEnemyRows * rowGap + (nonEnemyRows > 0 && enemyRows > 0 ? 24 : 0);
+    // Right column — ENEMIES header + enemy entries (if any).
+    const enemyRows = this.enemyEntries.length;
     if (enemyRows > 0) {
+      const headerY = startY - 18;
       const header = this.add
-        .text(GAME_WIDTH / 2, enemyStartY - 18, 'ENEMIES', {
+        .text(rightColX, headerY, 'ENEMIES', {
           fontFamily: 'monospace',
           fontSize: '12px',
           color: '#888888',
@@ -112,7 +114,7 @@ export class GymIndex extends Phaser.Scene {
       void header;
       this.enemyEntries.forEach((entry, index) => {
         const row = this.add
-          .text(GAME_WIDTH / 2, enemyStartY + 10 + index * rowGap, entry.label, entryStyle)
+          .text(rightColX, startY + index * rowGap, entry.label, entryStyle)
           .setOrigin(0.5);
         row.setData('enemyKey', entry.enemyKey);
         row.setInteractive({ useHandCursor: true });

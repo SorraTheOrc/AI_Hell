@@ -171,5 +171,33 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     expect(idx.listedEnemyScenes.length).toBeGreaterThan(0);
     expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'scout')).toBe(true);
   });
+
+  it('renders enemies in a two-column layout (left=scenes, right=enemies)', async () => {
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+    // All rendered text objects should exist (layout doesn't change counts).
+    // Verify enemy text objects use the right-column X coordinate
+    // (GAME_WIDTH * 0.67) and non-enemy entries use left-column (GAME_WIDTH * 0.33).
+    const { GAME_WIDTH } = await import('../core/constants');
+    const leftCol = Math.round(GAME_WIDTH * 0.33);
+    const rightCol = Math.round(GAME_WIDTH * 0.67);
+    // Boss is a non-enemy scene → left column.
+    const bossText = findText(idx, 'Boss');
+    expect(Math.round(bossText.x)).toBe(leftCol);
+    // Scout is an enemy entry → right column.
+    const scoutEntry = idx.listedEnemyScenes.find((s) => s.enemyKey === 'scout');
+    expect(scoutEntry).toBeDefined();
+    const scoutText = (idx.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === scoutEntry!.label,
+    );
+    expect(scoutText).toBeDefined();
+    expect(Math.round(scoutText!.x)).toBe(rightCol);
+    // ENEMIES header also on right column.
+    const header = (idx.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === 'ENEMIES',
+    );
+    expect(header).toBeDefined();
+    expect(Math.round(header!.x)).toBe(rightCol);
+  });
 });
 
