@@ -70,9 +70,9 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
     expect(allVisible).toBe(true);
   });
 
-  // ── AC1: No horizontal movement during dive ──────────────────────
+  // ── AC1: Diagonal dive toward the player ─────────────────────────
 
-  it('AC1 — diver x-coordinate remains constant during the dive phase (vertical drop)', async () => {
+  it('AC1 — diver dives diagonally toward the player (x and y follow the bezier)', async () => {
     const scene = await bootGym();
 
     // Advance the 3 s hold phase deterministically via accumulated tick dt
@@ -93,13 +93,15 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
     expect(divingDivers.length).toBeGreaterThan(0);
 
     const diver = divingDivers[0];
+    const player = scene.getPlayer()!;
+    const targetX = player.x;
     const startX = diver.x;
     const startY = diver.y;
+    const startDistToTarget = Math.abs(startX - targetX);
 
-    // Sample x while the diver remains in the DIVING state (we joined the
-    // 2 s dive part-way through). Sampling beyond the dive would capture
-    // the smooth return glide, which legitimately moves x toward the
-    // drifted slot — this test must only cover the dive itself.
+    // Sample x and y while the diver remains in the DIVING state (we joined
+    // the 2 s dive part-way through). Sampling beyond the dive would capture
+    // the smooth return glide — this test must only cover the dive itself.
     const samples: number[] = [];
     for (let i = 0; i < 60 && diver.behaviourState === DiverState.DIVING; i++) {
       scene.tick(0.05);
@@ -107,11 +109,15 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
     }
     expect(samples.length).toBeGreaterThanOrEqual(5);
 
-    // AC1: x must stay locked at the dive-start x — a straight vertical drop.
+    // AC1+AC2: the dive is a diagonal parabolic arc toward the player's
+    // position at dive start — x must move substantially toward the target,
+    // not stay locked at the formation slot.
     const maxDelta = Math.max(...samples.map((sx) => Math.abs(sx - startX)));
-    expect(maxDelta).toBeLessThanOrEqual(2);
+    expect(maxDelta).toBeGreaterThan(10);
+    // The diver should end closer to the player in x than it started.
+    expect(Math.abs(diver.x - targetX)).toBeLessThan(startDistToTarget);
 
-    // The dive is vertical, not frozen: y must have changed substantially.
+    // The dive is not frozen: y must also have changed substantially.
     expect(Math.abs(diver.y - startY)).toBeGreaterThan(10);
   });
 
@@ -156,8 +162,8 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
     // Sample x every 100ms through the rest of the dive (2s) and the full
     // return (~0.83s). A snap would appear as a large step between two
     // consecutive samples (~85 px for the drift while the diver was away);
-    // the fixed behaviour glides smoothly (dive: 0 px; return: ~13 px/100ms;
-    // formation drift: ~3 px/100ms), so a 25 px cap cleanly separates the two.
+    // the diagonal dive moves ~30-60 px/100ms and the return ~60 px/100ms,
+    // so an 80 px cap cleanly separates smooth motion from a horizontal snap.
     let maxStep = 0;
     for (let i = 0; i < 35; i++) {
       const prevX = diver.x;
@@ -165,7 +171,7 @@ describe('GymDiver — E2 Diver gym scene (AC1-AC6)', () => {
       maxStep = Math.max(maxStep, Math.abs(diver.x - prevX));
     }
 
-    expect(maxStep).toBeLessThanOrEqual(25);
+    expect(maxStep).toBeLessThanOrEqual(80);
     // The diver completed the return within the window.
     expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });

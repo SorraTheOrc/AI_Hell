@@ -203,3 +203,115 @@ describe('Diver entity — audio (GDD §7.3, Diver fire/destruction sounds)', ()
     expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
   });
 });
+
+describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset });
+  }
+
+  it('AC1 — computeFacingRotation maps nose-up to the target direction', async () => {
+    // Nose points up in local space: 0 = up, PI/2 = right, PI = down, -PI/2 = left.
+    expect(Diver.computeFacingRotation(0, 0, 0, -100)).toBeCloseTo(0, 5);           // up
+    expect(Diver.computeFacingRotation(0, 0, 100, 0)).toBeCloseTo(Math.PI / 2, 5); // right
+    expect(Diver.computeFacingRotation(0, 0, 0, 100)).toBeCloseTo(Math.PI, 5);     // down
+    expect(Diver.computeFacingRotation(0, 0, -100, 0)).toBeCloseTo(-Math.PI / 2, 5); // left
+  });
+
+  it('AC1 — rotation during formation smoothly tracks toward the player', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+    // Player far to the right of the diver.
+    diver.setAimTarget(600, 300);
+    const desired = Diver.computeFacingRotation(diver.x, diver.y, 600, 300);
+    expect(desired).toBeCloseTo(Math.PI / 2, 5);
+
+    // One small tick: rotation moves part-way toward the target, not instantly.
+    const rot0 = diver.rotation;
+    diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+    expect(diver.rotation).not.toBeCloseTo(desired, 1);
+    expect(Math.abs(diver.rotation - desired)).toBeLessThan(Math.abs(rot0 - desired));
+
+    // Many ticks: converges close to the desired angle.
+    for (let i = 0; i < 40; i++) diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+    expect(diver.rotation).toBeCloseTo(desired, 1);
+  });
+
+  it('AC1 — rotation updates when the target moves', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+    diver.setAimTarget(600, 300); // right
+    for (let i = 0; i < 30; i++) diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+    const rotRight = diver.rotation;
+    expect(rotRight).toBeGreaterThan(0.5);
+
+    // Swing the target to the left — rotation should track the new direction.
+    diver.setAimTarget(200, 300); // left
+    for (let i = 0; i < 40; i++) diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+    expect(diver.rotation).toBeLessThan(-0.5);
+  });
+
+  it('AC2 — dive follows the full bezier diagonally to the snapshotted player position', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 200;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+    const aim = { x: 700, y: 500 };
+    diver.setAimTarget(aim.x, aim.y);
+
+    const holdTicks = Math.ceil(DIVER_HOLD_FORMATION_SECONDS / 0.5);
+    for (let i = 0; i < holdTicks; i++) diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Advance to t=0.5 (half the 2s dive) and verify both x and y follow the bezier.
+    diver.applyFormationPosition(baseX, baseY, DIVER_DIVE_DURATION * 0.5, 26, 22);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    const apexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
+    const apexX = (baseX + aim.x) / 2;
+    const point = Diver.computeDivePoint(baseX, baseY, apexX, apexY, aim.x, aim.y, 0.5);
+    expect(diver.x).toBeCloseTo(point.x, 2);
+    expect(diver.y).toBeCloseTo(point.y, 2);
+    // x must have moved diagonally away from start, not stayed locked.
+    expect(Math.abs(diver.x - baseX)).toBeGreaterThan(50);
+  });
+
+  it('AC2 — diagonal dive also snapshots x: aim changes mid-dive do not alter x', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 200;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+    const aimA = { x: 700, y: 500 };
+    diver.setAimTarget(aimA.x, aimA.y);
+    const holdTicks = Math.ceil(DIVER_HOLD_FORMATION_SECONDS / 0.5);
+    for (let i = 0; i < holdTicks; i++) diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    const aimB = { x: 100, y: 100 };
+    diver.setAimTarget(aimB.x, aimB.y);
+    diver.applyFormationPosition(baseX, baseY, DIVER_DIVE_DURATION * 0.25, 26, 22);
+    const apexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
+    const apexXA = (baseX + aimA.x) / 2;
+    const apexXB = (baseX + aimB.x) / 2;
+    const pointA = Diver.computeDivePoint(baseX, baseY, apexXA, apexY, aimA.x, aimA.y, 0.25);
+    const pointB = Diver.computeDivePoint(baseX, baseY, apexXB, apexY, aimB.x, aimB.y, 0.25);
+    expect(diver.x).toBeCloseTo(pointA.x, 4);
+    expect(diver.y).toBeCloseTo(pointA.y, 4);
+    expect(Math.abs(diver.x - pointB.x)).toBeGreaterThan(5);
+  });
+});
