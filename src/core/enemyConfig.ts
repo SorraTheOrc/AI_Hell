@@ -27,6 +27,9 @@ export type EnemyShotPattern =
   | 'orbital'
   | 'coordinated';
 
+// Single source of truth for formation kinds lives in `src/utils/formations.ts`
+// (`EnemyFormationKind`). Re-export it here so callers can import from either
+// place without creating a circular dep (both are leaf modules).
 export type EnemyFormationKind = 'v' | 'diver' | 'rect' | 'swarm' | 'orbital' | 'single';
 
 // ── EnemyConfig shape ─────────────────────────────────────────────
