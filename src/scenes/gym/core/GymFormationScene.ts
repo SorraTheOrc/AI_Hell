@@ -194,7 +194,7 @@ export class GymFormationScene<
   TEntity extends FormationSceneEntity,
   TBullet extends FormationSceneBullet,
 > extends Phaser.Scene {
-  private readonly config: EnemyFormationConfig<TEntity, TBullet>;
+  protected config: EnemyFormationConfig<TEntity, TBullet>;
 
   protected entities: TEntity[] = [];
   protected bullets: TBullet[] = [];

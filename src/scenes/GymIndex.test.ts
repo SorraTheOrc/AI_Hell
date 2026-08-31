@@ -56,6 +56,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Boss',
       'Diver',
+      'Enemies',
       'Phaser',
       'Player',
       'PowerUps',
@@ -67,6 +68,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBoss',
       'GymDiver',
+      'GymEnemies',
       'GymPhaser',
       'GymPlayer',
       'GymPowerUps',
