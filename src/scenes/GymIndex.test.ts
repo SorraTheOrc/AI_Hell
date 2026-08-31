@@ -34,6 +34,9 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
   });
 
   async function bootIndex(): Promise<GymIndex> {
@@ -53,10 +56,11 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver, GymSwarm,
     // GymPowerUps, GymWeapons, GymBoss are on disk. Labels strip the
     // leading "Gym" and are sorted alphabetically.
+    // GymEnemies is no longer listed as a bare scene — individual enemies
+    // appear via listedEnemyScenes instead (one entry per EnemyConfig).
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Boss',
       'Diver',
-      'Enemies',
       'Phaser',
       'Player',
       'PowerUps',
@@ -68,7 +72,6 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBoss',
       'GymDiver',
-      'GymEnemies',
       'GymPhaser',
       'GymPlayer',
       'GymPowerUps',
@@ -77,6 +80,10 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymTank',
       'GymWeapons',
     ]);
+    // Enemy section: one entry per seed config (+ any Save As entries)
+    const enemyKeys = scene.listedEnemyScenes.map((s) => s.enemyKey).sort();
+    expect(enemyKeys).toEqual(expect.arrayContaining(['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss'].sort()));
+    expect(scene.listedEnemyScenes.every((s) => s.key === `GymEnemies:${s.enemyKey}`)).toBe(true);
 
     // No .test.ts module leaks into the list, and the index itself is not
     // listed (it lives outside the globbed folder).
@@ -108,6 +115,7 @@ describe('GymIndex — back to index from a gym scene (AC5)', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    localStorage.clear();
   });
 
   it('the ← INDEX button on a gym scene switches back to GymIndex', async () => {
@@ -127,3 +135,53 @@ describe('GymIndex — back to index from a gym scene (AC5)', () => {
     expect(booted!.game.scene.isActive('GymScout')).toBe(false);
   });
 });
+describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
+  let booted: BootedGame | null = null;
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+  });
+
+  it('routes an enemy entry to GymEnemies with the correct enemyKey', async () => {
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+    const scout = idx.listedEnemyScenes.find((s) => s.enemyKey === 'scout');
+    expect(scout).toBeDefined();
+    // "Scout" label appears twice (bare GymScout + enemy config) until the
+    // per-enemy gyms are retired. Pick the enemy-section row (last match,
+    // below the non-enemy block). Reverse scan finds the enemy row.
+    const matches = (idx.children.list as Phaser.GameObjects.Text[]).filter(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === scout!.label,
+    );
+    expect(matches.length, `expected duplicate "Scout" rows (legacy + enemy)`).toBeGreaterThanOrEqual(2);
+    // Enemy rows are appended after non-enemy rows, so the last "Scout" is the enemy one.
+    // Fall back to getData('enemyKey') when available (future-proof after retirement).
+    const enemyRow =
+      matches.find((c) => (c as unknown as { getData?: (k: string) => unknown }).getData?.('enemyKey') === 'scout') ??
+      matches[matches.length - 1]!;
+    enemyRow.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted.game.scene.isActive('GymEnemies')).toBe(true);
+  });
+
+  it('Save As enemy appears on next index load without code changes', async () => {
+    const { saveEnemyConfig, DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
+    saveEnemyConfig({ ...DEFAULT_ENEMY_CONFIGS.scout, key: 'zzz-custom', displayName: 'Zzz Custom' });
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+    expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'zzz-custom')).toBe(true);
+    expect(idx.listedEnemyScenes.some((s) => s.label === 'Zzz Custom')).toBe(true);
+  });
+
+  it('corrupt storage does not crash the index (falls back via loadAllEnemyConfigs)', async () => {
+    localStorage.setItem('ai-hell-enemy-config:scout', 'not-json');
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+    expect(idx.listedEnemyScenes.length).toBeGreaterThan(0);
+    expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'scout')).toBe(true);
+  });
+});
+
