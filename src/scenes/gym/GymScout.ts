@@ -7,10 +7,12 @@
  * - **Explode** — destroys a random surviving scout with an explosion
  *   animation.
  * - **Shoot**  — toggles aimed firing (simulates Level 4+ behaviour):
- *   when on, scouts periodically fire red shots aimed at a default target
- *   position (bottom-centre of the screen, standing in for the player).
+ *   when on, scouts periodically fire red aimed shots that track the
+ *   player's live position.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD, no
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy scouts, and scout shots hitting the ship trigger
+ * explosion + respawn (infinite lives). No other enemy types, no HUD, no
  * power-ups. Scouts pass freely through one another — no collision is
  * installed (GDD §2.6).
  *
@@ -25,7 +27,7 @@
 import Phaser from 'phaser';
 
 import { Scout, ScoutBullet } from '../../entities/Scout';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { buildVFormationOffsets } from '../../utils/formations';
 import { FormationOffset } from '../../utils/formations';
 import {
@@ -54,6 +56,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
   driftSpeed: SCOUT_FORMATION_DRIFT_SPEED,
   startX: SCOUT_FORMATION_START_X,
   startY: SCOUT_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'scouts',
   hintText: 'E1 Scout gym — V-formation demo',
   createEntity: (

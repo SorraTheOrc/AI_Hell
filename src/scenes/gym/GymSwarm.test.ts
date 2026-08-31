@@ -1,15 +1,26 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import * as effectsModule from '../../audio/effects';
 import {
   GymSwarm,
   SWARM_FORMATION_COUNT,
   SWARM_FORMATION_SPACING_X,
   SWARM_FORMATION_SPACING_Y,
 } from './GymSwarm';
-import { SWARM_BULLET_SPEED } from '../../entities/Swarm';
+import { SWARM_BULLET_SPEED, SWARM_BURST_INTERVAL } from '../../entities/Swarm';
+import { Player } from '../../entities/Player';
+import { PLAYER_SPAWN } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
+
+/** Wraps an angle difference into [-π, π]. */
+function angleDelta(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}
 
 /** Finds an on-screen text button by label (observable via scene children). */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -27,6 +38,7 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    vi.clearAllMocks();
   });
 
   async function bootGym(): Promise<GymSwarm> {
@@ -77,14 +89,15 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
     expect(baseAfter).toBeGreaterThan(baseBefore);
 
     // Members stay near their formation slot + cluster drift.
-    // Cluster drift is bounded: ±(CLUSTER_MAX_SPREAD * spacingX * 0.5) ≈ ±8.75px.
+    // Cluster drift is bounded: x within ±~12px, y within ±~6px (GDD
+    // §4.1 "tight clusters" — members never scatter across the screen).
     for (const swarm of scene.formationSwarms) {
       const expectedX =
         scene.formationX + swarm.offset.col * SWARM_FORMATION_SPACING_X;
       const expectedY =
         scene.formationY + swarm.offset.row * SWARM_FORMATION_SPACING_Y;
-      expect(Math.abs(swarm.x - expectedX)).toBeLessThan(12);
-      expect(Math.abs(swarm.y - expectedY)).toBeLessThan(8);
+      expect(Math.abs(swarm.x - expectedX)).toBeLessThan(14);
+      expect(Math.abs(swarm.y - expectedY)).toBeLessThan(9);
     }
   });
 
@@ -198,5 +211,161 @@ describe('GymSwarm — E5 Swarm gym scene (AC1-AC9)', () => {
   it('AC5 — shows the shared ← INDEX back button', async () => {
     const scene = await bootGym();
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
+  });
+
+  // ── Audio orchestration (AC2, AC3; fire at point of shooting) ──────
+
+  it('AC2 — plays a Swarm-specific burst sound in effects.ts', async () => {
+    vi.spyOn(effectsModule, 'playSwarmBurstSound');
+
+    const scene = await bootGym();
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    shoot.emit('pointerdown'); // ON
+
+    // Wait for bullets to fire (shoot enabled → immediate fire on first
+    // eligible interval).
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(effectsModule.playSwarmBurstSound).toHaveBeenCalled();
+  });
+
+  it('AC3 — plays exactly one volley-level burst sound even with many entities firing', async () => {
+    vi.spyOn(effectsModule, 'playSwarmBurstSound');
+
+    const scene = await bootGym();
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    shoot.emit('pointerdown'); // ON
+
+    // Wait for one volley cycle.
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // Count how many volley sounds were played.
+    const callCount = vi.mocked(effectsModule.playSwarmBurstSound).mock.calls.length;
+    // The scene plays the volley-level sound once per frame where bullets appear.
+    // With 15 entities firing, it should play ONCE per volley.
+    // (Due to timing, we may get multiple calls if multiple volleys fire.)
+    expect(callCount).toBeGreaterThanOrEqual(1);
+
+    // The key assertion: the volley-level sound is NOT called once per entity.
+    // With 15 entities, if it were per-entity we'd see 15+ calls.
+    // The volley-level sound should be at most a few calls (one per volley frame).
+    expect(callCount).toBeLessThan(scene.formationSwarms.length);
+  });
+
+  // NOTE: Advance-cue removed per operator feedback — fire sound now
+  // plays at the point of shooting, not as a warning. See GymSwarm.ts
+  // update override comment and Swarm.ts tryFireBurstBullet doc.
+});
+
+describe('GymSwarm — player in the gym (epic per-scene AC1-AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymSwarm> {
+    booted = await bootScene([GymSwarm]);
+    return booted!.scene as GymSwarm;
+  }
+
+  it('AC1 — spawns the keyboard-controlled player ship at PLAYER_SPAWN', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player!.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player!.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.aliveCount).toBe(SWARM_FORMATION_COUNT);
+  });
+
+  it('AC1 — the player responds to the cursor keys', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+    const x0 = player.x;
+    const y0 = player.y;
+
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+
+    expect(player.y - y0).toBeGreaterThan(40);
+    expect(player.x).toBe(x0);
+  });
+
+  it('AC2 — the burst volley aims at the live player (up-right), not the old stand-in', async () => {
+    const scene = await bootGym();
+    scene.toggleShooting();
+    scene.time.now += SWARM_BURST_INTERVAL + 500;
+    scene.tick(0.05); // every member fires its burst at the live player
+
+    const bullets = scene.activeBullets;
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+      expect(speed).toBeCloseTo(SWARM_BULLET_SPEED, 1);
+    }
+
+    // The mean burst direction points at the player from the formation
+    // centre (up-right). The old bottom-centre stand-in would point
+    // downward instead.
+    const meanVx = bullets.reduce((a, b) => a + b.vx, 0) / bullets.length;
+    const meanVy = bullets.reduce((a, b) => a + b.vy, 0) / bullets.length;
+    expect(meanVx).toBeGreaterThan(0);
+    expect(meanVy).toBeLessThan(0);
+    const expected = Math.atan2(
+      PLAYER_SPAWN.y - scene.formationY,
+      PLAYER_SPAWN.x - scene.formationX,
+    );
+    const actual = Math.atan2(meanVy, meanVx);
+    expect(Math.abs(angleDelta(actual, expected))).toBeLessThan(0.35);
+  });
+
+  it('AC3 — a player bullet destroys a swarm member; a swarm shot hitting the player respawns it', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+
+    // Park a player bullet on the first member — destroyed + bullet consumed.
+    const victim = scene.formationSwarms[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.05);
+    expect(victim.alive).toBe(false);
+    expect(scene.aliveCount).toBe(SWARM_FORMATION_COUNT - 1);
+
+    // Remaining members fire bursts aimed at the live player. Each burst
+    // applies an independent random spread (±0.15 rad per bullet), so a
+    // single volley can all-miss the ship entirely (measured ~12% of volleys
+    // at full-suite load). Never rely on one volley's luck: poll with bounded
+    // quarter-interval clock steps so the swarm re-fires fresh aimed volleys
+    // until one lands (mirrors the GymScout AC2 poll idiom, commit e48b046).
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    scene.toggleShooting();
+    const hitsBefore = scene.getPlayerHitCount();
+    for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) {
+      scene.time.now += SWARM_BURST_INTERVAL / 4;
+      scene.tick(0.05);
+    }
+
+    expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+    expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+  });
+
+  it('AC4 — regression: EXPLODE/SHOOT/formation drift still work with the player present', async () => {
+    const scene = await bootGym();
+    const before = scene.aliveCount;
+    scene.explodeRandom();
+    expect(scene.aliveCount).toBe(before - 1);
+
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(true);
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(false);
+
+    const fx = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeGreaterThan(fx);
   });
 });

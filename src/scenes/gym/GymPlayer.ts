@@ -26,12 +26,19 @@
 import Phaser from 'phaser';
 
 import { Player } from '../../entities/Player';
-import { keysToInput, WasdKeysLike } from '../../utils/input';
+import {
+  FourDirectionalInputHandler,
+  AsteroidsInputHandler,
+  ControlInput,
+  ControlSchemeType,
+} from '../../utils/movementModel';
+import { WasdKeysLike } from '../../utils/input';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import {
   loadShipConfig,
   saveShipConfig,
   ShipConfig,
+  ControlScheme,
 } from '../../core/config';
 import { addBackToIndexButton } from '../../utils/gymNavigation';
 
@@ -42,7 +49,16 @@ const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> 
   shipSize: { min: 4, max: 60, step: 1 },
   thrustFlameLength: { min: 0.1, max: 2, step: 0.05 },
   frictionDeceleration: { min: 0, max: 400, step: 5 },
+  asteroidsRotationSpeed: { min: 0.5, max: 10, step: 0.5 },
 };
+
+/** Scheme toggle button id. */
+export const SCHEME_TOGGLE_ID = 'gym-scheme-toggle';
+
+/** Scheme toggle text label for display. */
+function schemeLabel(scheme: ControlSchemeType): string {
+  return scheme === 'asteroids' ? 'Scheme: Asteroids' : 'Scheme: 4-Directional';
+}
 
 /** Colour config values (rendered with `<input type="color">`). */
 const COLOR_FIELDS = ['shipColor', 'thrustFlameColor', 'thrustFlameInnerColor'];
@@ -67,6 +83,11 @@ export class GymPlayer extends Phaser.Scene {
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
   private panel: HTMLDivElement | null = null;
+  /** Pluggable input handlers (one per control scheme, AC5). */
+  private fourDirHandler = new FourDirectionalInputHandler();
+  private asteroidsHandler = new AsteroidsInputHandler();
+  /** The scheme currently driving player input — kept in sync with the player. */
+  private scheme: ControlSchemeType = 'fourDirectional';
 
   constructor() {
     super({ key: 'GymPlayer' });
@@ -100,6 +121,7 @@ export class GymPlayer extends Phaser.Scene {
     const config = loadShipConfig();
     this._applyPanelValues(config);
     this.player.setConfig(config);
+    this.scheme = this.player.getScheme();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.panel?.remove();
@@ -119,6 +141,18 @@ export class GymPlayer extends Phaser.Scene {
     const host = document.querySelector('#game-container') ?? document.body;
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
+
+    // Control-scheme toggle (AC3 — button to switch schemes).
+    const schemeRow = document.createElement('div');
+    schemeRow.className = 'gym-panel-row';
+    const toggle = document.createElement('button');
+    toggle.id = SCHEME_TOGGLE_ID;
+    toggle.type = 'button';
+    toggle.dataset['scheme'] = 'fourDirectional';
+    toggle.textContent = schemeLabel('fourDirectional');
+    toggle.addEventListener('click', () => this._onToggleScheme());
+    schemeRow.appendChild(toggle);
+    panel.appendChild(schemeRow);
 
     // Numeric sliders.
     for (const [field, range] of Object.entries(SLIDER_RANGES)) {
@@ -192,6 +226,22 @@ export class GymPlayer extends Phaser.Scene {
     return row;
   }
 
+  /** Toggles the control scheme button and applies it live (AC3). */
+  private _onToggleScheme(): void {
+    const toggle = this.panel?.querySelector<HTMLButtonElement>(
+      `#${SCHEME_TOGGLE_ID}`,
+    );
+    if (!toggle) return;
+    const next: ControlSchemeType =
+      toggle.dataset['scheme'] === 'asteroids'
+        ? 'fourDirectional'
+        : 'asteroids';
+    toggle.dataset['scheme'] = next;
+    toggle.textContent = schemeLabel(next);
+    // Applies the merged config (with the new scheme) to the player live.
+    this._onControlInput();
+  }
+
   /** Reads all controls into a ShipConfig. */
   private _readPanelValues(): ShipConfig {
     const source = loadShipConfig();
@@ -199,13 +249,21 @@ export class GymPlayer extends Phaser.Scene {
       const input = this.panel?.querySelector<HTMLInputElement>(
         `input[data-config="${field}"]`,
       );
-      if (input) source[field as keyof ShipConfig] = Number(input.value);
+      if (input) (source as unknown as Record<string, unknown>)[field] = Number(input.value);
     }
     for (const field of COLOR_FIELDS) {
       const input = this.panel?.querySelector<HTMLInputElement>(
         `input[data-config="${field}"]`,
       );
-      if (input) source[field as keyof ShipConfig] = hexToColor(input.value);
+      if (input) (source as unknown as Record<string, unknown>)[field] = hexToColor(input.value);
+    }
+    // The scheme toggle is the source of truth for controlScheme (AC3).
+    const toggle = this.panel?.querySelector<HTMLButtonElement>(
+      `#${SCHEME_TOGGLE_ID}`,
+    );
+    if (toggle) {
+      source.controlScheme = (toggle.dataset['scheme'] ??
+        'fourDirectional') as ControlScheme;
     }
     return source;
   }
@@ -230,6 +288,14 @@ export class GymPlayer extends Phaser.Scene {
       if (input) {
         input.value = colorToHex(config[field as keyof ShipConfig] as number);
       }
+    }
+    // Sync the scheme toggle button with the config's control scheme.
+    const toggle = this.panel.querySelector<HTMLButtonElement>(
+      `#${SCHEME_TOGGLE_ID}`,
+    );
+    if (toggle) {
+      toggle.dataset['scheme'] = config.controlScheme ?? 'fourDirectional';
+      toggle.textContent = schemeLabel(config.controlScheme ?? 'fourDirectional');
     }
   }
 
@@ -264,16 +330,24 @@ export class GymPlayer extends Phaser.Scene {
   }
 
   /**
-   * Reads the current held-key state into a MovementInput.
+   * Reads the current held-key state into a ControlInput for the active
+   * control scheme (AC5 — pluggable input handlers).
    * Level-triggered per frame: a key that is held down returns true
    * every frame until released, so thrust accumulates continuously.
    */
-  private _readInput() {
-    return keysToInput(this.cursors, this.wasd);
+  private _readInput(): ControlInput | undefined {
+    const raw = { cursors: this.cursors, wasd: this.wasd };
+    return this.scheme === 'asteroids'
+      ? this.asteroidsHandler.mapInput(raw)
+      : this.fourDirHandler.mapInput(raw);
   }
 
   update(_time: number, delta: number): void {
     if (!this.player) return;
+
+    // Keep the scheme in sync with the player (scheme switches also
+    // happen on setConfig from the panel / saved config).
+    this.scheme = this.player.getScheme();
 
     const input = this._readInput();
     if (input) this.player.setInput(input);

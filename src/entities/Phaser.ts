@@ -9,12 +9,16 @@
  * 1 HP — destroyed by a single bullet, plays an explosion animation, and
  * is removed. Phasers never collide with each other (GDD §2.6): the scene
  * does not install any collision between Phasers.
+ *
+ * Audio (GDD §7.3): destruction audio is owned by the base scene
+ * (`playDestructionSound()`), not by this entity (no double-play). The
+ * helper lives in `src/audio/effects.ts` and degrades to a safe no-op
+ * without an AudioContext.
  */
 
 import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
-import { playDestructionSound } from '../audio/effects';
 
 // ── Visual / behaviour tuning (per GDD §4.1) ────────────────────────
 
@@ -91,6 +95,8 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
   private _tellStartTime = 0;
   private _isTelling = false;
   private _orbitalPhase: number;
+  /** Aim point for the radial pattern — the fixed bottom-centre stand-in by default. */
+  private readonly target: Phaser.Math.Vector2;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -100,6 +106,11 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.formationOffset = config.formationOffset;
     // Each Phaser gets a unique orbital phase based on its offset index.
     this._orbitalPhase = this._computeOrbitalPhase(config.formationOffset);
+    // Aim point defaults to the bottom-centre stand-in (simulated player).
+    this.target = new Phaser.Math.Vector2(
+      scene.scale.width / 2,
+      scene.scale.height - 40,
+    );
 
     // Outer ring — magenta neon circle.
     this.ringGraphics = scene.add.graphics();
@@ -151,10 +162,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
    * Plays the destruction animation: expanding, fading rings.
    * The body is hidden immediately and the explosion graphics are
    * cleaned up when the tween completes.
+   *
+   * NOTE: intentionally plays NO destruction sound here — the shared
+   * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
+   * and is already called once per destruction (design doc §7 no-double-play
+   * rule). Adding a call here would double-play.
    */
   playExplosion(): void {
-    playDestructionSound();
-
     const scene = this.scene as Phaser.Scene;
     scene.tweens.add({
       targets: this.explosionGraphics,
@@ -220,6 +234,21 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     return this._isTelling;
   }
 
+  /** The position the radial pattern is aimed at (stand-in by default). */
+  get aimTarget(): Phaser.Math.Vector2 {
+    return this.target.clone();
+  }
+
+  /**
+   * Live aim tracking: rotates the radial pattern so one spoke points at
+   * the player's current position (replaces the bottom-centre stand-in
+   * default). The 8-spoke radial shape, speed, tell, and fire interval are
+   * unchanged.
+   */
+  setAimTarget(x: number, y: number): void {
+    this.target.set(x, y);
+  }
+
   // ── Behaviour ────────────────────────────────────────────────────
 
   /**
@@ -250,18 +279,18 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       this.tellGraphics.clear();
       this._lastFireTime = now;
 
-      // Fire in 8 radial directions.
+      // Fire in 8 radial directions, rotated so one spoke points exactly
+      // at the aim target (stand-in by default, live player position when
+      // the scene pushes it). The 8-spoke radial shape is unchanged.
       const bullets: PhaserBullet[] = [];
-      const directions = [
-        { dx: 0, dy: -1 },    // up
-        { dx: 0, dy: 1 },     // down
-        { dx: -1, dy: 0 },    // left
-        { dx: 1, dy: 0 },     // right
-        { dx: -1, dy: -1 },   // up-left
-        { dx: 1, dy: -1 },    // up-right
-        { dx: -1, dy: 1 },    // down-left
-        { dx: 1, dy: 1 },     // down-right
-      ];
+      const baseAngle = Math.atan2(
+        this.target.y - this.y,
+        this.target.x - this.x,
+      );
+      const directions = Array.from({ length: 8 }, (_, k) => {
+        const angle = baseAngle + (k * Math.PI) / 4;
+        return { dx: Math.cos(angle), dy: Math.sin(angle) };
+      });
 
       for (const dir of directions) {
         const graphics = this.scene.add.graphics();

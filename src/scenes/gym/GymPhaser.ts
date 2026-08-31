@@ -6,9 +6,11 @@
  * with a central core. Phasers fire predictable radial bursts with clear
  * tell animations (≥ 500 ms advance cue) before each firing cycle.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD, no
- * power-ups. Phasers pass freely through one another — no collision is
- * installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy phasers, and phasers shots hitting the
+ * ship trigger explosion + respawn (infinite lives). No other enemy
+ * types, no HUD, no power-ups. Phasers pass freely through one another — no
+ * collision is installed (GDD §2.6).
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn/UI/update/bullet-lifecycle boilerplate lives in the shared core
@@ -30,7 +32,7 @@ import {
   PHASER_BULLET_SPEED,
   PHASER_COLOR,
 } from '../../entities/Phaser';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { FormationOffset } from '../../utils/formations';
 import {
   EnemyFormationConfig,
@@ -80,6 +82,7 @@ const PHASER_CONFIG: EnemyFormationConfig<PhaserEntity, PhaserBullet> = {
   driftSpeed: PHASER_FORMATION_DRIFT_SPEED,
   startX: PHASER_FORMATION_START_X,
   startY: PHASER_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'phasers',
   hintText: 'E4 Phaser gym — orbital path demo',
   createEntity: (

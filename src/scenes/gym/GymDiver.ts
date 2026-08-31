@@ -2,8 +2,9 @@
  * Gym scene — E2 Diver testbed (GDD §4.2).
  *
  * Renders a diamond-formation of Diver enemies that advance across the
- * screen. Each diver periodically breaks from formation, follows a curved
- * (parabolic) trajectory toward the player position, then returns to its
+ * screen. Each diver periodically breaks from formation, dives straight
+ * down (x locked at its formation slot) along a parabolic vertical arc
+ * toward the player position, then returns smoothly to its current
  * formation slot. Two on-screen controls drive the demonstration:
  *
  * - **Explode** — destroys a random surviving diver with an explosion
@@ -12,9 +13,11 @@
  *   when on, divers periodically fire short-burst spread shots (3–5
  *   projectiles at slight angles) during their dive trajectory.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD,
- * no power-ups. Divers pass freely through one another — no collision
- * is installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy divers, and diver shots hitting the ship
+ * trigger explosion + respawn (infinite lives). No other enemy types, no
+ * HUD, no power-ups. Divers pass freely through one another — no
+ * collision is installed (GDD §2.6).
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn/UI/update/bullet-lifecycle boilerplate lives in the shared core
@@ -27,7 +30,7 @@
 import Phaser from 'phaser';
 
 import { Diver, DiverBullet, DiverState } from '../../entities/Diver';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { buildDiverFormationOffsets } from '../../utils/formations';
 import { FormationOffset } from '../../utils/formations';
 import {
@@ -56,8 +59,9 @@ const DIVER_CONFIG: EnemyFormationConfig<Diver, DiverBullet> = {
   driftSpeed: DIVER_FORMATION_DRIFT_SPEED,
   startX: DIVER_FORMATION_START_X,
   startY: DIVER_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'divers',
-  hintText: 'E2 Diver gym — curved-dive demo',
+  hintText: 'E2 Diver gym — vertical-dive demo',
   createEntity: (
     scene: Phaser.Scene,
     x: number,

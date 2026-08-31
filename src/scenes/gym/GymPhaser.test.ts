@@ -2,7 +2,7 @@
  * Tests for the E4 Phaser gym scene.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -15,9 +15,11 @@ import {
   PHASER_BULLET_SPEED,
   PHASER_FIRE_INTERVAL,
   PHASER_ADVANCE_CUE_DURATION,
-  PHASER_ORBITAL_SPEED,
 } from '../../entities/Phaser';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
+import { Player } from '../../entities/Player';
+import * as effectsModule from '../../audio/effects';
+import { PLAYER_SPAWN } from '../../core/constants';
 
 /** Finds an on-screen text button by label (observable via scene children). */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -59,25 +61,27 @@ describe('GymPhaser — E4 Phaser gym scene (AC1-AC11)', () => {
   it('AC3 — Phasers move in orbital paths around the formation centre', async () => {
     const scene = await bootGym();
 
-    // Record the formation base before waiting.
+    // Record the formation base and each Phaser's position before moving.
     const baseBefore = scene.formationX;
+    const positionsBefore = scene.formationPhasers.map((p) => ({
+      x: p.x,
+      y: p.y,
+    }));
 
-    // Wait for orbital movement (the game loop advances positions).
-    await new Promise((r) => setTimeout(r, 500));
+    // Drive the game loop deterministically (GymScout-style): advance the
+    // game clock so the orbital phase sweeps, then step the simulation so
+    // the base drifts and each Phaser repositions. Wall-clock setTimeout
+    // waits are avoided — under CI load / headless timer throttling the
+    // game clock advances less than the wall clock, making displacement
+    // land just under the absolute threshold (the observed flake).
+    scene.time.now += 1000; // 1.0 s of game clock → orbital phase sweeps 0.4 rad
+    scene.tick(1.0);        // one deterministic 1.0 s step: drift + orbital motion
 
     // The formation base should have drifted right (base scene update).
     const baseAfter = scene.formationX;
     expect(baseAfter).toBeGreaterThan(baseBefore);
 
     // Positions should have changed (orbital + drift movement).
-    const positionsBefore = scene.formationPhasers.map((p) => ({
-      x: p.x,
-      y: p.y,
-    }));
-
-    // Wait a bit more for additional movement.
-    await new Promise((r) => setTimeout(r, 300));
-
     const positionsAfter = scene.formationPhasers.map((p) => ({
       x: p.x,
       y: p.y,
@@ -86,7 +90,9 @@ describe('GymPhaser — E4 Phaser gym scene (AC1-AC11)', () => {
     for (let i = 0; i < positionsBefore.length; i++) {
       const dx = positionsAfter[i].x - positionsBefore[i].x;
       const dy = positionsAfter[i].y - positionsBefore[i].y;
-      // Combined drift + orbital movement should produce noticeable displacement.
+      // Combined drift + orbital movement should produce noticeable
+      // displacement. Deterministic: the minimum over any orbital phase is
+      // ~1.79 px at this step size, comfortably above the 1.5 px threshold.
       const dist = Math.sqrt(dx * dx + dy * dy);
       expect(dist).toBeGreaterThan(1.5);
     }
@@ -295,5 +301,126 @@ describe('GymPhaser — E4 Phaser gym scene (AC1-AC11)', () => {
       expect(container.ringGraphics).toBeDefined();
       expect(container.coreGraphics).toBeDefined();
     }
+  });
+});
+
+/** Wraps an angle difference into [-π, π]. */
+function angleDelta(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
+describe('GymPhaser — player in the gym (epic per-scene AC1-AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymPhaser> {
+    booted = await bootScene([GymPhaser]);
+    return booted!.scene as GymPhaser;
+  }
+
+  it('AC1 — spawns the keyboard-controlled player ship at PLAYER_SPAWN', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player!.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player!.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.aliveCount).toBe(PHASER_FORMATION_ENTITY_COUNT);
+  });
+
+  it('AC1 — the player responds to the cursor keys', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+    const x0 = player.x;
+    const y0 = player.y;
+
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+
+    expect(player.y - y0).toBeGreaterThan(40);
+    expect(player.x).toBe(x0);
+  });
+
+  it('AC2 — the radial spoke pattern includes the spoke aimed at the live player', async () => {
+    const scene = await bootGym();
+    scene.toggleShooting();
+
+    // Drive the two-phase tell deterministically by advancing the clock.
+    scene.time.now += PHASER_FIRE_INTERVAL;
+    scene.tick(0.05); // tell starts — no bullets yet
+    scene.time.now += PHASER_ADVANCE_CUE_DURATION;
+    scene.tick(0.05); // volley fires
+
+    const bullets = scene.activeBullets;
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+      expect(speed).toBeCloseTo(PHASER_BULLET_SPEED, 1);
+    }
+
+    // The 8-spoke pattern is rotated so one spoke points exactly at the
+    // player (spoke spacing is 45°, so a 0.3 rad tolerance is decisive).
+    const aimed = bullets.some((b) => {
+      const actual = Math.atan2(b.vy, b.vx);
+      return scene.formationPhasers.some((p) => {
+        const expected = Math.atan2(PLAYER_SPAWN.y - p.y, PLAYER_SPAWN.x - p.x);
+        return Math.abs(angleDelta(actual, expected)) < 0.3;
+      });
+    });
+    expect(aimed).toBe(true);
+  });
+
+  it('AC3 — a player bullet destroys a phaser; a phaser spoke hitting the player respawns it', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+
+    // Park a player bullet on the first phaser — destroyed + bullet consumed.
+    const victim = scene.formationPhasers[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.05);
+    expect(victim.alive).toBe(false);
+    expect(scene.aliveCount).toBe(PHASER_FORMATION_ENTITY_COUNT - 1);
+
+    // Each phaser's spoke pattern aims one spoke exactly at the live
+    // player at the moment of firing — that spoke reaches the ship.
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    scene.toggleShooting();
+    scene.time.now += PHASER_FIRE_INTERVAL;
+    scene.tick(0.05); // tell starts
+    scene.time.now += PHASER_ADVANCE_CUE_DURATION;
+    scene.tick(0.05); // volley fires
+
+    const hitsBefore = scene.getPlayerHitCount();
+    for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+    expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+  });
+
+  it('AC4 — regression: EXPLODE/SHOOT/formation drift still work with the player present', async () => {
+    const scene = await bootGym();
+    const before = scene.aliveCount;
+    scene.explodeRandom();
+    expect(scene.aliveCount).toBe(before - 1);
+
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(true);
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(false);
+
+    const fx = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeGreaterThan(fx);
   });
 });

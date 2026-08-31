@@ -16,11 +16,11 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|-----|-----------|------------|---------------------|
 | E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Curved dive toward player, returns to formation | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | §4.1 | Vertical dive toward player (x locked at formation slot), returns to current formation slot | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
-| Boss | The Central AI | §4.3 | 3–4 attack phases, multi-hit health | (per GDD) | complex patterns per phase |
+| Boss | The Central AI | §4.3 | 4 attack phases, multi-hit health (4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
 All enemies are **1 HP** (single bullet destroys them, except the Boss which is
 multi-hit) and **never collide with each other** (GDD §2.6) — no collision
@@ -65,6 +65,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
   driftSpeed: SCOUT_FORMATION_DRIFT_SPEED,
   startX: SCOUT_FORMATION_START_X,
   startY: SCOUT_FORMATION_START_Y,
+  player: PLAYER_SPAWN,        // spawn the Player ship here (see §7)
   statusLabel: 'scouts',          // status line: "SCORE: n/a — scouts: 6"
   hintText: 'E1 Scout gym — V-formation demo',
   createEntity: (scene, x, y, formationOffset) =>
@@ -85,6 +86,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
 | `hintText` | Bottom hint line. |
 | `createEntity` | Factory for one enemy at an absolute position + its formation offset. |
 | `collectBullets` | Called per entity per frame; returns any bullets that entity fired (empty array if none). |
+| `player` | *Optional* player spawn position `{x, y}` — when present the scene spawns the keyboard-controlled Player ship there with live combat interaction (see §7). |
 
 ### 2.3 Entity & bullet contracts
 
@@ -98,6 +100,9 @@ interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
   readonly offset: FormationOffset;
   destroySelf(): void;
   applyFormationPosition(baseX, baseY, dt, spacingX, spacingY): void;
+  /** Optional live-aim seam: update the fire/dive target to the player's
+   *  current position. The base scene pushes this each frame (see §7). */
+  setAimTarget?(x: number, y: number): void;
 }
 ```
 
@@ -137,7 +142,9 @@ for reference implementations (the base class drives them).
    - Add test accessors matching this project's convention
      (`formation<Name>s`, `aliveCount`, `shootingEnabled`,
      `activeBullets`, `formationX`, `formationY` — the latter five come
-     from the base class).
+     from the base class). Player accessors also come from the base
+     (`getPlayer`, `getCursors`, `getPlayerHitCount`,
+     `isPlayerInvulnerable`, `toggleShooting`).
 4. **Discovery.** Put the scene at `src/scenes/gym/Gym<Name>.ts` — the gym
    index auto-discovers it (no registry edit). Put any shared/helper code in
    a **subfolder** (`src/scenes/gym/core/`, or `src/utils/` for pure
@@ -149,18 +156,48 @@ for reference implementations (the base class drives them).
    - drift over time,
    - EXPLODE destroys one random alive enemy, no-op at zero,
    - SHOOT toggles off→on→off and gates new bullets,
-   - the `← INDEX` button exists.
+   - the `← INDEX` button exists,
+   - the player spawns at the scene's `player` config position, responds
+     to the cursor keys, fights (player bullet ↔ enemy / enemy bullet →
+     ship respawn), and live enemy aim tracks it (see §7).
 6. **Audio + navigation.** `playSpawnSound()` / `playDestructionSound()`
    and `addBackToIndexButton()` are handled by the base class — do not
-   re-add them.
+   re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
+   and are orchestrated where the shots are produced: Swarm plays a
+   scene-level volley burst sound at the point of shooting (no warning
+   cue); Scout uses a per-entity two-phase tell — an advance cue (≥ 500 ms
+   lead) at tell start, with the fire sound scheduled to start exactly at
+   the cue's end so the two flow back-to-back with no dead gap; Phaser
+   uses the same two-phase tell pattern; Tank plays a scene-level
+   mechanical-whine advance cue flowing with **no gap** into a heavy
+   cannon-thump fire sound, one cue+thump pair per radial burst at the
+   point of shooting (the whine's ≥ 500 ms duration provides the advance
+   lead); Diver plays `playDiverFireSound()` (short low/nasal crack)
+   exactly once per spread burst from its entity-level `tryFireSpreadBurst()`
+   (no advance cue — the fire sound alone is the tell).
+   Audio-character decisions are made **per-enemy at implementation
+   time** and may deviate from the GDD §7.3 catalog defaults (e.g. Tank's
+   heavy thump vs the generic "short zap") — see the GDD §7.3 note.
+
+7. **Destruction sound ownership.** The base class `GymFormationScene.explodeRandom()`
+   plays `playDestructionSound()` for all enemies, unless the entity opts
+   into a distinct sound via the optional `playDestructionAudio?()` seam on
+   `FormationSceneEntity` — the base scene prefers the hook and falls back
+   to the shared sound when it is absent (Diver implements the hook to play
+   `playDiverDestructionSound()`). Entity classes should NOT call
+   `playDestructionSound()` in their `playExplosion()` — doing so would
+   double-play the sound. This is a design decision per GDD §7.3
+   and the core-library best practices.
 
 ### 3.2 Existing scenes (reference implementations)
 
-| Scene | Entity | Formation | Fire pattern |
-|-------|--------|-----------|--------------|
-| `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) |
-| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) |
-| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) |
+| Scene | Entity | Formation | Fire pattern | Audio |
+|-------|--------|-----------|--------------|-------+-------|
+| `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
+| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
+| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (scene-level, one cue+thump pair per burst, no gap between cue and thump) |
+| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (scene-level, once per volley, at point of shooting) |
+| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | none |
 
 ---
 
@@ -223,8 +260,161 @@ When a new enemy needs the base scene to behave differently:
   `Container` entity + stub bullets exercise spawn, HUD, drift/respawn,
   explode, shoot toggle, bullet advance, and off-screen removal.
 - **Per-scene** (`src/scenes/gym/GymScout.test.ts`, `GymDiver.test.ts`,
-  `GymTank.test.ts`) — behaviour-preserving tests that must pass unchanged
-  after a refactor; they are the regression net for the scene rewrites.
+  `GymTank.test.ts`, `GymPhaser.test.ts`, `GymSwarm.test.ts`) —
+  behaviour-preserving tests that must pass unchanged after a refactor;
+  they are the regression net for the scene rewrites and each also
+  asserts the player-in-the-gym convention (spawn, keyboard, live aim,
+  combat, respawn — see §7). `GymSwarm.test.ts` additionally asserts
+  cluster drift bounds and the pass-through (no-collision) invariant
+  (GDD §2.6).
 - **Browser smoke test** — run `npm run dev`, open the gym index, and
   confirm formations render with the correct neon colours (headless tests
   cannot see pixels; this is a manual step).
+
+---
+
+## 7. Player in the enemy gym — live combat convention
+
+Every enemy gym scene now includes the **real, keyboard-controlled Player
+ship** (`src/entities/Player.ts`) with live combat interaction, so enemy
+behaviour is demonstrated against an actual target and the scenes double as
+combat testbeds.
+
+### 7.1 Spawn & input
+
+- **Config seam:** a scene opts in by setting `player: {x, y}` in its
+  `EnemyFormationConfig` (an optional, backward-compatible extension —
+  scenes without it spawn no ship, e.g. the future Boss gym until built).
+  All five enemy gyms use `PLAYER_SPAWN` from `src/core/constants.ts`
+  (`{x: 920, y: 30}` — top-right, so auto-fire heads right across the
+  screen away from the formations).
+- **Input:** the base scene binds the cursor keys (arrows) AND `W/A/S/D`,
+  clamped to the game bounds; `maxSpeed` 175 px/s. The bound keys are
+  routed through the player's **saved control scheme** — keyed off
+  `player.getScheme()` inside `GymFormationScene._readPlayerInput`, which
+  dispatches to `FourDirectionalInputHandler` (default) or
+  `AsteroidsInputHandler` (both in `src/utils/movementModel.ts`):
+  - **4-directional scheme (default):** arrows and `W/A/S/D` move the ship
+    up / down / left / right as before.
+  - **Asteroids scheme:** `W`/Arrow Up thrust the ship **forward** (in its
+    current facing direction), `A`/Arrow Left turn it **left**, and
+    `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
+  `GymPowerUps` and `GymWeapons` implement the same scheme-aware routing in
+  their own `_readInput` methods.
+
+  > **Supersession:** the per-scene wiring described in this §7 (including
+  > the input routing above) is superseded by the Enemy Design tooling
+  > (AH-0MTFP7EIC004F1MN): enemy configuration moves to a JSON file loaded
+  > at runtime by a single config-driven scene, with a gym UI for tuning
+  > enemy parameters. Until that tooling lands, this per-scene wiring is the
+  > source of truth.
+- **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
+  `PlayerBullet`s toward its current heading.
+
+### 7.2 Collisions & respawn
+
+Resolved in the base class `GymFormationScene._handleCollisions` each tick:
+
+1. Player bullets → enemies (hit radius 20): enemy destroyed (`alive=false`,
+   1 HP) + explosion SFX; the bullet is consumed.
+2. Player bullets → enemy bullets (radii 3 + 6): both consumed (mutual
+   destruction — bullets pass through *aliens* per GDD §2.6, but not each
+   other).
+3. Enemy bullets → player hull (`SHIP_SIZE/2` = 10 + bullet 6): ship
+   explosion + SFX, `getPlayerHitCount()` increments, the ship respawns at
+   its spawn position with short invulnerability; **infinite lives** — the
+   demonstration never ends.
+
+### 7.3 Live aim tracking
+
+The base scene pushes the player's live position into every alive enemy each
+frame (`entity.setAimTarget?.(player.x, player.y)` — an optional seam,
+forward-compatible with entities that have no target concept) **before**
+collecting bullets, so that frame's shots use the current position:
+
+- **Scout / Swarm** — retarget `target`/burst aim continuously; bullets arc
+  toward the player's live position at fire time.
+- **Phaser** — rotates its 8-spoke radial pattern so one spoke points at the
+  live player; telegraph rules (two-phase tell ≥ 600 ms advance cue, then
+  the volley) are unchanged.
+- **Diver** — **snapshots the target at dive start** (recorded seam
+  decision): a mid-dive aim change does not alter the in-flight dive arc.
+  Dives are x-locked at the formation slot.
+- **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
+  is untouched (no aim seam).
+
+### 7.4 Testing the convention
+
+Per-scene test files carry a `player in the gym (epic per-scene AC1-AC4)`
+block:
+
+1. **spawn** — player is a `Player` at the scene's `player` config position
+   and the formation is undisturbed;
+2. **keyboard** — hold a cursor key across `tick(dt)` calls and assert
+   displacement (deterministic — no real waits);
+3. **aim/combat** — fire gates are advanced by mutating `scene.time.now`
+   between `tick()` calls (enemy fire/tell gates read the clock), then
+   assert: aimed bullets track the live position, a parked
+   `spawnPlayerBullet(x, y, 0, 0)` destroys an enemy, and the volley hits
+   the ship (`getPlayerHitCount() > 0`) with respawn + invulnerability;
+4. **regression** — EXPLODE/SHOOT toggling and formation drift still work
+   with the player present.
+
+Deterministic combat loops stop on the first `getPlayerHitCount()` increment
+(a hit-count guard) so post-hit invulnerability can be asserted.
+
+### 7.5 Boss gym
+
+The Boss gym work item (`AH-0MT99QBDW001O7PE`) is **out of scope** for this
+convention and will follow it when built: spawn the player via the same
+`player` config seam and reuse the live-combat collision/respawn machinery.
+
+---
+
+## Audio Best Practices
+
+All enemy audio functions live in
+[`src/audio/effects.ts`](../src/audio/effects.ts) — the **single source of
+truth**; never inline an audio call anywhere else. The audio event catalog and
+default sound characters are defined in
+[GDD §7.3](Game%20Design%20Document.md); per-enemy audio characters are decided
+**at implementation time** and may deviate from the catalog defaults (see §3.1
+checklist item 6). Scope rules matter — base-class-owned sounds are played
+**once by the base scene** and must never be re-played by entities.
+
+### Spawn
+
+- **Function:** `playSpawnSound()`
+- **When:** during entity creation, from the base class spawn loop.
+- **Scope:** the base class `GymFormationScene` owns spawn sound — the spawn
+  loop calls `playSpawnSound()` once when the formation is created (see §3.1
+  checklist item 5). Entity constructors must **not** call it.
+
+### Shoot / fire (per enemy type)
+
+| Enemy | Advance cue | Fire sound | Scope & timing |
+|-------|-------------|------------|----------------|
+| E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
+| E2 Diver | none (no advance cue — fire sound alone is the tell) | `playDiverFireSound()` — short low/nasal crack | **entity-level**, exactly once per spread burst inside `tryFireSpreadBurst()` |
+| E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **scene-level**, one cue+thump pair per radial burst at the point of shooting — the cue flows with **no gap** into the thump |
+| E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **scene-level** volley burst, once per volley at the point of shooting |
+| Boss | none | none | no audio today (see §3.2 table) |
+
+Orchestration rule: entity-specific fire sounds are invoked **where the shots
+are produced** — the scene's `collectBullets` callback for scene-level sounds
+(Swarm, Tank), or the entity's own fire/tell logic for entity-level sounds
+(Scout) — never re-added in a thin scene class.
+
+### Explode / destruction
+
+- **Function:** `playDestructionSound()` (shared) — or an entity-specific
+  sound via the optional `playDestructionAudio?()` seam on
+  `FormationSceneEntity` (e.g. `playDiverDestructionSound()`).
+- **When:** during entity destruction.
+- **Ownership rule (critical):** the base class `GymFormationScene` owns the
+destruction sound — `explodeRandom()` and the player-bullet collision handler
+call the entity's `playDestructionAudio?.()` when present, otherwise falling
+back to `playDestructionSound()`, once per destroyed enemy. Entities must
+**NOT** call a destruction sound in their own `playExplosion()` — doing so
+double-plays the sound (see §3.1 checklist item 7; regression-tested in
+`src/entities/Scout.test.ts` and `src/scenes/gym/GymDiver.test.ts`).

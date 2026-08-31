@@ -11,9 +11,11 @@
  *   behaviour): when on, tanks periodically fire 10-projectile radial
  *   bursts; when off, tanks only hold formation.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD,
- * no power-ups. Tanks pass freely through one another — no collision
- * is installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy tanks, and tank shots hitting the ship trigger
+ * explosion + respawn (infinite lives). No other enemy types, no HUD, no
+ * power-ups. Tanks pass freely through one another — no collision is
+ * installed (GDD §2.6).
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn/UI/update/bullet-lifecycle boilerplate lives in the shared core
@@ -26,9 +28,10 @@
 import Phaser from 'phaser';
 
 import { Tank, TankBullet } from '../../entities/Tank';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
 import { buildRectFormationOffsets } from '../../utils/formations';
 import { FormationOffset } from '../../utils/formations';
+import { playTankAdvanceCue, playTankFireSound } from '../../audio/effects';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -55,6 +58,7 @@ const TANK_CONFIG: EnemyFormationConfig<Tank, TankBullet> = {
   driftSpeed: TANK_FORMATION_DRIFT_SPEED,
   startX: TANK_FORMATION_START_X,
   startY: TANK_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'tanks',
   hintText: 'E3 Tank gym — slow formation demo',
   createEntity: (
@@ -69,6 +73,34 @@ const TANK_CONFIG: EnemyFormationConfig<Tank, TankBullet> = {
 export class GymTank extends GymFormationScene<Tank, TankBullet> {
   constructor() {
     super(TANK_CONFIG);
+  }
+
+  // ── Scene update loop (overridden for burst-level audio orchestration) ──
+
+  /**
+   * Overrides the base update to play the Tank's advance-cue + cannon-thump
+   * pair exactly once at the point of shooting — in the same frame any tank
+   * fires a radial burst (GDD §7.3, Swarm-style scene-level pattern).
+   *
+   * The base class calls `collectBullets` per entity; when the total bullet
+   * count increases (one or more entities fired a burst this frame), we play
+   * the mechanical-whine advance cue immediately followed by the heavy
+   * cannon-thump fire sound — one cue+thump pair per burst, never per
+   * projectile and never per entity. `playTankFireSound()` schedules its
+   * thump at the end of the whine so the pair flows together with no gap
+   * (the whine's ≥ 500 ms duration provides the advance lead).
+   */
+  override update(_time: number, delta: number): void {
+    const bulletCountBefore = this.bullets.length;
+    super.update(_time, delta);
+    const bulletCountAfter = this.bullets.length;
+
+    // New bullets this frame = a radial burst was fired this frame: play
+    // the cue+thump pair once, at the moment of shooting.
+    if (bulletCountAfter > bulletCountBefore) {
+      playTankAdvanceCue();
+      playTankFireSound();
+    }
   }
 
   // ── Public test accessors (behaviour preserved from the pre-refactor

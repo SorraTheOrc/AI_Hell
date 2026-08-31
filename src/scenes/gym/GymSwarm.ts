@@ -6,17 +6,19 @@
  * changes. Clusters of 3–5 enemies weave together, split and rejoin —
  * creating the unpredictable, chaotic movement that defines the E5 Swarm.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD, no
- * power-ups. Swarms pass freely through one another — no collision is
- * installed (GDD §2.6).
+ * The player ship (arrows + WASD) is part of the scene with live combat:
+ * player bullets destroy swarms, and swarms shots hitting the
+ * ship trigger explosion + respawn (infinite lives). No other enemy
+ * types, no HUD, no power-ups. Swarms pass freely through one another — no
+ * collision is installed (GDD §2.6).
  *
  * Two on-screen controls:
  *
  * - **Explode** — destroys a random surviving swarm member with an
  *   explosion animation.
  * - **Shoot**  — toggles coordinated burst firing (simulates Level 4+
- *   behaviour): when on, swarm members fire cyan burst shots toward the
- *   bottom-centre target.
+ *   behaviour): when on, swarm members fire cyan burst shots that track
+ *   the player's live position.
  *
  * This scene is a **thin** GymFormationScene subclass: all formation
  * spawn / UI / update / bullet-lifecycle boilerplate lives in the shared
@@ -29,12 +31,17 @@
 import Phaser from 'phaser';
 
 import { Swarm, SwarmBullet, SWARM_CLUSTER_COUNT } from '../../entities/Swarm';
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
-import { buildSwarmClusterOffsets, FormationOffset } from '../../utils/formations';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPAWN } from '../../core/constants';
+import {
+  buildSwarmClusterOffsets,
+  FormationOffset,
+  SWARM_CLUSTER_ROW_STRIDE,
+} from '../../utils/formations';
 import {
   EnemyFormationConfig,
   GymFormationScene,
 } from './core/GymFormationScene';
+import { playSwarmBurstSound } from '../../audio/effects';
 
 /** How many swarm members spawn. */
 export const SWARM_FORMATION_COUNT = 15;
@@ -57,6 +64,7 @@ const SWARM_CONFIG: EnemyFormationConfig<Swarm, SwarmBullet> = {
   driftSpeed: SWARM_FORMATION_DRIFT_SPEED,
   startX: SWARM_FORMATION_START_X,
   startY: SWARM_FORMATION_START_Y,
+  player: PLAYER_SPAWN,
   statusLabel: 'swarms',
   hintText: 'E5 Swarm gym — tight-cluster movement demo',
   createEntity: (
@@ -65,11 +73,12 @@ const SWARM_CONFIG: EnemyFormationConfig<Swarm, SwarmBullet> = {
     y: number,
     formationOffset: FormationOffset,
   ): Swarm => {
-    // Assign clusters: members are distributed across SWARM_CLUSTER_COUNT
-    // clusters based on their spawn index.
-    const swarmIndex = SWARM_CONFIG.buildOffsets(SWARM_FORMATION_COUNT)
-      .findIndex((o) => o.row === formationOffset.row && o.col === formationOffset.col);
-    const clusterIndex = (swarmIndex % SWARM_CLUSTER_COUNT);
+    // Derive the member's cluster from its offset row band: the builder
+    // places cluster c's members around row c * SWARM_CLUSTER_ROW_STRIDE.
+    const clusterIndex = Math.min(
+      SWARM_CLUSTER_COUNT - 1,
+      Math.max(0, Math.round(formationOffset.row / SWARM_CLUSTER_ROW_STRIDE)),
+    );
     return new Swarm(scene, { x, y, formationOffset }, clusterIndex);
   },
   collectBullets: (swarm, now): SwarmBullet[] => {
@@ -81,6 +90,30 @@ const SWARM_CONFIG: EnemyFormationConfig<Swarm, SwarmBullet> = {
 export class GymSwarm extends GymFormationScene<Swarm, SwarmBullet> {
   constructor() {
     super(SWARM_CONFIG);
+  }
+
+  // ── Scene update loop (overridden for volley-level audio orchestration) ──
+
+  /**
+   * Overrides the base update to play the Swarm volley-level burst sound
+   * exactly once at the point of shooting — in the same frame (and same
+   * tick) any swarm member fires a bullet. No pre-warning cue: the audio
+   * is tied to the firing event itself.
+   *
+   * The base class calls `collectBullets` per entity; when the total bullet
+   * count increases (one or more entities fired), we play the swarm burst
+   * sound exactly once to represent the coordinated volley.
+   */
+  override update(_time: number, delta: number): void {
+    const bulletCountBefore = this.bullets.length;
+    super.update(_time, delta);
+    const bulletCountAfter = this.bullets.length;
+
+    // New bullets this frame = firing happened this frame: play the
+    // volley-level sound once, at the moment of shooting.
+    if (bulletCountAfter > bulletCountBefore) {
+      playSwarmBurstSound();
+    }
   }
 
   // ── Public test accessors (thin wrappers over the base class) ───

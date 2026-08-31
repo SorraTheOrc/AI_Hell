@@ -22,6 +22,8 @@ describe('ship configuration module', () => {
     expect(DEFAULT_CONFIG.thrustFlameColor).toBe(0xff8c00);
     expect(DEFAULT_CONFIG.thrustFlameInnerColor).toBe(0xffff00);
     expect(DEFAULT_CONFIG.frictionDeceleration).toBe(100);
+    expect(DEFAULT_CONFIG.controlScheme).toBe('fourDirectional');
+    expect(DEFAULT_CONFIG.asteroidsRotationSpeed).toBe(3);
   });
 
   it('falls back to defaults when nothing has been saved', () => {
@@ -55,6 +57,8 @@ describe('ship configuration module', () => {
       thrustFlameColor: 0x445566,
       thrustFlameInnerColor: 0x778899,
       frictionDeceleration: 50,
+      controlScheme: 'asteroids',
+      asteroidsRotationSpeed: 4.5,
     };
     saveShipConfig(custom);
 
@@ -63,5 +67,26 @@ describe('ship configuration module', () => {
     expect(loaded).toEqual(custom);
     // Prove the value came from storage, not from the defaults.
     expect(loaded.shipColor).toBe(0x112233);
+  });
+
+  it('merges scheme defaults over a pre-scheme (legacy) saved config', () => {
+    // A config saved before the control-scheme feature has no scheme fields;
+    // loading must fall back to the 4-directional defaults (AC4 compat).
+    const legacy = {
+      thrustAcceleration: 350,
+      maxSpeed: 200,
+      shipSize: 25,
+      thrustFlameLength: 0.8,
+      shipColor: 0x00ffff,
+      thrustFlameColor: 0xff8c00,
+      thrustFlameInnerColor: 0xffff00,
+      frictionDeceleration: 80,
+    };
+    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(legacy));
+
+    const loaded = loadShipConfig();
+    expect(loaded.thrustAcceleration).toBe(350);
+    expect(loaded.controlScheme).toBe('fourDirectional');
+    expect(loaded.asteroidsRotationSpeed).toBe(3);
   });
 });

@@ -76,7 +76,7 @@ describe('formation-offset builders (shared geometry, GDD §4.1)', () => {
   describe('buildSwarmClusterOffsets (loose 3–5 packs, E5)', () => {
     it('packs enemies into a small number of tight clusters', () => {
       const offsets = buildSwarmClusterOffsets(10);
-      // 10 enemies ≈ 2–3 clusters of 3–5; the max row spread stays small
+      // 10 enemies ≈ 2 clusters of 5; the max row spread stays small
       // relative to the base spacing so packs read as one swarm.
       const rows = offsets.map((o) => o.row);
       expect(Math.max(...rows) - Math.min(...rows)).toBeLessThan(4);
@@ -85,9 +85,11 @@ describe('formation-offset builders (shared geometry, GDD §4.1)', () => {
 
     it('keeps cluster members close while clusters are separated', () => {
       const offsets = buildSwarmClusterOffsets(12);
-      // Cluster 0's members share the same centre (row/col rounded to the
-      // nearest tenth), so intra-cluster spread is small (< 1 slot).
-      const cluster0 = offsets.filter((o) => o.row < 1);
+      // Cluster 0 sits at centreCol 0 (members at cols -0.9..0.9); the
+      // next cluster starts at col >= 1.7, so col < 1 isolates pack 0
+      // (12 ÷ 3 clusters = 4 members). Intra-cluster column spread is
+      // 0.6-slot steps ⇒ the pack stays tight (< 2 slots).
+      const cluster0 = offsets.filter((o) => o.col < 1);
       const cols = cluster0.map((o) => o.col);
       expect(Math.max(...cols) - Math.min(...cols)).toBeLessThan(2);
       const rows = cluster0.map((o) => o.row);
