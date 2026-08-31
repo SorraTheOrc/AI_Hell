@@ -4,7 +4,7 @@
  * thrust movement and screen-wrap, overlap collection applying effects,
  * and the shared ← INDEX back button.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -13,6 +13,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
+import * as effectsModule from '../../audio/effects';
 import { GymPowerUps } from './GymPowerUps';
 
 describe('GymPowerUps AC1: gym index discovery', () => {
@@ -360,5 +361,68 @@ describe('GymPowerUps — scheme-aware input routing (parent AC1/AC2/AC3)', () =
     scene.tick(0.25);
     scene.getCursors()!.up.isDown = false;
     expect(player.y).toBeLessThan(y1);
+  });
+});
+
+describe('GymPowerUps — non-combat pickup activation audio per type (AC6c)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootPowerUps(): Promise<GymPowerUps> {
+    booted = await bootScene([GymPowerUps]);
+    return booted!.scene as GymPowerUps;
+  }
+
+  /** Collects a fully-grown drop of the given type under the ship. */
+  function collectDrop(scene: GymPowerUps, id: 'P5' | 'P8' | 'P9'): void {
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop(id, 480, 270);
+    scene.advanceDrops(0.5); // grow window → full size (collectible)
+    scene.tick(1 / 60); // one frame runs the overlap collection check
+  }
+
+  it('collecting P5 (Speed Boost) plays playSpeedBoostCollectSound exactly once', async () => {
+    const speedSound = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
+    const lifeSound = vi.spyOn(effectsModule, 'playExtraLifeCollectSound');
+    const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
+    const scene = await bootPowerUps();
+
+    collectDrop(scene, 'P5');
+
+    expect(speedSound).toHaveBeenCalledTimes(1);
+    expect(lifeSound).not.toHaveBeenCalled();
+    expect(magnetSound).not.toHaveBeenCalled();
+  });
+
+  it('collecting P8 (Extra Life) plays playExtraLifeCollectSound exactly once', async () => {
+    const speedSound = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
+    const lifeSound = vi.spyOn(effectsModule, 'playExtraLifeCollectSound');
+    const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
+    const scene = await bootPowerUps();
+
+    collectDrop(scene, 'P8');
+
+    expect(lifeSound).toHaveBeenCalledTimes(1);
+    expect(speedSound).not.toHaveBeenCalled();
+    expect(magnetSound).not.toHaveBeenCalled();
+  });
+
+  it('collecting P9 (Magnet) plays playMagnetCollectSound exactly once', async () => {
+    const speedSound = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
+    const lifeSound = vi.spyOn(effectsModule, 'playExtraLifeCollectSound');
+    const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
+    const scene = await bootPowerUps();
+
+    collectDrop(scene, 'P9');
+
+    expect(magnetSound).toHaveBeenCalledTimes(1);
+    expect(speedSound).not.toHaveBeenCalled();
+    expect(lifeSound).not.toHaveBeenCalled();
   });
 });

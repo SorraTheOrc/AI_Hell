@@ -514,6 +514,35 @@ audio decisions and the implementation best practices (which audio is owned by
 the base scene, where entity-specific sounds are orchestrated, and the no-gap
 pattern).
 
+#### Player Audio Character
+
+The player ship has its own procedural audio palette (all in
+`src/audio/effects.ts`), giving the player the same by-ear feedback the
+enemies get:
+
+| Cue | Sound Character | Synthesis (wave, contour) | Volume |
+|-----|-----------------|---------------------------|--------|
+| Cannon fire | Solid medium blip | Square 800 → 400 Hz, ~80 ms | 0.15 |
+| Spread fire | Wide multi-tone sweep | Triangle 600 → 1200 → 800 Hz, ~120 ms | 0.15 |
+| Dual fire | Sharp crack (twin barrels) | Sawtooth 900 → 300 Hz + offset sine tick | ≤ 0.15 |
+| Rapid fire | Tight staccato | Triangle 500 → 900 Hz, ~50 ms | 0.12 |
+| Spread pickup | Widening fan sweep | Triangle 500 → 1500 → 800 Hz | 0.15 |
+| Dual pickup | Two-note crack | Sawtooth 1000 → 500 then 1200 → 700 Hz | 0.14 |
+| Rapid pickup | Accelerating rise | Triangle 400 → 1600 Hz | 0.14 |
+| Reset pickup (→ cannon) | Gentle unwind to baseline | Sine 900 → 300 Hz, ~200 ms | 0.12 |
+| P5 Speed Boost pickup | Bright ascending zip | Square 600 → 1800 Hz | 0.13 |
+| P8 Extra Life pickup | Warm two-note chime | Sine 440 → 880 then 660 → 990 Hz | 0.13 |
+| P9 Magnet pickup | Low pulsing field hum | Square 180 → 90 → 180 Hz + sine undertone | ≤ 0.12 |
+
+- **Shoot cues play once per shot** (not once per bullet), keyed off the
+  equipped weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
+- **Pickup activation cues** are unique per pickup type and distinct from the
+generic collection chime and weapon-change arpeggio, so the player knows at a
+glance which bonus was collected.
+- All player cues keep volume ≤ 0.2 so they read over enemy audio without
+drowning it out, and every cue degrades to a safe no-op without an
+AudioContext (headless tests, autoplay-blocked browsers).
+
 #### Advance Telegraphing (≥ 500 ms Lead Time)
 
 Key events are announced by an **advance audio cue** with a minimum 500 ms lead time before the visual event:

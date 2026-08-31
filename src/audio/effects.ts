@@ -418,3 +418,266 @@ export function playScoutFireSound(): void {
   osc.start(t);
   osc.stop(t + 0.14);
 }
+
+// ── Player weapon shoot cues (GDD §2.3, §7.3) ─────────────────────
+
+/**
+ * Solid medium blip — player Cannon fire sound (GDD §2.3, §7.3).
+ *
+ * A short square-wave sweep (800 → 400 Hz, ~80 ms) — the "default"
+ * gun feel: punchy but not harsh, instantly readable as the baseline
+ * weapon. Distinct from the Scout laser (1400 → 700 Hz square), the
+ * Tank thump (90 → 28 Hz sawtooth), and the Swarm buzz. Safe no-op
+ * without an AudioContext.
+ */
+export function playCannonFireSound(): void {
+  blip(800, 400, 0.08, 'square', 0.15);
+}
+
+/**
+ * Wide multi-tone sweep — player Spread fire sound (GDD §2.3, §7.3).
+ *
+ * A triangle-wave fan that sweeps up and down (600 → 1200 → 800 Hz,
+ * ~120 ms) — wider and rounder than the cannon blip, evoking three
+ * bullets fanning out. Distinct wave type (triangle) and longer
+ * duration than the cannon/square. Safe no-op without an AudioContext.
+ */
+export function playSpreadFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(600, t);
+  osc.frequency.exponentialRampToValueAtTime(1200, t + 0.06);
+  osc.frequency.exponentialRampToValueAtTime(800, t + 0.12);
+  gain.gain.setValueAtTime(0.15, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.14);
+}
+
+/**
+ * Sharp crack — player Dual fire sound (GDD §2.3, §7.3).
+ *
+ * A quick sawtooth burst (900 → 300 Hz, ~60 ms) with a layered sine
+ * tick on top — a crisp double-punch crack evoking two side-by-side
+ * bullets. Shortest and sharpest of the four shoot cues, so the rapid
+ * fire-rate of the dual weapon stays legible. Safe no-op without an
+ * AudioContext.
+ */
+export function playDualFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Main crack: fast sawtooth fall.
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(900, t);
+  osc.frequency.exponentialRampToValueAtTime(300, t + 0.06);
+  gain.gain.setValueAtTime(0.15, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.08);
+
+  // Second tick: short sine blip offset 20 ms — the "second barrel".
+  const tick = ctx.createOscillator();
+  const tickGain = ctx.createGain();
+  tick.type = 'sine';
+  tick.frequency.setValueAtTime(1200, t + 0.02);
+  tick.frequency.exponentialRampToValueAtTime(800, t + 0.06);
+  tickGain.gain.setValueAtTime(0, t + 0.02);
+  tickGain.gain.linearRampToValueAtTime(0.1, t + 0.025);
+  tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+  tick.connect(tickGain).connect(ctx.destination);
+  tick.start(t + 0.02);
+  tick.stop(t + 0.08);
+}
+
+/**
+ * Tight staccato blip — player Rapid fire sound (GDD §2.3, §7.3).
+ *
+ * A very short triangle blip (500 → 900 Hz, ~50 ms) — soft and
+ * percussive, tuned for the rapid weapon's 125 ms fire rate so
+ * consecutive shots read as a staccato rattle rather than mush.
+ * Lowest volume of the four (0.12) to avoid overpowering the
+ * fast cadence. Safe no-op without an AudioContext.
+ */
+export function playRapidFireSound(): void {
+  blip(500, 900, 0.05, 'triangle', 0.12);
+}
+
+// ── Player weapon pickup activation cues (GDD §4.4, §7.3) ──────────
+
+/**
+ * Widening fan sweep — Spread weapon pickup activation sound.
+ *
+ * A triangle-wave fan that climbs then broadens (500 → 1500 → 800 Hz,
+ * ~0.15 s) — distinct from the generic collection chime and weapon
+ * change arpeggio, signalling "fan of bullets armed". Safe no-op
+ * without an AudioContext.
+ */
+export function playSpreadPickupSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(500, t);
+  osc.frequency.exponentialRampToValueAtTime(1500, t + 0.08);
+  osc.frequency.exponentialRampToValueAtTime(800, t + 0.15);
+  gain.gain.setValueAtTime(0.15, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.17);
+}
+
+/**
+ * Crisp two-note crack — Dual weapon pickup activation sound.
+ *
+ * A tight sawtooth drop (1000 → 500 Hz) followed 60 ms later by a
+ * second, slightly higher drop (1200 → 700 Hz) — the audio twin of the
+ * dual side-by-side barrels. Distinct from every other cue. Safe no-op
+ * without an AudioContext.
+ */
+export function playDualPickupSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  const notes: Array<{ delay: number; from: number; to: number }> = [
+    { delay: 0, from: 1000, to: 500 },
+    { delay: 0.06, from: 1200, to: 700 },
+  ];
+  for (const note of notes) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(note.from, t + note.delay);
+    osc.frequency.exponentialRampToValueAtTime(note.to, t + note.delay + 0.08);
+    gain.gain.setValueAtTime(0, t + note.delay);
+    gain.gain.linearRampToValueAtTime(0.14, t + note.delay + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + note.delay + 0.08);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t + note.delay);
+    osc.stop(t + note.delay + 0.1);
+  }
+}
+
+/**
+ * Accelerating rise — Rapid weapon pickup activation sound.
+ *
+ * A fast triangle climb (400 → 1600 Hz over 0.1 s) that gets brighter
+ * as it goes — evoking the rapid weapon's escalating fire rate.
+ * Short and energetic, distinct from all other cues. Safe no-op
+ * without an AudioContext.
+ */
+export function playRapidPickupSound(): void {
+  blip(400, 1600, 0.1, 'triangle', 0.14);
+}
+
+/**
+ * Gentle unwind to baseline — Reset (back to Cannon) activation sound.
+ *
+ * A soft sine fall (900 → 300 Hz, ~0.2 s) — calmer than the weapon
+ * pickups, signalling a return to the default cannon. Distinct from
+ * the generic collection chime and weapon-change arpeggio. Safe no-op
+ * without an AudioContext.
+ */
+export function playResetPickupSound(): void {
+  blip(900, 300, 0.2, 'sine', 0.12);
+}
+
+// ── Non-combat pickup activation cues (GDD §4.4, §7.3) ─────────────
+
+/**
+ * Quick ascending zip — P5 Speed Boost activation sound.
+ *
+ * A rapid square climb (600 → 1800 Hz, ~0.1 s) with a bright edge,
+ * evoking the ship lurching forward faster. Distinct from weapon
+ * pickups and the collection chime. Safe no-op without an
+ * AudioContext.
+ */
+export function playSpeedBoostCollectSound(): void {
+  blip(600, 1800, 0.1, 'square', 0.13);
+}
+
+/**
+ * Warm two-note chime — P8 Extra Life activation sound.
+ *
+ * A slow, comforting sine pair (440 → 880 Hz then 660 → 990 Hz) —
+ * warmer and more melodic than any other cue, signalling a life
+ * gained. Distinct from the generic collection chime. Safe no-op
+ * without an AudioContext.
+ */
+export function playExtraLifeCollectSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  const notes: Array<{ delay: number; from: number; to: number }> = [
+    { delay: 0, from: 440, to: 880 },
+    { delay: 0.12, from: 660, to: 990 },
+  ];
+  for (const note of notes) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(note.from, t + note.delay);
+    osc.frequency.exponentialRampToValueAtTime(note.to, t + note.delay + 0.18);
+    gain.gain.setValueAtTime(0, t + note.delay);
+    gain.gain.linearRampToValueAtTime(0.13, t + note.delay + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + note.delay + 0.18);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t + note.delay);
+    osc.stop(t + note.delay + 0.2);
+  }
+}
+
+/**
+ * Magnetic pulse-hum — P9 Magnet activation sound.
+ *
+ * A low square pulse oscillating 180 → 90 → 180 Hz with a sine
+ * undertone — a subtle "power field" hum evoking the attraction
+ * effect. Deeper than the other non-combat cues, distinct from all
+ * weapon pickups. Safe no-op without an AudioContext.
+ */
+export function playMagnetCollectSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Low pulsing square: the "field" layer.
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(180, t);
+  osc.frequency.exponentialRampToValueAtTime(90, t + 0.12);
+  osc.frequency.exponentialRampToValueAtTime(180, t + 0.24);
+  gain.gain.setValueAtTime(0.12, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.26);
+
+  // Soft sine undertone for body.
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = 'sine';
+  body.frequency.setValueAtTime(80, t);
+  body.frequency.exponentialRampToValueAtTime(50, t + 0.24);
+  bodyGain.gain.setValueAtTime(0.08, t);
+  bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  body.connect(bodyGain).connect(ctx.destination);
+  body.start(t);
+  body.stop(t + 0.26);
+}

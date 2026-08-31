@@ -49,8 +49,14 @@ import { drawWeaponIcon, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
-  playPowerUpCollectSound,
-  playWeaponChangeSound,
+  playCannonFireSound,
+  playSpreadFireSound,
+  playDualFireSound,
+  playRapidFireSound,
+  playSpreadPickupSound,
+  playDualPickupSound,
+  playRapidPickupSound,
+  playResetPickupSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton } from '../../utils/gymNavigation';
@@ -192,6 +198,11 @@ export class GymWeapons extends Phaser.Scene {
     // due, re-arming the cooldown to the weapon's fire rate.
     if (!this.player.tryFire(dt)) return;
 
+    // AC — player shoot audio: play the equipped weapon's distinct
+    // cue exactly once per shot (not per bullet) so fast weapons stay
+    // legible.
+    this._playShootCue();
+
     const headingDeg = (this.player.getHeading() * 180) / Math.PI;
     const weaponDef = this.player.getWeaponDef();
     const bulletDescs = createBulletsFromHeading(
@@ -214,6 +225,29 @@ export class GymWeapons extends Phaser.Scene {
           vel.vy,
         ),
       );
+    }
+  }
+
+  /**
+   * Plays the shoot cue for the player's currently equipped weapon.
+   * One cue per shot, keyed off `getEquippedWeapon()` (AC — player
+   * shoot audio). Safe no-op without an AudioContext.
+   */
+  private _playShootCue(): void {
+    if (!this.player) return;
+    switch (this.player.getEquippedWeapon()) {
+      case 'cannon':
+        playCannonFireSound();
+        break;
+      case 'spread':
+        playSpreadFireSound();
+        break;
+      case 'dual':
+        playDualFireSound();
+        break;
+      case 'rapid':
+        playRapidFireSound();
+        break;
     }
   }
 
@@ -331,21 +365,31 @@ export class GymWeapons extends Phaser.Scene {
   /**
    * Applies the drop's weapon effect (equip or reset to cannon),
    * plays the appropriate cue, and removes the drop.
+   *
+   * AC — pickup activation audio: each weapon pickup (Spread, Dual,
+   * Rapid, Reset) plays a unique activation sound on collection,
+   * distinct from the generic `playPowerUpCollectSound()` and
+   * `playWeaponChangeSound()`.
    */
   private _collectDrop(drop: ActiveDrop): void {
     if (!this.player) return;
 
     if (drop.weaponType === 'reset') {
       this.player.resetWeapon(); // AC2 — Reset returns to cannon
+      playResetPickupSound();
     } else {
       this.player.equipWeapon(drop.weaponType); // AC2 — persistent switch
-    }
-
-    // AC6 — collection cue (distinct weapon-change cue for equips).
-    if (drop.weaponType === 'reset') {
-      playPowerUpCollectSound();
-    } else {
-      playWeaponChangeSound();
+      switch (drop.weaponType) {
+        case 'spread':
+          playSpreadPickupSound();
+          break;
+        case 'dual':
+          playDualPickupSound();
+          break;
+        case 'rapid':
+          playRapidPickupSound();
+          break;
+      }
     }
 
     // Remove the drop's visuals.

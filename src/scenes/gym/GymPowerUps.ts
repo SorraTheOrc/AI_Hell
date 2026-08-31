@@ -31,6 +31,11 @@ import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import { PowerUpId } from '../../powerups/types';
+import {
+  playSpeedBoostCollectSound,
+  playExtraLifeCollectSound,
+  playMagnetCollectSound,
+} from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton } from '../../utils/gymNavigation';
 import {
@@ -242,6 +247,21 @@ export class GymPowerUps extends Phaser.Scene {
     const effect = drop.powerUp.tryCollect();
     if (!effect) return;
     this.effectsRegistry.applyCollect(effect.id as PowerUpId);
+
+    // AC — non-combat pickup activation audio: each pickup type plays
+    // a unique activation sound on collection (previously none played
+    // at all). Safe no-op without an AudioContext.
+    switch (effect.id) {
+      case 'P5':
+        playSpeedBoostCollectSound();
+        break;
+      case 'P8':
+        playExtraLifeCollectSound();
+        break;
+      case 'P9':
+        playMagnetCollectSound();
+        break;
+    }
   }
 
   // ── Input ─────────────────────────────────────────────────────────

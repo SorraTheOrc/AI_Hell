@@ -13,7 +13,7 @@
  * - AC5: shared timing (7 s lifetime, parameterised vs the 5 s non-combat gym)
  * - AC7: scene boots via gameHarness, collection swaps the weapon
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -21,6 +21,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
+import * as effectsModule from '../../audio/effects';
 import { GymWeapons } from './GymWeapons';
 
 describe('GymWeapons AC1/AC3: gym index discovery', () => {
@@ -489,5 +490,126 @@ describe('GymWeapons — scheme-aware input routing (parent AC1/AC2/AC3)', () =>
     scene.tick(0.25);
     scene.getCursors()!.up.isDown = false;
     expect(player.y).toBeLessThan(y1);
+  });
+});
+
+describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  /** Fires one volley of the given weapon from a stationary heading. */
+  function fireOnce(scene: GymWeapons, weapon: 'cannon' | 'spread' | 'dual' | 'rapid'): void {
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    player.equipWeapon(weapon);
+    // Establish a heading (move right), then advance past the fire rate.
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.5, scene.scale.width, scene.scale.height);
+    scene.tick(0.6);
+  }
+
+  it('auto-firing the cannon plays playCannonFireSound exactly once per shot', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
+    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+    const scene = await bootWeapons();
+    // Boot auto-fires the default cannon; clear so we assert only the
+    // shots fired below.
+    vi.clearAllMocks();
+
+    fireOnce(scene, 'cannon');
+
+    expect(cannonSound).toHaveBeenCalledTimes(1);
+    // No other weapon's cue plays.
+    expect(spreadSound).not.toHaveBeenCalled();
+    expect(dualSound).not.toHaveBeenCalled();
+    expect(rapidSound).not.toHaveBeenCalled();
+  });
+
+  it('auto-firing the spread weapon plays playSpreadFireSound (one per shot, not per bullet)', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+    const scene = await bootWeapons();
+    vi.clearAllMocks();
+
+    fireOnce(scene, 'spread');
+
+    // Spread fires 3 bullets per shot but the cue plays once.
+    expect(spreadSound).toHaveBeenCalledTimes(1);
+    expect(cannonSound).not.toHaveBeenCalled();
+  });
+
+  it('auto-firing the dual weapon plays playDualFireSound (one per shot, not per bullet)', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
+    const scene = await bootWeapons();
+    vi.clearAllMocks();
+
+    fireOnce(scene, 'dual');
+
+    expect(dualSound).toHaveBeenCalledTimes(1);
+    expect(cannonSound).not.toHaveBeenCalled();
+  });
+
+  it('auto-firing the rapid weapon plays playRapidFireSound (one per shot)', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+    const scene = await bootWeapons();
+    vi.clearAllMocks();
+
+    fireOnce(scene, 'rapid');
+
+    expect(rapidSound).toHaveBeenCalledTimes(1);
+    expect(cannonSound).not.toHaveBeenCalled();
+  });
+
+  it('weapon pickup collection plays the unique per-weapon activation cue (AC6c)', async () => {
+    const spreadPickup = vi.spyOn(effectsModule, 'playSpreadPickupSound');
+    const dualPickup = vi.spyOn(effectsModule, 'playDualPickupSound');
+    const rapidPickup = vi.spyOn(effectsModule, 'playRapidPickupSound');
+    const resetPickup = vi.spyOn(effectsModule, 'playResetPickupSound');
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Collect Spread.
+    scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(spreadPickup).toHaveBeenCalledTimes(1);
+    expect(dualPickup).not.toHaveBeenCalled();
+    expect(rapidPickup).not.toHaveBeenCalled();
+    expect(resetPickup).not.toHaveBeenCalled();
+
+    // Collect Dual.
+    scene.spawnDrop('dual', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(dualPickup).toHaveBeenCalledTimes(1);
+    expect(spreadPickup).toHaveBeenCalledTimes(1); // unchanged
+
+    // Collect Rapid.
+    scene.spawnDrop('rapid', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(rapidPickup).toHaveBeenCalledTimes(1);
+
+    // Collect Reset → returns to cannon with its own cue.
+    scene.spawnDrop('reset', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(resetPickup).toHaveBeenCalledTimes(1);
+    expect(player.getEquippedWeapon()).toBe('cannon');
   });
 });
