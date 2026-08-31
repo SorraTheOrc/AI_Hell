@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.2 (2026-08-31)
+### Features
+- Added an Asteroids-style control mode with ship rotation and a switchable scheme in the Gym. (AH-0MTF0EFNZ000RPVD)
+- Added distinct firing sounds for each weapon and unique audio cues for every power-up pickup. (AH-0MTGBPRYC000QIHU)
+- Added a gym scene to test the fast, chaotic Swarm enemy clusters. (AH-0MT99N53O0077KHC)
+- Test power-ups in a new gym: grab speed boosts, extra lives, and magnets with live HUD timers. (AH-0MTC0QPS60005MNT)
+- Your ship now auto-fires, with four weapon pickups (Spread, Dual, Rapid, Reset) that swap your fire pattern until you collect another. (AH-0MTC1TEXR006I5XR)
+- Tank bursts now have a warning whine and heavy cannon thump so you can hear them coming. (AH-0MTCNZAPS007WTQE)
+- Swarm enemies now make a coordinated burst sound when firing and a louder explosion when destroyed. (AH-0MTCO1L74003CAQJ)
+- Scout enemies now warn you with a sound before firing and make a laser blip when they shoot. (AH-0MTCO1LDA008RA19)
+- Diver enemies now make distinct sounds when firing and exploding. (AH-0MTCO1LGD0082SVG)
+- Enemy gyms now include a playable ship so you can dodge, shoot, and test enemy AI live. (AH-0MTD0Z0Y7003T1NT)
+- Scout's warning cue now flows directly into its shot sound with no dead gap. (AH-0MTF1I1S8003P0GU)
+- Thruster flames now match your keys: forward fires rear, turns fire side thrusters. (AH-0MTFORPJ2003RWWQ)
+- Power-up drops are now semi-random instead of following a fixed pattern. (AH-0MTCPL9NA0025ZUI)
+### Bug Fixes
+- Diver no longer slides sideways while diving or snaps back to formation. (AH-0MTCP1CKB00480BD)
+- Fixed controls in enemy and power-up gyms so your saved control scheme works everywhere. (AH-0MTFPDKDU006QUDC)
+- Fixed Phaser enemies playing their destruction sound twice. (AH-0MTFEFA62007J971)
+- Swarm enemies are now 50% bigger, making them easier to see during fast, dense attacks. (AH-0MTCO1LA8004B7ZF)
+- Fixed a test that could randomly fail under heavy load, making the game more stable. (AH-0MTFSM3IR001QR0C)
+- Fixed a flaky test so diver dives are always checked reliably. (AH-0MTFTIZX7005DNFW)
+### Other
+- Enemy audio guide now covers spawn, shoot, and explosion sounds. (AH-0MTCNZFCD009P5IB)
+- Fixed a version mismatch that was blocking game startup. (AH-0MTGTEJ8W004IFZ5)
+
 ## v0.1.1 (2026-08-28)
 ### Features
 - Add an extra life power up (AH-0MT7UX8LE0072MR3)
