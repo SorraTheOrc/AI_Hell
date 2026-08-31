@@ -33,7 +33,11 @@ import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormatio
 
 export const GYM_ENEMIES_DEFAULT_KEY = 'scout';
 
-// ── Panel DOM ids (queryable by tests) ───────────────────────────
+/**
+ * Panel DOM ids — stable selectors for tests. The panel is a plain-DOM
+ * overlay under `#game-container` (mirrors `GymPlayer`'s `gym-config-panel`),
+ * removed on scene `SHUTDOWN` to avoid leakage across re-boots.
+ */
 
 export const ENEMY_PANEL_ID = 'enemy-gym-panel';
 export const ENEMY_SAVE_ID = 'enemy-gym-save';

@@ -26,6 +26,34 @@ All enemies are **1 HP** (single bullet destroys them, except the Boss which is
 multi-hit) and **never collide with each other** (GDD §2.6) — no collision
 system is installed in the gym scenes.
 
+### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN)
+
+Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
+(`src/core/enemyConfig.ts`) — a JSON-serializable record of formation,
+visual and shot tuning. Six **seed configs** (scout/diver/tank/phaser/swarm/boss)
+mirror the former hard-coded constants and are the built-in defaults. Every
+other behaviour — formation geometry, bullet dispatch, gym index listing —
+derives from the config + small registries instead of per-enemy scene
+classes.
+
+**Persistence.** Each enemy has its own localStorage entry under the
+namespace `ai-hell-enemy-config:<key>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
+Corrupt or missing storage falls back to seed defaults without throwing;
+partial saves are merged over defaults so unknown forward-compatible fields
+are preserved. The set of available keys is the union of the seed registry
+and any stored suffixes (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()`),
+so a new `Save As…` entry becomes discoverable without code changes.
+
+**Gym surface.** `GymEnemies` (`src/scenes/gym/GymEnemies.ts`,
+key `GymEnemies`) is the **single reusable gym scene**. It is parameterized
+by `{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
+formation/bullet behaviour from the loaded config. The gym index (`GymIndex`)
+enumerates enemy configs — one clickable row per config (label
+`displayName`) that boots `GymEnemies` with that `enemyKey` — rather than
+hard-coded per-enemy scenes. Legacy `GymScout`/`GymDiver`/… scenes have been
+retired; their formation/bullet assertions now live in `GymEnemies.test.ts`
+keyed by `enemyKey`.
+
 ---
 
 ## 2. Core library architecture
@@ -50,6 +78,13 @@ The generic geometry (formation offsets) lives in
 `FormationOffset`, `buildVFormationOffsets`, `buildDiverFormationOffsets`,
 `buildRectFormationOffsets`. These are pure functions — unit-test them
 directly without booting a scene.
+
+**Formation & shot registries** (see §2.4): formation kinds map to builder
+functions (`FORMATION_BUILDERS` / `getFormationBuilder(kind)` with a safe
+`buildVFormationOffsets` fallback for unknown kinds), and shot patterns are
+validated by `src/utils/enemyShotPatterns.ts` (`VALID ShotPattern` set,
+`sanitizeShotPattern` → `'none'`). Together they keep `EnemyConfig` small
+and `GymEnemies` free of per-type branches.
 
 ### 2.2 Configuration contract
 
@@ -302,12 +337,12 @@ combat testbeds.
   `GymPowerUps` and `GymWeapons` implement the same scheme-aware routing in
   their own `_readInput` methods.
 
-  > **Supersession:** the per-scene wiring described in this §7 (including
-  > the input routing above) is superseded by the Enemy Design tooling
-  > (AH-0MTFP7EIC004F1MN): enemy configuration moves to a JSON file loaded
-  > at runtime by a single config-driven scene, with a gym UI for tuning
-  > enemy parameters. Until that tooling lands, this per-scene wiring is the
-  > source of truth.
+  > **Data-driven successor:** the per-scene wiring described in this §7
+  > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN):
+  > enemy tuning also lives in JSON (`EnemyConfig` under
+  > `ai-hell-enemy-config:<key>`) and is exercised through the single
+  > `GymEnemies` scene (see §1.1 / §8). The per-scene `player` seam itself
+  > is unchanged — `GymEnemies` reuses it.
 - **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
   `PlayerBullet`s toward its current heading.
 
@@ -370,6 +405,108 @@ convention and will follow it when built: spawn the player via the same
 `player` config seam and reuse the live-combat collision/respawn machinery.
 
 ---
+
+## 8. EnemyConfig reference & adding a new enemy
+
+### 8.1 EnemyConfig shape (`src/core/enemyConfig.ts`)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars). localStorage suffix. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
+| `displayName` | `string` | Human label shown in the index and `GymEnemies` hint. |
+| `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single'` — selects the builder in `src/utils/formations.ts`. |
+| `count` | `number` | Formation size. |
+| `spacingX` / `spacingY` | `number` | Slot spacing (px). |
+| `driftSpeed` | `number` | Rightward drift (px/s). |
+| `startX` / `startY` | `number` | Base position (px). |
+| `size` | `number` | Body radius/half-size (px). |
+| `color` | `number` | Body colour `0xRRGGBB`. |
+| `bulletColor` / `bulletSize` | `number` | Bullet colour / radius. |
+| `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
+| `fireInterval` | `number` | ms between volleys. |
+| `bulletSpeed` | `number` | px/s. |
+| `burstCount` | `number` | Burst / radial spoke count. |
+| `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. |
+
+Seed defaults live in `DEFAULT_ENEMY_CONFIGS` (scout/diver/tank/phaser/swarm/boss);
+`DEFAULT_ENEMY_KEYS` is the seed key set. `createEnemyFromConfig()` in
+`src/entities/enemyFactory.ts` maps a config to its entity class (unknown keys
+fall back to Scout; Swarm's `clusterIndex` is `row / SWARM_CLUSTER_ROW_STRIDE`).
+
+### 8.2 Storage keys
+
+- Per-enemy localStorage key: `ai-hell-enemy-config:<slug>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
+- Namespaced separately from `ai-hell-ship-config` (ship tuning).
+- Helpers: `loadEnemyConfig(key)` (fallback without throw), `saveEnemyConfig(cfg)`,
+  `deleteEnemyConfig(key)`, `listEnemyConfigKeys()`, `loadAllEnemyConfigs()`.
+
+### 8.3 FormationKind & shot-pattern registries
+
+- `src/utils/formations.ts`: `buildOrbitalPhaseOffsets`, `buildSingleOffset`,
+  `EnemyFormationKind`, `FORMATION_BUILDERS`, `getFormationBuilder(kind)` (unknown → `buildVFormationOffsets`).
+- `src/utils/enemyShotPatterns.ts`: `VALID_SHOT_PATTERNS`, `sanitizeShotPattern` (unknown → `'none'`), `isValidShotPattern`.
+
+### 8.4 Entity seam
+
+`Scout`/`Diver`/`Tank`/`Phaser`/`Swarm` (`src/entities/*.ts`) accept an
+optional seam config (`size? color? bulletColor? bulletSize? bulletSpeed?
+fireInterval? burstCount?`) and store `private readonly _*` fields derived as
+`config.xxx ?? CONST` so hard-coded constants remain the default and old tests
+stay green. Getters (`effectiveSize`, `effectiveColor`, …) are used by the
+entity's own drawing/fire paths.
+
+### 8.5 Gym surface — GymEnemies + editor panel
+
+`GymEnemies` is the only enemy gym scene. `init({ enemyKey })` loads the
+config and calls `getFormationBuilder(cfg.formationKind)` to build
+`EnemyFormationConfig` via `enemyConfigToFormationConfig`. `collectBullets`
+dispatches by `cfg.key` (Scout/Diver/…) so per-enemy quirks stay behind the
+seam.
+
+The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
+`#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
+`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/bulletSpeed/burstCount`,
+colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
+plus **Save** (overwrite active key) and **Save As…** (sanitize → validate →
+duplicate check via `listEnemyConfigKeys()`, displayName = raw input).
+Live `input`/`change` events patch `config.buildOffsets/spacing/drift/start/count`
+and best-effort mutate entity `_*` fields. Panel is removed on scene
+`SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
+Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
+`enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
+`data-config` / `data-config-value` on controls.
+
+The gym index discovers enemies via `src/utils/enemyGymDiscovery.ts`
+(`discoverEnemyGymEntries()` → `{ key: 'GymEnemies:<slug>', label,
+ enemyKey }[]`, sorted by label) and routes each row to
+`scene.start('GymEnemies', { enemyKey })`. Bare `GymEnemies` is excluded
+from the plain scene list; Save As enemies appear on next index load
+without code changes.
+
+### 8.6 Adding a new enemy (convention)
+
+1. **Tune in the gym.** Run `npm run dev`, open the **Gym Index → any
+   Enemies entry** (e.g. Scout). Use the **Enemies panel** sliders/selects/
+   colour pickers to dial in movement, formation and shot feel — changes
+   live-apply without reload.
+2. **Save As…** Enter a new name (e.g. `My New Enemy`) and click **Save
+   As…**. The name is slugified (`my-new-enemy`), validated
+   (`isValidEnemyKey`, ≤40 chars, hyphen slug, unique), and stored as
+   `ai-hell-enemy-config:my-new-enemy` with that displayName.
+3. **Appears in the index.** Reload / return to the gym index — the new
+   entry appears under the **ENEMIES** section without editing
+   `GymIndex.ts`.
+4. **Code archetype (when a truly new entity is needed).** If the enemy
+   needs new movement/shot code beyond the existing registries: add a new
+   entity in `src/entities/<Name>.ts` with the same seam (`size? color? …`),
+   a builder in `src/utils/formations.ts` or a shot pattern in
+   `src/utils/enemyShotPatterns.ts` with tests, wire it in
+   `src/entities/enemyFactory.ts`, and add a seed entry to
+   `DEFAULT_ENEMY_CONFIGS` in `src/core/enemyConfig.ts`.
+5. **Storage hygiene.** `npm test` clears `localStorage` between suites;
+   the gym panel removes itself on `SHUTDOWN`. Corrupt storage for a key
+   falls back to that key's seed/defaults — the index skips only when
+   `loadAllEnemyConfigs()` itself cannot run.
 
 ## Audio Best Practices
 

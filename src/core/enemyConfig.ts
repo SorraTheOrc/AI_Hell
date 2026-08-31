@@ -88,7 +88,14 @@ export interface EnemyConfig {
 
 // ── Storage constants ─────────────────────────────────────────────
 
-/** Namespace prefix for per-enemy localStorage keys. */
+/**
+ * Namespace prefix for per-enemy localStorage keys.
+ *
+ * Each enemy persists under `ai-hell-enemy-config:<key>`, namespaced
+ * separately from `ai-hell-ship-config`. Corrupt/missing entries fall
+ * back to seed defaults without throwing (see `loadEnemyConfig`).
+ * Tests clear localStorage between suites.
+ */
 export const ENEMY_CONFIG_STORAGE_PREFIX = 'ai-hell-enemy-config:';
 
 /** Validated slug pattern (lowercase, numbers, hyphens only; max 40 chars). */
