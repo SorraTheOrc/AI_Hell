@@ -11,6 +11,8 @@
  * importers keep working unchanged.
  */
 
+export type ControlScheme = 'fourDirectional' | 'asteroids';
+
 export interface ShipConfig {
   /** Acceleration applied each second a thrust direction is held (px/s²). */
   thrustAcceleration: number;
@@ -28,6 +30,10 @@ export interface ShipConfig {
   thrustFlameInnerColor: number;
   /** Linear deceleration rate (px/s²) when no direction keys are held; 0 = zero friction. */
   frictionDeceleration: number;
+  /** Control scheme: 'fourDirectional' (WASD → thrust) or 'asteroids' (W → forward, A/S → turn). */
+  controlScheme: ControlScheme;
+  /** Rotation speed in radians/s for the Asteroids control scheme. */
+  asteroidsRotationSpeed: number;
 }
 
 /** Built-in defaults — the current hard-coded tuning values. */
@@ -40,6 +46,8 @@ export const DEFAULT_CONFIG: ShipConfig = {
   thrustFlameColor: 0xff8c00,
   thrustFlameInnerColor: 0xffff00,
   frictionDeceleration: 100,
+  controlScheme: 'fourDirectional',
+  asteroidsRotationSpeed: 3,
 };
 
 /** localStorage key under which the ship config JSON is persisted. */

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -12,7 +12,11 @@ import {
 import {
   TANK_BULLET_SPEED,
   TANK_BURST_COUNT,
+  TANK_FIRE_INTERVAL,
 } from '../../entities/Tank';
+import { Player } from '../../entities/Player';
+import * as effectsModule from '../../audio/effects';
+import { PLAYER_SPAWN } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label. */
@@ -87,10 +91,16 @@ describe('GymTank — E3 Tank gym scene (AC1-AC6)', () => {
   it('AC3 — the formation advances slowly across the screen (slower than scouts)', async () => {
     const scene = await bootGym();
     const baseBefore = scene.formationX;
-    await waitMs(350);
+
+    // Drive 350 ms of drift deterministically via accumulated tick dt — no
+    // wall-clock wait. The background Phaser loop's real-frame timing varies
+    // under parallel CPU load, so a real-time wait flaked outside the drift
+    // band (mirrors the GymDiver AC1 fix, commit c2aaa54).
+    for (let i = 0; i < 7; i++) scene.tick(0.05);
     const baseAfter = scene.formationX;
 
-    // The base moves right at the configured drift speed.
+    // The base moves right at the configured drift speed: 7 ticks × 0.05 s
+    // × 18 px/s = exactly 6.3 px, inside [18×0.25, 18×0.5] px.
     expect(baseAfter).toBeGreaterThan(baseBefore);
     // Tanks drift at 18 px/s — Scouts at 40 px/s.
     expect(baseAfter - baseBefore).toBeGreaterThan(
@@ -218,5 +228,184 @@ describe('GymTank — E3 Tank gym scene (AC1-AC6)', () => {
   it('AC5 — shows the shared ← INDEX back button', async () => {
     const scene = await bootGym();
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
+  });
+
+  // ── Audio orchestration (scene-level cue+thump pair per burst) ──────
+
+  it('AC — plays one Tank advance-cue + cannon-thump pair per radial burst, cue first', { timeout: 15000 }, async () => {
+    vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const scene = await bootGym();
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    shoot.emit('pointerdown'); // ON
+
+    // Wait longer than one fire interval (2400 ms) so a burst fires.
+    await waitMs(2600);
+    expect(scene.activeBullets.length).toBeGreaterThan(0);
+    expect(effectsModule.playTankAdvanceCue).toHaveBeenCalled();
+    expect(effectsModule.playTankFireSound).toHaveBeenCalled();
+
+    // The advance cue must precede the fire thump (cue → thump, no gap).
+    const cueOrder = vi.mocked(effectsModule.playTankAdvanceCue).mock
+      .invocationCallOrder[0];
+    const thumpOrder = vi.mocked(effectsModule.playTankFireSound).mock
+      .invocationCallOrder[0];
+    expect(cueOrder).toBeLessThan(thumpOrder);
+
+    // One cue per thump — the pair travels together (never a cue or thump
+    // without its partner, and never per projectile).
+    const cueCalls = vi.mocked(effectsModule.playTankAdvanceCue).mock.calls.length;
+    const thumpCalls = vi.mocked(effectsModule.playTankFireSound).mock.calls.length;
+    expect(cueCalls).toBe(thumpCalls);
+    // Scene-level orchestration: a single synchronized burst is one call,
+    // not one per tank (6 tanks) and not one per projectile (10/burst).
+    expect(cueCalls).toBeLessThan(scene.formationTanks.length);
+
+    // The whine duration itself provides the ≥ 500 ms advance lead (GDD §7.3).
+    expect(effectsModule.TANK_ADVANCE_CUE_DURATION).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('AC — destroying a tank plays the shared destruction sound exactly once (no tank-specific double-play)', async () => {
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    vi.spyOn(effectsModule, 'playTankDestructionSound');
+
+    const scene = await bootGym();
+    const explode = findButton(scene, 'EXPLODE');
+
+    // The Tank must NOT wire its own destruction cue — the base scene owns
+    // the single shared destruction sound (design doc §7 rule).
+    explode.emit('pointerdown');
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playTankDestructionSound).not.toHaveBeenCalled();
+
+    explode.emit('pointerdown');
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(2);
+    expect(effectsModule.playTankDestructionSound).not.toHaveBeenCalled();
+  });
+
+  it('AC — new Tank audio helpers degrade to safe no-ops without an AudioContext', () => {
+    // happy-dom provides no Web Audio API: calling the helpers directly must
+    // not throw and returns undefined (the effects.ts headless contract).
+    expect(effectsModule.playTankAdvanceCue()).toBeUndefined();
+    expect(effectsModule.playTankFireSound()).toBeUndefined();
+  });
+});
+
+describe('GymTank — player in the gym (epic per-scene AC1-AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymTank> {
+    booted = await bootScene([GymTank]);
+    return booted!.scene as GymTank;
+  }
+
+  it('AC1 — spawns the keyboard-controlled player ship at PLAYER_SPAWN', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player!.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player!.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.aliveCount).toBe(TANK_FORMATION_COUNT);
+  });
+
+  it('AC1 — the player responds to the cursor keys', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+    const x0 = player.x;
+    const y0 = player.y;
+
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+
+    expect(player.y - y0).toBeGreaterThan(40);
+    expect(player.x).toBe(x0);
+  });
+
+  it('AC2 — the radial burst stays direction-agnostic (Tank has no live aim)', async () => {
+    const scene = await bootGym();
+    scene.toggleShooting();
+    scene.time.now += TANK_FIRE_INTERVAL + 200;
+    scene.tick(0.05);
+
+    const bullets = scene.activeBullets;
+    expect(bullets.length).toBe(TANK_FORMATION_COUNT * TANK_BURST_COUNT);
+
+    // Every bullet at full radial speed; a symmetric full-circle burst has
+    // zero mean velocity — no aim bias toward or away from the player.
+    let meanVx = 0;
+    let meanVy = 0;
+    for (const bullet of bullets) {
+      const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+      expect(speed).toBeCloseTo(TANK_BULLET_SPEED, 1);
+      meanVx += bullet.vx;
+      meanVy += bullet.vy;
+    }
+    meanVx /= bullets.length;
+    meanVy /= bullets.length;
+    expect(Math.abs(meanVx)).toBeLessThan(TANK_BULLET_SPEED * 0.05);
+    expect(Math.abs(meanVy)).toBeLessThan(TANK_BULLET_SPEED * 0.05);
+  });
+
+  it('AC3 — a player bullet destroys a tank; a tank bullet hitting the player respawns it', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+
+    // Park a player bullet on the first tank — destroyed + bullet consumed.
+    const victim = scene.formationTanks[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.05);
+    expect(victim.alive).toBe(false);
+    expect(scene.aliveCount).toBe(TANK_FORMATION_COUNT - 1);
+
+    // Fire the direction-agnostic volley and park the player exactly on
+    // the future path of an on-screen bullet: deterministic hit.
+    scene.toggleShooting();
+    scene.time.now += TANK_FIRE_INTERVAL + 200;
+    scene.tick(0.05); // 10-bullet radial burst from each tank
+
+    const STEPS = 60; // 3s ahead at TANK_BULLET_SPEED
+    const lane = scene.activeBullets.find((b) => {
+      const px = b.graphics.x + b.vx * STEPS * 0.05;
+      const py = b.graphics.y + b.vy * STEPS * 0.05;
+      return px > 0 && px < 960 && py > 0 && py < 540;
+    });
+    expect(lane, 'an on-screen tank bullet path must exist').toBeDefined();
+    const laneX = lane!.graphics.x + lane!.vx * STEPS * 0.05;
+    const laneY = lane!.graphics.y + lane!.vy * STEPS * 0.05;
+    player.respawn(laneX, laneY);
+
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    const hitsBefore = scene.getPlayerHitCount();
+    for (let i = 0; i < STEPS + 10 && scene.getPlayerHitCount() === hitsBefore; i++) scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+    expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+  });
+
+  it('AC4 — regression: EXPLODE/SHOOT/formation drift still work with the player present', async () => {
+    const scene = await bootGym();
+    const before = scene.aliveCount;
+    scene.explodeRandom();
+    expect(scene.aliveCount).toBe(before - 1);
+
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(true);
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(false);
+
+    const fx = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeGreaterThan(fx);
   });
 });

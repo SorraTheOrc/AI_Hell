@@ -31,6 +31,17 @@
 | **Auto-fire** | Continuous (always active) |
 | **Space** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
 
+> **Control schemes:** the ship honours the player's **saved control scheme**,
+> applied in every gym scene (enemy, power-up and weapons) via
+> `player.getScheme()`-keyed input handlers (`FourDirectionalInputHandler` and
+> `AsteroidsInputHandler` in `src/utils/movementModel.ts`). The table above
+> describes the **4-directional scheme (default)**. Under the **Asteroids
+> scheme** the movement keys are re-mapped: `W`/Arrow Up = **forward thrust**
+> (in the current facing direction), `A`/Arrow Left = **turn left**, `D`/Arrow
+> Right = **turn right** (rotation 3 rad/s) — never 4-directional movement.
+> Note: turn right is bound to **D** (not S); S remains the 4-directional
+> backward thrust binding only.
+
 ### 2.2 Movement
 
 - **Thrust-based Newtonian movement** — space physics with thrust input and tunable linear deceleration (friction). The player ship moves on a 2D plane (not lane-based); velocity changes via thrust input and, when no direction key is held, decays toward zero.
@@ -50,7 +61,7 @@
 
 ### 2.3 Combat Mechanics
 
-- **Auto-fire**: The player ship fires continuously without any input. The fire rate is fixed and consistent.
+- **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). The fire rate and shot pattern depend on the **equipped weapon** (§4.4): the default **Cannon** fires a single bullet straight ahead every ~400 ms; weapon power-ups (Spread/Dual/Rapid) replace it persistently with their own pattern and rate before returning to the Cannon via the **Reset** power-up.
 - **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **P8 – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
@@ -127,7 +138,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Fires**: No (Levels 1–3); yes, aimed shot (Level 4+).
 
 #### E2 — Diver
-- **Behavior**: Dives toward the player in a curved trajectory, then returns to formation.
+- **Behavior**: Dives straight down toward the player (x locked at its formation slot — a vertical trajectory), then returns to its current formation slot.
 - **Appearance**: Medium, dart-shaped neon entity.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.
@@ -187,8 +198,8 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
-| P1 | **Spread Shot** | Fires 3 bullets in a fan pattern for 10 seconds | Triple-line neon arc |
-| P2 | **Rapid Fire** | Doubles fire rate for 10 seconds | Firing-rate waveform |
+| P1 | **Spread Shot** | Fires a 3-bullet fan (-30°/0°/+30° relative to heading) **until replaced** (persistent, no timer) | Triple-line neon arc |
+| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) **until replaced** (persistent, no timer) | Firing-rate waveform |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
@@ -202,6 +213,10 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 > **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when Space is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
 
 > **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
+
+> **P1 / P2 (Weapon Power-Ups) — Persistent until replaced:** Weapon power-ups (P1 Spread Shot, P2 Rapid Fire, plus the new Dual and Reset drops) are **persistent** — they remain equipped **indefinitely** until the player collects a different weapon power-up. This is a **deviation from the original timed (10 s) semantics** defined above; the operator decided that weapon power-ups should persist like the P9 Magnet, making weapon selection meaningful rather than fleeting. A fourth power-up drop, **Reset**, returns the ship to the default Cannon.
+
+> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **persistent** (non-timed) semantics per operator decision, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and instant weapon switching on collection. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the weapon slot + fire cooldown and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
 
 ### 4.5 Scoring System
 
@@ -292,12 +307,20 @@ src/
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (sole scene in gameConfig):
 │   │                      discovers + lists gym scenes from scenes/gym/ (import.meta.glob)
 │   └── gym/
-│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
-│       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
-│       └── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
+│       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
+│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
+│       ├── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
+│       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
+│       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
+│       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
+│       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
+│       └── GymWeapons.ts — weapon power-up gym (key GymWeapons, label "Weapons"):
+│                           auto-fire ship + round-robin Spread/Dual/Rapid/Reset
+│                           drops (7 s lifetime, persistent weapon switching)
 ├── entities/
-│   ├── Player.ts        — Player ship
+│   ├── Player.ts        — Player ship (auto-fire, weapon slot)
+│   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, off-screen cull)
 │   ├── Enemy.ts         — Base enemy class
 │   ├── Scout.ts         — E1 Scout
 │   ├── Diver.ts         — E2 Diver
@@ -310,21 +333,22 @@ src/
 │   ├── EnemyBullet.ts   — Enemy-fired projectiles
 │   └── BulletPattern.ts — Bullet pattern definitions
 ├── powerups/
-│   ├── PowerUp.ts       — Base power-up class
-│   ├── SpreadShot.ts    — P1
-│   ├── RapidFire.ts     — P2
-│   ├── Shield.ts        — P3
-│   ├── Bomb.ts          — P4
-│   ├── SpeedBoost.ts    — P5
-│   ├── PhaseShift.ts    — P6
-│   ├── Teleport.ts      — P7 (collectable teleport power-up)
-│   ├── ExtraLife.ts     — P8 (passive, rare)
-│   └── Magnet.ts        — P9 (permanent attraction power-up)
+│   ├── PowerUp.ts       — Base power-up drop class: grow/hold/shrink/despawn lifecycle,
+│   │                      delta-time driven (framerate-independent), collection gated at >3% full-size scale
+│   ├── spawner.ts       — Pluggable spawner strategy layer: PowerUpSpawner interface,
+│   │                      RoundRobinSpawner (deterministic gym drops),
+│   │                      WeightedRandomSpawner (semi-random in-game drops with mid-run weight tuning)
+│   ├── types.ts         — Power-up catalogue (id, name, type, duration/stack semantics per §4.4)
+│   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed multiplier, P9 magnet
+│   │                      radius/attraction); engine-agnostic, consumed by the HUD and scenes
+│   └── icons.ts         — Code-drawn neon power-up icons (shared by field drops and the HUD)
 ├── waves/
 │   ├── WaveManager.ts   — Wave spawning and management
 │   └── Formations.ts    — Formation movement patterns
 ├── ui/
-│   ├── HUD.ts           — Heads-up display (score, lives)
+│   ├── HUD.ts           — Standalone power-up HUD (implemented): Phaser Container attachable to any
+│   │                      scene, renders above gameplay; per-active-effect rows (icon, name,
+│   │                      remaining-seconds timer or stack count) + lives counter
 │   ├── Menu.ts          — Main menu, game-over screen
 │   │                      (distinct from the dev-only gym index; shipped-game UI)
 │   └── Leaderboard.ts   — Leaderboard display and input
@@ -476,6 +500,50 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
 | **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
+
+#### Per-Enemy Audio Character
+
+Audio-character decisions for individual enemies are made **per-enemy at
+implementation time** and may deliberately deviate from the generic catalog
+entries above — the catalog defines the default character, not a straitjacket.
+Example: the E1 Scout (gym scene `GymScout`) uses a rising sine-wave advance
+cue flowing with **no gap** into a sharp square-wave shot blip, with the fire
+sound scheduled at the cue's end; the E3 Tank (gym scene `GymTank`) uses a
+rising mechanical-whine advance cue flowing with **no gap** into a heavy low
+cannon thump, one cue+thump pair per radial burst, instead of the generic
+"short zap". See `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` for the per-enemy
+audio decisions and the implementation best practices (which audio is owned by
+the base scene, where entity-specific sounds are orchestrated, and the no-gap
+pattern).
+
+#### Player Audio Character
+
+The player ship has its own procedural audio palette (all in
+`src/audio/effects.ts`), giving the player the same by-ear feedback the
+enemies get:
+
+| Cue | Sound Character | Synthesis (wave, contour) | Volume |
+|-----|-----------------|---------------------------|--------|
+| Cannon fire | Solid medium blip | Square 800 → 400 Hz, ~80 ms | 0.15 |
+| Spread fire | Wide multi-tone sweep | Triangle 600 → 1200 → 800 Hz, ~120 ms | 0.15 |
+| Dual fire | Sharp crack (twin barrels) | Sawtooth 900 → 300 Hz + offset sine tick | ≤ 0.15 |
+| Rapid fire | Tight staccato | Triangle 500 → 900 Hz, ~50 ms | 0.12 |
+| Spread pickup | Widening fan sweep | Triangle 500 → 1500 → 800 Hz | 0.15 |
+| Dual pickup | Two-note crack | Sawtooth 1000 → 500 then 1200 → 700 Hz | 0.14 |
+| Rapid pickup | Accelerating rise | Triangle 400 → 1600 Hz | 0.14 |
+| Reset pickup (→ cannon) | Gentle unwind to baseline | Sine 900 → 300 Hz, ~200 ms | 0.12 |
+| P5 Speed Boost pickup | Bright ascending zip | Square 600 → 1800 Hz | 0.13 |
+| P8 Extra Life pickup | Warm two-note chime | Sine 440 → 880 then 660 → 990 Hz | 0.13 |
+| P9 Magnet pickup | Low pulsing field hum | Square 180 → 90 → 180 Hz + sine undertone | ≤ 0.12 |
+
+- **Shoot cues play once per shot** (not once per bullet), keyed off the
+  equipped weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
+- **Pickup activation cues** are unique per pickup type and distinct from the
+generic collection chime and weapon-change arpeggio, so the player knows at a
+glance which bonus was collected.
+- All player cues keep volume ≤ 0.2 so they read over enemy audio without
+drowning it out, and every cue degrades to a safe no-op without an
+AudioContext (headless tests, autoplay-blocked browsers).
 
 #### Advance Telegraphing (≥ 500 ms Lead Time)
 

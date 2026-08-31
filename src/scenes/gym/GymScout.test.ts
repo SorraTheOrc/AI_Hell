@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import * as effectsModule from '../../audio/effects';
 import {
   GymScout,
   SCOUT_FORMATION_COUNT,
@@ -9,7 +10,9 @@ import {
   SCOUT_FORMATION_SPACING_Y,
   SCOUT_FORMATION_DRIFT_SPEED,
 } from './GymScout';
-import { SCOUT_BULLET_SPEED } from '../../entities/Scout';
+import { SCOUT_BULLET_SPEED, SCOUT_FIRE_INTERVAL, SCOUT_ADVANCE_CUE_DURATION, ScoutBullet } from '../../entities/Scout';
+import { Player } from '../../entities/Player';
+import { PLAYER_SPAWN } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label (observable via scene children). */
@@ -28,6 +31,7 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    vi.clearAllMocks();
   });
 
   async function bootGym(): Promise<GymScout> {
@@ -135,14 +139,16 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
     expect(scene.shootingEnabled).toBe(true);
     expect(scene.formationScouts.every((s) => s.shootEnabled)).toBe(true);
 
-    // Scouts fire aimed shots at the default player position (bottom-centre).
+    // Scouts fire aimed shots at the live player (top-right).
     await new Promise((r) => setTimeout(r, 1400));
     expect(scene.activeBullets.length).toBeGreaterThan(0);
     for (const bullet of scene.activeBullets) {
       const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
       expect(speed).toBeCloseTo(SCOUT_BULLET_SPEED, 1);
-      // Default aim target sits below the formation ⇒ shots travel downward.
-      expect(bullet.vy).toBeGreaterThan(0);
+      // The player sits up-right of the formation ⇒ shots travel up-right
+      // (the old bottom-centre stand-in would have pointed downward).
+      expect(bullet.vx).toBeGreaterThan(0);
+      expect(bullet.vy).toBeLessThan(0);
     }
   });
 
@@ -171,5 +177,154 @@ describe('GymScout — E1 Scout gym scene (AC1-AC6)', () => {
     await new Promise((r) => setTimeout(r, 400));
     const later = scene.activeBullets.length;
     expect(later).toBeLessThanOrEqual(countAfter);
+  });
+
+  // ── Audio orchestration (per-entity advance cue + fire sound) ──────
+
+  it('AC6 — fires and plays the Scout fire sound during real timed firing (safe no-op in headless)', async () => {
+    vi.spyOn(effectsModule, 'playScoutFireSound');
+
+    const scene = await bootGym();
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    shoot.emit('pointerdown'); // ON
+
+    // Each scout's first shot lands after the advance-cue tell (~600 ms).
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(scene.activeBullets.length).toBeGreaterThan(0);
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalled();
+    // One fire sound per aimed shot — never a burst per entity per frame.
+    const shots = scene.activeBullets.length;
+    const calls = vi.mocked(effectsModule.playScoutFireSound).mock.calls.length;
+    expect(calls).toBeGreaterThanOrEqual(shots);
+    expect(calls).toBeLessThanOrEqual(scene.formationScouts.length * 2);
+  });
+
+  it('AC6 — destroying a scout plays the shared destruction sound exactly once (no entity double-play)', async () => {
+    vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const scene = await bootGym();
+    const explode = findButton(scene, 'EXPLODE');
+
+    explode.emit('pointerdown'); // destroys one scout
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(1);
+
+    explode.emit('pointerdown'); // destroys another
+    expect(effectsModule.playDestructionSound).toHaveBeenCalledTimes(2);
+  });
+});
+describe('GymScout — player in the gym (epic per-scene AC1-AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymScout> {
+    booted = await bootScene([GymScout]);
+    return booted!.scene as GymScout;
+  }
+
+  it('AC1 — spawns the keyboard-controlled player ship at PLAYER_SPAWN', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer();
+    expect(player).toBeInstanceOf(Player);
+    expect(player!.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player!.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    // The formation is undisturbed by the player's presence.
+    expect(scene.aliveCount).toBe(SCOUT_FORMATION_COUNT);
+  });
+
+  it('AC1 — the player responds to the cursor keys', async () => {
+    const scene = await bootGym();
+    const player = scene.getPlayer()!;
+    const x0 = player.x;
+    const y0 = player.y;
+
+    // Hold DOWN for one simulated second: the ship accelerates downward
+    // (spawn is top-right, so there is plenty of vertical room).
+    scene.getCursors()!.down.isDown = true;
+    for (let i = 0; i < 4; i++) scene.tick(0.25);
+    scene.getCursors()!.down.isDown = false;
+
+    expect(player.y - y0).toBeGreaterThan(40);
+    expect(player.x).toBe(x0);
+  });
+
+  it('AC2 — aimed fire tracks the live player (up-right), not the old stand-in', async () => {
+    const scene = await bootGym();
+    scene.toggleShooting();
+
+    // Start the two-phase tell (fire interval elapses), then advance in
+    // small, bounded steps until the volley has actually fired. Polling in
+    // quarter-cue steps (rather than one exact-boundary jump) keeps the
+    // test deterministic under real-clock drift on loaded machines — the
+    // single 600 ms boundary could otherwise be missed and assert 0 bullets.
+    scene.time.now += SCOUT_FIRE_INTERVAL;
+    scene.tick(0.05); // tell starts
+    let bullets: ScoutBullet[] = [];
+    for (let i = 0; i < 40 && bullets.length === 0; i++) {
+      scene.time.now += SCOUT_ADVANCE_CUE_DURATION / 4;
+      scene.tick(0.05);
+      bullets = scene.activeBullets;
+    }
+
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      const speed = Math.sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+      expect(speed).toBeCloseTo(SCOUT_BULLET_SPEED, 1);
+      // Every scout sits below-left of the live player.
+      expect(bullet.vx).toBeGreaterThan(0);
+      expect(bullet.vy).toBeLessThan(0);
+    }
+  });
+
+  it('AC3 — a player bullet destroys a scout; a scout bullet hitting the player respawns it', async () => {
+    const scene = await bootGym();
+    const enemy = scene.formationScouts[0];
+    const player = scene.getPlayer()!;
+
+    // Park a player bullet on the target enemy — it is destroyed and
+    // the bullet consumed.
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.05);
+    expect(enemy.alive).toBe(false);
+    expect(scene.aliveCount).toBe(SCOUT_FORMATION_COUNT - 1);
+
+    // Remaining scouts fire aimed shots at the live player; one reaching
+    // the ship triggers a respawn at the scene spawn point.
+    vi.spyOn(effectsModule, 'playDestructionSound');
+    scene.toggleShooting();
+    scene.time.now += SCOUT_FIRE_INTERVAL;
+    scene.tick(0.05); // tell starts
+    scene.time.now += SCOUT_ADVANCE_CUE_DURATION;
+    scene.tick(0.05); // volley fires, aimed at the player at PLAYER_SPAWN
+
+    // The nearest aimed bullet reaches the ship within ~3s; allow 8s.
+    const hitsBefore = scene.getPlayerHitCount();
+    for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+    expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+    expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+  });
+
+  it('AC4 — regression: EXPLODE/SHOOT/formation drift still work with the player present', async () => {
+    const scene = await bootGym();
+    const before = scene.aliveCount;
+    scene.explodeRandom();
+    expect(scene.aliveCount).toBe(before - 1);
+
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(true);
+    scene.toggleShooting();
+    expect(scene.shootingEnabled).toBe(false);
+
+    const fx = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeGreaterThan(fx);
   });
 });

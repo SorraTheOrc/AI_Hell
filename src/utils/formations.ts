@@ -20,6 +20,13 @@ export interface FormationOffset {
 }
 
 /**
+ * Row stride between swarm cluster centres (in formation-slot units).
+ * Used by the builder below and by GymSwarm to derive a member's cluster
+ * index from its offset row.
+ */
+export const SWARM_CLUSTER_ROW_STRIDE = 1.4;
+
+/**
  * Builds V-formation offsets for `count` scouts: row 0 has one scout
  * (the apex), row 1 two scouts, row 2 three — wing columns spread outward
  * symmetrically. Returns rows in ascending order (apex first).
@@ -81,32 +88,32 @@ export function buildDiverFormationOffsets(count: number): FormationOffset[] {
 /**
  * Builds loose cluster offsets for swarms (E5, GDD §4.1).
  *
- * Offsets are 2D Gaussian-ish clusters around a few local centres rather
- * than a strict grid, so the swarm reads as several tight packs that can
- * slide past one another. Returns offsets in spawn order (cluster 0 first).
+ * Members are divided into packs of 3–5 (GDD §4.1: "Clusters of 3–5
+ * enemies move together"), each pack clustered around a local centre
+ * (`centreRow = c * SWARM_CLUSTER_ROW_STRIDE`, `centreCol = c * 2`).
+ * The offsets are deterministic and tight: intra-cluster column spread is
+ * 0.6 slots, row spread ±0.5 slots — so each pack reads as one close group
+ * that can slide past neighbouring packs. Returns offsets in spawn order
+ * (cluster 0 members first).
  */
 export function buildSwarmClusterOffsets(count: number): FormationOffset[] {
   const offsets: FormationOffset[] = [];
   if (count <= 0) return offsets;
 
-  const clusters = Math.max(1, Math.round(count / 4)); // 3–5 per pack
-  let remaining = count;
-  let spawn = 0;
-  for (let c = 0; c < clusters && remaining > 0; c++) {
-    const packSize = Math.min(remaining, Math.max(2, Math.round(count / clusters)));
-    // Local centre of this cluster (each cluster drifts independently).
-    const centreRow = c * 1.4;
-    const centreCol = c * 1.8;
-    for (let m = 0; m < packSize; m++) {
-      // Squareish scatter around the centre (deterministic, seeded by index).
-      const spread = m % 2 === 0 ? 0.7 : -0.7;
-      const drift2 = Math.floor(m / 2) - Math.floor(packSize / 2);
+  // Packs of 3–5 → ~count/5 clusters, always at least one.
+  const clusters = Math.min(count, Math.max(1, Math.ceil(count / 5)));
+  const base = Math.floor(count / clusters);
+  const extra = count % clusters;
+
+  for (let c = 0; c < clusters; c++) {
+    const size = base + (c < extra ? 1 : 0);
+    const centreRow = c * SWARM_CLUSTER_ROW_STRIDE;
+    const centreCol = c * 2;
+    for (let m = 0; m < size; m++) {
       offsets.push({
-        row: centreRow + Math.round(spread * 100) / 100,
-        col: centreCol + Math.round(drift2 * 0.9 * 100) / 100,
+        row: centreRow + (m % 2 === 0 ? 0.5 : -0.5),
+        col: centreCol + (m - (size - 1) / 2) * 0.6,
       });
-      remaining--;
-      spawn++;
     }
   }
   return offsets;

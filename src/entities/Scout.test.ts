@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   buildVFormationOffsets,
+  SCOUT_ADVANCE_CUE_DURATION,
   SCOUT_BULLET_COLOR,
   SCOUT_BULLET_SPEED,
   SCOUT_COLOR,
@@ -67,6 +70,7 @@ describe('Scout entity (visuals, firing, destruction)', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    vi.clearAllMocks();
   });
 
   function makeScout(
@@ -128,7 +132,7 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(buf[lineStyleIdx + 2]).toBe(SCOUT_COLOR);
   });
 
-  it('fires an aimed bullet only when shoot mode is enabled and the interval has elapsed', async () => {
+  it('fires an aimed bullet only when enabled, after BOTH the interval and the advance-cue tell', async () => {
     booted = await bootScene([HarnessScene]);
     const scout = makeScout(100, 100);
     const t0 = 1_000_000;
@@ -137,17 +141,34 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     scout.shootEnabled = false;
     expect(scout.tryFireAimedBullet(t0)).toBeNull();
 
-    // Enabled — fires immediately (no previous shot recorded).
+    // Enabled — the first eligible call starts the ≥ 500 ms advance-cue
+    // tell (GDD §7.3) and returns no bullet yet.
     scout.shootEnabled = true;
-    const bullet = scout.tryFireAimedBullet(t0);
+    expect(scout.tryFireAimedBullet(t0)).toBeNull();
+    expect(scout.isTelling).toBe(true);
+
+    // Still inside the tell window — no shot.
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION - 1)).toBeNull();
+    expect(scout.isTelling).toBe(true);
+
+    // Tell completed — the shot fires with the expected bullet colour.
+    const bullet = scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION);
     expect(bullet).not.toBeNull();
     expect(bullet!.color).toBe(SCOUT_BULLET_COLOR);
+    expect(scout.isTelling).toBe(false);
 
     // Within the fire interval — refuses to fire again.
-    expect(scout.tryFireAimedBullet(t0 + SCOUT_FIRE_INTERVAL - 1)).toBeNull();
+    expect(scout.tryFireAimedBullet(
+      t0 + SCOUT_ADVANCE_CUE_DURATION + SCOUT_FIRE_INTERVAL - 1,
+    )).toBeNull();
 
-    // After the interval elapses — fires again.
-    expect(scout.tryFireAimedBullet(t0 + SCOUT_FIRE_INTERVAL + 1)).not.toBeNull();
+    // After the interval the cycle restarts with a fresh tell, then fires.
+    expect(scout.tryFireAimedBullet(
+      t0 + SCOUT_ADVANCE_CUE_DURATION + SCOUT_FIRE_INTERVAL + 1,
+    )).toBeNull();
+    expect(scout.tryFireAimedBullet(
+      t0 + SCOUT_ADVANCE_CUE_DURATION * 2 + SCOUT_FIRE_INTERVAL + 1,
+    )).not.toBeNull();
   });
 
   it('aims bullets at the configured target position', async () => {
@@ -162,7 +183,9 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     const target = scout.aimTarget;
 
     scout.shootEnabled = true;
-    const bullet = scout.tryFireAimedBullet(1_000_000)!;
+    // First eligible call starts the tell; the shot fires after the cue.
+    expect(scout.tryFireAimedBullet(1_000_000)).toBeNull();
+    const bullet = scout.tryFireAimedBullet(1_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
 
     const dist = Math.sqrt(
       (target.x - scout.x) ** 2 + (target.y - scout.y) ** 2,
@@ -187,6 +210,81 @@ describe('Scout entity (visuals, firing, destruction)', () => {
 
     // Destroying twice is harmless.
     expect(() => scout.destroySelf()).not.toThrow();
+  });
+
+  it('destruction plays NO entity-level sound — the base scene owns playDestructionSound (no double-play)', async () => {
+    booted = await bootScene([HarnessScene]);
+    vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const scout = makeScout(100, 100);
+    scout.destroySelf();
+
+    // The entity's explosion path must stay silent: GymFormationScene
+    // .explodeRandom() plays playDestructionSound() exactly once per
+    // destruction (design doc §7). An entity call here would double-play.
+    expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
+  });
+
+  it('plays the advance cue and fire sound back-to-back at tell start — no gap between cue and shot sound', async () => {
+    booted = await bootScene([HarnessScene]);
+    vi.spyOn(effectsModule, 'playScoutAdvanceCue');
+    vi.spyOn(effectsModule, 'playScoutFireSound');
+
+    const scout = makeScout(100, 100);
+    const t0 = 1_000_000;
+    scout.shootEnabled = true;
+
+    // Tell starts: the advance cue and fire sound both play back-to-back.
+    expect(scout.tryFireAimedBullet(t0)).toBeNull();
+    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(1);
+
+    // Ordering: the advance cue was called before the fire sound.
+    const cueOrder = vi.mocked(effectsModule.playScoutAdvanceCue).mock
+      .invocationCallOrder[0];
+    const fireOrder = vi.mocked(effectsModule.playScoutFireSound).mock
+      .invocationCallOrder[0];
+    expect(cueOrder).toBeLessThan(fireOrder);
+
+    // Still telling one millisecond before the cue completes — no shot.
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION - 1)).toBeNull();
+    // Counts unchanged: both sounds were already played at tell start.
+    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(1);
+
+    // Tell completes: the shot fires, NO additional audio (both sounds
+    // were already played at tell start, back-to-back, no gap).
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(1);
+
+    // A second cycle repeats the pattern exactly (one cue, one fire sound).
+    const t1 = t0 + SCOUT_ADVANCE_CUE_DURATION + SCOUT_FIRE_INTERVAL;
+    expect(scout.tryFireAimedBullet(t1)).toBeNull();
+    expect(scout.tryFireAimedBullet(t1 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
+    expect(effectsModule.playScoutAdvanceCue).toHaveBeenCalledTimes(2);
+    expect(effectsModule.playScoutFireSound).toHaveBeenCalledTimes(2);
+  });
+
+  it('disabling shoot mode mid-tell resets the tell so a re-enable starts a fresh cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = makeScout(100, 100);
+    const t0 = 1_000_000;
+
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(t0)).toBeNull(); // tell starts
+    expect(scout.isTelling).toBe(true);
+
+    // Toggle off mid-tell → tell state cleared.
+    scout.shootEnabled = false;
+    expect(scout.isTelling).toBe(false);
+
+    // Re-enable → a fresh tell cycle begins from the new time base.
+    const t1 = t0 + 500_000;
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(t1)).toBeNull();
+    expect(scout.isTelling).toBe(true);
+    expect(scout.tryFireAimedBullet(t1 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
   });
 
   it('scouts pass freely through each other — overlapping scouts neither repel nor separate (GDD §2.6)', async () => {
@@ -214,5 +312,54 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(left.y).toBe(270);
     expect(right.y).toBe(270);
     expect(Math.abs(left.x - right.x)).toBeLessThanOrEqual(4.2);
+  });
+
+  it('firing is unaffected by headless audio — audio helpers are safe no-ops without an AudioContext', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = makeScout(100, 100);
+    const t0 = 1_000_000;
+
+    scout.shootEnabled = true;
+    // No AudioContext exists in the headless harness; starting the tell
+    // and firing must not throw and must still produce a bullet.
+    expect(() => scout.tryFireAimedBullet(t0)).not.toThrow();
+    expect(() => scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toThrow();
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).toBeNull(); // within interval
+  });
+
+  it('setAimTarget retargets aimed shots to the player’s live position (replacing the stand-in)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = new Scout(booted.scene, {
+      x: 100,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+    });
+
+    // Default aim is the bottom-centre stand-in.
+    const standIn = scout.aimTarget;
+    expect(standIn.x).toBe(GAME_WIDTH / 2);
+    expect(standIn.y).toBe(GAME_HEIGHT - 40);
+
+    // Live player position (top-right of the scout): the shot must now
+    // travel toward the player, not the stand-in.
+    scout.setAimTarget(700, 120);
+    const live = scout.aimTarget;
+    expect(live.x).toBe(700);
+    expect(live.y).toBe(120);
+
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(1_000_000)).toBeNull(); // tell
+    const bullet = scout.tryFireAimedBullet(1_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
+
+    const dist = Math.sqrt((live.x - scout.x) ** 2 + (live.y - scout.y) ** 2);
+    const expectedVx = ((live.x - scout.x) / dist) * SCOUT_BULLET_SPEED;
+    const expectedVy = ((live.y - scout.y) / dist) * SCOUT_BULLET_SPEED;
+    expect(bullet.vx).toBeCloseTo(expectedVx, 5);
+    expect(bullet.vy).toBeCloseTo(expectedVy, 5);
+
+    // The shot flies up-and-right towards the player — the opposite arc
+    // of the bottom-centre stand-in (which would fly down-and-right).
+    expect(bullet.vy).toBeLessThan(0);
+    expect(bullet.vx).toBeGreaterThan(0);
   });
 });

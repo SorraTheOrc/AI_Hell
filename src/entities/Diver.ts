@@ -2,8 +2,17 @@
  * Diver enemy entity (GDD §4.2 — E2 Diver).
  *
  * Renders as a medium, dart-shaped neon-yellow entity. Periodically breaks
- * from formation, follows a curved (parabolic) trajectory toward the player
- * position (bottom-centre of screen), then returns to its formation slot.
+ * from formation and dives toward the player position along a parabolic
+ * arc (diagonal — x and y follow the full quadratic bezier from the
+ * formation slot to the player's position at dive start), then returns
+ * smoothly to its current formation slot — ending exactly on the slot as
+ * it exists when the return completes, so the diver rejoins the drifting
+ * formation without a horizontal snap.
+ *
+ * During the formation hold phase the diver smoothly rotates its container
+ * to visually face the player (nose points toward the target). The dart
+ * sprite is drawn with its nose pointing "up" (negative y) so that the
+ * container rotation aligns the nose toward the player.
  *
  * 1 HP — destroyed by a single bullet, plays an explosion animation, and
  * is removed. Divers never collide with each other (GDD §2.6).
@@ -15,6 +24,10 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT } from '../core/constants';
+import {
+  playDiverDestructionSound,
+  playDiverFireSound,
+} from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
 
 export type { FormationOffset } from '../utils/formations';
@@ -104,9 +117,9 @@ export class Diver extends Phaser.GameObjects.Container {
   private _diveTargetY = 0;
   private _diveApexX = 0;
   private _diveApexY = 0;
+  private _diveCol = 0;
+  private _diveRow = 0;
   private _returnProgress = 0;
-  private _returnOriginX = 0;
-  private _returnOriginY = 0;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -145,12 +158,14 @@ export class Diver extends Phaser.GameObjects.Container {
     this.bodyGraphics.lineStyle(2, DIVER_COLOR, 1);
     const half = DIVER_SIZE / 2;
 
-    // Dart shape — elongated chevron pointing "down" (toward player).
+    // Dart shape — elongated chevron pointing "up" (nose at negative y in
+    // local space). Positive container rotation then aligns the nose toward
+    // the target (desired = atan2(dx, -dy)).
     this.bodyGraphics.beginPath();
-    this.bodyGraphics.moveTo(0, half);            // nose tip
-    this.bodyGraphics.lineTo(half * 0.5, -half);  // top-right wing
-    this.bodyGraphics.lineTo(0, -half * 0.3);     // notch
-    this.bodyGraphics.lineTo(-half * 0.5, -half); // top-left wing
+    this.bodyGraphics.moveTo(0, -half);            // nose tip (up)
+    this.bodyGraphics.lineTo(half * 0.5, half);  // bottom-right wing
+    this.bodyGraphics.lineTo(0, half * 0.3);     // notch
+    this.bodyGraphics.lineTo(-half * 0.5, half); // bottom-left wing
     this.bodyGraphics.closePath();
     this.bodyGraphics.strokePath();
   }
@@ -215,9 +230,56 @@ export class Diver extends Phaser.GameObjects.Container {
     return this._state;
   }
 
+  /** The position aimed at when diving (defaults to the bottom-centre stand-in). */
+  get aimTarget(): Phaser.Math.Vector2 {
+    return this.target.clone();
+  }
+
+  /**
+   * Computes the container rotation that points the diver's nose (local
+   * -y / up) toward the target position. Exposed for tests and
+   * observability. 0 = up, PI/2 = right, PI = down.
+   */
+  static computeFacingRotation(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+  ): number {
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    return Math.atan2(dx, -dy);
+  }
+
+  /**
+   * Live aim tracking: retargets the dive to the player's current position.
+   * The dive snapshots this position at dive start (`_startDive`), so aim
+   * changes mid-dive do not alter an in-flight dive.
+   */
+  setAimTarget(x: number, y: number): void {
+    this.target.set(x, y);
+  }
+
   /** Speed at which this diver's formation drifts (px/s). */
   get driftSpeed(): number {
     return DIVER_FORMATION_DRIFT_SPEED;
+  }
+
+  // ── Optional destruction-audio seam ──────────────────────────────
+
+  /**
+   * Plays the Diver-specific destruction sound.
+   *
+   * Implements the optional `playDestructionAudio?()` seam on
+   * `FormationSceneEntity`. The base `GymFormationScene` prefers this
+   * over the shared `playDestructionSound()`, so the diver's destruction
+   * sound plays exactly once per destruction (no double-play).
+   *
+   * `playExplosion()` intentionally does NOT call any audio — the base
+   * scene owns destruction audio timing (design doc §7).
+   */
+  playDestructionAudio(): void {
+    playDiverDestructionSound();
   }
 
   // ── Behaviour ────────────────────────────────────────────────────
@@ -240,6 +302,9 @@ export class Diver extends Phaser.GameObjects.Container {
     this._lastFireTime = now;
 
     const bullets: DiverBullet[] = [];
+    // Play the fire sound exactly once per spread burst (not per
+    // projectile — the 3-5 bullet volley shares a single sound).
+    playDiverFireSound();
 
     // Aim direction: straight down (toward bottom-centre / player).
     const baseAngle = 0; // straight down in screen coords (y increases downward)
@@ -302,7 +367,9 @@ export class Diver extends Phaser.GameObjects.Container {
 
   /**
    * Updates the diver's position based on its current state.
-   * Handles formation hold, diving (parabolic arc), and returning.
+   * Handles formation hold (with smooth rotation toward player), diving
+   * (diagonal parabolic arc toward the snapshotted player position), and
+   * returning (smooth re-entry onto the current formation slot).
    */
   applyFormationPosition(
     baseX: number,
@@ -325,7 +392,7 @@ export class Diver extends Phaser.GameObjects.Container {
         break;
 
       case DiverState.RETURNING:
-        this._handleReturn(dt);
+        this._handleReturn(baseX, baseY, spacingX, spacingY, dt);
         break;
     }
   }
@@ -345,6 +412,24 @@ export class Diver extends Phaser.GameObjects.Container {
       formationPos.y,
     );
 
+    // Smoothly rotate the container to face the player. The nose points up in
+    // local space, so desired = atan2(dx, -dy). Delegates to the testable
+    // static helper `computeFacingRotation`. Exponential smoothing keeps the
+    // rotation frame-rate independent and avoids snaps.
+    const desired = Diver.computeFacingRotation(
+      this.x, this.y, this.target.x, this.target.y,
+    );
+    // Shortest angular difference, wrapped to (-PI, PI].
+    let diff = desired - this.rotation;
+    if (Phaser.Math.Angle && typeof Phaser.Math.Angle.Wrap === 'function') {
+      diff = Phaser.Math.Angle.Wrap(diff);
+    } else {
+      diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+    }
+    const lerpFactor = 1 - Math.exp(-5 * dt);
+    this.rotation += diff * lerpFactor;
+
     // After hold timer reaches threshold, initiate a dive.
     this._holdTimer += dt;
     if (this._holdTimer >= DIVER_HOLD_FORMATION_SECONDS) {
@@ -362,7 +447,7 @@ export class Diver extends Phaser.GameObjects.Container {
     this._diveStartX = formationPos.x;
     this._diveStartY = formationPos.y;
 
-    // Target is the player position (bottom-centre).
+    // Target is the player position (snapshotted at dive start).
     this._diveTargetX = this.target.x;
     this._diveTargetY = this.target.y;
 
@@ -370,9 +455,10 @@ export class Diver extends Phaser.GameObjects.Container {
     this._diveApexX = (this._diveStartX + this._diveTargetX) / 2;
     this._diveApexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
 
-    // Remember original formation position for return.
-    this._returnOriginX = formationPos.x;
-    this._returnOriginY = formationPos.y;
+    // Remember which formation slot we dove from. The return re-enters this
+    // slot at its CURRENT (drifted) position so there is no snap on re-entry.
+    this._diveCol = this.formationOffset.col;
+    this._diveRow = this.formationOffset.row;
   }
 
   private _handleDive(dt: number): void {
@@ -393,6 +479,8 @@ export class Diver extends Phaser.GameObjects.Container {
       this._diveTargetY,
       this._divePhase,
     );
+    // Diagonal parabolic dive — both x and y follow the bezier from the
+    // formation slot to the snapshotted player position.
     this.setPosition(point.x, point.y);
 
     // Fire spread shots during the dive if shoot mode is enabled.
@@ -404,23 +492,41 @@ export class Diver extends Phaser.GameObjects.Container {
     }
   }
 
-  private _handleReturn(dt: number): void {
+  /**
+   * Returns the diver to its formation slot, ending exactly on the slot's
+   * CURRENT position (the formation kept drifting while the diver was away).
+   * Both x and y ease smoothly toward the current slot so the diver rejoins
+   * the formation without a horizontal snap when the return completes.
+   */
+  private _handleReturn(
+    baseX: number,
+    baseY: number,
+    spacingX: number,
+    spacingY: number,
+    dt: number,
+  ): void {
     this._returnProgress += dt * 1.2; // slightly faster return
+    const t = Math.min(this._returnProgress, 1);
+
+    // The slot we must re-enter is its current position (base + offset).
+    const slotX = baseX + this._diveCol * spacingX;
+    const slotY = baseY + this._diveRow * spacingY;
+
+    // Glide from the dive-end position (snapshotted target) onto the current
+    // slot. Evaluating the slot each frame absorbs the formation drift, so at
+    // t=1 the diver lands exactly on the slot and the next formation update
+    // continues seamlessly.
+    this.setPosition(
+      this._diveTargetX + (slotX - this._diveTargetX) * t,
+      this._diveTargetY + (slotY - this._diveTargetY) * t,
+    );
+
     if (this._returnProgress >= 1) {
       this._returnProgress = 1;
       this._state = DiverState.FORMATION;
       this._holdTimer = 0;
-      return;
+      this.setPosition(slotX, slotY);
     }
-
-    // Lerp from the dive target back to the original formation position.
-    const t = this._returnProgress;
-    const endX = this._returnOriginX;
-    const endY = this._returnOriginY;
-    this.setPosition(
-      this._diveTargetX + (endX - this._diveTargetX) * t,
-      this._diveTargetY + (endY - this._diveTargetY) * t,
-    );
   }
 
   destroy(fromScene?: boolean): void {

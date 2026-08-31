@@ -641,4 +641,401 @@ describe('Player ship entity', () => {
     const third = player!.getFlameLength();
     expect(third).toBeGreaterThan(second);
   });
+
+  // ── Weapon system: heading, equip, auto-fire ─────────────────────
+
+  it('starts equipped with the cannon weapon (AC1, AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+  });
+
+  it('getHeading returns 0° (right) when stationary with no prior movement', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    // Ship starts at centre with zero velocity.
+    player!.setPosition(480, 270);
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    expect(player!.getHeading()).toBe(0);
+  });
+
+  it('getHeading derives heading from velocity when moving', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.setPosition(480, 270);
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.physicsTick(1, scene.scale.width, scene.scale.height);
+
+    // Moving right → heading should be 0°.
+    expect(player!.getHeading()).toBe(0);
+  });
+
+  it('getHeading falls back to most-recent heading when stationary (AC7)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.setPosition(480, 270);
+
+    // Move right first → heading = 0°.
+    player!.setInput({ up: false, down: false, left: false, right: true });
+    player!.physicsTick(1, scene.scale.width, scene.scale.height);
+    expect(player!.getHeading()).toBe(0);
+
+    // Stop moving → heading should still be 0° (most-recent fallback).
+    player!.setInput({ up: false, down: false, left: false, right: false });
+    player!.physicsTick(0.5, scene.scale.width, scene.scale.height);
+    expect(player!.getHeading()).toBe(0);
+  });
+
+  it('equipWeapon swaps to the given weapon (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+
+    player!.equipWeapon('spread');
+    expect(player!.getEquippedWeapon()).toBe('spread');
+
+    player!.equipWeapon('rapid');
+    expect(player!.getEquippedWeapon()).toBe('rapid');
+  });
+
+  it('resetWeapon returns to cannon (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('spread');
+    expect(player!.getEquippedWeapon()).toBe('spread');
+
+    player!.resetWeapon();
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+  });
+
+  it('getWeaponDef returns the correct definition for the equipped weapon', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+
+    // Cannon: single bullet, 400 ms fire rate.
+    expect(player!.getWeaponDef().id).toBe('cannon');
+    expect(player!.getWeaponDef().offsets).toEqual([0]);
+    expect(player!.getWeaponDef().fireRateMs).toBe(400);
+
+    player!.equipWeapon('rapid');
+    expect(player!.getWeaponDef().id).toBe('rapid');
+    expect(player!.getWeaponDef().offsets).toEqual([0]);
+    expect(player!.getWeaponDef().fireRateMs).toBe(125);
+  });
+
+  it('tryFire fires once then blocks until cooldown elapses (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('cannon'); // 400 ms fire rate
+
+    // First call: ready to fire.
+    const fired1 = player!.tryFire(0.5); // 500 ms > 400 ms → fires
+    expect(fired1).toBe(true);
+
+    // Second call immediately: cooldown not elapsed.
+    const fired2 = player!.tryFire(0.1); // 100 ms < 400 ms → blocked
+    expect(fired2).toBe(false);
+
+    // After remaining cooldown: fires again.
+    const fired3 = player!.tryFire(0.35); // 350 ms more → 450 ms total ≥ 400 ms
+    expect(fired3).toBe(true);
+  });
+
+  it('tryFire with rapid weapon fires much faster (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('rapid'); // 125 ms fire rate
+
+    // At 125 ms intervals, should fire every time.
+    expect(player!.tryFire(0.125)).toBe(true);
+    expect(player!.tryFire(0.125)).toBe(true);
+    expect(player!.tryFire(0.125)).toBe(true);
+  });
+
+  it('tryFire with spread weapon blocks between shots (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('spread'); // 600 ms fire rate
+
+    // First shot at 600 ms.
+    expect(player!.tryFire(0.6)).toBe(true);
+    // Next shot blocked at 100 ms.
+    expect(player!.tryFire(0.1)).toBe(false);
+    // After 500 ms more (total 1100 ms ≥ 600 ms), fires again.
+    expect(player!.tryFire(0.5)).toBe(true);
+  });
+
+  it('tickFireCooldown decrements the cooldown (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    player!.equipWeapon('cannon');
+
+    // Fire once to set cooldown.
+    player!.tryFire(0.5);
+    expect(player!.getFireCooldown()).toBeGreaterThan(0);
+
+    // Tick cooldown forward.
+    player!.tickFireCooldown(100);
+    expect(player!.getFireCooldown()).toBeLessThanOrEqual(300);
+  });
+
+  it('isFireReady returns true when cooldown has elapsed', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player!.isFireReady()).toBe(true);
+
+    player!.tryFire(0.5);
+    expect(player!.isFireReady()).toBe(false);
+
+    player!.tickFireCooldown(500);
+    expect(player!.isFireReady()).toBe(true);
+  });
+});
+
+// ── Asteroids control scheme (AC1, AC2, AC3, AC5) ───────────────────
+
+describe('Player — Asteroids control scheme', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+  async function bootPlayerScene(): Promise<Phaser.Scene> {
+    booted = await bootScene([GymPlayer]);
+    return booted!.scene;
+  }
+
+  const playerOf = (scene: Phaser.Scene) => {
+    const children = scene.sys.displayList.getChildren();
+    return children.find((c) => c instanceof Player) as Player | undefined;
+  };
+
+  async function bootAsteroidsPlayer(): Promise<Player> {
+    const scene = await bootPlayerScene();
+    await tick();
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.setScheme('asteroids');
+    return player as Player;
+  }
+
+  it('setScheme swaps the pluggable movement model (AC5)', async () => {
+    const player = await bootAsteroidsPlayer();
+    expect(player.getScheme()).toBe('asteroids');
+
+    player.setScheme('fourDirectional');
+    expect(player.getScheme()).toBe('fourDirectional');
+  });
+
+  it('draws three engine ports on the hull when in Asteroids mode (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    const arcSpy = vi.spyOn(player, 'arc');
+    player.setConfig({ ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+
+    // Three engines: main rear + two forward-side thrusters.
+    expect(arcSpy).toHaveBeenCalledTimes(3);
+
+    // Port radius = shipSize × 0.08 × size. Default shipSize 20:
+    // main 1.6px; forward-side thrusters 20 × 0.08 × 0.7 = 1.12px (70%).
+    const radii = arcSpy.mock.calls.map((call) => call[2] as number);
+    expect(Math.max(...radii)).toBeCloseTo(1.6, 5);
+    const small = radii.filter((r) => r < 1.6);
+    expect(small).toHaveLength(2);
+    for (const r of small) expect(r).toBeCloseTo(1.12, 5);
+  });
+
+  it('rotates by rotationSpeed while a turn key is held (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Default rotationSpeed 3 rad/s → 1s turn right = 3 rad.
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(1, 960, 540);
+
+    expect(player.getHeading()).toBeCloseTo(3, 5);
+    expect(player.rotation).toBeCloseTo(3, 5);
+
+    // Turn left 1s back toward 0.
+    player.setInput({ forward: false, turnLeft: true, turnRight: false });
+    player.physicsTick(1, 960, 540);
+    expect(player.getHeading()).toBeCloseTo(0, 3);
+  });
+
+  it('wraps the rotation speed via the config slider (AC3)', async () => {
+    const player = await bootAsteroidsPlayer();
+    player.setConfig({
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsRotationSpeed: 6,
+    });
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(1, 960, 540);
+    expect(player.getHeading()).toBeCloseTo(6, 5);
+  });
+
+  it('thrusts in the facing direction when forward is held (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // No rotation → facing 0 (right).
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    const x0 = player.x;
+    player.physicsTick(1, 960, 540);
+    expect(player.x).toBeGreaterThan(x0); // moved right
+    expect(player.y).toBeCloseTo(270); // no vertical motion
+  });
+
+  it('accelerates along the current facing after turning (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Turn right for 0.5s → facing ≈ 1.5 rad; then thrust forward 1s.
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(0.5, 960, 540);
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.physicsTick(1, 960, 540);
+
+    // Velocity direction matches the facing angle (screen coords).
+    const { vx, vy } = player.getMovementState();
+    const heading = Math.atan2(vy, vx);
+    expect(heading).toBeCloseTo(1.5, 2);
+    expect(player.getHeading()).toBeCloseTo(1.5, 2);
+  });
+
+  it('fires only the main engine while forward thrust is held (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    expect(player.getFlameLengths()).toEqual({
+      main: 0,
+      leftSide: 0,
+      rightSide: 0,
+    });
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    // Only the main rear thruster fires at full size.
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBe(0);
+  });
+
+  it('fires only the right-side engine on turn-left (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: false, turnLeft: true, turnRight: false });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    // Side thrusters are 70% size.
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.main).toBe(0);
+  });
+
+  it('fires only the left-side engine on turn-right (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.leftSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.rightSide).toBe(0);
+    expect(lens.main).toBe(0);
+  });
+
+  it('fires main + right-side on forward + turn-left (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: true, turnRight: false });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.rightSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.leftSide).toBe(0);
+  });
+
+  it('fires main + left-side on forward + turn-right (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.leftSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.rightSide).toBe(0);
+  });
+
+  it('shows no flames while coasting and decays them on release (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 500);
+    expect(player.getFlameLengths().main).toBeGreaterThan(0);
+
+    // Release: flames decay to zero.
+    player.setInput({ forward: false, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 5000);
+    expect(player.getFlameLengths().main).toBe(0);
+  });
+
+  it('respawn resets position, velocity, rotation and flames (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: true });
+    player.physicsTick(1, 960, 540);
+    player.preUpdate(0, 500);
+
+    player.respawn(100, 100);
+    expect(player.x).toBe(100);
+    expect(player.y).toBe(100);
+    expect(player.getMovementState().vx).toBe(0);
+    expect(player.getMovementState().vy).toBe(0);
+    expect(player.rotation).toBe(0);
+    expect(player.getFlameLengths()).toEqual({
+      main: 0,
+      leftSide: 0,
+      rightSide: 0,
+    });
+  });
 });
