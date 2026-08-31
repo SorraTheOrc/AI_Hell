@@ -27,6 +27,8 @@ import type { EnemyConfig } from '../../core/enemyConfig';
 import type { FormationOffset } from '../../utils/formations';
 import { getFormationBuilder } from '../../utils/formations';
 import { PLAYER_SPAWN, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { Player } from '../../entities/Player';
+import { playSpawnSound } from '../../audio/effects';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
@@ -44,6 +46,8 @@ export const ENEMY_SAVE_ID = 'enemy-gym-save';
 export const ENEMY_SAVE_AS_ID = 'enemy-gym-save-as';
 export const ENEMY_SAVE_STATUS_ID = 'enemy-gym-save-status';
 export const ENEMY_SAVE_AS_INPUT_ID = 'enemy-gym-save-as-input';
+export const ENEMY_RESPAWN_ID = 'enemy-gym-respawn';
+export const ENEMY_TOGGLE_PLAYER_ID = 'enemy-gym-toggle-player';
 
 // Numeric slider ranges (mirrors GymPlayer SLIDER_RANGES pattern).
 const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -136,6 +140,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
   private pendingKey: string = GYM_ENEMIES_DEFAULT_KEY;
   private activeConfig: EnemyConfig = loadEnemyConfig(GYM_ENEMIES_DEFAULT_KEY);
   private panel: HTMLDivElement | null = null;
+  private _playerEnabled = true;
 
   constructor() {
     super(enemyConfigToFormationConfig(GYM_ENEMIES_DEFAULT_KEY));
@@ -183,6 +188,26 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     // Formation / shot enums as selects.
     panel.appendChild(this._selectRow('formationKind', [...FORMATION_KINDS]));
     panel.appendChild(this._selectRow('shotPattern', [...SHOT_PATTERNS]));
+
+    // Respawn + Player toggle row (controls that affect the live scene, not persistence).
+    const utilRow = document.createElement('div');
+    utilRow.className = 'gym-panel-actions';
+
+    const respawn = document.createElement('button');
+    respawn.id = ENEMY_RESPAWN_ID;
+    respawn.type = 'button';
+    respawn.textContent = 'Respawn';
+    respawn.addEventListener('click', () => this._onRespawn());
+
+    const togglePlayer = document.createElement('button');
+    togglePlayer.id = ENEMY_TOGGLE_PLAYER_ID;
+    togglePlayer.type = 'button';
+    togglePlayer.dataset['enabled'] = this._playerEnabled ? 'true' : 'false';
+    togglePlayer.textContent = this._playerEnabled ? 'Player: ON' : 'Player: OFF';
+    togglePlayer.addEventListener('click', () => this._onTogglePlayer());
+
+    utilRow.append(respawn, togglePlayer);
+    panel.appendChild(utilRow);
 
     // Save / Save As row.
     const actions = document.createElement('div');
@@ -367,6 +392,86 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     }
   }
 
+  // ── Respawn / Player toggle ─────────────────────────────────────
+
+  private _onRespawn(): void {
+    // Read the freshest panel values (sliders may have changed since last input event
+    // if the test set .value directly without dispatching — _readPanelValues covers it).
+    const cfg = this._readPanelValues();
+    this.activeConfig = cfg;
+
+    // Keep the protected formation seam in sync so future ticks use the new tuning.
+    const builder = getFormationBuilder(cfg.formationKind);
+    this.config.buildOffsets = builder;
+    this.config.count = cfg.count;
+    this.config.spacingX = cfg.spacingX;
+    this.config.spacingY = cfg.spacingY;
+    this.config.driftSpeed = cfg.driftSpeed;
+    this.config.startX = cfg.startX;
+    this.config.startY = cfg.startY;
+
+    // Tear down existing enemies and enemy bullets.
+    for (const e of this.entities) e.destroy();
+    (this.entities as EnemyEntity[]).length = 0;
+    for (const b of this.bullets) b.graphics.destroy();
+    (this.bullets as GymEnemiesBullet[]).length = 0;
+    // Also clear player bullets so the respawn is a clean slate.
+    for (const pb of this.playerBullets) pb.destroy();
+    (this.playerBullets as unknown[]).length = 0;
+
+    // Reset formation origin to the (possibly new) start.
+    this.formationBaseX = cfg.startX;
+    this.formationBaseY = cfg.startY;
+
+    // Spawn a fresh formation using the same factory the initial create() used.
+    // createEntity is closed over the original cfg at construction time, so
+    // rebuild a config-aware factory that captures the new cfg.
+    const offsets = builder(cfg.count);
+    for (const offset of offsets) {
+      const entity = createEnemyFromConfig(this, cfg, this.formationBaseX + offset.col * cfg.spacingX, this.formationBaseY + offset.row * cfg.spacingY, offset);
+      this.add.existing(entity);
+      this.entities.push(entity);
+    }
+    // Preserve SHOOT toggle state across the respawn.
+    for (const e of this.entities) e.shootEnabled = this.shootingEnabled;
+
+    // Refresh the status line so the count is correct.
+    const st = (this as unknown as { statusText?: Phaser.GameObjects.Text }).statusText;
+    st?.setText(`SCORE: n/a — ${cfg.displayName.toLowerCase()}: ${this.entities.length}`);
+    playSpawnSound();
+  }
+
+  private _onTogglePlayer(): void {
+    const btn = this.panel?.querySelector<HTMLButtonElement>(`#${ENEMY_TOGGLE_PLAYER_ID}`);
+    if (this._playerEnabled) {
+      // Turn OFF — despawn the ship and clear its bullets.
+      if (this.player) {
+        this.player.destroy();
+        (this as unknown as { player: Player | null }).player = null;
+      }
+      for (const pb of this.playerBullets) pb.destroy();
+      (this.playerBullets as unknown[]).length = 0;
+      this._playerEnabled = false;
+      if (btn) {
+        btn.dataset['enabled'] = 'false';
+        btn.textContent = 'Player: OFF';
+      }
+    } else {
+      // Turn ON — respawn at the canonical spawn point.
+      const p = new Player(this, { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y });
+      this.add.existing(p);
+      (this as unknown as { player: Player | null }).player = p;
+      // Keep private spawn coords in sync (accessed via any — they are private in the base).
+      (this as unknown as Record<string, unknown>)['playerSpawnX'] = PLAYER_SPAWN.x;
+      (this as unknown as Record<string, unknown>)['playerSpawnY'] = PLAYER_SPAWN.y;
+      this._playerEnabled = true;
+      if (btn) {
+        btn.dataset['enabled'] = 'true';
+        btn.textContent = 'Player: ON';
+      }
+    }
+  }
+
   // ── Save flows ─────────────────────────────────────────────────
 
   private _setStatus(text: string): void {
@@ -428,5 +533,9 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
 
   get currentConfig(): EnemyConfig {
     return { ...this.activeConfig };
+  }
+
+  get isPlayerEnabled(): boolean {
+    return this._playerEnabled;
   }
 }

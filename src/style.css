@@ -155,3 +155,29 @@ body {
 #enemy-gym-panel #enemy-gym-save-status {
   color: #7fdb8a;
 }
+
+#enemy-gym-panel #enemy-gym-respawn {
+  background: #2ecc71;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 14px;
+  color: #000;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#enemy-gym-panel #enemy-gym-toggle-player {
+  background: #444;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 5px 14px;
+  color: #ddd;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#enemy-gym-panel #enemy-gym-toggle-player[data-enabled="true"] {
+  background: #2a4a2a;
+  border-color: #4a8c4a;
+  color: #8fdb8f;
+}

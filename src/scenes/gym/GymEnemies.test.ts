@@ -247,6 +247,60 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-panel')).toBeNull();
   });
 
+  // ── Respawn + Player toggle ──────────────────────────────────
+
+  it('renders Respawn (green) and Player toggle buttons in the panel', async () => {
+    await bootWithKey('scout');
+    const respawn = document.getElementById('enemy-gym-respawn') as HTMLButtonElement | null;
+    const toggle = document.getElementById('enemy-gym-toggle-player') as HTMLButtonElement | null;
+    expect(respawn, 'enemy-gym-respawn missing').not.toBeNull();
+    expect(toggle, 'enemy-gym-toggle-player missing').not.toBeNull();
+    expect(respawn!.textContent.toLowerCase()).toContain('respawn');
+    expect(toggle!.textContent.toLowerCase()).toContain('player');
+  });
+
+  it('Respawn clears existing enemies and spawns a fresh formation at start', async () => {
+    const scene = await bootWithKey('scout');
+    const beforeIds = scene.formationEntities.slice();
+    // Explode one so the formation is no longer at full strength
+    findButton(scene, 'EXPLODE').emit('pointerdown');
+    expect(scene.aliveCount).toBe(beforeIds.length - 1);
+    (document.getElementById('enemy-gym-respawn') as HTMLButtonElement).click();
+    expect(scene.aliveCount).toBe(beforeIds.length);
+    expect(scene.formationEntities.length).toBe(beforeIds.length);
+    // New objects, not the old instances
+    for (const e of beforeIds) expect(scene.formationEntities).not.toContain(e);
+    expect(scene.formationX).toBeCloseTo(scene.currentConfig.startX, 0);
+    expect(scene.formationY).toBeCloseTo(scene.currentConfig.startY, 0);
+  });
+
+  it('Respawn honors live slider values (count/spacing) without requiring Save', async () => {
+    const scene = await bootWithKey('scout');
+    const beforeCount = scene.formationEntities.length;
+    const countInput = document.querySelector<HTMLInputElement>('input[data-config="count"]')!;
+    countInput.value = String(beforeCount + 2);
+    countInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.count).toBe(beforeCount + 2);
+    (document.getElementById('enemy-gym-respawn') as HTMLButtonElement).click();
+    expect(scene.formationEntities.length).toBe(beforeCount + 2);
+    expect(scene.aliveCount).toBe(beforeCount + 2);
+  });
+
+  it('Player toggle hides the player and clears its bullets; toggling again restores it', async () => {
+    const scene = await bootWithKey('scout');
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.isPlayerEnabled).toBe(true);
+    (document.getElementById('enemy-gym-toggle-player') as HTMLButtonElement).click();
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.isPlayerEnabled).toBe(false);
+    expect(document.getElementById('enemy-gym-toggle-player')!.textContent!.toLowerCase()).toContain('off');
+    expect(scene.getPlayerBullets().length).toBe(0);
+    (document.getElementById('enemy-gym-toggle-player') as HTMLButtonElement).click();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.isPlayerEnabled).toBe(true);
+    expect(document.getElementById('enemy-gym-toggle-player')!.textContent!.toLowerCase()).toContain('on');
+  });
+
   // ── Swarm AC3 — aimed burst hits player (AH-0MTFTJ01K000JG4I) ─────
   // Retired GymSwarm AC3 (epic AH-0MTFPDKDU006QUDC, one-off flake under
   // full-suite parallel load) preserved in the config-driven gym after
