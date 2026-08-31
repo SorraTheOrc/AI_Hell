@@ -55,6 +55,12 @@ export interface SwarmConfig {
   y: number;
   /** Offset within the swarm formation; the scene computes absolute position. */
   formationOffset: FormationOffset;
+  size?: number;
+  color?: number;
+  bulletColor?: number;
+  bulletSize?: number;
+  bulletSpeed?: number;
+  fireInterval?: number;
 }
 
 /**
@@ -82,6 +88,12 @@ export class Swarm extends Phaser.GameObjects.Container {
   private _alive = true;
   private _shootEnabled = false;
   private _lastBurstTime = 0;
+  private readonly _size: number;
+  private readonly _color: number;
+  private readonly _bulletColor: number;
+  private readonly _bulletSize: number;
+  private readonly _bulletSpeed: number;
+  private readonly _fireInterval: number;
 
   // Per-cluster phase — each cluster drifts with a different angular phase
   // so members weave around each other naturally.
@@ -103,6 +115,12 @@ export class Swarm extends Phaser.GameObjects.Container {
 
     this.formationOffset = config.formationOffset;
     this.clusterIdx = clusterIndex;
+    this._size = config.size ?? SWARM_SIZE;
+    this._color = config.color ?? SWARM_COLOR;
+    this._bulletColor = config.bulletColor ?? SWARM_BULLET_COLOR;
+    this._bulletSize = config.bulletSize ?? SWARM_BULLET_SIZE;
+    this._bulletSpeed = config.bulletSpeed ?? SWARM_BULLET_SPEED;
+    this._fireInterval = config.fireInterval ?? SWARM_BURST_INTERVAL;
 
     // Each cluster gets a unique angular phase so they weave differently.
     const phaseStep = (Math.PI * 2) / SWARM_CLUSTER_COUNT;
@@ -135,12 +153,12 @@ export class Swarm extends Phaser.GameObjects.Container {
    */
   private _drawBody(): void {
     this.bodyGraphics.clear();
-    const half = SWARM_SIZE / 2;
+    const half = this._size / 2;
 
     // lineStyle MUST come after clear() — Graphics is command-buffered and
     // clear() wipes prior styles (project gotcha, see §4.2 of the enemy doc).
-    this.bodyGraphics.lineStyle(2, SWARM_COLOR, 1);
-    this.bodyGraphics.fillStyle(SWARM_COLOR, 0.35);
+    this.bodyGraphics.lineStyle(2, this._color, 1);
+    this.bodyGraphics.fillStyle(this._color, 0.35);
 
     // Diamond: top → right → bottom → left → close.
     this.bodyGraphics.beginPath();
@@ -166,11 +184,11 @@ export class Swarm extends Phaser.GameObjects.Container {
       duration: 400,
       onUpdate: () => {
         const alpha = this.explosionGraphics.alpha;
-        const radius = SWARM_SIZE * 2 * (1 - alpha) + SWARM_SIZE * 0.25;
+        const radius = this._size * 2 * (1 - alpha) + this._size * 0.25;
         this.explosionGraphics.clear();
         this.explosionGraphics.lineStyle(
           Math.max(1, Math.round(3 * alpha)),
-          SWARM_COLOR,
+          this._color,
           alpha,
         );
         this.explosionGraphics.strokeCircle(0, 0, radius);
@@ -223,6 +241,8 @@ export class Swarm extends Phaser.GameObjects.Container {
     this.target.set(x, y);
   }
 
+  get effectiveSize(): number { return this._size; }
+  get effectiveColor(): number { return this._color; }
   get clusterIndex(): number {
     return this.clusterIdx;
   }
@@ -251,7 +271,7 @@ export class Swarm extends Phaser.GameObjects.Container {
    */
   tryFireBurstBullet(now: number): SwarmBullet | null {
     if (!this._shootEnabled || !this._alive) return null;
-    if (now - this._lastBurstTime < SWARM_BURST_INTERVAL) return null;
+    if (now - this._lastBurstTime < this._fireInterval) return null;
     this._lastBurstTime = now;
 
     const dx = this.target.x - this.x;
@@ -262,16 +282,16 @@ export class Swarm extends Phaser.GameObjects.Container {
     const angle = baseAngle + spread;
 
     const graphics = this.scene.add.graphics();
-    graphics.fillStyle(SWARM_BULLET_COLOR, 1);
-    graphics.fillCircle(0, 0, SWARM_BULLET_SIZE);
+    graphics.fillStyle(this._bulletColor, 1);
+    graphics.fillCircle(0, 0, this._bulletSize);
     graphics.setPosition(this.x, this.y);
     graphics.setDepth(3);
 
     return {
       graphics,
-      color: SWARM_BULLET_COLOR,
-      vx: Math.cos(angle) * SWARM_BULLET_SPEED,
-      vy: Math.sin(angle) * SWARM_BULLET_SPEED,
+      color: this._bulletColor,
+      vx: Math.cos(angle) * this._bulletSpeed,
+      vy: Math.sin(angle) * this._bulletSpeed,
     };
   }
 

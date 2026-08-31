@@ -69,6 +69,13 @@ export interface PhaserConfig {
   y: number;
   /** Offset within the orbital formation; used to determine orbit phase. */
   formationOffset: FormationOffset;
+  size?: number;
+  color?: number;
+  bulletColor?: number;
+  bulletSize?: number;
+  bulletSpeed?: number;
+  fireInterval?: number;
+  burstCount?: number;
 }
 
 /**
@@ -97,6 +104,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
   private _orbitalPhase: number;
   /** Aim point for the radial pattern — the fixed bottom-centre stand-in by default. */
   private readonly target: Phaser.Math.Vector2;
+  private readonly _size: number;
+  private readonly _colorNumber: number;
+  private readonly _bulletColor: number;
+  private readonly _bulletSize: number;
+  private readonly _bulletSpeed: number;
+  private readonly _fireInterval: number;
+  private readonly _burstCount: number;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -106,6 +120,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.formationOffset = config.formationOffset;
     // Each Phaser gets a unique orbital phase based on its offset index.
     this._orbitalPhase = this._computeOrbitalPhase(config.formationOffset);
+    this._size = config.size ?? PHASER_SIZE;
+    this._colorNumber = config.color ?? PHASER_COLOR_NUMBER;
+    this._bulletColor = config.bulletColor ?? PHASER_BULLET_COLOR;
+    this._bulletSize = config.bulletSize ?? PHASER_BULLET_SIZE;
+    this._bulletSpeed = config.bulletSpeed ?? PHASER_BULLET_SPEED;
+    this._fireInterval = config.fireInterval ?? PHASER_FIRE_INTERVAL;
+    this._burstCount = config.burstCount ?? 8;
     // Aim point defaults to the bottom-centre stand-in (simulated player).
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
@@ -120,7 +141,7 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
     // Inner core — solid magenta circle.
     this.coreGraphics = scene.add.graphics();
-    this.coreGraphics.fillStyle(PHASER_COLOR_NUMBER, 0.8);
+    this.coreGraphics.fillStyle(this._colorNumber, 0.8);
     this.coreGraphics.fillCircle(0, 0, PHASER_CORE_SIZE);
     this.coreGraphics.setDepth(2);
     this.add(this.coreGraphics);
@@ -149,10 +170,10 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
   private _drawBody(): void {
     this.ringGraphics.clear();
-    const half = PHASER_SIZE / 2;
+    const half = this._size / 2;
 
     // Style must be set AFTER clear(): Graphics is command-buffered.
-    this.ringGraphics.lineStyle(PHASER_RING_WIDTH, PHASER_COLOR_NUMBER, 1);
+    this.ringGraphics.lineStyle(PHASER_RING_WIDTH, this._colorNumber, 1);
 
     // Circular neon ring.
     this.ringGraphics.strokeCircle(0, 0, half + 4);
@@ -176,11 +197,11 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       duration: 400,
       onUpdate: () => {
         const alpha = this.explosionGraphics.alpha;
-        const radius = PHASER_SIZE * 2 * (1 - alpha) + PHASER_SIZE * 0.25;
+        const radius = this._size * 2 * (1 - alpha) + this._size * 0.25;
         this.explosionGraphics.clear();
         this.explosionGraphics.lineStyle(
           Math.max(1, Math.round(3 * alpha)),
-          PHASER_COLOR_NUMBER,
+          this._colorNumber,
           alpha,
         );
         this.explosionGraphics.strokeCircle(0, 0, radius);
@@ -221,7 +242,7 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       // The check in tryFireRadialBullets is (now - _lastFireTime < FIRE_INTERVAL).
       // Setting to (now - FIRE_INTERVAL) makes the difference equal to FIRE_INTERVAL,
       // so the condition fails and we proceed to start the tell.
-      this._lastFireTime = (this.scene as Phaser.Scene).time.now - PHASER_FIRE_INTERVAL;
+      this._lastFireTime = (this.scene as Phaser.Scene).time.now - this._fireInterval;
     }
   }
 
@@ -229,6 +250,9 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     return { ...this.formationOffset };
   }
 
+  get effectiveSize(): number { return this._size; }
+  get effectiveColor(): number { return this._colorNumber; }
+  get effectiveBurstCount(): number { return this._burstCount; }
   /** Whether the Phaser is currently in its tell (warning) state. */
   get isTelling(): boolean {
     return this._isTelling;
@@ -271,7 +295,7 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
    */
   tryFireRadialBullets(now: number): PhaserBullet[] {
     if (!this._shootEnabled || !this._alive) return [];
-    if (now - this._lastFireTime < PHASER_FIRE_INTERVAL) return [];
+    if (now - this._lastFireTime < this._fireInterval) return [];
 
     // Check if we're in tell state — if so, fire now.
     if (this._isTelling) {
@@ -287,15 +311,15 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
         this.target.y - this.y,
         this.target.x - this.x,
       );
-      const directions = Array.from({ length: 8 }, (_, k) => {
-        const angle = baseAngle + (k * Math.PI) / 4;
+      const directions = Array.from({ length: this._burstCount }, (_, k) => {
+        const angle = baseAngle + (k * Math.PI * 2) / this._burstCount;
         return { dx: Math.cos(angle), dy: Math.sin(angle) };
       });
 
       for (const dir of directions) {
         const graphics = this.scene.add.graphics();
-        graphics.fillStyle(PHASER_BULLET_COLOR, 1);
-        graphics.fillCircle(0, 0, PHASER_BULLET_SIZE);
+        graphics.fillStyle(this._bulletColor, 1);
+        graphics.fillCircle(0, 0, this._bulletSize);
         graphics.setPosition(this.x, this.y);
         graphics.setDepth(3);
 
@@ -303,9 +327,9 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
         const mag = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
         bullets.push({
           graphics,
-          color: PHASER_BULLET_COLOR,
-          vx: (dir.dx / mag) * PHASER_BULLET_SPEED,
-          vy: (dir.dy / mag) * PHASER_BULLET_SPEED,
+          color: this._bulletColor,
+          vx: (dir.dx / mag) * this._bulletSpeed,
+          vy: (dir.dy / mag) * this._bulletSpeed,
         });
       }
       return bullets;
@@ -364,9 +388,9 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.tellGraphics.clear();
     const progress = elapsed / PHASER_ADVANCE_CUE_DURATION;
     const alpha = 0.5 + 0.5 * Math.sin(progress * Math.PI * 4);
-    const radius = PHASER_SIZE + 8 + 4 * Math.sin(progress * Math.PI * 2);
+    const radius = this._size + 8 + 4 * Math.sin(progress * Math.PI * 2);
 
-    this.tellGraphics.lineStyle(2, PHASER_COLOR_NUMBER, alpha);
+    this.tellGraphics.lineStyle(2, this._colorNumber, alpha);
     this.tellGraphics.strokeCircle(0, 0, radius);
   }
 

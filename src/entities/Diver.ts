@@ -78,6 +78,13 @@ export interface DiverConfig {
   y: number;
   /** Offset within the formation. */
   formationOffset: FormationOffset;
+  size?: number;
+  color?: number;
+  bulletColor?: number;
+  bulletSize?: number;
+  bulletSpeed?: number;
+  fireInterval?: number;
+  burstCount?: number;
 }
 
 /**
@@ -120,6 +127,13 @@ export class Diver extends Phaser.GameObjects.Container {
   private _diveCol = 0;
   private _diveRow = 0;
   private _returnProgress = 0;
+  private readonly _size: number;
+  private readonly _color: number;
+  private readonly _bulletColor: number;
+  private readonly _bulletSize: number;
+  private readonly _bulletSpeed: number;
+  private readonly _fireInterval: number;
+  private readonly _burstCount: number;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -127,6 +141,13 @@ export class Diver extends Phaser.GameObjects.Container {
     super(scene, config.x, config.y);
 
     this.formationOffset = config.formationOffset;
+    this._size = config.size ?? DIVER_SIZE;
+    this._color = config.color ?? DIVER_COLOR;
+    this._bulletColor = config.bulletColor ?? DIVER_BULLET_COLOR;
+    this._bulletSize = config.bulletSize ?? DIVER_BULLET_SIZE;
+    this._bulletSpeed = config.bulletSpeed ?? DIVER_BULLET_SPEED;
+    this._fireInterval = config.fireInterval ?? DIVER_FIRE_INTERVAL;
+    this._burstCount = config.burstCount ?? DIVER_BURST_COUNT;
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
       scene.scale.height - 40,
@@ -134,7 +155,7 @@ export class Diver extends Phaser.GameObjects.Container {
 
     // Body — medium dart shape in yellow.
     this.bodyGraphics = scene.add.graphics();
-    this.bodyGraphics.lineStyle(2, DIVER_COLOR, 1);
+    this.bodyGraphics.lineStyle(2, this._color, 1);
     this._drawBody();
     this.bodyGraphics.setDepth(1);
     this.add(this.bodyGraphics);
@@ -155,8 +176,8 @@ export class Diver extends Phaser.GameObjects.Container {
     // before clear(), so the dart was stroked with the default style
     // and rendered invisible in a real browser (headless tests cannot
     // see pixels, so the suite stayed green).
-    this.bodyGraphics.lineStyle(2, DIVER_COLOR, 1);
-    const half = DIVER_SIZE / 2;
+    this.bodyGraphics.lineStyle(2, this._color, 1);
+    const half = this._size / 2;
 
     // Dart shape — elongated chevron pointing "up" (nose at negative y in
     // local space). Positive container rotation then aligns the nose toward
@@ -181,11 +202,11 @@ export class Diver extends Phaser.GameObjects.Container {
       duration: 450,
       onUpdate: () => {
         const alpha = this.explosionGraphics.alpha;
-        const radius = DIVER_SIZE * 2 * (1 - alpha) + DIVER_SIZE * 0.25;
+        const radius = this._size * 2 * (1 - alpha) + this._size * 0.25;
         this.explosionGraphics.clear();
         this.explosionGraphics.lineStyle(
           Math.max(1, Math.round(3 * alpha)),
-          DIVER_COLOR,
+          this._color,
           alpha,
         );
         this.explosionGraphics.strokeCircle(0, 0, radius);
@@ -203,6 +224,10 @@ export class Diver extends Phaser.GameObjects.Container {
   }
 
   // ── Public state ─────────────────────────────────────────────────
+
+  get effectiveSize(): number { return this._size; }
+  get effectiveColor(): number { return this._color; }
+  get effectiveBurstCount(): number { return this._burstCount; }
 
   get alive(): boolean {
     return this._alive;
@@ -298,7 +323,7 @@ export class Diver extends Phaser.GameObjects.Container {
    */
   tryFireSpreadBurst(now: number): DiverBullet[] {
     if (!this._shootEnabled || !this._alive) return [];
-    if (now - this._lastFireTime < DIVER_FIRE_INTERVAL) return [];
+    if (now - this._lastFireTime < this._fireInterval) return [];
     this._lastFireTime = now;
 
     const bullets: DiverBullet[] = [];
@@ -309,21 +334,21 @@ export class Diver extends Phaser.GameObjects.Container {
     // Aim direction: straight down (toward bottom-centre / player).
     const baseAngle = 0; // straight down in screen coords (y increases downward)
 
-    for (let i = 0; i < DIVER_BURST_COUNT; i++) {
+    for (let i = 0; i < this._burstCount; i++) {
       // Distribute projectiles evenly across the spread angle.
-      const t = (i / (DIVER_BURST_COUNT - 1 || 1)) * 2 - 1; // -1 to +1
+      const t = (i / (this._burstCount - 1 || 1)) * 2 - 1; // -1 to +1
       const angle = baseAngle + t * (DIVER_BURST_SPREAD_ANGLE / 2);
 
-      const vx = Math.sin(angle) * DIVER_BULLET_SPEED;
-      const vy = Math.cos(angle) * DIVER_BULLET_SPEED;
+      const vx = Math.sin(angle) * this._bulletSpeed;
+      const vy = Math.cos(angle) * this._bulletSpeed;
 
       const graphics = this.scene.add.graphics();
-      graphics.fillStyle(DIVER_BULLET_COLOR, 1);
-      graphics.fillCircle(0, 0, DIVER_BULLET_SIZE);
+      graphics.fillStyle(this._bulletColor, 1);
+      graphics.fillCircle(0, 0, this._bulletSize);
       graphics.setPosition(this.x, this.y);
       graphics.setDepth(3);
 
-      bullets.push({ graphics, color: DIVER_BULLET_COLOR, vx, vy });
+      bullets.push({ graphics, color: this._bulletColor, vx, vy });
     }
     return bullets;
   }
