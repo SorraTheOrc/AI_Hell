@@ -37,8 +37,10 @@
 > `AsteroidsInputHandler` in `src/utils/movementModel.ts`). The table above
 > describes the **4-directional scheme (default)**. Under the **Asteroids
 > scheme** the movement keys are re-mapped: `W`/Arrow Up = **forward thrust**
-> (in the current facing direction), `A`/Arrow Left = **turn left**, `S`/Arrow
+> (in the current facing direction), `A`/Arrow Left = **turn left**, `D`/Arrow
 > Right = **turn right** (rotation 3 rad/s) — never 4-directional movement.
+> Note: turn right is bound to **D** (not S); S remains the 4-directional
+> backward thrust binding only.
 
 ### 2.2 Movement
 

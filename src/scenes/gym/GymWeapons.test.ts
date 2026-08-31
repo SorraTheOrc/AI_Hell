@@ -437,22 +437,22 @@ describe('GymWeapons — scheme-aware input routing (parent AC1/AC2/AC3)', () =>
     expect(player.y).toBeCloseTo(y0, 5);
   });
 
-  it('asteroids: A/Left = turnLeft and S/Right = turnRight — the ship rotates', async () => {
+  it('asteroids: A/Left = turnLeft and D/Right = turnRight — the ship rotates (AH-0MTFORPJ2003RWWQ)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: A → turnLeft (CCW, wraps to 2π−0.75); S → turnRight (+0.75).
+    // WASD path: A → turnLeft (CCW, wraps to 2π−0.75); D → turnRight (+0.75).
     scene.getWasd()!.A.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.A.isDown = false;
     expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
 
     resetToAsteroids(player);
-    scene.getWasd()!.S.isDown = true;
+    scene.getWasd()!.D.isDown = true;
     scene.tick(0.25);
-    scene.getWasd()!.S.isDown = false;
+    scene.getWasd()!.D.isDown = false;
     expect(player.getHeading()).toBeCloseTo(0.75, 3);
 
     // Arrow path: Left → turnLeft; Right → turnRight.

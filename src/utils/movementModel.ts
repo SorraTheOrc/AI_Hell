@@ -269,14 +269,16 @@ export class AsteroidsModel implements MovementModel {
     _componentThrust: { dx: number; dy: number } | null,
   ): Array<{ engine: string; scale: number }> {
     const a = input as AsteroidsInput;
-    if (!a.forward) return [];
-    // All three rear-facing engines fire while forward thrust is held:
-    // the main rear thruster plus the two forward-side thrusters.
-    return [
-      { engine: 'main', scale: 1 },
-      { engine: 'leftSide', scale: 1 },
-      { engine: 'rightSide', scale: 1 },
-    ];
+    const engines: Array<{ engine: string; scale: number }> = [];
+    // Key-specific engine selection (AH-0MTFORPJ2003RWWQ):
+    //   forward → main rear thruster
+    //   turnLeft → right-side thruster (opposite the turn direction)
+    //   turnRight → left-side thruster
+    // Combinations union the entries (e.g. forward+turn → main + side).
+    if (a.forward) engines.push({ engine: 'main', scale: 1 });
+    if (a.turnLeft) engines.push({ engine: 'rightSide', scale: 1 });
+    if (a.turnRight) engines.push({ engine: 'leftSide', scale: 1 });
+    return engines;
   }
 
   getEngineSoundLevel(_state: MovementState, input: ControlInput): number {
@@ -317,7 +319,10 @@ export class AsteroidsInputHandler implements InputHandler {
     return {
       forward: (c?.up?.isDown ?? false) || (w?.W?.isDown ?? false),
       turnLeft: (c?.left?.isDown ?? false) || (w?.A?.isDown ?? false),
-      turnRight: (c?.right?.isDown ?? false) || (w?.S?.isDown ?? false),
+      // turnRight: D key (WASD) + Right cursor arrow — S is NOT a turn-right
+      // key in the Asteroids scheme (it is a 4-directional backward thrust
+      // binding only). (AH-0MTFORPJ2003RWWQ)
+      turnRight: (c?.right?.isDown ?? false) || (w?.D?.isDown ?? false),
     };
   }
 }

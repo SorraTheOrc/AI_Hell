@@ -464,16 +464,16 @@ describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)'
     expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
   });
 
-  it('asteroids: S/Right = turnRight — the ship rotates clockwise', async () => {
+  it('asteroids: D/Right = turnRight — the ship rotates clockwise (AH-0MTFORPJ2003RWWQ)', async () => {
     const scene = await bootWithPlayer();
     const player = scene.getPlayer()!;
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: S → turnRight (+0.75 rad).
-    scene.getWasd()!.S.isDown = true;
+    // WASD path: D → turnRight (+0.75 rad).
+    scene.getWasd()!.D.isDown = true;
     scene.tick(0.25);
-    scene.getWasd()!.S.isDown = false;
+    scene.getWasd()!.D.isDown = false;
     expect(player.getHeading()).toBeCloseTo(0.75, 3);
 
     // Arrow path: Right → turnRight as well.

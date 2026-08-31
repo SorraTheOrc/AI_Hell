@@ -11,9 +11,10 @@
  * - `fourDirectional` (default): WASD/arrows map to up/down/left/right
  *   thrust; four cardinal engine ports fire flames opposite the thrust.
  * - `asteroids`: W/Up = forward thrust in the ship's facing direction,
- *   A/Left and S/Right rotate the ship; three engines render (main rear
- *   thruster + two 70% forward-side thrusters) and fire while forward
- *   thrust is held, visually rotating with the hull.
+ *   A/Left and D/Right rotate the ship; three engines render (main rear
+ *   thruster + two 70% forward-side thrusters) and fire key-specifically
+ *   (forward→main, turnLeft→rightSide, turnRight→leftSide), visually
+ *   rotating with the hull. (AH-0MTFORPJ2003RWWQ)
  *
  * Ship tuning values (size, colours, flame, thrust, max speed, scheme)
  * come from the config module (`core/config.ts`) — either injected at

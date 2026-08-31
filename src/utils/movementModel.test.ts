@@ -207,9 +207,16 @@ describe('AsteroidsInputHandler', () => {
     expect(input).toEqual({ forward: false, turnLeft: true, turnRight: false });
   });
 
-  it('maps S key to turnRight', () => {
+  it('maps S key to nothing (Asteroids scheme; S is 4-dir only)', () => {
     const input = handler.mapInput({
       wasd: { W: { isDown: false }, A: { isDown: false }, S: { isDown: true }, D: { isDown: false } },
+    } as unknown as unknown);
+    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: false });
+  });
+
+  it('maps D key to turnRight (AH-0MTFORPJ2003RWWQ)', () => {
+    const input = handler.mapInput({
+      wasd: { W: { isDown: false }, A: { isDown: false }, S: { isDown: false }, D: { isDown: true } },
     } as unknown as unknown);
     expect(input).toEqual({ forward: false, turnLeft: false, turnRight: true });
   });
@@ -315,18 +322,13 @@ describe('engine activity (VFX integration)', () => {
     expect(activity).toContainEqual({ engine: 'left', scale: 0.5 });
   });
 
-  it('asteroids fires all three engines on forward thrust (AC2 VFX)', () => {
+  it('asteroids fires only the main engine on forward thrust (AC1 VFX)', () => {
     const activity = asteroids.getEngineActivity(
       idleState,
       asteroidsInput(true),
       null,
     );
-    expect(activity.map((a) => a.engine).sort()).toEqual([
-      'leftSide',
-      'main',
-      'rightSide',
-    ]);
-    for (const a of activity) expect(a.scale).toBe(1);
+    expect(activity).toEqual([{ engine: 'main', scale: 1 }]);
   });
 
   it('asteroids fires no engines when idle (AC2 VFX)', () => {
@@ -338,13 +340,46 @@ describe('engine activity (VFX integration)', () => {
     expect(activity).toEqual([]);
   });
 
-  it('asteroids turning alone produces no flames (AC1)', () => {
+  it('asteroids turnLeft fires only the right-side engine (AC1)', () => {
     const activity = asteroids.getEngineActivity(
       idleState,
       asteroidsInput(false, true, false),
       null,
     );
-    expect(activity).toEqual([]);
+    expect(activity).toEqual([{ engine: 'rightSide', scale: 1 }]);
+  });
+
+  it('asteroids turnRight fires only the left-side engine (AC1)', () => {
+    const activity = asteroids.getEngineActivity(
+      idleState,
+      asteroidsInput(false, false, true),
+      null,
+    );
+    expect(activity).toEqual([{ engine: 'leftSide', scale: 1 }]);
+  });
+
+  it('asteroids forward + turnLeft fires main + rightSide (AC2)', () => {
+    const activity = asteroids.getEngineActivity(
+      idleState,
+      asteroidsInput(true, true, false),
+      null,
+    );
+    expect(activity).toEqual([
+      { engine: 'main', scale: 1 },
+      { engine: 'rightSide', scale: 1 },
+    ]);
+  });
+
+  it('asteroids forward + turnRight fires main + leftSide (AC2)', () => {
+    const activity = asteroids.getEngineActivity(
+      idleState,
+      asteroidsInput(true, false, true),
+      null,
+    );
+    expect(activity).toEqual([
+      { engine: 'main', scale: 1 },
+      { engine: 'leftSide', scale: 1 },
+    ]);
   });
 });
 

@@ -938,7 +938,7 @@ describe('Player — Asteroids control scheme', () => {
     expect(player.getHeading()).toBeCloseTo(1.5, 2);
   });
 
-  it('fires all three engines while forward thrust is held (AC2)', async () => {
+  it('fires only the main engine while forward thrust is held (AC1)', async () => {
     const player = await bootAsteroidsPlayer();
 
     expect(player.getFlameLengths()).toEqual({
@@ -951,11 +951,59 @@ describe('Player — Asteroids control scheme', () => {
     player.preUpdate(0, 500);
 
     const lens = player.getFlameLengths();
-    // Main rear fires at full size; the two forward-side thrusters are
-    // 70% size → their flame max is 70% of the main (AC2).
+    // Only the main rear thruster fires at full size.
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBe(0);
+  });
+
+  it('fires only the right-side engine on turn-left (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: false, turnLeft: true, turnRight: false });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    // Side thrusters are 70% size.
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.main).toBe(0);
+  });
+
+  it('fires only the left-side engine on turn-right (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.leftSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.rightSide).toBe(0);
+    expect(lens.main).toBe(0);
+  });
+
+  it('fires main + right-side on forward + turn-left (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: true, turnRight: false });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.rightSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.leftSide).toBe(0);
+  });
+
+  it('fires main + left-side on forward + turn-right (AC2)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
     expect(lens.main).toBeCloseTo(15, 2);
     expect(lens.leftSide).toBeCloseTo(15 * 0.7, 2);
-    expect(lens.rightSide).toBeCloseTo(15 * 0.7, 2);
+    expect(lens.rightSide).toBe(0);
   });
 
   it('shows no flames while coasting and decays them on release (AC1)', async () => {
