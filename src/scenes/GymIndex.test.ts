@@ -16,7 +16,7 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../utils/gymNavigation';
 import { GymIndex, GYM_INDEX_TITLE } from './GymIndex';
-import { GymScout } from './gym/GymScout';
+import { GymBoss } from './gym/GymBoss';
 
 /** Finds an on-screen text by label. */
 function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -58,26 +58,18 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // leading "Gym" and are sorted alphabetically.
     // GymEnemies is no longer listed as a bare scene — individual enemies
     // appear via listedEnemyScenes instead (one entry per EnemyConfig).
+    // 5 legacy per-enemy gyms (Scout/Diver/Tank/Phaser/Swarm) have been retired
+    // (AH-0MTHG5JVP006U6K7) — individual enemies now appear via listedEnemyScenes.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Boss',
-      'Diver',
-      'Phaser',
       'Player',
       'PowerUps',
-      'Scout',
-      'Swarm',
-      'Tank',
       'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBoss',
-      'GymDiver',
-      'GymPhaser',
       'GymPlayer',
       'GymPowerUps',
-      'GymScout',
-      'GymSwarm',
-      'GymTank',
       'GymWeapons',
     ]);
     // Enemy section: one entry per seed config (+ any Save As entries)
@@ -101,11 +93,11 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       expect(booted!.game.scene.getScene(key)).not.toBeNull();
     }
 
-    // Click the "Scout" entry — the GymScout scene should start.
-    findText(scene, 'Scout').emit('pointerdown');
+    // Click the "Boss" entry — the GymBoss scene should start.
+    findText(scene, 'Boss').emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
 
-    expect(booted!.game.scene.isActive('GymScout')).toBe(true);
+    expect(booted!.game.scene.isActive('GymBoss')).toBe(true);
   });
 });
 
@@ -121,18 +113,18 @@ describe('GymIndex — back to index from a gym scene (AC5)', () => {
   it('the ← INDEX button on a gym scene switches back to GymIndex', async () => {
     // Boot the gym scene with the index registered alongside it (the first
     // class auto-starts, the rest are available for scene.start).
-    booted = await bootScene([GymScout, GymIndex]);
-    const scout = booted!.scene as GymScout;
-    expect(scout.sys.isActive()).toBe(true);
+    booted = await bootScene([GymBoss, GymIndex]);
+    const boss = booted!.scene as GymBoss;
+    expect(boss.sys.isActive()).toBe(true);
 
     expect(booted!.game.scene.isActive(GYM_INDEX_KEY)).toBe(false);
 
     // Pointer-press the shared back button.
-    findText(scout, BACK_TO_INDEX_LABEL).emit('pointerdown');
+    findText(boss, BACK_TO_INDEX_LABEL).emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
 
     expect(booted!.game.scene.isActive(GYM_INDEX_KEY)).toBe(true);
-    expect(booted!.game.scene.isActive('GymScout')).toBe(false);
+    expect(booted!.game.scene.isActive('GymBoss')).toBe(false);
   });
 });
 describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
@@ -150,18 +142,14 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     const idx = booted.scene as GymIndex;
     const scout = idx.listedEnemyScenes.find((s) => s.enemyKey === 'scout');
     expect(scout).toBeDefined();
-    // "Scout" label appears twice (bare GymScout + enemy config) until the
-    // per-enemy gyms are retired. Pick the enemy-section row (last match,
-    // below the non-enemy block). Reverse scan finds the enemy row.
+    // Enemy "Scout" row is unique after retirement; bare GymScout no longer exists.
     const matches = (idx.children.list as Phaser.GameObjects.Text[]).filter(
       (c) => c instanceof Phaser.GameObjects.Text && c.text === scout!.label,
     );
-    expect(matches.length, `expected duplicate "Scout" rows (legacy + enemy)`).toBeGreaterThanOrEqual(2);
-    // Enemy rows are appended after non-enemy rows, so the last "Scout" is the enemy one.
-    // Fall back to getData('enemyKey') when available (future-proof after retirement).
+    expect(matches.length).toBeGreaterThanOrEqual(1);
     const enemyRow =
       matches.find((c) => (c as unknown as { getData?: (k: string) => unknown }).getData?.('enemyKey') === 'scout') ??
-      matches[matches.length - 1]!;
+      matches[0]!;
     enemyRow.emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
     expect(booted.game.scene.isActive('GymEnemies')).toBe(true);
