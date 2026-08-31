@@ -37,6 +37,9 @@ describe('GymEnemies — single reusable enemy gym', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    // Also remove any GymPlayer panel leakage if overlapping test runs
+    document.getElementById('gym-config-panel')?.remove();
   });
 
   async function bootWithKey(enemyKey?: string): Promise<GymEnemies> {
@@ -161,4 +164,84 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(found, 'GymEnemies not discovered by glob').toBeDefined();
     expect(found!.label.toLowerCase()).toContain('enemies');
   });
+
+  // ── Editor panel (AH-0MTHG5BIB006PP0P) ──────────────────────────
+
+  it('renders the editor panel with sliders/selects/colour and Save/Save As controls queryable by DOM', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel');
+    expect(panel, 'enemy-gym-panel missing').not.toBeNull();
+    expect(panel!.querySelector('input[data-config="driftSpeed"]')).not.toBeNull();
+    expect(panel!.querySelector('input[data-config="spacingX"]')).not.toBeNull();
+    expect(panel!.querySelector('input[data-config="count"]')).not.toBeNull();
+    expect(panel!.querySelector('input[data-config="fireInterval"]')).not.toBeNull();
+    expect(panel!.querySelector('input[data-config="bulletSpeed"]')).not.toBeNull();
+    expect(panel!.querySelector('select[data-config="formationKind"]')).not.toBeNull();
+    expect(panel!.querySelector('select[data-config="shotPattern"]')).not.toBeNull();
+    expect(panel!.querySelector('input[data-config="color"]')).not.toBeNull();
+    expect(document.getElementById('enemy-gym-save')).not.toBeNull();
+    expect(document.getElementById('enemy-gym-save-as')).not.toBeNull();
+    expect(document.getElementById('enemy-gym-save-as-input')).not.toBeNull();
+    expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
+  });
+
+  it('panel input live-updates in-memory config and is observable via currentConfig', async () => {
+    const scene = await bootWithKey('scout');
+    const input = document.querySelector<HTMLInputElement>('input[data-config="driftSpeed"]')!;
+    const before = scene.currentConfig.driftSpeed;
+    input.value = String(before + 20);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.driftSpeed).toBe(before + 20);
+  });
+
+  it('Save overwrites the active config and round-trips via loadEnemyConfig', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const input = document.querySelector<HTMLInputElement>('input[data-config="spacingX"]')!;
+    input.value = '55';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
+    expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('Saved');
+    expect(lec('scout').spacingX).toBe(55);
+  });
+
+  it('Save As creates a new entry and is discoverable; round-trip holds', async () => {
+    const { loadEnemyConfig: lec2, listEnemyConfigKeys: lkeys } = await import('../../core/enemyConfig');
+    const scene = await bootWithKey('scout');
+    (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'My New Enemy';
+    (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
+    expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('my-new-enemy');
+    expect(lkeys()).toContain('my-new-enemy');
+    expect(lec2('my-new-enemy').displayName).toBe('My New Enemy');
+    expect(scene.activeEnemyKey).toBe('my-new-enemy');
+    expect(lec2('my-new-enemy').spacingX).toBe(scene.currentConfig.spacingX);
+  });
+
+  it('Save As validates empty name and shows an error without creating a file', async () => {
+    const { listEnemyConfigKeys: lkeys2 } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const before = lkeys2().slice();
+    (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = '   ';
+    (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
+    expect(document.getElementById('enemy-gym-save-status')!.textContent!.toLowerCase()).toContain('must not be empty');
+    expect(lkeys2()).toEqual(before);
+  });
+
+  it('Save As validates duplicate key and shows an error without overwriting', async () => {
+    const { loadEnemyConfig: lec3 } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const original = lec3('scout');
+    (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'scout';
+    (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
+    expect(document.getElementById('enemy-gym-save-status')!.textContent!.toLowerCase()).toContain('already exists');
+    expect(lec3('scout')).toEqual(original);
+  });
+
+  it('SHUTDOWN removes the panel from the DOM (no leakage)', async () => {
+    const scene = await bootWithKey('scout');
+    expect(document.getElementById('enemy-gym-panel')).not.toBeNull();
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(document.getElementById('enemy-gym-panel')).toBeNull();
+  });
+
 });
