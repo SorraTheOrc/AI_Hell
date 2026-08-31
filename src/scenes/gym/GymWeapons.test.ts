@@ -613,3 +613,52 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     expect(player.getEquippedWeapon()).toBe('cannon');
   });
 });
+
+describe('GymWeapons — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('AC2/AC4 — each weapon drop draws Graphics (bubble + icon) scaled with its lifecycle; despawn destroys them', async () => {
+    const scene = await bootWeapons();
+    const drop = scene.spawnDrop('spread', 480, 270);
+    const graphics = drop.graphics;
+
+    // Bubble+icon graphics created, on the display list, at scale 0.
+    expect(graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
+    expect(scene.children.list).toContain(graphics);
+    expect(graphics.scaleX).toBeCloseTo(0, 5);
+
+    // Grows with the lifecycle: after the 0.5 s grow window → full scale.
+    scene.advanceDrops(0.5);
+    expect(drop.powerUp.currentScale).toBeCloseTo(1, 5);
+    expect(graphics.scaleX).toBeCloseTo(1, 5);
+
+    // Shrinks and is destroyed when the drop despawns (7 s lifetime).
+    scene.advanceDrops(6.6); // grow 0.5 + hold + shrink ⇒ despawned by 7.1 s
+    expect(drop.powerUp.state).toBe('despawned');
+    expect(graphics.active).toBe(false); // destroyed — removed from the scene
+    expect(scene.children.list).not.toContain(graphics);
+  });
+
+  it('AC3 — at full scale the weapon pickup radius is doubled: a drop 30 px away (between the old 26 px and new 42 px radii) is now collectible', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // 30 px right of the ship; ship hull 10 + drop radius 32 = 42 ≥ 30.
+    scene.spawnDrop('dual', 510, 270);
+    scene.advanceDrops(0.5); // grow to full size
+    scene.collectOverlapping();
+
+    expect(player.getEquippedWeapon()).toBe('dual');
+  });
+});

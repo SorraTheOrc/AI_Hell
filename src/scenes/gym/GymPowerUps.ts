@@ -30,7 +30,8 @@ import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
-import { PowerUpId } from '../../powerups/types';
+import { getPowerUpById, PowerUpId } from '../../powerups/types';
+import { drawPowerUpDrop } from '../../powerups/icons';
 import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
@@ -62,7 +63,7 @@ const SPAWN_POSITIONS: readonly { x: number; y: number }[] = [
   { x: 720, y: 405 },
 ];
 
-/** A live drop on the field: pure lifecycle + its world position. */
+/** A live drop on the field: pure lifecycle + its world position + visuals. */
 export interface ActiveDrop {
   /** The drop's lifecycle/state (grow/hold/shrink/collect). */
   powerUp: PowerUp;
@@ -70,6 +71,8 @@ export interface ActiveDrop {
   x: number;
   /** World y position. */
   y: number;
+  /** Graphics object rendering the drop's glowing bubble + icon (scaled by lifecycle). */
+  graphics: Phaser.GameObjects.Graphics;
 }
 
 export class GymPowerUps extends Phaser.Scene {
@@ -165,7 +168,7 @@ export class GymPowerUps extends Phaser.Scene {
     const id = this.roundRobinSpawner.next();
     const pos = SPAWN_POSITIONS[this.spawnIndex % SPAWN_POSITIONS.length];
     this.spawnIndex += 1;
-    this.drops.push({ powerUp: new PowerUp(id), x: pos.x, y: pos.y });
+    this._spawnDrop(id, pos.x, pos.y);
   }
 
   /**
@@ -173,7 +176,21 @@ export class GymPowerUps extends Phaser.Scene {
    * can place a drop deterministically under the ship.
    */
   spawnDrop(id: PowerUpId, x: number, y: number): ActiveDrop {
-    const drop: ActiveDrop = { powerUp: new PowerUp(id), x, y };
+    return this._spawnDrop(id, x, y);
+  }
+
+  private _spawnDrop(id: PowerUpId, x: number, y: number): ActiveDrop {
+    const graphics = this.add.graphics();
+    // Bubble + icon drawn in local space centred at the Graphics' own
+    // origin (0,0) so `setScale` grows it about its centre; position the
+    // Graphics at the drop's world position.
+    graphics.setPosition(x, y);
+    const entry = getPowerUpById(id);
+    drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
+    // Start at scale 0 — the lifecycle grows it in.
+    graphics.setScale(0);
+
+    const drop: ActiveDrop = { powerUp: new PowerUp(id), x, y, graphics };
     this.drops.push(drop);
     return drop;
   }
@@ -183,8 +200,13 @@ export class GymPowerUps extends Phaser.Scene {
     const kept: ActiveDrop[] = [];
     for (const drop of this.drops) {
       drop.powerUp.advance(dt);
+      // Bubble + icon scale tracks the lifecycle scale factor (0 → 1 → 0).
+      drop.graphics.setScale(drop.powerUp.currentScale);
       if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
         kept.push(drop);
+      } else {
+        // Fully despawned — remove the drop's visuals from the display list.
+        drop.graphics.destroy();
       }
     }
     this.drops = kept;
@@ -247,6 +269,9 @@ export class GymPowerUps extends Phaser.Scene {
     const effect = drop.powerUp.tryCollect();
     if (!effect) return;
     this.effectsRegistry.applyCollect(effect.id as PowerUpId);
+
+    // Remove the drop's visuals (bubble + icon) from the display list.
+    drop.graphics.destroy();
 
     // AC — non-combat pickup activation audio: each pickup type plays
     // a unique activation sound on collection (previously none played

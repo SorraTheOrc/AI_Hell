@@ -60,7 +60,21 @@ export const POWER_UP_COLLECTION_THRESHOLD = 3;
 export const POWER_UP_SPAWN_INTERVAL = 5;
 
 /** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. */
-export const POWER_UP_DROP_SIZE = 16;
+export const POWER_UP_DROP_SIZE = 32;
+
+// ── Power-up drop bubble visuals (GDD §4.4, §7.1) ─────────────────
+// Tunable feel constants for the glowing bubble drawn around every
+// on-field drop (AH-0MTG5MGPZ00986B4). The bubble is purely visual:
+// the collection radius stays `DROP_SIZE * scale + hull`.
+
+/** Bubble ring radius as a multiple of the drop size (1.4× the drop). */
+export const POWER_UP_BUBBLE_RADIUS_FACTOR = 1.4;
+
+/** Stroke width (px) of the bubble ring. */
+export const POWER_UP_BUBBLE_STROKE_WIDTH = 2;
+
+/** Alpha of the bubble's soft outer glow halo (0–1). */
+export const POWER_UP_BUBBLE_GLOW_ALPHA = 0.35;
 
 // ── P9 Magnet (GDD §4.4) ────────────────────────────────────────────
 
@@ -93,7 +107,8 @@ export const WEAPON_DROP_LIFETIME = 7;
 export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
 
 /** Base radius of a weapon drop on the field (px), scaled by lifecycle.
- * Same as non-combat drops.
+ * Mirrors `POWER_UP_DROP_SIZE` (doubled to 32 px, AH-0MTG5MGPZ00986B4) so
+ * weapon drops render at the same enlarged size as non-combat drops.
  */
 export const WEAPON_DROP_SIZE = POWER_UP_DROP_SIZE;
 

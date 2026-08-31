@@ -45,7 +45,7 @@ import {
   createBulletsFromHeading,
   angleToVelocity,
 } from '../../utils/weapons';
-import { drawWeaponIcon, WeaponDropIconId } from '../../powerups/icons';
+import { drawWeaponDrop, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
@@ -277,11 +277,11 @@ export class GymWeapons extends Phaser.Scene {
 
   private _spawnDrop(weaponType: DropType, x: number, y: number): ActiveDrop {
     const graphics = this.add.graphics();
-    // Icon drawn in local space centred at its own origin (0,0) so
+    // Bubble + icon drawn in local space centred at its own origin (0,0) so
     // `setScale` grows it about its centre; position the graphics at
     // the drop's world position.
     graphics.setPosition(x, y);
-    drawWeaponIcon(graphics, weaponType as WeaponDropIconId, 0, 0, WEAPON_DROP_SIZE);
+    drawWeaponDrop(graphics, weaponType as WeaponDropIconId, 0, 0, WEAPON_DROP_SIZE);
     // Start at scale 0 — the lifecycle grows it in (AC3).
     graphics.setScale(0);
 

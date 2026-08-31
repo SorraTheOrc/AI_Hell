@@ -10,6 +10,11 @@ import Phaser from 'phaser';
 
 import { PowerUpType } from './types';
 import { WeaponId } from '../utils/weapons';
+import {
+  POWER_UP_BUBBLE_GLOW_ALPHA,
+  POWER_UP_BUBBLE_RADIUS_FACTOR,
+  POWER_UP_BUBBLE_STROKE_WIDTH,
+} from '../core/constants';
 
 /** Icon stroke colours per type. */
 const ICON_COLORS: Record<PowerUpType, number> = {
@@ -41,6 +46,21 @@ export function drawPowerUpIcon(
   size: number,
 ): void {
   graphics.clear();
+  _drawPowerUpIcon(graphics, type, x, y, size);
+}
+
+/**
+ * Inner power-up icon drawing WITHOUT clearing first — shared by
+ * `drawPowerUpIcon` (HUD icons) and `drawPowerUpDrop` (field drops
+ * with the glowing bubble layered underneath).
+ */
+function _drawPowerUpIcon(
+  graphics: Phaser.GameObjects.Graphics,
+  type: PowerUpType,
+  x: number,
+  y: number,
+  size: number,
+): void {
   graphics.lineStyle(2, ICON_COLORS[type], 1);
 
   switch (type) {
@@ -172,6 +192,21 @@ export function drawWeaponIcon(
   size: number,
 ): void {
   graphics.clear();
+  _drawWeaponIcon(graphics, weaponId, x, y, size);
+}
+
+/**
+ * Inner weapon icon drawing WITHOUT clearing first — shared by
+ * `drawWeaponIcon` (caller-owned buffers) and `drawWeaponDrop` (field
+ * drops with the glowing bubble layered underneath).
+ */
+function _drawWeaponIcon(
+  graphics: Phaser.GameObjects.Graphics,
+  weaponId: WeaponDropIconId,
+  x: number,
+  y: number,
+  size: number,
+): void {
   if (weaponId === 'reset') {
     graphics.lineStyle(2, RESET_ICON_COLOR, 1);
     drawResetIcon(graphics, x, y, size);
@@ -315,4 +350,89 @@ function drawRapidIcon(
     }
   }
   g.strokePath();
+}
+
+// ── Field drop rendering: glowing bubble + icon ────────────────────
+// Larger, legible on-field drops (AH-0MTG5MGPZ00986B4): every drop is
+// surrounded by a neon bubble (glow halo + crisp ring) in its aura
+// colour, drawn with raw Phaser Graphics — no external assets (GDD
+// §7.1). The bubble is scaled with the drop lifecycle by the caller
+// (`setScale` on the shared Graphics); it is purely visual and does not
+// extend the collection radius.
+
+/** Bubble aura colour for a non-combat power-up type. */
+function powerUpBubbleColor(type: PowerUpType): number {
+  return ICON_COLORS[type];
+}
+
+/** Bubble aura colour for a weapon/reset drop. */
+function weaponBubbleColor(weaponId: WeaponDropIconId): number {
+  return weaponId === 'reset' ? RESET_ICON_COLOR : WEAPON_ICON_COLORS[weaponId];
+}
+
+/**
+ * Draws the glowing bubble around a drop icon into `graphics`
+ * (appends — never clears). Neon style: a soft outer glow halo (two
+ * stacked translucent fills, approximation of a bloom without shaders)
+ * plus a crisp ring, centred at (x, y). Radius is
+ * `POWER_UP_BUBBLE_RADIUS_FACTOR × size`.
+ *
+ * @param graphics — Caller-owned Phaser Graphics.
+ * @param x — Centre x position.
+ * @param y — Centre y position.
+ * @param size — Drop radius extent in px (e.g. `POWER_UP_DROP_SIZE`).
+ * @param color — Aura colour (per-type neon colour of the drop).
+ */
+export function drawDropBubble(
+  graphics: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  size: number,
+  color: number,
+): void {
+  const radius = size * POWER_UP_BUBBLE_RADIUS_FACTOR;
+
+  // Soft outer halo — two stacked fills read as a glow on black.
+  graphics.fillStyle(color, POWER_UP_BUBBLE_GLOW_ALPHA * 0.4);
+  graphics.fillCircle(x, y, radius * 1.6);
+  graphics.fillStyle(color, POWER_UP_BUBBLE_GLOW_ALPHA);
+  graphics.fillCircle(x, y, radius * 1.2);
+
+  // Crisp neon ring.
+  graphics.lineStyle(POWER_UP_BUBBLE_STROKE_WIDTH, color, 1);
+  graphics.strokeCircle(x, y, radius);
+}
+
+/**
+ * Draws a complete non-combat field drop into `graphics` (cleared
+ * first): glowing bubble + icon, centred at (x, y) with the given size
+ * (radius extent in px).
+ */
+export function drawPowerUpDrop(
+  graphics: Phaser.GameObjects.Graphics,
+  type: PowerUpType,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  graphics.clear();
+  drawDropBubble(graphics, x, y, size, powerUpBubbleColor(type));
+  _drawPowerUpIcon(graphics, type, x, y, size);
+}
+
+/**
+ * Draws a complete weapon/reset field drop into `graphics` (cleared
+ * first): glowing bubble + icon, centred at (x, y) with the given size
+ * (radius extent in px).
+ */
+export function drawWeaponDrop(
+  graphics: Phaser.GameObjects.Graphics,
+  weaponId: WeaponDropIconId,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  graphics.clear();
+  drawDropBubble(graphics, x, y, size, weaponBubbleColor(weaponId));
+  _drawWeaponIcon(graphics, weaponId, x, y, size);
 }

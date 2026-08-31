@@ -15,6 +15,10 @@ import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery
 import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import { GymPowerUps } from './GymPowerUps';
+import {
+  POWER_UP_DROP_SIZE,
+  WEAPON_DROP_SIZE,
+} from '../../core/constants';
 
 describe('GymPowerUps AC1: gym index discovery', () => {
   let booted: BootedGame | null = null;
@@ -424,5 +428,78 @@ describe('GymPowerUps — non-combat pickup activation audio per type (AC6c)', (
     expect(magnetSound).toHaveBeenCalledTimes(1);
     expect(speedSound).not.toHaveBeenCalled();
     expect(lifeSound).not.toHaveBeenCalled();
+  });
+});
+
+describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootPowerUps(): Promise<GymPowerUps> {
+    booted = await bootScene([GymPowerUps]);
+    return booted!.scene as GymPowerUps;
+  }
+
+  it('AC1 — doubles the canonical drop size constant (16 → 32) for both drop families', () => {
+    expect(POWER_UP_DROP_SIZE).toBe(32);
+    expect(WEAPON_DROP_SIZE).toBe(POWER_UP_DROP_SIZE);
+  });
+
+  it('AC2/AC4 — every spawned drop gets Graphics (bubble + icon) scaled with its lifecycle; despawn destroys the visuals', async () => {
+    const scene = await bootPowerUps();
+    const drop = scene.spawnDrop('P5', 480, 270);
+    const graphics = drop.graphics;
+
+    // Bubble+icon graphics created, on the display list, at scale 0.
+    expect(graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
+    expect(scene.children.list).toContain(graphics);
+    expect(graphics.scaleX).toBeCloseTo(0, 5);
+
+    // Grows with the lifecycle: after the 0.5 s grow window → full scale.
+    scene.advanceDrops(0.5);
+    expect(drop.powerUp.currentScale).toBeCloseTo(1, 5);
+    expect(graphics.scaleX).toBeCloseTo(1, 5);
+
+    // Shrinks and is destroyed when the drop despawns (5 s lifetime).
+    scene.advanceDrops(4.6);
+    expect(drop.powerUp.state).toBe('despawned');
+    expect(graphics.active).toBe(false); // destroyed — removed from the scene
+    expect(scene.children.list).not.toContain(graphics);
+  });
+
+  it('AC3 — at full scale the pickup radius is doubled: a drop 30 px away (between the old 26 px and new 42 px radii) is now collectible', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // 30 px right of the ship. Old radius 16 + 10 = 26 → missed;
+    // doubled radius 32 + 10 = 42 → caught.
+    scene.spawnDrop('P5', 510, 270);
+    scene.advanceDrops(0.5); // grow to full size
+    scene.tick(1 / 60); // one frame runs the overlap collection
+
+    expect(registry.isActive('P5')).toBe(true);
+    const atShip = scene
+      .getDrops()
+      .filter((d) => Math.hypot(d.x - 480, d.y - 270) < 1);
+    expect(atShip).toHaveLength(0); // consumed by the collection
+  });
+
+  it('AC3 — a drop beyond the doubled radius is still not collected (boundary scales with the new size)', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    scene.spawnDrop('P5', 480 + 60, 270); // 60 px > 42 px new radius
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+
+    expect(registry.isActive('P5')).toBe(false);
+    expect(scene.getDrops().length).toBeGreaterThan(0); // drop still on field
   });
 });
