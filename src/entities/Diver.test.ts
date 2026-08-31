@@ -3,11 +3,13 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import * as effectsModule from '../audio/effects';
 import {
   DIVER_COLOR,
   DIVER_HOLD_FORMATION_SECONDS,
   DIVER_DIVE_DURATION,
   DIVER_DIVE_APEX_FRACTION,
+  DIVER_FIRE_INTERVAL,
   Diver,
   DiverState,
   FormationOffset,
@@ -120,5 +122,84 @@ describe('Diver entity (E2 diver, GDD §4.1 — live aim tracking)', () => {
     expect(diver.x).toBeCloseTo(pointA.x, 5);
     expect(diver.y).toBeCloseTo(pointA.y, 5);
     expect(Math.abs(diver.y - pointB.y)).toBeGreaterThan(5);
+  });
+});
+
+describe('Diver entity — audio (GDD §7.3, Diver fire/destruction sounds)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset });
+  }
+
+  it('AC — plays the fire sound exactly once per spread burst (not per projectile)', async () => {
+    booted = await bootScene([HarnessScene]);
+    vi.spyOn(effectsModule, 'playDiverFireSound');
+
+    const diver = makeDiver(100, 100);
+    diver.shootEnabled = true;
+    const t0 = 1_000_000;
+
+    const bullets = diver.tryFireSpreadBurst(t0);
+    // A full 4-projectile burst was produced…
+    expect(bullets.length).toBeGreaterThanOrEqual(3);
+    // …but the sound played exactly once (shared across the volley).
+    expect(effectsModule.playDiverFireSound).toHaveBeenCalledTimes(1);
+
+    // Before the fire interval elapses no burst and no additional sound.
+    expect(diver.tryFireSpreadBurst(t0 + 10)).toEqual([]);
+    expect(effectsModule.playDiverFireSound).toHaveBeenCalledTimes(1);
+
+    // After the interval a new burst fires another single sound.
+    const bullets2 = diver.tryFireSpreadBurst(t0 + DIVER_FIRE_INTERVAL);
+    expect(bullets2.length).toBeGreaterThanOrEqual(3);
+    expect(effectsModule.playDiverFireSound).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — no firing advance cue is wired into the Diver fire path', async () => {
+    booted = await bootScene([HarnessScene]);
+    vi.spyOn(effectsModule, 'playDiverFireSound');
+    // The Scout cue helper exists but must NOT be wired into the Diver
+    // path (producer decision Q2 — fire sound alone is sufficient).
+    vi.spyOn(effectsModule, 'playScoutAdvanceCue');
+
+    const diver = makeDiver(100, 100);
+    diver.shootEnabled = true;
+    diver.tryFireSpreadBurst(1_000_000);
+
+    expect(effectsModule.playDiverFireSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playScoutAdvanceCue).not.toHaveBeenCalled();
+  });
+
+  it('AC — destruction plays the Diver-specific sound via the hook and NO shared sound in playExplosion (no double-play)', async () => {
+    booted = await bootScene([HarnessScene]);
+    vi.spyOn(effectsModule, 'playDiverDestructionSound');
+    vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const diver = makeDiver(100, 100);
+    // The optional seam exists on the entity.
+    expect(typeof diver.playDestructionAudio).toBe('function');
+
+    // The destruction sound hook plays the Diver-specific sound.
+    diver.playDestructionAudio();
+    expect(effectsModule.playDiverDestructionSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
+
+    // The entity explosion path stays silent: the base scene owns
+    // destruction audio timing via the seam (no double-play, §7).
+    diver.destroySelf();
+    expect(effectsModule.playDiverDestructionSound).toHaveBeenCalledTimes(1);
+    expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
   });
 });

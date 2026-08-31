@@ -318,6 +318,74 @@ export function playScoutAdvanceCue(): void {
   blip(880, 1320, SCOUT_ADVANCE_CUE_DURATION, 'sine', 0.08);
 }
 
+// ── Diver enemy cues (GDD §4.1 — E2 Diver) ─────────────────────────
+
+/**
+ * Short low/nasal crack — E2 Diver fire sound (GDD §7.3).
+ *
+ * A quick sawtooth burst that dips from ~280 Hz to ~120 Hz over 80 ms
+ * — evokes a mechanical "crack" appropriate to a diver breaking formation
+ * and firing. Played exactly once per spread burst (not per projectile).
+ * Distinct from the Scout blip, the Swarm buzz, and the Tank thump.
+ * Safe no-op without an AudioContext.
+ */
+export function playDiverFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(280, ctx.currentTime);
+  osc.frequency.linearRampToValueAtTime(120, ctx.currentTime + 0.08);
+  gain.gain.setValueAtTime(0.15, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.1);
+}
+
+/**
+ * Distinct Diver destruction sound — deeper, more resonant than the
+ * shared destruction burst.
+ *
+ * A slower, lower sawtooth fall (280 → 40 Hz over 0.35 s) with a
+ * sine undertone, giving the diver's explosion a heavier, more
+ * resonant quality than the generic enemy destruction. Played exactly
+ * once per diver destruction via the optional `playDestructionAudio?()`
+ * seam; the Diver entity must NOT call `playDestructionSound()` in
+ * `playExplosion()` to avoid double-play (design doc §7). Safe no-op
+ * without an AudioContext.
+ */
+export function playDiverDestructionSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  // Main descent: deeper than the shared burst (440→60).
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(280, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.35);
+  gain.gain.setValueAtTime(0.25, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.37);
+
+  // Sine undertone for weight.
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = 'sine';
+  body.frequency.setValueAtTime(80, ctx.currentTime);
+  body.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 0.35);
+  bodyGain.gain.setValueAtTime(0.15, ctx.currentTime);
+  bodyGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+  body.connect(bodyGain).connect(ctx.destination);
+  body.start(ctx.currentTime);
+  body.stop(ctx.currentTime + 0.37);
+}
+
 /**
  * Sharp laser-like blip — E1 Scout fire sound (GDD §7.3).
  *

@@ -459,3 +459,64 @@ describe('GymDiver — player in the gym (epic per-scene AC1-AC4)', () => {
     expect(scene.formationX).toBeGreaterThan(fx);
   });
 });
+
+describe('GymDiver — destruction audio (Diver-specific sound, no double-play)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  async function bootGym(): Promise<GymDiver> {
+    booted = await bootScene([GymDiver]);
+    return booted!.scene as GymDiver;
+  }
+
+  it('AC — EXPLODE destroys a diver and plays the Diver-specific sound exactly once (no shared double-play)', async () => {
+    const scene = await bootGym();
+    const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
+    const sharedSound = vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const explode = findButton(scene, 'EXPLODE');
+    explode.emit('pointerdown');
+
+    expect(scene.aliveCount).toBe(DIVER_FORMATION_COUNT - 1);
+    // The seam was preferred: Diver-specific sound played exactly once,
+    // and the shared destruction sound was NOT played for the diver.
+    expect(diverSound).toHaveBeenCalledTimes(1);
+    expect(sharedSound).not.toHaveBeenCalled();
+  });
+
+  it('AC — a player bullet destroying a diver plays the Diver-specific sound exactly once (no double-play)', async () => {
+    const scene = await bootGym();
+    const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
+    const sharedSound = vi.spyOn(effectsModule, 'playDestructionSound');
+
+    const victim = scene.formationDivers[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.05);
+
+    expect(victim.alive).toBe(false);
+    expect(diverSound).toHaveBeenCalledTimes(1);
+    expect(sharedSound).not.toHaveBeenCalled();
+  });
+
+  it('AC — audio degrades to a safe no-op in headless runs (no throw when diving/firing)', async () => {
+    const scene = await bootGym();
+    const diver = scene.formationDivers[0];
+
+    // Fire path: a burst produced with the fire sound called once.
+    const fireSound = vi.spyOn(effectsModule, 'playDiverFireSound');
+    diver.shootEnabled = true;
+    const t0 = scene.time.now;
+    expect(() => diver.tryFireSpreadBurst(t0)).not.toThrow();
+    expect(fireSound).toHaveBeenCalledTimes(1);
+
+    // Destruction path: no throw, sound invoked via the seam.
+    expect(() => diver.playDestructionAudio()).not.toThrow();
+    expect(() => scene.explodeRandom()).not.toThrow();
+    expect(scene.aliveCount).toBe(DIVER_FORMATION_COUNT - 1);
+  });
+});

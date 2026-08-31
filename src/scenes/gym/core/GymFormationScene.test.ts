@@ -215,6 +215,24 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
     expect(scene.aliveCount).toBe(0);
   });
 
+  it('AC — entities WITHOUT the destruction-audio hook keep the shared sound exactly once (backward compatible)', async () => {
+    const scene = await bootGym();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
+
+    // StubEnemy omits `playDestructionAudio?()` — the base scene must
+    // fall back to the shared sound (once per destruction, no change for
+    // Scout/Tank/Swarm/Phaser).
+    const explode = scene.children.list.find(
+      (c): c is Phaser.GameObjects.Text =>
+        c instanceof Phaser.GameObjects.Text && c.text === 'EXPLODE',
+    );
+    explode!.emit('pointerdown');
+    expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
+    expect(destroySound).toHaveBeenCalledTimes(1);
+    expect(diverSound).not.toHaveBeenCalled();
+  });
+
   it('AC1 — SHOOT toggle propagates to every entity and updates the button label', async () => {
     const scene = await bootGym();
     const shoot = scene.children.list.find(
@@ -657,6 +675,24 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(target.alive).toBe(false);
     expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
     expect(scene.getPlayerBullets()).not.toContain(pb);
+  });
+
+  it('AC — player-bullet destruction WITHOUT the hook falls back to the shared sound (backward compatible)', async () => {
+    const { scene } = await bootParked();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
+    // This describe block has no clearAllMocks in afterEach, so the same
+    // module mocks accumulate across tests — measure the delta instead.
+    const sharedBefore = vi.mocked(destroySound).mock.calls.length;
+    const diverBefore = vi.mocked(diverSound).mock.calls.length;
+    const target = scene.formationEntities[0];
+
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(false);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(sharedBefore + 1);
+    expect(vi.mocked(diverSound).mock.calls.length).toBe(diverBefore);
   });
 
   it('AC1 — bullets that miss an enemy stay in flight (no false positives)', async () => {

@@ -18,6 +18,10 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT } from '../core/constants';
+import {
+  playDiverDestructionSound,
+  playDiverFireSound,
+} from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
 
 export type { FormationOffset } from '../utils/formations';
@@ -237,6 +241,23 @@ export class Diver extends Phaser.GameObjects.Container {
     return DIVER_FORMATION_DRIFT_SPEED;
   }
 
+  // ── Optional destruction-audio seam ──────────────────────────────
+
+  /**
+   * Plays the Diver-specific destruction sound.
+   *
+   * Implements the optional `playDestructionAudio?()` seam on
+   * `FormationSceneEntity`. The base `GymFormationScene` prefers this
+   * over the shared `playDestructionSound()`, so the diver's destruction
+   * sound plays exactly once per destruction (no double-play).
+   *
+   * `playExplosion()` intentionally does NOT call any audio — the base
+   * scene owns destruction audio timing (design doc §7).
+   */
+  playDestructionAudio(): void {
+    playDiverDestructionSound();
+  }
+
   // ── Behaviour ────────────────────────────────────────────────────
 
   destroySelf(): void {
@@ -257,6 +278,9 @@ export class Diver extends Phaser.GameObjects.Container {
     this._lastFireTime = now;
 
     const bullets: DiverBullet[] = [];
+    // Play the fire sound exactly once per spread burst (not per
+    // projectile — the 3-5 bullet volley shares a single sound).
+    playDiverFireSound();
 
     // Aim direction: straight down (toward bottom-centre / player).
     const baseAngle = 0; // straight down in screen coords (y increases downward)

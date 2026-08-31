@@ -24,7 +24,10 @@ import {
   PLAYER_RESPAWN_INVULNERABLE,
   SHIP_SIZE,
 } from '../../../core/constants';
-import { playDestructionSound, playSpawnSound } from '../../../audio/effects';
+import {
+  playDestructionSound,
+  playSpawnSound,
+} from '../../../audio/effects';
 import { addBackToIndexButton } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
@@ -78,6 +81,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * scene skips the call via optional chaining.
    */
   setAimTarget?(x: number, y: number): void;
+  /**
+   * Optional: plays the entity-specific destruction sound. When present
+   * the base scene prefers it over the shared `playDestructionSound()`,
+   * so the entity's destruction sound plays exactly once (no double-play).
+   * Entities that omit it fall through to the shared destruction sound,
+   * preserving backward-compatible behaviour for Scout / Tank / Swarm /
+   * Phaser.
+   */
+  playDestructionAudio?(): void;
 }
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
@@ -308,7 +320,11 @@ export class GymFormationScene<
     if (alive.length === 0) return;
     const victim = alive[Math.floor(Math.random() * alive.length)];
     victim.destroySelf();
-    playDestructionSound();
+    if (victim.playDestructionAudio) {
+      victim.playDestructionAudio();
+    } else {
+      playDestructionSound();
+    }
     this.statusText.setText(
       `exploded: ${victim.offset.row}:${victim.offset.col} — ${this.config.statusLabel}: ${this.aliveCount}`,
     );
@@ -597,7 +613,11 @@ export class GymFormationScene<
           )
         ) {
           entity.destroySelf();
-          playDestructionSound();
+          if (entity.playDestructionAudio) {
+            entity.playDestructionAudio();
+          } else {
+            playDestructionSound();
+          }
           pb.destroy();
           spent = true;
           break;

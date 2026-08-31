@@ -172,14 +172,21 @@ for reference implementations (the base class drives them).
    mechanical-whine advance cue flowing with **no gap** into a heavy
    cannon-thump fire sound, one cue+thump pair per radial burst at the
    point of shooting (the whine's ≥ 500 ms duration provides the advance
-   lead). Audio-character decisions are made **per-enemy at implementation
+   lead); Diver plays `playDiverFireSound()` (short low/nasal crack)
+   exactly once per spread burst from its entity-level `tryFireSpreadBurst()`
+   (no advance cue — the fire sound alone is the tell).
+   Audio-character decisions are made **per-enemy at implementation
    time** and may deviate from the GDD §7.3 catalog defaults (e.g. Tank's
    heavy thump vs the generic "short zap") — see the GDD §7.3 note.
 
 7. **Destruction sound ownership.** The base class `GymFormationScene.explodeRandom()`
-   plays `playDestructionSound()` for all enemies. Entity classes should
-   NOT call `playDestructionSound()` in their `playExplosion()` — doing so
-   would double-play the sound. This is a design decision per GDD §7.3
+   plays `playDestructionSound()` for all enemies, unless the entity opts
+   into a distinct sound via the optional `playDestructionAudio?()` seam on
+   `FormationSceneEntity` — the base scene prefers the hook and falls back
+   to the shared sound when it is absent (Diver implements the hook to play
+   `playDiverDestructionSound()`). Entity classes should NOT call
+   `playDestructionSound()` in their `playExplosion()` — doing so would
+   double-play the sound. This is a design decision per GDD §7.3
    and the core-library best practices.
 
 ### 3.2 Existing scenes (reference implementations)
@@ -187,7 +194,7 @@ for reference implementations (the base class drives them).
 | Scene | Entity | Formation | Fire pattern | Audio |
 |-------|--------|-----------|--------------|-------+-------|
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
-| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | none |
+| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (scene-level, one cue+thump pair per burst, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (scene-level, once per volley, at point of shooting) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | none |
@@ -388,7 +395,7 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 | Enemy | Advance cue | Fire sound | Scope & timing |
 |-------|-------------|------------|----------------|
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
-| E2 Diver | none | none | no audio today (see §3.2 table) |
+| E2 Diver | none (no advance cue — fire sound alone is the tell) | `playDiverFireSound()` — short low/nasal crack | **entity-level**, exactly once per spread burst inside `tryFireSpreadBurst()` |
 | E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **scene-level**, one cue+thump pair per radial burst at the point of shooting — the cue flows with **no gap** into the thump |
 | E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **scene-level** volley burst, once per volley at the point of shooting |
 | Boss | none | none | no audio today (see §3.2 table) |
@@ -400,11 +407,14 @@ are produced** — the scene's `collectBullets` callback for scene-level sounds
 
 ### Explode / destruction
 
-- **Function:** `playDestructionSound()`
+- **Function:** `playDestructionSound()` (shared) — or an entity-specific
+  sound via the optional `playDestructionAudio?()` seam on
+  `FormationSceneEntity` (e.g. `playDiverDestructionSound()`).
 - **When:** during entity destruction.
 - **Ownership rule (critical):** the base class `GymFormationScene` owns the
 destruction sound — `explodeRandom()` and the player-bullet collision handler
-call `playDestructionSound()` once per destroyed enemy. Entities must **NOT**
-call `playDestructionSound()` in their own `playExplosion()` — doing so
+call the entity's `playDestructionAudio?.()` when present, otherwise falling
+back to `playDestructionSound()`, once per destroyed enemy. Entities must
+**NOT** call a destruction sound in their own `playExplosion()` — doing so
 double-plays the sound (see §3.1 checklist item 7; regression-tested in
-`src/entities/Scout.test.ts`).
+`src/entities/Scout.test.ts` and `src/scenes/gym/GymDiver.test.ts`).
