@@ -9,10 +9,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/enemyConfig';
+import { PLAYER_SPAWN } from '../../core/constants';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from './GymEnemies';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
+import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 
 // GymIndex discovery helper (glob) — verify GymEnemies is listed without extra registration.
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
@@ -242,6 +245,60 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-panel')).not.toBeNull();
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
     expect(document.getElementById('enemy-gym-panel')).toBeNull();
+  });
+
+  // ── Swarm AC3 — aimed burst hits player (AH-0MTFTJ01K000JG4I) ─────
+  // Retired GymSwarm AC3 (epic AH-0MTFPDKDU006QUDC, one-off flake under
+  // full-suite parallel load) preserved in the config-driven gym after
+  // the 5bbaa2d GymEnemies merge. Mirrors the GymScout AC2 poll idiom
+  // (commit e48b046): the swarm uses the same deterministic tick +
+  // frozen scene.time.now seam as the scout. The retired single-volley
+  // form relied on one burst's random spread (±0.15 rad per bullet) —
+  // ~12% of volleys all-miss at full-suite load — so this contract
+  // polls with bounded quarter-interval clock steps until a burst lands.
+  describe('swarm — AC3 a player bullet destroys a swarm member; a swarm burst hitting the player respawns it (AH-0MTFTJ01K000JG4I)', () => {
+    it('a player bullet destroys one swarm member and a subsequent aimed swarm burst hits the player (hits → respawn + invulnerability + sound)', async () => {
+      const scene = await bootWithKey('swarm');
+      const player = scene.getPlayer()!;
+      expect(player).not.toBeNull();
+
+      // Park a player bullet on the first swarm member — destroyed + bullet consumed.
+      // Use the live world position so the overlap is deterministic (hit radius 20 + 3 = 23 px).
+      const victim = scene.formationEntities[0] as unknown as {
+        alive: boolean;
+        bodyVisible: boolean;
+        x: number;
+        y: number;
+      };
+      expect(victim.alive).toBe(true);
+      const countBefore = scene.aliveCount;
+      const pb = scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+      scene.tick(0.05);
+      expect(victim.alive).toBe(false);
+      expect(scene.aliveCount).toBe(countBefore - 1);
+      expect(victim.bodyVisible).toBe(false);
+      expect(scene.getPlayerBullets()).not.toContain(pb);
+
+      // Remaining members fire bursts aimed at the live player. Each burst
+      // applies an independent random spread (±0.15 rad per bullet), so a
+      // single volley can all-miss the ship entirely (measured ~12% of volleys
+      // at full-suite load). Never rely on one volley's luck: poll with bounded
+      // quarter-interval clock steps so the swarm re-fires fresh aimed volleys
+      // until one lands (mirrors the GymScout AC2 poll idiom, commit e48b046).
+      vi.spyOn(effectsModule, 'playDestructionSound');
+      scene.toggleShooting();
+      const hitsBefore = scene.getPlayerHitCount();
+      for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) {
+        scene.time.now += SWARM_BURST_INTERVAL / 4;
+        scene.tick(0.05);
+      }
+
+      expect(scene.getPlayerHitCount()).toBeGreaterThan(0);
+      expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
+      expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
+      expect(scene.isPlayerInvulnerable()).toBe(true);
+      expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+    });
   });
 
 });
