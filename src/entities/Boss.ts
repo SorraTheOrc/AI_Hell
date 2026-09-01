@@ -654,8 +654,9 @@ export class Boss extends Phaser.GameObjects.Container {
     this._healthSegmentsRemaining--;
 
     if (this._healthSegmentsRemaining <= 0) {
-      // Boss destroyed — play destruction animation.
+      // Boss destroyed — play destruction animation + sound.
       this.destroySelf();
+      playBossDestructionSound();
       return 0;
     }
 
@@ -739,8 +740,10 @@ export class Boss extends Phaser.GameObjects.Container {
     this.coreGraphics.setAlpha(0);
     this.coreGlowGraphics.setAlpha(0);
     this._playExplosion();
-    playBossDestructionSound();
     this._drawHealthBar(); // health bar goes dark
+    // Note: destruction audio is played by the caller (takeDamage or the
+    // base-class collision handler via playDestructionAudio) to avoid a
+    // double-play when the base class also invokes playDestructionAudio().
   }
 
   /**
@@ -842,6 +845,27 @@ export class Boss extends Phaser.GameObjects.Container {
     }
 
     return bullets;
+  }
+
+  // ── Destruction audio (FormationSceneEntity hook) ───────────────
+
+  /**
+   * Plays the Boss-specific destruction sound exactly once.
+   * Called by the base class when the Boss is killed by player bullets.
+   */
+  playDestructionAudio(): void {
+    playBossDestructionSound();
+  }
+
+  // ── Aim target tracking (FormationSceneEntity hook) ─────────────
+
+  /**
+   * Updates the player's live world position so aimed fire targets
+   * the player each frame instead of the fixed bottom-centre stand-in.
+   */
+  setAimTarget(x: number, y: number): void {
+    this._playerTargetX = x;
+    this._playerTargetY = y;
   }
 
   // ── Cleanup ─────────────────────────────────────────────────────
