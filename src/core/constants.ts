@@ -50,17 +50,17 @@ export const POWER_UP_GROW_DURATION = 0.5;
 /** Time in seconds for a power-up drop to shrink from full size to 0. */
 export const POWER_UP_SHRINK_DURATION = 0.5;
 
-/** Total lifetime of a power-up drop from spawn to despawn (seconds). */
-export const POWER_UP_LIFETIME = 5;
+/** Total lifetime of a power-up drop from spawn to despawn (seconds). 12.5 s = 2.5× the original 5 s. */
+export const POWER_UP_LIFETIME = 12.5;
 
 /** Collection threshold: drops are collectible only above this percentage of full size (3). */
 export const POWER_UP_COLLECTION_THRESHOLD = 3;
 
-/** Interval between spawns in a round-robin cycle (seconds). */
-export const POWER_UP_SPAWN_INTERVAL = 5;
+/** Interval between spawns in a round-robin cycle (seconds). Mirrors POWER_UP_LIFETIME so one drop is on screen at a time. */
+export const POWER_UP_SPAWN_INTERVAL = 12.5;
 
-/** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. */
-export const POWER_UP_DROP_SIZE = 32;
+/** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 8 px = 25% of the original 32 px (75% reduction). */
+export const POWER_UP_DROP_SIZE = 8;
 
 // ── Power-up drop bubble visuals (GDD §4.4, §7.1) ─────────────────
 // Tunable feel constants for the glowing bubble drawn around every
@@ -107,8 +107,8 @@ export const WEAPON_DROP_LIFETIME = 7;
 export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
 
 /** Base radius of a weapon drop on the field (px), scaled by lifecycle.
- * Mirrors `POWER_UP_DROP_SIZE` (doubled to 32 px, AH-0MTG5MGPZ00986B4) so
- * weapon drops render at the same enlarged size as non-combat drops.
+ * Mirrors `POWER_UP_DROP_SIZE` (8 px after 75% reduction) so
+ * weapon drops render at the same size as non-combat drops.
  */
 export const WEAPON_DROP_SIZE = POWER_UP_DROP_SIZE;
 

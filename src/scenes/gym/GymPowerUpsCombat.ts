@@ -22,9 +22,9 @@
  * used to farm lives or score.
  *
  * Spawn cadence mirrors `GymPowerUps`: one drop at a time, round-robin
- * P3 → P4 → P6 → P7, each living `POWER_UP_LIFETIME` (5 s, grow →
+ * P3 → P4 → P6 → P7, each living `POWER_UP_LIFETIME` (12.5 s, grow →
  * hold → shrink, framerate-independent via `PowerUp`), collection
- * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (32 px)
+ * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (8 px)
  * bubble + icon visuals. NEXT spawn coincides with previous despawn
  * while nothing is collected — one drop on screen.
  *
@@ -235,6 +235,11 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private playerInvulnerable = 0;
   private playerBlinkPhase = 0;
 
+  // Visual feedback
+  private shieldBubble: Phaser.GameObjects.Graphics | null = null;
+  private bombNoticeTimer = 0;
+  private bombNoticeLabel: Phaser.GameObjects.Text | null = null;
+
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
 
@@ -250,7 +255,17 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.add.existing(this.player);
 
     addBackToIndexButton(this);
-    this.hud = new HUD(this, this.effectsRegistry);
+    this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+
+    this.shieldBubble = this.add.graphics();
+    this.shieldBubble.setDepth(50);
+    this.bombNoticeLabel = this.add.text(GAME_WIDTH / 2, 24, '', {
+      fontFamily: 'monospace',
+      fontSize: '14px',
+      color: '#ff4444',
+      backgroundColor: '#1a1a1a',
+      padding: { x: 6, y: 2 },
+    }).setOrigin(0.5).setVisible(false);
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
@@ -347,8 +362,45 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
 
+    // ── Visuals (shield bubble + phase ghost + bomb notice) ─
+    this._updateVisuals(dt);
+
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();
+  }
+
+  // ── Visuals ──────────────────────────────────────────────────────
+
+  private _updateVisuals(dt: number): void {
+    // Shield bubble: drawn around the ship while P3 is active.
+    if (this.shieldBubble && this.player) {
+      this.shieldBubble.clear();
+      if (this.effectsRegistry.isShielded) {
+        this.shieldBubble.lineStyle(2, 0x3399ff, 0.9);
+        this.shieldBubble.strokeCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
+        this.shieldBubble.fillStyle(0x3399ff, 0.12);
+        this.shieldBubble.fillCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
+      }
+    }
+    // Phase ghost: semi-transparent ship while P6 is active.
+    if (this.player) {
+      if (this.effectsRegistry.isPhased) {
+        // Ghost outline — keep blink alpha if invulnerable, else ghost alpha.
+        if (this.playerInvulnerable <= 0) this.player.setAlpha(0.45);
+      } else if (this.playerInvulnerable <= 0) {
+        this.player.setAlpha(1);
+      }
+    }
+    // Bomb notice: brief centered flash after P4.
+    if (this.bombNoticeTimer > 0) {
+      this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
+      if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
+    }
+  }
+
+  private _flashBombNotice(): void {
+    this.bombNoticeTimer = 1.2;
+    this.bombNoticeLabel?.setText('BOMB! Bullets cleared').setVisible(true);
   }
 
   // ── Spawning / lifecycle ─────────────────────────────────────────
@@ -422,6 +474,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     // P4 Bomb: clear enemy bullets instantly (no enemy damage).
     if (id === 'P4') {
       this._clearEnemyBullets();
+      this._flashBombNotice();
     }
 
     this.effectsRegistry.applyCollect(id);
@@ -624,6 +677,21 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.shootEnabled = !this.shootEnabled;
     for (const s of this.scouts) s.shootEnabled = this.shootEnabled;
     this.shootButton?.setText(this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF');
+  }
+
+  // ── Test accessors for visuals ─────────────────────────────────
+
+  /** Whether the shield bubble is currently visible (for tests). */
+  isShieldBubbleVisible(): boolean {
+    return this.effectsRegistry.isShielded;
+  }
+  /** Whether the phase ghost is currently active (for tests). */
+  isPhaseGhostActive(): boolean {
+    return this.effectsRegistry.isPhased;
+  }
+  /** Whether the bomb notice is currently visible (for tests). */
+  isBombNoticeVisible(): boolean {
+    return this.bombNoticeTimer > 0;
   }
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */

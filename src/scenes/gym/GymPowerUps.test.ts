@@ -255,10 +255,10 @@ describe('GymPowerUps spawn cadence (parent AC2 via the scene)', () => {
     expect(drops.length).toBeGreaterThanOrEqual(1);
     expect(drops[0].powerUp.id).toBe('P5');
 
-    // Advance ~5 s (ignoring collection): the P5 drop despawns at the end
-    // of its 5 s lifetime and the next (P8) spawns at the same instant —
+    // Advance ~12.5 s (ignoring collection): the P5 drop despawns at the end
+    // of its 12.5 s lifetime and the next (P8) spawns at the same instant —
     // so exactly one drop is on screen at the boundary (parent AC2).
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
     }
     drops = scene.getDrops();
@@ -444,8 +444,8 @@ describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)
     return booted!.scene as GymPowerUps;
   }
 
-  it('AC1 — doubles the canonical drop size constant (16 → 32) for both drop families', () => {
-    expect(POWER_UP_DROP_SIZE).toBe(32);
+  it('AC1 — drop size constants reflect the 8 px power-up / weapon size', () => {
+    expect(POWER_UP_DROP_SIZE).toBe(8);
     expect(WEAPON_DROP_SIZE).toBe(POWER_UP_DROP_SIZE);
   });
 
@@ -464,22 +464,21 @@ describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)
     expect(drop.powerUp.currentScale).toBeCloseTo(1, 5);
     expect(graphics.scaleX).toBeCloseTo(1, 5);
 
-    // Shrinks and is destroyed when the drop despawns (5 s lifetime).
-    scene.advanceDrops(4.6);
+    // Shrinks and is destroyed when the drop despawns (12.5 s lifetime).
+    scene.advanceDrops(12.1);
     expect(drop.powerUp.state).toBe('despawned');
     expect(graphics.active).toBe(false); // destroyed — removed from the scene
     expect(scene.children.list).not.toContain(graphics);
   });
 
-  it('AC3 — at full scale the pickup radius is doubled: a drop 30 px away (between the old 26 px and new 42 px radii) is now collectible', async () => {
+  it('AC3 — at full scale a drop within the pickup radius (ship hull + drop size) is collectible', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // 30 px right of the ship. Old radius 16 + 10 = 26 → missed;
-    // doubled radius 32 + 10 = 42 → caught.
-    scene.spawnDrop('P5', 510, 270);
+    // 8 px drop + 10 px ship hull = 18 px pickup radius → 15 px away should be caught.
+    scene.spawnDrop('P5', 495, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.tick(1 / 60); // one frame runs the overlap collection
 
@@ -490,12 +489,12 @@ describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)
     expect(atShip).toHaveLength(0); // consumed by the collection
   });
 
-  it('AC3 — a drop beyond the doubled radius is still not collected (boundary scales with the new size)', async () => {
+  it('AC3 — a drop beyond the pickup radius is still not collected (boundary scales with the new size)', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     scene.getPlayer()!.setPosition(480, 270);
 
-    scene.spawnDrop('P5', 480 + 60, 270); // 60 px > 42 px new radius
+    scene.spawnDrop('P5', 480 + 30, 270); // 30 px > 18 px pickup radius
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
 

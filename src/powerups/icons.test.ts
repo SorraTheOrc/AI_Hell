@@ -61,7 +61,11 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
   it('drawPowerUpDrop renders bubble + icon for every non-combat type — strictly more geometry than the bare icon', async () => {
     const scene = await bootBare();
     for (const type of [
+      PowerUpType.SHIELD,
+      PowerUpType.BOMB,
       PowerUpType.SPEED_BOOST,
+      PowerUpType.PHASE_SHIFT,
+      PowerUpType.TELEPORT,
       PowerUpType.EXTRA_LIFE,
       PowerUpType.MAGNET,
     ]) {
