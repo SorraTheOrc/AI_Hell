@@ -644,13 +644,14 @@ describe('thruster hum — gain envelope + lifecycle (AH-0MTFOSOHN001Q620)', () 
     expect(ctx.oscillators.length).toBeGreaterThan(firstOscCount);
   });
 
-  it('distinct wave types: thruster hum uses sawtooth+sine+filtered noise (AC1 — distinct from blip cues)', () => {
+  it('distinct wave types: thruster hum uses triangle+sine+filtered noise (jet roar, no sawtooth buzz)', () => {
     prime();
     const ctx = RecordingAudioContext.instances[0];
     const types = ctx.oscillators.map((o) => o.type);
-    expect(types).toContain('sawtooth');
+    expect(types).toContain('triangle');
     expect(types).toContain('sine');
     // Jet-engine layer: white-noise source (type='noise' in mock) adds whoosh.
     expect(types).toContain('noise');
+    expect(types).not.toContain('sawtooth');
   });
 });

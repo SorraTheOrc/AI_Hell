@@ -5,8 +5,8 @@
  * assets to ship. Each enemy kind maps to distinct tones: spawn uses a
  * high rising blip, destruction a quick descending noise burst. The
  * player ship's thruster hum is a continuous jet-engine roar:
- * sawtooth + sine oscillators (low rumble) + filtered white noise
- * (whoosh) through one reused gain node (see the thruster hum
+ * soft triangle + sine oscillators (low rumble) + band-pass
+ * filtered white noise (whoosh) through one reused gain node
  * section below).
  *
  * Thruster-scaling rationale: the hum gain tracks
@@ -33,20 +33,21 @@
 // never exceeds THRUSTER_HUM_MAX_VOLUME (0.15) and the smoothed envelope
 // mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
 // Safe no-op without an AudioContext (headless tests / autoplay-blocked).
-// Architecture: sawtooth (85 Hz) + sine (45 Hz) for low rumble + white
-// noise through a lowpass filter for jet-engine "whoosh".
+// Architecture: triangle (60 Hz) + sine (35 Hz) for soft low rumble +
+// white noise through a band-pass filter for jet-engine "whoosh"; no
+// harsh sawtooth — the filtered noise is the dominant jet texture.
 
 /** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
 export const THRUSTER_HUM_MAX_VOLUME = 0.15;
-/** Base thruster hum frequency — low sawtooth hum (GDD §7.3 continuous hum). */
-export const THRUSTER_HUM_BASE_FREQ = 85;
-/** Undertone frequency (sine) — adds body to the low hum. */
-export const THRUSTER_HUM_UNDERTONE_FREQ = 45;
-/** Detune spread in cents applied per frame for tonal drift (AC1). */
+/** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum, jet roar). */
+export const THRUSTER_HUM_BASE_FREQ = 60;
+/** Undertone frequency (sine) — adds body to the low jet rumble. */
+export const THRUSTER_HUM_UNDERTONE_FREQ = 35;
+/** Detune spread retained for compat (jet roar no longer uses harsh detune). */
 export const THRUSTER_HUM_DETUNE_SPREAD_CENTS = 12;
-/** Noise filter centre range for grit randomization (AC2). */
-export const THRUSTER_HUM_NOISE_FILTER_MIN = 350;
-export const THRUSTER_HUM_NOISE_FILTER_MAX = 650;
+/** Noise filter centre range for jet texture (band-pass). */
+export const THRUSTER_HUM_NOISE_FILTER_MIN = 700;
+export const THRUSTER_HUM_NOISE_FILTER_MAX = 1100;
 /** Gain ramp time at FLAME_REF_THRUST: mirrors flame growth (mirrors FLAME_GROWTH_TIME_AT_REF). */
 export const THRUSTER_HUM_GROWTH_TIME = 0.03;
 /** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER (quick silence on release). */
@@ -72,11 +73,6 @@ interface ThrusterHumState {
   gain: GainNode;
   /** Current gain — tracks the visual flame model analogously. */
   currentGain: number;
-}
-
-/** Small grit/detune helper: clamped random in [-spread, +spread]. */
-function jitter(spread: number): number {
-  return (Math.random() * 2 - 1) * spread;
 }
 
 /** For tests: returns the current thruster hum state (or null if not started). */
@@ -116,20 +112,13 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
   gain.connect(ctx.destination);
 
   const osc = ctx.createOscillator();
-  osc.type = 'sawtooth';
+  osc.type = 'triangle';
   osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ, ctx.currentTime);
-  // Initial detune wobble so the first frame is not perfectly static (AC1).
-  try {
-    (osc.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS * 0.6), ctx.currentTime);
-  } catch { /* detune not supported in some mocks */ }
   osc.connect(gain);
 
   const sub = ctx.createOscillator();
   sub.type = 'sine';
   sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ, ctx.currentTime);
-  try {
-    (sub.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS * 0.4), ctx.currentTime);
-  } catch { /* detune not supported */ }
   sub.connect(gain);
 
   // ── Jet-engine noise layer ──────────────────────────────────────
@@ -145,11 +134,10 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
   noise.loop = true;
 
   const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'lowpass';
-  // Initial grit: randomized cutoff/Q so each hum instance has slightly
-  // different jet texture (AC2).
+  noiseFilter.type = 'bandpass';
+  // Initial jet texture: band-pass centre 700–1100 Hz, moderate Q.
   const initCutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
-  const initQ = 0.3 + Math.random() * 0.7;
+  const initQ = 0.6 + Math.random() * 0.5;
   noiseFilter.frequency.setValueAtTime(initCutoff, ctx.currentTime);
   noiseFilter.Q.setValueAtTime(initQ, ctx.currentTime);
 
@@ -167,7 +155,8 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
 /**
  * Sustained thruster hum — player SFX (AH-0MTFOSOHN001Q620, GDD §7.3).
  *
- * A single reused low sawtooth + sine undertone through one gain node.
+ * A single reused soft triangle + sine undertone through one gain node
+ * plus a dominant band-pass filtered white-noise whoosh (jet roar).
  * The gain envelope ramps smoothly so thrust onset/decay never clicks:
  * rise mirrors the flame growth time (30 ms at reference thrust),
  * decay is ~4× faster. `level` in [0, 1] comes from
@@ -215,23 +204,14 @@ export function updateThrusterSound(level: number): void {
   }
 
   const hum = ensureThrusterHum(ctx);
-  // Pitch lightly tracks level: subtle Doppler hint without being shrill.
-  const pitchScale = 1 + clamped * 0.2;
-  // Micro jitter ±3% keeps sustained thrust from sounding static (AC1).
-  const oscJitter = 1 + jitter(0.03);
-  const subJitter = 1 + jitter(0.03);
-  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale * subJitter, ctx.currentTime);
-  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale * oscJitter, ctx.currentTime);
-  // Per-frame tonal drift via detune (cents) and grit via filter modulation (AC1/AC2).
-  try {
-    (hum.osc.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS), ctx.currentTime);
-    (hum.sub.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS * 0.7), ctx.currentTime);
-  } catch { /* detune not supported */ }
+  // Gentle pitch follows level — subtle, no buzzy jitter.
+  const pitchScale = 1 + clamped * 0.12;
+  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale, ctx.currentTime);
+  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale, ctx.currentTime);
+  // Gentle jet filter drift — small variance per frame, filtered noise stays dominant.
   try {
     const cutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
-    const q = 0.3 + Math.random() * 0.7;
     hum.noiseFilter.frequency.setValueAtTime(cutoff, ctx.currentTime);
-    hum.noiseFilter.Q.setValueAtTime(q, ctx.currentTime);
   } catch { /* filter params not supported */ }
 
   const t = ctx.currentTime;
