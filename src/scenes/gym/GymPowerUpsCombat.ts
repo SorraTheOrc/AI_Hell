@@ -94,7 +94,7 @@ const SPAWN_POSITIONS: readonly { x: number; y: number }[] = [
 ];
 
 /** Small threat formation: 3 scouts in a V (1 + 2), mirrors E1 but tiny. */
-const COMBAT_SCOUT_COUNT = 3;
+export const COMBAT_SCOUT_COUNT = 3;
 const COMBAT_SPACING_X = 32;
 const COMBAT_SPACING_Y = 28;
 const COMBAT_START_X = GAME_WIDTH * 0.2;
@@ -512,9 +512,17 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     }
   }
 
+  /** Headless clock for scouts: advances with the deterministic dt. */
+  private _nextFireTime = 0;
+
   private _tickScouts(): void {
     if (!this.shootEnabled) return;
-    const now = this.time.now;
+    // Advance the virtual clock by the scene's dt accumulated elsewhere.
+    // Use a fixed step that mirrors the test harness tick() cadence so
+    // scouts fire deterministically without relying on this.time.now
+    // (which is 0 in headless happy-dom).
+    this._nextFireTime += 16; // ms — one 60 Hz tick
+    const now = this._nextFireTime;
     for (const scout of this.scouts) {
       if (!scout.alive) continue;
       const bullet = scout.tryFireAimedBullet(now);
