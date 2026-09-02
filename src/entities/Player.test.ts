@@ -16,6 +16,7 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
+import * as effects from '../audio/effects';
 
 describe('Player ship entity', () => {
   let booted: BootedGame | null = null;
@@ -1037,5 +1038,163 @@ describe('Player — Asteroids control scheme', () => {
       leftSide: 0,
       rightSide: 0,
     });
+  });
+});
+
+// ── Thruster hum wiring — Player → effects (AH-0MTHF3SJL009T2QL) ────────
+
+describe('Player — Thruster hum wiring', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+  async function bootPlayerScene(): Promise<Phaser.Scene> {
+    booted = await bootScene([GymPlayer]);
+    return booted!.scene;
+  }
+
+  const playerOf = (scene: Phaser.Scene) => {
+    const children = scene.sys.displayList.getChildren();
+    return children.find((c) => c instanceof Player) as Player | undefined;
+  };
+
+  async function bootPlayer(): Promise<Player> {
+    const scene = await bootPlayerScene();
+    await tick();
+    const p = playerOf(scene);
+    expect(p).toBeDefined();
+    return p as Player;
+  }
+
+  it('calls updateThrusterSound with level 0 while idle and >0 while thrusting (AC1, AC2)', async () => {
+    const player = await bootPlayer();
+    const spy = vi.spyOn(effects, 'updateThrusterSound');
+
+    // Idle frame → level 0 (silence) so the hum decays quickly on release.
+    player.setInput({ up: false, down: false, left: false, right: false });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(0);
+    spy.mockClear();
+
+    // Thrust held → level 1 at default thrust 300 (FLAME_REF_THRUST).
+    player.setInput({ up: true, down: false, left: false, right: false });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(1);
+  });
+
+  it('scales the hum level proportionally to thrustAcceleration (AC2)', async () => {
+    const player = await bootPlayer();
+    const spy = vi.spyOn(effects, 'updateThrusterSound');
+
+    // Half thrust → level 0.5 (slider audible).
+    player.setConfig({ ...DEFAULT_CONFIG, thrustAcceleration: 150 });
+    player.setInput({ up: true, down: false, left: false, right: false });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(expect.closeTo(0.5, 5));
+
+    // Default thrust → level 1 (backward-compat no-arg case).
+    spy.mockClear();
+    player.setConfig({ ...DEFAULT_CONFIG, thrustAcceleration: 300 });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(1);
+  });
+
+  it('produces hum for any arrow/WASD thrust key in fourDirectional (AC3)', async () => {
+    const player = await bootPlayer();
+    const spy = vi.spyOn(effects, 'updateThrusterSound');
+
+    const thrustKeys: Array<Record<string, boolean>> = [
+      { up: true, down: false, left: false, right: false },
+      { up: false, down: true, left: false, right: false },
+      { up: false, down: false, left: true, right: false },
+      { up: false, down: false, left: false, right: true },
+      { up: true, down: false, left: true, right: false }, // diagonal
+    ];
+    for (const keys of thrustKeys) {
+      spy.mockClear();
+      player.setInput(keys as never);
+      player.preUpdate(0, 16);
+      expect(spy).toHaveBeenLastCalledWith(expect.any(Number));
+      expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
+    }
+  });
+
+  it('produces hum for forward and turn inputs in Asteroids, silence when coasting (AC4)', async () => {
+    const player = await bootPlayer();
+    player.setScheme('asteroids');
+    const spy = vi.spyOn(effects, 'updateThrusterSound');
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(expect.any(Number));
+    expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
+
+    spy.mockClear();
+    player.setInput({ forward: false, turnLeft: true, turnRight: false });
+    player.preUpdate(0, 16);
+    expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
+
+    spy.mockClear();
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.preUpdate(0, 16);
+    expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
+
+    spy.mockClear();
+    player.setInput({ forward: false, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(0);
+  });
+
+  it('hum stops on respawn, destroy, and stopThrusterAudio (AC5)', async () => {
+    const player = await bootPlayer();
+    const stopSpy = vi.spyOn(effects, 'stopThrusterSound');
+
+    // Respawns silence the hum so no orphaned audio after hit.
+    player.setInput({ up: true, down: false, left: false, right: false });
+    player.preUpdate(0, 16);
+    player.respawn(100, 100);
+    expect(stopSpy).toHaveBeenCalled();
+    stopSpy.mockClear();
+
+    // Explicit stop (scene switch) also silences.
+    player.stopThrusterAudio();
+    expect(stopSpy).toHaveBeenCalled();
+    stopSpy.mockClear();
+
+    // Destroy stops the hum and still calls super.destroy safely.
+    player.destroy();
+    expect(stopSpy).toHaveBeenCalled();
+  });
+
+  it('does not change physics: thrust level only affects audio, not tick (AC6)', async () => {
+    const player = await bootPlayer();
+    player.setPosition(480, 270);
+
+    // Two identical physics ticks must land at the same position even
+    // though preUpdate now also drives audio — no coupling.
+    player.setInput({ up: true, down: false, left: false, right: false });
+    player.preUpdate(0, 16);
+    player.physicsTick(1, 960, 540);
+    const y1 = player.y;
+
+    // Reset and repeat the same thrust frame.
+    player.setPosition(480, 270);
+    // Clear movement state velocity by respawning then re-thrusting:
+    player.respawn(480, 270);
+    player.setInput({ up: true, down: false, left: false, right: false });
+    player.preUpdate(0, 16);
+    player.physicsTick(1, 960, 540);
+    expect(player.y).toBeCloseTo(y1, 5);
   });
 });

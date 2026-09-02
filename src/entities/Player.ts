@@ -59,6 +59,7 @@ import {
   MovementConfig,
 } from '../utils/movement';
 import { updateFlameLength } from '../utils/flame';
+import { stopThrusterSound, updateThrusterSound } from '../audio/effects';
 import {
   AsteroidsModel,
   ControlInput,
@@ -622,6 +623,12 @@ export class Player extends Phaser.GameObjects.Graphics {
    * rate, so turning leaves no flame behind at the old port. In the
    * Asteroids scheme the three engines (main + two 70% forward-side)
    * fire at full scale while forward thrust is held (AC2).
+   *
+   * Also drives the thruster hum (AH-0MTFOSOHN001Q620) via
+   * `getEngineSoundLevel(state, input, thrustAcceleration)` →
+   * `updateThrusterSound(level)`: a single ship-level hum scaled
+   * proportionally to thrustAcceleration so the slider is audible.
+   * Safe no-op without an AudioContext (headless tests, autoplay).
    */
   preUpdate(_time: number, delta: number): void {
     const dt = delta / 1000;
@@ -667,6 +674,21 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (changed) {
       this._redraw();
     }
+
+    // Drive the thruster hum from the movement model level. One call per
+    // frame regardless of flame changes — the audio module's gain envelope
+    // handles fade-in/decay internally; 0 silences and decays the hum,
+    // retriggering ramps from the current gain so rapid toggling is clean.
+    try {
+      const level = this._model.getEngineSoundLevel(
+        this._movementState,
+        this._input,
+        this._config.thrust,
+      );
+      updateThrusterSound(level);
+    } catch {
+      // Never crash the game loop on an audio error.
+    }
   }
 
   /**
@@ -707,11 +729,33 @@ export class Player extends Phaser.GameObjects.Graphics {
   /**
    * Relocates the ship to (x, y) with zero velocity and no flame — the
    * respawn behaviour used by scenes after the player takes a hit.
+   * Also silences any active thruster hum (AC5 — no orphaned audio on
+   * destroy/respawn or scene switch).
    */
   respawn(x: number, y: number): void {
     this._movementState = { x, y, vx: 0, vy: 0, facing: 0 };
     this.setRotation(0);
     this.setPosition(x, y);
     for (const port of this._engines()) this._flameLens[port.port] = 0;
+    try { stopThrusterSound(); } catch { /* ignore */ }
+  }
+
+  /**
+   * Stops the thruster hum — call on scene shutdown / scene switch so
+   * no hum survives beyond the ship's lifecycle (AC5).
+   * Safe no-op if no hum is active.
+   */
+  stopThrusterAudio(): void {
+    try { stopThrusterSound(); } catch { /* ignore */ }
+  }
+
+  /**
+   * Phaser lifecycle hook: called when the GameObject is destroyed.
+   * Ensures the thruster hum is stopped so no AudioNodes survive.
+   * Mirrors the respawn path (AC5).
+   */
+  override destroy(fromScene?: boolean): void {
+    try { stopThrusterSound(); } catch { /* ignore */ }
+    try { super.destroy(fromScene); } catch { /* ignore — no displayList in tests */ }
   }
 }
