@@ -20,7 +20,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
-import { POWER_UP_DROP_SIZE, POWER_UP_LIFETIME } from '../../core/constants';
+import { POWER_UP_DROP_SIZE } from '../../core/constants';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

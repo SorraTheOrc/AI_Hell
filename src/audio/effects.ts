@@ -45,6 +45,10 @@ export const THRUSTER_HUM_BASE_FREQ = 60;
 export const THRUSTER_HUM_UNDERTONE_FREQ = 35;
 /** Detune spread retained for compat (jet roar no longer uses harsh detune). */
 export const THRUSTER_HUM_DETUNE_SPREAD_CENTS = 12;
+/** Maximum detune drift range in cents for organic tonal variation. */
+const THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS = 8;
+/** Per-frame detune drift step size in cents (random-walk). */
+const THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS = 2;
 /** Noise filter centre range for jet texture (band-pass). */
 export const THRUSTER_HUM_NOISE_FILTER_MIN = 700;
 export const THRUSTER_HUM_NOISE_FILTER_MAX = 1100;
@@ -73,6 +77,10 @@ interface ThrusterHumState {
   gain: GainNode;
   /** Current gain — tracks the visual flame model analogously. */
   currentGain: number;
+  /** Subtle detune drift in cents — slow random-walk variation for organic tonal character. */
+  detuneOsc: number;
+  /** Subtle detune drift in cents for the undertone oscillator. */
+  detuneSub: number;
 }
 
 /** For tests: returns the current thruster hum state (or null if not started). */
@@ -148,7 +156,14 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
   osc.start(ctx.currentTime);
   sub.start(ctx.currentTime);
 
-  thrusterHum = { ctx, osc, sub, noise, noiseFilter, gain, currentGain: 0 };
+  // ── Subtle detune drift — organic tonal variation (AC1, AH-0MTK9JP37003MJQ4) ──
+  // Small random-walk in cents, independent of thrust level.
+  const initDetuneOsc = (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS;
+  const initDetuneSub = (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS;
+  osc.detune.setValueAtTime(initDetuneOsc, ctx.currentTime);
+  sub.detune.setValueAtTime(initDetuneSub, ctx.currentTime);
+
+  thrusterHum = { ctx, osc, sub, noise, noiseFilter, gain, currentGain: 0, detuneOsc: initDetuneOsc, detuneSub: initDetuneSub };
   return thrusterHum;
 }
 
@@ -208,6 +223,25 @@ export function updateThrusterSound(level: number): void {
   const pitchScale = 1 + clamped * 0.12;
   hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale, ctx.currentTime);
   hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale, ctx.currentTime);
+  // Subtle detune drift — slow random-walk for organic tonal variation (AC1).
+  try {
+    const driftOsc = Math.max(
+      -THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+      Math.min(THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+        hum.detuneOsc + (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS
+      )
+    );
+    const driftSub = Math.max(
+      -THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+      Math.min(THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+        hum.detuneSub + (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS
+      )
+    );
+    hum.osc.detune.setValueAtTime(driftOsc, ctx.currentTime);
+    hum.sub.detune.setValueAtTime(driftSub, ctx.currentTime);
+    hum.detuneOsc = driftOsc;
+    hum.detuneSub = driftSub;
+  } catch { /* detune not supported */ }
   // Gentle jet filter drift — small variance per frame, filtered noise stays dominant.
   try {
     const cutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);

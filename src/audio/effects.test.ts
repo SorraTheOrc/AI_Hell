@@ -51,8 +51,15 @@ interface GainEvent {
 interface RecordedOscillator {
   type: string;
   freqEvents: FreqEvent[];
+  detuneEvents: DetuneEvent[];
   startTime: number | null;
   stopTime: number | null;
+}
+
+interface DetuneEvent {
+  method: 'setValueAtTime';
+  value: number;
+  time: number;
 }
 
 interface RecordedGain {
@@ -81,6 +88,7 @@ class RecordingAudioContext {
     const rec: RecordedOscillator = {
       type: 'sine',
       freqEvents: [],
+      detuneEvents: [],
       startTime: null,
       stopTime: null,
     };
@@ -101,6 +109,11 @@ class RecordingAudioContext {
         },
         linearRampToValueAtTime: (value: number, time: number) => {
           rec.freqEvents.push({ method: 'linearRampToValueAtTime', value, time });
+        },
+      },
+      detune: {
+        setValueAtTime: (value: number, time: number) => {
+          rec.detuneEvents.push({ method: 'setValueAtTime', value, time });
         },
       },
       connect: () => ({ connect: () => ({}) }),
