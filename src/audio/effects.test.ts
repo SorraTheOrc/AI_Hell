@@ -25,6 +25,13 @@ import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
+  THRUSTER_HUM_MAX_VOLUME,
+  THRUSTER_HUM_GROWTH_TIME,
+  THRUSTER_HUM_SHRINK_MULTIPLIER,
+  updateThrusterSound,
+  stopThrusterSound,
+  _resetThrusterHumForTests,
+  _resetAudioContextForTests,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -50,6 +57,8 @@ interface RecordedOscillator {
 
 interface RecordedGain {
   gainEvents: GainEvent[];
+  // Web Audio API's GainNode helpers needed by the thruster hum.
+  cancelCalls: number[];
 }
 
 /**
@@ -104,7 +113,7 @@ class RecordingAudioContext {
   }
 
   createGain(): unknown {
-    const rec: RecordedGain = { gainEvents: [] };
+    const rec: RecordedGain = { gainEvents: [], cancelCalls: [] };
     this.gains.push(rec);
     return {
       gain: {
@@ -116,6 +125,9 @@ class RecordingAudioContext {
         },
         exponentialRampToValueAtTime: (value: number, time: number) => {
           rec.gainEvents.push({ method: 'exponentialRampToValueAtTime', value, time });
+        },
+        cancelScheduledValues: (time: number) => {
+          rec.cancelCalls.push(time);
         },
       },
       connect: () => ({}),
@@ -429,5 +441,172 @@ describe('player pickup activation cues — oscillator parameters (AC3, AC4, AC6
     expect(oscs[1].type).toBe('sine');
     expect(startFreq([oscs[1]])).toBe(80);
     expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+});
+
+// ── Thruster hum — player SFX (AH-0MTFOSOHN001Q620) ─────────────────
+//
+// Tests follow the AC layout in the parent brief:
+// - AC1: Web Audio synthesis, no assets, distinct from blip cues.
+// - AC3: fade-in from silence (≤ 100 ms at ref), quick 4× decay, no click.
+// - AC5: no overlapping oscillators; stop cleans up; rapid toggling is clean.
+// - AC2: volume respects THRUSTER_HUM_MAX_VOLUME (≤ 0.2).
+
+describe('thruster hum — synthesis + no-op (AH-0MTFOSOHN001Q620)', () => {
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('degrades to safe no-op without an AudioContext (AC1)', () => {
+    // No AudioContext installed — headless / autoplay-blocked path.
+    expect(() => updateThrusterSound(0.5)).not.toThrow();
+    expect(() => updateThrusterSound(0)).not.toThrow();
+    expect(() => updateThrusterSound(1)).not.toThrow();
+    expect(() => stopThrusterSound()).not.toThrow();
+    // No oscillators should be created without a context.
+    expect(RecordingAudioContext.instances).toHaveLength(0);
+  });
+
+  it('stopThrusterSound is a safe no-op when no hum is active', () => {
+    expect(() => stopThrusterSound()).not.toThrow();
+  });
+
+  it('clamping: NaN / negative / >1 levels are handled safely', () => {
+    (window as unknown as { AudioContext: unknown }).AudioContext = RecordingAudioContext;
+    // These should not throw; NaN/negative => 0 (silence), >1 => 1.
+    expect(() => updateThrusterSound(NaN)).not.toThrow();
+    expect(() => updateThrusterSound(-1)).not.toThrow();
+    expect(() => updateThrusterSound(2)).not.toThrow();
+    expect(() => updateThrusterSound(Infinity)).not.toThrow();
+  });
+});
+
+describe('thruster hum — gain envelope + lifecycle (AH-0MTFOSOHN001Q620)', () => {
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext = RecordingAudioContext;
+  });
+
+  function prime() {
+    // Force the shared audioCtx to be created against the RecordingAudioContext.
+    // Any cue would work; thruster itself needs the context seeded first.
+    updateThrusterSound(1);
+  }
+
+  it('creates a reused gain node and ramps gain from 0 to target (AC3 fade-in, AC2 volume)', () => {
+    prime();
+    const ctx = RecordingAudioContext.instances[0];
+    // Only one gain node for the thruster (not per-frame) + the one live thruster pair.
+    const firstOscCount = ctx.oscillators.length;
+    const firstGainCount = ctx.gains.length;
+
+    // The second call reuses the same nodes — no new oscillators.
+    updateThrusterSound(0.5);
+    expect(ctx.oscillators).toHaveLength(firstOscCount);
+    expect(ctx.gains).toHaveLength(firstGainCount);
+
+    // The thruster gain envelope includes a fade-in: verify at least one
+    // linearRamp and that the peak does not exceed THRUSTER_HUM_MAX_VOLUME.
+    const thrusterGain = ctx.gains[firstGainCount - 1];
+    const ramps = thrusterGain.gainEvents.filter((e) => e.method === 'linearRampToValueAtTime');
+    expect(ramps.length).toBeGreaterThan(0);
+    const peak = Math.max(0, ...thrusterGain.gainEvents.map((e) => e.value));
+    expect(peak).toBeLessThanOrEqual(THRUSTER_HUM_MAX_VOLUME + 1e-9);
+  });
+
+  it('fade-out cancels pending ramps and ramps to 0 at ~4× the growth rate (AC3)', () => {
+    prime();
+    const ctx = RecordingAudioContext.instances[0];
+    const gainCountBeforeDecay = ctx.gains.length;
+    const gain = ctx.gains[gainCountBeforeDecay - 1];
+    const eventsBefore = gain.gainEvents.length;
+
+    updateThrusterSound(0);
+    const eventsAfter = gain.gainEvents;
+    // Decay cancels pending ramps and does a linear ramp to 0.
+    expect(gain.cancelCalls.length).toBeGreaterThan(0);
+    const tail = eventsAfter.slice(eventsBefore);
+    expect(tail.some((e) => e.method === 'linearRampToValueAtTime' && e.value === 0)).toBe(true);
+    // Decay window ~ growthTime / 4 (handle ≤ 100 ms budget at reference).
+    const decayRamp = tail.find((e) => e.method === 'linearRampToValueAtTime' && e.value === 0)!;
+    const expectedDecay = THRUSTER_HUM_GROWTH_TIME / THRUSTER_HUM_SHRINK_MULTIPLIER;
+    // The ramp target time is currentTime + decay; since our mock's currentTime
+    // is 0, the ramp time equals the decay duration.
+    expect(decayRamp.time).toBeCloseTo(expectedDecay, 5);
+    // Growth/decay mirror FLAME_* constants: sanity check the exported constant.
+    expect(THRUSTER_HUM_GROWTH_TIME).toBeCloseTo(0.03);
+    expect(THRUSTER_HUM_SHRINK_MULTIPLIER).toBe(4);
+  });
+
+  it('retriggering while decaying restarts the ramp from the current gain (AC3)', () => {
+    prime();
+    const ctx = RecordingAudioContext.instances[0];
+    const gain = ctx.gains[ctx.gains.length - 1];
+    const oscCountBefore = ctx.oscillators.length;
+
+    updateThrusterSound(0); // start decay
+    const midCancel = gain.cancelCalls.length;
+    updateThrusterSound(0.6); // retrigger
+    // No new oscillators on retrigger — reuse.
+    expect(ctx.oscillators).toHaveLength(oscCountBefore);
+    // Retrigger cancels scheduled values and ramps toward the new target.
+    expect(gain.cancelCalls.length).toBeGreaterThan(midCancel);
+    const lastRamp = [...gain.gainEvents].reverse().find((e) => e.method === 'linearRampToValueAtTime')!;
+    expect(lastRamp.value).toBeCloseTo(0.6 * THRUSTER_HUM_MAX_VOLUME, 5);
+  });
+
+  it('rapid toggling does not leak oscillators (AC5)', () => {
+    prime();
+    const ctx = RecordingAudioContext.instances[0];
+    const baseline = ctx.oscillators.length;
+    for (let i = 0; i < 10; i++) {
+      updateThrusterSound(i % 2 === 0 ? 0.3 : 0);
+    }
+    // At most the thruster pair + no new live pair per toggle — single gain reused.
+    expect(ctx.oscillators.length).toBe(baseline);
+  });
+
+  it('changing level scales volume proportionally (AC2)', () => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext = RecordingAudioContext;
+    updateThrusterSound(0.5);
+    const ctx = RecordingAudioContext.instances[0];
+    const gain = ctx.gains[ctx.gains.length - 1];
+    let ramp05 = [...gain.gainEvents].reverse().find((e) => e.method === 'linearRampToValueAtTime')!.value;
+    expect(ramp05).toBeCloseTo(0.5 * THRUSTER_HUM_MAX_VOLUME, 5);
+
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext = RecordingAudioContext;
+    updateThrusterSound(1);
+    const ctx2 = RecordingAudioContext.instances[0];
+    const gain2 = ctx2.gains[ctx2.gains.length - 1];
+    let ramp1 = [...gain2.gainEvents].reverse().find((e) => e.method === 'linearRampToValueAtTime')!.value;
+    expect(ramp1).toBeCloseTo(THRUSTER_HUM_MAX_VOLUME, 5);
+    expect(ramp1).toBeCloseTo(ramp05 * 2, 5);
+  });
+
+  it('stopThrusterSound frees the nodes (AC5)', () => {
+    prime();
+    const ctx = RecordingAudioContext.instances[0];
+    const firstOscCount = ctx.oscillators.length;
+    stopThrusterSound();
+    // Next thrust creates a fresh pair — proof the old nodes were stopped.
+    updateThrusterSound(0.7);
+    // The stale mock still has the old oscillators; but _reset cleared the
+    // thruster state so ensureThrusterHum will allocate fresh nodes.
+    expect(ctx.oscillators.length).toBeGreaterThan(firstOscCount);
+  });
+
+  it('distinct wave types: thruster hum uses sawtooth+sine (AC1 — distinct from blip cues)', () => {
+    prime();
+    const ctx = RecordingAudioContext.instances[0];
+    const types = ctx.oscillators.map((o) => o.type);
+    expect(types).toContain('sawtooth');
+    expect(types).toContain('sine');
   });
 });

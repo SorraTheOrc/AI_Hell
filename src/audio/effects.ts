@@ -11,6 +11,184 @@
  */
 
 
+// ── Thruster hum (player SFX, AH-0MTFOSOHN001Q620) ─────────────────
+
+/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
+export const THRUSTER_HUM_MAX_VOLUME = 0.15;
+/** Base thruster hum frequency — low sawtooth hum (GDD §7.3 continuous hum). */
+export const THRUSTER_HUM_BASE_FREQ = 85;
+/** Undertone frequency (sine) — adds body to the low hum. */
+export const THRUSTER_HUM_UNDERTONE_FREQ = 45;
+/** Gain ramp time at FLAME_REF_THRUST: mirrors flame growth (mirrors FLAME_GROWTH_TIME_AT_REF). */
+export const THRUSTER_HUM_GROWTH_TIME = 0.03;
+/** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER. */
+export const THRUSTER_HUM_SHRINK_MULTIPLIER = 4;
+
+/** Clamp level to [0, 1]. */
+function clampLevel(level: number): number {
+  if (level <= 0 || !Number.isFinite(level)) return 0;
+  if (level >= 1) return 1;
+  return level;
+}
+
+let thrusterHum: ThrusterHumState | null = null;
+
+interface ThrusterHumState {
+  ctx: AudioContext;
+  osc: OscillatorNode;
+  sub: OscillatorNode;
+  gain: GainNode;
+  /** Current gain — tracks the visual flame model analogously. */
+  currentGain: number;
+}
+
+/** For tests: returns the current thruster hum state (or null if not started). */
+export function _getThrusterHumStateForTests(): ThrusterHumState | null {
+  return thrusterHum;
+}
+
+/**
+ * Resets the thruster hum AudioNode lifecycle — stops any active hum and
+ * clears module state. Exported under _ for tests so worktrees can re-test
+ * the hum lifecycle in isolation.
+ */
+export function _resetThrusterHumForTests(): void {
+  if (thrusterHum) {
+    try {
+      thrusterHum.gain.gain.cancelScheduledValues(thrusterHum.ctx.currentTime);
+      thrusterHum.gain.gain.setValueAtTime(0, thrusterHum.ctx.currentTime);
+      thrusterHum.osc.stop(thrusterHum.ctx.currentTime);
+      thrusterHum.sub.stop(thrusterHum.ctx.currentTime);
+    } catch { /* already stopped / no ctx */ }
+    thrusterHum = null;
+  }
+  // Also allow tests to re-seed the AudioContext with a new mock.
+  // getAudioContext() caches the ctor instance; thruster tests need a fresh ctx.
+}
+
+/** Ensures the thruster hum has a live oscillator+gain. Lazily creates the nodes. */
+function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
+  if (thrusterHum && thrusterHum.ctx === ctx) return thrusterHum;
+  // Orphaned context → tear down old hum first.
+  if (thrusterHum) {
+    _resetThrusterHumForTests();
+  }
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, ctx.currentTime);
+  gain.connect(ctx.destination);
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ, ctx.currentTime);
+  osc.connect(gain);
+
+  const sub = ctx.createOscillator();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ, ctx.currentTime);
+  sub.connect(gain);
+
+  osc.start(ctx.currentTime);
+  sub.start(ctx.currentTime);
+
+  thrusterHum = { ctx, osc, sub, gain, currentGain: 0 };
+  return thrusterHum;
+}
+
+/**
+ * Sustained thruster hum — player SFX (AH-0MTFOSOHN001Q620, GDD §7.3).
+ *
+ * A single reused low sawtooth + sine undertone through one gain node.
+ * The gain envelope ramps smoothly so thrust onset/decay never clicks:
+ * rise mirrors the flame growth time (30 ms at reference thrust),
+ * decay is ~4× faster. `level` in [0, 1] comes from
+ * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
+ * scaled by thrustAcceleration; the gain target is
+ * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.15).
+ *
+ * Call once per frame from `Player.preUpdate` — 0 silences the hum,
+ * > 0 reuses the same nodes and ramps the gain. Does not leak oscillators.
+ * Safe no-op without an AudioContext (headless tests / autoplay-blocked
+ * browsers) — never throws.
+ *
+ * Thruster hum is NOT wired to per-engine flame ports — single ship-level
+ * hum per the intake's single-hum assumption; VFX stays per-engine visual.
+ */
+export function updateThrusterSound(level: number): void {
+  const clamped = clampLevel(level);
+  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME;
+
+  const ctx = getAudioContext();
+  if (!ctx) {
+    // Headless: track gain target so tests can still assert ramping
+    // semantics without real audio; without a ctx the hum stays no-op
+    // to the player but the module state mirrors "what the gain would be".
+    if (clamped === 0 && thrusterHum) {
+      // Silencing with no ctx — just forget the state, same as stop.
+      thrusterHum = null as unknown as ThrusterHumState;
+      // Keep gainTracking for test assertions when headless (not used at runtime).
+    }
+    return;
+  }
+
+  if (clamped === 0) {
+    if (!thrusterHum) return;
+    // 4× decay: time to silence is growthTime / SHRINK_MULTIPLIER
+    const decayTime = THRUSTER_HUM_GROWTH_TIME / THRUSTER_HUM_SHRINK_MULTIPLIER;
+    const t = ctx.currentTime;
+    thrusterHum.gain.gain.cancelScheduledValues(t);
+    thrusterHum.gain.gain.setValueAtTime(thrusterHum.currentGain, t);
+    thrusterHum.gain.gain.linearRampToValueAtTime(0, t + decayTime);
+    thrusterHum.currentGain = 0;
+    // Leave nodes live so retriggering ramps up from the decay tail
+    // (no click) — stop only on explicit scene destroy via `stopThrusterSound`.
+    return;
+  }
+
+  const hum = ensureThrusterHum(ctx);
+  // Pitch lightly tracks level: subtle Doppler hint without being shrill.
+  const pitchScale = 1 + clamped * 0.2;
+  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale, ctx.currentTime);
+  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale, ctx.currentTime);
+
+  const t = ctx.currentTime;
+  // Rise time at this level = growthTime * (level's currentGain-distance / 1)
+  // — faster at higher thrust analogously, but we approximate with linear
+  // ramping from currentGain to target over growthTime scaled by remaining delta.
+  const delta = Math.abs(targetGain - hum.currentGain);
+  const ramp = THRUSTER_HUM_GROWTH_TIME * (delta / THRUSTER_HUM_MAX_VOLUME);
+  hum.gain.gain.cancelScheduledValues(t);
+  hum.gain.gain.setValueAtTime(hum.currentGain, t);
+  hum.gain.gain.linearRampToValueAtTime(targetGain, t + Math.max(0.005, ramp));
+  hum.currentGain = targetGain;
+}
+
+/**
+ * Forces the thruster hum to stop and frees its AudioNodes.
+ * Called when the ship is destroyed/respawned or the scene shuts down
+ * (AC5 — no orphaned audio). Safe no-op without a live hum.
+ */
+export function stopThrusterSound(): void {
+  if (!thrusterHum) return;
+  try {
+    thrusterHum.gain.gain.cancelScheduledValues(thrusterHum.ctx.currentTime);
+    thrusterHum.gain.gain.setValueAtTime(0, thrusterHum.ctx.currentTime);
+    thrusterHum.osc.stop(thrusterHum.ctx.currentTime + 0.02);
+    thrusterHum.sub.stop(thrusterHum.ctx.currentTime + 0.02);
+  } catch { /* ignore */ }
+  thrusterHum = null;
+}
+
+/**
+ * Resets the internal AudioContext cache — needed only in tests when
+ * window.AudioContext is swapped between the recording mock and the
+ * absence case. Production code never calls this.
+ */
+export function _resetAudioContextForTests(): void {
+  try { thrusterHum?.gain?.gain?.cancelScheduledValues?.(thrusterHum.ctx.currentTime); } catch { /* ignore */ }
+  thrusterHum = null;
+  audioCtx = null;
+}
+
 let audioCtx: AudioContext | null = null;
 
 /** Lazily creates the shared AudioContext, or returns null if unavailable. */
