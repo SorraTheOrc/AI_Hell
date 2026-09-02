@@ -92,11 +92,16 @@ export interface MovementModel {
 
   /**
    * SFX integration: engine sound level in [0, 1] (0 = silent).
-   * Scales with `thrustAcceleration` so audio follows the tuning slider:
-   * idle = 0, thrusting = min(1, thrustAcceleration / FLAME_REF_THRUST)
-   * (GDD §2.2, AH-0MTFOSOHN001Q620). `thrustAcceleration` defaults to
-   * FLAME_REF_THRUST for backward compatibility (binary callers remain valid).
-   * At thrust <= 0 the level is 0, consistent with `flameGrowthRate`.
+   *
+   * Continuous thrust-scaled output (AH-0MTFOSOHN001Q620, GDD §2.2
+   * `ShipConfig`): idle = 0; while thrust input is held the level is
+   * `min(1, thrustAcceleration / FLAME_REF_THRUST)` so the thruster hum
+   * (src/audio/effects.ts → updateThrusterSound(level)) follows the
+   * tuning slider — half thrustAcceleration → ~0.5 level, double →
+   * clamped to 1, ≤ 0 → 0 (consistent with flameGrowthRate).
+   * `thrustAcceleration` defaults to FLAME_REF_THRUST for backward
+   * compatibility (binary callers remain valid). Called per-frame from
+   * Player.preUpdate as `getEngineSoundLevel(state, input, config.thrust)`.
    */
   getEngineSoundLevel(state: MovementState, input: ControlInput, thrustAcceleration?: number): number;
 }

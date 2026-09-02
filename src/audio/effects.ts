@@ -1,17 +1,37 @@
 /**
- * Procedural audio effects for enemy gym scenes (GDD §7.3).
+ * Procedural audio effects for enemy gym scenes and the player ship (GDD §7.3).
  *
  * Sounds are synthesised at runtime with the Web Audio API — no audio
  * assets to ship. Each enemy kind maps to distinct tones: spawn uses a
- * high rising blip, destruction a quick descending noise burst.
+ * high rising blip, destruction a quick descending noise burst. The
+ * player ship's thruster hum is a continuous low sawtooth + sine
+ * undertone sustained through one reused gain node (see the thruster
+ * hum section below).
+ *
+ * Thruster-scaling rationale: the hum gain tracks
+ * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
+ * (level in [0, 1] = min(1, thrustAcceleration / FLAME_REF_THRUST),
+ * GDD §2.2 `ShipConfig`), so the tuning slider stays audible and
+ * halved/doubled thrust halves/caps the hum — the same thrust value
+ * that drives the flame animation drives audio.
  *
  * In environments without a working AudioContext (headless tests, some
- * browsers) every function degrades to a safe no-op: the game never
- * depends on audio being available.
+ * browsers, autoplay-blocked) every function degrades to a safe no-op:
+ * the game never depends on audio being available — `updateThrusterSound`
+ * simply does nothing and never throws.
  */
 
 
-// ── Thruster hum (player SFX, AH-0MTFOSOHN001Q620) ─────────────────
+// ── Thruster hum (player SFX, AH-0MTFOSOHN001Q620, GDD §7.3) ───────
+//
+// Single ship-level continuous hum — NOT per-engine flame port (see
+// docs/Game Design Document.md §7.3 Player Audio Character). Driven
+// once per frame from Player.preUpdate via the level returned by
+// getEngineSoundLevel(state, input, thrustAcceleration) so audio stays
+// in lockstep with the tuning slider and both control schemes. Gain
+// never exceeds THRUSTER_HUM_MAX_VOLUME (0.15) and the smoothed envelope
+// mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
+// Safe no-op without an AudioContext (headless tests / autoplay-blocked).
 
 /** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
 export const THRUSTER_HUM_MAX_VOLUME = 0.15;
@@ -21,7 +41,7 @@ export const THRUSTER_HUM_BASE_FREQ = 85;
 export const THRUSTER_HUM_UNDERTONE_FREQ = 45;
 /** Gain ramp time at FLAME_REF_THRUST: mirrors flame growth (mirrors FLAME_GROWTH_TIME_AT_REF). */
 export const THRUSTER_HUM_GROWTH_TIME = 0.03;
-/** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER. */
+/** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER (quick silence on release). */
 export const THRUSTER_HUM_SHRINK_MULTIPLIER = 4;
 
 /** Clamp level to [0, 1]. */
