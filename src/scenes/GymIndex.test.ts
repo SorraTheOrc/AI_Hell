@@ -64,12 +64,14 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Boss',
       'Player',
       'PowerUps',
+      'PowerUpsCombat',
       'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBoss',
       'GymPlayer',
       'GymPowerUps',
+      'GymPowerUpsCombat',
       'GymWeapons',
     ]);
     // Enemy section: one entry per seed config (+ any Save As entries)

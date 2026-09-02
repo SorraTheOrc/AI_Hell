@@ -67,12 +67,16 @@ describe('power-up lifecycle constants', () => {
 // ── Catalogue tests ─────────────────────────────────────────────────
 
 describe('power-up catalogue (types)', () => {
-  it('contains exactly three non-combat types: P5, P8, P9', () => {
+  it('contains the non-combat types P5, P8, P9 (plus combat P3,P4,P6,P7)', () => {
     const ids = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
-    expect(ids).toHaveLength(3);
     expect(ids).toContain('P5');
     expect(ids).toContain('P8');
     expect(ids).toContain('P9');
+    // Combat gym adds P3,P4,P6,P7 (AH-0MTC2P6G3007PJ40)
+    expect(ids).toContain('P3');
+    expect(ids).toContain('P4');
+    expect(ids).toContain('P6');
+    expect(ids).toContain('P7');
   });
 
   it('P5 is Speed Boost', () => {

@@ -128,3 +128,20 @@ export const PLAYER_RESPAWN_INVULNERABLE = 1.5;
  * with formation or wait-based tests.
  */
 export const PLAYER_SPAWN = { x: 920, y: 30 } as const;
+
+// ── Combat gym — threat-coupled power-ups (GDD §4.4, GymPowerUpsCombat) ─
+
+/** P3 Shield duration in seconds (15 s, absorbs one hit). */
+export const COMBAT_SHIELD_DURATION = 15;
+
+/** P6 Phase Shift duration in seconds (3 s, pass-through). */
+export const COMBAT_PHASE_SHIFT_DURATION = 3;
+
+/** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
+export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;
+
+/** Hit-response invulnerability after a flash/reset with no lives (seconds). */
+export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
+
+/** Blink half-period while invulnerable after a hit (seconds). */
+export const COMBAT_HIT_BLINK_INTERVAL = 0.1;
