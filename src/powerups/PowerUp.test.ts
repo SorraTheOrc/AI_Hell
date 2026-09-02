@@ -30,16 +30,16 @@ import {
 
 const TEST_GROW_DURATION = 0.5; // seconds
 const TEST_SHRINK_DURATION = 0.5; // seconds
-const TEST_TOTAL_LIFETIME = 5; // seconds
+const TEST_TOTAL_LIFETIME = POWER_UP_LIFETIME; // seconds — mirrors POWER_UP_LIFETIME (12.5 s, 2.5× original)
 
 // ── Constants tests ─────────────────────────────────────────────────
 
 describe('power-up lifecycle constants', () => {
-  it('defines a positive spawn interval (5 s default)', () => {
+  it('defines a positive spawn interval (12.5 s default)', () => {
     expect(POWER_UP_SPAWN_INTERVAL).toBeGreaterThan(0);
   });
 
-  it('defines a positive total lifetime (5 s default)', () => {
+  it('defines a positive total lifetime (12.5 s default)', () => {
     expect(POWER_UP_LIFECYCLE_TOTAL_LIFETIME).toBeGreaterThan(0);
   });
 
@@ -115,7 +115,7 @@ describe('round-robin spawner AC2: spawn cadence', () => {
   });
 
   it('spawn interval equals drop lifetime — the next spawn coincides with the previous despawn (exactly one drop on screen)', () => {
-    // One spawn every 5 s, 5 s lifetime → at every spawn tick the previous
+    // One spawn every 12.5 s, 12.5 s lifetime → at every spawn tick the previous
     // drop has just finished fading, so at most one drop exists at a time.
     expect(POWER_UP_SPAWN_INTERVAL).toBe(POWER_UP_LIFECYCLE_TOTAL_LIFETIME);
   });

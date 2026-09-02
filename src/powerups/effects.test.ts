@@ -211,3 +211,131 @@ describe('registry aggregation (feed for the HUD, parent AC4/AC6)', () => {
     expect(reg.magnetStacks()).toBe(2);
   });
 });
+
+// ── Combat gym effects (AH-0MTC2P6G3007PJ40) ──────────────────────────
+
+describe('P3 Shield (AC4): 15 s bubble, absorbs one hit, refresh on re-collect', () => {
+  it('is shielded while active, blocks one hit then pops', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3');
+    expect(reg.isShielded).toBe(true);
+    expect(reg.isHitImmune).toBe(true);
+    expect(reg.tryAbsorbShield()).toBe(true); // absorbs first hit
+    expect(reg.isShielded).toBe(false); // popped
+    expect(reg.tryAbsorbShield()).toBe(false); // no second absorb
+  });
+
+  it('expires after 15 s', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3');
+    reg.tick(14.9);
+    expect(reg.isShielded).toBe(true);
+    reg.tick(0.2);
+    expect(reg.isShielded).toBe(false);
+  });
+
+  it('refreshes on re-collect (never additive)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3');
+    reg.tick(10); // 5 s remaining
+    reg.applyCollect('P3'); // refresh
+    expect(reg.remaining('P3')).toBeCloseTo(15);
+    reg.tick(14.9);
+    expect(reg.isShielded).toBe(true);
+    reg.tick(0.2);
+    expect(reg.isShielded).toBe(false);
+  });
+});
+
+describe('P4 Bomb (AC5): instant bullet clear, no registry state', () => {
+  it('is a no-op in the registry (scene clears bullets)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P4');
+    expect(reg.isShielded).toBe(false);
+    expect(reg.isPhased).toBe(false);
+    expect(reg.activeEffects()).toHaveLength(0);
+    // Re-collect is also a benign no-op.
+    reg.applyCollect('P4');
+    expect(reg.activeEffects()).toHaveLength(0);
+  });
+});
+
+describe('P6 Phase Shift (AC6): 3 s intangibility, pass-through, refresh', () => {
+  it('is phased while active', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    expect(reg.isPhased).toBe(true);
+    expect(reg.isHitImmune).toBe(true);
+  });
+
+  it('expires after 3 s', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.tick(2.9);
+    expect(reg.isPhased).toBe(true);
+    reg.tick(0.2);
+    expect(reg.isPhased).toBe(false);
+  });
+
+  it('refreshes on re-collect', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.tick(2); // 1 s remaining
+    reg.applyCollect('P6'); // refresh
+    expect(reg.remaining('P6')).toBeCloseTo(3);
+    // applyPhaseShift refresh path
+    reg.tick(1);
+    reg.applyPhaseShift();
+    expect(reg.remaining('P6')).toBeCloseTo(3);
+  });
+});
+
+describe('P7 Teleport (AC7): FIFO stacks, consume, grants P6', () => {
+  it('FIFO stacks grow on collect', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.hasTeleport()).toBe(false);
+    reg.applyCollect('P7');
+    reg.applyCollect('P7');
+    expect(reg.teleportStacks()).toBe(2);
+    expect(reg.hasTeleport()).toBe(true);
+  });
+
+  it('consumeTeleport removes one stack and grants P6', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P7');
+    reg.applyCollect('P7');
+    expect(reg.consumeTeleport()).toBe(true);
+    expect(reg.teleportStacks()).toBe(1);
+    expect(reg.isPhased).toBe(true); // phase granted on teleport
+  });
+
+  it('returns false when empty, and stacks appear in activeEffects', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.consumeTeleport()).toBe(false);
+    reg.applyCollect('P7');
+    reg.applyCollect('P7');
+    const active = reg.activeEffects();
+    const t = active.find((e) => e.id === 'P7');
+    expect(t).toBeDefined();
+    expect(t!.stacks).toBe(2);
+  });
+});
+
+describe('combat hit model (AC8): hit immunity via shield / phase', () => {
+  it('no immunity when neither shield nor phase is active', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.isHitImmune).toBe(false);
+  });
+
+  it('shield or phase grants hit immunity, lost on absorb or expiry', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3');
+    expect(reg.isHitImmune).toBe(true);
+    reg.tryAbsorbShield();
+    expect(reg.isHitImmune).toBe(false);
+    reg.applyCollect('P6');
+    expect(reg.isHitImmune).toBe(true);
+    reg.tick(3.1);
+    expect(reg.isHitImmune).toBe(false);
+  });
+});

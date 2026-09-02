@@ -56,17 +56,25 @@ export interface HUDEntry {
  * untyped: the class is intentionally a plain `Phaser.Container` so it
  * binds to any scene without importing scene-specific types.
  */
+export interface HUDOptions {
+  /** Whether to show the lives counter row. Defaults to true for backward compatibility. Combat gyms with no lives mechanic pass `{ showLives: false }`. */
+  showLives?: boolean;
+}
+
 export class HUD extends Phaser.GameObjects.Container {
   private _registry: EffectsRegistry | null = null;
   private _livesLabel: Phaser.GameObjects.Text;
   private _rows: HUDEntry[] = [];
   private _rowObjects: Phaser.GameObjects.GameObject[] = [];
   private _iconGraphics: Phaser.GameObjects.Graphics;
+  private _showLives: boolean;
 
-  constructor(scene: Phaser.Scene, registry: EffectsRegistry | null = null) {
+  constructor(scene: Phaser.Scene, registry: EffectsRegistry | null = null, options?: HUDOptions) {
     super(scene, 8, 8);
     scene.add.existing(this);
     this.setDepth(HUD_DEPTH);
+
+    this._showLives = options?.showLives ?? true;
 
     this._iconGraphics = new Phaser.GameObjects.Graphics(scene);
     this._livesLabel = new Phaser.GameObjects.Text(
@@ -76,6 +84,7 @@ export class HUD extends Phaser.GameObjects.Container {
       '',
       TEXT_STYLE,
     );
+    this._livesLabel.setVisible(this._showLives);
     this.add([this._iconGraphics, this._livesLabel]);
 
     this._registry = registry;
@@ -115,9 +124,16 @@ export class HUD extends Phaser.GameObjects.Container {
         this._addRow(effect, row);
         row += 1;
       }
-      this._livesLabel.setText(`Lives: ${this._registry.lives()}`);
+      if (this._showLives) {
+        this._livesLabel.setVisible(true);
+        this._livesLabel.setText(`Lives: ${this._registry.lives()}`);
+      } else {
+        this._livesLabel.setVisible(false);
+        this._livesLabel.setText('');
+      }
     } else {
       this._livesLabel.setText('');
+      if (!this._showLives) this._livesLabel.setVisible(false);
     }
   }
 
