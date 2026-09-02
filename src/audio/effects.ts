@@ -42,6 +42,11 @@ export const THRUSTER_HUM_MAX_VOLUME = 0.15;
 export const THRUSTER_HUM_BASE_FREQ = 85;
 /** Undertone frequency (sine) — adds body to the low hum. */
 export const THRUSTER_HUM_UNDERTONE_FREQ = 45;
+/** Detune spread in cents applied per frame for tonal drift (AC1). */
+export const THRUSTER_HUM_DETUNE_SPREAD_CENTS = 12;
+/** Noise filter centre range for grit randomization (AC2). */
+export const THRUSTER_HUM_NOISE_FILTER_MIN = 350;
+export const THRUSTER_HUM_NOISE_FILTER_MAX = 650;
 /** Gain ramp time at FLAME_REF_THRUST: mirrors flame growth (mirrors FLAME_GROWTH_TIME_AT_REF). */
 export const THRUSTER_HUM_GROWTH_TIME = 0.03;
 /** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER (quick silence on release). */
@@ -67,6 +72,11 @@ interface ThrusterHumState {
   gain: GainNode;
   /** Current gain — tracks the visual flame model analogously. */
   currentGain: number;
+}
+
+/** Small grit/detune helper: clamped random in [-spread, +spread]. */
+function jitter(spread: number): number {
+  return (Math.random() * 2 - 1) * spread;
 }
 
 /** For tests: returns the current thruster hum state (or null if not started). */
@@ -108,11 +118,18 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
   const osc = ctx.createOscillator();
   osc.type = 'sawtooth';
   osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ, ctx.currentTime);
+  // Initial detune wobble so the first frame is not perfectly static (AC1).
+  try {
+    (osc.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS * 0.6), ctx.currentTime);
+  } catch { /* detune not supported in some mocks */ }
   osc.connect(gain);
 
   const sub = ctx.createOscillator();
   sub.type = 'sine';
   sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ, ctx.currentTime);
+  try {
+    (sub.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS * 0.4), ctx.currentTime);
+  } catch { /* detune not supported */ }
   sub.connect(gain);
 
   // ── Jet-engine noise layer ──────────────────────────────────────
@@ -129,8 +146,12 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
 
   const noiseFilter = ctx.createBiquadFilter();
   noiseFilter.type = 'lowpass';
-  noiseFilter.frequency.setValueAtTime(500, ctx.currentTime);
-  noiseFilter.Q.setValueAtTime(0.5, ctx.currentTime);
+  // Initial grit: randomized cutoff/Q so each hum instance has slightly
+  // different jet texture (AC2).
+  const initCutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
+  const initQ = 0.3 + Math.random() * 0.7;
+  noiseFilter.frequency.setValueAtTime(initCutoff, ctx.currentTime);
+  noiseFilter.Q.setValueAtTime(initQ, ctx.currentTime);
 
   noise.connect(noiseFilter);
   noiseFilter.connect(gain);
@@ -196,8 +217,22 @@ export function updateThrusterSound(level: number): void {
   const hum = ensureThrusterHum(ctx);
   // Pitch lightly tracks level: subtle Doppler hint without being shrill.
   const pitchScale = 1 + clamped * 0.2;
-  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale, ctx.currentTime);
-  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale, ctx.currentTime);
+  // Micro jitter ±3% keeps sustained thrust from sounding static (AC1).
+  const oscJitter = 1 + jitter(0.03);
+  const subJitter = 1 + jitter(0.03);
+  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale * subJitter, ctx.currentTime);
+  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale * oscJitter, ctx.currentTime);
+  // Per-frame tonal drift via detune (cents) and grit via filter modulation (AC1/AC2).
+  try {
+    (hum.osc.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS), ctx.currentTime);
+    (hum.sub.detune as unknown as AudioParam)?.setValueAtTime?.(jitter(THRUSTER_HUM_DETUNE_SPREAD_CENTS * 0.7), ctx.currentTime);
+  } catch { /* detune not supported */ }
+  try {
+    const cutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
+    const q = 0.3 + Math.random() * 0.7;
+    hum.noiseFilter.frequency.setValueAtTime(cutoff, ctx.currentTime);
+    hum.noiseFilter.Q.setValueAtTime(q, ctx.currentTime);
+  } catch { /* filter params not supported */ }
 
   const t = ctx.currentTime;
   // Rise time at this level = growthTime * (level's currentGain-distance / 1)
