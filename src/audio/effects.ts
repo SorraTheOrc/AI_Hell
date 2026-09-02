@@ -4,9 +4,10 @@
  * Sounds are synthesised at runtime with the Web Audio API — no audio
  * assets to ship. Each enemy kind maps to distinct tones: spawn uses a
  * high rising blip, destruction a quick descending noise burst. The
- * player ship's thruster hum is a continuous low sawtooth + sine
- * undertone sustained through one reused gain node (see the thruster
- * hum section below).
+ * player ship's thruster hum is a continuous jet-engine roar:
+ * sawtooth + sine oscillators (low rumble) + filtered white noise
+ * (whoosh) through one reused gain node (see the thruster hum
+ * section below).
  *
  * Thruster-scaling rationale: the hum gain tracks
  * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
@@ -32,6 +33,8 @@
 // never exceeds THRUSTER_HUM_MAX_VOLUME (0.15) and the smoothed envelope
 // mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
 // Safe no-op without an AudioContext (headless tests / autoplay-blocked).
+// Architecture: sawtooth (85 Hz) + sine (45 Hz) for low rumble + white
+// noise through a lowpass filter for jet-engine "whoosh".
 
 /** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
 export const THRUSTER_HUM_MAX_VOLUME = 0.15;
@@ -57,6 +60,10 @@ interface ThrusterHumState {
   ctx: AudioContext;
   osc: OscillatorNode;
   sub: OscillatorNode;
+  /** White-noise source for jet-engine whoosh character. */
+  noise: AudioBufferSourceNode;
+  /** Low-pass filter shaping the noise into jet-like roar. */
+  noiseFilter: BiquadFilterNode;
   gain: GainNode;
   /** Current gain — tracks the visual flame model analogously. */
   currentGain: number;
@@ -79,6 +86,7 @@ export function _resetThrusterHumForTests(): void {
       thrusterHum.gain.gain.setValueAtTime(0, thrusterHum.ctx.currentTime);
       thrusterHum.osc.stop(thrusterHum.ctx.currentTime);
       thrusterHum.sub.stop(thrusterHum.ctx.currentTime);
+      thrusterHum.noise.stop(thrusterHum.ctx.currentTime);
     } catch { /* already stopped / no ctx */ }
     thrusterHum = null;
   }
@@ -107,10 +115,31 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
   sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ, ctx.currentTime);
   sub.connect(gain);
 
+  // ── Jet-engine noise layer ──────────────────────────────────────
+  // White noise → lowpass filter → gain.  The noise gives the hum
+  // its jet-engine "whoosh" quality instead of a pure oscillator buzz.
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = true;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'lowpass';
+  noiseFilter.frequency.setValueAtTime(500, ctx.currentTime);
+  noiseFilter.Q.setValueAtTime(0.5, ctx.currentTime);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(gain);
+  noise.start(ctx.currentTime);
+
   osc.start(ctx.currentTime);
   sub.start(ctx.currentTime);
 
-  thrusterHum = { ctx, osc, sub, gain, currentGain: 0 };
+  thrusterHum = { ctx, osc, sub, noise, noiseFilter, gain, currentGain: 0 };
   return thrusterHum;
 }
 
@@ -194,6 +223,7 @@ export function stopThrusterSound(): void {
     thrusterHum.gain.gain.setValueAtTime(0, thrusterHum.ctx.currentTime);
     thrusterHum.osc.stop(thrusterHum.ctx.currentTime + 0.02);
     thrusterHum.sub.stop(thrusterHum.ctx.currentTime + 0.02);
+    thrusterHum.noise.stop(thrusterHum.ctx.currentTime + 0.02);
   } catch { /* ignore */ }
   thrusterHum = null;
 }

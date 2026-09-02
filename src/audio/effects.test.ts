@@ -49,7 +49,7 @@ interface GainEvent {
 }
 
 interface RecordedOscillator {
-  type: OscillatorType;
+  type: string;
   freqEvents: FreqEvent[];
   startTime: number | null;
   stopTime: number | null;
@@ -68,6 +68,7 @@ interface RecordedGain {
 class RecordingAudioContext {
   static instances: RecordingAudioContext[] = [];
   currentTime = 0;
+  sampleRate = 44100;
   destination = {};
   oscillators: RecordedOscillator[] = [];
   gains: RecordedGain[] = [];
@@ -85,10 +86,10 @@ class RecordingAudioContext {
     };
     this.oscillators.push(rec);
     return {
-      get type(): OscillatorType {
+      get type(): string {
         return rec.type;
       },
-      set type(v: OscillatorType) {
+      set type(v: string) {
         rec.type = v;
       },
       frequency: {
@@ -130,6 +131,47 @@ class RecordingAudioContext {
           rec.cancelCalls.push(time);
         },
       },
+      connect: () => ({}),
+    };
+  }
+
+  /** Mock for createBuffer — returns a minimal AudioBuffer with random data. */
+  createBuffer(_channels: number, length: number, _sampleRate: number): unknown {
+    const data = new Float32Array(length);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    return {
+      getChannelData: () => data,
+    };
+  }
+
+  /** Mock for createBufferSource (noise node). */
+  createBufferSource(): unknown {
+    const rec: RecordedOscillator = {
+      type: 'noise',
+      freqEvents: [],
+      startTime: null,
+      stopTime: null,
+    };
+    this.oscillators.push(rec);
+    return {
+      buffer: null,
+      loop: false,
+      connect: () => ({ connect: () => ({}) }),
+      start: (_t: number) => {
+        rec.startTime = 0;
+      },
+      stop: (_t: number) => {
+        rec.stopTime = 0;
+      },
+    };
+  }
+
+  /** Mock for createBiquadFilter — jet-engine noise shaping. */
+  createBiquadFilter(): unknown {
+    return {
+      type: 'lowpass' as const,
+      frequency: { setValueAtTime: () => {} },
+      Q: { setValueAtTime: () => {} },
       connect: () => ({}),
     };
   }
@@ -602,11 +644,13 @@ describe('thruster hum — gain envelope + lifecycle (AH-0MTFOSOHN001Q620)', () 
     expect(ctx.oscillators.length).toBeGreaterThan(firstOscCount);
   });
 
-  it('distinct wave types: thruster hum uses sawtooth+sine (AC1 — distinct from blip cues)', () => {
+  it('distinct wave types: thruster hum uses sawtooth+sine+filtered noise (AC1 — distinct from blip cues)', () => {
     prime();
     const ctx = RecordingAudioContext.instances[0];
     const types = ctx.oscillators.map((o) => o.type);
     expect(types).toContain('sawtooth');
     expect(types).toContain('sine');
+    // Jet-engine layer: white-noise source (type='noise' in mock) adds whoosh.
+    expect(types).toContain('noise');
   });
 });
