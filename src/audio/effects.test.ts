@@ -162,6 +162,7 @@ class RecordingAudioContext {
     const rec: RecordedOscillator = {
       type: 'noise',
       freqEvents: [],
+      detuneEvents: [],
       startTime: null,
       stopTime: null,
     };

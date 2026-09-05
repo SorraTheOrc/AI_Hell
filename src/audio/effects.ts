@@ -1,3 +1,15 @@
+
+// <!-- REFACTOR-AH-0MTP19JIB004ORC0
+// smell: duplicate_code
+// severity: medium
+// description: Thruster teardown sequence duplicated across _resetThrusterHumForTests/stopThrusterSound/_resetAudioContextForTests (AH-0MTP19JIB004ORC0).
+// -->
+
+// <!-- REFACTOR-AH-0MTP19DG100472CV
+// smell: unused_export
+// severity: low
+// description: THRUSTER_HUM_DETUNE_SPREAD_CENTS exported but never imported anywhere; dead compat constant (AH-0MTP19DG100472CV).
+// -->
 /**
  * Procedural audio effects for enemy gym scenes and the player ship (GDD §7.3).
  *
@@ -198,7 +210,7 @@ export function updateThrusterSound(level: number): void {
     // to the player but the module state mirrors "what the gain would be".
     if (clamped === 0 && thrusterHum) {
       // Silencing with no ctx — just forget the state, same as stop.
-      thrusterHum = null as unknown as ThrusterHumState;
+      thrusterHum = null;
       // Keep gainTracking for test assertions when headless (not used at runtime).
     }
     return;
