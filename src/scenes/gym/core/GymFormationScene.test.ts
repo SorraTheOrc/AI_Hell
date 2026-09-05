@@ -964,3 +964,236 @@ describe('GymFormationScene — enemy live aim tracking (parent AC1–AC3)', () 
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
   });
 });
+
+describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MTFXKA5Q003LBH5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(
+    player?: { x: number; y: number },
+  ): Promise<BootedScene> {
+    booted = await bootScene([makeStubScene(() => [], player)]);
+    return booted!.scene as BootedScene;
+  }
+
+  function killAll(scene: BootedScene): void {
+    for (const e of scene.formationEntities) e.destroySelf();
+  }
+
+  it('AC1 — when aliveCount transitions to 0 the scene enters the respawn countdown within one tick', async () => {
+    const scene = await bootGym();
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+
+    killAll(scene);
+    expect(scene.aliveCount).toBe(0);
+    // Wipe is only observed on the next tick (collision tick creates the
+    // aliveCount === 0 state, the following tick starts the countdown).
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.getRespawnCountdownRemaining()).toBeGreaterThan(2.9);
+    expect(scene.getRespawnCountdownRemaining()).toBeLessThanOrEqual(3);
+  });
+
+  it('AC1 — countdown overlay text is visible and centred while active', async () => {
+    const scene = await bootGym();
+    killAll(scene);
+    scene.tick(0.016);
+
+    const overlay = scene.getRespawnCountdownText();
+    expect(overlay).not.toBeNull();
+    expect(overlay!.visible).toBe(true);
+    expect(overlay!.text).toMatch(/Respawning in 3/);
+    expect(overlay!.x).toBeCloseTo(GAME_WIDTH / 2, 5);
+    expect(overlay!.y).toBeCloseTo(GAME_HEIGHT / 2, 5);
+  });
+
+  it('AC2 — countdown ticks once per second: 3 → 2 → 1 over wall-clock seconds', async () => {
+    const scene = await bootGym();
+    killAll(scene);
+    scene.tick(0.016);
+    expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 3/);
+
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.getRespawnCountdownRemaining()).toBeCloseTo(2, 1);
+    expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 2/);
+
+    scene.tick(1.0);
+    expect(scene.getRespawnCountdownRemaining()).toBeCloseTo(1, 1);
+    expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 1/);
+  });
+
+  it('AC2 — after exactly 3 seconds the formation respawns and the countdown is removed', async () => {
+    const scene = await bootGym();
+    const offsetsBefore = vOffsets(FORMATION_COUNT);
+    killAll(scene);
+    scene.tick(0.016); // start countdown
+
+    // Advance to just before expiry — still counting down.
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.aliveCount).toBe(0);
+
+    const spawnSound = vi.spyOn(effectsModule, 'playSpawnSound');
+    const callsBefore = spawnSound.mock.calls.length;
+    scene.tick(1.0); // expiry → respawn
+
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.getRespawnCountdownRemaining()).toBe(0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.formationEntities.every((e) => e.alive)).toBe(true);
+    // Countdown overlay hidden (not destroyed, so a second wipe can reuse it).
+    expect(scene.getRespawnCountdownText()!.visible).toBe(false);
+    expect(spawnSound.mock.calls.length).toBeGreaterThan(callsBefore);
+
+    // Formation reset to startX/startY-derived positions.
+    expect(scene.formationX).toBeCloseTo(START_X, 5);
+    expect(scene.formationY).toBeCloseTo(START_Y, 5);
+    for (const [i, entity] of scene.formationEntities.entries()) {
+      const { row, col } = offsetsBefore[i];
+      expect(entity.x).toBeCloseTo(START_X + col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(START_Y + row * SPACING_Y, 5);
+    }
+  });
+
+  it('AC4 — enemy bullets in flight are cleared on respawn; player bullets persist', async () => {
+    // Stationary enemy bullet via collect, parked at a known spot.
+    let armed = false;
+    const collect = (enemy: StubEnemy): StubBullet[] => {
+      if (!armed) return [];
+      armed = false;
+      const b = new StubBullet(enemy.scene, 0, 0);
+      b.graphics.setPosition(10, 10);
+      return [b];
+    };
+    booted = await bootScene([
+      makeStubScene(collect, { x: 920, y: 30 }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+
+    // Arm one enemy bullet before the wipe, then kill the formation.
+    armed = true;
+    scene.tick(0.016);
+    expect(scene.activeBullets.length).toBe(1);
+    const enemyBullet = scene.activeBullets[0];
+
+    killAll(scene);
+    scene.tick(0.016); // start countdown
+    // Park a player bullet far from the formation so it never collides.
+    const pb = scene.spawnPlayerBullet(900, 500, 0, 0);
+    expect(scene.getPlayerBullets()).toContain(pb);
+
+    // Fast-forward past the 3s countdown.
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+
+    expect(scene.activeBullets.length).toBe(0);
+    expect(scene.activeBullets).not.toContain(enemyBullet);
+    // Player bullet survives the respawn.
+    expect(scene.getPlayerBullets()).toContain(pb);
+  });
+
+  it('AC5 — shootEnabled state carries over across the respawn', async () => {
+    const scene = await bootGym();
+    // Enable shooting before the wipe.
+    const shoot = scene.children.list.find(
+      (c): c is Phaser.GameObjects.Text =>
+        c instanceof Phaser.GameObjects.Text && c.text === 'SHOOT: OFF',
+    )!;
+    shoot.emit('pointerdown');
+    expect(scene.shootingEnabled).toBe(true);
+
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+
+    expect(scene.shootingEnabled).toBe(true);
+    expect(scene.formationEntities.every((e) => e.shootEnabled)).toBe(true);
+    // Button label still reflects ON.
+    expect(
+      scene.children.list.some(
+        (c): c is Phaser.GameObjects.Text =>
+          c instanceof Phaser.GameObjects.Text && c.text === 'SHOOT: ON',
+      ),
+    ).toBe(true);
+  });
+
+  it('AC5 — OFF shooting also carries over (no surprise toggle)', async () => {
+    const scene = await bootGym();
+    expect(scene.shootingEnabled).toBe(false);
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.shootingEnabled).toBe(false);
+    expect(scene.formationEntities.every((e) => !e.shootEnabled)).toBe(true);
+  });
+
+  it('countdown restarts correctly if the scene is torn down mid-countdown (no crash or stale state)', async () => {
+    const scene = await bootGym();
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // Simulate the Phaser SHUTDOWN that the scene listens for — it must
+    // cancel the countdown without throwing, so a re-boot starts clean.
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.getRespawnCountdownRemaining()).toBe(0);
+
+    // Destroy and re-boot a fresh scene — no stale countdown.
+    booted!.game.destroy(true);
+    booted = await bootScene([makeStubScene(() => [], undefined)]);
+    const fresh = booted!.scene as BootedScene;
+    expect(fresh.isRespawnCountdownActive()).toBe(false);
+    expect(fresh.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('no countdown starts while enemies remain alive', async () => {
+    const scene = await bootGym();
+    // Kill all but one.
+    for (let i = 0; i < FORMATION_COUNT - 1; i++) {
+      scene.formationEntities[i].destroySelf();
+    }
+    expect(scene.aliveCount).toBe(1);
+    scene.tick(0.5);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    scene.tick(0.5);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+  });
+
+  it('wipe → respawn loop is repeatable: a second wipe after respawn starts a fresh countdown', async () => {
+    const scene = await bootGym();
+    // First wipe → respawn.
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+
+    // Second wipe of the fresh formation.
+    killAll(scene);
+    expect(scene.aliveCount).toBe(0);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+  });
+});
