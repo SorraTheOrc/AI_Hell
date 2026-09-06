@@ -1,10 +1,4 @@
 
-// <!-- REFACTOR-AH-0MTP19JIB004ORC0
-// smell: duplicate_code
-// severity: medium
-// description: Thruster teardown sequence duplicated across _resetThrusterHumForTests/stopThrusterSound/_resetAudioContextForTests (AH-0MTP19JIB004ORC0).
-// -->
-
 // <!-- REFACTOR-AH-0MTP19DG100472CV
 // smell: unused_export
 // severity: low
@@ -101,20 +95,31 @@ export function _getThrusterHumStateForTests(): ThrusterHumState | null {
 }
 
 /**
+ * Internal: tears down all thruster hum AudioNodes and clears state.
+ *
+ * @param ctxTime    — the AudioContext.currentTime to schedule cancel/setValueAtTime.
+ * @param stopOffset — additional time (seconds) after ctxTime to stop oscillators
+ *                     (0 = immediate; 0.02 = graceful ramp tail).
+ */
+function teardownThrusterHum(ctxTime: number, stopOffset: number): void {
+  try {
+    thrusterHum!.gain.gain.cancelScheduledValues(ctxTime);
+    thrusterHum!.gain.gain.setValueAtTime(0, ctxTime);
+    thrusterHum!.osc.stop(ctxTime + stopOffset);
+    thrusterHum!.sub.stop(ctxTime + stopOffset);
+    thrusterHum!.noise.stop(ctxTime + stopOffset);
+  } catch { /* already stopped / no ctx */ }
+  thrusterHum = null;
+}
+
+/**
  * Resets the thruster hum AudioNode lifecycle — stops any active hum and
  * clears module state. Exported under _ for tests so worktrees can re-test
  * the hum lifecycle in isolation.
  */
 export function _resetThrusterHumForTests(): void {
   if (thrusterHum) {
-    try {
-      thrusterHum.gain.gain.cancelScheduledValues(thrusterHum.ctx.currentTime);
-      thrusterHum.gain.gain.setValueAtTime(0, thrusterHum.ctx.currentTime);
-      thrusterHum.osc.stop(thrusterHum.ctx.currentTime);
-      thrusterHum.sub.stop(thrusterHum.ctx.currentTime);
-      thrusterHum.noise.stop(thrusterHum.ctx.currentTime);
-    } catch { /* already stopped / no ctx */ }
-    thrusterHum = null;
+    teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
   }
   // Also allow tests to re-seed the AudioContext with a new mock.
   // getAudioContext() caches the ctor instance; thruster tests need a fresh ctx.
@@ -279,14 +284,7 @@ export function updateThrusterSound(level: number): void {
  */
 export function stopThrusterSound(): void {
   if (!thrusterHum) return;
-  try {
-    thrusterHum.gain.gain.cancelScheduledValues(thrusterHum.ctx.currentTime);
-    thrusterHum.gain.gain.setValueAtTime(0, thrusterHum.ctx.currentTime);
-    thrusterHum.osc.stop(thrusterHum.ctx.currentTime + 0.02);
-    thrusterHum.sub.stop(thrusterHum.ctx.currentTime + 0.02);
-    thrusterHum.noise.stop(thrusterHum.ctx.currentTime + 0.02);
-  } catch { /* ignore */ }
-  thrusterHum = null;
+  teardownThrusterHum(thrusterHum.ctx.currentTime, 0.02);
 }
 
 /**
@@ -295,7 +293,9 @@ export function stopThrusterSound(): void {
  * absence case. Production code never calls this.
  */
 export function _resetAudioContextForTests(): void {
-  try { thrusterHum?.gain?.gain?.cancelScheduledValues?.(thrusterHum.ctx.currentTime); } catch { /* ignore */ }
+  if (thrusterHum) {
+    teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
+  }
   thrusterHum = null;
   audioCtx = null;
 }
