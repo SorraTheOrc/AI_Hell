@@ -72,6 +72,19 @@ encapsulates everything the first three enemy gym scenes duplicated:
 - **Update loop** — formation drift + respawn off the left edge,
   per-entity `applyFormationPosition()`, fire-bullet collection, bullet
   advance, and off-screen bullet removal.
+- **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
+  enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
+  `destroySelf()` — mid-explosion counts), the base scene starts a
+  visible 3-second centred countdown (`Respawning in 3…2…1…`, driven by
+  `tick(dt)` wall-clock seconds), clears enemy bullets, recreates the
+  full formation at `config.startX/startY` with the original
+  `count/spacing` geometry, resets `formationBaseX/Y`, hides the
+  countdown, and plays `playSpawnSound()`. `shootEnabled` carries over;
+  player bullets persist. The countdown is torn down on scene
+  `SHUTDOWN` so a restart never leaks. Test seams:
+  `isRespawnCountdownActive()`, `getRespawnCountdownRemaining()`,
+  `getRespawnCountdownText()`. Core-library owned — every formation gym
+  (`GymEnemies` for every `enemyKey`) inherits it with no per-scene code.
 
 The generic geometry (formation offsets) lives in
 `src/utils/formations.ts`:
@@ -194,7 +207,10 @@ for reference implementations (the base class drives them).
    - the `← INDEX` button exists,
    - the player spawns at the scene's `player` config position, responds
      to the cursor keys, fights (player bullet ↔ enemy / enemy bullet →
-     ship respawn), and live enemy aim tracks it (see §7).
+     ship respawn), and live enemy aim tracks it (see §7),
+   - wipe → 3 s countdown → respawn is automatic and needs **no
+     per-scene code** — it is core-library owned (see §2.5); observe it
+     via `isRespawnCountdownActive()` / `getRespawnCountdownRemaining()`.
 6. **Audio + navigation.** `playSpawnSound()` / `playDestructionSound()`
    and `addBackToIndexButton()` are handled by the base class — do not
    re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
@@ -223,6 +239,32 @@ for reference implementations (the base class drives them).
    `playDestructionSound()` in their `playExplosion()` — doing so would
    double-play the sound. This is a design decision per GDD §7.3
    and the core-library best practices.
+
+### 2.5 Wipe → countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5)
+
+- **Signal:** `aliveCount === 0` — every `FormationSceneEntity.alive ===
+  false` (1 HP enemies, `destroySelf()`). Explosion VFX still playing
+  counts as killed.
+- **Countdown:** 3 s wall-clock (`tick(dt)`), visible centred text
+  (`GAME_WIDTH/2, GAME_HEIGHT/2`, depth 100): `Respawning in 3…` → `2…`
+  → `1…` → `Respawning…` (expiry). Observable via
+  `isRespawnCountdownActive()` / `getRespawnCountdownRemaining()` /
+  `getRespawnCountdownText()` (text overlay, hidden when inactive and
+  reusable across wipes). Starts on the tick *after* the wipe is
+  observed; races with drift respawn (`_respawnX()`) are orthogonal —
+  wipe/respawn resets `formationBaseX/Y` to `startX/Y`.
+- **Respawn:** clears enemy bullets only (player bullets persist),
+  destroys old entities, recreates the formation via
+  `config.buildOffsets(count)` + `config.createEntity()` at
+  `startX/startY`-derived positions, restores `shootEnabled` across the
+  respawn, refreshes `statusText`, hides the countdown, and calls
+  `playSpawnSound()`. Fully repeatable — the next wipe starts a fresh
+  countdown.
+- **Scope:** core-library owned in `GymFormationScene`; inherited by
+  every formation gym (including `GymEnemies` for every `enemyKey`).
+  `GymBoss` (multi-phase) is out of scope.
+- **Tear-down:** `SHUTDOWN` cancels the countdown and hides the overlay
+  so a scene restart never double-fires or leaks.
 
 ### 3.2 Existing scenes (reference implementations)
 
