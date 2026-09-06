@@ -2,8 +2,9 @@
  * AH-0MTHG5B83007W4W4 — Single reusable enemy gym scene (GymEnemies).
  *
  * Happy-dom boot per seed (count/spacing), corruption fallback, and
- * discoverability via the gym index glob. Respawn-when-all-killed delegates
- * to GymFormationScene — asserted implicitly via aliveCount behaviour.
+ * discoverability via the gym index glob. Wipe → 3s countdown → respawn
+ * (AH-0MTFXKA5Q003LBH5) is core-library owned — smoke-tested here to prove
+ * every enemyKey inherits it without per-scene code.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -149,7 +150,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.aliveCount).toBe(3);
   });
 
-  it('EXPLODE reduces aliveCount and is harmless when empty (no respawn yet — delegates to base)', async () => {
+  it('EXPLODE reduces aliveCount and is harmless when empty (wipe → countdown starts on next tick)', async () => {
     const scene = await bootWithKey('scout');
     const btn = findButton(scene, 'EXPLODE');
     const initial = scene.aliveCount;
@@ -160,6 +161,41 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(() => btn.emit('pointerdown')).not.toThrow();
     expect(scene.aliveCount).toBe(0);
   });
+
+  // ── Wipe → 3s countdown → respawn smoke (AH-0MTFXKA5Q003LBH5) ─
+  // Core-library owned in GymFormationScene — one parameterized smoke across
+  // every enemyKey proves the inheritance with no per-scene duplication.
+  it.each(Object.keys(DEFAULT_ENEMY_CONFIGS))(
+    'wipe → 3s countdown → respawn inherited for seed "%s" (no per-scene code)',
+    async (key) => {
+      const scene = await bootWithKey(key);
+      const count = scene.formationEntities.length;
+      expect(scene.isRespawnCountdownActive()).toBe(false);
+
+      // Destroy every enemy (1 HP each).
+      for (const e of scene.formationEntities) e.destroySelf();
+      expect(scene.aliveCount).toBe(0);
+
+      // Countdown starts on the next tick, visible centred text.
+      scene.tick(0.016);
+      expect(scene.isRespawnCountdownActive()).toBe(true);
+      expect(scene.getRespawnCountdownText()).not.toBeNull();
+      expect(scene.getRespawnCountdownText()!.visible).toBe(true);
+      expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 3/);
+
+      // Fast-forward exactly 3 s → formation respawns, countdown hidden.
+      const spawnSound = vi.spyOn(effectsModule, 'playSpawnSound');
+      const callsBefore = spawnSound.mock.calls.length;
+      scene.tick(1.0);
+      scene.tick(1.0);
+      scene.tick(1.0);
+      expect(scene.isRespawnCountdownActive()).toBe(false);
+      expect(scene.aliveCount).toBe(count);
+      expect(scene.formationEntities.every((e) => e.alive)).toBe(true);
+      expect(scene.getRespawnCountdownText()!.visible).toBe(false);
+      expect(spawnSound.mock.calls.length).toBeGreaterThan(callsBefore);
+    },
+  );
 
   it('is discoverable by GymIndex via import.meta.glob (no extra registration)', async () => {
     const entries = discoverGymScenes(loadGymSceneModules());
