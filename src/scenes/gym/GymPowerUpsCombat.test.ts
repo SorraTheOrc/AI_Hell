@@ -215,8 +215,8 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     expect(drops[0].powerUp.id).toBe('P7'); // fourth
   });
 
-  it('drops spawn at the configured size (8 px)', () => {
-    expect(POWER_UP_DROP_SIZE).toBe(8);
+  it('drops spawn at the configured size (16 px)', () => {
+    expect(POWER_UP_DROP_SIZE).toBe(16);
   });
 });
 

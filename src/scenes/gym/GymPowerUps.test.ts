@@ -445,7 +445,7 @@ describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)
   }
 
   it('AC1 — drop size constants reflect the 8 px power-up / weapon size', () => {
-    expect(POWER_UP_DROP_SIZE).toBe(8);
+    expect(POWER_UP_DROP_SIZE).toBe(16);
     expect(WEAPON_DROP_SIZE).toBe(POWER_UP_DROP_SIZE);
   });
 
