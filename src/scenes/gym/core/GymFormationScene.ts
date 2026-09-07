@@ -326,6 +326,39 @@ export class GymFormationScene<
     // mid-countdown so a restart does not leak or double-fire.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this._cancelRespawnCountdown();
+      // The countdown overlay Text is a display-list child destroyed by the
+      // DisplayList shutdown; drop the reference so a restart's respawn
+      // creates a fresh overlay on the new display list.
+      this.countdownText = null;
+      // ── Full teardown: destroy and clear all scene-owned objects ──
+      // This prevents stale references from being iterated after a
+      // stop/restart of the same scene instance (the only restart
+      // vector in the gym index flow).  Phaser's DisplayList.shutdown
+      // already sets each display-list child's `scene = undefined`,
+      // but the bookkeeping arrays (`entities`, `bullets`,
+      // `playerBullets`) are never cleared — on a fresh create() they
+      // are populated again on top of the stale array, so tick() now
+      // iterates destroyed objects whose `scene` property is
+      // undefined.  Destroying them explicitly and clearing the arrays
+      // avoids that double-population.
+      for (const entity of this.entities) entity.destroy(true);
+      this.entities.length = 0;
+
+      for (const bullet of this.bullets) bullet.graphics.destroy();
+      this.bullets.length = 0;
+
+      for (const pb of this.playerBullets) pb.destroy();
+      this.playerBullets.length = 0;
+
+      for (const exp of this.playerExplosions) exp.destroy();
+      this.playerExplosions.length = 0;
+
+      // Null-out the player reference so any stale callback does not
+      // reach the destroyed ship.
+      this.player = null;
+
+      // Reset scene toggle state so a fresh create() starts clean.
+      this.shootEnabled = false;
     });
   }
 

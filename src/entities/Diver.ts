@@ -127,6 +127,11 @@ export class Diver extends Phaser.GameObjects.Container {
   private _diveCol = 0;
   private _diveRow = 0;
   private _returnProgress = 0;
+  /** Local phase accumulator for the idle wiggle (replaces `scene.time.now`.
+   *  Allows the entity to compute its wiggle offset without a `scene` ref,
+   *  which is required for correctness when the entity is stale after a
+   *  scene restart (its `this.scene` is undefined). */
+  private _localPhase = 0;
   private readonly _size: number;
   private readonly _color: number;
   private readonly _bulletColor: number;
@@ -193,8 +198,14 @@ export class Diver extends Phaser.GameObjects.Container {
 
   /**
    * Plays the destruction animation: expanding, fading rings.
+   *
+   * Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
+   * display-list child has `scene === undefined`; animating it here would
+   * dereference undefined. Normal single-run destruction keeps the old
+   * behaviour exactly (the guard never triggers on a live object).
    */
   playExplosion(): void {
+    if (!this.scene) return;
     const scene = this.scene as Phaser.Scene;
     scene.tweens.add({
       targets: this.explosionGraphics,
@@ -405,6 +416,12 @@ export class Diver extends Phaser.GameObjects.Container {
   ): void {
     if (!this._alive) return;
 
+    // Idle-wiggle phase advances every frame while alive (dt-driven
+    // replacement for the old `scene.time.now` wall-clock wiggle, kept
+    // ticking across dive/return so re-entering FORMATION has no phase
+    // jump). Never dereferences `this.scene`.
+    this._localPhase += dt;
+
     const formationPos = this.getFormationPosition(baseX, baseY, spacingX, spacingY);
 
     switch (this._state) {
@@ -429,8 +446,11 @@ export class Diver extends Phaser.GameObjects.Container {
     dt: number,
   ): void {
     // Subtle idle wiggle (similar to Scout).
+    // Uses the local phase accumulator instead of `scene.time.now` so the
+    // entity does not crash when its `scene` is undefined (stale after
+    // a scene restart — the SHUTDOWN teardown destroys it first).
     const phase = (this.formationOffset.row + this.formationOffset.col) * 0.7;
-    const wiggle = Math.sin((this.scene as Phaser.Scene).time.now / 1000 + phase) * 1.5;
+    const wiggle = Math.sin(this._localPhase + phase) * 1.5;
 
     this.setPosition(
       formationPos.x + wiggle,

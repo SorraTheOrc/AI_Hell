@@ -170,6 +170,11 @@ export class Scout extends Phaser.GameObjects.Container {
    * rule). Adding a call here would double-play.
    */
   playExplosion(): void {
+    // Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
+    // display-list child has `scene === undefined`; animating it here would
+    // dereference undefined. Normal single-run destruction keeps the old
+    // behaviour exactly (the guard never triggers on a live object).
+    if (!this.scene) return;
     const scene = this.scene as Phaser.Scene;
     scene.tweens.add({
       targets: this.explosionGraphics,

@@ -314,4 +314,40 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
     expect(diver.y).toBeCloseTo(pointA.y, 4);
     expect(Math.abs(diver.x - pointB.x)).toBeGreaterThan(5);
   });
+
+  describe('scene-less (stale) diver — AH-0MTPLHLZ3006MOC4 AC3', () => {
+    it('AC3 — applyFormationPosition no longer reads a live scene (a display-list-destroyed diver with scene undefined ticks without throwing)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const diver = makeDiver(400, 300);
+
+      // Simulate Phaser's DisplayList.shutdown: destroys the object and sets
+      // its `scene` to undefined (GameObject.destroy).  The stale object may
+      // still sit in the scene's bookkeeping array with _alive === true.
+      (diver as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+      expect(diver.alive).toBe(true);
+
+      // The per-frame formation update must not dereference `this.scene`
+      // (the old code read scene.time.now here and threw).
+      expect(() =>
+        diver.applyFormationPosition(400, 300, 0.016, 26, 22),
+      ).not.toThrow();
+
+      // Still animate into a dive over ticks — never touching the scene.
+      for (let i = 0; i < 40; i++) {
+        diver.applyFormationPosition(400, 300, 0.1, 26, 22);
+      }
+      expect(diver.behaviourState).not.toBe(DiverState.FORMATION);
+    });
+
+    it('AC — destroySelf on a scene-less diver never throws (null-scene playExplosion guard)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const diver = makeDiver(100, 100);
+      (diver as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+
+      expect(() => diver.destroySelf()).not.toThrow();
+      expect(diver.alive).toBe(false);
+    });
+  });
 });

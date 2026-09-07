@@ -99,9 +99,16 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
   private _alive = true;
   private _shootEnabled = false;
   private _lastFireTime = 0;
+  /** Seconds (local phase) when the tell (warning) animation started. */
   private _tellStartTime = 0;
   private _isTelling = false;
   private _orbitalPhase: number;
+  /** Local phase accumulator for orbital rotation (seconds, dt-driven;
+   *  replaces `scene.time.now`).  Allows the entity to compute its orbital
+   *  position without a `scene` ref, which is required for correctness when
+   *  the entity is stale after a scene restart (its `this.scene` is
+   *  undefined). */
+  private _localPhase = 0;
   /** Aim point for the radial pattern — the fixed bottom-centre stand-in by default. */
   private readonly target: Phaser.Math.Vector2;
   private readonly _size: number;
@@ -188,8 +195,14 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
    * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
    * and is already called once per destruction (design doc §7 no-double-play
    * rule). Adding a call here would double-play.
+   *
+   * Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
+   * display-list child has `scene === undefined`; animating it here would
+   * dereference undefined. Normal single-run destruction keeps the old
+   * behaviour exactly (the guard never triggers on a live object).
    */
   playExplosion(): void {
+    if (!this.scene) return;
     const scene = this.scene as Phaser.Scene;
     scene.tweens.add({
       targets: this.explosionGraphics,
@@ -238,11 +251,16 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       this._tellStartTime = 0;
       this.tellGraphics.clear();
     } else {
-      // When enabling, set _lastFireTime so the first cycle starts immediately.
-      // The check in tryFireRadialBullets is (now - _lastFireTime < FIRE_INTERVAL).
-      // Setting to (now - FIRE_INTERVAL) makes the difference equal to FIRE_INTERVAL,
-      // so the condition fails and we proceed to start the tell.
-      this._lastFireTime = (this.scene as Phaser.Scene).time.now - this._fireInterval;
+      // When enabling, arm the first cycle to start immediately.  The
+      // interval gate in tryFireRadialBullets is
+      //   (now - _lastFireTime < _fireInterval) → blocked
+      // so a large negative sentinel makes now - _lastFireTime always
+      // exceed the interval for any scene clock value (which starts at 0
+      // and grows).  This replaces the old `scene.time.now - interval`
+      // (which read this.scene — a crash vector for stale entities)
+      // without changing the observable behaviour: the first eligible
+      // call starts the tell right away.
+      this._lastFireTime = -this._fireInterval;
     }
   }
 
@@ -337,7 +355,9 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
     // Start the tell animation — this is the warning phase.
     this._isTelling = true;
-    this._tellStartTime = now;
+    // Store the local phase (in seconds) so applyFormationPosition can
+    // compute tell elapsed without accessing scene.time.now.
+    this._tellStartTime = this._localPhase;
     // The actual firing happens on the next call after the tell duration.
     return [];
   }
@@ -350,7 +370,7 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
   applyFormationPosition(
     baseX: number,
     baseY: number,
-    _dt: number,
+    dt: number,
     _spacingX: number,
     _spacingY: number,
   ): void {
@@ -360,9 +380,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     const centerX = baseX;
     const centerY = baseY;
 
-    // Advance orbital angle using the scene's time.
-    const sceneTime = (this.scene as Phaser.Scene).time.now;
-    const currentAngle = this._orbitalPhase + sceneTime * 0.001 * PHASER_ORBITAL_SPEED;
+    // Advance orbital angle using a local phase accumulator instead of
+    // `scene.time.now` so the entity does not crash when its `scene` is
+    // undefined (stale after a scene restart — the SHUTDOWN teardown
+    // destroys it first).
+    this._localPhase += dt;
+    const currentAngle =
+      this._orbitalPhase + this._localPhase * PHASER_ORBITAL_SPEED;
 
     // Compute orbital position.
     const x = centerX + PHASER_ORBITAL_RADIUS * Math.cos(currentAngle);
@@ -371,12 +395,14 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
     // Handle tell animation if firing is enabled.
     if (this._shootEnabled && this._isTelling) {
-      const elapsed = sceneTime - this._tellStartTime;
-      if (elapsed < PHASER_ADVANCE_CUE_DURATION) {
+      // Tell elapsed in ms (local phase is in seconds).
+      const tellElapsed =
+        Math.max(0, this._localPhase - this._tellStartTime) * 1000;
+      if (tellElapsed < PHASER_ADVANCE_CUE_DURATION) {
         // During the tell, pulse the ring to warn the player.
-        this._drawTell(elapsed);
+        this._drawTell(tellElapsed);
         // Play advance audio cue at the start of the tell (once).
-        if (elapsed < 50) {
+        if (tellElapsed < 50) {
           this._playAdvanceCue();
         }
       }

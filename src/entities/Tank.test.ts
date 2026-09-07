@@ -101,4 +101,23 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     // optional chaining).
     expect('setAimTarget' in tank).toBe(false);
   });
+
+  describe('scene-less (stale) tank — AH-0MTPLHLZ3006MOC4', () => {
+    it('AC — destroySelf on a display-list-destroyed tank never throws (null-scene playExplosion guard)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const tank = makeTank(100, 100);
+
+      // Simulate Phaser's DisplayList.shutdown: destroys the object and sets
+      // its `scene` to undefined (GameObject.destroy).  The stale object may
+      // still sit in the scene's bookkeeping array with _alive === true — the
+      // original crash manifested here when a player bullet hit it and
+      // destroySelf → playExplosion read this.scene.tweens.
+      (tank as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+      expect(tank.alive).toBe(true);
+
+      expect(() => tank.destroySelf()).not.toThrow();
+      expect(tank.alive).toBe(false);
+    });
+  });
 });

@@ -391,4 +391,37 @@ describe('GymEnemies — single reusable enemy gym', () => {
     });
   });
 
+  describe('stop/restart of the SAME registered instance — gym-index vector (AH-0MTPLHLZ3006MOC4)', () => {
+    it('AC1/AC2 — repeated scene.start across enemy keys never crashes and never doubles entities', async () => {
+      // Boot the real registered GymEnemies instance (no per-key wrapper).
+      booted = await bootScene([GymEnemies]);
+      const manager = booted.game.scene;
+      const sameInstance = booted.scene as GymEnemies;
+      expect(sameInstance.activeEnemyKey).toBe(GYM_ENEMIES_DEFAULT_KEY);
+
+      // Cycle through several enemy keys via the real scene manager — the
+      // exact gym-index restart vector (scene.start on the same registered
+      // key stops + restarts the SAME instance).  Before the fix, each
+      // restart pushed a fresh formation on top of the stale destroyed
+      // entities from the previous run, so tick() dereferenced their
+      // undefined `scene` and crashed.
+      const cycle = ['tank', 'swarm', 'diver', 'phaser', 'scout'];
+      for (const key of cycle) {
+        expect(() => manager.start('GymEnemies', { enemyKey: key })).not.toThrow();
+
+        const scene = manager.getScene('GymEnemies') as GymEnemies;
+        // The restart must reuse the SAME scene instance (the leak vector).
+        expect(scene).toBe(sameInstance);
+        expect(scene.activeEnemyKey).toBe(key);
+        // AC2 — exactly the freshly spawned count: no leftover references
+        // from the previous run (no doubling), all alive.
+        const expected = DEFAULT_ENEMY_CONFIGS[key].count;
+        expect(scene.formationEntities.length).toBe(expected);
+        expect(scene.aliveCount).toBe(expected);
+        // AC1 — the restarted scene ticks without touching stale entities.
+        expect(() => scene.tick(0.016)).not.toThrow();
+        expect(scene.aliveCount).toBe(expected);
+      }
+    });
+  });
 });

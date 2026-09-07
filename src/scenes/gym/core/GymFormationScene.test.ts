@@ -1197,3 +1197,93 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
     expect(scene.isRespawnCountdownActive()).toBe(false);
   });
 });
+
+describe('GymFormationScene — stop/restart of the same instance clears stale entities (AH-0MTPLHLZ3006MOC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(): Promise<BootedScene> {
+    booted = await bootScene([makeStubScene(() => [])]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC4 — emitting SHUTDOWN clears entities/bullets/playerBullets so a second create() starts clean (no crash, no doubling)', async () => {
+    const scene = await bootGym();
+    expect(scene.formationEntities.length).toBe(FORMATION_COUNT);
+
+    // Simulate the Phaser stop: DisplayList.shutdown destroys children and
+    // sets their `scene` to undefined; the scene's own SHUTDOWN hook then
+    // clears the bookkeeping arrays (the fix under test).
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    // After the SHUTDOWN teardown the arrays are empty — a later restart
+    // (same instance) will push only the fresh formation.
+    expect(scene.formationEntities).toHaveLength(0);
+    expect(scene.activeBullets).toHaveLength(0);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+
+    // Re-run create() on the SAME instance (the gym-index restart vector).
+    // This must spawn exactly FORMATION_COUNT fresh entities and the tick
+    // must not iterate stale destroyed objects.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(() => scene.tick(0.016)).not.toThrow();
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('AC4 — with a player: SHUTDOWN teardown nulls the player and clears player bullets; restart spawns a fresh ship', async () => {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    expect(scene.getPlayer()).not.toBeNull();
+
+    // Fire an extra player bullet (boot may already have auto-fired some).
+    scene.spawnPlayerBullet(100, 100, 0, 100);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.formationEntities).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    expect(() => scene.tick(0.016)).not.toThrow();
+  });
+
+  it('AC4 — SHUTDOWN mid-countdown drops the stale overlay reference; a same-instance restart re-creates a working overlay', async () => {
+    const scene = await bootGym();
+
+    // Enter a wipe → countdown cycle so an overlay text exists on the display list.
+    for (const e of scene.formationEntities) e.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.getRespawnCountdownText()).not.toBeNull();
+
+    // Tear down mid-countdown (the gym-index restart vector).
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    // The stale overlay object (destroyed with the display list) must no
+    // longer be referenced, so the next respawn builds a fresh one.
+    expect(scene.getRespawnCountdownText()).toBeNull();
+
+    // Restart the SAME instance: a fresh wipe → countdown cycle creates a
+    // brand-new visible overlay on the new display list (no stale text reuse).
+    scene.create();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    for (const e of scene.formationEntities) e.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    const overlay = scene.getRespawnCountdownText();
+    expect(overlay).not.toBeNull();
+    expect(overlay!.visible).toBe(true);
+    expect(() => scene.tick(1.0)).not.toThrow();
+  });
+});

@@ -140,4 +140,40 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
     );
     expect(second).toHaveLength(8);
   });
+
+  describe('scene-less (stale) phaser — AH-0MTPLHLZ3006MOC4 AC3', () => {
+    it('AC3 — applyFormationPosition no longer reads a live scene (a display-list-destroyed phaser with scene undefined ticks without throwing)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const phaser = makePhaser(240, 300);
+
+      // Simulate Phaser's DisplayList.shutdown: destroys the object and sets
+      // its `scene` to undefined (GameObject.destroy).  The stale object may
+      // still sit in the scene's bookkeeping array with _alive === true.
+      (phaser as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+      expect(phaser.alive).toBe(true);
+
+      // The per-frame orbital update must not dereference `this.scene`
+      // (the old code read scene.time.now here and threw on frame one).
+      expect(() =>
+        phaser.applyFormationPosition(240, 300, 0.016, 0, 0),
+      ).not.toThrow();
+      for (let i = 0; i < 60; i++) {
+        phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+      }
+      // The orbit still advances via its local phase accumulator.
+      expect(phaser.x).not.toBe(240);
+      expect(phaser.y).not.toBe(300);
+    });
+
+    it('AC — destroySelf on a scene-less phaser never throws (null-scene playExplosion guard)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const phaser = makePhaser(100, 100);
+      (phaser as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+
+      expect(() => phaser.destroySelf()).not.toThrow();
+      expect(phaser.alive).toBe(false);
+    });
+  });
 });
