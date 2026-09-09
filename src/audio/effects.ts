@@ -1,9 +1,4 @@
 
-// <!-- REFACTOR-AH-0MTP19DG100472CV
-// smell: unused_export
-// severity: low
-// description: THRUSTER_HUM_DETUNE_SPREAD_CENTS exported but never imported anywhere; dead compat constant (AH-0MTP19DG100472CV).
-// -->
 /**
  * Procedural audio effects for enemy gym scenes and the player ship (GDD §7.3).
  *
@@ -49,8 +44,6 @@ export const THRUSTER_HUM_MAX_VOLUME = 0.15;
 export const THRUSTER_HUM_BASE_FREQ = 60;
 /** Undertone frequency (sine) — adds body to the low jet rumble. */
 export const THRUSTER_HUM_UNDERTONE_FREQ = 35;
-/** Detune spread retained for compat (jet roar no longer uses harsh detune). */
-export const THRUSTER_HUM_DETUNE_SPREAD_CENTS = 12;
 /** Maximum detune drift range in cents for organic tonal variation. */
 const THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS = 8;
 /** Per-frame detune drift step size in cents (random-walk). */
