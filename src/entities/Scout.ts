@@ -279,6 +279,10 @@ export class Scout extends Phaser.GameObjects.Container {
    * exactly once. This telegraphes aimed shots so players can react.
    */
   tryFireAimedBullet(now: number): ScoutBullet | null {
+    // Belt-and-braces null-scene guard (AH-0MTVYBELZ000EZ1Y): when a scene is
+    // restarted the old display-list children have `scene === undefined`;
+    // ticking them here would dereference undefined (crash).
+    if (!this.scene) return null;
     if (!this._shootEnabled || !this._alive) return null;
     if (now - this._lastFireTime < this._fireInterval) return null;
 
