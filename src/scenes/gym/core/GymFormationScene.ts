@@ -90,6 +90,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * Phaser.
    */
   playDestructionAudio?(): void;
+  /**
+   * Optional multi-hit damage seam (Boss, GDD §4.3). When present,
+   * player-bullet collisions delegate to this instead of `destroySelf()`
+   * so the entity can decrement phased health and only self-destruct
+   * when depleted. The entity must handle its own SFX/visuals and
+   * `alive` flag; the base scene consumes the bullet and skips the
+   * generic destruction sound.
+   */
+  takeDamage?(): number | void;
 }
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
@@ -674,8 +683,11 @@ export class GymFormationScene<
     const bulletHitRadius = this.getBulletHitRadius();
     const playerHull = SHIP_SIZE / 2;
 
-    // 1. Player bullets vs enemy entities: destroy the enemy, consume
-    //    the bullet. Rebuild the list so consumed bullets are dropped.
+    // 1. Player bullets vs enemy entities: damage the enemy, consume
+    //    the bullet. Multi-hit entities (Boss, GDD §4.3) expose
+    //    `takeDamage()` — each hit decrements one phase and only
+    //    destroys on the final phase. Single-HP enemies fall through
+    //    to `destroySelf()`. Rebuild the list so consumed bullets are dropped.
     const keptPlayerBullets: PlayerBullet[] = [];
     for (const pb of this.playerBullets) {
       let spent = false;
@@ -691,11 +703,17 @@ export class GymFormationScene<
             entityHitRadius,
           )
         ) {
-          entity.destroySelf();
-          if (entity.playDestructionAudio) {
-            entity.playDestructionAudio();
+          if (entity.takeDamage) {
+            // Multi-hit path (Boss): entity owns health, phase
+            // transition, and SFX — base scene only consumes the bullet.
+            entity.takeDamage();
           } else {
-            playDestructionSound();
+            entity.destroySelf();
+            if (entity.playDestructionAudio) {
+              entity.playDestructionAudio();
+            } else {
+              playDestructionSound();
+            }
           }
           pb.destroy();
           spent = true;
