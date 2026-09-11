@@ -174,7 +174,8 @@ export function hslToHex(h: number, s: number, l: number): number {
 /**
  * Applies small HSL jitter around the base colour.
  * Uses the provided RNG for deterministic output.
- * Hue ±18°, saturation ±0.08, lightness ±0.06.
+ * Hue ±EXPLOSION_HUE_JITTER_DEG, saturation ±EXPLOSION_SAT_VARIANCE,
+ * lightness ±EXPLOSION_LIGHT_VARIANCE (tunable constants above).
  */
 export function jitterColor(baseColor: number, rng: () => number): number {
   const hsl = colorToHSL(baseColor);
