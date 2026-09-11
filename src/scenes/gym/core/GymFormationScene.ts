@@ -777,6 +777,36 @@ export class GymFormationScene<
       }
     }
     this.bullets = keptEnemyBullets;
+
+    // 4. Player body vs enemy body: when the player ship overlaps an
+    //    enemy entity, the enemy is destroyed and the player is hit
+    //    (explosion VFX/SFX + respawn + invulnerability). Skipped if
+    //    the player is currently invulnerable.
+    if (this.playerInvulnerable <= 0) {
+      for (const entity of this.entities) {
+        if (!entity.alive) continue;
+        if (
+          this._collide(
+            this.player.x,
+            this.player.y,
+            playerHull,
+            entity.x,
+            entity.y,
+            entityHitRadius,
+          )
+        ) {
+          entity.destroySelf();
+          // Only play the entity-specific destruction audio (if any).
+          // The generic destruction sound is already played by
+          // _hitPlayer(), so we avoid double-play.
+          if (entity.playDestructionAudio) {
+            entity.playDestructionAudio();
+          }
+          this._hitPlayer();
+          break;
+        }
+      }
+    }
   }
 
   /**

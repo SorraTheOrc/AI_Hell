@@ -7,6 +7,7 @@ import { GAME_HEIGHT, GAME_WIDTH } from '../../../core/constants';
 import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
+  SHIP_SIZE,
 } from '../../../core/constants';
 import { Player } from '../../../entities/Player';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
@@ -1285,5 +1286,182 @@ describe('GymFormationScene — stop/restart of the same instance clears stale e
     expect(overlay).not.toBeNull();
     expect(overlay!.visible).toBe(true);
     expect(() => scene.tick(1.0)).not.toThrow();
+  });
+});
+
+describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W8PT)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const PLAYER_SPAWN = { x: 920, y: 30 };
+
+  async function bootWithPlayer(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], PLAYER_SPAWN),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  /** Helper: position the player at an entity's post-tick coordinates
+   *  and sync the internal physics state so `tick()` doesn't reset it.
+   *  During tick the formation base drifts right by `DRIFT_SPEED * dt`.
+   */
+  function placePlayerAtEntity(scene: BootedScene, entity: FormationSceneEntity): void {
+    const player = scene.getPlayer()!;
+    const postTickX = scene.formationX + DRIFT_SPEED * 0.05
+      + entity.offset.col * SPACING_X;
+    const postTickY = scene.formationY + entity.offset.row * SPACING_Y;
+    player.setPosition(postTickX, postTickY);
+    (player as any)._movementState = {
+      x: postTickX,
+      y: postTickY,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+  }
+
+  it('AC1 — when player overlaps an enemy entity, the enemy is destroyed via destroySelf()', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    expect(target.alive).toBe(true);
+
+    // Position the player at the entity's post-tick location and sync physics state.
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
+  });
+
+  it('AC1 — the enemy destruction sound plays on player-vs-enemy collision', async () => {
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(callsBefore + 1);
+  });
+
+  it('AC2 — the player is treated as "hit": explosion VFX/SFX + respawn + invulnerability', async () => {
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    // Hit counter incremented.
+    expect(scene.getPlayerHitCount()).toBe(1);
+    // Explosion VFX spawned.
+    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    // Destruction sound played (enemy destruction).
+    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(callsBefore);
+    // Player respawned at spawn point.
+    expect(scene.getPlayer()!.x).toBe(PLAYER_SPAWN.x);
+    expect(scene.getPlayer()!.y).toBe(PLAYER_SPAWN.y);
+    // Invulnerability window engaged.
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
+  });
+
+  it('AC2 — player-vs-enemy collision while invulnerable does not trigger another hit', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[1];
+
+    // Directly set the invulnerability window so the player-vs-enemy-body
+    // collision below is ignored. (Enemy-bullet → player collision would
+    // also work, but the stub has no enemy fire.)
+    (scene as any).playerInvulnerable = 1.0;
+    (scene as any).playerBlinkPhase = 0;
+
+    // Now push the player into a different enemy — should be ignored due to invulnerability.
+    placePlayerAtEntity(scene, target);
+    const hitCountBefore = scene.getPlayerHitCount();
+    const aliveBefore = scene.aliveCount;
+    scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBe(hitCountBefore);
+    expect(scene.aliveCount).toBe(aliveBefore); // enemy NOT destroyed
+    expect(target.alive).toBe(true);
+  });
+
+  it('AC3 — collision uses the entity hit radius from getEntityHitRadius()', async () => {
+    // Use a custom (small) entity hit radius.
+    const smallRadius = 5;
+    booted = await bootScene([
+      makeStubScene(() => [], PLAYER_SPAWN, { entityHitRadius: smallRadius }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    const target = scene.formationEntities[0];
+
+    const playerHull = SHIP_SIZE / 2;
+    const dist = playerHull + smallRadius;
+    const entityBaseX = scene.formationX + DRIFT_SPEED * 0.05 + target.offset.col * SPACING_X;
+
+    // ── Tick 1: player just outside the collision radius ──────────
+    placePlayerAtEntity(scene, target);
+    const player = scene.getPlayer()!;
+    player.x = entityBaseX - dist - 1;
+    (player as any)._movementState.x = entityBaseX - dist - 1;
+    scene.tick(0.05);
+    expect(target.alive).toBe(true);
+
+    // ── Tick 2: player just inside ────────────────────────────────
+    // The entity drifts one more tick (another 2 px), so shift the
+    // player right by that amount to stay just inside.
+    player.x = entityBaseX + DRIFT_SPEED * 0.05 - dist + 1;
+    (player as any)._movementState.x = entityBaseX + DRIFT_SPEED * 0.05 - dist + 1;
+    scene.tick(0.05);
+    expect(target.alive).toBe(false);
+  });
+
+  it('AC4 — playerHitCount increments on each collision', async () => {
+    const scene = await bootWithPlayer();
+
+    // Player starts at spawn — hit count is zero.
+    expect(scene.getPlayerHitCount()).toBe(0);
+
+    // Push into first enemy.
+    const e1 = scene.formationEntities[0];
+    placePlayerAtEntity(scene, e1);
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(1);
+
+    // Clear the invulnerability window set by the first hit so the
+    // second collision is not silently skipped.
+    (scene as any).playerInvulnerable = 0;
+
+    // Push into second enemy.
+    const e2 = scene.formationEntities[1];
+    placePlayerAtEntity(scene, e2);
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(2);
+  });
+
+  it('AC — player misses enemy when not overlapping (no false positives)', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    const aliveBefore = target.alive;
+    // Position player far outside the hit radius.
+    const entityBaseX = scene.formationX + DRIFT_SPEED * 0.05 + target.offset.col * SPACING_X;
+    const player = scene.getPlayer()!;
+    player.x = entityBaseX - 100;
+    (player as any)._movementState.x = entityBaseX - 100;
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(aliveBefore);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.getPlayerHitCount()).toBe(0);
   });
 });
