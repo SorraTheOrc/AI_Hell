@@ -16,6 +16,11 @@
 import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
+import {
+  resolvePatterns,
+  spawnExplosionParticles,
+  type ExplosionHandle,
+} from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -76,6 +81,8 @@ export interface TankBullet {
 export class Tank extends Phaser.GameObjects.Container {
   private readonly bodyGraphics: Phaser.GameObjects.Graphics;
   private readonly explosionGraphics: Phaser.GameObjects.Graphics;
+  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
+  private readonly explosionHandles: ExplosionHandle[] = [];
   private readonly formationOffset: FormationOffset;
 
   private _alive = true;
@@ -155,31 +162,20 @@ export class Tank extends Phaser.GameObjects.Container {
     // behaviour exactly (the guard never triggers on a live object).
     if (!this.scene) return;
     const scene = this.scene as Phaser.Scene;
-    scene.tweens.add({
-      targets: this.explosionGraphics,
-      alpha: { from: 1, to: 0 },
-      duration: 500,
-      onUpdate: () => {
-        const alpha = this.explosionGraphics.alpha;
-        const radius = TANK_SIZE * 2.5 * (1 - alpha) + TANK_SIZE * 0.3;
-        this.explosionGraphics.clear();
-        this.explosionGraphics.lineStyle(
-          Math.max(1, Math.round(4 * alpha)),
-          TANK_COLOR,
-          alpha,
-        );
-        this.explosionGraphics.strokeCircle(0, 0, radius);
-        this.explosionGraphics.beginPath();
-        this.explosionGraphics.moveTo(-radius, 0);
-        this.explosionGraphics.lineTo(radius, 0);
-        this.explosionGraphics.moveTo(0, -radius);
-        this.explosionGraphics.lineTo(0, radius);
-        this.explosionGraphics.strokePath();
-      },
-      onComplete: () => {
-        this.explosionGraphics.destroy();
-      },
-    });
+    const handle = spawnExplosionParticles(
+      scene,
+      this.x,
+      this.y,
+      this._color,
+      this._size,
+      { patterns: resolvePatterns('tank') },
+    );
+    if (handle) this.explosionHandles.push(handle);
+  }
+
+  /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
+  getExplosionHandles(): ExplosionHandle[] {
+    return this.explosionHandles.slice();
   }
 
   // ── Public state ─────────────────────────────────────────────────
@@ -289,6 +285,10 @@ export class Tank extends Phaser.GameObjects.Container {
   destroy(fromScene?: boolean): void {
     this.bodyGraphics.destroy();
     this.explosionGraphics.destroy();
+    // Scene-level particle Graphics are NOT display-list children —
+    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
+    for (const handle of this.explosionHandles) handle.destroy();
+    this.explosionHandles.length = 0;
     super.destroy(fromScene);
   }
 }

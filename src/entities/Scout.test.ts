@@ -3,6 +3,12 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
+import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   buildVFormationOffsets,
@@ -11,6 +17,7 @@ import {
   SCOUT_BULLET_SPEED,
   SCOUT_COLOR,
   SCOUT_FIRE_INTERVAL,
+  SCOUT_SIZE,
   Scout,
   FormationOffset,
 } from './Scout';
@@ -210,6 +217,43 @@ describe('Scout entity (visuals, firing, destruction)', () => {
 
     // Destroying twice is harmless.
     expect(() => scout.destroySelf()).not.toThrow();
+  });
+
+  it('destruction spawns a particle burst tinted around SCOUT_COLOR (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = makeScout(100, 100);
+    expect(scout.getExplosionHandles().length).toBe(0);
+
+    scout.destroySelf();
+
+    const handles = scout.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('scout'));
+    expect(handles[0].totalCount).toBe(scaledCount(SCOUT_SIZE));
+
+    // Colours are jittered around the scout's neon green.
+    const base = colorToHSL(SCOUT_COLOR);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
+  });
+
+  it('destroy() tears down live particle handles (SHUTDOWN leak guard, AC4)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = makeScout(100, 100);
+    scout.destroySelf();
+    const handle = scout.getExplosionHandles()[0];
+    expect(handle.alive).toBe(true);
+
+    // Entity destroy() (the scene SHUTDOWN path) must destroy the
+    // scene-level particle Graphics, not just the container children.
+    scout.destroy(true);
+    expect(handle.alive).toBe(false);
+    expect(scout.getExplosionHandles()).toHaveLength(0);
   });
 
   it('destruction plays NO entity-level sound — the base scene owns playDestructionSound (no double-play)', async () => {

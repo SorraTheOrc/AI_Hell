@@ -6,10 +6,18 @@ import * as effectsModule from '../audio/effects';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FormationOffset } from '../utils/formations';
 import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
+import {
   PHASER_ADVANCE_CUE_DURATION,
   PHASER_BULLET_SPEED,
   PHASER_COLOR,
+  PHASER_COLOR_NUMBER,
   PHASER_FIRE_INTERVAL,
+  PHASER_SIZE,
   PhaserEntity,
   PhaserConfig,
 } from './Phaser';
@@ -111,6 +119,29 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
     // .explodeRandom() plays playDestructionSound() exactly once per
     // destruction (design doc §7). An entity call here would double-play.
     expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
+  });
+
+  it('destruction spawns a ring+implosion particle burst tinted around the Phaser magenta (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = makePhaser(100, 100);
+    expect(phaser.getExplosionHandles().length).toBe(0);
+
+    phaser.destroySelf();
+
+    const handles = phaser.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('phaser'));
+    expect(handles[0].patterns).toEqual(['ring', 'implosion']);
+    expect(handles[0].totalCount).toBe(scaledCount(PHASER_SIZE));
+
+    const base = colorToHSL(PHASER_COLOR_NUMBER);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
   });
 
   it('AC5 — the fire interval still gates repeating cycles while aiming', async () => {

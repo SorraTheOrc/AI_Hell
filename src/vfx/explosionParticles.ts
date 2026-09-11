@@ -482,10 +482,12 @@ export interface ExplosionHandle {
 }
 
 /** Minimal Phaser surface needed by `spawnExplosionParticles`. Kept
- * structural (not `Phaser.Scene`) so unit tests can inject a double. */
+ * structural (not `Phaser.Scene`) so unit tests can inject a double.
+ * `tweens.add` takes `unknown` so a real `Phaser.Scene` (whose `add`
+ * accepts a TweenBuilderConfig union) is structurally assignable. */
 export interface ExplosionScene {
   add: { graphics(opts?: { x?: number; y?: number }): { setDepth(d: number): unknown; clear(): unknown; fillStyle(c: number, a?: number): unknown; fillCircle(x: number, y: number, r: number): unknown; destroy(): void; alpha: number } };
-  tweens: { add(cfg: Record<string, unknown>): unknown };
+  tweens: { add(cfg: unknown): unknown };
 }
 
 /**

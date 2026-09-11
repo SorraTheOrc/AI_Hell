@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as effectsModule from '../../../audio/effects';
+import * as explosionModule from '../../../vfx/explosionParticles';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
-import { GAME_HEIGHT, GAME_WIDTH } from '../../../core/constants';
+import { GAME_HEIGHT, GAME_WIDTH, SHIP_COLOR } from '../../../core/constants';
 import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
@@ -1353,11 +1354,14 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
 
   it('AC2 — the player is treated as "hit": explosion VFX/SFX + respawn + invulnerability', async () => {
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
     const scene = await bootWithPlayer();
     const target = scene.formationEntities[0];
 
     const callsBefore = vi.mocked(destroySound).mock.calls.length;
     placePlayerAtEntity(scene, target);
+    const hitX = scene.getPlayer()!.x;
+    const hitY = scene.getPlayer()!.y;
     scene.tick(0.05);
 
     // Hit counter incremented.
@@ -1366,12 +1370,45 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
     // Destruction sound played (enemy destruction).
     expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(callsBefore);
+    // The player burst is spawned through the shared particle helper with
+    // the ship colour/size and the 'player' pattern assignment (AC2).
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    const playerCall = spawnSpy.mock.calls[0];
+    expect(playerCall).toBeDefined();
+    expect(playerCall[0]).toBe(scene);
+    expect(playerCall[1]).toBeCloseTo(hitX, 0);
+    expect(playerCall[2]).toBeCloseTo(hitY, 0);
+    expect(playerCall[3]).toBe(SHIP_COLOR);
+    expect(playerCall[4]).toBe(SHIP_SIZE);
+    expect(playerCall[5]?.patterns).toEqual(['radial', 'ring']);
+    expect(playerCall[5]?.registry).toBeDefined();
     // Player respawned at spawn point.
     expect(scene.getPlayer()!.x).toBe(PLAYER_SPAWN.x);
     expect(scene.getPlayer()!.y).toBe(PLAYER_SPAWN.y);
     // Invulnerability window engaged.
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
+  });
+
+  it('AC4 — SHUTDOWN destroys active player particle Graphics; restart leaks none', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    // A player particle burst is active and registered for teardown.
+    const active = scene.getPlayerExplosions();
+    expect(active.length).toBeGreaterThan(0);
+
+    // Simulate the Phaser stop/restart vector.
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayerExplosions()).toHaveLength(0);
+
+    // Restarting the same instance must not throw and must start clean.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
   });
 
   it('AC2 — player-vs-enemy collision while invulnerable does not trigger another hit', async () => {

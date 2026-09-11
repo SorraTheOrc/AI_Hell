@@ -27,6 +27,11 @@
 import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
+import {
+  resolvePatterns,
+  spawnExplosionParticles,
+  type ExplosionHandle,
+} from '../vfx/explosionParticles';
 
 
 // ── Visual / behaviour tuning (per GDD §4.3) ────────────────────────
@@ -228,6 +233,8 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly coreGraphics: Phaser.GameObjects.Graphics;
   private readonly coreGlowGraphics: Phaser.GameObjects.Graphics;
   private readonly explosionGraphics: Phaser.GameObjects.Graphics;
+  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
+  private readonly explosionHandles: ExplosionHandle[] = [];
   protected readonly healthBarGraphics: Phaser.GameObjects.Graphics;
 
   private readonly formationOffset: FormationOffset;
@@ -764,36 +771,27 @@ export class Boss extends Phaser.GameObjects.Container {
   // ── Animation ───────────────────────────────────────────────────
 
   /**
-   * Plays the destruction animation: expanding, fading rings.
+   * Plays the destruction animation: a large particle burst tinted around
+   * the Boss red, using all three patterns (`resolvePatterns('boss')`).
+   * Graphics are cleaned up on completion or in `destroy()`.
    */
   private _playExplosion(): void {
+    if (!this.scene) return;
     const scene = this.scene as Phaser.Scene;
-    scene.tweens.add({
-      targets: this.explosionGraphics,
-      alpha: { from: 1, to: 0 },
-      duration: 800,
-      onUpdate: () => {
-        const alpha = this.explosionGraphics.alpha;
-        const radius = BOSS_RADIUS * 2.5 * (1 - alpha) + BOSS_RADIUS;
-        this.explosionGraphics.clear();
-        this.explosionGraphics.lineStyle(
-          Math.max(1, Math.round(4 * alpha)),
-          BOSS_COLOR,
-          alpha,
-        );
-        this.explosionGraphics.strokeCircle(0, 0, radius);
-        // Cross lines.
-        this.explosionGraphics.beginPath();
-        this.explosionGraphics.moveTo(-radius, 0);
-        this.explosionGraphics.lineTo(radius, 0);
-        this.explosionGraphics.moveTo(0, -radius);
-        this.explosionGraphics.lineTo(0, radius);
-        this.explosionGraphics.strokePath();
-      },
-      onComplete: () => {
-        this.explosionGraphics.destroy();
-      },
-    });
+    const handle = spawnExplosionParticles(
+      scene,
+      this.x,
+      this.y,
+      BOSS_COLOR,
+      BOSS_RADIUS,
+      { patterns: resolvePatterns('boss') },
+    );
+    if (handle) this.explosionHandles.push(handle);
+  }
+
+  /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
+  getExplosionHandles(): ExplosionHandle[] {
+    return this.explosionHandles.slice();
   }
 
   /**
@@ -879,6 +877,10 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._pulseWaveGraphics) {
       this._pulseWaveGraphics.destroy();
     }
+    // Scene-level particle Graphics are NOT display-list children —
+    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
+    for (const handle of this.explosionHandles) handle.destroy();
+    this.explosionHandles.length = 0;
     super.destroy(fromScene);
   }
 }

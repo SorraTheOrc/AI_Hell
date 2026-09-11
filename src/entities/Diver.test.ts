@@ -5,7 +5,14 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import * as effectsModule from '../audio/effects';
 import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
+import {
   DIVER_COLOR,
+  DIVER_SIZE,
   DIVER_HOLD_FORMATION_SECONDS,
   DIVER_DIVE_DURATION,
   DIVER_DIVE_APEX_FRACTION,
@@ -201,6 +208,28 @@ describe('Diver entity — audio (GDD §7.3, Diver fire/destruction sounds)', ()
     diver.destroySelf();
     expect(effectsModule.playDiverDestructionSound).toHaveBeenCalledTimes(1);
     expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
+  });
+
+  it('destruction spawns a particle burst tinted around DIVER_COLOR (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = makeDiver(100, 100);
+    expect(diver.getExplosionHandles().length).toBe(0);
+
+    diver.destroySelf();
+
+    const handles = diver.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('diver'));
+    expect(handles[0].totalCount).toBe(scaledCount(DIVER_SIZE));
+
+    const base = colorToHSL(DIVER_COLOR);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
   });
 });
 

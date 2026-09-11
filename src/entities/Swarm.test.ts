@@ -14,6 +14,12 @@ import {
   buildSwarmClusterOffsets,
 } from './Swarm';
 import { FormationOffset } from '../utils/formations';
+import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
 
 /** Minimal scene that only constructs Swarm entities (no scene logic needed). */
 class HarnessScene extends Phaser.Scene {
@@ -248,43 +254,42 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     expect(() => swarm.destroySelf()).not.toThrow();
   });
 
-  it('destruction explosion rings derive their radii from SWARM_SIZE (AC3)', async () => {
-    const ARC = 0; // Phaser Graphics Commands.ARC: [id, x, y, radius, start, end, ccw, overshoot]
-
+  it('destruction particle burst derives its count and colour from SWARM_SIZE/SWARM_COLOR (AC3, AC5)', async () => {
     booted = await bootScene([HarnessScene]);
     const swarm = makeSwarm(100, 100);
 
-    const children = (swarm as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
-    // The explosion Graphics is the child that is NOT the body (the body holds
-    // the diamond MOVE_TO path; the explosion starts with only default styles).
-    const explosion = children.find(
-      (c): c is Phaser.GameObjects.Graphics =>
-        c instanceof Phaser.GameObjects.Graphics &&
-        !(c.commandBuffer as number[]).includes(5), // MOVE_TO — absent until the tween runs
-    );
-    expect(explosion, 'expected an idle explosion Graphics child').toBeDefined();
+    // No particles before destruction.
+    expect(swarm.getExplosionHandles().length).toBe(0);
 
     swarm.destroySelf();
-    const tweens = booted!.scene.tweens.getTweens();
-    expect(tweens.length).toBe(1);
-    // Seek halfway through the 400ms explosion (emit callbacks) → alpha ≈ 0.5.
-    tweens[0].seek(200, 16.6, true);
 
-    // radius = SWARM_SIZE * (2 * (1 - alpha) + 0.25) for alpha in [0, 1] —
-    // linear in SWARM_SIZE, so the ring scales proportionally with the body.
-    // Solving for the observed alpha proves the radius sits on the formula's
-    // curve (i.e. it derives from SWARM_SIZE, AC3), without pinning the pool
-    // progress to an exact value.
-    const buf: number[] = explosion!.commandBuffer as number[];
-    const arcIdx = buf.indexOf(ARC);
-    expect(arcIdx, 'expected an ARC ring command in the explosion buffer').toBeGreaterThanOrEqual(0);
-    const radius = buf[arcIdx + 3];
-    const ratio = radius / SWARM_SIZE;
-    const impliedAlpha = 1 - (ratio - 0.25) / 2;
-    expect(impliedAlpha).toBeGreaterThan(0);
-    expect(impliedAlpha).toBeLessThan(1);
-    // Mid-explosion: the ring has already expanded beyond the enlarged body.
-    expect(radius).toBeGreaterThan(SWARM_SIZE);
+    // The particle burst is the primary VFX: one handle, per-type patterns.
+    const handles = swarm.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    const handle = handles[0];
+    expect(handle.patterns).toEqual(resolvePatterns('swarm'));
+
+    // Count is size-proportional (clamped) — larger bodies emit more.
+    expect(handle.totalCount).toBe(scaledCount(SWARM_SIZE));
+    expect(handle.totalCount).toBeGreaterThanOrEqual(8);
+
+    // Every emitted colour is jittered around the swarm's neon blue.
+    const baseHsl = colorToHSL(SWARM_COLOR);
+    for (const p of handle.particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - baseHsl.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.1);
+    }
+
+    // The tween fades and shrinks the particles over their lifespan.
+    const tweens = booted!.scene.tweens.getTweens();
+    expect(tweens.length).toBeGreaterThanOrEqual(1);
+    const firstAlpha = handle.particles[0].alpha;
+    const firstRadius = handle.particles[0].radius;
+    tweens[0].seek(200, 16.6, true);
+    expect(handle.particles[0].alpha).toBeLessThan(firstAlpha);
+    expect(handle.particles[0].radius).toBeLessThan(firstRadius);
   });
 
   it('swarms pass freely through each other — overlapping members neither repel nor separate (GDD §2.6)', async () => {

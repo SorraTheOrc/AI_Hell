@@ -22,6 +22,7 @@ import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
+  SHIP_COLOR,
   SHIP_SIZE,
 } from '../../../core/constants';
 import {
@@ -43,6 +44,10 @@ import {
 import {
   WasdKeysLike,
 } from '../../../utils/input';
+import {
+  resolvePatterns,
+  spawnExplosionParticles,
+} from '../../../vfx/explosionParticles';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -840,35 +845,17 @@ export class GymFormationScene<
   }
 
   /**
-   * Spawns a tweened expanding-ring explosion at (x, y) — the player
-   * equivalent of `Scout.playExplosion`. Tracked in `playerExplosions`
-   * so tests can observe the VFX without pixel assertions.
+   * Spawns the player-death particle burst at (x, y) — the player
+   * equivalent of an entity `playExplosion()`. Colours are tinted around
+   * `SHIP_COLOR` and the burst scales with `SHIP_SIZE`; the Graphics are
+   * tracked in `playerExplosions` so the SHUTDOWN handler (and tests) see
+   * them without pixel assertions, and the helper unregisters them on
+   * completion.
    */
   private _spawnPlayerExplosion(x: number, y: number): void {
-    const gfx = this.add.graphics({ x, y });
-    this.playerExplosions.push(gfx);
-    this.tweens.add({
-      targets: gfx,
-      alpha: { from: 1, to: 0 },
-      duration: 400,
-      onUpdate: () => {
-        const t = gfx.alpha;
-        const radius = 8 + 24 * (1 - t);
-        gfx.clear();
-        gfx.lineStyle(2, 0x00ffff, t);
-        gfx.strokeCircle(0, 0, radius);
-        gfx.beginPath();
-        gfx.moveTo(-radius, 0);
-        gfx.lineTo(radius, 0);
-        gfx.moveTo(0, -radius);
-        gfx.lineTo(0, radius);
-        gfx.strokePath();
-      },
-      onComplete: () => {
-        gfx.destroy();
-        const idx = this.playerExplosions.indexOf(gfx);
-        if (idx >= 0) this.playerExplosions.splice(idx, 1);
-      },
+    spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
+      patterns: resolvePatterns('player'),
+      registry: this.playerExplosions,
     });
   }
 

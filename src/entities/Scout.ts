@@ -24,6 +24,11 @@ import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
 import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
+import {
+  resolvePatterns,
+  spawnExplosionParticles,
+  type ExplosionHandle,
+} from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -104,6 +109,8 @@ export class Scout extends Phaser.GameObjects.Container {
   private readonly _bulletSize: number;
   private readonly _bulletSpeed: number;
   private readonly _fireInterval: number;
+  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
+  private readonly explosionHandles: ExplosionHandle[] = [];
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -160,9 +167,11 @@ export class Scout extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Plays the destruction animation: expanding, fading rings.
-   * The body is hidden immediately and the explosion graphics are
-   * cleaned up when the tween completes.
+   * Plays the destruction animation: a particle burst tinted around the
+   * scout's neon-green body colour (per-type patterns from
+   * `resolvePatterns('scout')`). The body is hidden immediately by
+   * `destroySelf()`; particle Graphics are cleaned up when the tween
+   * completes (or in `destroy()` for SHUTDOWN teardown).
    *
    * NOTE: intentionally plays NO destruction sound here — the shared
    * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
@@ -176,28 +185,20 @@ export class Scout extends Phaser.GameObjects.Container {
     // behaviour exactly (the guard never triggers on a live object).
     if (!this.scene) return;
     const scene = this.scene as Phaser.Scene;
-    scene.tweens.add({
-      targets: this.explosionGraphics,
-      alpha: { from: 1, to: 0 },
-      duration: 400,
-      onUpdate: () => {
-        // Read the tweened property directly (Phaser 4 tweens it in place).
-        const alpha = this.explosionGraphics.alpha;
-        const radius = this._size * 2 * (1 - alpha) + this._size * 0.25;
-        this.explosionGraphics.clear();
-        this.explosionGraphics.lineStyle(Math.max(1, Math.round(3 * alpha)), this._color, alpha);
-        this.explosionGraphics.strokeCircle(0, 0, radius);
-        this.explosionGraphics.beginPath();
-        this.explosionGraphics.moveTo(-radius, 0);
-        this.explosionGraphics.lineTo(radius, 0);
-        this.explosionGraphics.moveTo(0, -radius);
-        this.explosionGraphics.lineTo(0, radius);
-        this.explosionGraphics.strokePath();
-      },
-      onComplete: () => {
-        this.explosionGraphics.destroy();
-      },
-    });
+    const handle = spawnExplosionParticles(
+      scene,
+      this.x,
+      this.y,
+      this._color,
+      this._size,
+      { patterns: resolvePatterns('scout') },
+    );
+    if (handle) this.explosionHandles.push(handle);
+  }
+
+  /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
+  getExplosionHandles(): ExplosionHandle[] {
+    return this.explosionHandles.slice();
   }
 
   // ── Public state ─────────────────────────────────────────────────
@@ -349,6 +350,10 @@ export class Scout extends Phaser.GameObjects.Container {
   destroy(fromScene?: boolean): void {
     this.bodyGraphics.destroy();
     this.explosionGraphics.destroy();
+    // Scene-level particle Graphics are NOT display-list children —
+    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
+    for (const handle of this.explosionHandles) handle.destroy();
+    this.explosionHandles.length = 0;
     super.destroy(fromScene);
   }
 }
