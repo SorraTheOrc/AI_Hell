@@ -31,4 +31,7 @@ pnpm-debug.log*
 # implement skill state file
 .implement_state.json
 
+# herdr downtime marker
+.herdr-downtime-disabled
+
 ### End of Worklog Specific Ignores
