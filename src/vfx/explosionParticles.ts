@@ -46,6 +46,45 @@ export const EXPLOSION_SAT_VARIANCE = 0.08;
 /** Lightness variance bound (0-1 scale, < 0.2). */
 export const EXPLOSION_LIGHT_VARIANCE = 0.06;
 
+// ── Pattern speed/radius tuning (AC5) ─────────────────────────────
+
+/** Radial burst: base speed in px/s (plus per-size term). */
+export const EXPLOSION_RADIAL_SPEED_BASE = 60;
+/** Radial burst: additional speed per px of entity size. */
+export const EXPLOSION_RADIAL_SPEED_PER_SIZE = 3;
+/** Radial burst: speed spread as a fraction of the base speed (±). */
+export const EXPLOSION_RADIAL_SPEED_SPREAD = 0.4;
+/** Radial burst: starting particle radius as a fraction of entity size. */
+export const EXPLOSION_RADIAL_START_RADIUS = 0.5;
+
+/** Ring burst: ring radius as a multiple of entity size. */
+export const EXPLOSION_RING_RADIUS_FACTOR = 1.2;
+/** Ring burst: base speed in px/s (plus per-size term). */
+export const EXPLOSION_RING_SPEED_BASE = 50;
+/** Ring burst: additional speed per px of entity size. */
+export const EXPLOSION_RING_SPEED_PER_SIZE = 2.5;
+/** Ring burst: speed tolerance as a fraction (±7% keeps the ring coherent). */
+export const EXPLOSION_RING_SPEED_TOLERANCE = 0.07;
+/** Ring burst: particle radius as a fraction of entity size. */
+export const EXPLOSION_RING_PARTICLE_RADIUS = 0.3;
+
+/** Implosion: scatter radius as a multiple of entity size. */
+export const EXPLOSION_IMPLOSION_SCATTER_FACTOR = 2;
+/** Implosion: inward drift base speed in px/s (plus per-size term). */
+export const EXPLOSION_IMPLOSION_SPEED_BASE = 40;
+/** Implosion: additional inward speed per px of entity size. */
+export const EXPLOSION_IMPLOSION_SPEED_PER_SIZE = 2;
+/** Burst phase: base outward speed in px/s (plus per-size term). */
+export const EXPLOSION_BURST_SPEED_BASE = 70;
+/** Burst phase: additional outward speed per px of entity size. */
+export const EXPLOSION_BURST_SPEED_PER_SIZE = 4;
+/** Burst phase: speed spread as a fraction of the base speed (±). */
+export const EXPLOSION_BURST_SPEED_SPREAD = 0.4;
+/** Burst phase: angular jitter in radians around the scatter angle. */
+export const EXPLOSION_BURST_ANGLE_SPREAD = 0.5;
+/** Implosion: particle radius as a fraction of entity size. */
+export const EXPLOSION_IMPLOSION_PARTICLE_RADIUS = 0.4;
+
 // ── Types ──────────────────────────────────────────────────────────
 
 /** A single particle's data (pure, no Phaser types). */
@@ -208,9 +247,9 @@ export function generateRadialBurst(
   rng: () => number,
 ): Particle[] {
   const particles: Particle[] = [];
-  const startRadius = size * 0.5;
-  const speedBase = 60 + size * 3; // px/s, scales with size
-  const speedSpread = speedBase * 0.4;
+  const startRadius = size * EXPLOSION_RADIAL_START_RADIUS;
+  const speedBase = EXPLOSION_RADIAL_SPEED_BASE + size * EXPLOSION_RADIAL_SPEED_PER_SIZE;
+  const speedSpread = speedBase * EXPLOSION_RADIAL_SPEED_SPREAD;
 
   for (let i = 0; i < count; i++) {
     const angle = rng() * Math.PI * 2;
@@ -247,9 +286,9 @@ export function generateRingBurst(
   rng: () => number,
 ): Particle[] {
   const particles: Particle[] = [];
-  const ringRadius = size * 1.2;
-  const speedBase = 50 + size * 2.5;
-  const speedTolerance = speedBase * 0.07; // ±7% for slight uniformity
+  const ringRadius = size * EXPLOSION_RING_RADIUS_FACTOR;
+  const speedBase = EXPLOSION_RING_SPEED_BASE + size * EXPLOSION_RING_SPEED_PER_SIZE;
+  const speedTolerance = speedBase * EXPLOSION_RING_SPEED_TOLERANCE;
 
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2; // evenly spaced on the ring
@@ -263,10 +302,10 @@ export function generateRingBurst(
       vy: Math.sin(angle) * speed,
       color,
       alpha: 1,
-      radius: size * 0.3,
+      radius: size * EXPLOSION_RING_PARTICLE_RADIUS,
       dead: false,
       fadeStep: 1 / EXPLOSION_LIFESPAN_MS,
-      shrinkStep: (size * 0.3) / EXPLOSION_LIFESPAN_MS,
+      shrinkStep: (size * EXPLOSION_RING_PARTICLE_RADIUS) / EXPLOSION_LIFESPAN_MS,
     });
   }
 
@@ -287,11 +326,10 @@ export function generateImplosionBurst(
   rng: () => number,
 ): Particle[] {
   const particles: Particle[] = [];
-  const scatterRadius = size * 2;
-  const implSpeed = 40 + size * 2; // inward speed
-  const burstSpeedBase = 70 + size * 4;
-  const burstSpeedSpread = burstSpeedBase * 0.4;
-  // implDuration = 100ms — wired in Phaser layer for phase transition timing
+  const scatterRadius = size * EXPLOSION_IMPLOSION_SCATTER_FACTOR;
+  const implSpeed = EXPLOSION_IMPLOSION_SPEED_BASE + size * EXPLOSION_IMPLOSION_SPEED_PER_SIZE;
+  const burstSpeedBase = EXPLOSION_BURST_SPEED_BASE + size * EXPLOSION_BURST_SPEED_PER_SIZE;
+  const burstSpeedSpread = burstSpeedBase * EXPLOSION_BURST_SPEED_SPREAD;
 
   for (let i = 0; i < count; i++) {
     const angle = rng() * Math.PI * 2;
@@ -306,11 +344,11 @@ export function generateImplosionBurst(
     const vyImpl = (dyIn / distIn) * implSpeed;
 
     // Outward burst velocity (opposite of starting angle).
-    const burstAngle = angle + (rng() - 0.5) * 0.5; // slight random spread
+    const burstAngle = angle + (rng() - 0.5) * EXPLOSION_BURST_ANGLE_SPREAD;
     const burstSpeed = burstSpeedBase + (rng() - 0.5) * 2 * burstSpeedSpread;
 
     const color = jitterColor(baseColor, rng);
-    const startRadius = size * 0.4;
+    const startRadius = size * EXPLOSION_IMPLOSION_PARTICLE_RADIUS;
 
     particles.push({
       x: startX,
@@ -356,6 +394,46 @@ export function combinePatterns(patterns: Pattern[], total: number): number[] {
   }
 
   return counts;
+}
+
+// ── AC5: Per-type pattern assignment ─────────────────────────────
+
+/** Entity type key for pattern assignment (matches entity module names). */
+export type ExplosionEntityType =
+  | 'scout'
+  | 'diver'
+  | 'tank'
+  | 'phaser'
+  | 'swarm'
+  | 'boss'
+  | 'player';
+
+/**
+ * Per-type pattern assignment — the single source of truth for which
+ * explosion feel each entity gets. Single pattern = full count, two =
+ * half each, three = third each (via `combinePatterns`).
+ *
+ * Tune the feel per enemy here; death paths only pass their type key.
+ * Documented in GDD §7.2.
+ */
+export const EXPLOSION_PATTERNS_BY_TYPE: Record<ExplosionEntityType, Pattern[]> = {
+  scout: ['radial'],
+  diver: ['radial'],
+  swarm: ['radial'],
+  tank: ['radial', 'ring'],
+  player: ['radial', 'ring'],
+  phaser: ['ring', 'implosion'],
+  boss: ['radial', 'ring', 'implosion'],
+};
+
+/**
+ * Returns the assigned `Pattern[]` for an entity type from
+ * `EXPLOSION_PATTERNS_BY_TYPE`. Unknown keys fall back to `['radial']`
+ * (never throws — a missing entry must not break a death path).
+ */
+export function resolvePatterns(type: string): Pattern[] {
+  const patterns = (EXPLOSION_PATTERNS_BY_TYPE as Record<string, Pattern[]>)[type];
+  return patterns ? [...patterns] : ['radial'];
 }
 
 // ── Phaser integration (thin rendering layer) ────────────────────

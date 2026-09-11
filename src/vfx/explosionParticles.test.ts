@@ -761,3 +761,79 @@ describe('spawnExplosionParticles (AC1–AC5)', () => {
     expect(scene.tweenCfgs.length).toBe(0);
   });
 });
+
+// ── AC5: resolvePatterns + tunable pattern constants ──────────────
+
+describe('resolvePatterns (AC5)', () => {
+  it('returns single patterns for scout/diver/swarm', async () => {
+    const { resolvePatterns } = await import('./explosionParticles');
+    expect(resolvePatterns('scout')).toEqual(['radial']);
+    expect(resolvePatterns('diver')).toEqual(['radial']);
+    expect(resolvePatterns('swarm')).toEqual(['radial']);
+  });
+
+  it('returns pairs for tank/player/phaser', async () => {
+    const { resolvePatterns } = await import('./explosionParticles');
+    expect(resolvePatterns('tank')).toEqual(['radial', 'ring']);
+    expect(resolvePatterns('player')).toEqual(['radial', 'ring']);
+    expect(resolvePatterns('phaser')).toEqual(['ring', 'implosion']);
+  });
+
+  it('returns all three patterns for the boss', async () => {
+    const { resolvePatterns } = await import('./explosionParticles');
+    expect(resolvePatterns('boss')).toEqual(['radial', 'ring', 'implosion']);
+  });
+
+  it('unknown types fall back to radial (never throws)', async () => {
+    const { resolvePatterns } = await import('./explosionParticles');
+    expect(resolvePatterns('mystery-ship')).toEqual(['radial']);
+    expect(resolvePatterns('')).toEqual(['radial']);
+  });
+
+  it('returns a copy (mutating the result does not affect the map)', async () => {
+    const { resolvePatterns } = await import('./explosionParticles');
+    const first = resolvePatterns('boss');
+    first.push('radial');
+    expect(resolvePatterns('boss')).toEqual(['radial', 'ring', 'implosion']);
+  });
+
+  it('pattern speeds/radii are exposed as tunable constants', async () => {
+    const mod = await import('./explosionParticles');
+    for (const key of [
+      'EXPLOSION_RADIAL_SPEED_BASE',
+      'EXPLOSION_RADIAL_SPEED_PER_SIZE',
+      'EXPLOSION_RADIAL_SPEED_SPREAD',
+      'EXPLOSION_RADIAL_START_RADIUS',
+      'EXPLOSION_RING_RADIUS_FACTOR',
+      'EXPLOSION_RING_SPEED_BASE',
+      'EXPLOSION_RING_SPEED_PER_SIZE',
+      'EXPLOSION_RING_SPEED_TOLERANCE',
+      'EXPLOSION_RING_PARTICLE_RADIUS',
+      'EXPLOSION_IMPLOSION_SCATTER_FACTOR',
+      'EXPLOSION_IMPLOSION_SPEED_BASE',
+      'EXPLOSION_IMPLOSION_SPEED_PER_SIZE',
+      'EXPLOSION_BURST_SPEED_BASE',
+      'EXPLOSION_BURST_SPEED_PER_SIZE',
+      'EXPLOSION_BURST_SPEED_SPREAD',
+      'EXPLOSION_BURST_ANGLE_SPREAD',
+      'EXPLOSION_IMPLOSION_PARTICLE_RADIUS',
+      'EXPLOSION_IMPLOSION_MS',
+    ] as const) {
+      expect(typeof mod[key], key).toBe('number');
+      expect(mod[key], key).toBeGreaterThan(0);
+    }
+  });
+
+  it('EXPLOSION_PATTERNS_BY_TYPE covers all 7 entity types', async () => {
+    const { EXPLOSION_PATTERNS_BY_TYPE } = await import('./explosionParticles');
+    const keys = Object.keys(EXPLOSION_PATTERNS_BY_TYPE).sort();
+    expect(keys).toEqual(['boss', 'diver', 'phaser', 'player', 'scout', 'swarm', 'tank']);
+    for (const patterns of Object.values(EXPLOSION_PATTERNS_BY_TYPE)) {
+      expect(patterns.length).toBeGreaterThanOrEqual(1);
+      expect(patterns.length).toBeLessThanOrEqual(3);
+      for (const p of patterns) {
+        expect(['radial', 'ring', 'implosion']).toContain(p);
+      }
+    }
+  });
+});
