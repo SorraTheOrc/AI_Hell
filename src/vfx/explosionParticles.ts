@@ -2,16 +2,19 @@
  * Shared particle explosion module (AH-0MTV6ADT4001FB2V).
  *
  * Pure-logic helpers for particle-based explosion VFX — count scaling,
- * colour jitter, geometry emitters, and pattern combination. No Phaser
- * rendering dependencies; the Phaser wiring layer lives in the caller
- * (entity/scene death paths).
+ * colour jitter, geometry emitters, and pattern combination — plus the
+ * thin Phaser rendering layer (`spawnExplosionParticles`).
  *
  * Pattern types:
  *   - `radial` — uniform random directions + speed spread.
  *   - `ring` — particles emitted on a circle at shared radius/speed.
  *   - `implosion` — drift inward for ~100 ms then burst outward.
  *
- * All helpers use a seeded PRNG for deterministic tests.
+ * Which entity uses which patterns lives in `EXPLOSION_PATTERNS_BY_TYPE`;
+ * death paths resolve it via `resolvePatterns(type)`. All tuning values
+ * (counts, lifespan, jitter, speeds/radii) are exported constants below.
+ *
+ * All pure helpers use a seeded PRNG for deterministic tests.
  */
 
 // ── Tunable constants (AC2, AC4) ───────────────────────────────────

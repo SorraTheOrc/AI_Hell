@@ -484,7 +484,20 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 - **Shapes**: Geometric, angular shapes — triangles, chevrons, hexagons, rings. No organic forms.
 - **Player hull**: Direction-neutral regular hexagon (flat top/bottom, circumradius = `shipSize / 2`), neon outline only (no fill), with four small engine ports at the top, bottom, left, and right cardinal points. The hexagon's 60° rotational symmetry means the hull never implies a heading — in a thrust-based 360°-movement game the player has no fixed forward direction, so thrust intent is read from the engine flames, not the silhouette. Enemy ships keep directional silhouettes (chevrons/darts in §4.1) since they do fly with a heading.
 - **Animations**: Smooth, fluid motion for formations; sharp, precise motion for bullets.
-- **Particle effects**: Minimal — use for explosions (enemy destruction) and power-up collection.
+- **Particle effects**: Minimal — use for explosions (enemy destruction, player death) and power-up collection. Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
+- **Explosion patterns**: Three burst patterns are available — **radial** (uniform random directions with a speed spread), **ring/shell** (particles on a shared circle forming an expanding ring), and **implosion-then-burst** (particles drift inward for ~100 ms, then burst outward). Each entity type is assigned one, two, or three patterns (even split of the size-scaled count across them) via the single `EXPLOSION_PATTERNS_BY_TYPE` map; death paths call `resolvePatterns(type)` rather than hard-coding patterns:
+
+  | Entity | Patterns | Feel |
+  |---|---|---|
+  | Scout (E1) | radial | quick green spray |
+  | Diver (E2) | radial | quick yellow spray |
+  | Tank (E3) | radial + ring | heavy orange shell + spray |
+  | Phaser (E4) | ring + implosion | magenta ring that gathers then blows |
+  | Swarm (E5) | radial | small blue spray (per member) |
+  | Boss | radial + ring + implosion | layered red detonation |
+  | Player | radial + ring | cyan shell + spray on death |
+
+  Counts, lifespan, jitter ranges, and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline.
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 

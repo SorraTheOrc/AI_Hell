@@ -375,6 +375,16 @@ Enemy archetypes are JSON, not new scene files (see `docs/ENEMY_DESIGN_AND_IMPLE
 
 Full shape/storage/registry docs: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.
 
+#### Explosion VFX (particle bursts)
+
+All destruction paths share one particle-burst module: `src/vfx/explosionParticles.ts`.
+
+- `spawnExplosionParticles(scene, x, y, baseColor, size, opts)` spawns a burst of small filled circles tinted (small HSL jitter) around the exploding entity's neon colour, fading and shrinking over `EXPLOSION_LIFESPAN_MS`. Counts scale with `size` (clamped 8–80).
+- Three patterns are available (`radial`, `ring`, `implosion`) and each entity type is assigned one, two, or three via the single `EXPLOSION_PATTERNS_BY_TYPE` map — death paths call `resolvePatterns('scout' | 'tank' | …)` instead of hard-coding patterns. The player death path uses `SHIP_COLOR` / `SHIP_SIZE` with the `player` entry.
+- Counts, lifespan, colour jitter, and per-pattern speeds/radii are tunable constants at the top of the module. See GDD §7.2 for the per-entity feel table.
+
+Coverage: `src/vfx/explosionParticles.test.ts` (pure geometry/colour/count + Phaser integration), plus per-entity assertions in the entity/scene suites (patterns, size-scaled count, colour centred on the entity palette, and SHUTDOWN teardown).
+
 #### E1 Scout Gym Scene (now via `GymEnemies` — legacy `GymScout` retired)
 
 The E1 Scout (GDD §4.1) is now demonstrated through the single reusable scene `GymEnemies` with `enemyKey='scout'` (seed in `src/core/enemyConfig.ts`). `src/scenes/gym/GymScout.ts` has been retired. The entity and formation are:
