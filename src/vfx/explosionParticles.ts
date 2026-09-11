@@ -357,29 +357,213 @@ export function combinePatterns(patterns: Pattern[], total: number): number[] {
   return counts;
 }
 
-// ── Phaser integration (thin layer — implemented in later children) ─
+// ── Phaser integration (thin rendering layer) ────────────────────
+
+/**
+ * Implosion phase duration in ms — particles drift inward for this long
+ * before switching to outward burst velocity.
+ */
+export const EXPLOSION_IMPLOSION_MS = 100;
+
+/** Optional overrides for `spawnExplosionParticles`. */
+export interface SpawnExplosionOptions {
+  /** Which patterns to emit (default `['radial']`). */
+  patterns?: Pattern[];
+  /** Particle-count override (default `scaledCount(size)`). */
+  count?: number;
+  /** Lifespan override in ms (default `EXPLOSION_LIFESPAN_MS`). */
+  lifespan?: number;
+  /** PRNG seed override (default `Date.now()`-derived). */
+  seed?: number;
+  /**
+   * Optional Graphics registry (e.g. `playerExplosions`) — the handle's
+   * Graphics is pushed here on spawn and spliced on completion, so a
+   * SHUTDOWN handler can destroy leftovers exactly like the existing
+   * ring/cross explosions.
+   */
+  registry?: { push(g: unknown): void; indexOf(g: unknown): number; splice(i: number, n: number): void };
+}
+
+/** Live handle for a spawned explosion. Test seam: `particles` is the
+ * pure simulated state, `graphics` the Phaser object (destroyed on
+ * completion/teardown). */
+export interface ExplosionHandle {
+  /** The Phaser Graphics object (destroyed on completion). */
+  readonly graphics: unknown;
+  /** Pure simulated particle state (positions advance with the tween). */
+  readonly particles: Particle[];
+  /** Total particle count at spawn (for count assertions). */
+  readonly totalCount: number;
+  /** Patterns assigned (one entry per particle group). */
+  readonly patterns: Pattern[];
+  /** Destroys the Graphics immediately (SHUTDOWN teardown path). */
+  destroy(): void;
+  /** Whether the explosion is still animating. */
+  readonly alive: boolean;
+}
+
+/** Minimal Phaser surface needed by `spawnExplosionParticles`. Kept
+ * structural (not `Phaser.Scene`) so unit tests can inject a double. */
+export interface ExplosionScene {
+  add: { graphics(opts?: { x?: number; y?: number }): { setDepth(d: number): unknown; clear(): unknown; fillStyle(c: number, a?: number): unknown; fillCircle(x: number, y: number, r: number): unknown; destroy(): void; alpha: number } };
+  tweens: { add(cfg: Record<string, unknown>): unknown };
+}
 
 /**
  * Spawns a particle explosion at (x, y) on the given scene.
  * This is the Phaser-side entry point called from entity death paths.
+ *
+ * - Count defaults to `scaledCount(size)` (size-proportional, clamped).
+ * - Particles are split across `opts.patterns` via `combinePatterns`.
+ * - A single Graphics is animated by one tween over `lifespan` ms:
+ *   each onUpdate derives elapsed from the tweened alpha (the same
+ *   pattern the existing ring/cross explosions use), advances particle
+ *   positions, flips implosion→burst at 100 ms, and redraws all live
+ *   particles as small filled circles that fade and shrink.
+ * - On completion the Graphics is destroyed and removed from
+ *   `opts.registry` (if given) — the SHUTDOWN teardown pattern.
+ *
+ * Returns `null` when `scene` is missing (belt-and-braces null-scene
+ * guard per AH-0MTPLHLZ3006MOC4).
  *
  * @param scene  — Phaser.Scene instance (for Graphics/tweens).
  * @param x      — X coordinate of the explosion centre.
  * @param y      — Y coordinate of the explosion centre.
  * @param baseColor — Hex colour of the exploding entity.
  * @param size   — Size of the exploding entity (affects count).
- * @param opts   — Optional overrides (patterns, custom count, etc.).
+ * @param opts   — Optional overrides (patterns, count, lifespan, seed, registry).
  */
-// NOTE: The Phaser Graphics + tween wiring is implemented in child AH-0MTVID8RQ002DJ0J.
-// This stub allows the pure-logic tests to pass today.
 export function spawnExplosionParticles(
-  _scene: unknown,
-  _x: number,
-  _y: number,
-  _baseColor: number,
-  _size: number,
-  _opts?: Record<string, unknown>,
-): void {
-  // Stub — the real implementation (Graphics + tween loop) lands in
-  // the wiring child (AH-0MTVID8RQ002DJ0J). Pure tests don't need it.
+  scene: ExplosionScene | null | undefined,
+  x: number,
+  y: number,
+  baseColor: number,
+  size: number,
+  opts: SpawnExplosionOptions = {},
+): ExplosionHandle | null {
+  if (!scene) return null;
+
+  const patterns = opts.patterns ?? ['radial'];
+  const totalCount = opts.count ?? scaledCount(size);
+  const lifespan = opts.lifespan ?? EXPLOSION_LIFESPAN_MS;
+  const rng = createRng(opts.seed ?? Date.now());
+
+  // Split the count across patterns (deterministic remainder).
+  const counts = totalCount > 0 ? combinePatterns(patterns, totalCount) : [];
+
+  // Generate particles for each pattern group.
+  const particles: Particle[] = [];
+  for (let i = 0; i < patterns.length; i++) {
+    const count = counts[i];
+    if (count <= 0) continue;
+    const pattern = patterns[i];
+    if (pattern === 'radial') {
+      particles.push(...generateRadialBurst(count, 0, 0, size, baseColor, rng));
+    } else if (pattern === 'ring') {
+      particles.push(...generateRingBurst(count, 0, 0, size, baseColor, rng));
+    } else {
+      particles.push(...generateImplosionBurst(count, 0, 0, size, baseColor, rng));
+    }
+  }
+
+  // Advance a particle group by `elapsedMs` (pure, exported for tests).
+  const stepParticles = (elapsedMs: number): void => {
+    const dt = elapsedMs / 1000;
+    for (const p of particles) {
+      // Implosion particles drift inward, then switch to burst velocity.
+      if (p.phase === 'implosion' && elapsedMs >= EXPLOSION_IMPLOSION_MS) {
+        p.phase = 'burst';
+        p.vx = p.burstVx ?? p.vx;
+        p.vy = p.burstVy ?? p.vy;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.alpha = Math.max(0, 1 - p.fadeStep * elapsedMs);
+      const startRadius = p.fadeStep > 0 ? p.shrinkStep / p.fadeStep : p.radius;
+      p.radius = Math.max(0, startRadius - p.shrinkStep * elapsedMs);
+      p.dead = p.alpha <= 0 && p.radius <= 0;
+    }
+  };
+
+  // Single Graphics for the whole burst (depth above bodies).
+  const gfx = scene.add.graphics({ x, y });
+  (gfx as { setDepth(d: number): unknown }).setDepth(5);
+
+  let alive = true;
+  let lastElapsed = 0;
+  const draw = (): void => {
+    gfx.clear();
+    for (const p of particles) {
+      if (p.dead || p.radius <= 0) continue;
+      gfx.fillStyle(p.color, Math.max(0, Math.min(1, p.alpha)));
+      gfx.fillCircle(p.x, p.y, Math.max(0.5, p.radius));
+    }
+  };
+
+  const finish = (): void => {
+    alive = false;
+    gfx.destroy();
+    if (opts.registry) {
+      const idx = opts.registry.indexOf(gfx);
+      if (idx >= 0) opts.registry.splice(idx, 1);
+    }
+  };
+
+  if (opts.registry) opts.registry.push(gfx);
+
+  const handle: ExplosionHandle = {
+    graphics: gfx,
+    particles,
+    totalCount: particles.length,
+    patterns: [...patterns],
+    destroy: () => { if (alive) finish(); },
+    get alive(): boolean { return alive; },
+  };
+
+  if (particles.length === 0) {
+    // Nothing to animate — clean up immediately.
+    finish();
+    return handle;
+  }
+
+  scene.tweens.add({
+    targets: gfx,
+    alpha: { from: 1, to: 0 },
+    duration: lifespan,
+    onUpdate: () => {
+      // Derive elapsed from the tweened property (existing explosion
+      // pattern — robust to headless timer quirks).
+      const alpha = (gfx as { alpha: number }).alpha;
+      const elapsed = (1 - alpha) * lifespan;
+      // Incremental stepping keeps velocities linear in wall-clock time.
+      const step = Math.max(0, elapsed - lastElapsed);
+      if (step > 0) {
+        const dt = step / 1000;
+        for (const p of particles) {
+          if (p.phase === 'implosion' && elapsed >= EXPLOSION_IMPLOSION_MS) {
+            p.phase = 'burst';
+            p.vx = p.burstVx ?? p.vx;
+            p.vy = p.burstVy ?? p.vy;
+          }
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+        }
+        // Alpha/radius are absolute functions of elapsed (not incremental).
+        for (const p of particles) {
+          p.alpha = Math.max(0, 1 - p.fadeStep * elapsed);
+          const startRadius = p.fadeStep > 0 ? p.shrinkStep / p.fadeStep : p.radius;
+          p.radius = Math.max(0, startRadius - p.shrinkStep * elapsed);
+          p.dead = p.alpha <= 0 && p.radius <= 0;
+        }
+        lastElapsed = elapsed;
+      }
+      draw();
+    },
+    onComplete: () => { finish(); },
+  });
+
+  // Expose the stepper for headless verification (not part of the VFX path).
+  (handle as { _stepForTests?: (ms: number) => void })._stepForTests = stepParticles;
+
+  return handle;
 }

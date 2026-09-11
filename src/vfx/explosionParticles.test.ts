@@ -28,6 +28,8 @@ import {
   generateImplosionBurst,
   type Pattern,
   combinePatterns,
+  spawnExplosionParticles,
+  EXPLOSION_IMPLOSION_MS,
 } from './explosionParticles';
 
 // ── Seeded RNG for deterministic tests ─────────────────────────────
@@ -519,5 +521,243 @@ describe('Particle lifecycle (AC5)', () => {
     }
     const aliveAfter = particles.filter((p) => !p.dead).length;
     expect(aliveAfter).toBe(0);
+  });
+});
+
+// ── AC1–AC5: spawnExplosionParticles (Phaser integration) ──────────
+
+/** Records calls made by the stub tween/scene. */
+interface CapturedTween {
+  targets: unknown;
+  alpha: { from: number; to: number };
+  duration: number;
+  onUpdate?: () => void;
+  onComplete?: () => void;
+}
+
+interface StubGraphics {
+  x: number;
+  y: number;
+  alpha: number;
+  destroyed: boolean;
+  depth: number;
+  fillCalls: Array<{ color: number; alpha: number }>;
+  setDepth(d: number): void;
+  clear(): void;
+  fillStyle(c: number, a?: number): void;
+  fillCircle(x: number, y: number, r: number): void;
+  destroy(): void;
+}
+
+interface StubScene {
+  gfx: StubGraphics[];
+  tweenCfgs: CapturedTween[];
+  add: {
+    graphics(opts?: { x?: number; y?: number }): StubGraphics;
+  };
+  tweens: {
+    add(cfg: CapturedTween): void;
+  };
+}
+
+/** Creates a headed stub scene that captures Graphics + tween calls. */
+function makeStubScene(): StubScene {
+  const stub: StubScene = {
+    gfx: [],
+    tweenCfgs: [],
+    add: {
+      graphics(opts?: { x?: number; y?: number }): StubGraphics {
+        const g: StubGraphics = {
+          x: opts?.x ?? 0,
+          y: opts?.y ?? 0,
+          alpha: 1,
+          destroyed: false,
+          depth: 0,
+          fillCalls: [],
+          setDepth(d: number): void {
+            g.depth = d;
+          },
+          clear(): void {},
+          fillStyle(c: number, a?: number): void {
+            g.fillCalls.push({ color: c, alpha: a ?? 1 });
+          },
+          fillCircle(_x: number, _y: number, _r: number): void {},
+          destroy(): void {
+            g.destroyed = true;
+          },
+        };
+        stub.gfx.push(g);
+        return g;
+      },
+    },
+    tweens: {
+      add(cfg: CapturedTween): void {
+        stub.tweenCfgs.push(cfg);
+      },
+    },
+  };
+  return stub;
+}
+
+/** Advances the captured tween to `elapsedMs` (driving onUpdate). */
+function advanceTween(scene: StubScene, elapsedMs: number, duration: number): void {
+  const cfg = scene.tweenCfgs[0];
+  expect(cfg, 'expected a tween to be scheduled').toBeDefined();
+  const gfx = cfg.targets as StubGraphics;
+  gfx.alpha = 1 - elapsedMs / duration;
+  cfg.onUpdate?.();
+}
+
+describe('spawnExplosionParticles (AC1–AC5)', () => {
+  it('AC1: returns a handle with particles sized by scaledCount(size)', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      100,
+      100,
+      0x00ff00,
+      16,
+      { seed: 1, patterns: ['radial'] },
+    );
+    expect(handle).not.toBeNull();
+    expect(handle!.totalCount).toBeGreaterThanOrEqual(8);
+    expect(handle!.totalCount).toBeLessThanOrEqual(80);
+    expect(handle!.particles.length).toBe(handle!.totalCount);
+  });
+
+  it('AC1: larger size yields more particles', () => {
+    const small = spawnExplosionParticles(
+      makeStubScene() as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 14, { seed: 1, patterns: ['radial'] },
+    );
+    const large = spawnExplosionParticles(
+      makeStubScene() as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 50, { seed: 1, patterns: ['radial'] },
+    );
+    expect(large!.totalCount).toBeGreaterThanOrEqual(small!.totalCount);
+  });
+
+  it('AC2: count override exposes tunable configuration', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0xff0000, 20, { seed: 5, count: 12, patterns: ['radial'] },
+    );
+    expect(handle!.totalCount).toBe(12);
+  });
+
+  it('AC3: default pattern is radial single', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 20, { seed: 7 },
+    );
+    expect(handle!.patterns).toEqual(['radial']);
+  });
+
+  it('AC3: multiple patterns split particles across groups', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0xff00ff, 20, { seed: 9, count: 30, patterns: ['radial', 'ring'] },
+    );
+    expect(handle!.patterns).toEqual(['radial', 'ring']);
+    expect(handle!.totalCount).toBe(30);
+  });
+
+  it('AC4: tween drives particles forward and fades/shrinks them', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 20, { seed: 11, count: 8, patterns: ['radial'] },
+    );
+    const startPositions = handle!.particles.map((p) => ({ x: p.x, y: p.y }));
+    // Half-way through the lifespan.
+    advanceTween(scene, EXPLOSION_LIFESPAN_MS / 2, EXPLOSION_LIFESPAN_MS);
+    for (let i = 0; i < handle!.particles.length; i++) {
+      const p = handle!.particles[i];
+      // Moved from origin.
+      const moved = Math.hypot(p.x - startPositions[i].x, p.y - startPositions[i].y);
+      expect(moved).toBeGreaterThan(0);
+      // Faded and shrunk but not dead yet.
+      expect(p.alpha).toBeLessThan(1);
+      expect(p.alpha).toBeGreaterThan(0);
+      expect(p.dead).toBe(false);
+    }
+  });
+
+  it('AC4: onComplete destroys the Graphics and unregisters', () => {
+    const registry: unknown[] = [];
+    const fakeRegistry = {
+      push: (g: unknown) => { registry.push(g); },
+      indexOf: (g: unknown) => registry.indexOf(g),
+      splice: (i: number, n: number) => { registry.splice(i, n); },
+    };
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 20, { seed: 13, count: 6, registry: fakeRegistry },
+    );
+    expect(registry.length).toBe(1);
+    // Finish the tween.
+    advanceTween(scene, EXPLOSION_LIFESPAN_MS, EXPLOSION_LIFESPAN_MS);
+    scene.tweenCfgs[0].onComplete?.();
+    expect(handle!.alive).toBe(false);
+    expect((handle!.graphics as StubGraphics).destroyed).toBe(true);
+    expect(registry.length).toBe(0);
+  });
+
+  it('AC4: destroy() tears down mid-flight (SHUTDOWN path)', () => {
+    const registry: unknown[] = [];
+    const fakeRegistry = {
+      push: (g: unknown) => { registry.push(g); },
+      indexOf: (g: unknown) => registry.indexOf(g),
+      splice: (i: number, n: number) => { registry.splice(i, n); },
+    };
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 20, { seed: 15, count: 6, registry: fakeRegistry },
+    );
+    expect(handle!.alive).toBe(true);
+    handle!.destroy();
+    expect(handle!.alive).toBe(false);
+    expect((handle!.graphics as StubGraphics).destroyed).toBe(true);
+    expect(registry.length).toBe(0);
+  });
+
+  it('AC4: implosion particles switch phase after ~100 ms', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0xff0000, 28, { seed: 17, count: 9, patterns: ['implosion'] },
+    );
+    // Before the implosion window — still inward.
+    advanceTween(scene, EXPLOSION_IMPLOSION_MS - 20, EXPLOSION_LIFESPAN_MS);
+    for (const p of handle!.particles) {
+      expect(p.phase).toBe('implosion');
+    }
+    // Past the window — burst phase with outward velocity.
+    advanceTween(scene, EXPLOSION_IMPLOSION_MS + 50, EXPLOSION_LIFESPAN_MS);
+    for (const p of handle!.particles) {
+      expect(p.phase).toBe('burst');
+    }
+  });
+
+  it('AC5: null scene returns null (no crash)', () => {
+    const handle = spawnExplosionParticles(null, 0, 0, 0x00ff00, 20);
+    expect(handle).toBeNull();
+  });
+
+  it('AC5: zero count cleans up immediately without a tween', () => {
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0x00ff00, 20, { seed: 19, count: 0 },
+    );
+    expect(handle).not.toBeNull();
+    expect(handle!.totalCount).toBe(0);
+    expect(handle!.alive).toBe(false);
+    expect(scene.tweenCfgs.length).toBe(0);
   });
 });
