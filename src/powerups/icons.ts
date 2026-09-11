@@ -18,7 +18,11 @@ import {
 
 /** Icon stroke colours per type. */
 const ICON_COLORS: Record<PowerUpType, number> = {
+  [PowerUpType.SHIELD]: 0x3399ff, // blue — shield
+  [PowerUpType.BOMB]: 0xff3333, // red — bomb
   [PowerUpType.SPEED_BOOST]: 0x00ffff, // cyan — speed
+  [PowerUpType.PHASE_SHIFT]: 0xaaaaaa, // grey — ghost/phase
+  [PowerUpType.TELEPORT]: 0xffcc00, // amber — teleport portal
   [PowerUpType.EXTRA_LIFE]: 0xff6ec7, // pink — life
   [PowerUpType.MAGNET]: 0xb57bff, // purple — magnet
 };
@@ -64,8 +68,20 @@ function _drawPowerUpIcon(
   graphics.lineStyle(2, ICON_COLORS[type], 1);
 
   switch (type) {
+    case PowerUpType.SHIELD:
+      drawShield(graphics, x, y, size);
+      break;
+    case PowerUpType.BOMB:
+      drawBomb(graphics, x, y, size);
+      break;
     case PowerUpType.SPEED_BOOST:
       drawLightning(graphics, x, y, size);
+      break;
+    case PowerUpType.PHASE_SHIFT:
+      drawPhase(graphics, x, y, size);
+      break;
+    case PowerUpType.TELEPORT:
+      drawTeleport(graphics, x, y, size);
       break;
     case PowerUpType.EXTRA_LIFE:
       drawHeart(graphics, x, y, size);
@@ -113,6 +129,113 @@ function drawHeart(
   g.lineTo(x, y + s);
   g.lineTo(x + s * 0.65, y - s * 0.1);
   g.closePath();
+  g.strokePath();
+}
+
+/** Shield outline — classic heater shield. */
+function drawShield(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.moveTo(x - s * 0.6, y - s * 0.5);
+  g.lineTo(x + s * 0.6, y - s * 0.5);
+  g.lineTo(x + s * 0.6, y + s * 0.2);
+  g.lineTo(x, y + s * 0.9);
+  g.lineTo(x - s * 0.6, y + s * 0.2);
+  g.closePath();
+  g.strokePath();
+  // Inner highlight line
+  g.beginPath();
+  g.moveTo(x, y - s * 0.5);
+  g.lineTo(x, y + s * 0.5);
+  g.strokePath();
+}
+
+/** Bomb — circle body with fuse and radiating blast lines. */
+function drawBomb(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.arc(x, y + s * 0.2, s * 0.45, 0, Math.PI * 2);
+  g.strokePath();
+  // Fuse
+  g.beginPath();
+  g.moveTo(x + s * 0.15, y - s * 0.15);
+  g.lineTo(x + s * 0.4, y - s * 0.6);
+  g.strokePath();
+  // Spark
+  g.beginPath();
+  g.arc(x + s * 0.45, y - s * 0.65, s * 0.1, 0, Math.PI * 2);
+  g.strokePath();
+  // Radiating blast ticks
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2;
+    const r0 = s * 0.65;
+    const r1 = s * 0.9;
+    g.beginPath();
+    g.moveTo(x + Math.cos(angle) * r0, y + Math.sin(angle) * r0);
+    g.lineTo(x + Math.cos(angle) * r1, y + Math.sin(angle) * r1);
+    g.strokePath();
+  }
+}
+
+/** Phase shift — ghostly double outline (offset ghost). */
+function drawPhase(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Outer ghost body (rounded top, wavy bottom)
+  g.beginPath();
+  g.arc(x, y - s * 0.2, s * 0.5, Math.PI, 0, false);
+  g.lineTo(x + s * 0.5, y + s * 0.6);
+  g.lineTo(x + s * 0.25, y + s * 0.35);
+  g.lineTo(x, y + s * 0.6);
+  g.lineTo(x - s * 0.25, y + s * 0.35);
+  g.lineTo(x - s * 0.5, y + s * 0.6);
+  g.closePath();
+  g.strokePath();
+  // Inner offset ghost for shift effect
+  g.beginPath();
+  g.arc(x + s * 0.15, y - s * 0.15, s * 0.35, Math.PI, 0, false);
+  g.lineTo(x + s * 0.5, y + s * 0.45);
+  g.lineTo(x + s * 0.32, y + s * 0.25);
+  g.lineTo(x + s * 0.15, y + s * 0.45);
+  g.closePath();
+  g.strokePath();
+  // Eyes
+  g.beginPath();
+  g.arc(x - s * 0.18, y - s * 0.15, s * 0.08, 0, Math.PI * 2);
+  g.strokePath();
+  g.beginPath();
+  g.arc(x + s * 0.18, y - s * 0.15, s * 0.08, 0, Math.PI * 2);
+  g.strokePath();
+}
+
+/** Teleport — concentric portal rings with directional chevron. */
+function drawTeleport(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  for (const r of [0.3, 0.55, 0.8]) {
+    g.beginPath();
+    g.arc(x, y, s * r, 0, Math.PI * 2);
+    g.strokePath();
+  }
+  // Directional chevron (right-pointing)
+  g.beginPath();
+  g.moveTo(x - s * 0.15, y - s * 0.25);
+  g.lineTo(x + s * 0.25, y);
+  g.lineTo(x - s * 0.15, y + s * 0.25);
   g.strokePath();
 }
 

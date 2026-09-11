@@ -218,6 +218,8 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **persistent** (non-timed) semantics per operator decision, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and instant weapon switching on collection. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the weapon slot + fire cooldown and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
 
+> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, Space → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. Space consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
+
 ### 4.5 Scoring System
 
 | Action | Points |
@@ -312,6 +314,8 @@ src/
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
 │       ├── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
+│       ├── GymPowerUpsCombat.ts — combat-coupled power-up gym (key GymPowerUpsCombat, label "PowerUpsCombat"):
+│       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (Space)
 │       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
 │       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
@@ -338,10 +342,9 @@ src/
 │   ├── spawner.ts       — Pluggable spawner strategy layer: PowerUpSpawner interface,
 │   │                      RoundRobinSpawner (deterministic gym drops),
 │   │                      WeightedRandomSpawner (semi-random in-game drops with mid-run weight tuning)
-│   ├── types.ts         — Power-up catalogue (id, name, type, duration/stack semantics per §4.4)
-│   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed multiplier, P9 magnet
-│   │                      radius/attraction); engine-agnostic, consumed by the HUD and scenes
-│   └── icons.ts         — Code-drawn neon power-up icons (shared by field drops and the HUD)
+│   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
+│   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
+│   └── icons.ts         — Code-drawn neon power-up icons (shield/bomb/phase/teleport/speed/life/magnet)
 ├── waves/
 │   ├── WaveManager.ts   — Wave spawning and management
 │   └── Formations.ts    — Formation movement patterns
@@ -481,7 +484,20 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 - **Shapes**: Geometric, angular shapes — triangles, chevrons, hexagons, rings. No organic forms.
 - **Player hull**: Direction-neutral regular hexagon (flat top/bottom, circumradius = `shipSize / 2`), neon outline only (no fill), with four small engine ports at the top, bottom, left, and right cardinal points. The hexagon's 60° rotational symmetry means the hull never implies a heading — in a thrust-based 360°-movement game the player has no fixed forward direction, so thrust intent is read from the engine flames, not the silhouette. Enemy ships keep directional silhouettes (chevrons/darts in §4.1) since they do fly with a heading.
 - **Animations**: Smooth, fluid motion for formations; sharp, precise motion for bullets.
-- **Particle effects**: Minimal — use for explosions (enemy destruction) and power-up collection.
+- **Particle effects**: Minimal — use for explosions (enemy destruction, player death) and power-up collection. Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
+- **Explosion patterns**: Three burst patterns are available — **radial** (uniform random directions with a speed spread), **ring/shell** (particles on a shared circle forming an expanding ring), and **implosion-then-burst** (particles drift inward for ~100 ms, then burst outward). Each entity type is assigned one, two, or three patterns (even split of the size-scaled count across them) via the single `EXPLOSION_PATTERNS_BY_TYPE` map; death paths call `resolvePatterns(type)` rather than hard-coding patterns:
+
+  | Entity | Patterns | Feel |
+  |---|---|---|
+  | Scout (E1) | radial | quick green spray |
+  | Diver (E2) | radial | quick yellow spray |
+  | Tank (E3) | radial + ring | heavy orange shell + spray |
+  | Phaser (E4) | ring + implosion | magenta ring that gathers then blows |
+  | Swarm (E5) | radial | small blue spray (per member) |
+  | Boss | radial + ring + implosion | layered red detonation |
+  | Player | radial + ring | cyan shell + spray on death |
+
+  Counts, lifespan, jitter ranges, and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline.
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
@@ -535,7 +551,9 @@ enemies get:
 | P5 Speed Boost pickup | Bright ascending zip | Square 600 → 1800 Hz | 0.13 |
 | P8 Extra Life pickup | Warm two-note chime | Sine 440 → 880 then 660 → 990 Hz | 0.13 |
 | P9 Magnet pickup | Low pulsing field hum | Square 180 → 90 → 180 Hz + sine undertone | ≤ 0.12 |
+| Thruster hum (held thrust) | Continuous jet-engine roar | Triangle 60 Hz + sine 35 Hz rumble + band-pass filtered white noise (700–1100 Hz) whoosh, thrust-scaled (≤ 0.15) | ≤ 0.15 |
 
+- **Thruster hum** — single ship-level continuous jet-engine roar (NOT per-engine flame port), synthesised as a soft triangle fundamental (60 Hz) with a sine undertone (35 Hz) for low rumble plus white noise through a band-pass filter (700–1100 Hz, Q 0.6–1.1) for jet-engine whoosh; filtered noise is the dominant texture, all through one reused gain node; gain follows `getEngineSoundLevel` level `min(1, thrustAcceleration / FLAME_REF_THRUST)` (GDD §2.2 `ShipConfig`), so the tuning slider is audible (half thrust → ~0.5 level). Contour: smooth fade-in ramping over `THRUSTER_HUM_GROWTH_TIME` (30 ms at reference thrust) and ~4× quicker decay when thrust stops (mirrors the flame growth/shrink timing), with no clicks on retrigger; volume ≤ 0.15 (within the "≤ 0.2" ceiling for all player cues). Driven per-frame by `Player.preUpdate` → `getEngineSoundLevel(state, input, thrustAcceleration)` → `updateThrusterSound(level)` for both `fourDirectional` (any arrow/WASD) and `asteroids` (forward/turn) schemes; stops on release, respawn, player destroy, or scene shutdown so no audio nodes leak.
 - **Shoot cues play once per shot** (not once per bullet), keyed off the
   equipped weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
 - **Pickup activation cues** are unique per pickup type and distinct from the

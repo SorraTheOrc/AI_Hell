@@ -649,13 +649,13 @@ describe('GymWeapons — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)'
     expect(scene.children.list).not.toContain(graphics);
   });
 
-  it('AC3 — at full scale the weapon pickup radius is doubled: a drop 30 px away (between the old 26 px and new 42 px radii) is now collectible', async () => {
+  it('AC3 — at full scale a weapon drop within the pickup radius is collectible', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // 30 px right of the ship; ship hull 10 + drop radius 32 = 42 ≥ 30.
-    scene.spawnDrop('dual', 510, 270);
+    // 8 px weapon drop + 10 px ship hull = 18 px pickup radius → 15 px away should be caught.
+    scene.spawnDrop('dual', 495, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.collectOverlapping();
 

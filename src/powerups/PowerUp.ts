@@ -57,14 +57,14 @@ export const POWER_UP_LIFECYCLE_GROW_DURATION = POWER_UP_GROW_DURATION;
 /** Time in seconds for a drop to shrink from full size to 0. */
 export const POWER_UP_LIFECYCLE_SHRINK_DURATION = POWER_UP_SHRINK_DURATION;
 
-/** Total lifetime of a drop from spawn to despawn (5 s). */
+/** Total lifetime of a drop from spawn to despawn (12.5 s). */
 export const POWER_UP_LIFECYCLE_TOTAL_LIFETIME = POWER_UP_LIFETIME;
 
 /** Collection is gated: a drop is collectible only above this percentage of full size (3%). */
 export const POWER_UP_COLLECTION_THRESHOLD_PERCENT =
   POWER_UP_COLLECTION_THRESHOLD;
 
-/** Interval between spawns in a round-robin cycle (5 s). */
+/** Interval between spawns in a round-robin cycle (12.5 s). */
 export const POWER_UP_SPAWN_INTERVAL = POWER_UP_SPAWN_INTERVAL_CORE;
 
 // ── State enum ──────────────────────────────────────────────────────

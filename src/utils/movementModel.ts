@@ -10,6 +10,7 @@
  */
 
 import { MovementState } from './movement';
+import { FLAME_REF_THRUST } from './flame';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -91,11 +92,18 @@ export interface MovementModel {
 
   /**
    * SFX integration: engine sound level in [0, 1] (0 = silent).
-   * Placeholder interface — the project has no audio system yet, so
-   * implementations return a computed level for a future SFX engine
-   * to consume (see work item AH-0MTF0EFNZ000RPVD Q4).
+   *
+   * Continuous thrust-scaled output (AH-0MTFOSOHN001Q620, GDD §2.2
+   * `ShipConfig`): idle = 0; while thrust input is held the level is
+   * `min(1, thrustAcceleration / FLAME_REF_THRUST)` so the thruster hum
+   * (src/audio/effects.ts → updateThrusterSound(level)) follows the
+   * tuning slider — half thrustAcceleration → ~0.5 level, double →
+   * clamped to 1, ≤ 0 → 0 (consistent with flameGrowthRate).
+   * `thrustAcceleration` defaults to FLAME_REF_THRUST for backward
+   * compatibility (binary callers remain valid). Called per-frame from
+   * Player.preUpdate as `getEngineSoundLevel(state, input, config.thrust)`.
    */
-  getEngineSoundLevel(state: MovementState, input: ControlInput): number;
+  getEngineSoundLevel(state: MovementState, input: ControlInput, thrustAcceleration?: number): number;
 }
 
 /**
@@ -158,9 +166,12 @@ export class FourDirectionalModel implements MovementModel {
     return selectEngines(input as FourDirectionalInput);
   }
 
-  getEngineSoundLevel(_state: MovementState, input: ControlInput): number {
+  getEngineSoundLevel(_state: MovementState, input: ControlInput, thrustAcceleration: number = FLAME_REF_THRUST): number {
     const fd = input as FourDirectionalInput;
-    return fd.up || fd.down || fd.left || fd.right ? 1 : 0;
+    const thrusting = fd.up || fd.down || fd.left || fd.right;
+    if (!thrusting) return 0;
+    if (thrustAcceleration <= 0) return 0;
+    return Math.min(1, thrustAcceleration / FLAME_REF_THRUST);
   }
 }
 
@@ -281,9 +292,12 @@ export class AsteroidsModel implements MovementModel {
     return engines;
   }
 
-  getEngineSoundLevel(_state: MovementState, input: ControlInput): number {
+  getEngineSoundLevel(_state: MovementState, input: ControlInput, thrustAcceleration: number = FLAME_REF_THRUST): number {
     const a = input as AsteroidsInput;
-    return a.forward || a.turnLeft || a.turnRight ? 1 : 0;
+    const thrusting = a.forward || a.turnLeft || a.turnRight;
+    if (!thrusting) return 0;
+    if (thrustAcceleration <= 0) return 0;
+    return Math.min(1, thrustAcceleration / FLAME_REF_THRUST);
   }
 }
 

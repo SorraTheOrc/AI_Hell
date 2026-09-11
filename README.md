@@ -354,7 +354,8 @@ wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. Thi
 The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **entry scene** for the project: `npm run dev` / `npm run preview` boot straight into it (it is the sole scene registered in `src/core/gameConfig.ts`). It lists every gym scene for isolated testing:
 
 - **Discovery is directory-dynamic (AC3):** the index enumerates `src/scenes/gym/` via Vite's `import.meta.glob` (see `src/utils/gymDiscovery.ts`) — there is no hard-coded scene list. Drop a new `Gym<Name>.ts` file into the folder and it appears on the index automatically (picked up on dev-server restart/HMR or rebuild, since `import.meta.glob` resolves at build time). `.test.ts` files are excluded, and the index itself lives outside the folder (`src/scenes/`) so it is never listed.
-- **Labels & ordering (AC4):** each entry's label strips the leading `Gym` from the file/class name (`GymScout` → `Scout`, `GymPlayer` → `Player`) and entries are sorted alphabetically. Selecting an entry starts that scene immediately by its class-name key (`this.scene.start('GymScout')`).
+- **Enemy sub-list (data-driven):** in addition to the gym scenes, the index enumerates every available `EnemyConfig` via `src/utils/enemyGymDiscovery.ts` (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()` under the `ai-hell-enemy-config:<key>` namespace) — one row per enemy (label `displayName`) under the **ENEMIES** header. Each row boots the single reusable scene `GymEnemies` with that enemy's key (`scene.start('GymEnemies', { enemyKey })`). Adding a new enemy via **Save As…** in the `GymEnemies` panel makes it appear here without editing `GymIndex.ts`. Bare `GymEnemies` is not listed as a plain scene.
+- **Labels & ordering (AC4):** each gym entry's label strips the leading `Gym` from the file/class name (`GymScout` → `Scout`, `GymPlayer` → `Player`) and entries are sorted alphabetically; enemy entries sort by `displayName`. Selecting an entry starts that scene immediately (gym scenes by class-name key, enemy rows as `GymEnemies` with `enemyKey`).
 - **Back to the list (AC5):** every gym scene shows a shared "← INDEX" button (`src/utils/gymNavigation.ts`) that switches back to `GymIndex` — no reload needed.
 
 #### Adding a New Gym Scene (convention)
@@ -363,9 +364,30 @@ The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **entry scene** 
 2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index.
 3. Add a `Gym<Name>.test.ts` next to it (excluded from the index automatically).
 
-#### E1 Scout Gym Scene
+#### Adding a New Enemy (convention)
 
-The first enemy gym scene (Create E1 Scout gym scene) is a standalone Phaser scene demonstrating the E1 Scout (GDD §4.1):
+Enemy archetypes are JSON, not new scene files (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.1 / §8 for the full reference).
+
+1. **Tune in the gym:** `npm run dev` → **Gym Index → any Enemies entry** (e.g. Scout). Use the **Enemies panel** (`enemy-gym-panel`) sliders / colour pickers / selects — changes live-apply without reload.
+2. **Save As…:** enter a new name (e.g. `My New Enemy`) and click **Save As…** — the name is slugified (`my-new-enemy`, `sanitizeEnemyKey` / `isValidEnemyKey`, ≤ 40 chars, must be unique) and stored as `ai-hell-enemy-config:my-new-enemy` (namespaced separately from `ai-hell-ship-config`).
+3. **Appears in the index:** return to the **Gym Index** — the new enemy appears under **ENEMIES** without editing `GymIndex.ts` (discovery via `src/utils/enemyGymDiscovery.ts`; corrupt storage falls back gracefully).
+4. **Truly new behaviour:** if the enemy needs new code (movement/shot), add an entity in `src/entities/<Name>.ts` with the `size?/color?/bullet*?/fireInterval?/burstCount?` seam (defaults via `?? CONST`), a builder in `src/utils/formations.ts` or a pattern in `src/utils/enemyShotPatterns.ts`, wire it in `src/entities/enemyFactory.ts`, and seed it in `src/core/enemyConfig.ts` (`DEFAULT_ENEMY_CONFIGS`).
+
+Full shape/storage/registry docs: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.
+
+#### Explosion VFX (particle bursts)
+
+All destruction paths share one particle-burst module: `src/vfx/explosionParticles.ts`.
+
+- `spawnExplosionParticles(scene, x, y, baseColor, size, opts)` spawns a burst of small filled circles tinted (small HSL jitter) around the exploding entity's neon colour, fading and shrinking over `EXPLOSION_LIFESPAN_MS`. Counts scale with `size` (clamped 8–80).
+- Three patterns are available (`radial`, `ring`, `implosion`) and each entity type is assigned one, two, or three via the single `EXPLOSION_PATTERNS_BY_TYPE` map — death paths call `resolvePatterns('scout' | 'tank' | …)` instead of hard-coding patterns. The player death path uses `SHIP_COLOR` / `SHIP_SIZE` with the `player` entry.
+- Counts, lifespan, colour jitter, and per-pattern speeds/radii are tunable constants at the top of the module. See GDD §7.2 for the per-entity feel table.
+
+Coverage: `src/vfx/explosionParticles.test.ts` (pure geometry/colour/count + Phaser integration), plus per-entity assertions in the entity/scene suites (patterns, size-scaled count, colour centred on the entity palette, and SHUTDOWN teardown).
+
+#### E1 Scout Gym Scene (now via `GymEnemies` — legacy `GymScout` retired)
+
+The E1 Scout (GDD §4.1) is now demonstrated through the single reusable scene `GymEnemies` with `enemyKey='scout'` (seed in `src/core/enemyConfig.ts`). `src/scenes/gym/GymScout.ts` has been retired. The entity and formation are:
 
 - `src/entities/Scout.ts` — the Scout entity: a small neon-green chevron (`#00ff00`) that flies in a V-formation, fires aimed shots at a target position when shoot mode is enabled (simulating its level 4+ behaviour), and plays an explosion animation on destruction. Scouts are 1 HP and never collide with each other (GDD §2.6) — no collision system is installed.
 - `src/scenes/gym/GymScout.ts` — the gym scene: spawns a 6-scout V-formation that advances across the screen, with two on-screen controls: `EXPLODE` (destroys a random scout) and `SHOOT: ON/OFF` (toggles aimed firing that tracks the player's live position).
@@ -375,9 +397,9 @@ The scene is reachable from the gym index ("Scout" entry) and returns to it via 
 
 > **Graphics style gotcha (browser rendering):** Phaser `Graphics` is command-buffered, and `clear()` wipes any styles (line/fill) queued before it — it only re-applies the default white 1px stroke. Entity bodies must therefore call `lineStyle()` **after** `clear()` inside `_drawBody()`; the original Scout code styled before clearing, so the chevrons stroked with the default style and rendered invisible in a real browser (no console error, and headless tests stayed green). `src/entities/Scout.test.ts` regression-tests the stroke style ordering via the command buffer; visual confirmation is a manual `npm run dev` step (formation should show as neon-green chevrons).
 
-#### E5 Swarm Gym Scene
+#### E5 Swarm Gym Scene (now via `GymEnemies` — legacy `GymSwarm` retired)
 
-The E5 Swarm gym scene (Create E5 Swarm gym scene) is a standalone Phaser scene demonstrating the E5 Swarm (GDD §4.1) — the fast-moving, unpredictable cluster attacker. It builds on the shared `GymFormationScene` core library and the cluster offset builder in `src/utils/formations.ts`:
+The E5 Swarm (GDD §4.1) — the fast-moving, unpredictable cluster attacker — is now demonstrated via `GymEnemies` with `enemyKey='swarm'`. `src/scenes/gym/GymSwarm.ts` has been retired. The entity and formation are:
 
 - `src/entities/Swarm.ts` — the Swarm entity: a small diamond-shaped neon-blue (`#0066ff`) entity that moves in tight, fast-moving clusters with sudden direction changes. Members weave around their formation slot with a bounded per-cluster drift (clusters of 3–5, GDD §4.1), so packs stay together but can split and rejoin. At Level 4+ (shoot mode) members fire coordinated burst volleys aimed at the player's live position; 1 HP, explosion on destruction, no collisions (GDD §2.6).
 - `src/scenes/gym/GymSwarm.ts` — the gym scene: a thin `GymFormationScene` subclass spawning a 15-member swarm in ~3 clusters, with the standard `EXPLODE` and `SHOOT: ON/OFF` controls.
@@ -393,7 +415,7 @@ The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collect
 - `src/powerups/spawner.ts` — pluggable spawner strategy layer: `PowerUpSpawner` interface, `RoundRobinSpawner` (deterministic gym behaviour: P5 → P8 → P9) and `WeightedRandomSpawner` (semi-random in-game drops; per-ID weights tunable mid-run).
 - `src/powerups/types.ts` — power-up catalogue (id, name, type, duration/stack semantics) for P5/P8/P9.
 - `src/powerups/effects.ts` — engine-agnostic active-effects registry: P5 timed +50% speed (refresh on re-collect, never additive), P8 lives (start 3, cap 5), P9 permanent magnet stacks (cap 5; radius `2× ship size + 50% per stack`; attraction at `MAGNET_ATTRACTION_SPEED`, slower than ship max speed).
-- `src/powerups/icons.ts` — code-drawn neon icons shared by field drops and the HUD, plus the glowing drop bubble (`drawDropBubble`) and combined drop drawers (`drawPowerUpDrop`/`drawWeaponDrop`): every on-field drop renders a neon bubble (soft glow halo + crisp ring in the per-type aura colour) around its icon, `POWER_UP_DROP_SIZE` **doubled to 32 px** (`POWER_UP_BUBBLE_*` constants tunable in `src/core/constants.ts`; visual only — collection radius stays `DROP_SIZE × scale + hull`).
+- `src/powerups/icons.ts` — code-drawn neon icons shared by field drops and the HUD, plus the glowing drop bubble (`drawDropBubble`) and combined drop drawers (`drawPowerUpDrop`/`drawWeaponDrop`): every on-field drop renders a neon bubble (soft glow halo + crisp ring in the per-type aura colour) around its icon, `POWER_UP_DROP_SIZE` set to **16 px** (half the initial 32 px doubling; `POWER_UP_BUBBLE_*` constants tunable in `src/core/constants.ts`; visual only — collection radius stays `DROP_SIZE × scale + hull`).
 - `src/ui/HUD.ts` — **standalone HUD** (Phaser Container, depth above gameplay) attachable to any scene: per-effect rows (icon, name, remaining-seconds timer or `xN` stack count) plus a lives counter.
 - `src/scenes/gym/GymPowerUps.ts` — the scene: round-robin spawning via `RoundRobinSpawner` (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), per-drop Graphics (glowing bubble + icon) scaled with the grow/hold/shrink lifecycle and destroyed on collect/despawn, overlap collection gated at >3% scale (pickup radius = `POWER_UP_DROP_SIZE × scale + hull`, doubled at full scale), magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
 
@@ -406,7 +428,7 @@ The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire a
 - `src/utils/weapons.ts` — pure, unit-testable weapon catalogue: `cannon` (single bullet), `spread` (3-bullet fan at -30°/0°/+30°), `dual` (2 bullets perpendicular to heading), `rapid` (single bullets at a markedly higher rate) — each with its own fire rate, bullet colour/shape — plus heading math (`headingFromVelocity`, `absoluteAngle`, `computeHeading` — most-recent-heading fallback when stationary) and scene-facing helpers (`createBulletsFromHeading`, `angleToVelocity`).
 - `src/entities/Player.ts` — auto-fire weapon slot on the ship: `equipWeapon(id)` / `resetWeapon()` (**persistent** — no timer, AC2), `getHeading()`, fire cooldown (`tryFire`).
 - `src/entities/PlayerBullet.ts` — Graphics-drawn player bullet (`vx`/`vy`, filled circle), created via `createPlayerBullet` and culled off-screen via `advanceAndCull` (no physics bodies, matching the ScoutBullet precedent).
-- `src/powerups/icons.ts` — distinctive code-drawn weapon icons (fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset) with the same **glowing drop bubble** as non-combat drops (`drawWeaponDrop` lays the per-type neon bubble under the icon; enlarged to `WEAPON_DROP_SIZE` = 32 px); `src/audio/effects.ts` — spawn/despawn/collection/weapon-change cues (Web Audio synthesis, safe no-op fallback).
+- `src/powerups/icons.ts` — distinctive code-drawn weapon icons (fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset) with the same **glowing drop bubble** as non-combat drops (`drawWeaponDrop` lays the per-type neon bubble under the icon; enlarged to `WEAPON_DROP_SIZE` = 16 px); `src/audio/effects.ts` — spawn/despawn/collection/weapon-change cues (Web Audio synthesis, safe no-op fallback).
 - `src/scenes/gym/GymWeapons.ts` — the scene: ship + auto-fire + round-robin weapon-drop spawner (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime — parameterised via `WEAPON_DROP_LIFETIME`, sharing the `PowerUp` grow/hold/shrink lifecycle with the 5 s non-combat gym), per-drop Graphics (glowing bubble + icon) scaled with the lifecycle, collection gated at ≥3% scale, persistent weapon switching, and the shared "← INDEX" back button.
 
 The scene is reachable from the gym index ("Weapons" entry). Coverage: `src/utils/weapons.test.ts` (pattern math, fire rates, round-robin order, heading fallback) + `src/scenes/gym/GymWeapons.test.ts` (auto-discovery, ship presence, auto-fire, persistent switching/reset, round-robin, grow/shrink, collection gating) + `src/entities/Player.test.ts` (heading/equip/auto-fire behaviours).

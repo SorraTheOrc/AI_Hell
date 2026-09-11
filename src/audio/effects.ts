@@ -1,15 +1,297 @@
+
 /**
- * Procedural audio effects for enemy gym scenes (GDD §7.3).
+ * Procedural audio effects for enemy gym scenes and the player ship (GDD §7.3).
  *
  * Sounds are synthesised at runtime with the Web Audio API — no audio
  * assets to ship. Each enemy kind maps to distinct tones: spawn uses a
- * high rising blip, destruction a quick descending noise burst.
+ * high rising blip, destruction a quick descending noise burst. The
+ * player ship's thruster hum is a continuous jet-engine roar:
+ * soft triangle + sine oscillators (low rumble) + band-pass
+ * filtered white noise (whoosh) through one reused gain node
+ * section below).
+ *
+ * Thruster-scaling rationale: the hum gain tracks
+ * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
+ * (level in [0, 1] = min(1, thrustAcceleration / FLAME_REF_THRUST),
+ * GDD §2.2 `ShipConfig`), so the tuning slider stays audible and
+ * halved/doubled thrust halves/caps the hum — the same thrust value
+ * that drives the flame animation drives audio.
  *
  * In environments without a working AudioContext (headless tests, some
- * browsers) every function degrades to a safe no-op: the game never
- * depends on audio being available.
+ * browsers, autoplay-blocked) every function degrades to a safe no-op:
+ * the game never depends on audio being available — `updateThrusterSound`
+ * simply does nothing and never throws.
  */
 
+
+// ── Thruster hum (player SFX, AH-0MTFOSOHN001Q620, GDD §7.3) ───────
+//
+// Single ship-level continuous hum — NOT per-engine flame port (see
+// docs/Game Design Document.md §7.3 Player Audio Character). Driven
+// once per frame from Player.preUpdate via the level returned by
+// getEngineSoundLevel(state, input, thrustAcceleration) so audio stays
+// in lockstep with the tuning slider and both control schemes. Gain
+// never exceeds THRUSTER_HUM_MAX_VOLUME (0.15) and the smoothed envelope
+// mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
+// Safe no-op without an AudioContext (headless tests / autoplay-blocked).
+// Architecture: triangle (60 Hz) + sine (35 Hz) for soft low rumble +
+// white noise through a band-pass filter for jet-engine "whoosh"; no
+// harsh sawtooth — the filtered noise is the dominant jet texture.
+
+/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
+export const THRUSTER_HUM_MAX_VOLUME = 0.15;
+/** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum, jet roar). */
+export const THRUSTER_HUM_BASE_FREQ = 60;
+/** Undertone frequency (sine) — adds body to the low jet rumble. */
+export const THRUSTER_HUM_UNDERTONE_FREQ = 35;
+/** Maximum detune drift range in cents for organic tonal variation. */
+const THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS = 8;
+/** Per-frame detune drift step size in cents (random-walk). */
+const THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS = 2;
+/** Noise filter centre range for jet texture (band-pass). */
+export const THRUSTER_HUM_NOISE_FILTER_MIN = 700;
+export const THRUSTER_HUM_NOISE_FILTER_MAX = 1100;
+/** Gain ramp time at FLAME_REF_THRUST: mirrors flame growth (mirrors FLAME_GROWTH_TIME_AT_REF). */
+export const THRUSTER_HUM_GROWTH_TIME = 0.03;
+/** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER (quick silence on release). */
+export const THRUSTER_HUM_SHRINK_MULTIPLIER = 4;
+
+/** Clamp level to [0, 1]. */
+function clampLevel(level: number): number {
+  if (level <= 0 || !Number.isFinite(level)) return 0;
+  if (level >= 1) return 1;
+  return level;
+}
+
+let thrusterHum: ThrusterHumState | null = null;
+
+interface ThrusterHumState {
+  ctx: AudioContext;
+  osc: OscillatorNode;
+  sub: OscillatorNode;
+  /** White-noise source for jet-engine whoosh character. */
+  noise: AudioBufferSourceNode;
+  /** Low-pass filter shaping the noise into jet-like roar. */
+  noiseFilter: BiquadFilterNode;
+  gain: GainNode;
+  /** Current gain — tracks the visual flame model analogously. */
+  currentGain: number;
+  /** Subtle detune drift in cents — slow random-walk variation for organic tonal character. */
+  detuneOsc: number;
+  /** Subtle detune drift in cents for the undertone oscillator. */
+  detuneSub: number;
+}
+
+/** For tests: returns the current thruster hum state (or null if not started). */
+export function _getThrusterHumStateForTests(): ThrusterHumState | null {
+  return thrusterHum;
+}
+
+/**
+ * Internal: tears down all thruster hum AudioNodes and clears state.
+ *
+ * @param ctxTime    — the AudioContext.currentTime to schedule cancel/setValueAtTime.
+ * @param stopOffset — additional time (seconds) after ctxTime to stop oscillators
+ *                     (0 = immediate; 0.02 = graceful ramp tail).
+ */
+function teardownThrusterHum(ctxTime: number, stopOffset: number): void {
+  try {
+    thrusterHum!.gain.gain.cancelScheduledValues(ctxTime);
+    thrusterHum!.gain.gain.setValueAtTime(0, ctxTime);
+    thrusterHum!.osc.stop(ctxTime + stopOffset);
+    thrusterHum!.sub.stop(ctxTime + stopOffset);
+    thrusterHum!.noise.stop(ctxTime + stopOffset);
+  } catch { /* already stopped / no ctx */ }
+  thrusterHum = null;
+}
+
+/**
+ * Resets the thruster hum AudioNode lifecycle — stops any active hum and
+ * clears module state. Exported under _ for tests so worktrees can re-test
+ * the hum lifecycle in isolation.
+ */
+export function _resetThrusterHumForTests(): void {
+  if (thrusterHum) {
+    teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
+  }
+  // Also allow tests to re-seed the AudioContext with a new mock.
+  // getAudioContext() caches the ctor instance; thruster tests need a fresh ctx.
+}
+
+/** Ensures the thruster hum has a live oscillator+gain. Lazily creates the nodes. */
+function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
+  if (thrusterHum && thrusterHum.ctx === ctx) return thrusterHum;
+  // Orphaned context → tear down old hum first.
+  if (thrusterHum) {
+    _resetThrusterHumForTests();
+  }
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, ctx.currentTime);
+  gain.connect(ctx.destination);
+
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ, ctx.currentTime);
+  osc.connect(gain);
+
+  const sub = ctx.createOscillator();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ, ctx.currentTime);
+  sub.connect(gain);
+
+  // ── Jet-engine noise layer ──────────────────────────────────────
+  // White noise → lowpass filter → gain.  The noise gives the hum
+  // its jet-engine "whoosh" quality instead of a pure oscillator buzz.
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = true;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  // Initial jet texture: band-pass centre 700–1100 Hz, moderate Q.
+  const initCutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
+  const initQ = 0.6 + Math.random() * 0.5;
+  noiseFilter.frequency.setValueAtTime(initCutoff, ctx.currentTime);
+  noiseFilter.Q.setValueAtTime(initQ, ctx.currentTime);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(gain);
+  noise.start(ctx.currentTime);
+
+  osc.start(ctx.currentTime);
+  sub.start(ctx.currentTime);
+
+  // ── Subtle detune drift — organic tonal variation (AC1, AH-0MTK9JP37003MJQ4) ──
+  // Small random-walk in cents, independent of thrust level.
+  const initDetuneOsc = (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS;
+  const initDetuneSub = (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS;
+  osc.detune.setValueAtTime(initDetuneOsc, ctx.currentTime);
+  sub.detune.setValueAtTime(initDetuneSub, ctx.currentTime);
+
+  thrusterHum = { ctx, osc, sub, noise, noiseFilter, gain, currentGain: 0, detuneOsc: initDetuneOsc, detuneSub: initDetuneSub };
+  return thrusterHum;
+}
+
+/**
+ * Sustained thruster hum — player SFX (AH-0MTFOSOHN001Q620, GDD §7.3).
+ *
+ * A single reused soft triangle + sine undertone through one gain node
+ * plus a dominant band-pass filtered white-noise whoosh (jet roar).
+ * The gain envelope ramps smoothly so thrust onset/decay never clicks:
+ * rise mirrors the flame growth time (30 ms at reference thrust),
+ * decay is ~4× faster. `level` in [0, 1] comes from
+ * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
+ * scaled by thrustAcceleration; the gain target is
+ * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.15).
+ *
+ * Call once per frame from `Player.preUpdate` — 0 silences the hum,
+ * > 0 reuses the same nodes and ramps the gain. Does not leak oscillators.
+ * Safe no-op without an AudioContext (headless tests / autoplay-blocked
+ * browsers) — never throws.
+ *
+ * Thruster hum is NOT wired to per-engine flame ports — single ship-level
+ * hum per the intake's single-hum assumption; VFX stays per-engine visual.
+ */
+export function updateThrusterSound(level: number): void {
+  const clamped = clampLevel(level);
+  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME;
+
+  const ctx = getAudioContext();
+  if (!ctx) {
+    // Headless: track gain target so tests can still assert ramping
+    // semantics without real audio; without a ctx the hum stays no-op
+    // to the player but the module state mirrors "what the gain would be".
+    if (clamped === 0 && thrusterHum) {
+      // Silencing with no ctx — just forget the state, same as stop.
+      thrusterHum = null;
+      // Keep gainTracking for test assertions when headless (not used at runtime).
+    }
+    return;
+  }
+
+  if (clamped === 0) {
+    if (!thrusterHum) return;
+    // 4× decay: time to silence is growthTime / SHRINK_MULTIPLIER
+    const decayTime = THRUSTER_HUM_GROWTH_TIME / THRUSTER_HUM_SHRINK_MULTIPLIER;
+    const t = ctx.currentTime;
+    thrusterHum.gain.gain.cancelScheduledValues(t);
+    thrusterHum.gain.gain.setValueAtTime(thrusterHum.currentGain, t);
+    thrusterHum.gain.gain.linearRampToValueAtTime(0, t + decayTime);
+    thrusterHum.currentGain = 0;
+    // Leave nodes live so retriggering ramps up from the decay tail
+    // (no click) — stop only on explicit scene destroy via `stopThrusterSound`.
+    return;
+  }
+
+  const hum = ensureThrusterHum(ctx);
+  // Gentle pitch follows level — subtle, no buzzy jitter.
+  const pitchScale = 1 + clamped * 0.12;
+  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale, ctx.currentTime);
+  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale, ctx.currentTime);
+  // Subtle detune drift — slow random-walk for organic tonal variation (AC1).
+  try {
+    const driftOsc = Math.max(
+      -THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+      Math.min(THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+        hum.detuneOsc + (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS
+      )
+    );
+    const driftSub = Math.max(
+      -THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+      Math.min(THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
+        hum.detuneSub + (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS
+      )
+    );
+    hum.osc.detune.setValueAtTime(driftOsc, ctx.currentTime);
+    hum.sub.detune.setValueAtTime(driftSub, ctx.currentTime);
+    hum.detuneOsc = driftOsc;
+    hum.detuneSub = driftSub;
+  } catch { /* detune not supported */ }
+  // Gentle jet filter drift — small variance per frame, filtered noise stays dominant.
+  try {
+    const cutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
+    hum.noiseFilter.frequency.setValueAtTime(cutoff, ctx.currentTime);
+  } catch { /* filter params not supported */ }
+
+  const t = ctx.currentTime;
+  // Rise time at this level = growthTime * (level's currentGain-distance / 1)
+  // — faster at higher thrust analogously, but we approximate with linear
+  // ramping from currentGain to target over growthTime scaled by remaining delta.
+  const delta = Math.abs(targetGain - hum.currentGain);
+  const ramp = THRUSTER_HUM_GROWTH_TIME * (delta / THRUSTER_HUM_MAX_VOLUME);
+  hum.gain.gain.cancelScheduledValues(t);
+  hum.gain.gain.setValueAtTime(hum.currentGain, t);
+  hum.gain.gain.linearRampToValueAtTime(targetGain, t + Math.max(0.005, ramp));
+  hum.currentGain = targetGain;
+}
+
+/**
+ * Forces the thruster hum to stop and frees its AudioNodes.
+ * Called when the ship is destroyed/respawned or the scene shuts down
+ * (AC5 — no orphaned audio). Safe no-op without a live hum.
+ */
+export function stopThrusterSound(): void {
+  if (!thrusterHum) return;
+  teardownThrusterHum(thrusterHum.ctx.currentTime, 0.02);
+}
+
+/**
+ * Resets the internal AudioContext cache — needed only in tests when
+ * window.AudioContext is swapped between the recording mock and the
+ * absence case. Production code never calls this.
+ */
+export function _resetAudioContextForTests(): void {
+  if (thrusterHum) {
+    teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
+  }
+  thrusterHum = null;
+  audioCtx = null;
+}
 
 let audioCtx: AudioContext | null = null;
 

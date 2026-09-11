@@ -12,8 +12,16 @@ import { GymFormationScene } from './core/GymFormationScene';
 import {
   BOSS_PHASE_COUNT,
   BOSS_TELEGRAPH_MS,
+  BOSS_COLOR,
+  BOSS_RADIUS,
   BossPhase,
 } from '../../entities/Boss';
+import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../../vfx/explosionParticles';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 /** Finds an on-screen text button by label. */
@@ -225,6 +233,28 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     explodeBtn.emit('pointerdown');
     expect(boss.alive).toBe(false);
     expect(boss.bodyVisible).toBe(false);
+  });
+
+  it('AC8 — Boss death spawns an all-three-pattern particle burst tinted around BOSS_COLOR', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+
+    boss.destroySelf();
+
+    const handles = boss.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('boss'));
+    expect(handles[0].patterns).toEqual(['radial', 'ring', 'implosion']);
+    expect(handles[0].totalCount).toBe(scaledCount(BOSS_RADIUS));
+
+    const base = colorToHSL(BOSS_COLOR);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
   });
 
   it('AC9 — scene extends GymFormationScene (core library reuse)', async () => {

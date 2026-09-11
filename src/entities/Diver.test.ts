@@ -5,7 +5,14 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import * as effectsModule from '../audio/effects';
 import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
+import {
   DIVER_COLOR,
+  DIVER_SIZE,
   DIVER_HOLD_FORMATION_SECONDS,
   DIVER_DIVE_DURATION,
   DIVER_DIVE_APEX_FRACTION,
@@ -202,6 +209,28 @@ describe('Diver entity — audio (GDD §7.3, Diver fire/destruction sounds)', ()
     expect(effectsModule.playDiverDestructionSound).toHaveBeenCalledTimes(1);
     expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
   });
+
+  it('destruction spawns a particle burst tinted around DIVER_COLOR (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = makeDiver(100, 100);
+    expect(diver.getExplosionHandles().length).toBe(0);
+
+    diver.destroySelf();
+
+    const handles = diver.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('diver'));
+    expect(handles[0].totalCount).toBe(scaledCount(DIVER_SIZE));
+
+    const base = colorToHSL(DIVER_COLOR);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
+  });
 });
 
 describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX)', () => {
@@ -313,5 +342,112 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
     expect(diver.x).toBeCloseTo(pointA.x, 4);
     expect(diver.y).toBeCloseTo(pointA.y, 4);
     expect(Math.abs(diver.x - pointB.x)).toBeGreaterThan(5);
+  });
+
+  describe('rotation during dive and return — AH-0MTVYBY430008GB2', () => {
+    it('AC1 — rotation during dive updates toward the player (not frozen)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const baseX = 400;
+      const baseY = 300;
+      const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+      diver.setAimTarget(700, 500); // player bottom-right
+
+      // Hold in formation until the dive starts.
+      const holdTicks = Math.ceil(DIVER_HOLD_FORMATION_SECONDS / 0.5);
+      for (let i = 0; i < holdTicks; i++) {
+        diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+      // Reset rotation to 0 to verify dive-phase rotation updates.
+      diver.rotation = 0;
+      const rotBefore = diver.rotation;
+
+      // Advance one dive tick.
+      diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      // Rotation should have changed (not frozen during dive).
+      expect(diver.rotation).not.toBeCloseTo(rotBefore, 6);
+
+      // The rotation should be moving toward the player direction.
+      // At the start position, compute desired and verify rotation
+      // is closer to desired than 0 was.
+      const desired = Diver.computeFacingRotation(diver.x, diver.y, 700, 500);
+      expect(Math.abs(diver.rotation - desired)).toBeLessThan(
+        Math.abs(rotBefore - desired),
+      );
+    });
+
+    it('AC2 — rotation during return updates toward the player (not frozen)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const baseX = 200;
+      const baseY = 200;
+      const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+      diver.setAimTarget(700, 500); // player bottom-right
+
+      // Hold until dive starts.
+      const holdTicks = Math.ceil(DIVER_HOLD_FORMATION_SECONDS / 0.5);
+      for (let i = 0; i < holdTicks; i++) {
+        diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+      // Advance the dive to completion so we enter RETURNING state.
+      const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.05);
+      for (let i = 0; i < diveTicks; i++) {
+        diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.RETURNING);
+
+      // Reset rotation to 0 to verify return-phase rotation updates.
+      diver.rotation = 0;
+      const rotBefore = diver.rotation;
+
+      // Advance one return tick.
+      diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      // Rotation should have changed (not frozen during return).
+      expect(diver.rotation).not.toBeCloseTo(rotBefore, 6);
+
+      // The rotation should be moving toward the player direction.
+      const desired = Diver.computeFacingRotation(diver.x, diver.y, 700, 500);
+      expect(Math.abs(diver.rotation - desired)).toBeLessThan(
+        Math.abs(rotBefore - desired),
+      );
+    });
+  });
+
+  describe('scene-less (stale) diver — AH-0MTPLHLZ3006MOC4 AC3', () => {
+    it('AC3 — applyFormationPosition no longer reads a live scene (a display-list-destroyed diver with scene undefined ticks without throwing)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const diver = makeDiver(400, 300);
+
+      // Simulate Phaser's DisplayList.shutdown: destroys the object and sets
+      // its `scene` to undefined (GameObject.destroy).  The stale object may
+      // still sit in the scene's bookkeeping array with _alive === true.
+      (diver as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+      expect(diver.alive).toBe(true);
+
+      // The per-frame formation update must not dereference `this.scene`
+      // (the old code read scene.time.now here and threw).
+      expect(() =>
+        diver.applyFormationPosition(400, 300, 0.016, 26, 22),
+      ).not.toThrow();
+
+      // Still animate into a dive over ticks — never touching the scene.
+      for (let i = 0; i < 40; i++) {
+        diver.applyFormationPosition(400, 300, 0.1, 26, 22);
+      }
+      expect(diver.behaviourState).not.toBe(DiverState.FORMATION);
+    });
+
+    it('AC — destroySelf on a scene-less diver never throws (null-scene playExplosion guard)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const diver = makeDiver(100, 100);
+      (diver as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+
+      expect(() => diver.destroySelf()).not.toThrow();
+      expect(diver.alive).toBe(false);
+    });
   });
 });

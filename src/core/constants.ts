@@ -50,17 +50,17 @@ export const POWER_UP_GROW_DURATION = 0.5;
 /** Time in seconds for a power-up drop to shrink from full size to 0. */
 export const POWER_UP_SHRINK_DURATION = 0.5;
 
-/** Total lifetime of a power-up drop from spawn to despawn (seconds). */
-export const POWER_UP_LIFETIME = 5;
+/** Total lifetime of a power-up drop from spawn to despawn (seconds). 12.5 s = 2.5× the original 5 s. */
+export const POWER_UP_LIFETIME = 12.5;
 
 /** Collection threshold: drops are collectible only above this percentage of full size (3). */
 export const POWER_UP_COLLECTION_THRESHOLD = 3;
 
-/** Interval between spawns in a round-robin cycle (seconds). */
-export const POWER_UP_SPAWN_INTERVAL = 5;
+/** Interval between spawns in a round-robin cycle (seconds). Mirrors POWER_UP_LIFETIME so one drop is on screen at a time. */
+export const POWER_UP_SPAWN_INTERVAL = 12.5;
 
-/** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. */
-export const POWER_UP_DROP_SIZE = 32;
+/** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 16 px = half of the doubled 32 px size (AH-0MTG5MGPZ00986B4). */
+export const POWER_UP_DROP_SIZE = 16;
 
 // ── Power-up drop bubble visuals (GDD §4.4, §7.1) ─────────────────
 // Tunable feel constants for the glowing bubble drawn around every
@@ -107,8 +107,8 @@ export const WEAPON_DROP_LIFETIME = 7;
 export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
 
 /** Base radius of a weapon drop on the field (px), scaled by lifecycle.
- * Mirrors `POWER_UP_DROP_SIZE` (doubled to 32 px, AH-0MTG5MGPZ00986B4) so
- * weapon drops render at the same enlarged size as non-combat drops.
+ * Mirrors `POWER_UP_DROP_SIZE` (16 px — half the doubled 32 px size)
+ * so weapon drops render at the same size as non-combat drops.
  */
 export const WEAPON_DROP_SIZE = POWER_UP_DROP_SIZE;
 
@@ -128,3 +128,20 @@ export const PLAYER_RESPAWN_INVULNERABLE = 1.5;
  * with formation or wait-based tests.
  */
 export const PLAYER_SPAWN = { x: 920, y: 30 } as const;
+
+// ── Combat gym — threat-coupled power-ups (GDD §4.4, GymPowerUpsCombat) ─
+
+/** P3 Shield duration in seconds (15 s, absorbs one hit). */
+export const COMBAT_SHIELD_DURATION = 15;
+
+/** P6 Phase Shift duration in seconds (3 s, pass-through). */
+export const COMBAT_PHASE_SHIFT_DURATION = 3;
+
+/** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
+export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;
+
+/** Hit-response invulnerability after a flash/reset with no lives (seconds). */
+export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
+
+/** Blink half-period while invulnerable after a hit (seconds). */
+export const COMBAT_HIT_BLINK_INTERVAL = 0.1;

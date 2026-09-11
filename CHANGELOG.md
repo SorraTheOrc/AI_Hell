@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.3 (2026-09-12)
+### Features
+- Thrusters now sound like a smooth jet-engine roar instead of a harsh buzz. (AH-0MTK9ZSOX009SB1K)
+- Divers now aim at you before diving, making their attacks feel smarter and more threatening. (AH-0MTGBOKLC006N8UX)
+- Designers can now create and tune new enemy types in-game without code changes. (AH-0MTFP7EIC004F1MN)
+- Enemy gyms now respawn enemies after a 3-second countdown, so you can keep practicing. (AH-0MTFXKA5Q003LBH5)
+- Thruster hum now sounds richer and more jet-like instead of a flat buzz. (AH-0MTK9JP37003MJQ4)
+- Your ship now hums while thrusting, getting louder with stronger acceleration. (AH-0MTFOSOHN001Q620)
+- Practice the new combat power-ups against weak enemies in a dedicated training arena. (AH-0MTC2P6G3007PJ40)
+- Power-ups are now twice as big with a glowing ring, making them much easier to spot and grab. (AH-0MTG5MGPZ00986B4)
+- Face the Central AI boss with four escalating attack phases and a multi-stage health bar. (AH-0MT99QBDW001O7PE)
+- Gym controls moved to the bottom so your status info stays visible. (AH-0MTV7OAJM002GGMM)
+- Test massive enemy formations with up to 200 enemies at once. (AH-0MTV8Q1LV001KOA5)
+- Explosions now burst into colourful particles matching each ship's colour, making every kill feel more impactful. (AH-0MTV6ADT4001FB2V)
+### Bug Fixes
+- Switching between gym scenes no longer crashes the game. (AH-0MTPLHLZ3006MOC4)
+- The boss now takes four hits to defeat, with each hit changing its attack pattern. (AH-0MTV9NBZ400785KF)
+- Re-entering the combat gym no longer crashes when the Scout fires. (AH-0MTVYBELZ000EZ1Y)
+- The Diver now always turns to face you throughout its entire attack. (AH-0MTVYBY430008GB2)
+- Crashing into an enemy now destroys it and costs you a life. (AH-0MTV7JOLU006W8PT)
+- Coverage reviews now correctly count child items instead of falsely reporting full coverage. (AH-0MTFRZQLN007IV0E)
+- Enemy swarm attacks now reliably hit and respawn you in gym tests. (AH-0MTFTJ01K000JG4I)
+### Other
+- Thruster sounds now shut off cleanly every time, preventing stuck or lingering audio. (AH-0MTP19JIB004ORC0)
+- Removed an unused audio setting; thruster sounds are unchanged. (AH-0MTP19DG100472CV)
+
 ## v0.1.2 (2026-08-31)
 ### Features
 - Added an Asteroids-style control mode with ship rotation and a switchable scheme in the Gym. (AH-0MTF0EFNZ000RPVD)

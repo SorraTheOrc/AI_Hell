@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as effectsModule from '../../../audio/effects';
+import * as explosionModule from '../../../vfx/explosionParticles';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
-import { GAME_HEIGHT, GAME_WIDTH } from '../../../core/constants';
+import { GAME_HEIGHT, GAME_WIDTH, SHIP_COLOR } from '../../../core/constants';
 import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
+  SHIP_SIZE,
 } from '../../../core/constants';
 import { Player } from '../../../entities/Player';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
@@ -962,5 +964,541 @@ describe('GymFormationScene — enemy live aim tracking (parent AC1–AC3)', () 
     expect(scene.getPlayer()).not.toBeNull();
     expect(() => scene.tick(0.25)).not.toThrow();
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+});
+
+describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MTFXKA5Q003LBH5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(
+    player?: { x: number; y: number },
+  ): Promise<BootedScene> {
+    booted = await bootScene([makeStubScene(() => [], player)]);
+    return booted!.scene as BootedScene;
+  }
+
+  function killAll(scene: BootedScene): void {
+    for (const e of scene.formationEntities) e.destroySelf();
+  }
+
+  it('AC1 — when aliveCount transitions to 0 the scene enters the respawn countdown within one tick', async () => {
+    const scene = await bootGym();
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+
+    killAll(scene);
+    expect(scene.aliveCount).toBe(0);
+    // Wipe is only observed on the next tick (collision tick creates the
+    // aliveCount === 0 state, the following tick starts the countdown).
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.getRespawnCountdownRemaining()).toBeGreaterThan(2.9);
+    expect(scene.getRespawnCountdownRemaining()).toBeLessThanOrEqual(3);
+  });
+
+  it('AC1 — countdown overlay text is visible and centred while active', async () => {
+    const scene = await bootGym();
+    killAll(scene);
+    scene.tick(0.016);
+
+    const overlay = scene.getRespawnCountdownText();
+    expect(overlay).not.toBeNull();
+    expect(overlay!.visible).toBe(true);
+    expect(overlay!.text).toMatch(/Respawning in 3/);
+    expect(overlay!.x).toBeCloseTo(GAME_WIDTH / 2, 5);
+    expect(overlay!.y).toBeCloseTo(GAME_HEIGHT / 2, 5);
+  });
+
+  it('AC2 — countdown ticks once per second: 3 → 2 → 1 over wall-clock seconds', async () => {
+    const scene = await bootGym();
+    killAll(scene);
+    scene.tick(0.016);
+    expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 3/);
+
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.getRespawnCountdownRemaining()).toBeCloseTo(2, 1);
+    expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 2/);
+
+    scene.tick(1.0);
+    expect(scene.getRespawnCountdownRemaining()).toBeCloseTo(1, 1);
+    expect(scene.getRespawnCountdownText()!.text).toMatch(/Respawning in 1/);
+  });
+
+  it('AC2 — after exactly 3 seconds the formation respawns and the countdown is removed', async () => {
+    const scene = await bootGym();
+    const offsetsBefore = vOffsets(FORMATION_COUNT);
+    killAll(scene);
+    scene.tick(0.016); // start countdown
+
+    // Advance to just before expiry — still counting down.
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.aliveCount).toBe(0);
+
+    const spawnSound = vi.spyOn(effectsModule, 'playSpawnSound');
+    const callsBefore = spawnSound.mock.calls.length;
+    scene.tick(1.0); // expiry → respawn
+
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.getRespawnCountdownRemaining()).toBe(0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.formationEntities.every((e) => e.alive)).toBe(true);
+    // Countdown overlay hidden (not destroyed, so a second wipe can reuse it).
+    expect(scene.getRespawnCountdownText()!.visible).toBe(false);
+    expect(spawnSound.mock.calls.length).toBeGreaterThan(callsBefore);
+
+    // Formation reset to startX/startY-derived positions.
+    expect(scene.formationX).toBeCloseTo(START_X, 5);
+    expect(scene.formationY).toBeCloseTo(START_Y, 5);
+    for (const [i, entity] of scene.formationEntities.entries()) {
+      const { row, col } = offsetsBefore[i];
+      expect(entity.x).toBeCloseTo(START_X + col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(START_Y + row * SPACING_Y, 5);
+    }
+  });
+
+  it('AC4 — enemy bullets in flight are cleared on respawn; player bullets persist', async () => {
+    // Stationary enemy bullet via collect, parked at a known spot.
+    let armed = false;
+    const collect = (enemy: StubEnemy): StubBullet[] => {
+      if (!armed) return [];
+      armed = false;
+      const b = new StubBullet(enemy.scene, 0, 0);
+      b.graphics.setPosition(10, 10);
+      return [b];
+    };
+    booted = await bootScene([
+      makeStubScene(collect, { x: 920, y: 30 }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+
+    // Arm one enemy bullet before the wipe, then kill the formation.
+    armed = true;
+    scene.tick(0.016);
+    expect(scene.activeBullets.length).toBe(1);
+    const enemyBullet = scene.activeBullets[0];
+
+    killAll(scene);
+    scene.tick(0.016); // start countdown
+    // Park a player bullet far from the formation so it never collides.
+    const pb = scene.spawnPlayerBullet(900, 500, 0, 0);
+    expect(scene.getPlayerBullets()).toContain(pb);
+
+    // Fast-forward past the 3s countdown.
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+
+    expect(scene.activeBullets.length).toBe(0);
+    expect(scene.activeBullets).not.toContain(enemyBullet);
+    // Player bullet survives the respawn.
+    expect(scene.getPlayerBullets()).toContain(pb);
+  });
+
+  it('AC5 — shootEnabled state carries over across the respawn', async () => {
+    const scene = await bootGym();
+    // Enable shooting before the wipe.
+    const shoot = scene.children.list.find(
+      (c): c is Phaser.GameObjects.Text =>
+        c instanceof Phaser.GameObjects.Text && c.text === 'SHOOT: OFF',
+    )!;
+    shoot.emit('pointerdown');
+    expect(scene.shootingEnabled).toBe(true);
+
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+
+    expect(scene.shootingEnabled).toBe(true);
+    expect(scene.formationEntities.every((e) => e.shootEnabled)).toBe(true);
+    // Button label still reflects ON.
+    expect(
+      scene.children.list.some(
+        (c): c is Phaser.GameObjects.Text =>
+          c instanceof Phaser.GameObjects.Text && c.text === 'SHOOT: ON',
+      ),
+    ).toBe(true);
+  });
+
+  it('AC5 — OFF shooting also carries over (no surprise toggle)', async () => {
+    const scene = await bootGym();
+    expect(scene.shootingEnabled).toBe(false);
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.shootingEnabled).toBe(false);
+    expect(scene.formationEntities.every((e) => !e.shootEnabled)).toBe(true);
+  });
+
+  it('countdown restarts correctly if the scene is torn down mid-countdown (no crash or stale state)', async () => {
+    const scene = await bootGym();
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // Simulate the Phaser SHUTDOWN that the scene listens for — it must
+    // cancel the countdown without throwing, so a re-boot starts clean.
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.getRespawnCountdownRemaining()).toBe(0);
+
+    // Destroy and re-boot a fresh scene — no stale countdown.
+    booted!.game.destroy(true);
+    booted = await bootScene([makeStubScene(() => [], undefined)]);
+    const fresh = booted!.scene as BootedScene;
+    expect(fresh.isRespawnCountdownActive()).toBe(false);
+    expect(fresh.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('no countdown starts while enemies remain alive', async () => {
+    const scene = await bootGym();
+    // Kill all but one.
+    for (let i = 0; i < FORMATION_COUNT - 1; i++) {
+      scene.formationEntities[i].destroySelf();
+    }
+    expect(scene.aliveCount).toBe(1);
+    scene.tick(0.5);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    scene.tick(0.5);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+  });
+
+  it('wipe → respawn loop is repeatable: a second wipe after respawn starts a fresh countdown', async () => {
+    const scene = await bootGym();
+    // First wipe → respawn.
+    killAll(scene);
+    scene.tick(0.016);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+
+    // Second wipe of the fresh formation.
+    killAll(scene);
+    expect(scene.aliveCount).toBe(0);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+  });
+});
+
+describe('GymFormationScene — stop/restart of the same instance clears stale entities (AH-0MTPLHLZ3006MOC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootGym(): Promise<BootedScene> {
+    booted = await bootScene([makeStubScene(() => [])]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC4 — emitting SHUTDOWN clears entities/bullets/playerBullets so a second create() starts clean (no crash, no doubling)', async () => {
+    const scene = await bootGym();
+    expect(scene.formationEntities.length).toBe(FORMATION_COUNT);
+
+    // Simulate the Phaser stop: DisplayList.shutdown destroys children and
+    // sets their `scene` to undefined; the scene's own SHUTDOWN hook then
+    // clears the bookkeeping arrays (the fix under test).
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    // After the SHUTDOWN teardown the arrays are empty — a later restart
+    // (same instance) will push only the fresh formation.
+    expect(scene.formationEntities).toHaveLength(0);
+    expect(scene.activeBullets).toHaveLength(0);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+
+    // Re-run create() on the SAME instance (the gym-index restart vector).
+    // This must spawn exactly FORMATION_COUNT fresh entities and the tick
+    // must not iterate stale destroyed objects.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(() => scene.tick(0.016)).not.toThrow();
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('AC4 — with a player: SHUTDOWN teardown nulls the player and clears player bullets; restart spawns a fresh ship', async () => {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    expect(scene.getPlayer()).not.toBeNull();
+
+    // Fire an extra player bullet (boot may already have auto-fired some).
+    scene.spawnPlayerBullet(100, 100, 0, 100);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.formationEntities).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    expect(() => scene.tick(0.016)).not.toThrow();
+  });
+
+  it('AC4 — SHUTDOWN mid-countdown drops the stale overlay reference; a same-instance restart re-creates a working overlay', async () => {
+    const scene = await bootGym();
+
+    // Enter a wipe → countdown cycle so an overlay text exists on the display list.
+    for (const e of scene.formationEntities) e.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.getRespawnCountdownText()).not.toBeNull();
+
+    // Tear down mid-countdown (the gym-index restart vector).
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    // The stale overlay object (destroyed with the display list) must no
+    // longer be referenced, so the next respawn builds a fresh one.
+    expect(scene.getRespawnCountdownText()).toBeNull();
+
+    // Restart the SAME instance: a fresh wipe → countdown cycle creates a
+    // brand-new visible overlay on the new display list (no stale text reuse).
+    scene.create();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    for (const e of scene.formationEntities) e.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    const overlay = scene.getRespawnCountdownText();
+    expect(overlay).not.toBeNull();
+    expect(overlay!.visible).toBe(true);
+    expect(() => scene.tick(1.0)).not.toThrow();
+  });
+});
+
+describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W8PT)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const PLAYER_SPAWN = { x: 920, y: 30 };
+
+  async function bootWithPlayer(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], PLAYER_SPAWN),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  /** Helper: position the player at an entity's post-tick coordinates
+   *  and sync the internal physics state so `tick()` doesn't reset it.
+   *  During tick the formation base drifts right by `DRIFT_SPEED * dt`.
+   */
+  function placePlayerAtEntity(scene: BootedScene, entity: FormationSceneEntity): void {
+    const player = scene.getPlayer()!;
+    const postTickX = scene.formationX + DRIFT_SPEED * 0.05
+      + entity.offset.col * SPACING_X;
+    const postTickY = scene.formationY + entity.offset.row * SPACING_Y;
+    player.setPosition(postTickX, postTickY);
+    (player as any)._movementState = {
+      x: postTickX,
+      y: postTickY,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+  }
+
+  it('AC1 — when player overlaps an enemy entity, the enemy is destroyed via destroySelf()', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    expect(target.alive).toBe(true);
+
+    // Position the player at the entity's post-tick location and sync physics state.
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
+  });
+
+  it('AC1 — the enemy destruction sound plays on player-vs-enemy collision', async () => {
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(callsBefore + 1);
+  });
+
+  it('AC2 — the player is treated as "hit": explosion VFX/SFX + respawn + invulnerability', async () => {
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    placePlayerAtEntity(scene, target);
+    const hitX = scene.getPlayer()!.x;
+    const hitY = scene.getPlayer()!.y;
+    scene.tick(0.05);
+
+    // Hit counter incremented.
+    expect(scene.getPlayerHitCount()).toBe(1);
+    // Explosion VFX spawned.
+    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    // Destruction sound played (enemy destruction).
+    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(callsBefore);
+    // The player burst is spawned through the shared particle helper with
+    // the ship colour/size and the 'player' pattern assignment (AC2).
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    const playerCall = spawnSpy.mock.calls[0];
+    expect(playerCall).toBeDefined();
+    expect(playerCall[0]).toBe(scene);
+    expect(playerCall[1]).toBeCloseTo(hitX, 0);
+    expect(playerCall[2]).toBeCloseTo(hitY, 0);
+    expect(playerCall[3]).toBe(SHIP_COLOR);
+    expect(playerCall[4]).toBe(SHIP_SIZE);
+    expect(playerCall[5]?.patterns).toEqual(['radial', 'ring']);
+    expect(playerCall[5]?.registry).toBeDefined();
+    // Player respawned at spawn point.
+    expect(scene.getPlayer()!.x).toBe(PLAYER_SPAWN.x);
+    expect(scene.getPlayer()!.y).toBe(PLAYER_SPAWN.y);
+    // Invulnerability window engaged.
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
+  });
+
+  it('AC4 — SHUTDOWN destroys active player particle Graphics; restart leaks none', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    // A player particle burst is active and registered for teardown.
+    const active = scene.getPlayerExplosions();
+    expect(active.length).toBeGreaterThan(0);
+
+    // Simulate the Phaser stop/restart vector.
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayerExplosions()).toHaveLength(0);
+
+    // Restarting the same instance must not throw and must start clean.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
+  });
+
+  it('AC2 — player-vs-enemy collision while invulnerable does not trigger another hit', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[1];
+
+    // Directly set the invulnerability window so the player-vs-enemy-body
+    // collision below is ignored. (Enemy-bullet → player collision would
+    // also work, but the stub has no enemy fire.)
+    (scene as any).playerInvulnerable = 1.0;
+    (scene as any).playerBlinkPhase = 0;
+
+    // Now push the player into a different enemy — should be ignored due to invulnerability.
+    placePlayerAtEntity(scene, target);
+    const hitCountBefore = scene.getPlayerHitCount();
+    const aliveBefore = scene.aliveCount;
+    scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBe(hitCountBefore);
+    expect(scene.aliveCount).toBe(aliveBefore); // enemy NOT destroyed
+    expect(target.alive).toBe(true);
+  });
+
+  it('AC3 — collision uses the entity hit radius from getEntityHitRadius()', async () => {
+    // Use a custom (small) entity hit radius.
+    const smallRadius = 5;
+    booted = await bootScene([
+      makeStubScene(() => [], PLAYER_SPAWN, { entityHitRadius: smallRadius }),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    const target = scene.formationEntities[0];
+
+    const playerHull = SHIP_SIZE / 2;
+    const dist = playerHull + smallRadius;
+    const entityBaseX = scene.formationX + DRIFT_SPEED * 0.05 + target.offset.col * SPACING_X;
+
+    // ── Tick 1: player just outside the collision radius ──────────
+    placePlayerAtEntity(scene, target);
+    const player = scene.getPlayer()!;
+    player.x = entityBaseX - dist - 1;
+    (player as any)._movementState.x = entityBaseX - dist - 1;
+    scene.tick(0.05);
+    expect(target.alive).toBe(true);
+
+    // ── Tick 2: player just inside ────────────────────────────────
+    // The entity drifts one more tick (another 2 px), so shift the
+    // player right by that amount to stay just inside.
+    player.x = entityBaseX + DRIFT_SPEED * 0.05 - dist + 1;
+    (player as any)._movementState.x = entityBaseX + DRIFT_SPEED * 0.05 - dist + 1;
+    scene.tick(0.05);
+    expect(target.alive).toBe(false);
+  });
+
+  it('AC4 — playerHitCount increments on each collision', async () => {
+    const scene = await bootWithPlayer();
+
+    // Player starts at spawn — hit count is zero.
+    expect(scene.getPlayerHitCount()).toBe(0);
+
+    // Push into first enemy.
+    const e1 = scene.formationEntities[0];
+    placePlayerAtEntity(scene, e1);
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(1);
+
+    // Clear the invulnerability window set by the first hit so the
+    // second collision is not silently skipped.
+    (scene as any).playerInvulnerable = 0;
+
+    // Push into second enemy.
+    const e2 = scene.formationEntities[1];
+    placePlayerAtEntity(scene, e2);
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(2);
+  });
+
+  it('AC — player misses enemy when not overlapping (no false positives)', async () => {
+    const scene = await bootWithPlayer();
+    const target = scene.formationEntities[0];
+
+    const aliveBefore = target.alive;
+    // Position player far outside the hit radius.
+    const entityBaseX = scene.formationX + DRIFT_SPEED * 0.05 + target.offset.col * SPACING_X;
+    const player = scene.getPlayer()!;
+    player.x = entityBaseX - 100;
+    (player as any)._movementState.x = entityBaseX - 100;
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(aliveBefore);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.getPlayerHitCount()).toBe(0);
   });
 });
