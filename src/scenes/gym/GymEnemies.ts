@@ -51,7 +51,7 @@ export const ENEMY_TOGGLE_PLAYER_ID = 'enemy-gym-toggle-player';
 
 // Numeric slider ranges (mirrors GymPlayer SLIDER_RANGES pattern).
 const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
-  count: { min: 1, max: 30, step: 1 },
+  count: { min: 1, max: 200, step: 1 },
   spacingX: { min: 10, max: 120, step: 1 },
   spacingY: { min: 10, max: 100, step: 1 },
   driftSpeed: { min: 0, max: 200, step: 1 },

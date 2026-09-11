@@ -424,4 +424,16 @@ describe('GymEnemies — single reusable enemy gym', () => {
       }
     });
   });
+
+  // ── AC1: count slider max (AH-0MTV8Q1LV001KOA5) ──────────────────
+
+  it('AC1 — count slider max is 200', async () => {
+    await bootWithKey('scout');
+    const countInput = document.querySelector<HTMLInputElement>(
+      'input[data-config="count"]',
+    )!;
+    expect(countInput.max).toBe('200');
+    expect(countInput.min).toBe('1');
+    expect(countInput.step).toBe('1');
+  });
 });
