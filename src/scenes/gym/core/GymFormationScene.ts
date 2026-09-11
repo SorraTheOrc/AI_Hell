@@ -298,16 +298,16 @@ export class GymFormationScene<
       ) as WasdKeysLike | undefined;
     }
 
-    // ── Controls (top-left HUD, minimal) ────────────────────────────
-    this.explodeButton = this._addButton(10, 10, 'EXPLODE', LABEL_STYLE);
-    this.shootButton = this._addButton(120, 10, 'SHOOT: OFF', LABEL_STYLE);
+    // ── Controls (bottom-left HUD, minimal) ─────────────────────────
+    this.explodeButton = this._addButton(10, GAME_HEIGHT - 60, 'EXPLODE', LABEL_STYLE);
+    this.shootButton = this._addButton(120, GAME_HEIGHT - 60, 'SHOOT: OFF', LABEL_STYLE);
 
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
     this.statusText = this.add.text(
       10,
-      44,
+      GAME_HEIGHT - 36,
       `SCORE: n/a — ${config.statusLabel}: ${this.entities.length}`,
       {
         fontFamily: 'monospace',
