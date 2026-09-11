@@ -441,6 +441,28 @@ export class Diver extends Phaser.GameObjects.Container {
 
   // ── State machine handlers ───────────────────────────────────────
 
+  /**
+   * Update the diver's rotation to face the player.
+   *
+   * Uses the same exponential-smoothing pattern in every state so the
+   * diver always visually tracks the player regardless of behaviour.
+   */
+  private _updateFacingRotation(dt: number): void {
+    const desired = Diver.computeFacingRotation(
+      this.x, this.y, this.target.x, this.target.y,
+    );
+    // Shortest angular difference, wrapped to (-PI, PI].
+    let diff = desired - this.rotation;
+    if (Phaser.Math.Angle && typeof Phaser.Math.Angle.Wrap === 'function') {
+      diff = Phaser.Math.Angle.Wrap(diff);
+    } else {
+      diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+    }
+    const lerpFactor = 1 - Math.exp(-5 * dt);
+    this.rotation += diff * lerpFactor;
+  }
+
   private _handleFormation(
     formationPos: Phaser.Math.Vector2,
     dt: number,
@@ -457,23 +479,8 @@ export class Diver extends Phaser.GameObjects.Container {
       formationPos.y,
     );
 
-    // Smoothly rotate the container to face the player. The nose points up in
-    // local space, so desired = atan2(dx, -dy). Delegates to the testable
-    // static helper `computeFacingRotation`. Exponential smoothing keeps the
-    // rotation frame-rate independent and avoids snaps.
-    const desired = Diver.computeFacingRotation(
-      this.x, this.y, this.target.x, this.target.y,
-    );
-    // Shortest angular difference, wrapped to (-PI, PI].
-    let diff = desired - this.rotation;
-    if (Phaser.Math.Angle && typeof Phaser.Math.Angle.Wrap === 'function') {
-      diff = Phaser.Math.Angle.Wrap(diff);
-    } else {
-      diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
-      if (diff < -Math.PI) diff += 2 * Math.PI;
-    }
-    const lerpFactor = 1 - Math.exp(-5 * dt);
-    this.rotation += diff * lerpFactor;
+    // Always face the player during formation hold.
+    this._updateFacingRotation(dt);
 
     // After hold timer reaches threshold, initiate a dive.
     this._holdTimer += dt;
@@ -528,6 +535,9 @@ export class Diver extends Phaser.GameObjects.Container {
     // formation slot to the snapshotted player position.
     this.setPosition(point.x, point.y);
 
+    // Always face the player during the dive.
+    this._updateFacingRotation(dt);
+
     // Fire spread shots during the dive if shoot mode is enabled.
     if (this._shootEnabled) {
       // Fire at roughly the midpoint of the dive for best visual effect.
@@ -565,6 +575,9 @@ export class Diver extends Phaser.GameObjects.Container {
       this._diveTargetX + (slotX - this._diveTargetX) * t,
       this._diveTargetY + (slotY - this._diveTargetY) * t,
     );
+
+    // Always face the player during the return.
+    this._updateFacingRotation(dt);
 
     if (this._returnProgress >= 1) {
       this._returnProgress = 1;

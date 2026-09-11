@@ -315,6 +315,77 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
     expect(Math.abs(diver.x - pointB.x)).toBeGreaterThan(5);
   });
 
+  describe('rotation during dive and return — AH-0MTVYBY430008GB2', () => {
+    it('AC1 — rotation during dive updates toward the player (not frozen)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const baseX = 400;
+      const baseY = 300;
+      const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+      diver.setAimTarget(700, 500); // player bottom-right
+
+      // Hold in formation until the dive starts.
+      const holdTicks = Math.ceil(DIVER_HOLD_FORMATION_SECONDS / 0.5);
+      for (let i = 0; i < holdTicks; i++) {
+        diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+      // Reset rotation to 0 to verify dive-phase rotation updates.
+      diver.rotation = 0;
+      const rotBefore = diver.rotation;
+
+      // Advance one dive tick.
+      diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      // Rotation should have changed (not frozen during dive).
+      expect(diver.rotation).not.toBeCloseTo(rotBefore, 6);
+
+      // The rotation should be moving toward the player direction.
+      // At the start position, compute desired and verify rotation
+      // is closer to desired than 0 was.
+      const desired = Diver.computeFacingRotation(diver.x, diver.y, 700, 500);
+      expect(Math.abs(diver.rotation - desired)).toBeLessThan(
+        Math.abs(rotBefore - desired),
+      );
+    });
+
+    it('AC2 — rotation during return updates toward the player (not frozen)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const baseX = 200;
+      const baseY = 200;
+      const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+      diver.setAimTarget(700, 500); // player bottom-right
+
+      // Hold until dive starts.
+      const holdTicks = Math.ceil(DIVER_HOLD_FORMATION_SECONDS / 0.5);
+      for (let i = 0; i < holdTicks; i++) {
+        diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+      // Advance the dive to completion so we enter RETURNING state.
+      const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.05);
+      for (let i = 0; i < diveTicks; i++) {
+        diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.RETURNING);
+
+      // Reset rotation to 0 to verify return-phase rotation updates.
+      diver.rotation = 0;
+      const rotBefore = diver.rotation;
+
+      // Advance one return tick.
+      diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      // Rotation should have changed (not frozen during return).
+      expect(diver.rotation).not.toBeCloseTo(rotBefore, 6);
+
+      // The rotation should be moving toward the player direction.
+      const desired = Diver.computeFacingRotation(diver.x, diver.y, 700, 500);
+      expect(Math.abs(diver.rotation - desired)).toBeLessThan(
+        Math.abs(rotBefore - desired),
+      );
+    });
+  });
+
   describe('scene-less (stale) diver — AH-0MTPLHLZ3006MOC4 AC3', () => {
     it('AC3 — applyFormationPosition no longer reads a live scene (a display-list-destroyed diver with scene undefined ticks without throwing)', async () => {
       booted = await bootScene([HarnessScene]);
