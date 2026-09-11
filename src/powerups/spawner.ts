@@ -136,11 +136,11 @@ export class WeightedRandomSpawner implements PowerUpSpawner {
     this._rng = rng ?? Math.random;
   }
 
-  /** Returns a copy of all current weights. */
-  getWeights(): Record<PowerUpId, number> {
-    const result = {} as Record<PowerUpId, number>;
-    for (const id of Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]) {
-      result[id] = this._weights.has(id) ? this._weights.get(id)! : 0;
+  /** Returns a copy of all current weights (subset keyed by tracked IDs). */
+  getWeights(): Partial<Record<PowerUpId, number>> {
+    const result: Partial<Record<PowerUpId, number>> = {};
+    for (const [id, w] of this._weights) {
+      result[id] = w;
     }
     return result;
   }
@@ -176,7 +176,9 @@ export class WeightedRandomSpawner implements PowerUpSpawner {
     }
 
     if (total <= 0 || firstId === null) {
-      // Deterministic fallback: return the first catalogue entry.
+      // Deterministic fallback: return the first tracked entry (preserves pre-existing tests
+      // that construct the spawner with ['P5','P8','P9'] — fallback must be P5, not P3).
+      if (firstId !== null) return firstId;
       const catalogueKeys = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
       return catalogueKeys[0];
     }

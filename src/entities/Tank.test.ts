@@ -3,10 +3,17 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
+import {
   TANK_BULLET_SPEED,
   TANK_BURST_COUNT,
   TANK_COLOR,
   TANK_FIRE_INTERVAL,
+  TANK_SIZE,
   Tank,
   FormationOffset,
 } from './Tank';
@@ -100,5 +107,47 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     // direction-agnostic (the scene's optional setAimTarget is a no-op via
     // optional chaining).
     expect('setAimTarget' in tank).toBe(false);
+  });
+
+  describe('scene-less (stale) tank — AH-0MTPLHLZ3006MOC4', () => {
+    it('AC — destroySelf on a display-list-destroyed tank never throws (null-scene playExplosion guard)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const tank = makeTank(100, 100);
+
+      // Simulate Phaser's DisplayList.shutdown: destroys the object and sets
+      // its `scene` to undefined (GameObject.destroy).  The stale object may
+      // still sit in the scene's bookkeeping array with _alive === true — the
+      // original crash manifested here when a player bullet hit it and
+      // destroySelf → playExplosion read this.scene.tweens.
+      (tank as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+      expect(tank.alive).toBe(true);
+
+      expect(() => tank.destroySelf()).not.toThrow();
+      expect(tank.alive).toBe(false);
+    });
+  });
+
+  it('destruction spawns a radial+ring particle burst tinted around TANK_COLOR (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = makeTank(100, 100);
+    expect(tank.getExplosionHandles().length).toBe(0);
+
+    tank.destroySelf();
+
+    const handles = tank.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('tank'));
+    expect(handles[0].patterns).toEqual(['radial', 'ring']);
+    expect(handles[0].totalCount).toBe(scaledCount(TANK_SIZE));
+
+    const base = colorToHSL(TANK_COLOR);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
   });
 });

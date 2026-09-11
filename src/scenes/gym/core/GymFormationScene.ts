@@ -22,6 +22,7 @@ import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
+  SHIP_COLOR,
   SHIP_SIZE,
 } from '../../../core/constants';
 import {
@@ -43,6 +44,10 @@ import {
 import {
   WasdKeysLike,
 } from '../../../utils/input';
+import {
+  resolvePatterns,
+  spawnExplosionParticles,
+} from '../../../vfx/explosionParticles';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -90,6 +95,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * Phaser.
    */
   playDestructionAudio?(): void;
+  /**
+   * Optional multi-hit damage seam (Boss, GDD §4.3). When present,
+   * player-bullet collisions delegate to this instead of `destroySelf()`
+   * so the entity can decrement phased health and only self-destruct
+   * when depleted. The entity must handle its own SFX/visuals and
+   * `alive` flag; the base scene consumes the bullet and skips the
+   * generic destruction sound.
+   */
+  takeDamage?(): number | void;
 }
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
@@ -186,6 +200,18 @@ const DEFAULT_BULLET_HIT_RADIUS = 6;
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 const PLAYER_BLINK_INTERVAL = 0.1;
 
+/** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
+const RESPAWN_COUNTDOWN_SECONDS = 3;
+
+/** Style for the centred respawn countdown overlay. */
+const COUNTDOWN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: 'monospace',
+  fontSize: '24px',
+  color: '#ffffff',
+  backgroundColor: '#000000',
+  padding: { x: 12, y: 8 },
+};
+
 /**
  * Generic formation gym scene. Parameterised by entity + bullet types so
  * concrete scenes keep fully-typed accessors (`formationScouts` etc.).
@@ -194,7 +220,7 @@ export class GymFormationScene<
   TEntity extends FormationSceneEntity,
   TBullet extends FormationSceneBullet,
 > extends Phaser.Scene {
-  private readonly config: EnemyFormationConfig<TEntity, TBullet>;
+  protected config: EnemyFormationConfig<TEntity, TBullet>;
 
   protected entities: TEntity[] = [];
   protected bullets: TBullet[] = [];
@@ -217,6 +243,11 @@ export class GymFormationScene<
   protected formationBaseX: number;
   protected formationBaseY: number;
   private shootEnabled = false;
+
+  // Wipe → 3s countdown → respawn lifecycle (core-library owned, AH-0MTFXKA5Q003LBH5).
+  private respawnCountdown = 0;
+  private respawnCountdownActive = false;
+  private countdownText: Phaser.GameObjects.Text | null = null;
 
   // Arrow-key (cursor) and WASD bindings for the player ship.
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
@@ -272,16 +303,16 @@ export class GymFormationScene<
       ) as WasdKeysLike | undefined;
     }
 
-    // ── Controls (top-left HUD, minimal) ────────────────────────────
-    this.explodeButton = this._addButton(10, 10, 'EXPLODE', LABEL_STYLE);
-    this.shootButton = this._addButton(120, 10, 'SHOOT: OFF', LABEL_STYLE);
+    // ── Controls (bottom-left HUD, minimal) ─────────────────────────
+    this.explodeButton = this._addButton(10, GAME_HEIGHT - 60, 'EXPLODE', LABEL_STYLE);
+    this.shootButton = this._addButton(120, GAME_HEIGHT - 60, 'SHOOT: OFF', LABEL_STYLE);
 
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
     this.statusText = this.add.text(
       10,
-      44,
+      GAME_HEIGHT - 36,
       `SCORE: n/a — ${config.statusLabel}: ${this.entities.length}`,
       {
         fontFamily: 'monospace',
@@ -299,6 +330,50 @@ export class GymFormationScene<
 
     // ── Back to gym index ───────────────────────────────────────────
     addBackToIndexButton(this);
+
+    // Ensure any stale countdown state from a prior create() (e.g. after
+    // a manual _onRespawn that rebuilt the formation) is cleared so a
+    // fresh scene never starts mid-countdown.
+    this._cancelRespawnCountdown();
+
+    // Clean up the countdown overlay if the scene is torn down
+    // mid-countdown so a restart does not leak or double-fire.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this._cancelRespawnCountdown();
+      // The countdown overlay Text is a display-list child destroyed by the
+      // DisplayList shutdown; drop the reference so a restart's respawn
+      // creates a fresh overlay on the new display list.
+      this.countdownText = null;
+      // ── Full teardown: destroy and clear all scene-owned objects ──
+      // This prevents stale references from being iterated after a
+      // stop/restart of the same scene instance (the only restart
+      // vector in the gym index flow).  Phaser's DisplayList.shutdown
+      // already sets each display-list child's `scene = undefined`,
+      // but the bookkeeping arrays (`entities`, `bullets`,
+      // `playerBullets`) are never cleared — on a fresh create() they
+      // are populated again on top of the stale array, so tick() now
+      // iterates destroyed objects whose `scene` property is
+      // undefined.  Destroying them explicitly and clearing the arrays
+      // avoids that double-population.
+      for (const entity of this.entities) entity.destroy(true);
+      this.entities.length = 0;
+
+      for (const bullet of this.bullets) bullet.graphics.destroy();
+      this.bullets.length = 0;
+
+      for (const pb of this.playerBullets) pb.destroy();
+      this.playerBullets.length = 0;
+
+      for (const exp of this.playerExplosions) exp.destroy();
+      this.playerExplosions.length = 0;
+
+      // Null-out the player reference so any stale callback does not
+      // reach the destroyed ship.
+      this.player = null;
+
+      // Reset scene toggle state so a fresh create() starts clean.
+      this.shootEnabled = false;
+    });
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -352,6 +427,21 @@ export class GymFormationScene<
   /** Whether firing is currently enabled. */
   get shootingEnabled(): boolean {
     return this.shootEnabled;
+  }
+
+  /** True while the wipe → respawn countdown is active. */
+  isRespawnCountdownActive(): boolean {
+    return this.respawnCountdownActive;
+  }
+
+  /** Seconds remaining on the respawn countdown (0 when inactive). */
+  getRespawnCountdownRemaining(): number {
+    return this.respawnCountdownActive ? Math.max(0, this.respawnCountdown) : 0;
+  }
+
+  /** The centred countdown overlay text (null when not active / not yet created). */
+  getRespawnCountdownText(): Phaser.GameObjects.Text | null {
+    return this.countdownText;
   }
 
   /** Bullets currently in flight. */
@@ -511,6 +601,9 @@ export class GymFormationScene<
       this._handleCollisions();
       this._updatePlayerInvulnerability(dt);
     }
+
+    // ── Wipe detection → 3s countdown → formation respawn ───────────
+    this._tickRespawnCountdown(dt);
   }
 
   /**
@@ -595,8 +688,11 @@ export class GymFormationScene<
     const bulletHitRadius = this.getBulletHitRadius();
     const playerHull = SHIP_SIZE / 2;
 
-    // 1. Player bullets vs enemy entities: destroy the enemy, consume
-    //    the bullet. Rebuild the list so consumed bullets are dropped.
+    // 1. Player bullets vs enemy entities: damage the enemy, consume
+    //    the bullet. Multi-hit entities (Boss, GDD §4.3) expose
+    //    `takeDamage()` — each hit decrements one phase and only
+    //    destroys on the final phase. Single-HP enemies fall through
+    //    to `destroySelf()`. Rebuild the list so consumed bullets are dropped.
     const keptPlayerBullets: PlayerBullet[] = [];
     for (const pb of this.playerBullets) {
       let spent = false;
@@ -612,11 +708,17 @@ export class GymFormationScene<
             entityHitRadius,
           )
         ) {
-          entity.destroySelf();
-          if (entity.playDestructionAudio) {
-            entity.playDestructionAudio();
+          if (entity.takeDamage) {
+            // Multi-hit path (Boss): entity owns health, phase
+            // transition, and SFX — base scene only consumes the bullet.
+            entity.takeDamage();
           } else {
-            playDestructionSound();
+            entity.destroySelf();
+            if (entity.playDestructionAudio) {
+              entity.playDestructionAudio();
+            } else {
+              playDestructionSound();
+            }
           }
           pb.destroy();
           spent = true;
@@ -680,6 +782,36 @@ export class GymFormationScene<
       }
     }
     this.bullets = keptEnemyBullets;
+
+    // 4. Player body vs enemy body: when the player ship overlaps an
+    //    enemy entity, the enemy is destroyed and the player is hit
+    //    (explosion VFX/SFX + respawn + invulnerability). Skipped if
+    //    the player is currently invulnerable.
+    if (this.playerInvulnerable <= 0) {
+      for (const entity of this.entities) {
+        if (!entity.alive) continue;
+        if (
+          this._collide(
+            this.player.x,
+            this.player.y,
+            playerHull,
+            entity.x,
+            entity.y,
+            entityHitRadius,
+          )
+        ) {
+          entity.destroySelf();
+          // Only play the entity-specific destruction audio (if any).
+          // The generic destruction sound is already played by
+          // _hitPlayer(), so we avoid double-play.
+          if (entity.playDestructionAudio) {
+            entity.playDestructionAudio();
+          }
+          this._hitPlayer();
+          break;
+        }
+      }
+    }
   }
 
   /**
@@ -713,36 +845,111 @@ export class GymFormationScene<
   }
 
   /**
-   * Spawns a tweened expanding-ring explosion at (x, y) — the player
-   * equivalent of `Scout.playExplosion`. Tracked in `playerExplosions`
-   * so tests can observe the VFX without pixel assertions.
+   * Spawns the player-death particle burst at (x, y) — the player
+   * equivalent of an entity `playExplosion()`. Colours are tinted around
+   * `SHIP_COLOR` and the burst scales with `SHIP_SIZE`; the Graphics are
+   * tracked in `playerExplosions` so the SHUTDOWN handler (and tests) see
+   * them without pixel assertions, and the helper unregisters them on
+   * completion.
    */
   private _spawnPlayerExplosion(x: number, y: number): void {
-    const gfx = this.add.graphics({ x, y });
-    this.playerExplosions.push(gfx);
-    this.tweens.add({
-      targets: gfx,
-      alpha: { from: 1, to: 0 },
-      duration: 400,
-      onUpdate: () => {
-        const t = gfx.alpha;
-        const radius = 8 + 24 * (1 - t);
-        gfx.clear();
-        gfx.lineStyle(2, 0x00ffff, t);
-        gfx.strokeCircle(0, 0, radius);
-        gfx.beginPath();
-        gfx.moveTo(-radius, 0);
-        gfx.lineTo(radius, 0);
-        gfx.moveTo(0, -radius);
-        gfx.lineTo(0, radius);
-        gfx.strokePath();
-      },
-      onComplete: () => {
-        gfx.destroy();
-        const idx = this.playerExplosions.indexOf(gfx);
-        if (idx >= 0) this.playerExplosions.splice(idx, 1);
-      },
+    spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
+      patterns: resolvePatterns('player'),
+      registry: this.playerExplosions,
     });
+  }
+
+  // ── Wipe → 3s countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5) ─
+
+  private _startRespawnCountdown(): void {
+    this.respawnCountdownActive = true;
+    this.respawnCountdown = RESPAWN_COUNTDOWN_SECONDS;
+    if (!this.countdownText) {
+      this.countdownText = this.add
+        .text(
+          GAME_WIDTH / 2,
+          GAME_HEIGHT / 2,
+          this._countdownLabel(),
+          COUNTDOWN_STYLE,
+        )
+        .setOrigin(0.5)
+        .setDepth(100);
+    } else {
+      this.countdownText.setVisible(true);
+    }
+    this.countdownText.setText(this._countdownLabel());
+  }
+
+  private _countdownLabel(): string {
+    const n = Math.max(1, Math.ceil(this.respawnCountdown));
+    return `Respawning in ${n}...`;
+  }
+
+  private _cancelRespawnCountdown(): void {
+    this.respawnCountdownActive = false;
+    this.respawnCountdown = 0;
+    if (this.countdownText) {
+      this.countdownText.setVisible(false);
+    }
+  }
+
+  private _tickRespawnCountdown(dt: number): void {
+    // No formation → nothing to wipe.
+    if (this.entities.length === 0) return;
+
+    if (this.respawnCountdownActive) {
+      this.respawnCountdown = Math.max(0, this.respawnCountdown - dt);
+      if (this.countdownText) {
+        this.countdownText.setText(
+          this.respawnCountdown <= 0 ? 'Respawning...' : this._countdownLabel(),
+        );
+      }
+      if (this.respawnCountdown <= 0) {
+        this._respawnFormation();
+      }
+      return;
+    }
+
+    // Wipe signal: every entity is no longer alive (mid-explosion counts
+    // as killed, per `alive === false` after `destroySelf()`).
+    if (this.aliveCount === 0) {
+      this._startRespawnCountdown();
+    }
+  }
+
+  private _respawnFormation(): void {
+    // Clear enemy bullets so a stale shot does not instantly hit the player
+    // after the respawn. Player bullets are intentionally kept.
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets.length = 0;
+
+    // Tear down the old (dead) entities and recreate the formation at its
+    // initial geometry, matching the initial create() path.
+    const wasShooting = this.shootEnabled;
+    for (const entity of this.entities) entity.destroy();
+    this.entities.length = 0;
+    this.formationBaseX = this.config.startX;
+    this.formationBaseY = this.config.startY;
+    const offsets = this.config.buildOffsets(this.config.count);
+    for (const offset of offsets) {
+      const entity = this.config.createEntity(
+        this,
+        this.formationBaseX + offset.col * this.config.spacingX,
+        this.formationBaseY + offset.row * this.config.spacingY,
+        offset,
+      );
+      this.add.existing(entity);
+      this.entities.push(entity);
+    }
+    // Preserve SHOOT toggle across the respawn (no surprise toggle).
+    for (const entity of this.entities) entity.shootEnabled = wasShooting;
+
+    this._cancelRespawnCountdown();
+    if (this.countdownText) this.countdownText.setVisible(false);
+    this.statusText?.setText(
+      `SCORE: n/a — ${this.config.statusLabel}: ${this.entities.length}`,
+    );
+    playSpawnSound();
   }
 
   /** x-coordinate that puts the whole formation off the left edge. */

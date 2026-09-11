@@ -385,27 +385,81 @@ describe('engine activity (VFX integration)', () => {
 
 // ── Engine sound level (SFX integration) ────────────────────────────
 
-describe('engine sound level (SFX integration)', () => {
+describe('engine sound level (SFX integration) — thruster-scaled (AH-0MTFOSOHN001Q620)', () => {
   const fourDir = new FourDirectionalModel();
   const asteroids = new AsteroidsModel();
   const idleState = { x: 480, y: 270, vx: 0, vy: 0 };
+  const THR = 300; // FLAME_REF_THRUST
 
-  it('4-dir is silent when idle (AC5 SFX placeholder)', () => {
+  // ── AC1 / AC3: 4-dir idle = 0 ─────────────────────────────
+  it('4-dir is silent when idle', () => {
     expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput())).toBe(0);
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(), THR)).toBe(0);
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(), 0)).toBe(0);
   });
 
-  it('4-dir reports level 1 while any thrust key is held (AC5 SFX placeholder)', () => {
-    expect(
-      fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true, false, false, true)),
-    ).toBe(1);
+  // ── AC2: 4-dir scales with thrust ─────────────────────────
+  it('4-dir at reference thrust yields ~1 when any thrust key held', () => {
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true, false, false, false), THR)).toBeCloseTo(1);
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(false, false, true, false), THR)).toBeCloseTo(1);
   });
 
-  it('asteroids is silent when idle (AC5 SFX placeholder)', () => {
+  it('4-dir at half thrust yields ~0.5', () => {
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true), THR / 2)).toBeCloseTo(0.5);
+  });
+
+  it('4-dir at 2× thrust is clamped to 1', () => {
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true), THR * 2)).toBeCloseTo(1);
+  });
+
+  it('4-dir default (no thrustAcceleration arg) remains backward compatible => 1', () => {
+    // Callers that omit thrustAcceleration (e.g. legacy/docs) get the reference level.
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true, false, false, true))).toBe(1);
+  });
+
+  // ── AC3 / AC4: asteroids idle = 0 ─────────────────────────
+  it('asteroids is silent when idle', () => {
     expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput())).toBe(0);
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(), THR)).toBe(0);
   });
 
-  it('asteroids reports level 1 while thrusting or turning (AC5 SFX placeholder)', () => {
-    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(true))).toBe(1);
-    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(false, false, true))).toBe(1);
+  // ── AC4: asteroids scales similarly ───────────────────────
+  it('asteroids at reference thrust yields ~1 while thrusting or turning', () => {
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(true), THR)).toBeCloseTo(1);
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(false, false, true), THR)).toBeCloseTo(1);
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(false, true, false), THR)).toBeCloseTo(1);
+  });
+
+  it('asteroids at half thrust yields ~0.5', () => {
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(true), THR / 2)).toBeCloseTo(0.5);
+  });
+
+  it('asteroids at 2× thrust is clamped to 1', () => {
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(true), THR * 2)).toBeCloseTo(1);
+  });
+
+  // ── AC5: thrust = 0 => 0 regardless of keys ───────────────
+  it('level is 0 when thrustAcceleration is 0, regardless of key state', () => {
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true), 0)).toBe(0);
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true, true), 0)).toBe(0);
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(true), 0)).toBe(0);
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(false, true, true), 0)).toBe(0);
+  });
+
+  it('negative thrustAcceleration also yields 0', () => {
+    expect(fourDir.getEngineSoundLevel(idleState, fourDirectionalInput(true), -1)).toBe(0);
+    expect(asteroids.getEngineSoundLevel(idleState, asteroidsInput(true), -50)).toBe(0);
+  });
+
+  // ── Also: result always in [0, 1] range ───────────────────
+  it('returns values in [0, 1] for a range of thrust values', () => {
+    for (const thrust of [0, 1, 150, 300, 600, 1000]) {
+      for (const input of [fourDirectionalInput(true), asteroidsInput(true)]) {
+        const model = (input as unknown as { up: boolean })?.up !== undefined ? fourDir : asteroids;
+        const level = model.getEngineSoundLevel(idleState, input, thrust);
+        expect(level).toBeGreaterThanOrEqual(0);
+        expect(level).toBeLessThanOrEqual(1);
+      }
+    }
   });
 });

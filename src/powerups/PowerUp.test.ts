@@ -30,16 +30,16 @@ import {
 
 const TEST_GROW_DURATION = 0.5; // seconds
 const TEST_SHRINK_DURATION = 0.5; // seconds
-const TEST_TOTAL_LIFETIME = 5; // seconds
+const TEST_TOTAL_LIFETIME = POWER_UP_LIFETIME; // seconds — mirrors POWER_UP_LIFETIME (12.5 s, 2.5× original)
 
 // ── Constants tests ─────────────────────────────────────────────────
 
 describe('power-up lifecycle constants', () => {
-  it('defines a positive spawn interval (5 s default)', () => {
+  it('defines a positive spawn interval (12.5 s default)', () => {
     expect(POWER_UP_SPAWN_INTERVAL).toBeGreaterThan(0);
   });
 
-  it('defines a positive total lifetime (5 s default)', () => {
+  it('defines a positive total lifetime (12.5 s default)', () => {
     expect(POWER_UP_LIFECYCLE_TOTAL_LIFETIME).toBeGreaterThan(0);
   });
 
@@ -67,12 +67,16 @@ describe('power-up lifecycle constants', () => {
 // ── Catalogue tests ─────────────────────────────────────────────────
 
 describe('power-up catalogue (types)', () => {
-  it('contains exactly three non-combat types: P5, P8, P9', () => {
+  it('contains the non-combat types P5, P8, P9 (plus combat P3,P4,P6,P7)', () => {
     const ids = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
-    expect(ids).toHaveLength(3);
     expect(ids).toContain('P5');
     expect(ids).toContain('P8');
     expect(ids).toContain('P9');
+    // Combat gym adds P3,P4,P6,P7 (AH-0MTC2P6G3007PJ40)
+    expect(ids).toContain('P3');
+    expect(ids).toContain('P4');
+    expect(ids).toContain('P6');
+    expect(ids).toContain('P7');
   });
 
   it('P5 is Speed Boost', () => {
@@ -111,7 +115,7 @@ describe('round-robin spawner AC2: spawn cadence', () => {
   });
 
   it('spawn interval equals drop lifetime — the next spawn coincides with the previous despawn (exactly one drop on screen)', () => {
-    // One spawn every 5 s, 5 s lifetime → at every spawn tick the previous
+    // One spawn every 12.5 s, 12.5 s lifetime → at every spawn tick the previous
     // drop has just finished fading, so at most one drop exists at a time.
     expect(POWER_UP_SPAWN_INTERVAL).toBe(POWER_UP_LIFECYCLE_TOTAL_LIFETIME);
   });

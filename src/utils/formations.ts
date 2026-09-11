@@ -139,3 +139,34 @@ export function buildRectFormationOffsets(count: number): FormationOffset[] {
   }
   return offsets;
 }
+
+// ── Registry consumed by the enemy-config pipeline (AH-0MTFP7EIC004F1MN) ──
+
+/** Extra formation used by the Phaser orbital path (phase columns). */
+export function buildOrbitalPhaseOffsets(count: number): FormationOffset[] {
+  const offsets: FormationOffset[] = [];
+  for (let i = 0; i < count; i++) offsets.push({ row: 0, col: i });
+  return offsets;
+}
+
+/** Single-entity formation for the Boss. */
+export function buildSingleOffset(_count: number): FormationOffset[] {
+  return [{ row: 0, col: 0 }];
+}
+
+export type EnemyFormationKind = 'v' | 'diver' | 'rect' | 'swarm' | 'orbital' | 'single';
+
+export const FORMATION_BUILDERS: Record<EnemyFormationKind, (count: number) => FormationOffset[]> = {
+  v: buildVFormationOffsets,
+  diver: buildDiverFormationOffsets,
+  rect: buildRectFormationOffsets,
+  swarm: buildSwarmClusterOffsets,
+  orbital: buildOrbitalPhaseOffsets,
+  single: buildSingleOffset,
+};
+
+/** Returns a builder for `kind`, falling back to `v` for unknown/invalid values. */
+export function getFormationBuilder(kind: string): (count: number) => FormationOffset[] {
+  if (kind in FORMATION_BUILDERS) return FORMATION_BUILDERS[kind as EnemyFormationKind];
+  return buildVFormationOffsets;
+}

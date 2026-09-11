@@ -13,8 +13,8 @@
  * A 4-phase health bar is displayed at the top of the screen. Each phase
  * depletes independently and transitions to the next attack pattern.
  *
- * Standalone gym scope: no player ship, no other enemy types, no HUD
- * beyond the health bar, no power-ups.
+ * Standalone gym scope: player ship for combat testing, no other enemy
+ * types, no HUD beyond the health bar, no power-ups.
  *
  * On-screen controls:
  *
@@ -33,7 +33,11 @@
 
 import Phaser from 'phaser';
 
-import { Boss, BOSS_PHASE_COUNT, BossBullet } from '../../entities/Boss';
+import {
+  Boss,
+  BOSS_PHASE_COUNT,
+  BossBullet,
+} from '../../entities/Boss';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { FormationOffset } from '../../utils/formations';
 import {
@@ -41,6 +45,10 @@ import {
   GymFormationScene,
   FormationSceneBullet,
 } from './core/GymFormationScene';
+
+/** Player spawn position for the Boss gym (bottom centre, same as GymEnemies). */
+const BOSS_PLAYER_SPAWN_X = GAME_WIDTH / 2;
+const BOSS_PLAYER_SPAWN_Y = GAME_HEIGHT - 40;
 
 /** Initial formation base position (Boss is centred). */
 export const BOSS_FORMATION_START_X = GAME_WIDTH / 2;
@@ -78,6 +86,10 @@ const BOSS_CONFIG: EnemyFormationConfig<
   startY: BOSS_FORMATION_START_Y,
   statusLabel: 'boss',
   hintText: 'Boss (Central AI) gym — 4-phase health & attack patterns',
+  player: {
+    x: BOSS_PLAYER_SPAWN_X,
+    y: BOSS_PLAYER_SPAWN_Y,
+  },
   createEntity: (
     scene: Phaser.Scene,
     x: number,
@@ -137,7 +149,11 @@ export class GymBoss extends GymFormationScene<
   override update(_time: number, delta: number): void {
     const dt = delta / 1000;
 
-    // Advance the Boss's attack state machine.
+    // Run the base class tick to handle player input, auto-fire,
+    // collision detection, bullet advancement, and formation positioning.
+    super.tick(dt);
+
+    // Advance the Boss's attack state machine and collect its bullets.
     const boss = this.formationEntities[0] as Boss;
     const bossBullets = boss.update(
       this.time.now,
@@ -146,40 +162,16 @@ export class GymBoss extends GymFormationScene<
       GAME_HEIGHT,
     );
 
-    // Collect Boss bullets into the base class bullet array.
-    // (Skip pulse waves — Boss manages them directly.)
+    // Add Boss bullets to the base class bullet collection (skip
+    // pulse waves — Boss manages their radius expansion separately).
     for (const bullet of bossBullets) {
-      if ('isPulseWave' in bullet && bullet.isPulseWave) {
-        // Pulse wave — already managed by Boss.
-      } else {
+      if (!('isPulseWave' in bullet && bullet.isPulseWave)) {
         this.bullets.push(bullet);
       }
     }
 
-    // ── Formation drift (Boss doesn't drift, but base class needs it) ─
-    this.formationBaseX += BOSS_FORMATION_DRIFT_SPEED * dt;
-
-    // Position the Boss.
-    for (const entity of this.entities) {
-      entity.applyFormationPosition(
-        this.formationBaseX,
-        this.formationBaseY,
-        dt,
-        BOSS_FORMATION_SPACING_X,
-        BOSS_FORMATION_SPACING_Y,
-      );
-    }
-
-    // ── Bullet advance & off-screen removal ───────────────────────
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const bullet = this.bullets[i];
-      bullet.graphics.x += bullet.vx * dt;
-      bullet.graphics.y += bullet.vy * dt;
-      if (this._bulletOffScreen(bullet.graphics)) {
-        bullet.graphics.destroy();
-        this.bullets.splice(i, 1);
-      }
-    }
+    // Advance pulse waves (radius-based, not velocity-based).
+    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
   // ── Damage button handler ───────────────────────────────────────

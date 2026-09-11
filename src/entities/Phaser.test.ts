@@ -6,10 +6,18 @@ import * as effectsModule from '../audio/effects';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FormationOffset } from '../utils/formations';
 import {
+  colorToHSL,
+  EXPLOSION_HUE_JITTER_DEG,
+  resolvePatterns,
+  scaledCount,
+} from '../vfx/explosionParticles';
+import {
   PHASER_ADVANCE_CUE_DURATION,
   PHASER_BULLET_SPEED,
   PHASER_COLOR,
+  PHASER_COLOR_NUMBER,
   PHASER_FIRE_INTERVAL,
+  PHASER_SIZE,
   PhaserEntity,
   PhaserConfig,
 } from './Phaser';
@@ -113,6 +121,29 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
     expect(effectsModule.playDestructionSound).not.toHaveBeenCalled();
   });
 
+  it('destruction spawns a ring+implosion particle burst tinted around the Phaser magenta (AC1)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = makePhaser(100, 100);
+    expect(phaser.getExplosionHandles().length).toBe(0);
+
+    phaser.destroySelf();
+
+    const handles = phaser.getExplosionHandles();
+    expect(handles.length).toBe(1);
+    expect(handles[0].patterns).toEqual(resolvePatterns('phaser'));
+    expect(handles[0].patterns).toEqual(['ring', 'implosion']);
+    expect(handles[0].totalCount).toBe(scaledCount(PHASER_SIZE));
+
+    const base = colorToHSL(PHASER_COLOR_NUMBER);
+    for (const p of handles[0].particles) {
+      const hsl = colorToHSL(p.color);
+      let delta = Math.abs(hsl.h - base.h) % 360;
+      if (delta > 180) delta = 360 - delta;
+      // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
+      expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
+    }
+  });
+
   it('AC5 — the fire interval still gates repeating cycles while aiming', async () => {
     booted = await bootScene([HarnessScene]);
     const phaser = makePhaser(240, 300);
@@ -139,5 +170,41 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
       nextStart + PHASER_ADVANCE_CUE_DURATION,
     );
     expect(second).toHaveLength(8);
+  });
+
+  describe('scene-less (stale) phaser — AH-0MTPLHLZ3006MOC4 AC3', () => {
+    it('AC3 — applyFormationPosition no longer reads a live scene (a display-list-destroyed phaser with scene undefined ticks without throwing)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const phaser = makePhaser(240, 300);
+
+      // Simulate Phaser's DisplayList.shutdown: destroys the object and sets
+      // its `scene` to undefined (GameObject.destroy).  The stale object may
+      // still sit in the scene's bookkeeping array with _alive === true.
+      (phaser as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+      expect(phaser.alive).toBe(true);
+
+      // The per-frame orbital update must not dereference `this.scene`
+      // (the old code read scene.time.now here and threw on frame one).
+      expect(() =>
+        phaser.applyFormationPosition(240, 300, 0.016, 0, 0),
+      ).not.toThrow();
+      for (let i = 0; i < 60; i++) {
+        phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+      }
+      // The orbit still advances via its local phase accumulator.
+      expect(phaser.x).not.toBe(240);
+      expect(phaser.y).not.toBe(300);
+    });
+
+    it('AC — destroySelf on a scene-less phaser never throws (null-scene playExplosion guard)', async () => {
+      booted = await bootScene([HarnessScene]);
+      const phaser = makePhaser(100, 100);
+      (phaser as unknown as { scene: Phaser.Scene | undefined }).scene =
+        undefined;
+
+      expect(() => phaser.destroySelf()).not.toThrow();
+      expect(phaser.alive).toBe(false);
+    });
   });
 });
