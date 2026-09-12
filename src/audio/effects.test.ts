@@ -25,6 +25,14 @@ import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
+  playDiverFireSound,
+  playDiverDestructionSound,
+  playDiverDiveStartSound,
+  playDiveSound,
+  stopDiveSound,
+  DIVER_DIVE_SOUND_DURATION,
+  _getDiverDiveSoundStateForTests,
+  _getDiverDiveSoundRefCountForTests,
   THRUSTER_HUM_MAX_VOLUME,
   THRUSTER_HUM_GROWTH_TIME,
   THRUSTER_HUM_SHRINK_MULTIPLIER,
@@ -171,11 +179,11 @@ class RecordingAudioContext {
       buffer: null,
       loop: false,
       connect: () => ({ connect: () => ({}) }),
-      start: (_t: number) => {
-        rec.startTime = 0;
+      start: (t: number) => {
+        rec.startTime = t;
       },
-      stop: (_t: number) => {
-        rec.stopTime = 0;
+      stop: (t: number) => {
+        rec.stopTime = t;
       },
     };
   }
@@ -184,7 +192,11 @@ class RecordingAudioContext {
   createBiquadFilter(): unknown {
     return {
       type: 'lowpass' as const,
-      frequency: { setValueAtTime: () => {} },
+      frequency: {
+        setValueAtTime: () => {},
+        exponentialRampToValueAtTime: () => {},
+        linearRampToValueAtTime: () => {},
+      },
       Q: { setValueAtTime: () => {} },
       connect: () => ({}),
     };
@@ -272,6 +284,115 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
     }
+  });
+
+  it('diver dive sounds also degrade to safe no-ops (AH-0MTVYC6E8005YN6F)', () => {
+    expect(() => playDiverDiveStartSound()).not.toThrow();
+    expect(() => playDiveSound()).not.toThrow();
+    expect(() => stopDiveSound()).not.toThrow();
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+});
+
+describe('diver dive sounds — synthesis + lifecycle (AH-0MTVYC6E8005YN6F)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // re-prime after the reset cleared the cache
+  });
+
+  it('dive-start cue: rising sawtooth + noise whoosh, ~250 ms, ≤ 0.2 volume', () => {
+    const snap = snapshot();
+    playDiverDiveStartSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Sawtooth ascent layer + noise texture layer.
+    expect(oscs).toHaveLength(2);
+    const sweep = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(sweep).toBeDefined();
+    expect(sweep.freqEvents[0].value).toBe(150);
+    const lastSweep = sweep.freqEvents[sweep.freqEvents.length - 1];
+    expect(lastSweep.value).toBe(600);
+    expect(sweep.stopTime! - sweep.startTime!).toBeGreaterThanOrEqual(0.25);
+    expect(sweep.stopTime! - sweep.startTime!).toBeLessThanOrEqual(0.3);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('dive-start cue is distinct from the fire crack and destruction fall', () => {
+    const snap = snapshot();
+    playDiverFireSound();
+    playDiverDestructionSound();
+    playDiverDiveStartSound();
+    const oscs = newOscillators(snap);
+
+    // Fire = 280→120 over 80 ms; destruction main = 280→40 over 350 ms;
+    // dive-start = 150→600 rising over 250 ms — unique rising contour.
+    const contours = oscs
+      .filter((o) => o.type === 'sawtooth')
+      .map((o) => ({
+        start: o.freqEvents[0].value,
+        end: o.freqEvents[o.freqEvents.length - 1].value,
+      }));
+    const rising = contours.filter((c) => c.end > c.start);
+    expect(rising).toHaveLength(1);
+    expect(rising[0].start).toBe(150);
+    expect(rising[0].end).toBe(600);
+  });
+
+  it('sustained dive sound: starts nodes, stops cleanly, state clears', () => {
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    playDiveSound();
+    expect(_getDiverDiveSoundStateForTests()).not.toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(1);
+    stopDiveSound();
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+
+  it('sustained dive sound: envelope covers the ~2 s dive duration', () => {
+    expect(DIVER_DIVE_SOUND_DURATION).toBe(2);
+    const snap = snapshot();
+    playDiveSound();
+    const oscs = newOscillators(snap);
+    // One noise texture node; its stop window covers the full dive + tail.
+    expect(oscs).toHaveLength(1);
+    expect(oscs[0].type).toBe('noise');
+    expect(oscs[0].stopTime! - oscs[0].startTime!).toBeGreaterThanOrEqual(
+      DIVER_DIVE_SOUND_DURATION,
+    );
+    stopDiveSound();
+  });
+
+  it('sustained dive sound: overlapping starts share one voice, last stop frees it', () => {
+    playDiveSound();
+    const first = _getDiverDiveSoundStateForTests();
+    playDiveSound(); // second concurrent diver
+    // Same shared voice, refcount bumped — no node duplication.
+    expect(_getDiverDiveSoundStateForTests()).toBe(first);
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(2);
+    stopDiveSound(); // first diver ends
+    expect(_getDiverDiveSoundStateForTests()).not.toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(1);
+    stopDiveSound(); // last diver ends → teardown
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+
+  it('stopDiveSound is a safe no-op when no dive sound is active', () => {
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(() => stopDiveSound()).not.toThrow();
   });
 });
 

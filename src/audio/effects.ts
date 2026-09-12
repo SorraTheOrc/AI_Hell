@@ -290,6 +290,11 @@ export function _resetAudioContextForTests(): void {
     teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
   }
   thrusterHum = null;
+  if (diverDiveSound) {
+    teardownDiveSound(diverDiveSound.ctx.currentTime, 0);
+  }
+  diverDiveSound = null;
+  diverDiveSoundRefCount = 0;
   audioCtx = null;
 }
 
@@ -601,6 +606,198 @@ export function playScoutAdvanceCue(): void {
 }
 
 // ── Diver enemy cues (GDD §4.1 — E2 Diver) ─────────────────────────
+
+/**
+ * Duration (seconds) of the sustained dive sound — matches `DIVER_DIVE_DURATION`.
+ *
+ * The dive sound plays from the FORMATION→DIVING transition until the
+ * DIVING→RETURNING transition, so the envelope must cover the full
+ * ~2 s dive arc. Tied to `Diver.DIVER_DIVE_DURATION` in `Diver.ts`.
+ */
+export const DIVER_DIVE_SOUND_DURATION = 2;
+
+/**
+ * Rising whoosh / crack — E2 Diver dive-start cue (AH-0MTVYC6E8005YN6F).
+ *
+ * A short rising sawtooth sweep (150 → 600 Hz, ~250 ms) layered with
+ * filtered white noise for a "breach" character — evokes the diver
+ * suddenly breaking formation and plunging toward the player. Played
+ * exactly once at the FORMATION→DIVING transition (in `_startDive()`),
+ * distinct from the fire crack, the destruction sound, and all other
+ * enemy cues. Safe no-op without an AudioContext.
+ */
+export function playDiverDiveStartSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const dur = 0.25;
+
+  // Rising sawtooth: the "crack" / whoosh ascent.
+  const osc = ctx.createOscillator();
+  const oscGain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(150, t);
+  osc.frequency.exponentialRampToValueAtTime(600, t + dur);
+  oscGain.gain.setValueAtTime(0.12, t);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(oscGain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+
+  // Noise layer: adds the "whoosh" texture of breaking through water.
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(300, t);
+  noiseFilter.frequency.exponentialRampToValueAtTime(1200, t + dur);
+  noiseFilter.Q.setValueAtTime(0.8, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.06, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ctx.destination);
+  noise.start(t);
+  noise.stop(t + dur + 0.02);
+}
+
+// ── Diver sustained dive sound ──────────────────────────────────────
+//
+// A continuous noise-sweep texture that plays while a diver is in
+// the DIVING state (≈ 2 s). Concurrent divers share one refcounted
+// voice: the first playDiveSound() creates the nodes, overlapping
+// dives only bump the refcount, and the nodes are torn down when the
+// last active dive calls stopDiveSound(). This keeps entity wiring
+// simple (plain start/stop calls, no per-dive handles) while tolerating
+// overlapping dives. The sound is bounded: start at FORMATION→DIVING,
+// stop at DIVING→RETURNING, destroySelf(), or destroy(). No oscillator
+// leak on destruction.
+
+interface DiverDiveSoundState {
+  ctx: AudioContext;
+  /** Band-pass filtered white-noise source for the dive whoosh texture. */
+  noise: AudioBufferSourceNode;
+  /** Filter shaping noise into a jet-like dive roar. */
+  filter: BiquadFilterNode;
+  gain: GainNode;
+}
+
+let diverDiveSound: DiverDiveSoundState | null = null;
+/** Active dive count holding the shared dive-sound voice. */
+let diverDiveSoundRefCount = 0;
+
+/** For tests: returns the current dive sound state (or null if not started). */
+export function _getDiverDiveSoundStateForTests(): DiverDiveSoundState | null {
+  return diverDiveSound;
+}
+
+/** For tests: returns how many active dives hold the shared voice. */
+export function _getDiverDiveSoundRefCountForTests(): number {
+  return diverDiveSoundRefCount;
+}
+
+/**
+ * Internal: tears down all dive sound AudioNodes and clears state.
+ */
+function teardownDiveSound(ctxTime: number, stopOffset: number): void {
+  try {
+    if (!diverDiveSound) return;
+    diverDiveSound.gain.gain.cancelScheduledValues(ctxTime);
+    diverDiveSound.gain.gain.setValueAtTime(0, ctxTime);
+    diverDiveSound.noise.stop(ctxTime + stopOffset);
+  } catch { /* already stopped / no ctx */ }
+  diverDiveSound = null;
+  diverDiveSoundRefCount = 0;
+}
+
+/**
+ * Starts (or shares) the sustained dive sound — continuous whoosh texture
+ * during the ~2 s dive (AH-0MTVYC6E8005YN6F).
+ *
+ * A band-pass filtered white-noise sweep (300 → 900 Hz) through a gain
+ * node, producing a jet-engine-like roar that evokes the diver charging
+ * through water toward the player. The voice is shared and refcounted:
+ * a second concurrent dive only bumps the hold count instead of stealing
+ * or duplicating the first diver's nodes.
+ *
+ * Safe no-op without an AudioContext.
+ */
+export function playDiveSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  // Shared voice already live (another diver mid-dive) → just refcount.
+  if (diverDiveSound) {
+    diverDiveSoundRefCount += 1;
+    return;
+  }
+
+  // Create a fresh noise source for this dive instance.
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    ctx.sampleRate * DIVER_DIVE_SOUND_DURATION,
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = true;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(300, ctx.currentTime);
+  filter.frequency.exponentialRampToValueAtTime(
+    900,
+    ctx.currentTime + DIVER_DIVE_SOUND_DURATION,
+  );
+  filter.Q.setValueAtTime(0.6, ctx.currentTime);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.1, ctx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.1);
+  gain.gain.setValueAtTime(0.1, ctx.currentTime + DIVER_DIVE_SOUND_DURATION - 0.2);
+  gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + DIVER_DIVE_SOUND_DURATION);
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+  noise.start(ctx.currentTime);
+  noise.stop(ctx.currentTime + DIVER_DIVE_SOUND_DURATION + 0.02);
+
+  diverDiveSound = { ctx, noise, filter, gain };
+  diverDiveSoundRefCount = 1;
+}
+
+/**
+ * Releases one dive's hold on the sustained dive sound.
+ *
+ * Called when a dive ends (DIVING→RETURNING), when the diver is
+ * destroyed mid-dive, or on scene teardown. The shared voice is torn
+ * down only when the last active dive releases it, so overlapping
+ * dives never cut each other off. Safe no-op if no sound is playing.
+ */
+export function stopDiveSound(): void {
+  if (!diverDiveSound) return;
+  // Other dives still active → release one hold, keep the voice live.
+  if (diverDiveSoundRefCount > 1) {
+    diverDiveSoundRefCount -= 1;
+    return;
+  }
+  teardownDiveSound(diverDiveSound.ctx.currentTime, 0.02);
+}
 
 /**
  * Short low/nasal crack — E2 Diver fire sound (GDD §7.3).

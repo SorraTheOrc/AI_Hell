@@ -132,6 +132,172 @@ describe('Diver entity (E2 diver, GDD §4.1 — live aim tracking)', () => {
   });
 });
 
+describe('Diver entity — dive SFX (AH-0MTVYC6E8005YN6F)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    // Restore (not just clear) so the cleanup stopDiveSound() below runs
+    // on the real function and is not recorded by any test's spy.
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    // Reset module-level dive sound state.
+    effectsModule.stopDiveSound();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset });
+  }
+
+  /**
+   * Advances ticks until the diver reaches the target state (or gives up
+   * after maxTicks). Returns the ticks used.
+   */
+  function advanceToState(
+    diver: Diver,
+    baseX: number,
+    baseY: number,
+    target: DiverState,
+    maxTicks = 50,
+  ): void {
+    for (let i = 0; i < maxTicks && diver.behaviourState !== target; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+  }
+
+  it('AC — dive-start cue fires exactly once per dive transition', async () => {
+    booted = await bootScene([HarnessScene]);
+    const spy = vi.spyOn(effectsModule, 'playDiverDiveStartSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Hold in formation until the dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Dive completes, returns through RETURNING to FORMATION (no extra cue).
+    advanceToState(diver, baseX, baseY, DiverState.FORMATION);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Next dive cycle fires the cue again.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — sustained dive sound start/stop pair is called at correct lifecycle points', async () => {
+    booted = await bootScene([HarnessScene]);
+    const startSpy = vi.spyOn(effectsModule, 'playDiveSound');
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Before dive: neither function called.
+    expect(startSpy).toHaveBeenCalledTimes(0);
+    expect(stopSpy).toHaveBeenCalledTimes(0);
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+
+    // Dive completes → RETURNING (stop called at DIVING→RETURNING)
+    // → FORMATION.
+    advanceToState(diver, baseX, baseY, DiverState.FORMATION);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+
+    // Next dive cycle: start again.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — no oscillator leak when destroyed mid-dive (stopDiveSound called)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Destroy mid-dive.
+    diver.destroySelf();
+    expect(diver.alive).toBe(false);
+    // stopDiveSound must be called to prevent oscillator leak.
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC — no oscillator leak on destroy() (stopDiveSound called)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Call destroy() (full teardown).
+    diver.destroy();
+    // stopDiveSound must be called to prevent oscillator leak.
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC — overlapping dives pair start/stop per diver (shared-voice refcount covered in effects.test.ts)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const startSpy = vi.spyOn(effectsModule, 'playDiveSound');
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diverA = makeDiver(baseX, baseY, { row: 0, col: 0 });
+    const diverB = makeDiver(baseX, baseY, { row: 1, col: 1 });
+
+    // Both divers hold into DIVING — one sustained-sound start each.
+    advanceToState(diverA, baseX, baseY, DiverState.DIVING);
+    advanceToState(diverB, baseX, baseY, DiverState.DIVING);
+    expect(diverA.behaviourState).toBe(DiverState.DIVING);
+    expect(diverB.behaviourState).toBe(DiverState.DIVING);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+
+    // Diver A destroyed mid-dive releases its hold exactly once.
+    diverA.destroySelf();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+
+    // Diver B ending its dive releases the second hold — starts and
+    // stops stay paired even with overlapping dives.
+    advanceToState(diverB, baseX, baseY, DiverState.FORMATION);
+    expect(stopSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — dive sounds degrade to no-ops in headless (no AudioContext)', async () => {
+    // These functions must never throw even without a working AudioContext.
+    // The effects module is shared; we just verify the calls are safe.
+    expect(() => effectsModule.playDiverDiveStartSound()).not.toThrow();
+    expect(() => effectsModule.playDiveSound()).not.toThrow();
+    expect(() => effectsModule.stopDiveSound()).not.toThrow();
+    expect(effectsModule._getDiverDiveSoundStateForTests()).toBeNull();
+  });
+});
+
 describe('Diver entity — audio (GDD §7.3, Diver fire/destruction sounds)', () => {
   let booted: BootedGame | null = null;
 

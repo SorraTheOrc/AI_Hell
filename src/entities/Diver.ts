@@ -26,6 +26,9 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT } from '../core/constants';
 import {
   playDiverDestructionSound,
+  playDiverDiveStartSound,
+  playDiveSound,
+  stopDiveSound,
   playDiverFireSound,
 } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
@@ -134,6 +137,8 @@ export class Diver extends Phaser.GameObjects.Container {
   private _diveCol = 0;
   private _diveRow = 0;
   private _returnProgress = 0;
+  /** Tracks whether a sustained dive sound is active (for no-leak on destroy). */
+  private _diveSoundActive = false;
   /** Local phase accumulator for the idle wiggle (replaces `scene.time.now`.
    *  Allows the entity to compute its wiggle offset without a `scene` ref,
    *  which is required for correctness when the entity is stale after a
@@ -320,6 +325,11 @@ export class Diver extends Phaser.GameObjects.Container {
     if (!this._alive) return;
     this._alive = false;
     this.bodyGraphics.setAlpha(0);
+    // Silence any sustained dive sound to prevent oscillator leak.
+    if (this._diveSoundActive) {
+      stopDiveSound();
+      this._diveSoundActive = false;
+    }
     this.playExplosion();
   }
 
@@ -492,6 +502,13 @@ export class Diver extends Phaser.GameObjects.Container {
     this._holdTimer = 0;
     this._divePhase = 0;
 
+    // Play the dive-start cue exactly once at the FORMATION→DIVING transition.
+    playDiverDiveStartSound();
+
+    // Start the sustained dive sound — plays for the full dive duration.
+    playDiveSound();
+    this._diveSoundActive = true;
+
     this._diveStartX = formationPos.x;
     this._diveStartY = formationPos.y;
 
@@ -515,6 +532,9 @@ export class Diver extends Phaser.GameObjects.Container {
       this._divePhase = 1;
       this._state = DiverState.RETURNING;
       this._returnProgress = 0;
+      // Stop the sustained dive sound when the dive ends.
+      stopDiveSound();
+      this._diveSoundActive = false;
       return;
     }
 
@@ -584,6 +604,12 @@ export class Diver extends Phaser.GameObjects.Container {
   }
 
   destroy(fromScene?: boolean): void {
+    // Silence any sustained dive sound to prevent oscillator leak on
+    // scene teardown / stop→restart (AH-0MTPLHLZ3006MOC4 precedent).
+    if (this._diveSoundActive) {
+      stopDiveSound();
+      this._diveSoundActive = false;
+    }
     this.bodyGraphics.destroy();
     this.explosionGraphics.destroy();
     // Scene-level particle Graphics are NOT display-list children —
