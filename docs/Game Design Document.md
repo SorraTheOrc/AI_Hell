@@ -29,7 +29,7 @@
 | **A / Arrow Left** | Move left |
 | **D / Arrow Right** | Move right |
 | **Auto-fire** | Continuous (always active) |
-| **Space** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
+| **S / ↓** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
 
 > **Control schemes:** the ship honours the player's **saved control scheme**,
 > applied in every gym scene (enemy, power-up and weapons) via
@@ -67,7 +67,7 @@
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
 - **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
-- **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with Space), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **Space bar** activates the teleport power-up while the player holds at least one Teleport power-up.
+- **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with S or ↓), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **S key or ↓** activates the teleport power-up while the player holds at least one Teleport power-up.
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
 ### 2.4 The "Enemies Are the Bullets" Design
@@ -204,13 +204,13 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
-| P7 | **Teleport** *(collectable)* | Press Space to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
+| P7 | **Teleport** *(collectable)* | Press S or ↓ to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
 | P9 | **Magnet** *(permanent, passive)* | Collecting this power-up permanently attracts **all power-up drops on screen** — including rare types such as P8 Extra Life — toward the player ship, making pickups easier to grab during dense bullet patterns. It is a **permanent** effect for the rest of the run (no activation key required, nothing is consumed), unlike the timed P1–P6 effects. Collecting additional Magnets **stacks**, increasing the attraction radius by **+50% per stack**, starting from a **base radius of 2× the player ship size**, up to a **cap of 5 stacks**. The attraction speed is **slower than the ship's movement speed**, so the player must still move toward the power-up — or remain stationary for it to drift in — to collect it. | Horseshoe magnet with neon glow |
 
 > **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
 
-> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when Space is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
+> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when S or ↓ is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
 
 > **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
 
@@ -218,7 +218,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **persistent** (non-timed) semantics per operator decision, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and instant weapon switching on collection. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the weapon slot + fire cooldown and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
 
-> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, Space → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. Space consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
+> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
 
 ### 4.5 Scoring System
 
@@ -315,7 +315,7 @@ src/
 │       ├── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
 │       ├── GymPowerUpsCombat.ts — combat-coupled power-up gym (key GymPowerUpsCombat, label "PowerUpsCombat"):
-│       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (Space)
+│       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (S/↓)
 │       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
 │       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
@@ -508,7 +508,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Category | Event | Sound Character | Volume | Lead Time |
 |----------|-------|-----------------|--------|-----------|
 | **Interactions** | Power-up pickup | Bright, ascending blip | Medium-high | Immediate |
-| **Interactions** | Teleport activate (Space) | Short whoosh + portal effect | Medium | Immediate |
+| **Interactions** | Teleport activate (S/↓) | Short whoosh + portal effect | Medium | Immediate |
 | **Impacts** | Player hit (life lost) | Low, jarring zap | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
@@ -615,7 +615,7 @@ All clarifying questions and their answers from the intake process are captured 
 4. **Engine selected** — Phaser (TypeScript/HTML5) is the locked engine choice. The engine policy bans UI-heavy engines (Godot/Unity); Phaser satisfies the code-first constraint.
 5. **Living document** — The GDD is not rigid; it may be edited during development with worklog-tracked changes.
 6. **Local leaderboard** — Simple `localStorage` for the MVP; no backend required.
-7. **Controls** — WASD/Arrow keys, auto-fire, Space for teleport power-up.
+7. **Controls** — WASD/Arrow keys, auto-fire, S or ↓ for teleport power-up.
 8. **Tron-inspired neon vector aesthetic** — Confirmed.
 9. **Magnet power-up (P9)** — Confirmed via interactive intake for AH-0MT7VE4SX0005A8V:
    - **Duration/stacking model** (Q: "Temporary timed effect or permanent upgrade?") — Answer: **permanent**; each pickup permanently increases the attraction radius for the rest of the run.

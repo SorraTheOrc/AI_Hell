@@ -9,7 +9,7 @@
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (does not damage
  *   1-HP scouts, GDD §4.4); no enemy damage.
  * - **P6 Phase Shift** — 3 s intangibility, pass-through enemies/bullets.
- * - **P7 Teleport** — stored FIFO stacks; Space teleports to the nearest
+ * - **P7 Teleport** — stored FIFO stacks; S or ↓ teleports to the nearest
  *   safe spot free of enemies/bullets in the direction of travel,
  *   clamped to screen bounds; grants P6 (3 s) on arrival. If no safe
  *   spot exists, teleports to the nearest on-screen position along
@@ -35,7 +35,7 @@
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *
- * Teleport (Space): consumes one P7 stack FIFO, warps to the nearest safe
+ * Teleport (S/↓): consumes one P7 stack FIFO, warps to the nearest safe
  * spot along the heading ray, clamped to screen bounds, then applies P6.
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
@@ -226,7 +226,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   // Input
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
-  private spaceKey: Phaser.Input.Keyboard.Key | undefined;
+  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
+  private downKey: Phaser.Input.Keyboard.Key | undefined;
   private fourDirHandler = new FourDirectionalInputHandler();
   private asteroidsHandler = new AsteroidsInputHandler();
 
@@ -269,7 +270,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    this.spaceKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.teleportKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+    this.downKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
 
     // Spawn the small scout formation.
     const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
@@ -297,7 +299,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.shootButton.setInteractive({ useHandCursor: true });
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'P3 Shield · P4 Bomb · P6 Phase · P7 Teleport (Space) — scouts fire aimed shots', {
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'P3 Shield · P4 Bomb · P6 Phase · P7 Teleport (S/↓) — scouts fire aimed shots', {
       fontFamily: 'monospace',
       fontSize: '11px',
       color: '#555555',
@@ -317,7 +319,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
    * One deterministic simulation step (seconds). Drives ship movement,
    * formation drift, scout aim + firing, bullet lifecycle, spawner,
    * drop lifecycles, collection (with P4 bomb), effect timers,
-   * teleport (Space), hit response, and HUD.
+   * teleport (S/↓), hit response, and HUD.
    */
   tick(dt: number): void {
     if (!this.player) return;
@@ -327,7 +329,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     if (input) this.player.setInput(input);
     this.player.physicsTick(dt, this.scale.width, this.scale.height);
 
-    // ── Teleport (Space) — before hit checks so arrival phase protects ─
+    // ── Teleport (S/↓) — before hit checks so arrival phase protects ─
     this._handleTeleport();
 
     // ── Formation drift ─────────────────────────────────────────
@@ -542,15 +544,20 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     }
   }
 
-  // ── Teleport (P7, Space) ─────────────────────────────────────────
+  // ── Teleport (P7, S/↓) ─────────────────────────────────────────
 
   private _handleTeleport(): void {
-    if (!this.player || !this.spaceKey) return;
+    if (!this.player || !this.teleportKey) return;
     // Phaser Key JustDown check; in headless tests we also expose
     // `triggerTeleport()` so tests don't need to fake keyboard state.
+    // Accept S key or down arrow as activation keys.
     const justDown = (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
-      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.spaceKey)
-      : this.spaceKey.isDown;
+      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.teleportKey)
+      : this.teleportKey.isDown;
+    const justDownDown = this.downKey ? (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
+      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.downKey)
+      : this.downKey.isDown : false;
+    if (!justDown && !justDownDown) return;
     // To avoid auto-repeat every frame while Space is held, only act on
     // the first frame isDown becomes true. The headless JustDown helper
     // already gates this; for fallback isDown we gate via a flag.
