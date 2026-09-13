@@ -123,11 +123,10 @@ export const PLAYER_RESPAWN_INVULNERABLE = 1.5;
 
 /**
  * Default spawn position for the keyboard-controlled player in the
- * Enemy Gym scenes: top-right corner, clear of every formation and
- * firing rightward off-screen so boot-time auto-fire never interferes
- * with formation or wait-based tests.
+ * Enemy Gym scenes: centre screen, clear of HUD elements and enemy
+ * formations. The player ship is clearly visible on scene boot.
  */
-export const PLAYER_SPAWN = { x: 920, y: 30 } as const;
+export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 
 // ── Combat gym — threat-coupled power-ups (GDD §4.4, GymPowerUpsCombat) ─
 

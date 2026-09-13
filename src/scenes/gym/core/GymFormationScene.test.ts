@@ -621,7 +621,7 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
   /** Player spawn far from the formation so auto-fire bullets never
    *  interfere with collision assertions (bullets fly right/off-screen,
    *  away from the formation at x ≈ 240–360). */
-  const PLAYER_SPAWN = { x: 920, y: 30 };
+  const PLAYER_SPAWN = { x: 480, y: 270 };
 
   /**
    * Boots a scene with a one-shot enemy-bullet "parking" collect: only
@@ -1076,7 +1076,7 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
       return [b];
     };
     booted = await bootScene([
-      makeStubScene(collect, { x: 920, y: 30 }),
+      makeStubScene(collect, { x: 480, y: 270 }),
     ]);
     const scene = booted!.scene as BootedScene;
 
@@ -1298,7 +1298,7 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     booted = null;
   });
 
-  const PLAYER_SPAWN = { x: 920, y: 30 };
+  const PLAYER_SPAWN = { x: 480, y: 270 };
 
   async function bootWithPlayer(): Promise<BootedScene> {
     booted = await bootScene([
