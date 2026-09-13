@@ -25,10 +25,16 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
   alive = true;
   shootEnabled = false;
   readonly offset: FormationOffset;
+  private readonly _hitRadius: number;
 
-  constructor(scene: Phaser.Scene, offset: FormationOffset) {
+  constructor(
+    scene: Phaser.Scene,
+    offset: FormationOffset,
+    hitRadius = 10,
+  ) {
     super(scene, 0, 0);
     this.offset = offset;
+    this._hitRadius = hitRadius;
   }
 
   destroySelf(): void {
@@ -36,7 +42,7 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
   }
 
   getHitRadius(): number {
-    return 10;
+    return this._hitRadius;
   }
 
   applyFormationPosition(
@@ -121,7 +127,8 @@ function makeStubScene(
     bulletHitRadius: collision?.bulletHitRadius,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
-      const enemy = new entityType(scene, offset);
+      const hitRadius = collision?.entityHitRadius ?? 10;
+      const enemy = new entityType(scene, offset, hitRadius);
       enemy.setPosition(x, y);
       return enemy;
     },
@@ -1436,8 +1443,8 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(target.alive).toBe(true);
   });
 
-  it('AC3 — collision uses the entity hit radius from getEntityHitRadius()', async () => {
-    // Use a custom (small) entity hit radius.
+  it('AC3 — collision uses the entity hit radius from getHitRadius()', async () => {
+    // Use a custom (small) entity hit radius via getHitRadius().
     const smallRadius = 5;
     booted = await bootScene([
       makeStubScene(() => [], PLAYER_SPAWN, { entityHitRadius: smallRadius }),

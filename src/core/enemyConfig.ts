@@ -209,7 +209,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     spacingY: 0,
     driftSpeed: 0,
     startX: GAME_WIDTH / 2,
-    startY: GAME_HEIGHT / 2 - 30,
+    startY: GAME_HEIGHT / 2 - 100,
     size: 50,
     color: 0xff0000,
     bulletColor: 0xffffff,
