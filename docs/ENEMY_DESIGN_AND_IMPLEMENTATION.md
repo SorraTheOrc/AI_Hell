@@ -297,6 +297,21 @@ body renders with the default style (near-invisible white outlines in a
 browser — no console error, headless tests stay green). This is regression
 tested in `src/entities/Scout.test.ts`.
 
+The failure mode is not limited to an invisible body. Phaser's WebGL
+renderer keeps the current stroke tint in a **module-global**
+(`strokeTint` in `GraphicsWebGLRenderer.js`), not per Graphics object: a
+`strokePath()` with no `LINE_STYLE` queued before it reuses whatever the
+previously rendered Graphics left behind. A body with its style wiped by
+`clear()` therefore *inherits an unrelated colour* that changes whenever
+another Graphics redraws (e.g. the player's per-frame thrust flames), and
+because only the **first-rendered** body has no preceding sibling to set a
+sane tint, the "wrong" colour appears to move to the next entity as the
+first is destroyed. `Tank` hit this variant (AH-0MTVYBL2L0085G6G): its
+outer hexagon had no `lineStyle()` after `clear()`, so the first alive tank
+changed colour with thrust input and on destruction. Body colour must be
+owned by the entity; add a regression test whenever an entity gains a new
+`_drawBody()` (Scout, Diver, Swarm and Tank each have one).
+
 ### 4.3 Test accessor convention
 
 Scene tests drive the public scene API (`formationScouts`, `aliveCount`,

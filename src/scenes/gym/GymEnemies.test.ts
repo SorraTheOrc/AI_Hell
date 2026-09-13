@@ -15,6 +15,7 @@ import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/enemyConfig';
 import { PLAYER_SPAWN } from '../../core/constants';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from './GymEnemies';
+import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 
@@ -27,6 +28,33 @@ function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text
   );
   expect(found, `button "${label}" not found`).toBeDefined();
   return found!;
+}
+
+// Phaser Graphics command ids (src/gameobjects/graphics/Commands.js).
+const LINE_STYLE = 6;
+const STROKE_PATH = 9;
+
+/**
+ * Effective body stroke colour of an enemy, read from the body Graphics
+ * command buffer: the colour of the LINE_STYLE queued before the first
+ * stroked path. Returns null when the body is stroked with no explicit
+ * style — the pre-fix Tank bug, where the colour leaked from Phaser's
+ * module-global renderer stroke tint (AH-0MTVYBL2L0085G6G).
+ */
+function bodyStrokeColor(entity: Phaser.GameObjects.GameObject): number | null {
+  const children =
+    (entity as unknown as { list?: Phaser.GameObjects.GameObject[] }).list ?? [];
+  const body = children.find(
+    (c): c is Phaser.GameObjects.Graphics =>
+      c instanceof Phaser.GameObjects.Graphics && c.commandBuffer.includes(STROKE_PATH),
+  );
+  if (!body) return null;
+  const buf = body.commandBuffer as number[];
+  const firstStroke = buf.indexOf(STROKE_PATH);
+  for (let i = firstStroke - 1; i >= 0; i--) {
+    if (buf[i] === LINE_STYLE) return buf[i + 2];
+  }
+  return null;
 }
 
 describe('GymEnemies — single reusable enemy gym', () => {
@@ -335,6 +363,61 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.getPlayer()).not.toBeNull();
     expect(scene.isPlayerEnabled).toBe(true);
     expect(document.getElementById('enemy-gym-toggle-player')!.textContent!.toLowerCase()).toContain('on');
+  });
+
+  // ── Tank body colour invariance (AH-0MTVYBL2L0085G6G) ────────────
+  // The first-rendered tank used to inherit Phaser's module-global
+  // leftover stroke tint (its explicit lineStyle was wiped by clear()),
+  // so its colour changed with thrust input and the "wrong" tank moved
+  // to the next alive one on destruction. These assertions read the actual
+  // queued stroke from the body Graphics command buffer.
+  describe('tank body colour is invariant to thrust input and destruction order (AH-0MTVYBL2L0085G6G)', () => {
+    it('AC1/AC2/AC3 — every alive tank keeps TANK_COLOR across thrust frames and after destroying the first alive tank', async () => {
+      const scene = await bootWithKey('tank');
+      const expected = DEFAULT_ENEMY_CONFIGS.tank.color;
+      expect(expected).toBe(TANK_COLOR);
+
+      const assertAllAliveAreTankColoured = () => {
+        for (const e of scene.formationEntities) {
+          if (!e.alive) continue;
+          expect(bodyStrokeColor(e)).toBe(expected);
+        }
+      };
+
+      // AC1 — all alive tanks carry an explicit tank stroke before any input.
+      expect(scene.aliveCount).toBeGreaterThan(0);
+      assertAllAliveAreTankColoured();
+
+      // AC1 — hold thrust (both control schemes receive the same key map;
+      // arrows are the canonical bindings here) and advance frames. The
+      // player's flame redraw is exactly what used to perturb the first
+      // tank's inherited stroke tint. The tank stroke must not move.
+      const cursors = scene.getCursors()!;
+      expect(cursors).toBeDefined();
+      cursors.right.isDown = true;
+      for (let i = 0; i < 10; i++) {
+        scene.tick(1 / 60);
+        assertAllAliveAreTankColoured();
+      }
+      cursors.right.isDown = false;
+      for (let i = 0; i < 10; i++) {
+        scene.tick(1 / 60);
+        assertAllAliveAreTankColoured();
+      }
+
+      // AC2 — destroying the first alive tank (top-left, row-major spawn
+      // order) must not hand a stale colour to the next alive tank. Repeat
+      // for the next two alive in spawn order.
+      for (let n = 0; n < 3; n++) {
+        const victim = scene.formationEntities.find((e) => e.alive);
+        if (!victim) break;
+        victim.destroySelf();
+        expect(victim.alive).toBe(false);
+        scene.tick(1 / 60);
+        expect(scene.aliveCount).toBeGreaterThan(0);
+        assertAllAliveAreTankColoured();
+      }
+    });
   });
 
   // ── Swarm AC3 — aimed burst hits player (AH-0MTFTJ01K000JG4I) ─────

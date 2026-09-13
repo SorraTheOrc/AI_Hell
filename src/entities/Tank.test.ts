@@ -51,6 +51,49 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     expect(TANK_COLOR).toBe(0xff6600); // neon orange per GDD §4.1
   });
 
+  it('strokes the hexagon with TANK_COLOR applied AFTER the buffer clear (browser render regression, AH-0MTVYBL2L0085G6G)', async () => {
+    // Graphics is command-buffered: clear() wipes any styles queued before it.
+    // The tank's outer hexagon had no lineStyle() queued after clear(), so in
+    // a real browser it inherited Phaser's module-global leftover stroke tint
+    // instead of the tank colour — the first-rendered tank changed colour with
+    // unrelated redraws (e.g. the player's per-frame thrust flames) and the
+    // "wrong" tank moved to the next alive one on destruction. Assert the
+    // hexagon's effective stroke is TANK_COLOR, i.e. queued after the last
+    // clear. Phaser Graphics command ids (src/gameobjects/graphics/Commands.js).
+    const LINE_STYLE = 6;
+    const STROKE_PATH = 9;
+
+    booted = await bootScene([HarnessScene]);
+    const tank = makeTank(100, 100);
+
+    // The body is the container child whose buffer contains a stroked path
+    // (the explosion layer's buffer is empty until a destruction).
+    const children = (tank as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    const body = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics &&
+        c.commandBuffer.includes(STROKE_PATH),
+    );
+    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+
+    const buf: number[] = body!.commandBuffer as number[];
+    const firstStrokeIdx = buf.indexOf(STROKE_PATH);
+    let lineStyleIdx = -1;
+    for (let i = firstStrokeIdx - 1; i >= 0; i--) {
+      if (buf[i] === LINE_STYLE) {
+        lineStyleIdx = i;
+        break;
+      }
+    }
+    expect(
+      lineStyleIdx,
+      'outer hexagon stroked with no explicit lineStyle after clear()',
+    ).toBeGreaterThanOrEqual(0);
+    // LINE_STYLE layout: [id, lineWidth, color, alpha].
+    expect(buf[lineStyleIdx + 1]).toBe(2.5);
+    expect(buf[lineStyleIdx + 2]).toBe(TANK_COLOR);
+  });
+
   it('AC2 — fires a full-circle radial burst with evenly spaced directions (direction-agnostic)', async () => {
     booted = await bootScene([HarnessScene]);
     const tank = makeTank(240, 300);

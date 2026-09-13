@@ -116,7 +116,6 @@ export class Tank extends Phaser.GameObjects.Container {
 
     // Body — larger hexagonal shape in orange.
     this.bodyGraphics = scene.add.graphics();
-    this.bodyGraphics.lineStyle(2.5, this._color, 1);
     this._drawBody();
     this.bodyGraphics.setDepth(1);
     this.add(this.bodyGraphics);
@@ -132,6 +131,16 @@ export class Tank extends Phaser.GameObjects.Container {
   private _drawBody(): void {
     this.bodyGraphics.clear();
     const half = this._size / 2;
+
+    // Style MUST be applied AFTER clear(): Graphics is command-buffered and
+    // clear() wipes any styles queued before it. Without this the outer
+    // hexagon was stroked with Phaser's leftover module-global stroke tint
+    // (GraphicsWebGLRenderer's `strokeTint` is not reset per object), so the
+    // first-rendered tank's colour leaked from whatever rendered previously —
+    // it changed with the player's per-frame thrust flames and appeared to
+    // move to the next alive tank on destruction (AH-0MTVYBL2L0085G6G).
+    // Matches the Scout/Diver/Swarm pattern (docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §4.2).
+    this.bodyGraphics.lineStyle(2.5, this._color, 1);
 
     // Hexagon pointing right (blocky/tank-like silhouette).
     this.bodyGraphics.beginPath();
