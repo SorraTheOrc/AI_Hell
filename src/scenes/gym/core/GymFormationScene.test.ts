@@ -35,6 +35,10 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
     this.alive = false;
   }
 
+  getHitRadius(): number {
+    return 10;
+  }
+
   applyFormationPosition(
     baseX: number,
     baseY: number,

@@ -22,6 +22,7 @@
 
 import Phaser from 'phaser';
 
+import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { FormationOffset } from '../utils/formations';
 import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
 import {
@@ -212,6 +213,18 @@ export class Scout extends Phaser.GameObjects.Container {
   get effectiveSize(): number { return this._size; }
   /** Effective config-driven body colour. */
   get effectiveColor(): number { return this._color; }
+
+  /**
+   * Hit radius (px) used for collision checks against this entity.
+   *
+   * Returns `Math.ceil(visualHalfSize + HIT_RADIUS_BUFFER_PX)` so the
+   * hit circle is proportionally sized to the entity's visual half-size
+   * with a small gameplay buffer (default 2 px) for visual stroke
+   * thickness.
+   */
+  getHitRadius(): number {
+    return Math.ceil(this._size / 2 + HIT_RADIUS_BUFFER_PX);
+  }
   /** Whether the scout body is currently visible (hidden on destruction). */
   get bodyVisible(): boolean {
     return this.bodyGraphics.alpha > 0 && this.bodyGraphics.visible;

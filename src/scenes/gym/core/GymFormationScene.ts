@@ -104,6 +104,14 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * generic destruction sound.
    */
   takeDamage?(): number | void;
+  /**
+   * Hit radius (px) used for circle-vs-circle collision checks.
+   *
+   * Each entity returns a value proportional to its visual half-size
+   * plus `HIT_RADIUS_BUFFER_PX`, so the hit circle matches the visual
+   * bounds rather than using the flat default.
+   */
+  getHitRadius(): number;
 }
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
@@ -684,7 +692,6 @@ export class GymFormationScene<
   private _handleCollisions(): void {
     if (!this.player) return;
 
-    const entityHitRadius = this.getEntityHitRadius();
     const bulletHitRadius = this.getBulletHitRadius();
     const playerHull = SHIP_SIZE / 2;
 
@@ -705,7 +712,7 @@ export class GymFormationScene<
             PLAYER_BULLET_RADIUS,
             entity.x,
             entity.y,
-            entityHitRadius,
+            entity.getHitRadius(),
           )
         ) {
           if (entity.takeDamage) {
@@ -797,7 +804,7 @@ export class GymFormationScene<
             playerHull,
             entity.x,
             entity.y,
-            entityHitRadius,
+            entity.getHitRadius(),
           )
         ) {
           entity.destroySelf();

@@ -15,6 +15,7 @@
 
 import Phaser from 'phaser';
 
+import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { FormationOffset } from '../utils/formations';
 import {
   resolvePatterns,
@@ -244,6 +245,19 @@ export class Swarm extends Phaser.GameObjects.Container {
 
   get effectiveSize(): number { return this._size; }
   get effectiveColor(): number { return this._color; }
+
+  /**
+   * Hit radius (px) used for collision checks against this entity.
+   *
+   * Returns `Math.ceil(visualHalfSize + HIT_RADIUS_BUFFER_PX)` so the
+   * hit circle is proportionally sized to the entity's visual half-size
+   * with a small gameplay buffer (default 2 px) for visual stroke
+   * thickness.
+   */
+  getHitRadius(): number {
+    return Math.ceil(this._size / 2 + HIT_RADIUS_BUFFER_PX);
+  }
+
   get clusterIndex(): number {
     return this.clusterIdx;
   }

@@ -23,7 +23,7 @@
 
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT } from '../core/constants';
+import { GAME_HEIGHT, HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import {
   playDiverDestructionSound,
   playDiverDiveStartSound,
@@ -240,6 +240,18 @@ export class Diver extends Phaser.GameObjects.Container {
   get effectiveSize(): number { return this._size; }
   get effectiveColor(): number { return this._color; }
   get effectiveBurstCount(): number { return this._burstCount; }
+
+  /**
+   * Hit radius (px) used for collision checks against this entity.
+   *
+   * Returns `Math.ceil(visualHalfSize + HIT_RADIUS_BUFFER_PX)` so the
+   * hit circle is proportionally sized to the entity's visual half-size
+   * with a small gameplay buffer (default 2 px) for visual stroke
+   * thickness.
+   */
+  getHitRadius(): number {
+    return Math.ceil(this._size / 2 + HIT_RADIUS_BUFFER_PX);
+  }
 
   get alive(): boolean {
     return this._alive;

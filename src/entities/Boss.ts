@@ -27,6 +27,7 @@
 import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
+import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import {
   resolvePatterns,
   spawnExplosionParticles,
@@ -720,6 +721,17 @@ export class Boss extends Phaser.GameObjects.Container {
 
   get alive(): boolean {
     return this._alive;
+  }
+
+  /**
+   * Hit radius (px) used for collision checks against this entity.
+   *
+   * Returns `BOSS_RADIUS + HIT_RADIUS_BUFFER_PX` (50 + 2 = 52 px).
+   * The Boss's visual radius is 50 px; this adds a small gameplay
+   * buffer for visual stroke thickness.
+   */
+  getHitRadius(): number {
+    return BOSS_RADIUS + HIT_RADIUS_BUFFER_PX;
   }
 
   get shootEnabled(): boolean {

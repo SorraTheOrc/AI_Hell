@@ -92,6 +92,18 @@ export const MAGNET_ATTRACTION_SPEED = 120;
 /** Render depth of the standalone HUD — above gameplay objects. */
 export const HUD_DEPTH = 1000;
 
+// ── Entity collision hit radii (GDD §2.6) ──────────────────────────
+
+/**
+ * Gameplay buffer (px) added to each entity's visual half-size when
+ * computing its hit radius for circle-vs-circle collision. Covers
+ * visual stroke thickness and small visual uncertainty.
+ *
+ * Increase to make enemies easier to hit; decrease for tighter,
+ * "pixel-perfect" feel. Default: 2 px.
+ */
+export const HIT_RADIUS_BUFFER_PX = 2;
+
 // ── Weapon power-ups (GDD §4.4, GymWeapons gym) ────────────────────
 
 /**
