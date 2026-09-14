@@ -1,12 +1,14 @@
 /**
  * Gym scene — weapon power-ups (Spread, Dual, Rapid) with auto-fire,
- * persistent switching, and Reset to cannon (GDD §2.3, §4.4).
+ * cumulative collection, and Reset to cannon (GDD §2.3, §4.4).
  *
  * Threat-free: no enemies, no enemy bullets.  The player ship flies
- * around collecting weapon power-up drops; each collected drop swaps
- * the ship's weapon **persistently** (no timer — active until another
- * weapon power-up is collected).  A fourth power-up drop, **Reset**,
- * returns the ship to the starting cannon (AC2).
+ * around collecting weapon power-up drops; each collected drop **adds**
+ * its weapon to the ship's active set for **10 seconds** (cumulative, no
+ * replacement — the permanent cannon is always active), and each timed
+ * weapon expires independently and silently stops firing afterwards. A
+ * fourth power-up drop, **Reset**, clears all timed weapons, leaving
+ * only the cannon (AC2/AC4).
  *
  * Spawn cadence (AC3): one drop on screen at a time, round-robin
  * **Spread → Dual → Rapid → Reset**, each living `WEAPON_DROP_LIFETIME`
@@ -16,12 +18,13 @@
  * The next spawn coincides with the previous drop's despawn (one drop
  * on screen while nothing is collected).
  *
- * Auto-fire (AC1): the ship auto-fires its equipped weapon in the
+ * Auto-fire (AC1, AC3): the ship auto-fires **every active weapon** in the
  * direction of movement (current velocity heading; most-recent heading
- * when stationary) with no fire button (GDD §2.3).  Bullet emission is
- * gated by the weapon's fire rate.  Player bullets are
- * demonstration-only: they fly in their pattern and are removed
- * off-screen; no collision damage.
+ * when stationary) with no fire button (GDD §2.3). Each weapon fires at
+ * its own independent fire rate; bullets of all active weapons are
+ * emitted on the same fire cycle when their individual cooldowns have
+ * elapsed.  Player bullets are demonstration-only: they fly in their
+ * pattern and are removed off-screen; no collision damage.
  *
  * Collection (AC4): a drop is collectible once its current scale is at
  * least 3% of full size; collection requires ship overlap (drop radius
@@ -154,6 +157,11 @@ export class GymWeapons extends Phaser.Scene {
   tick(dt: number): void {
     if (!this.player) return;
 
+    // ── Weapon timers: advance each timed weapon's 10 s countdown ──
+    // Expired weapons are silently dropped before auto-fire so they
+    // stop firing this step (AC2, AC5).
+    this.player.tickWeaponTimers(dt * 1000);
+
     // ── Ship: input → thrust movement + screen-wrap ─────────────
     const input = this._readInput();
     if (input) {
@@ -184,58 +192,63 @@ export class GymWeapons extends Phaser.Scene {
     this.collectOverlapping();
   }
 
-  // ── Auto-fire (AC1) ──────────────────────────────────────────────
+  // ── Auto-fire (AC1, AC3) ─────────────────────────────────────────
 
   /**
-   * Auto-fires the equipped weapon when its cooldown has elapsed.
-   * Bullets spawn in the direction of travel (or the most-recent
-   * heading when stationary) using the weapon's pattern.
+   * Auto-fires every active weapon whose cooldown has elapsed this
+   * frame, each at its own fire rate (AC3). Bullets spawn in the
+   * direction of travel (or the most-recent heading when stationary)
+   * using each firing weapon's pattern.
    */
   private _autoFire(dt: number): void {
     if (!this.player) return;
 
-    // tryFire decrements the cooldown and returns true when a shot is
-    // due, re-arming the cooldown to the weapon's fire rate.
-    if (!this.player.tryFire(dt)) return;
-
-    // AC — player shoot audio: play the equipped weapon's distinct
-    // cue exactly once per shot (not per bullet) so fast weapons stay
-    // legible.
-    this._playShootCue();
+    // tryFire decrements every active weapon's cooldown and returns the
+    // ids that fired — empty means nothing is due this frame.
+    const firedWeapons = this.player.tryFire(dt);
+    if (firedWeapons.length === 0) return;
 
     const headingDeg = (this.player.getHeading() * 180) / Math.PI;
-    const weaponDef = this.player.getWeaponDef();
-    const bulletDescs = createBulletsFromHeading(
-      weaponDef,
-      headingDeg,
-      this.player.x,
-      this.player.y,
-    );
 
-    for (const bd of bulletDescs) {
-      const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-      this.bullets.push(
-        createPlayerBullet(
-          this,
-          bd.x,
-          bd.y,
-          bd.color,
-          PLAYER_BULLET_RADIUS,
-          vel.vx,
-          vel.vy,
-        ),
+    // AC — player shoot audio: play each firing weapon's distinct cue
+    // exactly once per shot (not per bullet) so fast weapons stay
+    // legible.
+    for (const weaponId of firedWeapons) {
+      this._playShootCue(weaponId);
+
+      const weaponDef = this.player.getWeaponDef(weaponId);
+      const bulletDescs = createBulletsFromHeading(
+        weaponDef,
+        headingDeg,
+        this.player.x,
+        this.player.y,
       );
+
+      for (const bd of bulletDescs) {
+        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
+        this.bullets.push(
+          createPlayerBullet(
+            this,
+            bd.x,
+            bd.y,
+            bd.color,
+            PLAYER_BULLET_RADIUS,
+            vel.vx,
+            vel.vy,
+          ),
+        );
+      }
     }
   }
 
   /**
-   * Plays the shoot cue for the player's currently equipped weapon.
-   * One cue per shot, keyed off `getEquippedWeapon()` (AC — player
-   * shoot audio). Safe no-op without an AudioContext.
+   * Plays the shoot cue for one firing weapon. One cue per shot, keyed
+   * off the firing weapon's id (AC — player shoot audio). Safe no-op
+   * without an AudioContext.
    */
-  private _playShootCue(): void {
+  private _playShootCue(weaponId: WeaponId): void {
     if (!this.player) return;
-    switch (this.player.getEquippedWeapon()) {
+    switch (weaponId) {
       case 'cannon':
         playCannonFireSound();
         break;
@@ -375,10 +388,10 @@ export class GymWeapons extends Phaser.Scene {
     if (!this.player) return;
 
     if (drop.weaponType === 'reset') {
-      this.player.resetWeapon(); // AC2 — Reset returns to cannon
+      this.player.resetWeapon(); // AC4 — clears all timed weapons, leaves the cannon
       playResetPickupSound();
     } else {
-      this.player.equipWeapon(drop.weaponType); // AC2 — persistent switch
+      this.player.equipWeapon(drop.weaponType); // AC1/AC2 — cumulative: adds to the active set
       switch (drop.weaponType) {
         case 'spread':
           playSpreadPickupSound();

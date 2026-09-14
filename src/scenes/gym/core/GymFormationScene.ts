@@ -630,25 +630,30 @@ export class GymFormationScene<
   }
 
   /**
-   * Auto-fires the equipped weapon toward the direction of travel when
-   * its cooldown has elapsed (mirrors GymWeapons' auto-fire).
+   * Auto-fires every active weapon toward the direction of travel when
+   * its cooldown has elapsed (mirrors GymWeapons' auto-fire). Combat
+   * scenes only ever have the permanent cannon active, so behaviour is
+   * unchanged: one cannon volley per 400 ms cycle.
    */
   private _autoFire(dt: number): void {
     if (!this.player) return;
-    if (!this.player.tryFire(dt)) return;
+    const firedWeapons = this.player.tryFire(dt);
+    if (firedWeapons.length === 0) return;
 
     const headingDeg = (this.player.getHeading() * 180) / Math.PI;
-    const weaponDef = this.player.getWeaponDef();
-    const bulletDescs = createBulletsFromHeading(
-      weaponDef,
-      headingDeg,
-      this.player.x,
-      this.player.y,
-    );
+    for (const weaponId of firedWeapons) {
+      const weaponDef = this.player.getWeaponDef(weaponId);
+      const bulletDescs = createBulletsFromHeading(
+        weaponDef,
+        headingDeg,
+        this.player.x,
+        this.player.y,
+      );
 
-    for (const bd of bulletDescs) {
-      const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-      this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
+      for (const bd of bulletDescs) {
+        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
+        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
+      }
     }
   }
 

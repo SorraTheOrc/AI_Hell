@@ -1,17 +1,19 @@
 /**
  * Scene-level tests for the GymWeapons gym — weapon power-ups with
- * auto-fire, persistent switching, round-robin spawning, and Reset
- * (GDD §2.3, §4.4; parent AC1–AC7).
+ * auto-fire, cumulative collection + timed expiry, round-robin
+ * spawning, and Reset (GDD §2.3, §4.4; parent AC1–AC7).
  *
  * Covers:
  * - AC1: auto-discovery by gym index (key GymWeapons, label Weapons),
  *   ship presence, back button, auto-fire producing bullets
- * - AC2: persistent switching (no timer), reset to cannon
+ * - AC2: cumulative collection (adds to active set) and reset to cannon
  * - AC3: round-robin lifecycle (Spread → Dual → Rapid → Reset, one drop
- *   at a time, 7 s lifetime), grow/shrink
+ *   at a time, 7 s lifetime), grow/shrink; all active weapons fire
+ *   together at their own rates
  * - AC4: collection gating (≥ 3% scale), overlap detection
- * - AC5: shared timing (7 s lifetime, parameterised vs the 5 s non-combat gym)
- * - AC7: scene boots via gameHarness, collection swaps the weapon
+ * - AC5: shared timing (7 s lifetime, parameterised vs the 5 s non-combat gym);
+ *   timed weapons expire silently after `WEAPON_TIMEOUT_MS` (10 s)
+ * - AC7: scene boots via gameHarness, collection adds weapons cumulatively
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
@@ -124,9 +126,11 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     expect(bullets.every((b) => b.vx > 0)).toBe(true);
   });
 
-  it('rapid weapon produces more bullets than cannon over equal time', async () => {
-    // Rapid fires on every 150 ms step (125 ms rate); cannon skips steps
-    // (400 ms rate). Over 0.9 s rapid fires ~6 volleys, cannon ~2.
+  it('rapid weapon on top of the cannon produces more bullets over equal time (AC3)', async () => {
+    // Rapid fires every 150 ms step (125 ms rate); cannon skips steps
+    // (400 ms rate). Over 0.9 s rapid fires ~6 volleys, cannon ~2. With
+    // the cumulative model the rapid scene fires cannon + rapid together,
+    // so its bullet output is far higher than cannon alone.
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -168,7 +172,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
   });
 });
 
-describe('GymWeapons AC2: persistent switching + reset', () => {
+describe('GymWeapons AC2: cumulative collection + reset', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -186,7 +190,7 @@ describe('GymWeapons AC2: persistent switching + reset', () => {
     expect(scene.getPlayer()!.getEquippedWeapon()).toBe('cannon');
   });
 
-  it('collecting a weapon power-up equips that weapon persistently (AC2)', async () => {
+  it('collecting a weapon power-up adds it to the active set alongside the cannon (AC1)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -196,30 +200,93 @@ describe('GymWeapons AC2: persistent switching + reset', () => {
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
 
-    expect(player.getEquippedWeapon()).toBe('spread');
+    // Cumulative: spread is ADDED — the cannon is never replaced (AC1).
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread']);
 
-    // Weapon persists with no timer — many ticks later it is unchanged.
+    // The 10 s timer is still running — many ticks later it remains active.
     for (let i = 0; i < 60; i++) {
-      scene.tick(0.1);
+      scene.tick(0.1); // 6 s total, inside the 10 s timeout
     }
-    expect(player.getEquippedWeapon()).toBe('spread');
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread']);
   });
 
-  it('collecting a Reset power-up returns to cannon (AC2)', async () => {
+  it('collecting multiple weapons makes the ship fire all patterns cumulatively (AC3)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Equip spread first.
+    // Collect spread, then dual — both stay active alongside the cannon.
     scene.spawnDrop('spread', 480, 270);
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
-    expect(player.getEquippedWeapon()).toBe('spread');
+    scene.spawnDrop('dual', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
 
-    // Collect a Reset drop → back to cannon.
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
+
+    // One full fire cycle with all weapons ready: cannon (1 bullet) +
+    // spread (3) + dual (2) = 6 bullets, each in its weapon's colour.
+    // (The booted game loop may leave a stray cannon bullet on screen, so
+    // assert the delta added by this controlled tick.)
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.5, scene.scale.width, scene.scale.height);
+    const before = scene.getBullets().length;
+    scene.tick(0.6);
+
+    const bullets = scene.getBullets();
+    expect(bullets.length - before).toBe(6);
+    const colors = new Set(bullets.map((b) => b.color));
+    expect(colors.has(0x00ffff)).toBe(true); // cannon cyan
+    expect(colors.has(0xffaa00)).toBe(true); // spread orange
+    expect(colors.has(0xff00ff)).toBe(true); // dual magenta
+  });
+
+  it('expired timed weapons are silently dropped and stop firing (AC5)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Collect spread → active set is cannon + spread.
+    scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread']);
+
+    // 10 s of play later the timed weapon expires silently — no event,
+    // it simply stops being active (AC5).
+    scene.tick(10.1);
+    expect(player.getActiveWeapons()).toEqual(['cannon']);
+
+    // Auto-fire afterwards emits only the cannon's single straight volley.
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.5, scene.scale.width, scene.scale.height);
+    const before = scene.getBullets().length;
+    scene.tick(0.6);
+    const bullets = scene.getBullets();
+    expect(bullets.length - before).toBe(1); // cannon alone → 1 bullet
+    expect(bullets.at(-1)!.color).toBe(0x00ffff); // cannon cyan only
+  });
+
+  it('collecting a Reset power-up clears all timed weapons, leaving only the cannon (AC4)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Add two timed weapons first.
+    scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    scene.spawnDrop('dual', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
+
+    // Collect a Reset drop → all timed weapons cleared, only the cannon left.
     scene.spawnDrop('reset', 480, 270);
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
+    expect(player.getActiveWeapons()).toEqual(['cannon']);
     expect(player.getEquippedWeapon()).toBe('cannon');
   });
 });
@@ -545,9 +612,11 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
 
     fireOnce(scene, 'spread');
 
-    // Spread fires 3 bullets per shot but the cue plays once.
+    // Spread fires 3 bullets per shot but the cue plays once. With the
+    // cumulative model the permanently-active cannon fires too, so both
+    // the spread cue and the cannon cue play once per volley.
     expect(spreadSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).not.toHaveBeenCalled();
+    expect(cannonSound).toHaveBeenCalledTimes(1);
   });
 
   it('auto-firing the dual weapon plays playDualFireSound (one per shot, not per bullet)', async () => {
@@ -559,7 +628,7 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     fireOnce(scene, 'dual');
 
     expect(dualSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).not.toHaveBeenCalled();
+    expect(cannonSound).toHaveBeenCalledTimes(1);
   });
 
   it('auto-firing the rapid weapon plays playRapidFireSound (one per shot)', async () => {
@@ -571,7 +640,7 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     fireOnce(scene, 'rapid');
 
     expect(rapidSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).not.toHaveBeenCalled();
+    expect(cannonSound).toHaveBeenCalledTimes(1);
   });
 
   it('weapon pickup collection plays the unique per-weapon activation cue (AC6c)', async () => {

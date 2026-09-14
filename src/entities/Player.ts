@@ -33,13 +33,17 @@
  * (pure model in `utils/flame.ts`), so it is framerate-independent and
  * re-targets the current config live.
  *
- * Weapon system: the ship auto-fires its equipped weapon (GDD §2.3) in
+ * Weapon system: the ship auto-fires all active weapons (GDD §2.3) in
  * the direction of movement — the current velocity heading, or the most
- * recent non-zero heading when stationary. Weapons are persistent
- * (no timer) until replaced by another weapon power-up (GDD §4.4). The
- * heading + bullet-pattern math lives in `utils/weapons.ts`; the Player
- * exposes `getHeading()`, `equipWeapon()`, `resetWeapon()`, and a fire
- * cooldown the scene gates bullet emission with.
+ * recent non-zero heading when stationary. Weapons are **cumulative and
+ * timed** (GDD §4.4 revision): the permanent cannon plus every collected
+ * weapon power-up (Spread/Dual/Rapid), each with its own independent
+ * 10-second countdown from the moment of collection, after which it
+ * silently expires and stops firing. The heading + bullet-pattern math
+ * lives in `utils/weapons.ts`; the Player exposes `getHeading()`,
+ * `equipWeapon()` (adds), `resetWeapon()` (clears timed weapons),
+ * `tickWeaponTimers()`, and per-weapon fire cooldowns the scene gates
+ * bullet emission with.
  *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
@@ -71,8 +75,10 @@ import {
   WeaponId,
   WEAPON_CATALOGUE,
   getWeaponById,
+  isTimedWeapon,
   computeHeading,
 } from '../utils/weapons';
+import { WEAPON_TIMEOUT_MS } from '../core/constants';
 
 export interface PlayerConfig {
   x: number;
@@ -167,14 +173,22 @@ export class Player extends Phaser.GameObjects.Graphics {
   /** Current live speed multiplier (1 = normal, 1.5 = P5 boosted). */
   private _speedMultiplier = 1;
 
-  // ── Weapon system (AC1, AC2) ────────────────────────────────────
+  // ── Weapon system (AC1–AC4) ─────────────────────────────────────
+  // Cumulative model: the permanent cannon plus any collected timed
+  // weapons (Spread/Dual/Rapid), each with its own independent 10 s
+  // countdown from collection and its own per-weapon fire cooldown
+  // (GDD §4.4 revision).
 
-  /** Currently equipped weapon ID (defaults to cannon). */
-  private _equippedWeapon: WeaponId = 'cannon';
+  /** Permanent weapons — always active, never expire (currently only the cannon). */
+  private readonly _permanentWeapons: ReadonlySet<WeaponId> = new Set(['cannon']);
+  /** Collected timed weapons → remaining lifetime in ms (10 s each, independent countdown). */
+  private _weaponTimers: Map<WeaponId, number> = new Map();
+  /** Per-weapon fire cooldown in ms — each active weapon fires at its own rate (0 = ready). */
+  private _weaponCooldowns: Map<WeaponId, number> = new Map();
+  /** Most-recently collected weapon (primary view); falls back to cannon. */
+  private _primaryWeapon: WeaponId = 'cannon';
   /** Most-recent heading in radians (fallback when stationary). */
   private _lastHeading: number | null = null;
-  /** Fire cooldown in milliseconds before the next shot is allowed. */
-  private _fireCooldown = 0;
   /** Default heading in radians when the ship has never moved (0 = right). */
   private _defaultHeading = 0;
 
@@ -526,86 +540,137 @@ export class Player extends Phaser.GameObjects.Graphics {
     return ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   }
 
-  // ── Weapon slot (AC1, AC2) ──────────────────────────────────────
+  // ── Weapon collection (AC1–AC4) ─────────────────────────────────
 
   /**
-   * Equips the given weapon.  The weapon persists (no timer) until
-   * replaced by another weapon power-up (AC2).
+   * Returns the ids of all currently active weapons — the permanent
+   * cannon plus every collected timed weapon that has not yet expired
+   * (cannon first, then collected weapons in collection order). AC1.
+   */
+  getActiveWeapons(): WeaponId[] {
+    return [...this._permanentWeapons, ...this._weaponTimers.keys()];
+  }
+
+  /**
+   * Returns true when the given weapon is currently active (in the
+   * collection, or the permanent cannon).
+   */
+  hasWeapon(weaponId: WeaponId): boolean {
+    return this._permanentWeapons.has(weaponId) || this._weaponTimers.has(weaponId);
+  }
+
+  /**
+   * Collects a weapon power-up: **adds** it to the active set with a
+   * fresh 10-second countdown (AC1, AC2 — collection is cumulative, no
+   * replacement). Re-collecting an already-active timed weapon resets
+   * only that weapon's own timer; other weapons are unaffected. The
+   * cannon is permanent and collecting it is a no-op.
    *
-   * @param weaponId — The weapon to equip.
+   * @param weaponId — The weapon power-up to add ('spread' | 'dual' | 'rapid').
    */
   equipWeapon(weaponId: WeaponId): void {
+    if (!isTimedWeapon(weaponId)) {
+      return; // cannon is always active and never times out (AC2)
+    }
     if (!WEAPON_CATALOGUE[weaponId]) {
       return;
     }
-    this._equippedWeapon = weaponId;
-    this._readyFire();
+    // Fresh independent 10 s countdown from the moment of collection (AC2).
+    this._weaponTimers.set(weaponId, WEAPON_TIMEOUT_MS);
+    this._primaryWeapon = weaponId;
+    this._readyFire(weaponId);
   }
 
   /**
-   * Resets the equipped weapon to the starting Cannon (AC2 — Reset
-   * power-up).  Called by the Reset power-up on collection.
+   * Clears all timed weapons (Spread, Dual, Rapid), leaving only the
+   * permanent cannon (AC4 — Reset power-up). The Reset power-up itself
+   * is never a weapon and is never added to the active set.
    */
   resetWeapon(): void {
-    this._equippedWeapon = 'cannon';
-    this._readyFire();
-  }
-
-  /** Returns the currently equipped weapon ID. */
-  getEquippedWeapon(): WeaponId {
-    return this._equippedWeapon;
+    this._weaponTimers.clear();
+    this._weaponCooldowns.clear();
+    this._primaryWeapon = 'cannon';
+    this._readyFire('cannon');
   }
 
   /**
-   * Returns the weapon definition for the currently equipped weapon.
+   * Returns the most-recently collected timed weapon, or 'cannon' when
+   * no timed weapons are active. Backward-compatible single-weapon view
+   * (used by scene audio cues and legacy callers).
    */
-  getWeaponDef(): ReturnType<typeof getWeaponById> {
-    return getWeaponById(this._equippedWeapon);
-  }
-
-  // ── Auto-fire emission (AC1) ────────────────────────────────────
-
-  /** Returns true if the weapon is ready to fire (cooldown elapsed). */
-  isFireReady(): boolean {
-    return this._fireCooldown <= 0;
-  }
-
-  /** Returns the current fire cooldown in milliseconds (0 = ready). */
-  getFireCooldown(): number {
-    return this._fireCooldown;
+  getEquippedWeapon(): WeaponId {
+    return this._primaryWeapon;
   }
 
   /**
-   * Advances the fire cooldown by `dtMs` milliseconds, clamping at 0.
+   * Returns the weapon definition for a given weapon id, defaulting to
+   * the most-recently collected weapon (backward-compatible no-arg form).
+   *
+   * @param weaponId — Weapon to look up (defaults to the primary weapon).
+   */
+  getWeaponDef(weaponId?: WeaponId): ReturnType<typeof getWeaponById> {
+    return getWeaponById(weaponId ?? this._primaryWeapon);
+  }
+
+  /**
+   * Advances every timed weapon's countdown by `dtMs` milliseconds and
+   * removes (silently drops) any weapon whose 10-second timer has fully
+   * elapsed — it stops firing immediately (AC2, AC5). The permanent
+   * cannon never expires. Safe no-op with no timed weapons active.
    *
    * @param dtMs — Delta time in milliseconds.
    */
-  tickFireCooldown(dtMs: number): void {
-    if (this._fireCooldown > 0) {
-      this._fireCooldown = Math.max(0, this._fireCooldown - dtMs);
+  tickWeaponTimers(dtMs: number): void {
+    if (dtMs <= 0 || this._weaponTimers.size === 0) return;
+    for (const [id, remaining] of [...this._weaponTimers]) {
+      const next = remaining - dtMs;
+      if (next <= 0) {
+        this._weaponTimers.delete(id);
+        this._weaponCooldowns.delete(id);
+        if (this._primaryWeapon === id) {
+          // Fall back to the most recently collected remaining weapon.
+          const stillActive = [...this._weaponTimers.keys()];
+          this._primaryWeapon = stillActive.length > 0
+            ? stillActive[stillActive.length - 1]
+            : 'cannon';
+        }
+      } else {
+        this._weaponTimers.set(id, next);
+      }
     }
   }
 
+  // ── Auto-fire emission (AC3) ────────────────────────────────────
+
   /**
-   * Attempts to fire the equipped weapon given `dt` seconds have elapsed.
-   * Decrements the cooldown; when the cooldown has fully elapsed, sets
-   * it to the weapon's fire rate and returns `true` — the caller emits
-   * the bullet pattern this frame.
+   * Advances every active weapon's cooldown by `dt` seconds and returns
+   * the ids of the weapons whose cooldowns fully elapsed this call —
+   * each fires simultaneously, at its own independent fire rate (e.g.
+   * rapid every 125 ms, cannon every 400 ms, spread every 600 ms). A
+   * fired weapon's cooldown is re-armed to its own fire rate; an empty
+   * array means nothing fired this frame (the caller emits nothing).
    *
    * @param dt — Delta time in seconds since the last call.
-   * @returns true if a shot was ready to fire this frame.
+   * @returns The ids of the weapons that fired this frame.
    */
-  tryFire(dt: number): boolean {
-    const fireRateMs = this.getWeaponDef().fireRateMs;
-    this._fireCooldown -= dt * 1000;
-    if (this._fireCooldown > 0) return false;
-    this._fireCooldown = fireRateMs;
-    return true;
+  tryFire(dt: number): WeaponId[] {
+    const fired: WeaponId[] = [];
+    for (const weaponId of this.getActiveWeapons()) {
+      const fireRateMs = getWeaponById(weaponId).fireRateMs;
+      const cooldown = (this._weaponCooldowns.get(weaponId) ?? 0) - dt * 1000;
+      if (cooldown > 0) {
+        this._weaponCooldowns.set(weaponId, cooldown);
+      } else {
+        fired.push(weaponId);
+        this._weaponCooldowns.set(weaponId, fireRateMs);
+      }
+    }
+    return fired;
   }
 
-  /** Resets the fire cooldown to zero, allowing an immediate next shot. */
-  private _readyFire(): void {
-    this._fireCooldown = 0;
+  /** Resets one weapon's fire cooldown to zero (fires immediately this/next cycle). */
+  private _readyFire(weaponId: WeaponId): void {
+    this._weaponCooldowns.set(weaponId, 0);
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────

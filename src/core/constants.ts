@@ -118,6 +118,14 @@ export const WEAPON_DROP_LIFETIME = 7;
  */
 export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
 
+/**
+ * Duration (ms) each weapon power-up (Spread, Dual, Rapid) stays active
+ * after collection before it times out and stops firing (GDD §4.4).
+ * 10 000 ms = 10 s, from the moment of collection, per weapon. The
+ * permanent cannon has no timer and never expires.
+ */
+export const WEAPON_TIMEOUT_MS = 10000;
+
 /** Base radius of a weapon drop on the field (px), scaled by lifecycle.
  * Mirrors `POWER_UP_DROP_SIZE` (16 px — half the doubled 32 px size)
  * so weapon drops render at the same size as non-combat drops.
