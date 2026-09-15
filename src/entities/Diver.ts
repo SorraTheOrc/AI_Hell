@@ -80,6 +80,9 @@ export const DIVER_DIVE_APEX_FRACTION = 0.3;
 /** Formation drift speed — slightly faster than Tank. */
 export const DIVER_FORMATION_DRIFT_SPEED = 30;
 
+/** Duration (ms) the Diver pauses at the bottom of the dive arc before returning. */
+export const DIVER_PAUSE_DURATION = 500;
+
 
 export interface DiverConfig {
   x: number;
@@ -93,6 +96,8 @@ export interface DiverConfig {
   bulletSpeed?: number;
   fireInterval?: number;
   burstCount?: number;
+  /** Custom pause duration in ms at the bottom of the dive arc. Defaults to 500 ms. */
+  pauseDuration?: number;
 }
 
 /**
@@ -111,6 +116,7 @@ export interface DiverBullet {
 export enum DiverState {
   FORMATION = 'formation',
   DIVING = 'diving',
+  PAUSING = 'pausing',
   RETURNING = 'returning',
 }
 
@@ -144,6 +150,10 @@ export class Diver extends Phaser.GameObjects.Container {
    *  which is required for correctness when the entity is stale after a
    *  scene restart (its `this.scene` is undefined). */
   private _localPhase = 0;
+  /** Timer for the pause phase (accumulates dt in seconds). */
+  private _pauseTimer = 0;
+  /** Pause duration in seconds (configured or default). */
+  private _pauseDuration = DIVER_PAUSE_DURATION / 1000;
   private readonly _size: number;
   private readonly _color: number;
   private readonly _bulletColor: number;
@@ -165,6 +175,8 @@ export class Diver extends Phaser.GameObjects.Container {
     this._bulletSpeed = config.bulletSpeed ?? DIVER_BULLET_SPEED;
     this._fireInterval = config.fireInterval ?? DIVER_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? DIVER_BURST_COUNT;
+    this._pauseDuration =
+      (config.pauseDuration ?? DIVER_PAUSE_DURATION) / 1000;
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
       scene.scale.height - 40,
@@ -451,6 +463,10 @@ export class Diver extends Phaser.GameObjects.Container {
         this._handleDive(dt);
         break;
 
+      case DiverState.PAUSING:
+        this._handlePause(dt);
+        break;
+
       case DiverState.RETURNING:
         this._handleReturn(baseX, baseY, spacingX, spacingY, dt);
         break;
@@ -542,8 +558,9 @@ export class Diver extends Phaser.GameObjects.Container {
     this._divePhase += dt / DIVER_DIVE_DURATION;
     if (this._divePhase >= 1) {
       this._divePhase = 1;
-      this._state = DiverState.RETURNING;
-      this._returnProgress = 0;
+      // Move to PAUSING state, not directly to RETURNING.
+      this._state = DiverState.PAUSING;
+      this._pauseTimer = 0;
       // Stop the sustained dive sound when the dive ends.
       stopDiveSound();
       this._diveSoundActive = false;
@@ -572,6 +589,24 @@ export class Diver extends Phaser.GameObjects.Container {
       if (this._divePhase > 0.3 && this._divePhase < 0.7) {
         // Already handled by tryFireSpreadBurst via fire interval.
       }
+    }
+  }
+
+  /**
+   * Handles the pause phase: holds position while facing the player,
+   * then transitions to RETURNING after the pause duration elapses.
+   */
+  private _handlePause(dt: number): void {
+    this._pauseTimer += dt;
+
+    // Always face the player during the pause.
+    this._updateFacingRotation(dt);
+
+    // If pause duration has elapsed, transition to RETURNING.
+    if (this._pauseTimer >= this._pauseDuration) {
+      this._state = DiverState.RETURNING;
+      this._returnProgress = 0;
+      this._holdTimer = 0;
     }
   }
 
