@@ -117,4 +117,42 @@ describe('Config-aware entity seam', () => {
     expect((e as any).effectiveColor).toBe(0x999999);
     e.destroy(true);
   });
+
+  // ── shotProbability threading (AH-0MU0F1T2H003B4K0, AC5) ─────────
+
+  it('createEnemyFromConfig threads shotProbability into every dispatched entity', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm'] as const) {
+      const cfg = { ...DEFAULT_ENEMY_CONFIGS[key], shotProbability: 0.25 };
+      const e = createEnemyFromConfig(scene, cfg, 10, 10, { row: 0, col: 0 });
+      expect((e as unknown as { _shotProbability: number })._shotProbability).toBe(0.25);
+      e.destroy(true);
+    }
+    // Unknown custom key falls back to Scout but still receives the value.
+    const custom = { ...DEFAULT_ENEMY_CONFIGS.scout, key: 'custom-p', shotProbability: 0.5 };
+    const c = createEnemyFromConfig(scene, custom, 10, 10, { row: 0, col: 0 });
+    expect(c instanceof Scout).toBe(true);
+    expect((c as unknown as { _shotProbability: number })._shotProbability).toBe(0.5);
+    c.destroy(true);
+  });
+
+  it('threaded shotProbability gates firing behaviourally (p=0 skips, p=1 fires)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+
+    const skip = createEnemyFromConfig(
+      scene, { ...DEFAULT_ENEMY_CONFIGS.swarm, shotProbability: 0 }, 10, 10, { row: 0, col: 0 },
+    ) as Swarm;
+    skip.shootEnabled = true;
+    expect(skip.tryFireBurstBullet(1_000_000)).toBeNull();
+    skip.destroy(true);
+
+    const fire = createEnemyFromConfig(
+      scene, { ...DEFAULT_ENEMY_CONFIGS.swarm, shotProbability: 1 }, 10, 10, { row: 0, col: 0 },
+    ) as Swarm;
+    fire.shootEnabled = true;
+    expect(fire.tryFireBurstBullet(1_000_000)).not.toBeNull();
+    fire.destroy(true);
+  });
 });

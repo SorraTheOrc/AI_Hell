@@ -340,3 +340,72 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
   // shooting (handled by GymSwarm.update() at scene level).
   // No advance-cue sound is used per operator feedback.
 });
+
+describe('Swarm — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeSwarmWith(config: {
+    shotProbability?: number;
+    rng?: () => number;
+  }): Swarm {
+    const scene = booted!.scene;
+    return new Swarm(scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, ...config,
+    }, 0);
+  }
+
+  it('a forced-success roll fires a coordinated burst bullet', async () => {
+    booted = await bootScene([HarnessScene]);
+    const swarm = makeSwarmWith({ shotProbability: 0.25, rng: () => 0.1 });
+    swarm.shootEnabled = true;
+    expect(swarm.tryFireBurstBullet(1_000_000)).not.toBeNull();
+  });
+
+  it('a forced-failure roll skips, emits no bullet, and consumes the cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const swarm = makeSwarmWith({ shotProbability: 0.25, rng: () => 0.9 });
+    swarm.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(swarm.tryFireBurstBullet(t0)).toBeNull();
+    // Cycle consumed — still nothing inside the interval.
+    expect(swarm.tryFireBurstBullet(t0 + SWARM_BURST_INTERVAL - 1)).toBeNull();
+    // Next elapsed cycle rolls again (also forced failure).
+    expect(swarm.tryFireBurstBullet(t0 + SWARM_BURST_INTERVAL)).toBeNull();
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const swarm = makeSwarmWith({});
+    swarm.shootEnabled = true;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    const bullet = swarm.tryFireBurstBullet(1_000_000);
+    spy.mockRestore();
+    expect(bullet).not.toBeNull();
+  });
+
+  it('a deterministic 1-in-4 forced sequence emits ~1 bullet per 4 cycles per member', async () => {
+    booted = await bootScene([HarnessScene]);
+    // Pattern: three failures then one success, repeating.
+    const sequence = [0.9, 0.9, 0.9, 0.1];
+    let i = 0;
+    const swarm = makeSwarmWith({
+      shotProbability: 0.25,
+      rng: () => sequence[i++ % sequence.length],
+    });
+    swarm.shootEnabled = true;
+    const t0 = 1_000_000;
+
+    let fired = 0;
+    for (let cycle = 0; cycle < 8; cycle++) {
+      if (swarm.tryFireBurstBullet(t0 + cycle * SWARM_BURST_INTERVAL) !== null) fired++;
+    }
+    // 8 cycles at 25% under the forced 3-fail/1-success pattern → exactly 2.
+    expect(fired).toBe(2);
+  });
+});

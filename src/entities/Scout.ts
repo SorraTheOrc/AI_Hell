@@ -78,6 +78,14 @@ export interface ScoutConfig {
   bulletSize?: number;
   bulletSpeed?: number;
   fireInterval?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this scout fires when the interval
+   * elapses (per shot cycle). Defaults to `1.0` (current behaviour). A
+   * failed roll consumes the cycle — no tell cue, no shot.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -110,6 +118,8 @@ export class Scout extends Phaser.GameObjects.Container {
   private readonly _bulletSize: number;
   private readonly _bulletSpeed: number;
   private readonly _fireInterval: number;
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
   /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
   private readonly explosionHandles: ExplosionHandle[] = [];
 
@@ -125,6 +135,8 @@ export class Scout extends Phaser.GameObjects.Container {
     this._bulletSize = config.bulletSize ?? SCOUT_BULLET_SIZE;
     this._bulletSpeed = config.bulletSpeed ?? SCOUT_BULLET_SPEED;
     this._fireInterval = config.fireInterval ?? SCOUT_FIRE_INTERVAL;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
       scene.scale.height - 40,
@@ -309,7 +321,15 @@ export class Scout extends Phaser.GameObjects.Container {
       this._tellStartTime = 0;
       this._lastFireTime = now;
     } else {
-      // Interval elapsed, not telling — start the tell (advance cue).
+      // Interval elapsed, not telling — roll the shot probability at the
+      // decision point BEFORE starting the tell. A failed roll consumes
+      // the cycle and never plays an advance cue that would produce no
+      // shot (constraint: tell/RNG interaction).
+      if (!(this._rng() < this._shotProbability)) {
+        this._lastFireTime = now;
+        return null;
+      }
+      // Start the tell (advance cue).
       // Schedule cue + fire sound back-to-back: the fire sound is
       // scheduled at currentTime + SCOUT_ADVANCE_CUE_DURATION so it
       // lands exactly as the cue ends, flowing with no dead gap.

@@ -208,3 +208,59 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
     });
   });
 });
+
+describe('Phaser — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('a forced-success roll starts the tell then fires a radial burst', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = new PhaserEntity(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1, burstCount: 8,
+    });
+    phaser.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell starts
+    expect(phaser.isTelling).toBe(true);
+    const bullets = phaser.tryFireRadialBullets(t0 + PHASER_ADVANCE_CUE_DURATION);
+    expect(bullets).toHaveLength(8);
+    expect(phaser.isTelling).toBe(false);
+  });
+
+  it('a forced-failure roll consumes the cycle and never starts a tell', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = new PhaserEntity(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9, burstCount: 8,
+    });
+    phaser.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]);
+    expect(phaser.isTelling).toBe(false);
+    // Consumed cycle: nothing within the interval, next elapsed cycle rolls again.
+    expect(phaser.tryFireRadialBullets(t0 + PHASER_FIRE_INTERVAL - 1)).toEqual([]);
+    expect(phaser.tryFireRadialBullets(t0 + PHASER_FIRE_INTERVAL)).toEqual([]);
+    expect(phaser.isTelling).toBe(false);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = new PhaserEntity(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 }, burstCount: 8,
+    });
+    phaser.shootEnabled = true;
+    const t0 = 1_000_000;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell
+    expect(phaser.isTelling).toBe(true);
+    const bullets = phaser.tryFireRadialBullets(t0 + PHASER_ADVANCE_CUE_DURATION);
+    spy.mockRestore();
+    expect(bullets).toHaveLength(8);
+  });
+});

@@ -98,6 +98,15 @@ export interface DiverConfig {
   burstCount?: number;
   /** Custom pause duration in ms at the bottom of the dive arc. Defaults to 500 ms. */
   pauseDuration?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this diver fires when the interval
+   * elapses (per shot cycle). Defaults to `1.0` (current behaviour). The
+   * gate sits at the interval check so a failed roll does not corrupt
+   * dive state.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -161,6 +170,8 @@ export class Diver extends Phaser.GameObjects.Container {
   private readonly _bulletSpeed: number;
   private readonly _fireInterval: number;
   private readonly _burstCount: number;
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -175,6 +186,8 @@ export class Diver extends Phaser.GameObjects.Container {
     this._bulletSpeed = config.bulletSpeed ?? DIVER_BULLET_SPEED;
     this._fireInterval = config.fireInterval ?? DIVER_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? DIVER_BURST_COUNT;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
     this._pauseDuration =
       (config.pauseDuration ?? DIVER_PAUSE_DURATION) / 1000;
     this.target = new Phaser.Math.Vector2(
@@ -365,7 +378,12 @@ export class Diver extends Phaser.GameObjects.Container {
   tryFireSpreadBurst(now: number): DiverBullet[] {
     if (!this._shootEnabled || !this._alive) return [];
     if (now - this._lastFireTime < this._fireInterval) return [];
+    // Per-cycle probability gate at the interval check: consume the cycle
+    // first so a failed roll produces no burst and leaves dive state
+    // untouched (the Diver fires via tryFireSpreadBurst alongside its dive
+    // cycle, so the gate must not sit inside the dive handlers).
     this._lastFireTime = now;
+    if (!(this._rng() < this._shotProbability)) return [];
 
     const bullets: DiverBullet[] = [];
     // Play the fire sound exactly once per spread burst (not per

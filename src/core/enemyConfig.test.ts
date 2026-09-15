@@ -65,6 +65,18 @@ describe('EnemyConfig schema', () => {
     expect(DEFAULT_ENEMY_CONFIGS.swarm.bulletColor).toBe(0x00ccff);
   });
 
+  it('every seed supplies a shotProbability fraction (AC1: swarm 0.25, others 1.0)', () => {
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(typeof config.shotProbability).toBe('number');
+      expect(config.shotProbability).toBeGreaterThanOrEqual(0);
+      expect(config.shotProbability).toBeLessThanOrEqual(1);
+    }
+    expect(DEFAULT_ENEMY_CONFIGS.swarm.shotProbability).toBe(0.25);
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'boss']) {
+      expect(DEFAULT_ENEMY_CONFIGS[key].shotProbability).toBe(1.0);
+    }
+  });
+
   it('extra/open passthrough: unknown fields are allowed and round-trip (forward-compat)', () => {
     const extended = { ...DEFAULT_ENEMY_CONFIGS.scout, wiggleAmplitude: 3, cueDuration: 800 } as typeof DEFAULT_ENEMY_CONFIGS.scout & { wiggleAmplitude: number; cueDuration: number };
     expect((extended as Record<string, unknown>).wiggleAmplitude).toBe(3);
@@ -140,6 +152,37 @@ describe('EnemyConfig persistence (localStorage)', () => {
     expect(loaded.bulletSpeed).toBe(DEFAULT_ENEMY_CONFIGS.diver.bulletSpeed);
   });
 
+  it('the generic fallback config for a key with no seed defaults shotProbability to 1.0', () => {
+    const cfg = loadEnemyConfig('no-such-enemy');
+    expect(cfg.shotProbability).toBe(1.0);
+  });
+
+  it('legacy persisted seed config without shotProbability inherits the seed value (swarm 0.25)', () => {
+    // Pre-existing saved configs predate the field: merge-over-defaults must
+    // keep the seed's swarm 0.25 rather than dropping to 0/undefined.
+    const { shotProbability: _omitted, ...legacySwarm } = DEFAULT_ENEMY_CONFIGS.swarm;
+    window.localStorage.setItem(
+      `${ENEMY_CONFIG_STORAGE_PREFIX}swarm`,
+      JSON.stringify(legacySwarm),
+    );
+    const loaded = loadEnemyConfig('swarm');
+    expect(loaded.shotProbability).toBe(0.25);
+  });
+
+  it('legacy persisted custom config without shotProbability falls back to 1.0', () => {
+    window.localStorage.setItem(
+      `${ENEMY_CONFIG_STORAGE_PREFIX}legacy-custom`,
+      JSON.stringify({ key: 'legacy-custom', displayName: 'Legacy', count: 4 }),
+    );
+    const loaded = loadEnemyConfig('legacy-custom');
+    expect(loaded.shotProbability).toBe(1.0);
+  });
+
+  it('a persisted shotProbability round-trips and overrides the seed', () => {
+    saveEnemyConfig({ ...DEFAULT_ENEMY_CONFIGS.scout, shotProbability: 0.4 });
+    expect(loadEnemyConfig('scout').shotProbability).toBe(0.4);
+  });
+
   it('corrupt JSON falls back to defaults without throwing', () => {
     window.localStorage.setItem(`${ENEMY_CONFIG_STORAGE_PREFIX}scout`, '{ not json }}}}}');
     expect(() => loadEnemyConfig('scout')).not.toThrow();
@@ -166,6 +209,7 @@ describe('EnemyConfig persistence (localStorage)', () => {
       fireInterval: 1300,
       bulletSpeed: 170,
       burstCount: 5,
+      shotProbability: 0.6,
     };
     saveEnemyConfig(custom);
     const reloaded = loadEnemyConfig('custom-one');

@@ -67,6 +67,14 @@ export interface TankConfig {
   bulletSpeed?: number;
   fireInterval?: number;
   burstCount?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this tank fires when the interval
+   * elapses (per shot cycle). Defaults to `1.0` (current behaviour). A
+   * failed roll consumes the cycle with no bullets.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -100,6 +108,8 @@ export class Tank extends Phaser.GameObjects.Container {
   private readonly _bulletSpeed: number;
   private readonly _fireInterval: number;
   private readonly _burstCount: number;
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -114,6 +124,8 @@ export class Tank extends Phaser.GameObjects.Container {
     this._bulletSpeed = config.bulletSpeed ?? TANK_BULLET_SPEED;
     this._fireInterval = config.fireInterval ?? TANK_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? TANK_BURST_COUNT;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
 
     // Body — larger hexagonal shape in orange.
     this.bodyGraphics = scene.add.graphics();
@@ -248,7 +260,10 @@ export class Tank extends Phaser.GameObjects.Container {
   tryFireRadialBurst(now: number): TankBullet[] {
     if (!this._shootEnabled || !this._alive) return [];
     if (now - this._lastFireTime < this._fireInterval) return [];
+    // Per-cycle probability gate: consume the cycle first so a failed roll
+    // cannot retry-until-success within the same cycle.
     this._lastFireTime = now;
+    if (!(this._rng() < this._shotProbability)) return [];
 
     const bullets: TankBullet[] = [];
     for (let i = 0; i < this._burstCount; i++) {

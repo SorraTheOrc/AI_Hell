@@ -67,6 +67,14 @@ export interface SwarmConfig {
   bulletSize?: number;
   bulletSpeed?: number;
   fireInterval?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this member fires when the burst
+   * interval elapses (per shot cycle). Defaults to `1.0` (current
+   * behaviour). A failed roll consumes the cycle with no bullet.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -102,6 +110,8 @@ export class Swarm extends Phaser.GameObjects.Container {
   private readonly _bulletSize: number;
   private readonly _bulletSpeed: number;
   private readonly _fireInterval: number;
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
 
   // Per-cluster phase — each cluster drifts with a different angular phase
   // so members weave around each other naturally.
@@ -129,6 +139,8 @@ export class Swarm extends Phaser.GameObjects.Container {
     this._bulletSize = config.bulletSize ?? SWARM_BULLET_SIZE;
     this._bulletSpeed = config.bulletSpeed ?? SWARM_BULLET_SPEED;
     this._fireInterval = config.fireInterval ?? SWARM_BURST_INTERVAL;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
 
     // Each cluster gets a unique angular phase so they weave differently.
     const phaseStep = (Math.PI * 2) / SWARM_CLUSTER_COUNT;
@@ -287,7 +299,11 @@ export class Swarm extends Phaser.GameObjects.Container {
   tryFireBurstBullet(now: number): SwarmBullet | null {
     if (!this._shootEnabled || !this._alive) return null;
     if (now - this._lastBurstTime < this._fireInterval) return null;
+    // Per-cycle probability gate: consume the cycle first so a failed roll
+    // cannot retry-until-success within the same cycle (average volley
+    // density = shotProbability × member count per cycle for the swarm).
     this._lastBurstTime = now;
+    if (!(this._rng() < this._shotProbability)) return null;
 
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;

@@ -82,6 +82,15 @@ export interface PhaserConfig {
   bulletSpeed?: number;
   fireInterval?: number;
   burstCount?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this phaser fires when the interval
+   * elapses (per shot cycle). Defaults to `1.0` (current behaviour). The
+   * roll happens at the tell decision point, so a skipped cycle never
+   * plays an advance cue.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -126,6 +135,8 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
   private readonly _bulletSpeed: number;
   private readonly _fireInterval: number;
   private readonly _burstCount: number;
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -142,6 +153,8 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this._bulletSpeed = config.bulletSpeed ?? PHASER_BULLET_SPEED;
     this._fireInterval = config.fireInterval ?? PHASER_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? 8;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
     // Aim point defaults to the bottom-centre stand-in (simulated player).
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
@@ -362,7 +375,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       return bullets;
     }
 
-    // Start the tell animation — this is the warning phase.
+    // Start the tell animation — roll the shot probability at this
+    // decision point BEFORE entering the tell, so a failed roll consumes
+    // the cycle without playing an advance cue (tell/RNG constraint).
+    if (!(this._rng() < this._shotProbability)) {
+      this._lastFireTime = now;
+      return [];
+    }
     this._isTelling = true;
     // Store the local phase (in seconds) so applyFormationPosition can
     // compute tell elapsed without accessing scene.time.now.

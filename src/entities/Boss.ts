@@ -193,6 +193,14 @@ export interface BossConfig {
   y: number;
   /** Offset within the formation (unused for Boss, but required by the interface). */
   formationOffset: FormationOffset;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that the Boss fires when an attack cycle
+   * is eligible. Defaults to `1.0` (current behaviour). A failed roll
+   * consumes the cycle.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 // ── Bullet types ────────────────────────────────────────────────────
@@ -242,6 +250,8 @@ export class Boss extends Phaser.GameObjects.Container {
 
   private _alive = true;
   private _shootEnabled = true; // Boss always "shoots" (pattern-driven)
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
   private _healthSegmentsRemaining = BOSS_PHASE_COUNT;
@@ -269,6 +279,8 @@ export class Boss extends Phaser.GameObjects.Container {
     super(scene, config.x, config.y);
 
     this.formationOffset = config.formationOffset;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
 
     // Body — a hexagonal/geometric shape in neon red.
     this.bodyGraphics = scene.add.graphics();
@@ -459,8 +471,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Spread pattern (Phase 1): fires bullets in a wide arc.
    */
   tryFireSpreadBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
@@ -481,8 +496,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Spiral pattern (Phase 2): bullets spiral outward from the Boss.
    */
   tryFireSpiralBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
@@ -501,8 +519,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Pulse pattern (Phase 3): a screen-wide wave + aimed shots.
    */
   tryFirePulseBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const bullets: BossBullet[] = [];
 
@@ -544,8 +565,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Desperation pattern (Phase 4): all patterns combined at higher speed.
    */
   tryFireDesperationBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const bullets: BossBullet[] = [];
     const speed = this._bulletSpeed();
@@ -627,7 +651,14 @@ export class Boss extends Phaser.GameObjects.Container {
       this._currentPhaseNumber === 4
         ? BOSS_DESPERATION_ATTACK_INTERVAL
         : BOSS_ATTACK_INTERVAL;
-    return now - this._lastAttackTime >= interval;
+    if (now - this._lastAttackTime < interval) return false;
+    // Probability gate at the fire decision point: a failed roll consumes
+    // this cycle so the next volley rolls again (default 1.0 — unchanged).
+    if (!(this._rng() < this._shotProbability)) {
+      this._lastAttackTime = now;
+      return false;
+    }
+    return true;
   }
 
   private _bulletSpeed(): number {

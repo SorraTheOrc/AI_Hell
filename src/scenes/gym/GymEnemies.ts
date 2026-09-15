@@ -60,6 +60,7 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   size: { min: 6, max: 80, step: 1 },
   bulletSize: { min: 1, max: 12, step: 1 },
   fireInterval: { min: 100, max: 5000, step: 50 },
+  shotProbability: { min: 0, max: 1, step: 0.05 },
   bulletSpeed: { min: 40, max: 600, step: 5 },
   burstCount: { min: 1, max: 24, step: 1 },
 };
@@ -389,6 +390,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       if ('_bulletSpeed' in e) (e as Record<string, unknown>)['_bulletSpeed'] = config.bulletSpeed;
       if ('_fireInterval' in e) (e as Record<string, unknown>)['_fireInterval'] = config.fireInterval;
       if ('_burstCount' in e) (e as Record<string, unknown>)['_burstCount'] = config.burstCount;
+      if ('_shotProbability' in e) (e as Record<string, unknown>)['_shotProbability'] = config.shotProbability;
     }
   }
 

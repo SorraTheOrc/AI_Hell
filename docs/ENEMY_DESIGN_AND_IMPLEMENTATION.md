@@ -481,6 +481,7 @@ convention and will follow it when built: spawn the player via the same
 | `bulletColor` / `bulletSize` | `number` | Bullet colour / radius. |
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
 | `fireInterval` | `number` | ms between volleys. |
+| `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | px/s. |
 | `burstCount` | `number` | Burst / radial spoke count. |
 | `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. |
@@ -505,12 +506,23 @@ fall back to Scout; Swarm's `clusterIndex` is `row / SWARM_CLUSTER_ROW_STRIDE`).
 
 ### 8.4 Entity seam
 
-`Scout`/`Diver`/`Tank`/`Phaser`/`Swarm` (`src/entities/*.ts`) accept an
+`Scout`/`Diver`/`Tank`/`Phaser`/`Swarm`/`Boss` (`src/entities/*.ts`) accept an
 optional seam config (`size? color? bulletColor? bulletSize? bulletSpeed?
-fireInterval? burstCount?`) and store `private readonly _*` fields derived as
-`config.xxx ?? CONST` so hard-coded constants remain the default and old tests
-stay green. Getters (`effectiveSize`, `effectiveColor`, …) are used by the
-entity's own drawing/fire paths.
+fireInterval? burstCount? shotProbability? rng?`) and store `private readonly
+_*` fields derived as `config.xxx ?? CONST` so hard-coded constants remain the
+default and old tests stay green. Getters (`effectiveSize`, `effectiveColor`, …)
+are used by the entity's own drawing/fire paths.
+
+**Shot probability gate:** each entity stores `_shotProbability`
+(`config.shotProbability ?? 1.0`) and an injectable `_rng`
+(`config.rng ?? Math.random`). When the fire interval elapses the entity rolls
+`this._rng() < this._shotProbability` at the *decision point*: on success it
+continues the existing fire path; on failure it consumes the cycle
+(`_lastFireTime/_lastBurstTime = now`) and produces no bullet. For the tell
+entities (Scout/Phaser) the roll happens *before* a tell is scheduled, so a
+skipped cycle never plays an advance cue with no shot; Diver/Tank/Swarm gate at
+their interval check; the Boss gates in `_shouldFire` *after* its telegraph
+guard (never while a telegraph is scheduled).
 
 ### 8.5 Gym surface — GymEnemies + editor panel
 
@@ -522,7 +534,7 @@ seam.
 
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
-`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/bulletSpeed/burstCount`,
+`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
 plus **Save** (overwrite active key) and **Save As…** (sanitize → validate →
 duplicate check via `listEnemyConfigKeys()`, displayName = raw input).

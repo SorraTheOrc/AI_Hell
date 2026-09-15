@@ -827,3 +827,55 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     expect(diver.behaviourState).toBe(DiverState.RETURNING);
   });
 });
+
+describe('Diver — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('a forced-success roll produces a full spread burst when the interval elapses', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = new Diver(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1, burstCount: 4,
+    });
+    diver.shootEnabled = true;
+    const bullets = diver.tryFireSpreadBurst(1_000_000);
+    expect(bullets.length).toBe(4);
+  });
+
+  it('a forced-failure roll consumes the cycle with no burst and leaves dive state untouched', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = new Diver(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9, burstCount: 4,
+    });
+    diver.shootEnabled = true;
+    const t0 = 1_000_000;
+
+    // Skipped: no bullets emitted, cycle consumed.
+    expect(diver.tryFireSpreadBurst(t0)).toEqual([]);
+    expect(diver.tryFireSpreadBurst(t0 + DIVER_FIRE_INTERVAL - 1)).toEqual([]);
+
+    // The next elapsed cycle rolls again (also forced failure).
+    expect(diver.tryFireSpreadBurst(t0 + DIVER_FIRE_INTERVAL)).toEqual([]);
+    // Dive state machine was never entered/corrupted by the skipped fire.
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = new Diver(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, burstCount: 4,
+    });
+    diver.shootEnabled = true;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    const bullets = diver.tryFireSpreadBurst(1_000_000);
+    spy.mockRestore();
+    expect(bullets.length).toBe(4);
+  });
+});

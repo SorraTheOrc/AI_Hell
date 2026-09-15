@@ -261,6 +261,71 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.currentConfig.driftSpeed).toBe(before + 20);
   });
 
+  // ── shotProbability slider (AH-0MU0F1T2H003B4K0, AC6) ──────────
+
+  it('renders a shotProbability slider immediately after fireInterval with a 0–1 fraction range', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const slider = panel.querySelector<HTMLInputElement>('input[data-config="shotProbability"]');
+    expect(slider, 'shotProbability slider missing').not.toBeNull();
+    expect(slider!.min).toBe('0');
+    expect(slider!.max).toBe('1');
+    expect(Number(slider!.step)).toBe(0.05);
+
+    // DOM order: fireInterval then shotProbability then bulletSpeed.
+    const configInputs = [...panel.querySelectorAll<HTMLInputElement>('input[data-config]')]
+      .map((el) => el.dataset['config']);
+    expect(configInputs.indexOf('shotProbability')).toBe(configInputs.indexOf('fireInterval') + 1);
+  });
+
+  it('seeds the shotProbability slider from the active config (swarm 0.25, others 1.0)', async () => {
+    await bootWithKey('swarm');
+    const swarmSlider = document.querySelector<HTMLInputElement>('input[data-config="shotProbability"]')!;
+    expect(Number(swarmSlider.value)).toBe(0.25);
+
+    // Tear the swarm boot down before booting the scout harness.
+    booted?.game.destroy(true);
+    booted = null;
+
+    const scene = await bootWithKey('scout');
+    expect(scene.currentConfig.shotProbability).toBe(1.0);
+    const scoutSlider = document.querySelector<HTMLInputElement>('input[data-config="shotProbability"]')!;
+    expect(Number(scoutSlider.value)).toBe(1.0);
+  });
+
+  it('live-applies shotProbability to the spawned entities without a respawn', async () => {
+    const scene = await bootWithKey('swarm');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="shotProbability"]')!;
+    slider.value = '0.05';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.shotProbability).toBe(0.05);
+    for (const e of scene.formationEntities) {
+      expect((e as unknown as { _shotProbability: number })._shotProbability).toBe(0.05);
+    }
+  });
+
+  it('Save round-trips shotProbability through localStorage', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    const scene = await bootWithKey('swarm');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="shotProbability"]')!;
+    slider.value = '0.3';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
+    expect(scene.currentConfig.shotProbability).toBe(0.3);
+    expect(lec('swarm').shotProbability).toBeCloseTo(0.3, 5);
+  });
+
+  it('Save As round-trips shotProbability into the new custom enemy', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="shotProbability"]')!;
+    slider.value = '0.45';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'Prob Enemy';
+    (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
+    expect(lec('prob-enemy').shotProbability).toBeCloseTo(0.45, 5);
+  });
+
   it('Save overwrites the active config and round-trips via loadEnemyConfig', async () => {
     const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
     await bootWithKey('scout');

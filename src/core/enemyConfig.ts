@@ -77,6 +77,16 @@ export interface EnemyConfig {
   bulletSpeed: number;
   /** Burst / radial-spoke count (e.g. Tank radial 10, Diver burst 4, Phaser radial 8). */
   burstCount: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that an individual enemy fires on any
+   * given shot cycle, evaluated once per cycle at the fire decision point
+   * (when the interval elapses / the tell starts). A failed roll consumes
+   * the cycle: no bullet is emitted and no tell cue is played.
+   *
+   * Defaults to `1.0` for every seed except the E5 Swarm (`0.25`), so a
+   * 15-member cluster cannot out-damage every other encounter.
+   */
+  shotProbability: number;
 
   /**
    * Extensible passthrough — future tuning axes can be added here without
@@ -123,6 +133,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 1200,
     bulletSpeed: 200,
     burstCount: 1,
+    shotProbability: 1.0,
   },
   diver: {
     key: 'diver',
@@ -142,6 +153,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 1000,
     bulletSpeed: 220,
     burstCount: 4,
+    shotProbability: 1.0,
   },
   tank: {
     key: 'tank',
@@ -161,6 +173,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 2400,
     bulletSpeed: 150,
     burstCount: 10,
+    shotProbability: 1.0,
   },
   phaser: {
     key: 'phaser',
@@ -180,6 +193,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 2000,
     bulletSpeed: 180,
     burstCount: 8,
+    shotProbability: 1.0,
   },
   swarm: {
     key: 'swarm',
@@ -199,6 +213,9 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 900,
     bulletSpeed: 180,
     burstCount: 1,
+    // Only a quarter of the 15-member cluster fires per cycle, so the
+    // coordinated volley stays a threat without becoming a bullet wall.
+    shotProbability: 0.25,
   },
   boss: {
     key: 'boss',
@@ -218,6 +235,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 1200,
     bulletSpeed: 160,
     burstCount: 8,
+    shotProbability: 1.0,
   },
 };
 
@@ -290,6 +308,7 @@ export function loadEnemyConfig(key: string): EnemyConfig {
     fireInterval: 1200,
     bulletSpeed: 200,
     burstCount: 1,
+    shotProbability: 1.0,
   };
 
   const store = storage();

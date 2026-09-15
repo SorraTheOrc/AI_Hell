@@ -194,3 +194,48 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     }
   });
 });
+
+describe('Tank — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('a forced-success roll produces a full radial burst when the interval elapses', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = new Tank(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1, burstCount: TANK_BURST_COUNT,
+    });
+    tank.shootEnabled = true;
+    expect(tank.tryFireRadialBurst(1_000_000)).toHaveLength(TANK_BURST_COUNT);
+  });
+
+  it('a forced-failure roll consumes the cycle with no bullets', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = new Tank(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9, burstCount: TANK_BURST_COUNT,
+    });
+    tank.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(tank.tryFireRadialBurst(t0)).toHaveLength(0);
+    expect(tank.tryFireRadialBurst(t0 + TANK_FIRE_INTERVAL - 1)).toHaveLength(0);
+    // Next elapsed cycle rolls again (also forced failure).
+    expect(tank.tryFireRadialBurst(t0 + TANK_FIRE_INTERVAL)).toHaveLength(0);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = new Tank(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 }, burstCount: TANK_BURST_COUNT,
+    });
+    tank.shootEnabled = true;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    expect(tank.tryFireRadialBurst(1_000_000)).toHaveLength(TANK_BURST_COUNT);
+    spy.mockRestore();
+  });
+});
