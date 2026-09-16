@@ -24,7 +24,8 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
-import { GAME_HEIGHT, HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
+import { GAME_HEIGHT } from '../core/constants';
 import {
   playDiverDestructionSound,
   playDiverDiveStartSound,
@@ -33,11 +34,7 @@ import {
   playDiverFireSound,
 } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-  type ExplosionHandle,
-} from '../vfx/explosionParticles';
+import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -130,17 +127,10 @@ export enum DiverState {
   RETURNING = 'returning',
 }
 
-export class Diver extends Phaser.GameObjects.Container {
-  private readonly bodyGraphics: Phaser.GameObjects.Graphics;
-  private readonly explosionGraphics: Phaser.GameObjects.Graphics;
-  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
-  private readonly explosionHandles: ExplosionHandle[] = [];
-  private readonly formationOffset: FormationOffset;
-  private readonly target: Phaser.Math.Vector2;
+export class Diver extends BaseEnemy {
+  // ── Diver-specific fields ────────────────────────────────────────
 
-  private _alive = true;
-  private _shootEnabled = false;
-  private _lastFireTime = 0;
+  private readonly target: Phaser.Math.Vector2;
   private _state = DiverState.FORMATION;
   private _holdTimer = 0;
   private _divePhase = 0;
@@ -164,31 +154,25 @@ export class Diver extends Phaser.GameObjects.Container {
   private _pauseTimer = 0;
   /** Pause duration in seconds (configured or default). */
   private _pauseDuration = DIVER_PAUSE_DURATION / 1000;
-  private readonly _size: number;
-  private readonly _color: number;
-  private readonly _bulletColor: number;
-  private readonly _bulletSize: number;
-  private readonly _bulletSpeed: number;
-  private readonly _fireInterval: number;
   private readonly _burstCount: number;
-  private readonly _shotProbability: number;
-  private readonly _rng: () => number;
 
   // ── Construction ─────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: DiverConfig) {
-    super(scene, config.x, config.y);
+    const baseConfig: BaseEnemyConfig = {
+      formationOffset: config.formationOffset,
+      size: config.size ?? DIVER_SIZE,
+      color: config.color ?? DIVER_COLOR,
+      bulletColor: config.bulletColor ?? DIVER_BULLET_COLOR,
+      bulletSize: config.bulletSize ?? DIVER_BULLET_SIZE,
+      bulletSpeed: config.bulletSpeed ?? DIVER_BULLET_SPEED,
+      fireInterval: config.fireInterval ?? DIVER_FIRE_INTERVAL,
+      shotProbability: config.shotProbability,
+      rng: config.rng,
+    };
+    super(scene, config.x, config.y, baseConfig);
 
-    this.formationOffset = config.formationOffset;
-    this._size = config.size ?? DIVER_SIZE;
-    this._color = config.color ?? DIVER_COLOR;
-    this._bulletColor = config.bulletColor ?? DIVER_BULLET_COLOR;
-    this._bulletSize = config.bulletSize ?? DIVER_BULLET_SIZE;
-    this._bulletSpeed = config.bulletSpeed ?? DIVER_BULLET_SPEED;
-    this._fireInterval = config.fireInterval ?? DIVER_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? DIVER_BURST_COUNT;
-    this._shotProbability = config.shotProbability ?? 1.0;
-    this._rng = config.rng ?? Math.random;
     this._pauseDuration =
       (config.pauseDuration ?? DIVER_PAUSE_DURATION) / 1000;
     this.target = new Phaser.Math.Vector2(
@@ -196,22 +180,19 @@ export class Diver extends Phaser.GameObjects.Container {
       scene.scale.height - 40,
     );
 
-    // Body — medium dart shape in yellow.
-    this.bodyGraphics = scene.add.graphics();
-    this.bodyGraphics.lineStyle(2, this._color, 1);
+    // Draw the unique shape and add shared graphics in canonical order.
     this._drawBody();
-    this.bodyGraphics.setDepth(1);
-    this.add(this.bodyGraphics);
+    this.addSharedGraphics();
+  }
 
-    // Explosion layer.
-    this.explosionGraphics = scene.add.graphics();
-    this.explosionGraphics.setDepth(2);
-    this.add(this.explosionGraphics);
+  /** VFX pattern name for Diver explosions. */
+  protected getExplosionPatternName(): string {
+    return 'diver';
   }
 
   // ── Drawing ──────────────────────────────────────────────────────
 
-  private _drawBody(): void {
+  protected _drawBody(): void {
     this.bodyGraphics.clear();
     // Style must be set AFTER clear(): Graphics is command-buffered and
     // clear() wipes any styles queued before it (it only re-applies the
@@ -234,28 +215,6 @@ export class Diver extends Phaser.GameObjects.Container {
     this.bodyGraphics.strokePath();
   }
 
-  /**
-   * Plays the destruction animation: expanding, fading rings.
-   *
-   * Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
-   * display-list child has `scene === undefined`; animating it here would
-   * dereference undefined. Normal single-run destruction keeps the old
-   * behaviour exactly (the guard never triggers on a live object).
-   */
-  playExplosion(): void {
-    if (!this.scene) return;
-    const scene = this.scene as Phaser.Scene;
-    const handle = spawnExplosionParticles(
-      scene,
-      this.x,
-      this.y,
-      this._color,
-      this._size,
-      { patterns: resolvePatterns('diver') },
-    );
-    if (handle) this.explosionHandles.push(handle);
-  }
-
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
   getExplosionHandles(): ExplosionHandle[] {
     return this.explosionHandles.slice();
@@ -267,26 +226,6 @@ export class Diver extends Phaser.GameObjects.Container {
   get effectiveColor(): number { return this._color; }
   get effectiveBurstCount(): number { return this._burstCount; }
 
-  /**
-   * Hit radius (px) used for collision checks against this entity.
-   *
-   * Returns `Math.ceil(visualHalfSize + HIT_RADIUS_BUFFER_PX)` so the
-   * hit circle is proportionally sized to the entity's visual half-size
-   * with a small gameplay buffer (default 2 px) for visual stroke
-   * thickness.
-   */
-  getHitRadius(): number {
-    return Math.ceil(this._size / 2 + HIT_RADIUS_BUFFER_PX);
-  }
-
-  get alive(): boolean {
-    return this._alive;
-  }
-
-  get bodyVisible(): boolean {
-    return this.bodyGraphics.alpha > 0 && this.bodyGraphics.visible;
-  }
-
   get shootEnabled(): boolean {
     return this._shootEnabled;
   }
@@ -294,10 +233,6 @@ export class Diver extends Phaser.GameObjects.Container {
   set shootEnabled(value: boolean) {
     this._shootEnabled = value;
     if (!value) this._lastFireTime = 0;
-  }
-
-  get offset(): FormationOffset {
-    return { ...this.formationOffset };
   }
 
   /** Current behaviour state (formation, diving, or returning). */
@@ -359,16 +294,16 @@ export class Diver extends Phaser.GameObjects.Container {
 
   // ── Behaviour ────────────────────────────────────────────────────
 
-  destroySelf(): void {
-    if (!this._alive) return;
-    this._alive = false;
-    this.bodyGraphics.setAlpha(0);
-    // Silence any sustained dive sound to prevent oscillator leak.
+  /**
+   * Hides the body and silences any sustained dive sound (prevents
+   * oscillator leak on destruction).
+   */
+  protected hideBody(): void {
+    super.hideBody();
     if (this._diveSoundActive) {
       stopDiveSound();
       this._diveSoundActive = false;
     }
-    this.playExplosion();
   }
 
   /**
@@ -424,10 +359,8 @@ export class Diver extends Phaser.GameObjects.Container {
     spacingX: number,
     spacingY: number,
   ): Phaser.Math.Vector2 {
-    return new Phaser.Math.Vector2(
-      baseX + this.formationOffset.col * spacingX,
-      baseY + this.formationOffset.row * spacingY,
-    );
+    const base = this.computeFormationPosition(baseX, baseY, spacingX, spacingY);
+    return new Phaser.Math.Vector2(base.x, base.y);
   }
 
   /**
@@ -678,12 +611,6 @@ export class Diver extends Phaser.GameObjects.Container {
       stopDiveSound();
       this._diveSoundActive = false;
     }
-    this.bodyGraphics.destroy();
-    this.explosionGraphics.destroy();
-    // Scene-level particle Graphics are NOT display-list children —
-    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
-    for (const handle of this.explosionHandles) handle.destroy();
-    this.explosionHandles.length = 0;
     super.destroy(fromScene);
   }
 }

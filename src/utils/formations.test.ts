@@ -13,6 +13,7 @@ import {
   buildOrbitalPhaseOffsets,
   buildSingleOffset,
   buildVFormationOffsets,
+  computeFormationPosition,
 } from './formations';
 import { sanitizeShotPattern, isValidShotPattern } from './enemyShotPatterns';
 
@@ -52,6 +53,25 @@ describe('FORMATION_BUILDERS registry', () => {
   it('getFormationBuilder returns the correct builder for valid kinds', () => {
     expect(getFormationBuilder('orbital')).toBe(FORMATION_BUILDERS.orbital);
     expect(getFormationBuilder('v')).toBe(FORMATION_BUILDERS.v);
+  });
+});
+
+describe('computeFormationPosition (shared base calculation)', () => {
+  it('offsets the base position by column × spacingX and row × spacingY', () => {
+    const pos = computeFormationPosition(100, 50, { row: 2, col: -1 }, 20, 30);
+    expect(pos).toEqual({ x: 100 + -1 * 20, y: 50 + 2 * 30 });
+  });
+
+  it('returns the base position unchanged for a zero offset', () => {
+    expect(computeFormationPosition(480, 200, { row: 0, col: 0 }, 40, 40)).toEqual({
+      x: 480,
+      y: 200,
+    });
+  });
+
+  it('handles negative base positions and fractional offsets', () => {
+    const pos = computeFormationPosition(-10, -20, { row: -0.5, col: 1.5 }, 8, 16);
+    expect(pos).toEqual({ x: -10 + 1.5 * 8, y: -20 + -0.5 * 16 });
   });
 });
 

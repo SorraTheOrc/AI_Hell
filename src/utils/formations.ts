@@ -170,3 +170,31 @@ export function getFormationBuilder(kind: string): (count: number) => FormationO
   if (kind in FORMATION_BUILDERS) return FORMATION_BUILDERS[kind as EnemyFormationKind];
   return buildVFormationOffsets;
 }
+
+/** A 2D position produced by formation geometry helpers. */
+export interface FormationPosition {
+  x: number;
+  y: number;
+}
+
+/**
+ * Computes the base position of an enemy from its formation offset.
+ *
+ * This is the shared calculation: `x = baseX + offset.col * spacingX`
+ * and `y = baseY + offset.row * spacingY`. Each enemy adds its own
+ * movement modifier (wiggle, dive state machine, orbit, etc.) on top.
+ *
+ * Pure and side-effect free — no Phaser runtime dependency.
+ */
+export function computeFormationPosition(
+  baseX: number,
+  baseY: number,
+  offset: FormationOffset,
+  spacingX: number,
+  spacingY: number,
+): FormationPosition {
+  return {
+    x: baseX + offset.col * spacingX,
+    y: baseY + offset.row * spacingY,
+  };
+}

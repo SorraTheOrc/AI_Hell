@@ -23,14 +23,10 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
-import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { FormationOffset } from '../utils/formations';
 import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-  type ExplosionHandle,
-} from '../vfx/explosionParticles';
+import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -101,64 +97,52 @@ export interface ScoutBullet {
   vy: number;
 }
 
-export class Scout extends Phaser.GameObjects.Container {
-  private readonly bodyGraphics: Phaser.GameObjects.Graphics;
-  private readonly explosionGraphics: Phaser.GameObjects.Graphics;
-  private readonly target: Phaser.Math.Vector2;
-  private readonly formationOffset: FormationOffset;
+export class Scout extends BaseEnemy {
+  // ── Scout-specific fields ────────────────────────────────────────
 
-  private _alive = true;
-  private _shootEnabled = false;
-  private _lastFireTime = 0;
   private _tellStartTime = 0;
   private _isTelling = false;
   private _wigglePhase = Math.random() * Math.PI * 2;
-  private readonly _size: number;
-  private readonly _color: number;
-  private readonly _bulletColor: number;
-  private readonly _bulletSize: number;
-  private readonly _bulletSpeed: number;
-  private readonly _fireInterval: number;
-  private readonly _shotProbability: number;
-  private readonly _rng: () => number;
-  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
-  private readonly explosionHandles: ExplosionHandle[] = [];
+  /** Current aim target. */
+  protected readonly target: Phaser.Math.Vector2;
 
   // ── Construction ─────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: ScoutConfig) {
-    super(scene, config.x, config.y);
+    // Extract shared config fields for the base class, applying the
+    // Scout-specific defaults for any omitted field.
+    const baseConfig: BaseEnemyConfig = {
+      formationOffset: config.formationOffset,
+      size: config.size ?? SCOUT_SIZE,
+      color: config.color ?? SCOUT_COLOR,
+      bulletColor: config.bulletColor ?? SCOUT_BULLET_COLOR,
+      bulletSize: config.bulletSize ?? SCOUT_BULLET_SIZE,
+      bulletSpeed: config.bulletSpeed ?? SCOUT_BULLET_SPEED,
+      fireInterval: config.fireInterval ?? SCOUT_FIRE_INTERVAL,
+      shotProbability: config.shotProbability,
+      rng: config.rng,
+    };
+    super(scene, config.x, config.y, baseConfig);
 
-    this.formationOffset = config.formationOffset;
-    this._size = config.size ?? SCOUT_SIZE;
-    this._color = config.color ?? SCOUT_COLOR;
-    this._bulletColor = config.bulletColor ?? SCOUT_BULLET_COLOR;
-    this._bulletSize = config.bulletSize ?? SCOUT_BULLET_SIZE;
-    this._bulletSpeed = config.bulletSpeed ?? SCOUT_BULLET_SPEED;
-    this._fireInterval = config.fireInterval ?? SCOUT_FIRE_INTERVAL;
-    this._shotProbability = config.shotProbability ?? 1.0;
-    this._rng = config.rng ?? Math.random;
     this.target = new Phaser.Math.Vector2(
       scene.scale.width / 2,
       scene.scale.height - 40,
     );
 
-    // Body — small angular neon-green chevron pointing "down". The stroke
-    // style is applied inside _drawBody() AFTER clear() (see note there).
-    this.bodyGraphics = scene.add.graphics();
+    // Scout-specific initialisation — draw the unique shape and add the
+    // shared graphics in the canonical render order (body then explosion).
     this._drawBody();
-    this.bodyGraphics.setDepth(1);
-    this.add(this.bodyGraphics);
+    this.addSharedGraphics();
+  }
 
-    // Explosion bursts drawn on a separate graphics layer.
-    this.explosionGraphics = scene.add.graphics();
-    this.explosionGraphics.setDepth(2);
-    this.add(this.explosionGraphics);
+  /** VFX pattern name for Scout explosions. */
+  protected getExplosionPatternName(): string {
+    return 'scout';
   }
 
   // ── Drawing ──────────────────────────────────────────────────────
 
-  private _drawBody(): void {
+  protected _drawBody(): void {
     this.bodyGraphics.clear();
     const half = this._size / 2;
 
@@ -180,36 +164,6 @@ export class Scout extends Phaser.GameObjects.Container {
     this.bodyGraphics.strokePath();
   }
 
-  /**
-   * Plays the destruction animation: a particle burst tinted around the
-   * scout's neon-green body colour (per-type patterns from
-   * `resolvePatterns('scout')`). The body is hidden immediately by
-   * `destroySelf()`; particle Graphics are cleaned up when the tween
-   * completes (or in `destroy()` for SHUTDOWN teardown).
-   *
-   * NOTE: intentionally plays NO destruction sound here — the shared
-   * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
-   * and is already called once per destruction (design doc §7 no-double-play
-   * rule). Adding a call here would double-play.
-   */
-  playExplosion(): void {
-    // Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
-    // display-list child has `scene === undefined`; animating it here would
-    // dereference undefined. Normal single-run destruction keeps the old
-    // behaviour exactly (the guard never triggers on a live object).
-    if (!this.scene) return;
-    const scene = this.scene as Phaser.Scene;
-    const handle = spawnExplosionParticles(
-      scene,
-      this.x,
-      this.y,
-      this._color,
-      this._size,
-      { patterns: resolvePatterns('scout') },
-    );
-    if (handle) this.explosionHandles.push(handle);
-  }
-
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
   getExplosionHandles(): ExplosionHandle[] {
     return this.explosionHandles.slice();
@@ -217,31 +171,10 @@ export class Scout extends Phaser.GameObjects.Container {
 
   // ── Public state ─────────────────────────────────────────────────
 
-  /** Whether this scout is alive (not yet destroyed). */
-  get alive(): boolean {
-    return this._alive;
-  }
-
   /** Effective config-driven size (for tests). */
   get effectiveSize(): number { return this._size; }
   /** Effective config-driven body colour. */
   get effectiveColor(): number { return this._color; }
-
-  /**
-   * Hit radius (px) used for collision checks against this entity.
-   *
-   * Returns `Math.ceil(visualHalfSize + HIT_RADIUS_BUFFER_PX)` so the
-   * hit circle is proportionally sized to the entity's visual half-size
-   * with a small gameplay buffer (default 2 px) for visual stroke
-   * thickness.
-   */
-  getHitRadius(): number {
-    return Math.ceil(this._size / 2 + HIT_RADIUS_BUFFER_PX);
-  }
-  /** Whether the scout body is currently visible (hidden on destruction). */
-  get bodyVisible(): boolean {
-    return this.bodyGraphics.alpha > 0 && this.bodyGraphics.visible;
-  }
 
   /** Whether this scout currently fires aimed shots. */
   get shootEnabled(): boolean {
@@ -263,9 +196,7 @@ export class Scout extends Phaser.GameObjects.Container {
     }
   }
 
-  get offset(): FormationOffset {
-    return { ...this.formationOffset };
-  }
+  // ── Aim target ──────────────────────────────────────────────────
 
   /** The position aimed at when firing. */
   get aimTarget(): Phaser.Math.Vector2 {
@@ -281,17 +212,6 @@ export class Scout extends Phaser.GameObjects.Container {
   }
 
   // ── Behaviour ────────────────────────────────────────────────────
-
-  /**
-   * Destroys the scout: hides the body and plays the explosion animation.
-   * No-op if already destroyed.
-   */
-  destroySelf(): void {
-    if (!this._alive) return;
-    this._alive = false;
-    this.bodyGraphics.setAlpha(0);
-    this.playExplosion();
-  }
 
   /**
    * Fires an aimed shot toward the target if shoot mode is on, the scout
@@ -378,19 +298,8 @@ export class Scout extends Phaser.GameObjects.Container {
     this._wigglePhase += dt * 2;
     const wiggle = Math.sin(this._wigglePhase) * 2;
 
-    const x = baseX + this.formationOffset.col * spacingX + wiggle;
-    const y = baseY + this.formationOffset.row * spacingY;
-    this.setPosition(x, y);
-  }
-
-  destroy(fromScene?: boolean): void {
-    this.bodyGraphics.destroy();
-    this.explosionGraphics.destroy();
-    // Scene-level particle Graphics are NOT display-list children —
-    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
-    for (const handle of this.explosionHandles) handle.destroy();
-    this.explosionHandles.length = 0;
-    super.destroy(fromScene);
+    const base = this.computeFormationPosition(baseX, baseY, spacingX, spacingY);
+    this.setPosition(base.x + wiggle, base.y);
   }
 }
 
