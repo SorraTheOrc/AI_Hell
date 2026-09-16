@@ -22,6 +22,7 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { FormationOffset } from '../utils/formations';
 import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
@@ -344,15 +345,17 @@ export class Scout extends Phaser.GameObjects.Container {
     const dy = this.target.y - this.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
-    const graphics = this.scene.add.graphics();
-    graphics.fillStyle(this._bulletColor, 1);
-    graphics.fillCircle(0, 0, this._bulletSize);
-    graphics.setPosition(this.x, this.y);
-    graphics.setDepth(3);
+    const { graphics, color } = createBullet({
+      scene: this.scene,
+      color: this._bulletColor,
+      size: this._bulletSize,
+      x: this.x,
+      y: this.y,
+    });
 
     return {
       graphics,
-      color: this._bulletColor,
+      color,
       vx: (dx / dist) * this._bulletSpeed,
       vy: (dy / dist) * this._bulletSpeed,
     };

@@ -23,6 +23,7 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
 import { GAME_HEIGHT, HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import {
   playDiverDestructionSound,
@@ -401,13 +402,15 @@ export class Diver extends Phaser.GameObjects.Container {
       const vx = Math.sin(angle) * this._bulletSpeed;
       const vy = Math.cos(angle) * this._bulletSpeed;
 
-      const graphics = this.scene.add.graphics();
-      graphics.fillStyle(this._bulletColor, 1);
-      graphics.fillCircle(0, 0, this._bulletSize);
-      graphics.setPosition(this.x, this.y);
-      graphics.setDepth(3);
+      const { graphics, color } = createBullet({
+        scene: this.scene,
+        color: this._bulletColor,
+        size: this._bulletSize,
+        x: this.x,
+        y: this.y,
+      });
 
-      bullets.push({ graphics, color: this._bulletColor, vx, vy });
+      bullets.push({ graphics, color, vx, vy });
     }
     return bullets;
   }

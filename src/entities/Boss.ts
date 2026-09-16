@@ -26,6 +26,7 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { playBossFireSound } from '../audio/effects';
@@ -681,15 +682,17 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   private _createBullet(angle: number, speed: number): BossBullet {
-    const graphics = (this.scene as Phaser.Scene).add.graphics();
-    graphics.fillStyle(BOSS_BULLET_COLOR, 1);
-    graphics.fillCircle(0, 0, BOSS_BULLET_SIZE);
-    graphics.setPosition(this.x, this.y);
-    graphics.setDepth(3);
+    const { graphics, color } = createBullet({
+      scene: this.scene as Phaser.Scene,
+      color: BOSS_BULLET_COLOR,
+      size: BOSS_BULLET_SIZE,
+      x: this.x,
+      y: this.y,
+    });
 
     return {
       graphics,
-      color: BOSS_BULLET_COLOR,
+      color,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
     };

@@ -18,6 +18,7 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { playPhaserAdvanceCue, playPhaserFireSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
@@ -360,17 +361,19 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       });
 
       for (const dir of directions) {
-        const graphics = this.scene.add.graphics();
-        graphics.fillStyle(this._bulletColor, 1);
-        graphics.fillCircle(0, 0, this._bulletSize);
-        graphics.setPosition(this.x, this.y);
-        graphics.setDepth(3);
+        const { graphics, color } = createBullet({
+          scene: this.scene,
+          color: this._bulletColor,
+          size: this._bulletSize,
+          x: this.x,
+          y: this.y,
+        });
 
         // Normalise direction.
         const mag = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
         bullets.push({
           graphics,
-          color: this._bulletColor,
+          color,
           vx: (dir.dx / mag) * this._bulletSpeed,
           vy: (dir.dy / mag) * this._bulletSpeed,
         });

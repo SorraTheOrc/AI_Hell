@@ -15,6 +15,7 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { playSwarmBurstSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
@@ -316,15 +317,17 @@ export class Swarm extends Phaser.GameObjects.Container {
     const spread = (Math.random() - 0.5) * 0.3;
     const angle = baseAngle + spread;
 
-    const graphics = this.scene.add.graphics();
-    graphics.fillStyle(this._bulletColor, 1);
-    graphics.fillCircle(0, 0, this._bulletSize);
-    graphics.setPosition(this.x, this.y);
-    graphics.setDepth(3);
+    const { graphics, color } = createBullet({
+      scene: this.scene,
+      color: this._bulletColor,
+      size: this._bulletSize,
+      x: this.x,
+      y: this.y,
+    });
 
     return {
       graphics,
-      color: this._bulletColor,
+      color,
       vx: Math.cos(angle) * this._bulletSpeed,
       vy: Math.sin(angle) * this._bulletSpeed,
     };
