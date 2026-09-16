@@ -15,6 +15,11 @@
  *
  * NOTE: `constants.ts` re-sources `POWER_UP_SPAWN_INTERVAL` from
  * `DEFAULT_RULES` so the interval has a single source of truth.
+ *
+ * Consumers: the combat formation gym base (`src/scenes/gym/core/
+ * GymFormationScene.ts`) reads the interval and per-ID weights to drive
+ * power-up spawning, and the live spawn-interval slider
+ * (`src/utils/gymPowerUpControl.ts`) persists edits through `saveRules()`.
  */
 
 import type { PowerUpId } from '../powerups/types';

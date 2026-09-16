@@ -6,6 +6,10 @@
  * independently. Engine-agnostic — no Phaser imports — so the strategies
  * are unit-testable in isolation with an injected RNG.
  *
+ * Consumer: `GymFormationScene` positions every combat-gym power-up
+ * drop through `PowerUpPlacement`, passing the live enemy bodies (with
+ * their hit radii) and the player body.
+ *
  * @module powerups/placement
  */
 
