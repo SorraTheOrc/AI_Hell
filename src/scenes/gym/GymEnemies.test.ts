@@ -14,6 +14,7 @@ import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/enemyConfig';
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
+import { loadRules, saveRules } from '../../core/rules';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from './GymEnemies';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -701,5 +702,67 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
     expect(scene.getHUD()).not.toBeNull();
     expect(scene.getEffectsRegistry().lives()).toBe(4);
     expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
+});
+
+describe('GymEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  function getSlider(): HTMLInputElement {
+    const slider = document.querySelector<HTMLInputElement>(
+      '#power-up-spawn-interval',
+    );
+    expect(slider, 'spawn-interval slider missing').not.toBeNull();
+    return slider!;
+  }
+
+  it('AC1/AC3 — slider is present and seeded from the rules config', async () => {
+    saveRules({ ...loadRules(), powerUpSpawnInterval: 7 });
+
+    booted = await bootScene([GymEnemies]);
+    const scene = booted.scene as GymEnemies;
+
+    expect(getSlider().value).toBe('7');
+    expect(scene.getPowerUpSpawnInterval()).toBe(7);
+  });
+
+  it('AC2/AC4 — changing the slider applies live and persists across a reboot', async () => {
+    booted = await bootScene([GymEnemies]);
+    const scene = booted.scene as GymEnemies;
+
+    const slider = getSlider();
+    slider.value = '4';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(scene.getPowerUpSpawnInterval()).toBe(4);
+    expect(loadRules().powerUpSpawnInterval).toBe(4);
+
+    // Reboot the scene: the value is restored from the rules config.
+    booted.game.destroy(true);
+    booted = null;
+    booted = await bootScene([GymEnemies]);
+    const rested = booted.scene as GymEnemies;
+
+    expect(rested.getPowerUpSpawnInterval()).toBe(4);
+    expect(getSlider().value).toBe('4');
+  });
+
+  it('AC5 — SHUTDOWN removes the spawn-interval panel from the DOM', async () => {
+    booted = await bootScene([GymEnemies]);
+    const scene = booted.scene as GymEnemies;
+
+    expect(document.getElementById('enemy-gym-panel')).not.toBeNull();
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(document.getElementById('enemy-gym-panel')).toBeNull();
   });
 });

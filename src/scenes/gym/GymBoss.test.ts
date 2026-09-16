@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import {
@@ -7,6 +7,7 @@ import {
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../../core/constants';
+import { loadRules } from '../../core/rules';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
@@ -317,10 +318,16 @@ describe('GymBoss — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
   /** Boots GymBoss with a deterministic, short-interval power-up layer. */
   class PowerUpGymBoss extends GymBoss {
     init(): void {
-      this.config.powerUps = {
-        spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
-        placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
-        spawnInterval: INTERVAL,
+      // Reassign a per-instance clone: `this.config` is the shared
+      // module-level BOSS_CONFIG, so mutating it would leak into every
+      // later GymBoss instance.
+      this.config = {
+        ...this.config,
+        powerUps: {
+          spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+          placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+          spawnInterval: INTERVAL,
+        },
       };
     }
   }
@@ -362,10 +369,16 @@ describe('GymBoss — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => 
       const atPlayer: PowerUpPlacement = {
         place: (context) => ({ x: context.player.x, y: context.player.y }),
       };
-      this.config.powerUps = {
-        spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
-        placement: atPlayer,
-        spawnInterval: 1000,
+      // Reassign a per-instance clone: `this.config` is the shared
+      // module-level BOSS_CONFIG, so mutating it would leak into every
+      // later GymBoss instance.
+      this.config = {
+        ...this.config,
+        powerUps: {
+          spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+          placement: atPlayer,
+          spawnInterval: 1000,
+        },
       };
     }
   }
@@ -377,5 +390,63 @@ describe('GymBoss — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => 
     expect(scene.getHUD()).not.toBeNull();
     expect(scene.getEffectsRegistry().lives()).toBe(4);
     expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
+});
+
+describe('GymBoss — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('boss-gym-panel')?.remove();
+  });
+
+  function getSlider(): HTMLInputElement {
+    const slider = document.querySelector<HTMLInputElement>(
+      '#power-up-spawn-interval',
+    );
+    expect(slider, 'spawn-interval slider missing').not.toBeNull();
+    return slider!;
+  }
+
+  it('AC1 — renders the spawn-interval slider panel', async () => {
+    booted = await bootScene([GymBoss]);
+
+    expect(document.getElementById('boss-gym-panel')).not.toBeNull();
+    expect(getSlider().value).toBe('12.5');
+  });
+
+  it('AC2/AC3/AC4 — changing the slider applies live and persists across a reboot', async () => {
+    booted = await bootScene([GymBoss]);
+    const scene = booted.scene as GymBoss;
+
+    const slider = getSlider();
+    slider.value = '5';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(scene.getPowerUpSpawnInterval()).toBe(5);
+    expect(loadRules().powerUpSpawnInterval).toBe(5);
+
+    booted.game.destroy(true);
+    booted = null;
+    booted = await bootScene([GymBoss]);
+    const rested = booted.scene as GymBoss;
+
+    expect(rested.getPowerUpSpawnInterval()).toBe(5);
+    expect(getSlider().value).toBe('5');
+  });
+
+  it('AC5 — SHUTDOWN removes the spawn-interval panel from the DOM', async () => {
+    booted = await bootScene([GymBoss]);
+    const scene = booted.scene as GymBoss;
+
+    expect(document.getElementById('boss-gym-panel')).not.toBeNull();
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(document.getElementById('boss-gym-panel')).toBeNull();
   });
 });

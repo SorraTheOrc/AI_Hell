@@ -29,6 +29,10 @@ import { getFormationBuilder } from '../../utils/formations';
 import { PLAYER_SPAWN, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { playSpawnSound } from '../../audio/effects';
+import {
+  applyAndPersistSpawnInterval,
+  buildSpawnIntervalSlider,
+} from '../../utils/gymPowerUpControl';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
@@ -212,6 +216,13 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
 
     utilRow.append(respawn, togglePlayer);
     panel.appendChild(utilRow);
+
+    // Live spawn-interval control (power-up cadence, live-tunable).
+    const spawnControl = buildSpawnIntervalSlider((seconds) => {
+      this.setPowerUpSpawnInterval(seconds);
+      applyAndPersistSpawnInterval(seconds);
+    });
+    panel.appendChild(spawnControl.row);
 
     // Save / Save As row.
     const actions = document.createElement('div');
