@@ -28,6 +28,7 @@ import Phaser from 'phaser';
 
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { playBossFireSound } from '../audio/effects';
 import {
   resolvePatterns,
   spawnExplosionParticles,
@@ -488,6 +489,9 @@ export class Boss extends Phaser.GameObjects.Container {
       const angle = startAngle - t * spreadAngle;
       bullets.push(this._createBullet(angle, speed));
     }
+    // Play the Boss fire sound once per volley (alongside the phase cue telegraph).
+    playBossFireSound();
+
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
   }
@@ -511,6 +515,9 @@ export class Boss extends Phaser.GameObjects.Container {
       bullets.push(this._createBullet(angle, speed));
     }
     this._attackAngle += 0.3; // rotate the spiral next volley
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
+
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
   }
@@ -556,6 +563,9 @@ export class Boss extends Phaser.GameObjects.Container {
       const angle = baseAngle + (i - (aimCount - 1) / 2) * fanSpread;
       bullets.push(this._createBullet(angle, speed));
     }
+
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
 
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
@@ -612,6 +622,9 @@ export class Boss extends Phaser.GameObjects.Container {
       isPulseWave: true,
       pulseRadius: BOSS_CORE_GLOW_RADIUS,
     });
+
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
 
     this._lastAttackTime = now; // mark volley as fired
     return bullets;

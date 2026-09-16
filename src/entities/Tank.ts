@@ -16,6 +16,10 @@
 import Phaser from 'phaser';
 
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import {
+  playTankAdvanceCue,
+  playTankFireSound,
+} from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
 import {
   resolvePatterns,
@@ -264,6 +268,10 @@ export class Tank extends Phaser.GameObjects.Container {
     // cannot retry-until-success within the same cycle.
     this._lastFireTime = now;
     if (!(this._rng() < this._shotProbability)) return [];
+
+    // Two-phase audio tell: mechanical whine (advance cue) → cannon thump.
+    playTankAdvanceCue();
+    playTankFireSound();
 
     const bullets: TankBullet[] = [];
     for (let i = 0; i < this._burstCount; i++) {

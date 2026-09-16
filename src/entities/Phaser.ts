@@ -19,6 +19,7 @@
 import Phaser from 'phaser';
 
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { playPhaserAdvanceCue, playPhaserFireSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
 import {
   resolvePatterns,
@@ -346,6 +347,8 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       // Fire in 8 radial directions, rotated so one spoke points exactly
       // at the aim target (stand-in by default, live player position when
       // the scene pushes it). The 8-spoke radial shape is unchanged.
+      // The fire sound was already scheduled at tell start (cue end), so
+      // this branch plays no additional audio (no double-play).
       const bullets: PhaserBullet[] = [];
       const baseAngle = Math.atan2(
         this.target.y - this.y,
@@ -429,9 +432,12 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       if (tellElapsed < PHASER_ADVANCE_CUE_DURATION) {
         // During the tell, pulse the ring to warn the player.
         this._drawTell(tellElapsed);
-        // Play advance audio cue at the start of the tell (once).
+        // Play the two-phase audio tell at the start of the tell (once):
+        // the advance cue now, and the fire sound scheduled at the cue's
+        // end (matching the Scout pattern — no dead gap).
         if (tellElapsed < 50) {
-          this._playAdvanceCue();
+          playPhaserAdvanceCue();
+          playPhaserFireSound();
         }
       }
     }
@@ -448,29 +454,6 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.tellGraphics.strokeCircle(0, 0, radius);
   }
 
-  /** Plays the advance audio cue (≥ 500 ms before fire). */
-  private _playAdvanceCue(): void {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(660, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(
-      Math.max(1, 880),
-      ctx.currentTime + PHASER_ADVANCE_CUE_DURATION / 1000,
-    );
-
-    gain.gain.setValueAtTime(0.08, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + PHASER_ADVANCE_CUE_DURATION / 1000);
-
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + PHASER_ADVANCE_CUE_DURATION / 1000 + 0.02);
-  }
-
   destroy(fromScene?: boolean): void {
     this.ringGraphics.destroy();
     this.coreGraphics.destroy();
@@ -481,20 +464,5 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     for (const handle of this.explosionHandles) handle.destroy();
     this.explosionHandles.length = 0;
     super.destroy(fromScene);
-  }
-}
-
-/** Lazily creates the shared AudioContext, or returns null if unavailable. */
-function getAudioContext(): AudioContext | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const Ctor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctor) return null;
-    return new Ctor();
-  } catch {
-    return null;
   }
 }

@@ -580,6 +580,63 @@ export function playSwarmBurstSound(): void {
 // ── Scout enemy cues (GDD §4.1 — E1 Scout) ─────────────────────────
 
 /**
+ * Duration (seconds) of the Phaser advance-cue rising sine.
+ *
+ * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playPhaserFireSound()` can
+ * schedule its shot to start exactly at the cue's end time, flowing
+ * back-to-back with no dead gap between warning and shot.
+ */
+export const PHASER_ADVANCE_CUE_DURATION = 0.6;
+
+/**
+ * Rising warning blip — E4 Phaser firing advance cue (GDD §7.3).
+ *
+ * A rising sine (660 → 880 Hz) over `PHASER_ADVANCE_CUE_DURATION`
+ * (≥ 500 ms) that replaces the inline `_playAdvanceCue()` previously
+ * defined in `Phaser.ts`. Pitched lower than the Scout cue to stay
+ * distinct. Called at tell start, before `playPhaserFireSound()`.
+ * Safe no-op without an AudioContext.
+ */
+export function playPhaserAdvanceCue(): void {
+  blip(660, 880, PHASER_ADVANCE_CUE_DURATION, 'sine', 0.08);
+}
+
+/**
+ * Quick sharp blip — E4 Phaser fire sound (GDD §7.3).
+ *
+ * A short triangle-wave sweep (1000 → 500 Hz, ~80 ms) — sharper
+ * than the Scout fire sound to distinguish the orbital phaser's
+ * aimed shot. Very short (≤ 100 ms) to avoid cacophony when
+ * multiple Phasers fire simultaneously. Scheduled at
+ * `currentTime + PHASER_ADVANCE_CUE_DURATION` (the cue's end time)
+ * so that, when called back-to-back with `playPhaserAdvanceCue()`
+ * in the same tick, it flows with no dead gap. Safe no-op without
+ * an AudioContext.
+ */
+export function playPhaserFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime + PHASER_ADVANCE_CUE_DURATION;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(1000, t);
+  osc.frequency.exponentialRampToValueAtTime(
+    Math.max(1, 500),
+    t + 0.08,
+  );
+
+  gain.gain.setValueAtTime(0.12, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.1);
+}
+
+/**
  * Duration (seconds) of the Scout advance-cue rising blip.
  *
  * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playScoutFireSound()` can
@@ -896,6 +953,47 @@ export function playScoutFireSound(): void {
   osc.connect(gain).connect(ctx.destination);
   osc.start(t);
   osc.stop(t + 0.14);
+}
+
+// ── Boss enemy cues (GDD §4.3) ────────────────────────────────────
+
+/**
+ * Deep resonant boom — Central AI Boss fire sound (GDD §7.3).
+ *
+ * A heavy sawtooth fall (200 → 50 Hz over 200 ms) layered with a
+ * low sine undertone — evokes the Boss's overwhelming firepower.
+ * Called once per volley (Spread / Spiral / Pulse / Desperation)
+ * at the start of each attack phase, alongside the per-phase
+ * `playBossPhaseCue()` telegraph. Safe no-op without an AudioContext.
+ */
+export function playBossFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Main boom: low sawtooth fall.
+  const boom = ctx.createOscillator();
+  const boomGain = ctx.createGain();
+  boom.type = 'sawtooth';
+  boom.frequency.setValueAtTime(200, t);
+  boom.frequency.exponentialRampToValueAtTime(50, t + 0.2);
+  boomGain.gain.setValueAtTime(0.3, t);
+  boomGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  boom.connect(boomGain).connect(ctx.destination);
+  boom.start(t);
+  boom.stop(t + 0.22);
+
+  // Low sine body for weight.
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = 'sine';
+  body.frequency.setValueAtTime(60, t);
+  body.frequency.exponentialRampToValueAtTime(30, t + 0.2);
+  bodyGain.gain.setValueAtTime(0.2, t);
+  bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  body.connect(bodyGain).connect(ctx.destination);
+  body.start(t);
+  body.stop(t + 0.22);
 }
 
 // ── Player weapon shoot cues (GDD §2.3, §7.3) ─────────────────────

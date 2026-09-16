@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
 import { BOSS_ATTACK_INTERVAL, Boss } from './Boss';
 
 class HarnessScene extends Phaser.Scene {
@@ -78,5 +79,88 @@ describe('Boss — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
     expect(boss.isTelegraphing()).toBe(true);
     expect(boss.tryFireSpreadBullets(1_000_000)).toEqual([]);
     expect(rng).not.toHaveBeenCalled();
+  });
+});
+
+// ── AC4: Boss SFX wiring (AH-0MU3VPIA900697E8) ──────────────────────
+
+describe('Boss SFX wiring (AH-0MU3VPIA900697E8)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('playBossFireSound fires once per Spread volley', async () => {
+    booted = await bootScene([HarnessScene]);
+    const fireSpy = vi.spyOn(effectsModule, 'playBossFireSound');
+
+    const boss = new Boss(booted!.scene, {
+      x: 480, y: 300, formationOffset: { row: 0, col: 0 },
+    });
+    boss._simulateTelegraphElapsed();
+
+    const bullets = boss.tryFireSpreadBullets(1_000_000);
+    expect(bullets.length).toBeGreaterThan(0);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('playBossFireSound fires once per Spiral volley', async () => {
+    booted = await bootScene([HarnessScene]);
+    const fireSpy = vi.spyOn(effectsModule, 'playBossFireSound');
+
+    const boss = new Boss(booted!.scene, {
+      x: 480, y: 300, formationOffset: { row: 0, col: 0 },
+    });
+    boss._simulateTelegraphElapsed();
+
+    const bullets = boss.tryFireSpiralBullets(1_000_000);
+    expect(bullets.length).toBeGreaterThan(0);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('playBossFireSound fires once per Pulse volley', async () => {
+    booted = await bootScene([HarnessScene]);
+    const fireSpy = vi.spyOn(effectsModule, 'playBossFireSound');
+
+    const boss = new Boss(booted!.scene, {
+      x: 480, y: 300, formationOffset: { row: 0, col: 0 },
+    });
+    boss._simulateTelegraphElapsed();
+
+    const bullets = boss.tryFirePulseBullets(1_000_000);
+    expect(bullets.length).toBeGreaterThan(0);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('playBossFireSound fires once per Desperation volley', async () => {
+    booted = await bootScene([HarnessScene]);
+    const fireSpy = vi.spyOn(effectsModule, 'playBossFireSound');
+
+    const boss = new Boss(booted!.scene, {
+      x: 480, y: 300, formationOffset: { row: 0, col: 0 },
+    });
+    boss._simulateTelegraphElapsed();
+
+    const bullets = boss.tryFireDesperationBullets(1_000_000);
+    expect(bullets.length).toBeGreaterThan(0);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not play fire SFX when shotProbability fails', async () => {
+    booted = await bootScene([HarnessScene]);
+    const fireSpy = vi.spyOn(effectsModule, 'playBossFireSound');
+
+    const boss = new Boss(booted!.scene, {
+      x: 480, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0,
+    });
+    boss._simulateTelegraphElapsed();
+
+    const bullets = boss.tryFireSpreadBullets(1_000_000);
+    expect(bullets).toHaveLength(0);
+    expect(fireSpy).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
 import {
   colorToHSL,
   EXPLOSION_HUE_JITTER_DEG,
@@ -237,5 +238,84 @@ describe('Tank — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
     const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
     expect(tank.tryFireRadialBurst(1_000_000)).toHaveLength(TANK_BURST_COUNT);
     spy.mockRestore();
+  });
+});
+// ── AC1: Tank SFX wiring (AH-0MU3VPIA900697E8) ─────────────────────
+
+describe('Tank SFX wiring (AH-0MU3VPIA900697E8)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeTank(
+    x: number,
+    y: number,
+  ): Tank {
+    return new Tank(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('plays both playTankAdvanceCue and playTankFireSound on tryFireRadialBurst', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const tank = makeTank(100, 100);
+    const t0 = 1_000_000;
+
+    tank.shootEnabled = true;
+    const bullets = tank.tryFireRadialBurst(t0);
+
+    expect(bullets).toHaveLength(TANK_BURST_COUNT);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+
+    // Advance cue fires before fire sound.
+    const advanceOrder = advanceSpy.mock.invocationCallOrder[0];
+    const fireOrder = fireSpy.mock.invocationCallOrder[0];
+    expect(advanceOrder).toBeLessThan(fireOrder);
+  });
+
+  it('plays SFX exactly once per burst cycle, not per bullet', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const tank = makeTank(100, 100);
+    const t0 = 1_000_000;
+
+    tank.shootEnabled = true;
+    tank.tryFireRadialBurst(t0);
+
+    // Even though TANK_BURST_COUNT bullets are spawned, SFX fires once.
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not play SFX when shotProbability fails', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const tank = new Tank(booted.scene, {
+      x: 100,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+      shotProbability: 0,
+    });
+
+    tank.shootEnabled = true;
+    const bullets = tank.tryFireRadialBurst(1_000_000);
+
+    expect(bullets).toHaveLength(0);
+    expect(advanceSpy).not.toHaveBeenCalled();
+    expect(fireSpy).not.toHaveBeenCalled();
   });
 });

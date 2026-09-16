@@ -16,6 +16,7 @@
 import Phaser from 'phaser';
 
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { playSwarmBurstSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
 import {
   resolvePatterns,
@@ -304,6 +305,9 @@ export class Swarm extends Phaser.GameObjects.Container {
     // density = shotProbability × member count per cycle for the swarm).
     this._lastBurstTime = now;
     if (!(this._rng() < this._shotProbability)) return null;
+
+    // Swarm coordinated burst: single buzzing whoosh per volley.
+    playSwarmBurstSound();
 
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;

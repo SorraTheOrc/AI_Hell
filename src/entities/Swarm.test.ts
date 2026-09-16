@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   SWARM_BULLET_COLOR,
@@ -407,5 +408,60 @@ describe('Swarm — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
     }
     // 8 cycles at 25% under the forced 3-fail/1-success pattern → exactly 2.
     expect(fired).toBe(2);
+  });
+});
+// ── AC2: Swarm SFX wiring (AH-0MU3VPIA900697E8) ─────────────────────
+
+describe('Swarm SFX wiring (AH-0MU3VPIA900697E8)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeSwarm(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Swarm {
+    return new Swarm(booted!.scene, {
+      x,
+      y,
+      formationOffset: offset,
+    }, 0);
+  }
+
+  it('plays playSwarmBurstSound on tryFireBurstBullet', async () => {
+    booted = await bootScene([HarnessScene]);
+    const burstSpy = vi.spyOn(effectsModule, 'playSwarmBurstSound');
+
+    const swarm = makeSwarm(100, 100);
+    const t0 = 1_000_000;
+
+    swarm.shootEnabled = true;
+    const bullet = swarm.tryFireBurstBullet(t0);
+
+    expect(bullet).not.toBeNull();
+    expect(burstSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not play SFX when shotProbability fails', async () => {
+    booted = await bootScene([HarnessScene]);
+    const burstSpy = vi.spyOn(effectsModule, 'playSwarmBurstSound');
+
+    const swarm = new Swarm(booted.scene, {
+      x: 100,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+      shotProbability: 0,
+    }, 0);
+
+    swarm.shootEnabled = true;
+    const bullet = swarm.tryFireBurstBullet(1_000_000);
+
+    expect(bullet).toBeNull();
+    expect(burstSpy).not.toHaveBeenCalled();
   });
 });

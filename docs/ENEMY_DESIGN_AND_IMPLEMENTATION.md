@@ -215,15 +215,20 @@ for reference implementations (the base class drives them).
    and `addBackToIndexButton()` are handled by the base class — do not
    re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
    and are orchestrated where the shots are produced: Swarm plays a
-   scene-level volley burst sound at the point of shooting (no warning
-   cue); Scout uses a per-entity two-phase tell — an advance cue (≥ 500 ms
+   single buzzing volley burst sound (`playSwarmBurstSound()`) from its
+   entity-level `tryFireBurstBullet()` (no warning cue); Scout uses a
+   per-entity two-phase tell — an advance cue (≥ 500 ms
    lead) at tell start, with the fire sound scheduled to start exactly at
    the cue's end so the two flow back-to-back with no dead gap; Phaser
-   uses the same two-phase tell pattern; Tank plays a scene-level
-   mechanical-whine advance cue flowing with **no gap** into a heavy
-   cannon-thump fire sound, one cue+thump pair per radial burst at the
-   point of shooting (the whine's ≥ 500 ms duration provides the advance
-   lead); Diver plays `playDiverFireSound()` (short low/nasal crack)
+   uses the same two-phase tell pattern (`playPhaserAdvanceCue()` +
+   `playPhaserFireSound()`, scheduled at the cue's end); Tank plays an
+   entity-level `playTankAdvanceCue()` mechanical-whine flowing with
+   **no gap** into a heavy `playTankFireSound()` cannon thump, one
+   cue+thump pair per radial burst inside `tryFireRadialBurst()` (the
+   whine's ≥ 500 ms duration provides the advance
+   lead); the Boss keeps its per-phase telegraph cue (`playBossPhaseCue()`)
+   and plays `playBossFireSound()` once per attack volley; Diver plays
+   `playDiverFireSound()` (short low/nasal crack)
    exactly once per spread burst from its entity-level `tryFireSpreadBurst()`
    (no advance cue — the fire sound alone is the tell).
    Audio-character decisions are made **per-enemy at implementation
@@ -272,9 +277,9 @@ for reference implementations (the base class drives them).
 |-------|--------|-----------|--------------|-------+-------|
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
 | `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); dive-phase sounds — `playDiverDiveStartSound()` once at the FORMATION→DIVING transition plus a refcounted shared sustained dive voice (`playDiveSound()`/`stopDiveSound()`, ~2 s, stopped at DIVING→RETURNING / destroy); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
-| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (scene-level, one cue+thump pair per burst, no gap between cue and thump) |
-| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (scene-level, once per volley, at point of shooting) |
-| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | none |
+| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
+| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
+| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
 
 ---
 
@@ -602,14 +607,15 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 |-------|-------------|------------|----------------|
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
 | E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at DIVING→RETURNING, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
-| E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **scene-level**, one cue+thump pair per radial burst at the point of shooting — the cue flows with **no gap** into the thump |
-| E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **scene-level** volley burst, once per volley at the point of shooting |
-| Boss | none | none | no audio today (see §3.2 table) |
+| E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **entity-level**, one cue+thump pair per radial burst inside `tryFireRadialBurst()` — the cue flows with **no gap** into the thump |
+| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
+| E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **entity-level** volley burst, once per volley inside `tryFireBurstBullet()` |
+| Boss | `playBossPhaseCue()` — per-phase telegraph tone (retained) | `playBossFireSound()` — deep resonant boom (in `src/audio/effects.ts`) | **entity-level**, once per volley in each attack method (`tryFireSpreadBullets`, `tryFireSpiralBullets`, `tryFirePulseBullets`, `tryFireDesperationBullets`) |
 
 Orchestration rule: entity-specific fire sounds are invoked **where the shots
-are produced** — the scene's `collectBullets` callback for scene-level sounds
-(Swarm, Tank), or the entity's own fire/tell logic for entity-level sounds
-(Scout) — never re-added in a thin scene class.
+are produced** — the entity's own fire/tell logic (Tank's `tryFireRadialBurst`,
+Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
+Scout's two-phase tell) — never re-added in a thin scene class.
 
 ### Explode / destruction
 
