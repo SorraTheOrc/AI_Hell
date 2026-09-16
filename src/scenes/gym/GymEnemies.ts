@@ -131,6 +131,9 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     statusLabel: cfg.displayName.toLowerCase(),
     hintText: `${cfg.displayName} — ${cfg.formationKind} formation (config-driven)`,
     player: { ...PLAYER_SPAWN },
+    // Opt-in power-up layer: one drop at a time on the rules interval,
+    // weighted-random ID (P3–P9) and enemy/player-avoiding placement.
+    powerUps: {},
     createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>
       createEnemyFromConfig(scene, cfg, x, y, offset),
     collectBullets,

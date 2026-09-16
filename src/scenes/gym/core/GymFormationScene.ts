@@ -22,6 +22,7 @@ import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
+  POWER_UP_DROP_SIZE,
   SHIP_COLOR,
   SHIP_SIZE,
 } from '../../../core/constants';
@@ -53,6 +54,23 @@ import {
   ControlInput,
   FourDirectionalInputHandler,
 } from '../../../utils/movementModel';
+import {
+  loadRules,
+  POWER_UP_WEIGHT_IDS,
+  type PowerUpWeights,
+} from '../../../core/rules';
+import { drawPowerUpDrop } from '../../../powerups/icons';
+import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
+import {
+  RandomAvoidingPlacement,
+  type PlacementContext,
+  type PowerUpPlacement,
+} from '../../../powerups/placement';
+import {
+  WeightedRandomSpawner,
+  type PowerUpSpawner,
+} from '../../../powerups/spawner';
+import { getPowerUpById, type PowerUpId } from '../../../powerups/types';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -137,6 +155,42 @@ export interface PlayerFormationConfig {
   y: number;
 }
 
+/** Optional power-up layer configuration for a formation scene. */
+export interface PowerUpLayerConfig {
+  /**
+   * Injectable ID spawner. Defaults to a `WeightedRandomSpawner` over
+   * P3–P9 using the game-rules weights.
+   */
+  spawner?: PowerUpSpawner<PowerUpId>;
+  /**
+   * Injectable placement strategy. Defaults to `RandomAvoidingPlacement`
+   * (seeded from `rng`).
+   */
+  placement?: PowerUpPlacement;
+  /** Injectable RNG used to build the default spawner and placement. */
+  rng?: () => number;
+  /**
+   * Seconds between spawns. Defaults to the interval from the game-rules
+   * config (`loadRules().powerUpSpawnInterval`).
+   */
+  spawnInterval?: number;
+  /** Minimum distance from the screen edge for a drop (px). */
+  margin?: number;
+}
+
+/** A live power-up drop owned by the scene. */
+export interface FormationSceneDrop {
+  /** The drop's grow → hold → shrink → despawn lifecycle. */
+  powerUp: PowerUp;
+  /** The power-up ID. */
+  id: PowerUpId;
+  /** Fixed world-space position at spawn time (px). */
+  x: number;
+  y: number;
+  /** The drawn bubble + icon. */
+  graphics: Phaser.GameObjects.Graphics;
+}
+
 /** Per-scene configuration for a formation gym scene. */
 export interface EnemyFormationConfig<
   TEntity extends FormationSceneEntity,
@@ -179,6 +233,12 @@ export interface EnemyFormationConfig<
    * {@link DEFAULT_BULLET_HIT_RADIUS}.
    */
   bulletHitRadius?: number;
+  /**
+   * Opt-in power-up layer. When present, the scene spawns power-up drops
+   * (one at a time) on the configured interval, choosing the ID through a
+   * `PowerUpSpawner` and the position through a `PowerUpPlacement`.
+   */
+  powerUps?: PowerUpLayerConfig;
   /** Creates one enemy at the given absolute position with its offset. */
   createEntity(
     scene: Phaser.Scene,
@@ -204,6 +264,9 @@ const DEFAULT_ENTITY_HIT_RADIUS = 20;
 
 /** Default hit radius (px) of an enemy bullet when no config is given. */
 const DEFAULT_BULLET_HIT_RADIUS = 6;
+
+/** Default placement margin (px) from the screen edge for power-up drops. */
+const DEFAULT_POWER_UP_PLACEMENT_MARGIN = 24;
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 const PLAYER_BLINK_INTERVAL = 0.1;
@@ -268,6 +331,16 @@ export class GymFormationScene<
   protected shootButton!: Phaser.GameObjects.Text;
   protected explodeButton!: Phaser.GameObjects.Text;
   protected statusText!: Phaser.GameObjects.Text;
+
+  // Power-up layer (opt-in via `config.powerUps`).
+  private powerUpsEnabled = false;
+  private powerUpDrops: FormationSceneDrop[] = [];
+  private powerUpSpawner: PowerUpSpawner<PowerUpId> | null = null;
+  private powerUpPlacement: PowerUpPlacement | null = null;
+  private powerUpSpawnInterval = 0;
+  private powerUpSpawnTimer = 0;
+  private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
+  private powerUpSpawnCount = 0;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -339,6 +412,9 @@ export class GymFormationScene<
     // ── Back to gym index ───────────────────────────────────────────
     addBackToIndexButton(this);
 
+    // ── Optional power-up layer (opt-in via config.powerUps) ────────
+    this._initPowerUpLayer();
+
     // Ensure any stale countdown state from a prior create() (e.g. after
     // a manual _onRespawn that rebuilt the formation) is cleared so a
     // fresh scene never starts mid-countdown.
@@ -381,6 +457,11 @@ export class GymFormationScene<
 
       // Reset scene toggle state so a fresh create() starts clean.
       this.shootEnabled = false;
+
+      // Tear down any power-up drops owned by the scene.
+      for (const drop of this.powerUpDrops) drop.graphics.destroy();
+      this.powerUpDrops = [];
+      this.powerUpSpawnCount = 0;
     });
   }
 
@@ -418,6 +499,126 @@ export class GymFormationScene<
     this.shootEnabled = !this.shootEnabled;
     for (const entity of this.entities) entity.shootEnabled = this.shootEnabled;
     this.shootButton.setText(this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF');
+  }
+
+  // ── Power-up layer (spawning, cadence, placement) ────────────────
+
+  /** Initialises the opt-in power-up layer and spawns the first drop. */
+  private _initPowerUpLayer(): void {
+    const cfg = this.config.powerUps;
+    if (!cfg) {
+      this.powerUpsEnabled = false;
+      return;
+    }
+
+    this.powerUpsEnabled = true;
+    const rules = loadRules();
+    const rng = cfg.rng ?? Math.random;
+
+    this.powerUpPlacement =
+      cfg.placement ?? new RandomAvoidingPlacement({ rng });
+    this.powerUpSpawner =
+      cfg.spawner ?? this._buildDefaultPowerUpSpawner(rules.powerUpWeights, rng);
+    this.powerUpSpawnInterval =
+      cfg.spawnInterval ?? rules.powerUpSpawnInterval;
+    this.powerUpPlacementMargin =
+      cfg.margin ?? DEFAULT_POWER_UP_PLACEMENT_MARGIN;
+    this.powerUpSpawnTimer = this.powerUpSpawnInterval;
+
+    // One drop on screen immediately so the layer is observable at boot.
+    this._spawnPowerUpDrop();
+  }
+
+  /** Builds the default weighted-random spawner from the rules weights. */
+  private _buildDefaultPowerUpSpawner(
+    weights: PowerUpWeights,
+    rng: () => number,
+  ): PowerUpSpawner<PowerUpId> {
+    const spawner = new WeightedRandomSpawner([...POWER_UP_WEIGHT_IDS], rng);
+    for (const id of POWER_UP_WEIGHT_IDS) {
+      spawner.setWeight(id, weights[id]);
+    }
+    return spawner;
+  }
+
+  /** Snapshot of the live bodies a drop must avoid (enemies + player). */
+  private _powerUpPlacementContext(): PlacementContext {
+    const enemies = this.entities
+      .filter((entity) => entity.alive)
+      .map((entity) => ({
+        x: entity.x,
+        y: entity.y,
+        radius: entity.getHitRadius(),
+      }));
+    const player = this.player
+      ? { x: this.player.x, y: this.player.y, radius: SHIP_SIZE / 2 }
+      : { x: -1e6, y: -1e6, radius: 0 };
+
+    return {
+      width: GAME_WIDTH,
+      height: GAME_HEIGHT,
+      margin: this.powerUpPlacementMargin,
+      dropRadius: POWER_UP_DROP_SIZE,
+      enemies,
+      player,
+    };
+  }
+
+  /** Spawns one drop at a placement-strategy position. */
+  private _spawnPowerUpDrop(): void {
+    if (
+      !this.powerUpsEnabled ||
+      !this.powerUpSpawner ||
+      !this.powerUpPlacement
+    ) {
+      return;
+    }
+
+    const id = this.powerUpSpawner.next();
+    const { x, y } = this.powerUpPlacement.place(
+      this._powerUpPlacementContext(),
+    );
+
+    const graphics = this.add.graphics();
+    graphics.setPosition(x, y);
+    drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
+    graphics.setScale(0);
+
+    this.powerUpDrops.push({
+      powerUp: new PowerUp(id),
+      id,
+      x,
+      y,
+      graphics,
+    });
+    this.powerUpSpawnCount += 1;
+  }
+
+  /**
+   * Advances every drop's lifecycle and spawns the next drop when the
+   * configured interval has elapsed and no previous drop is still live
+   * (one drop on screen at a time).
+   */
+  private _updatePowerUpLayer(dt: number): void {
+    if (!this.powerUpsEnabled) return;
+
+    const kept: FormationSceneDrop[] = [];
+    for (const drop of this.powerUpDrops) {
+      drop.powerUp.advance(dt);
+      drop.graphics.setScale(drop.powerUp.currentScale);
+      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
+        kept.push(drop);
+      } else {
+        drop.graphics.destroy();
+      }
+    }
+    this.powerUpDrops = kept;
+
+    this.powerUpSpawnTimer -= dt;
+    if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
+      this._spawnPowerUpDrop();
+      this.powerUpSpawnTimer = this.powerUpSpawnInterval;
+    }
   }
 
   // ── Public test accessors ────────────────────────────────────────
@@ -470,6 +671,56 @@ export class GymFormationScene<
   /** The player ship (null when the config omitted `player`). */
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  /** Whether the opt-in power-up layer is active for this scene. */
+  isPowerUpLayerEnabled(): boolean {
+    return this.powerUpsEnabled;
+  }
+
+  /** The live power-up drops currently on screen. */
+  getPowerUpDrops(): FormationSceneDrop[] {
+    return [...this.powerUpDrops];
+  }
+
+  /** Cumulative number of drops spawned since the scene started. */
+  getPowerUpSpawnCount(): number {
+    return this.powerUpSpawnCount;
+  }
+
+  /** The configured seconds between spawns. */
+  getPowerUpSpawnInterval(): number {
+    return this.powerUpSpawnInterval;
+  }
+
+  /** The active ID spawner (null when the layer is disabled). */
+  getPowerUpSpawner(): PowerUpSpawner<PowerUpId> | null {
+    return this.powerUpSpawner;
+  }
+
+  /** Replaces the ID spawner (used by tests and live controls). */
+  setPowerUpSpawner(spawner: PowerUpSpawner<PowerUpId>): void {
+    this.powerUpSpawner = spawner;
+  }
+
+  /** The active placement strategy (null when the layer is disabled). */
+  getPowerUpPlacement(): PowerUpPlacement | null {
+    return this.powerUpPlacement;
+  }
+
+  /** Replaces the placement strategy (used by tests). */
+  setPowerUpPlacement(placement: PowerUpPlacement): void {
+    this.powerUpPlacement = placement;
+  }
+
+  /**
+   * Updates the spawn interval (seconds). Ignored when not a positive
+   * finite value. The next spawn uses the new cadence.
+   */
+  setPowerUpSpawnInterval(seconds: number): void {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    this.powerUpSpawnInterval = seconds;
+    this.powerUpSpawnTimer = seconds;
   }
 
   /** Player bullets currently in flight. */
@@ -609,6 +860,9 @@ export class GymFormationScene<
       this._handleCollisions();
       this._updatePlayerInvulnerability(dt);
     }
+
+    // ── Optional power-up layer: cadence + drop lifecycles ───────────
+    this._updatePowerUpLayer(dt);
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);

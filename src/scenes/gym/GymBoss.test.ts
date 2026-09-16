@@ -1,8 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import {
+  GAME_WIDTH,
+  GAME_HEIGHT,
+  POWER_UP_DROP_SIZE,
+  SHIP_SIZE,
+} from '../../core/constants';
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import { RoundRobinSpawner } from '../../powerups/spawner';
+import { RandomAvoidingPlacement } from '../../powerups/placement';
+import type { PowerUpId } from '../../powerups/types';
+import {
+  createSeededRng,
+  isClearOfBodies,
+  stubBody,
+} from '../../test/powerUpTestFixtures';
 import {
   GymBoss,
   BOSS_FORMATION_START_X,
@@ -288,5 +301,49 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     await new Promise((r) => setTimeout(r, 500));
     const baseXAfter = scene.formationX;
     expect(baseXAfter).toBe(baseXBefore);
+  });
+});
+
+describe('GymBoss — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 15;
+
+  /** Boots GymBoss with a deterministic, short-interval power-up layer. */
+  class PowerUpGymBoss extends GymBoss {
+    init(): void {
+      this.config.powerUps = {
+        spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+        placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+        spawnInterval: INTERVAL,
+      };
+    }
+  }
+
+  it('AC1/AC3 — spawns one drop at a time and never overlaps the boss or player', async () => {
+    booted = await bootScene([PowerUpGymBoss as unknown as typeof Phaser.Scene]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      scene.tick(INTERVAL);
+      expect(scene.getPowerUpDrops()).toHaveLength(1);
+
+      const drop = scene.getPowerUpDrops()[0];
+      const boss = scene.formationBoss;
+      const bodies = [stubBody(boss.x, boss.y, boss.getHitRadius())];
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    }
   });
 });

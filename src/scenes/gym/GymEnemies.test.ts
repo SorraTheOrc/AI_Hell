@@ -13,7 +13,7 @@ import Phaser from 'phaser';
 import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/enemyConfig';
-import { PLAYER_SPAWN } from '../../core/constants';
+import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from './GymEnemies';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -21,6 +21,14 @@ import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 
 // GymIndex discovery helper (glob) — verify GymEnemies is listed without extra registration.
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
+import { RoundRobinSpawner } from '../../powerups/spawner';
+import { RandomAvoidingPlacement } from '../../powerups/placement';
+import type { PowerUpId } from '../../powerups/types';
+import {
+  createSeededRng,
+  isClearOfBodies,
+  stubBody,
+} from '../../test/powerUpTestFixtures';
 
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
   const found = scene.children.list.find(
@@ -584,4 +592,73 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(countInput.min).toBe('1');
     expect(countInput.step).toBe('1');
   });
+});
+
+describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 15;
+
+  /** Boots GymEnemies with a deterministic, short-interval power-up layer. */
+  function makeScene(enemyKey: string): typeof Phaser.Scene {
+    class PowerUpGymEnemies extends GymEnemies {
+      override init(): void {
+        super.init({ enemyKey });
+        this.config.powerUps = {
+          spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+          placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+          spawnInterval: INTERVAL,
+        };
+      }
+    }
+    Object.defineProperty(PowerUpGymEnemies, 'name', {
+      value: `PowerUpGymEnemies_${enemyKey}`,
+    });
+    return PowerUpGymEnemies as unknown as typeof Phaser.Scene;
+  }
+
+  /** Asserts the current drop is clear of every live enemy and the player. */
+  function expectDropClear(scene: GymEnemies): void {
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop).toBeDefined();
+    const bodies = scene.formationEntities
+      .filter((enemy) => enemy.alive)
+      .map((enemy) => stubBody(enemy.x, enemy.y, enemy.getHitRadius()));
+    const player = scene.getPlayer();
+    if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+    expect(
+      isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+    ).toBe(true);
+  }
+
+  it('AC1/AC3 — spawns one drop at a time and avoids enemies/player (scout)', async () => {
+    booted = await bootScene([makeScene(GYM_ENEMIES_DEFAULT_KEY)]);
+    const scene = booted.scene as unknown as GymEnemies;
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      scene.tick(INTERVAL);
+      expect(scene.getPowerUpDrops()).toHaveLength(1);
+      expectDropClear(scene);
+    }
+  });
+
+  it.each(Object.keys(DEFAULT_ENEMY_CONFIGS))(
+    'AC1/AC3 — spawns and avoids overlap for every archetype ("%s")',
+    async (key) => {
+      booted = await bootScene([makeScene(key)]);
+      const scene = booted.scene as unknown as GymEnemies;
+
+      expect(scene.isPowerUpLayerEnabled()).toBe(true);
+      scene.tick(INTERVAL);
+      expectDropClear(scene);
+    },
+  );
 });

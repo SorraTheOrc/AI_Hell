@@ -4,7 +4,12 @@ import * as explosionModule from '../../../vfx/explosionParticles';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
-import { GAME_HEIGHT, GAME_WIDTH, SHIP_COLOR } from '../../../core/constants';
+import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  POWER_UP_DROP_SIZE,
+  SHIP_COLOR,
+} from '../../../core/constants';
 import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
@@ -18,7 +23,19 @@ import {
   FormationSceneBullet,
   FormationSceneEntity,
   GymFormationScene,
+  type PowerUpLayerConfig,
 } from './GymFormationScene';
+import { RoundRobinSpawner } from '../../../powerups/spawner';
+import {
+  RandomAvoidingPlacement,
+  type PowerUpPlacement,
+} from '../../../powerups/placement';
+import type { PowerUpId } from '../../../powerups/types';
+import {
+  createSeededRng,
+  isClearOfBodies,
+  stubBody,
+} from '../../../test/powerUpTestFixtures';
 
 /** Minimal entity the base class drives (mirrors the real enemy contract). */
 class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEntity {
@@ -111,6 +128,7 @@ function makeStubScene(
   player?: { x: number; y: number },
   collision?: { entityHitRadius?: number; bulletHitRadius?: number },
   entityType: typeof StubEnemy = StubEnemy,
+  powerUps?: PowerUpLayerConfig,
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
     sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
@@ -125,6 +143,7 @@ function makeStubScene(
     player,
     entityHitRadius: collision?.entityHitRadius,
     bulletHitRadius: collision?.bulletHitRadius,
+    powerUps,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
       const hitRadius = collision?.entityHitRadius ?? 10;
@@ -1511,5 +1530,134 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(target.alive).toBe(aliveBefore);
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
     expect(scene.getPlayerHitCount()).toBe(0);
+  });
+});
+
+describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 15;
+
+  /** Deterministic layer: round-robin IDs, seeded placement, short interval. */
+  function deterministicLayer(): PowerUpLayerConfig {
+    return {
+      spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+      placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+      spawnInterval: INTERVAL,
+    };
+  }
+
+  async function bootWithLayer(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  it('AC1 — is disabled by default (no drops without a config block)', async () => {
+    booted = await bootScene([makeStubScene(() => [], { x: 480, y: 270 })]);
+    const scene = booted.scene as BootedScene;
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(false);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    scene.tick(INTERVAL * 2);
+    expect(scene.getPowerUpSpawnCount()).toBe(0);
+  });
+
+  it('AC1 — spawns exactly one drop immediately when enabled', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+    expect(scene.getPowerUpDrops()).toHaveLength(1);
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+  });
+
+  it('AC1 — keeps one drop at a time and re-spawns on the configured interval', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+
+    scene.tick(INTERVAL);
+    expect(scene.getPowerUpDrops()).toHaveLength(1);
+    expect(scene.getPowerUpSpawnCount()).toBe(2);
+
+    scene.tick(INTERVAL);
+    expect(scene.getPowerUpDrops()).toHaveLength(1);
+    expect(scene.getPowerUpSpawnCount()).toBe(3);
+  });
+
+  it('AC1 — never exposes more than one drop when ticked in small steps', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    for (let i = 0; i < 300; i += 1) {
+      scene.tick(0.1); // 30 s total — several spawn cycles
+      expect(scene.getPowerUpDrops().length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('AC2 — selects the spawn ID through the injected PowerUpSpawner', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    const ids = [scene.getPowerUpDrops()[0].id];
+    for (let i = 0; i < 3; i += 1) {
+      scene.tick(INTERVAL);
+      ids.push(scene.getPowerUpDrops()[0].id);
+    }
+
+    expect(ids).toEqual(['P3', 'P4', 'P6', 'P7']);
+  });
+
+  it('AC3 — positions the drop through the injected placement strategy', async () => {
+    const fixed: PowerUpPlacement = { place: () => ({ x: 123, y: 45 }) };
+    const scene = await bootWithLayer({
+      spawner: new RoundRobinSpawner<PowerUpId>(['P3']),
+      placement: fixed,
+      spawnInterval: INTERVAL,
+    });
+
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop.x).toBe(123);
+    expect(drop.y).toBe(45);
+    expect(drop.graphics.x).toBe(123);
+    expect(drop.graphics.y).toBe(45);
+  });
+
+  it('AC3 — never places a drop on a live enemy or the player', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    // Tick to a fresh spawn each cycle so the enemy positions are final
+    // for the frame in which the drop was placed.
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      scene.tick(INTERVAL);
+      const drop = scene.getPowerUpDrops()[0];
+      const bodies = scene.formationEntities
+        .filter((enemy) => enemy.alive)
+        .map((enemy) => stubBody(enemy.x, enemy.y, enemy.getHitRadius()));
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    }
+  });
+
+  it('AC6 — applies a live interval change via setPowerUpSpawnInterval', async () => {
+    const scene = await bootWithLayer({
+      ...deterministicLayer(),
+      spawnInterval: 1000,
+    });
+    expect(scene.getPowerUpSpawnInterval()).toBe(1000);
+
+    scene.setPowerUpSpawnInterval(5);
+    expect(scene.getPowerUpSpawnInterval()).toBe(5);
+
+    const before = scene.getPowerUpSpawnCount();
+    scene.tick(20); // despawns the current drop and triggers the next spawn
+    expect(scene.getPowerUpSpawnCount()).toBe(before + 1);
   });
 });
