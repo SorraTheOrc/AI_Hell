@@ -95,7 +95,8 @@ const BOSS_CONFIG: EnemyFormationConfig<
     y: BOSS_PLAYER_SPAWN_Y,
   },
   // Opt-in power-up layer: one drop at a time on the rules interval,
-  // weighted-random ID (P3–P9) and boss/player-avoiding placement.
+  // weighted-random ID (P3–P9 plus weapon drops) and
+  // boss/player-avoiding placement.
   powerUps: {},
   createEntity: (
     scene: Phaser.Scene,

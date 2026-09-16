@@ -9,9 +9,13 @@ import {
 } from '../../core/constants';
 import { loadRules } from '../../core/rules';
 import { bootScene, BootedGame } from '../../test/gameHarness';
-import { RoundRobinSpawner } from '../../powerups/spawner';
+import {
+  RoundRobinSpawner,
+  WeightedRandomSpawner,
+  type PowerUpSpawner,
+} from '../../powerups/spawner';
 import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
-import type { PowerUpId } from '../../powerups/types';
+import type { DropId, PowerUpId } from '../../powerups/types';
 import {
   createSeededRng,
   isClearOfBodies,
@@ -352,6 +356,78 @@ describe('GymBoss — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
         isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
       ).toBe(true);
     }
+  });
+});
+
+describe('GymBoss — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots GymBoss whose spawner yields only weapon drops (at the player). */
+  function makeWeaponBoss(spawner: PowerUpSpawner<DropId>): typeof Phaser.Scene {
+    class WeaponGymBoss extends GymBoss {
+      init(): void {
+        this.config = {
+          ...this.config,
+          powerUps: {
+            spawner,
+            placement: {
+              place: (context) => ({ x: context.player.x, y: context.player.y }),
+            },
+            spawnInterval: 1000,
+          },
+        };
+      }
+    }
+    return WeaponGymBoss as unknown as typeof Phaser.Scene;
+  }
+
+  it('AC4 — a weapon drop is collectible and equips the weapon in the registry', async () => {
+    booted = await bootScene([
+      makeWeaponBoss(
+        new WeightedRandomSpawner<DropId>(['dual'], createSeededRng(1)),
+      ),
+    ]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    // The boot loop advances the drop past the 3% threshold, so the
+    // 'dual' drop spawned on the ship is collected and equipped.
+    expect(scene.getEffectsRegistry().hasWeapon('dual')).toBe(true);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
+
+  it('AC3 — spawns a weapon drop never overlapping the boss or player', async () => {
+    booted = await bootScene([
+      makeWeaponBoss(
+        new WeightedRandomSpawner<DropId>(
+          ['spread', 'dual', 'rapid'],
+          createSeededRng(2),
+        ),
+      ),
+    ]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    // Place away from the player by re-rolling with the avoiding
+    // placement, then assert the surviving drop avoids the bodies.
+    scene.setPowerUpPlacement(
+      new RandomAvoidingPlacement({ rng: createSeededRng(3) }),
+    );
+    scene.tick(1000);
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop).toBeDefined();
+    expect(drop.weaponDropId).toBeDefined();
+
+    const boss = scene.formationBoss;
+    const bodies = [stubBody(boss.x, boss.y, boss.getHitRadius())];
+    const player = scene.getPlayer();
+    if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+    expect(
+      isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+    ).toBe(true);
   });
 });
 

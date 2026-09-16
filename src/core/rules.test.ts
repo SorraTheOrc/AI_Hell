@@ -6,8 +6,10 @@ import {
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
   DEFAULT_RULES,
   DEFAULT_STANDARD_POWER_UP_WEIGHT,
+  DEFAULT_WEAPON_WEIGHT,
   POWER_UP_WEIGHT_IDS,
   RULES_STORAGE_KEY,
+  WEAPON_WEIGHT_IDS,
   defaultPowerUpWeights,
   loadRules,
   saveRules,
@@ -42,6 +44,15 @@ describe('game rules configuration module', () => {
       expect(weights.P8).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
       expect(weights.P8).toBeLessThan(weights.P3);
     });
+
+    it('contains weights for every weapon drop (spread/dual/rapid/reset)', () => {
+      expect(Object.keys(DEFAULT_RULES.weaponWeights).sort()).toEqual(
+        [...WEAPON_WEIGHT_IDS].sort(),
+      );
+      for (const id of WEAPON_WEIGHT_IDS) {
+        expect(DEFAULT_RULES.weaponWeights[id]).toBe(DEFAULT_WEAPON_WEIGHT);
+      }
+    });
   });
 
   // ── AC2: load/save persistence and partial merge ─────────────────
@@ -55,6 +66,12 @@ describe('game rules configuration module', () => {
       const custom: GameRules = {
         powerUpSpawnInterval: 5,
         powerUpWeights: { P3: 10, P4: 9, P5: 8, P6: 7, P7: 6, P8: 1, P9: 5 },
+        weaponWeights: {
+          spread: 3,
+          dual: 4,
+          rapid: 2,
+          reset: 1,
+        },
       };
       saveRules(custom);
 
@@ -63,6 +80,19 @@ describe('game rules configuration module', () => {
       // Prove the values came from storage, not from the defaults.
       expect(loaded.powerUpSpawnInterval).toBe(5);
       expect(loaded.powerUpWeights.P3).toBe(10);
+      expect(loaded.weaponWeights.spread).toBe(3);
+    });
+
+    it('merges a partial weapon weight table over the weapon defaults', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ weaponWeights: { rapid: 9 } }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.weaponWeights.rapid).toBe(9);
+      expect(loaded.weaponWeights.spread).toBe(DEFAULT_WEAPON_WEIGHT);
+      expect(loaded.weaponWeights.reset).toBe(DEFAULT_WEAPON_WEIGHT);
     });
 
     it('merges a partial stored config (interval only) over the weight defaults', () => {

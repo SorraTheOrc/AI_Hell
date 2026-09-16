@@ -205,3 +205,60 @@ describe('HUD AC5: reacts to registry changes', () => {
     destroy(game);
   });
 });
+describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
+  it('renders a weapon row when a weapon is equipped', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const list = (hud as unknown as { list: Phaser.GameObjects.GameObject[] })
+      .list;
+    const names = list
+      .filter((c) => c instanceof Phaser.GameObjects.Text)
+      .map((c) => (c as Phaser.GameObjects.Text).text);
+    expect(names).toContain('Weapon: spread');
+    expect(names).toContain('10s');
+    destroy(game);
+  });
+
+  it('renders one row per equipped weapon', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    reg.applyWeapon('dual');
+    reg.applyWeapon('rapid');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const list = (hud as unknown as { list: Phaser.GameObjects.GameObject[] })
+      .list;
+    const names = list
+      .filter((c) => c instanceof Phaser.GameObjects.Text)
+      .map((c) => (c as Phaser.GameObjects.Text).text);
+    expect(names).toContain('Weapon: spread');
+    expect(names).toContain('Weapon: dual');
+    expect(names).toContain('Weapon: rapid');
+    destroy(game);
+  });
+
+  it('drops the row once the weapon expires', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('rapid');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    reg.tick(10.1);
+    hud.refresh();
+    const list = (hud as unknown as { list: Phaser.GameObjects.GameObject[] })
+      .list;
+
+    expect(
+      list.some(
+        (c) =>
+          c instanceof Phaser.GameObjects.Text &&
+          c.text === 'Weapon: rapid',
+      ),
+    ).toBe(false);
+    destroy(game);
+  });
+});

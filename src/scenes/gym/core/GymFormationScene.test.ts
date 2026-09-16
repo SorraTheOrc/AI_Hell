@@ -25,12 +25,17 @@ import {
   GymFormationScene,
   type PowerUpLayerConfig,
 } from './GymFormationScene';
-import { RoundRobinSpawner } from '../../../powerups/spawner';
+import { RoundRobinSpawner, WeightedRandomSpawner } from '../../../powerups/spawner';
 import {
   RandomAvoidingPlacement,
   type PowerUpPlacement,
 } from '../../../powerups/placement';
-import type { PowerUpId } from '../../../powerups/types';
+import {
+  isWeaponDrop,
+  WEAPON_DROP_IDS,
+  type DropId,
+  type PowerUpId,
+} from '../../../powerups/types';
 import {
   createSeededRng,
   isClearOfBodies,
@@ -1822,5 +1827,183 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
     expect(player.y).toBeGreaterThanOrEqual(0);
     expect(player.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+});
+
+describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0MU3VOQKH005YOBH)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  async function boot(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  /** A placement that drops the next drop straight on the ship. */
+  function atPlayer(): PowerUpPlacement {
+    return { place: (context) => ({ x: context.player.x, y: context.player.y }) };
+  }
+
+  it('AC — the default spawner includes every weapon drop in its pool', async () => {
+    // No injected spawner: the scene builds the default weighted-random
+    // spawner from the rules weights, which must now include weapon IDs.
+    const scene = await boot({
+      placement: new RandomAvoidingPlacement({ rng: createSeededRng(7) }),
+      rng: createSeededRng(42),
+      spawnInterval: 1,
+    });
+
+    const seen = new Set<DropId>();
+    // Drive many spawn cycles through the default spawner. Each tick
+    // (> 12.5 s) despawns the current drop and spawns the next.
+    for (let i = 0; i < 400; i += 1) {
+      scene.tick(13);
+      const drop = scene.getPowerUpDrops()[0];
+      if (drop) seen.add(drop.dropId);
+    }
+
+    // Every weapon drop ID must be reachable from the default pool.
+    for (const weaponId of WEAPON_DROP_IDS) {
+      expect(seen.has(weaponId)).toBe(true);
+    }
+    // Power-up IDs remain in the pool.
+    expect([...seen].some((id) => id.startsWith('P'))).toBe(true);
+  });
+
+  it('AC — a weapon drop is rendered with the weapon icon and carries weaponDropId', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    });
+
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop).toBeDefined();
+    expect(drop.dropId).toBe('spread');
+    expect(drop.weaponDropId).toBe('spread');
+    expect(isWeaponDrop(drop.dropId)).toBe(true);
+  });
+
+  it('AC — collecting a weapon drop equips it through the shared EffectsRegistry', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+
+    // Spawn a deterministic weapon drop on the ship and collect it.
+    scene.spawnPowerUpDrop('dual', player.x, player.y);
+    scene.tick(0.1);
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.hasWeapon('dual')).toBe(true);
+    expect(registry.activeWeapons().map((w) => w.weaponId)).toContain('dual');
+    // The player ship's active set is updated so the weapon actually fires.
+    expect(player.hasWeapon('dual')).toBe(true);
+  });
+
+  it('AC — an equipped weapon expires in both the registry and on the ship after 10 s', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: 1000,
+    });
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.hasWeapon('spread')).toBe(true);
+    expect(player.hasWeapon('spread')).toBe(true);
+
+    // Advance past the 10 s weapon duration.
+    scene.tick(10.1);
+    expect(registry.hasWeapon('spread')).toBe(false);
+    expect(player.hasWeapon('spread')).toBe(false);
+  });
+
+  it('AC — the Reset drop clears every active weapon', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.spawnPowerUpDrop('rapid', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.activeWeapons()).toHaveLength(2);
+    expect(player.hasWeapon('spread')).toBe(true);
+    expect(player.hasWeapon('rapid')).toBe(true);
+
+    scene.spawnPowerUpDrop('reset', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(player.hasWeapon('spread')).toBe(false);
+    expect(player.hasWeapon('rapid')).toBe(false);
+  });
+
+  it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
+    const scene = await boot({
+      spawner: new WeightedRandomSpawner<DropId>(
+        [...WEAPON_DROP_IDS, 'P3'],
+        createSeededRng(3),
+      ),
+      placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+      spawnInterval: INTERVAL,
+    });
+
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      scene.tick(INTERVAL);
+      const drop = scene.getPowerUpDrops()[0];
+      expect(drop).toBeDefined();
+      const bodies = scene.formationEntities
+        .filter((enemy) => enemy.alive)
+        .map((enemy) => stubBody(enemy.x, enemy.y, enemy.getHitRadius()));
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    }
+  });
+
+  it('AC — the HUD renders active weapon rows alongside power-up rows', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+    const hud = scene.getHUD();
+    expect(hud).not.toBeNull();
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.tick(0.1);
+    hud!.refresh();
+
+    expect(
+      (
+        hud as unknown as {
+          list: Phaser.GameObjects.GameObject[];
+        }
+      ).list.some(
+        (c) =>
+          c instanceof Phaser.GameObjects.Text &&
+          c.text === 'Weapon: spread',
+      ),
+    ).toBe(true);
   });
 });

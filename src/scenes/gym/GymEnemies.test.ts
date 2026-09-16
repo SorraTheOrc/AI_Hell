@@ -22,9 +22,10 @@ import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 
 // GymIndex discovery helper (glob) — verify GymEnemies is listed without extra registration.
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
-import { RoundRobinSpawner } from '../../powerups/spawner';
+import { RoundRobinSpawner, WeightedRandomSpawner } from '../../powerups/spawner';
 import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
-import type { PowerUpId } from '../../powerups/types';
+import type { DropId, PowerUpId } from '../../powerups/types';
+import type { PowerUpSpawner } from '../../powerups/spawner';
 import {
   createSeededRng,
   isClearOfBodies,
@@ -662,6 +663,105 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
       expectDropClear(scene);
     },
   );
+});
+
+describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots GymEnemies whose spawner yields weapon drops (at the player). */
+  function makeWeaponScene(
+    enemyKey: string,
+    spawner: PowerUpSpawner<DropId>,
+    placementPowerUps: PowerUpPlacement = {
+      place: (context) => ({ x: context.player.x, y: context.player.y }),
+    },
+  ): typeof Phaser.Scene {
+    class WeaponGymEnemies extends GymEnemies {
+      override init(): void {
+        super.init({ enemyKey });
+        this.config.powerUps = {
+          spawner,
+          placement: placementPowerUps,
+          spawnInterval: 1000,
+        };
+      }
+    }
+    Object.defineProperty(WeaponGymEnemies, 'name', {
+      value: `WeaponGymEnemies_${enemyKey}`,
+    });
+    return WeaponGymEnemies as unknown as typeof Phaser.Scene;
+  }
+
+  it('AC4 — a weapon drop is collectible and equips the weapon in the registry', async () => {
+    booted = await bootScene([
+      makeWeaponScene(
+        GYM_ENEMIES_DEFAULT_KEY,
+        new WeightedRandomSpawner<DropId>(['rapid'], createSeededRng(1)),
+      ),
+    ]);
+    const scene = booted.scene as unknown as GymEnemies;
+
+    // The boot loop advances the drop past the 3% threshold, so the
+    // 'rapid' drop spawned on the ship is collected and equipped.
+    expect(scene.getEffectsRegistry().hasWeapon('rapid')).toBe(true);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
+
+  it.each(Object.keys(DEFAULT_ENEMY_CONFIGS))(
+    'AC3 — spawns a weapon drop avoiding enemies for archetype "%s"',
+    async (key) => {
+      booted = await bootScene([
+        makeWeaponScene(
+          key,
+          new WeightedRandomSpawner<DropId>(
+            ['spread', 'dual', 'rapid'],
+            createSeededRng(2),
+          ),
+          // Place away from the player so the drop survives to be asserted.
+          new RandomAvoidingPlacement({ rng: createSeededRng(3) }),
+        ),
+      ]);
+      const scene = booted.scene as unknown as GymEnemies;
+
+      const drop = scene.getPowerUpDrops()[0];
+      expect(drop).toBeDefined();
+      expect(drop.weaponDropId).toBeDefined();
+      const bodies = scene.formationEntities
+        .filter((enemy) => enemy.alive)
+        .map((enemy) => stubBody(enemy.x, enemy.y, enemy.getHitRadius()));
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    },
+  );
+
+  it('AC4 — the Reset drop clears equipped weapons', async () => {
+    booted = await bootScene([
+      makeWeaponScene(
+        GYM_ENEMIES_DEFAULT_KEY,
+        new WeightedRandomSpawner<DropId>(['spread'], createSeededRng(1)),
+      ),
+    ]);
+    const scene = booted.scene as unknown as GymEnemies;
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer()!;
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.spawnPowerUpDrop('dual', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.activeWeapons()).toHaveLength(2);
+
+    scene.spawnPowerUpDrop('reset', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.activeWeapons()).toHaveLength(0);
+  });
 });
 
 describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => {

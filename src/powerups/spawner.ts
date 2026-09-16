@@ -18,7 +18,7 @@
  * @module powerups/spawner
  */
 
-import { POWER_UP_CATALOGUE, PowerUpId } from './types';
+import { PowerUpId } from './types';
 
 // ── Fixed non-combat spawn order ───────────────────────────────────
 
@@ -101,7 +101,9 @@ export class RoundRobinSpawner<T extends string = PowerUpId> implements PowerUpS
 // ── WeightedRandomSpawner ──────────────────────────────────────────
 
 /**
- * Draws the next power-up ID at random, weighted by per-ID weights.
+ * Draws the next ID at random, weighted by per-ID weights. Generic so it
+ * can be used for power-up IDs (P3–P9), weapon types (spread, dual, rapid),
+ * or any combined `DropId` union.
  *
  * All entries start with equal weight (pure random, AC3).  Weights can
  * be read/updated at runtime so difficulty or game-state can tune
@@ -118,27 +120,30 @@ export class RoundRobinSpawner<T extends string = PowerUpId> implements PowerUpS
  * const id = spawner.next();
  * ```
  */
-export class WeightedRandomSpawner implements PowerUpSpawner {
-  private readonly _weights: Map<PowerUpId, number>;
+export class WeightedRandomSpawner<T extends string = PowerUpId> implements PowerUpSpawner<T> {
+  private readonly _weights: Map<T, number>;
   /** Injected RNG (default: `Math.random`) — useful for testing. */
   private _rng: () => number;
+  /** Stored first ID for deterministic fallback when all weights are zero. */
+  private readonly _firstId: T;
 
   /**
-   * @param ids       - All power-up IDs this spawner may yield.
+   * @param ids       - All IDs this spawner may yield.
    * @param rng       - Optional PRNG function returning [0, 1).
    */
-  constructor(ids: PowerUpId[], rng?: () => number) {
-    this._weights = new Map<PowerUpId, number>();
+  constructor(ids: T[], rng?: () => number) {
+    this._weights = new Map<T, number>();
     // Equal initial weights (pure random).
     for (const id of ids) {
       this._weights.set(id, 1);
     }
+    this._firstId = ids[0]!;
     this._rng = rng ?? Math.random;
   }
 
   /** Returns a copy of all current weights (subset keyed by tracked IDs). */
-  getWeights(): Partial<Record<PowerUpId, number>> {
-    const result: Partial<Record<PowerUpId, number>> = {};
+  getWeights(): Partial<Record<T, number>> {
+    const result: Partial<Record<T, number>> = {};
     for (const [id, w] of this._weights) {
       result[id] = w;
     }
@@ -146,11 +151,11 @@ export class WeightedRandomSpawner implements PowerUpSpawner {
   }
 
   /**
-   * Sets the weight for a specific power-up ID.
-   * @param id  - The power-up ID to adjust.
-   * @param w   - New weight (positive number).
+   * Sets the weight for a specific ID.
+   * @param id  - The ID to adjust.
+   * @param w   - New weight (non-negative number).
    */
-  setWeight(id: PowerUpId, w: number): void {
+  setWeight(id: T, w: number): void {
     if (w < 0) {
       throw new Error(`Weight must be non-negative, got ${w}`);
     }
@@ -158,18 +163,18 @@ export class WeightedRandomSpawner implements PowerUpSpawner {
   }
 
   /**
-   * Returns the current weight for a power-up ID.
-   * @param id  - The power-up ID.
+   * Returns the current weight for an ID.
+   * @param id  - The ID.
    * @returns Current weight (0 if not found).
    */
-  getWeight(id: PowerUpId): number {
+  getWeight(id: T): number {
     return this._weights.get(id) ?? 0;
   }
 
-  next(): PowerUpId {
+  next(): T {
     // Compute total weight; fall back to first entry if all zero.
     let total = 0;
-    let firstId: PowerUpId | null = null;
+    let firstId: T | null = null;
     for (const [id, w] of this._weights) {
       total += w;
       if (firstId === null) firstId = id;
@@ -179,8 +184,7 @@ export class WeightedRandomSpawner implements PowerUpSpawner {
       // Deterministic fallback: return the first tracked entry (preserves pre-existing tests
       // that construct the spawner with ['P5','P8','P9'] — fallback must be P5, not P3).
       if (firstId !== null) return firstId;
-      const catalogueKeys = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
-      return catalogueKeys[0];
+      return this._firstId;
     }
 
     // Weighted random selection: pick a threshold in [0, total).
@@ -191,6 +195,6 @@ export class WeightedRandomSpawner implements PowerUpSpawner {
     }
 
     // Fallback (should not reach here if total > 0, but be safe).
-    return firstId;
+    return this._firstId;
   }
 }

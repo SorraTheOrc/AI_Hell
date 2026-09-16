@@ -2,12 +2,12 @@
  * General game-rules configuration module (GDD §4.4, §6.3).
  *
  * Single source of truth for the tunable game rules that are shared
- * across scenes — currently the power-up spawn interval and the per-ID
- * drop weights. Values are persisted as a JSON blob in the browser's
- * localStorage (browser-native, GDD §6.3 web distribution model), so
- * changes made live (for example via a combat-gym control) survive page
- * reloads. Falls back to built-in defaults whenever no saved rules exist
- * or the stored JSON is corrupt.
+ * across scenes — currently the power-up spawn interval, the per-ID
+ * power-up drop weights and the per-weapon drop weights. Values are
+ * persisted as a JSON blob in the browser's localStorage (browser-native,
+ * GDD §6.3 web distribution model), so changes made live (for example via
+ * a combat-gym control) survive page reloads. Falls back to built-in
+ * defaults whenever no saved rules exist or the stored JSON is corrupt.
  *
  * Mirrors the `src/core/config.ts` pattern (`DEFAULT_RULES`,
  * `loadRules()`, `saveRules()`, a `storage()` guard, defaults merge over
@@ -22,12 +22,15 @@
  * (`src/utils/gymPowerUpControl.ts`) persists edits through `saveRules()`.
  */
 
-import type { PowerUpId } from '../powerups/types';
+import type { PowerUpId, WeaponDropId } from '../powerups/types';
 
 // ── Types ───────────────────────────────────────────────────────────
 
 /** Relative drop weights for every power-up ID the game can spawn. */
 export type PowerUpWeights = Record<PowerUpId, number>;
+
+/** Relative drop weights for every weapon drop the game can spawn. */
+export type WeaponWeights = Record<WeaponDropId, number>;
 
 /** Tunable, persisted game rules. */
 export interface GameRules {
@@ -39,6 +42,13 @@ export interface GameRules {
    * them internally.
    */
   powerUpWeights: PowerUpWeights;
+  /**
+   * Relative weight per weapon type (spread, dual, rapid). Higher
+   * weight ⇒ more likely. These are relative, not percentages — the
+   * spawner normalises them internally. Reset is handled separately
+   * (one Reset drop per full weapon cycle).
+   */
+  weaponWeights: WeaponWeights;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -56,6 +66,9 @@ export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
  */
 export const DEFAULT_EXTRA_LIFE_WEIGHT = 1;
 
+/** Default relative weight for weapon drops (spread, dual, rapid, reset). */
+export const DEFAULT_WEAPON_WEIGHT = 2;
+
 /** Every power-up ID covered by the default weight table (P3–P9). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'P3',
@@ -65,6 +78,14 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'P7',
   'P8',
   'P9',
+];
+
+/** Every weapon drop covered by the default weapon weight table. */
+export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
+  'spread',
+  'dual',
+  'rapid',
+  'reset',
 ];
 
 /**
@@ -81,10 +102,23 @@ export function defaultPowerUpWeights(): PowerUpWeights {
   return weights;
 }
 
+/**
+ * Builds a fresh default weapon weight table: every weapon drop
+ * (spread, dual, rapid, reset) carries {@link DEFAULT_WEAPON_WEIGHT}.
+ */
+export function defaultWeaponWeights(): WeaponWeights {
+  const weights = {} as WeaponWeights;
+  for (const id of WEAPON_WEIGHT_IDS) {
+    weights[id] = DEFAULT_WEAPON_WEIGHT;
+  }
+  return weights;
+}
+
 /** Built-in defaults — the current hard-coded tuning values. */
 export const DEFAULT_RULES: GameRules = {
   powerUpSpawnInterval: DEFAULT_POWER_UP_SPAWN_INTERVAL,
   powerUpWeights: defaultPowerUpWeights(),
+  weaponWeights: defaultWeaponWeights(),
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -111,6 +145,7 @@ function cloneDefaultRules(): GameRules {
   return {
     powerUpSpawnInterval: DEFAULT_RULES.powerUpSpawnInterval,
     powerUpWeights: { ...DEFAULT_RULES.powerUpWeights },
+    weaponWeights: { ...DEFAULT_RULES.weaponWeights },
   };
 }
 
@@ -145,13 +180,32 @@ function mergeWeights(stored: unknown): PowerUpWeights {
   return result;
 }
 
+/**
+ * Merges a stored (possibly partial/invalid) weapon weight table over
+ * the defaults. Unknown or non-numeric entries are ignored.
+ */
+function mergeWeaponWeights(stored: unknown): WeaponWeights {
+  const result = { ...DEFAULT_RULES.weaponWeights };
+  if (stored && typeof stored === 'object') {
+    const source = stored as Record<string, unknown>;
+    for (const id of WEAPON_WEIGHT_IDS) {
+      const value = source[id];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        result[id] = value;
+      }
+    }
+  }
+  return result;
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 /**
  * Loads the persisted game rules, or the defaults when nothing has been
  * saved (or the stored JSON is corrupt). A partial stored rules object is
- * merged over the defaults — including a partial `powerUpWeights` table —
- * so the result is always complete and valid.
+ * merged over the defaults — including a partial `powerUpWeights` table
+ * and a partial `weaponWeights` table — so the result is always complete
+ * and valid.
  *
  * Always returns a fresh object; mutating it never affects the defaults
  * or later loads.
@@ -168,6 +222,7 @@ export function loadRules(): GameRules {
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       powerUpWeights: mergeWeights(parsed.powerUpWeights),
+      weaponWeights: mergeWeaponWeights(parsed.weaponWeights),
     };
   } catch {
     return cloneDefaultRules();

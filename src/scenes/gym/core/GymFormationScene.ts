@@ -60,9 +60,11 @@ import {
 import {
   loadRules,
   POWER_UP_WEIGHT_IDS,
+  WEAPON_WEIGHT_IDS,
   type PowerUpWeights,
+  type WeaponWeights,
 } from '../../../core/rules';
-import { drawPowerUpDrop } from '../../../powerups/icons';
+import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
 import { findTeleportDestination } from '../../../powerups/teleport';
@@ -75,7 +77,14 @@ import {
   WeightedRandomSpawner,
   type PowerUpSpawner,
 } from '../../../powerups/spawner';
-import { getPowerUpById, type PowerUpId } from '../../../powerups/types';
+import {
+  getPowerUpById,
+  isWeaponDrop,
+  type DropId,
+  type PowerUpId,
+  type WeaponDropId,
+} from '../../../powerups/types';
+import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
@@ -165,9 +174,10 @@ export interface PlayerFormationConfig {
 export interface PowerUpLayerConfig {
   /**
    * Injectable ID spawner. Defaults to a `WeightedRandomSpawner` over
-   * P3–P9 using the game-rules weights.
+   * P3–P9 plus the weapon drops (spread, dual, rapid, reset) using the
+   * game-rules weights.
    */
-  spawner?: PowerUpSpawner<PowerUpId>;
+  spawner?: PowerUpSpawner<DropId>;
   /**
    * Injectable placement strategy. Defaults to `RandomAvoidingPlacement`
    * (seeded from `rng`).
@@ -190,6 +200,10 @@ export interface FormationSceneDrop {
   powerUp: PowerUp;
   /** The power-up ID. */
   id: PowerUpId;
+  /** The weapon drop ID (spread/dual/rapid/reset) when this is a weapon drop. */
+  weaponDropId?: WeaponDropId;
+  /** The unified drop ID (power-up or weapon). */
+  dropId: DropId;
   /** Fixed world-space position at spawn time (px). */
   x: number;
   y: number;
@@ -339,7 +353,7 @@ export class GymFormationScene<
   // Power-up layer (opt-in via `config.powerUps`).
   private powerUpsEnabled = false;
   private powerUpDrops: FormationSceneDrop[] = [];
-  private powerUpSpawner: PowerUpSpawner<PowerUpId> | null = null;
+  private powerUpSpawner: PowerUpSpawner<DropId> | null = null;
   private powerUpPlacement: PowerUpPlacement | null = null;
   private powerUpSpawnInterval = 0;
   private powerUpSpawnTimer = 0;
@@ -531,7 +545,12 @@ export class GymFormationScene<
     this.powerUpPlacement =
       cfg.placement ?? new RandomAvoidingPlacement({ rng });
     this.powerUpSpawner =
-      cfg.spawner ?? this._buildDefaultPowerUpSpawner(rules.powerUpWeights, rng);
+      cfg.spawner ??
+      this._buildDefaultPowerUpSpawner(
+        rules.powerUpWeights,
+        rules.weaponWeights,
+        rng,
+      );
     this.powerUpSpawnInterval =
       cfg.spawnInterval ?? rules.powerUpSpawnInterval;
     this.powerUpPlacementMargin =
@@ -557,14 +576,22 @@ export class GymFormationScene<
     this._spawnPowerUpDrop();
   }
 
-  /** Builds the default weighted-random spawner from the rules weights. */
+  /**
+   * Builds the default weighted-random spawner over power-up IDs AND
+   * weapon drops (spread, dual, rapid, reset) using the rules weights.
+   */
   private _buildDefaultPowerUpSpawner(
-    weights: PowerUpWeights,
+    powerUpWeights: PowerUpWeights,
+    weaponWeights: WeaponWeights,
     rng: () => number,
-  ): PowerUpSpawner<PowerUpId> {
-    const spawner = new WeightedRandomSpawner([...POWER_UP_WEIGHT_IDS], rng);
+  ): PowerUpSpawner<DropId> {
+    const ids: DropId[] = [...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS];
+    const spawner = new WeightedRandomSpawner<DropId>(ids, rng);
     for (const id of POWER_UP_WEIGHT_IDS) {
-      spawner.setWeight(id, weights[id]);
+      spawner.setWeight(id, powerUpWeights[id]);
+    }
+    for (const id of WEAPON_WEIGHT_IDS) {
+      spawner.setWeight(id, weaponWeights[id]);
     }
     return spawner;
   }
@@ -611,12 +638,14 @@ export class GymFormationScene<
   }
 
   /**
-   * Spawns a drop of *id* at (x, y). Public so tests (and future live
-   * controls) can place a deterministic drop; returns null when the
-   * power-up layer is disabled.
+   * Spawns a drop of *id* at (x, y). Weapon drops (spread/dual/rapid/
+   * reset) are rendered with the weapon icon; power-up drops with the
+   * power-up icon. Public so tests (and future live controls) can place
+   * a deterministic drop; returns null when the power-up layer is
+   * disabled.
    */
   spawnPowerUpDrop(
-    id: PowerUpId,
+    id: DropId,
     x: number,
     y: number,
   ): FormationSceneDrop | null {
@@ -624,12 +653,18 @@ export class GymFormationScene<
 
     const graphics = this.add.graphics();
     graphics.setPosition(x, y);
-    drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
+    if (isWeaponDrop(id)) {
+      drawWeaponDrop(graphics, id, 0, 0, POWER_UP_DROP_SIZE);
+    } else {
+      drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
+    }
     graphics.setScale(0);
 
     const drop: FormationSceneDrop = {
-      powerUp: new PowerUp(id),
-      id,
+      powerUp: new PowerUp(isWeaponDrop(id) ? 'P3' : id),
+      id: isWeaponDrop(id) ? 'P3' : id,
+      weaponDropId: isWeaponDrop(id) ? id : undefined,
+      dropId: id,
       x,
       y,
       graphics,
@@ -704,8 +739,33 @@ export class GymFormationScene<
   /**
    * Applies a collected drop through the shared `EffectsRegistry`. P4
    * also clears on-screen enemy bullets (without damaging enemies).
+   * Weapon drops equip the weapon through the registry (or reset the
+   * ship to the cannon).
    */
   private _collectDrop(drop: FormationSceneDrop): void {
+    // Weapon drops use the drop's own lifecycle as a collect-gate; the
+    // underlying PowerUp is a placeholder so tryCollect always succeeds
+    // once growing is complete. The registry tracks the weapon for the
+    // HUD, and the player ship's active set is updated so the weapon
+    // actually fires through auto-fire.
+    if (drop.weaponDropId) {
+      if (drop.weaponDropId === 'reset') {
+        this.effectsRegistry.tryResetWeapons();
+        this.player?.resetWeapon();
+      } else {
+        this.effectsRegistry.applyWeapon(drop.weaponDropId as WeaponId);
+        this.player?.equipWeapon(drop.weaponDropId as WeaponId);
+      }
+      drop.powerUp.tryCollect();
+      drop.graphics.destroy();
+      try {
+        playPowerUpCollectSound();
+      } catch {
+        // Audio is best-effort (headless tests have no AudioContext).
+      }
+      return;
+    }
+
     const effect = drop.powerUp.tryCollect();
     if (!effect) return;
 
@@ -880,12 +940,12 @@ export class GymFormationScene<
   }
 
   /** The active ID spawner (null when the layer is disabled). */
-  getPowerUpSpawner(): PowerUpSpawner<PowerUpId> | null {
+  getPowerUpSpawner(): PowerUpSpawner<DropId> | null {
     return this.powerUpSpawner;
   }
 
   /** Replaces the ID spawner (used by tests and live controls). */
-  setPowerUpSpawner(spawner: PowerUpSpawner<PowerUpId>): void {
+  setPowerUpSpawner(spawner: PowerUpSpawner<DropId>): void {
     this.powerUpSpawner = spawner;
   }
 
@@ -1036,6 +1096,10 @@ export class GymFormationScene<
 
     // ── Player ship: input → thrust, auto-fire, bullet lifecycle ──
     if (this.player) {
+      // Advance timed weapon countdowns (collected weapon drops expire
+      // after 10 s, mirroring GymWeapons) before auto-fire so an expired
+      // weapon stops firing this frame.
+      this.player.tickWeaponTimers(dt * 1000);
       const input = this._readPlayerInput();
       if (input) this.player.setInput(input);
       this.player.physicsTick(dt, this.scale.width, this.scale.height);
