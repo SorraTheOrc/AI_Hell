@@ -57,6 +57,8 @@ import {
   getPowerUpById,
 } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
+import { findTeleportDestination } from '../../powerups/teleport';
+export { findTeleportDestination } from '../../powerups/teleport';
 import {
   playPowerUpCollectSound,
   playDestructionSound,
@@ -76,7 +78,6 @@ import {
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
   SHIP_SIZE,
-  TELEPORT_SAFE_RADIUS,
   COMBAT_HIT_INVULNERABLE_DURATION,
   COMBAT_HIT_BLINK_INTERVAL,
 } from '../../core/constants';
@@ -104,98 +105,6 @@ const COMBAT_DRIFT_SPEED = 18;
 /** Hit radii used for player collision checks (px). */
 const ENEMY_HIT_RADIUS = SCOUT_SIZE / 2 + 4;
 const BULLET_HIT_RADIUS = 5;
-
-/** Screen margin when clamping the teleport destination. */
-const TELEPORT_MARGIN = SHIP_SIZE / 2 + 4;
-
-// ── Safe-spot resolution (P7, GDD §4.4) ─────────────────────────
-
-/**
- * Finds the nearest safe teleport destination along the heading ray.
- * Samples candidates along the ray plus a fallback grid; picks the
- * closest candidate whose disc (TELEPORT_SAFE_RADIUS) contains no
- * enemy/bullet, clamped to screen bounds (TELEPORT_MARGIN inset).
- * If no safe candidate exists, returns the furthest ray point clamped
- * on-screen (nearest on-screen position along the heading, per GDD).
- */
-export function findTeleportDestination(
-  fromX: number,
-  fromY: number,
-  headingRad: number,
-  enemies: Array<{ x: number; y: number }>,
-  bullets: Array<{ x: number; y: number }>,
-  width: number,
-  height: number,
-): { x: number; y: number } {
-  const ux = Math.cos(headingRad);
-  const uy = Math.sin(headingRad);
-  const safeRadius = TELEPORT_SAFE_RADIUS;
-
-  function isSafe(x: number, y: number): boolean {
-    for (const e of enemies) {
-      if (Math.hypot(e.x - x, e.y - y) < safeRadius + ENEMY_HIT_RADIUS) return false;
-    }
-    for (const b of bullets) {
-      if (Math.hypot(b.x - x, b.y - y) < safeRadius + BULLET_HIT_RADIUS) return false;
-    }
-    return true;
-  }
-
-  function clamp(x: number, y: number): { x: number; y: number } {
-    return {
-      x: Math.max(TELEPORT_MARGIN, Math.min(width - TELEPORT_MARGIN, x)),
-      y: Math.max(TELEPORT_MARGIN, Math.min(height - TELEPORT_MARGIN, y)),
-    };
-  }
-
-  // Candidates along the heading ray at increasing distances.
-  const rayDistances = [80, 160, 240, 360, 480, 640];
-  const candidates: Array<{ x: number; y: number; dist: number }> = [];
-
-  for (const d of rayDistances) {
-    const p = clamp(fromX + ux * d, fromY + uy * d);
-    // Skip candidates that barely moved (heading into wall).
-    if (Math.hypot(p.x - fromX, p.y - fromY) < 10) continue;
-    candidates.push({ ...p, dist: d });
-  }
-
-  // Fallback grid candidates (screen quadrants) — ensure coverage when
-  // the ray is blocked the whole way.
-  const grid: Array<{ x: number; y: number }> = [
-    { x: width * 0.25, y: height * 0.25 },
-    { x: width * 0.75, y: height * 0.25 },
-    { x: width * 0.25, y: height * 0.75 },
-    { x: width * 0.75, y: height * 0.75 },
-    { x: width * 0.5, y: height * 0.5 },
-  ];
-  for (const g of grid) {
-    const d = Math.hypot(g.x - fromX, g.y - fromY);
-    // Prefer ray direction: penalise grid points behind the heading.
-    const dot = (g.x - fromX) * ux + (g.y - fromY) * uy;
-    const penalty = dot < 0 ? 1000 : 0;
-    candidates.push({ ...g, dist: d + penalty });
-  }
-
-  candidates.sort((a, b) => a.dist - b.dist);
-
-  for (const c of candidates) {
-    if (isSafe(c.x, c.y)) return { x: c.x, y: c.y };
-  }
-
-  // No safe spot — return the furthest ray point clamped on-screen
-  // (nearest on-screen position along the heading, per GDD), which is
-  // the last ray candidate.
-  const lastRay = candidates.find(
-    (c) => Math.abs(c.x - fromX) > 1 || Math.abs(c.y - fromY) > 1,
-  );
-  if (lastRay) {
-    // Walk further along heading until hitting the margin, then clamp.
-    let x = fromX + ux * 1000;
-    let y = fromY + uy * 1000;
-    return clamp(x, y);
-  }
-  return clamp(fromX + ux * 80, fromY + uy * 80);
-}
 
 // ── Active drop model ──────────────────────────────────────────────
 
@@ -589,6 +498,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
       bullets,
       this.scale.width,
       this.scale.height,
+      { enemyHitRadius: ENEMY_HIT_RADIUS, bulletHitRadius: BULLET_HIT_RADIUS },
     );
 
     // Consume one stack FIFO and grant P6 phase shift at landing.

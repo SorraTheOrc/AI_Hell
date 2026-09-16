@@ -22,7 +22,7 @@ import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 // GymIndex discovery helper (glob) — verify GymEnemies is listed without extra registration.
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { RoundRobinSpawner } from '../../powerups/spawner';
-import { RandomAvoidingPlacement } from '../../powerups/placement';
+import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
 import type { PowerUpId } from '../../powerups/types';
 import {
   createSeededRng,
@@ -661,4 +661,45 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
       expectDropClear(scene);
     },
   );
+});
+
+describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots GymEnemies whose first drop lands on the ship and is a P8. */
+  function makeCollectScene(enemyKey: string): typeof Phaser.Scene {
+    const atPlayer: PowerUpPlacement = {
+      place: (context) => ({ x: context.player.x, y: context.player.y }),
+    };
+    class CollectGymEnemies extends GymEnemies {
+      override init(): void {
+        super.init({ enemyKey });
+        this.config.powerUps = {
+          spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+          placement: atPlayer,
+          spawnInterval: 1000,
+        };
+      }
+    }
+    Object.defineProperty(CollectGymEnemies, 'name', {
+      value: `CollectGymEnemies_${enemyKey}`,
+    });
+    return CollectGymEnemies as unknown as typeof Phaser.Scene;
+  }
+
+  it('AC2/AC5 — a drop collected on the ship applies its effect and the HUD renders', async () => {
+    booted = await bootScene([makeCollectScene(GYM_ENEMIES_DEFAULT_KEY)]);
+    const scene = booted.scene as unknown as GymEnemies;
+
+    // The boot loop advances the drop past the 3% threshold, so the P8
+    // spawned on the ship is collected: lives go 3 → 4 and the HUD is shown.
+    expect(scene.getHUD()).not.toBeNull();
+    expect(scene.getEffectsRegistry().lives()).toBe(4);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
 });

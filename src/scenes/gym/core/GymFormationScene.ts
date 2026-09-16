@@ -28,6 +28,7 @@ import {
 } from '../../../core/constants';
 import {
   playDestructionSound,
+  playPowerUpCollectSound,
   playSpawnSound,
 } from '../../../audio/effects';
 import { addBackToIndexButton } from '../../../utils/gymNavigation';
@@ -61,6 +62,8 @@ import {
 } from '../../../core/rules';
 import { drawPowerUpDrop } from '../../../powerups/icons';
 import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
+import { EffectsRegistry } from '../../../powerups/effects';
+import { findTeleportDestination } from '../../../powerups/teleport';
 import {
   RandomAvoidingPlacement,
   type PlacementContext,
@@ -71,6 +74,7 @@ import {
   type PowerUpSpawner,
 } from '../../../powerups/spawner';
 import { getPowerUpById, type PowerUpId } from '../../../powerups/types';
+import { HUD } from '../../../ui/HUD';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -341,6 +345,13 @@ export class GymFormationScene<
   private powerUpSpawnTimer = 0;
   private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
   private powerUpSpawnCount = 0;
+  /** Shared active-effect registry (effects applied by collected drops). */
+  private effectsRegistry = new EffectsRegistry();
+  /** Standalone HUD rendering the active effects (null when disabled). */
+  private hud: HUD | null = null;
+  /** S / ↓ keys consumed by the P7 teleport (only when a player exists). */
+  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
+  private downKey: Phaser.Input.Keyboard.Key | undefined;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -462,6 +473,10 @@ export class GymFormationScene<
       for (const drop of this.powerUpDrops) drop.graphics.destroy();
       this.powerUpDrops = [];
       this.powerUpSpawnCount = 0;
+      this.hud?.destroy();
+      this.hud = null;
+      this.teleportKey = undefined;
+      this.downKey = undefined;
     });
   }
 
@@ -525,6 +540,21 @@ export class GymFormationScene<
       cfg.margin ?? DEFAULT_POWER_UP_PLACEMENT_MARGIN;
     this.powerUpSpawnTimer = this.powerUpSpawnInterval;
 
+    // Fresh registry + standalone HUD per scene start (lives visible so
+    // P8 is observable).
+    this.effectsRegistry = new EffectsRegistry();
+    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
+
+    // P7 teleport keys (only meaningful when a player is present).
+    if (this.player) {
+      this.teleportKey = this.input.keyboard?.addKey(
+        Phaser.Input.Keyboard.KeyCodes.S,
+      );
+      this.downKey = this.input.keyboard?.addKey(
+        Phaser.Input.Keyboard.KeyCodes.DOWN,
+      );
+    }
+
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
   }
@@ -564,7 +594,7 @@ export class GymFormationScene<
     };
   }
 
-  /** Spawns one drop at a placement-strategy position. */
+  /** Spawns one drop at a placement-strategy position (cadence path). */
   private _spawnPowerUpDrop(): void {
     if (
       !this.powerUpsEnabled ||
@@ -578,29 +608,48 @@ export class GymFormationScene<
     const { x, y } = this.powerUpPlacement.place(
       this._powerUpPlacementContext(),
     );
+    this.spawnPowerUpDrop(id, x, y);
+    this.powerUpSpawnCount += 1;
+  }
+
+  /**
+   * Spawns a drop of *id* at (x, y). Public so tests (and future live
+   * controls) can place a deterministic drop; returns null when the
+   * power-up layer is disabled.
+   */
+  spawnPowerUpDrop(
+    id: PowerUpId,
+    x: number,
+    y: number,
+  ): FormationSceneDrop | null {
+    if (!this.powerUpsEnabled) return null;
 
     const graphics = this.add.graphics();
     graphics.setPosition(x, y);
     drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
     graphics.setScale(0);
 
-    this.powerUpDrops.push({
+    const drop: FormationSceneDrop = {
       powerUp: new PowerUp(id),
       id,
       x,
       y,
       graphics,
-    });
-    this.powerUpSpawnCount += 1;
+    };
+    this.powerUpDrops.push(drop);
+    return drop;
   }
 
   /**
-   * Advances every drop's lifecycle and spawns the next drop when the
-   * configured interval has elapsed and no previous drop is still live
-   * (one drop on screen at a time).
+   * Advances drop lifecycles, resolves fly-over collection, spawns the
+   * next drop when the configured interval has elapsed and no previous
+   * drop is still live (one drop on screen at a time), handles P7
+   * teleport, ticks the effects registry and refreshes the HUD.
    */
   private _updatePowerUpLayer(dt: number): void {
     if (!this.powerUpsEnabled) return;
+
+    this._handleTeleport();
 
     const kept: FormationSceneDrop[] = [];
     for (const drop of this.powerUpDrops) {
@@ -614,11 +663,140 @@ export class GymFormationScene<
     }
     this.powerUpDrops = kept;
 
+    this._collectOverlappingDrops();
+
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
       this._spawnPowerUpDrop();
       this.powerUpSpawnTimer = this.powerUpSpawnInterval;
     }
+
+    this.effectsRegistry.tick(dt);
+    this.hud?.refresh();
+  }
+
+  // ── Drop collection (fly-over) ───────────────────────────────────
+
+  /** Collects any collectible drop overlapping the player's hull. */
+  private _collectOverlappingDrops(): void {
+    if (!this.player) return;
+    const hull = SHIP_SIZE / 2;
+
+    const kept: FormationSceneDrop[] = [];
+    for (const drop of this.powerUpDrops) {
+      if (drop.powerUp.canCollect() && this._dropOverlapsShip(drop, hull)) {
+        this._collectDrop(drop);
+      } else {
+        kept.push(drop);
+      }
+    }
+    this.powerUpDrops = kept;
+  }
+
+  /** Whether a drop's current radius overlaps the player's hull. */
+  private _dropOverlapsShip(drop: FormationSceneDrop, hull: number): boolean {
+    if (!this.player) return false;
+    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
+    return (
+      Math.hypot(this.player.x - drop.x, this.player.y - drop.y) <=
+      hull + dropRadius
+    );
+  }
+
+  /**
+   * Applies a collected drop through the shared `EffectsRegistry`. P4
+   * also clears on-screen enemy bullets (without damaging enemies).
+   */
+  private _collectDrop(drop: FormationSceneDrop): void {
+    const effect = drop.powerUp.tryCollect();
+    if (!effect) return;
+
+    if (drop.id === 'P4') {
+      this._clearEnemyBullets();
+    }
+    this.effectsRegistry.applyCollect(drop.id);
+    drop.graphics.destroy();
+    try {
+      playPowerUpCollectSound();
+    } catch {
+      // Audio is best-effort (headless tests have no AudioContext).
+    }
+  }
+
+  /** Clears all on-screen enemy bullets (P4 bomb — no enemy damage). */
+  private _clearEnemyBullets(): void {
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets.length = 0;
+  }
+
+  // ── Teleport (P7, S/↓) ───────────────────────────────────────────
+
+  /** Handles the S / ↓ key press for a P7 teleport. */
+  private _handleTeleport(): void {
+    if (!this.player || !this.teleportKey) return;
+    const JustDown = (
+      Phaser.Input.Keyboard as unknown as {
+        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
+      }
+    ).JustDown;
+    const sDown = JustDown
+      ? JustDown(this.teleportKey)
+      : this.teleportKey.isDown;
+    const downDown = this.downKey
+      ? JustDown
+        ? JustDown(this.downKey)
+        : this.downKey.isDown
+      : false;
+    if (sDown || downDown) this.triggerTeleport();
+  }
+
+  /**
+   * Consumes one P7 teleport stack and warps the player to the nearest
+   * safe spot along the heading (granting P6 on arrival via the
+   * registry). Public so tests can trigger it deterministically without
+   * faking keyboard state. Returns true when a teleport was performed.
+   */
+  triggerTeleport(): boolean {
+    if (!this.player || !this.powerUpsEnabled) return false;
+    if (!this.effectsRegistry.hasTeleport()) return false;
+
+    const heading = this.player.getHeading();
+    const enemies = this.entities
+      .filter((entity) => entity.alive)
+      .map((entity) => ({
+        x: entity.x,
+        y: entity.y,
+        radius: entity.getHitRadius(),
+      }));
+    const bullets = this.bullets.map((bullet) => ({
+      x: bullet.graphics.x,
+      y: bullet.graphics.y,
+    }));
+
+    const dest = findTeleportDestination(
+      this.player.x,
+      this.player.y,
+      heading,
+      enemies,
+      bullets,
+      this.scale.width,
+      this.scale.height,
+      {
+        enemyHitRadius: this.getEntityHitRadius(),
+        bulletHitRadius: this.getBulletHitRadius(),
+      },
+    );
+
+    // Consume one stack FIFO and grant P6 phase shift at the landing spot.
+    this.effectsRegistry.consumeTeleport();
+    this.player.setPosition(dest.x, dest.y);
+    const state = this.player.getMovementState();
+    (
+      this.player as unknown as {
+        _movementState: { x: number; y: number };
+      }
+    )._movementState = { ...state, x: dest.x, y: dest.y };
+    return true;
   }
 
   // ── Public test accessors ────────────────────────────────────────
@@ -676,6 +854,16 @@ export class GymFormationScene<
   /** Whether the opt-in power-up layer is active for this scene. */
   isPowerUpLayerEnabled(): boolean {
     return this.powerUpsEnabled;
+  }
+
+  /** Shared active-effect registry (effects applied by collected drops). */
+  getEffectsRegistry(): EffectsRegistry {
+    return this.effectsRegistry;
+  }
+
+  /** The standalone effects HUD (null when the power-up layer is disabled). */
+  getHUD(): HUD | null {
+    return this.hud;
   }
 
   /** The live power-up drops currently on screen. */

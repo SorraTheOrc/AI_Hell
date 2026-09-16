@@ -9,7 +9,7 @@ import {
 } from '../../core/constants';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { RoundRobinSpawner } from '../../powerups/spawner';
-import { RandomAvoidingPlacement } from '../../powerups/placement';
+import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
 import type { PowerUpId } from '../../powerups/types';
 import {
   createSeededRng,
@@ -345,5 +345,37 @@ describe('GymBoss — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
         isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
       ).toBe(true);
     }
+  });
+});
+
+describe('GymBoss — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots GymBoss whose first drop lands on the ship and is a P8. */
+  class CollectGymBoss extends GymBoss {
+    init(): void {
+      const atPlayer: PowerUpPlacement = {
+        place: (context) => ({ x: context.player.x, y: context.player.y }),
+      };
+      this.config.powerUps = {
+        spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+        placement: atPlayer,
+        spawnInterval: 1000,
+      };
+    }
+  }
+
+  it('AC2/AC5 — a drop collected on the ship applies its effect and the HUD renders', async () => {
+    booted = await bootScene([CollectGymBoss as unknown as typeof Phaser.Scene]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    expect(scene.getHUD()).not.toBeNull();
+    expect(scene.getEffectsRegistry().lives()).toBe(4);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
   });
 });

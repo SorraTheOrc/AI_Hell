@@ -1661,3 +1661,142 @@ describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
     expect(scene.getPowerUpSpawnCount()).toBe(before + 1);
   });
 });
+
+describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9NQ0006613)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  // Long interval so cadence spawns never interfere with the assertions.
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  async function boot(
+    powerUps: PowerUpLayerConfig,
+    collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
+  ): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(collect, { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  function layer(id: PowerUpId, placement: PowerUpPlacement): PowerUpLayerConfig {
+    return {
+      spawner: new RoundRobinSpawner<PowerUpId>([id]),
+      placement,
+      spawnInterval: INTERVAL,
+    };
+  }
+
+  it('AC1 — fly-over collection is gated at 3% scale and hull overlap', async () => {
+    const scene = await boot(layer('P3', CLEAR));
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+
+    // Scale 0: on the ship but below the 3% collection threshold.
+    expect(drop.powerUp.canCollect()).toBe(false);
+    scene.tick(0.01); // 2% — still below the threshold
+    expect(drop.powerUp.canCollect()).toBe(false);
+    expect(scene.getPowerUpDrops()).toContain(drop);
+
+    scene.tick(0.1); // 22% — collectible and overlapping the hull
+    expect(scene.getPowerUpDrops()).not.toContain(drop);
+  });
+
+  it('AC2 — collecting applies the effect through the shared EffectsRegistry', async () => {
+    const scene = await boot(layer('P9', CLEAR));
+    const player = scene.getPlayer()!;
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(0);
+
+    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.tick(0.1);
+
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(1);
+  });
+
+  it('AC3 — renders the standalone HUD with lives counter and active-effect rows', async () => {
+    const scene = await boot(layer('P9', CLEAR));
+    const hud = scene.getHUD();
+    expect(hud).not.toBeNull();
+    expect(hud!.getLivesLabel()).toBe('Lives: 3');
+
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.tick(0.1);
+    hud!.refresh();
+
+    expect(hud!.getRows().some((row) => row.id === 'P9')).toBe(true);
+  });
+
+  it('AC4 — P8 updates the lives counter', async () => {
+    const scene = await boot(layer('P8', CLEAR));
+    const player = scene.getPlayer()!;
+    expect(scene.getEffectsRegistry().lives()).toBe(3);
+
+    scene.spawnPowerUpDrop('P8', player.x, player.y);
+    scene.tick(0.1);
+
+    expect(scene.getEffectsRegistry().lives()).toBe(4);
+  });
+
+  it('AC4 — P9 stacks (capped at five)', async () => {
+    const scene = await boot(layer('P9', CLEAR));
+    const player = scene.getPlayer()!;
+
+    for (let i = 0; i < 6; i += 1) {
+      scene.spawnPowerUpDrop('P9', player.x, player.y);
+      scene.tick(0.1);
+    }
+
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(5);
+  });
+
+  it('AC4 — P4 clears on-screen enemy bullets without damaging enemies', async () => {
+    const collect = (enemy: StubEnemy) => [new StubBullet(enemy.scene, 0, 0)];
+    const scene = await boot(layer('P4', CLEAR), collect);
+
+    // Let the formation produce a batch of on-screen enemy bullets.
+    scene.tick(0.05);
+    expect(scene.activeBullets.length).toBeGreaterThan(0);
+    const aliveBefore = scene.aliveCount;
+
+    // Collect a P4 on the ship — the bomb clears every on-screen bullet.
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop('P4', player.x, player.y);
+    scene.tick(0.05);
+
+    expect(scene.activeBullets).toHaveLength(0);
+    expect(scene.aliveCount).toBe(aliveBefore);
+  });
+
+  it('AC4 — P7 teleport consumes a stack, moves the ship and grants P6', async () => {
+    const scene = await boot(layer('P7', CLEAR));
+    const player = scene.getPlayer()!;
+
+    // Collect a P7 to gain a teleport stack.
+    scene.spawnPowerUpDrop('P7', player.x, player.y);
+    scene.tick(0.1);
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.teleportStacks()).toBe(1);
+
+    // Move the ship off the grid-centre fallback so the safe-spot search
+    // must pick a genuinely different landing position.
+    player.setPosition(300, 400);
+    const beforeX = player.x;
+    const beforeY = player.y;
+    expect(scene.triggerTeleport()).toBe(true);
+
+    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(true);
+    expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
+    expect(player.x).toBeGreaterThanOrEqual(0);
+    expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(player.y).toBeGreaterThanOrEqual(0);
+    expect(player.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+});
