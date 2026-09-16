@@ -806,6 +806,27 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Respawns the player at the **current** position and facing, with
+   * velocity zeroed — used for the in-place respawn after a hit.
+   * Preserves the ship's facing and rotation so the ship does not
+   * appear to "snap" to a default direction (AC3).
+   */
+  respawnInPlace(): void {
+    const facing = this._movementState.facing ?? 0;
+    this._movementState = {
+      x: this._movementState.x,
+      y: this._movementState.y,
+      vx: 0,
+      vy: 0,
+      facing,
+    };
+    this.setRotation(facing);
+    this.setPosition(this._movementState.x, this._movementState.y);
+    for (const port of this._engines()) this._flameLens[port.port] = 0;
+    try { stopThrusterSound(); } catch { /* ignore */ }
+  }
+
+  /**
    * Stops the thruster hum — call on scene shutdown / scene switch so
    * no hum survives beyond the ship's lifecycle (AC5).
    * Safe no-op if no hum is active.

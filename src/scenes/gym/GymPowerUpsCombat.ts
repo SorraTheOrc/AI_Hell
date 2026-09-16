@@ -60,6 +60,10 @@ import { drawPowerUpDrop } from '../../powerups/icons';
 import { findTeleportDestination } from '../../powerups/teleport';
 export { findTeleportDestination } from '../../powerups/teleport';
 import {
+  resolvePatterns,
+  spawnExplosionParticles,
+} from '../../vfx/explosionParticles';
+import {
   playPowerUpCollectSound,
   playDestructionSound,
   playSpawnSound,
@@ -75,8 +79,11 @@ import { buildVFormationOffsets } from '../../utils/formations';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  PLAYER_HIT_SCALE_PEAK,
+  PLAYER_HIT_SCALE_PULSE_DURATION,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
+  SHIP_COLOR,
   SHIP_SIZE,
   COMBAT_HIT_INVULNERABLE_DURATION,
   COMBAT_HIT_BLINK_INTERVAL,
@@ -145,6 +152,9 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private playerInvulnerable = 0;
   private playerBlinkPhase = 0;
 
+  // Player death VFX (tracks explosion Graphics for tests/SHUTDOWN).
+  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
+
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   private bombNoticeTimer = 0;
@@ -166,6 +176,12 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
     addBackToIndexButton(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+
+    // Clean up on shutdown to prevent stale references on restart.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      for (const exp of this.playerExplosions) exp.destroy();
+      this.playerExplosions.length = 0;
+    });
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
@@ -568,15 +584,31 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     if (!this.player) return;
     this.playerHitCount += 1;
     try { playDestructionSound(); } catch { /* ignore */ }
-    this.player.setPosition(GAME_WIDTH / 2, GAME_HEIGHT / 2);
-    const state = this.player.getMovementState();
-    (this.player as unknown as { _movementState: { x: number; y: number; vx: number; vy: number } })._movementState = {
-      ...state,
-      x: GAME_WIDTH / 2,
-      y: GAME_HEIGHT / 2,
-      vx: 0,
-      vy: 0,
-    };
+
+    // Particle burst VFX at the player's hit position.
+    spawnExplosionParticles(
+      this,
+      this.player.x,
+      this.player.y,
+      SHIP_COLOR,
+      SHIP_SIZE,
+      {
+        patterns: resolvePatterns('player'),
+        registry: this.playerExplosions,
+      },
+    );
+
+    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
+    this.tweens.add({
+      targets: this.player,
+      scale: PLAYER_HIT_SCALE_PEAK,
+      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
+      yoyo: true,
+      ease: 'Power2',
+    });
+
+    // In-place respawn: preserve position and facing, zero velocity.
+    this.player.respawnInPlace();
     this._startInvulnerability();
   }
 
@@ -617,6 +649,10 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   /** Whether the bomb notice is currently visible (for tests). */
   isBombNoticeVisible(): boolean {
     return this.bombNoticeTimer > 0;
+  }
+  /** Player explosion VFX graphics (empty once tweens end; for tests). */
+  getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
+    return this.playerExplosions.slice();
   }
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */

@@ -418,9 +418,16 @@ Resolved in the base class `GymFormationScene._handleCollisions` each tick:
    destruction — bullets pass through *aliens* per GDD §2.6, but not each
    other).
 3. Enemy bullets → player hull (`SHIP_SIZE/2` = 10 + bullet 6): ship
-   explosion + SFX, `getPlayerHitCount()` increments, the ship respawns at
-   its spawn position with short invulnerability; **infinite lives** — the
+   explosion + SFX, `getPlayerHitCount()` increments, the ship respawns
+   **in-place** at its current position and orientation (velocity zeroed) with
+   a scale-pulse VFX (ship expands to 150% then contracts back to 100%),
+   followed by a short invulnerability window; **infinite lives** — the
    demonstration never ends.
+
+> **Initial spawn unchanged:** the player still spawns centre screen
+> (`PLAYER_SPAWN = { x: 480, y: 270 }`) at scene start; only the *post-hit
+> respawn* is in-place. Supersedes the respawn clause of AH-0MTVYBCUW008BEQT
+> AC4 ("the respawn position matches the initial spawn position").
 
 ### 7.3 Live aim tracking
 

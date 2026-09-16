@@ -170,3 +170,11 @@ export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 
 /** Blink half-period while invulnerable after a hit (seconds). */
 export const COMBAT_HIT_BLINK_INTERVAL = 0.1;
+
+// ── Player hit VFX (AH-0MU3VQ0JR009CSIN) ──────────────────────────
+
+/** Peak scale factor for the player-hit scale pulse VFX (1.5× normal). */
+export const PLAYER_HIT_SCALE_PEAK = 1.5;
+
+/** Duration of the player-hit scale pulse: expand + contract cycle (seconds). */
+export const PLAYER_HIT_SCALE_PULSE_DURATION = 0.4;

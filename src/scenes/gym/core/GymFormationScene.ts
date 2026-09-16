@@ -21,6 +21,8 @@ import {
   GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
+  PLAYER_HIT_SCALE_PEAK,
+  PLAYER_HIT_SCALE_PULSE_DURATION,
   PLAYER_RESPAWN_INVULNERABLE,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
@@ -306,8 +308,6 @@ export class GymFormationScene<
   protected playerBullets: PlayerBullet[] = [];
 
   // Player hit/respawn state (only meaningful when `config.player` set).
-  private playerSpawnX = 0;
-  private playerSpawnY = 0;
   private playerHitCount = 0;
   /** Seconds of invulnerability remaining after a hit (blinks while > 0). */
   private playerInvulnerable = 0;
@@ -385,8 +385,6 @@ export class GymFormationScene<
         x: config.player.x,
         y: config.player.y,
       });
-      this.playerSpawnX = config.player.x;
-      this.playerSpawnY = config.player.y;
       // Graphics objects are not auto-added to the display list either.
       this.add.existing(this.player);
       this.cursors = this.input.keyboard?.createCursorKeys();
@@ -1270,15 +1268,28 @@ export class GymFormationScene<
 
   /**
    * Player hit: records the hit, plays the destruction sound, spawns the
-   * explosion VFX at the ship position, respawns the player at the spawn
-   * point with a short invulnerability window, and resets the blink phase.
+   * explosion VFX at the ship position, plays a scale-pulse VFX on the
+   * ship (expand to 150% → contract back to 100%), respawns the player
+   * in-place (same position and facing, velocity zeroed) with a short
+   * invulnerability window, and resets the blink phase.
    */
   private _hitPlayer(): void {
     if (!this.player) return;
     this.playerHitCount += 1;
     playDestructionSound();
     this._spawnPlayerExplosion(this.player.x, this.player.y);
-    this.player.respawn(this.playerSpawnX, this.playerSpawnY);
+
+    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
+    this.tweens.add({
+      targets: this.player,
+      scale: PLAYER_HIT_SCALE_PEAK,
+      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
+      yoyo: true,
+      ease: 'Power2',
+    });
+
+    // In-place respawn: preserve position and facing, zero velocity.
+    this.player.respawnInPlace();
     this.playerInvulnerable = PLAYER_RESPAWN_INVULNERABLE;
     this.playerBlinkPhase = 0;
     this.player.setAlpha(1);

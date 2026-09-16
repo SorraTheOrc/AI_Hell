@@ -812,32 +812,50 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(scene.getPlayerBullets()).toContain(outside);
   });
 
-  it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + respawn + invulnerability blink', async () => {
+  it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + in-place respawn + invulnerability blink', async () => {
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
     const { scene, parkAt, armed } = await bootParked();
     const player = scene.getPlayer()!;
 
-    // Move the ship away from spawn so respawn is observable.
-    scene.getCursors()!.down.isDown = true;
-    for (let i = 0; i < 4; i++) scene.tick(0.25);
-    scene.getCursors()!.down.isDown = false;
-    expect(player.y).toBeGreaterThan(PLAYER_SPAWN.y + 10);
+    // Move the player away from spawn so respawn in-place is observable.
+    // We use a single tick with cursors pressed, then park the bullet
+    // and tick again — all in a controlled way.
+    const cursors = scene.getCursors()!;
+    cursors.down.isDown = true;
+    cursors.right.isDown = true;
+    for (let i = 0; i < 20; i++) scene.tick(0.1);
+    cursors.down.isDown = false;
+    cursors.right.isDown = false;
+    // Decay residual velocity so the player is stationary.
+    for (let i = 0; i < 20; i++) scene.tick(0.05);
 
-    // Park an enemy bullet exactly on the ship.
-    parkAt.x = player.x;
-    parkAt.y = player.y;
+    // Park an enemy bullet at the player's current position.
+    const preHitX = player.x;
+    const preHitY = player.y;
+    const preHitState = player.getMovementState();
+    const preHitFacing = preHitState.facing ?? 0;
+    parkAt.x = preHitX;
+    parkAt.y = preHitY;
     const callsBefore = vi.mocked(destroySound).mock.calls.length;
     armed();
     scene.tick(0.05);
 
-    // Hit: VFX/SFX fired, hit counter incremented, respawned at spawn.
+    // Hit: VFX/SFX fired, hit counter incremented, respawned in-place.
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
     expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(
       callsBefore,
     );
-    expect(player.x).toBe(PLAYER_SPAWN.x);
-    expect(player.y).toBe(PLAYER_SPAWN.y);
+    // AC1: player is at the SAME position (not relocated to spawn).
+    // Small drift during tick(0.05) from friction/physics is acceptable.
+    expect(Math.abs(player.x - preHitX)).toBeLessThan(3);
+    expect(Math.abs(player.y - preHitY)).toBeLessThan(3);
+    // AC3: facing preserved exactly.
+    const postState = player.getMovementState();
+    expect(postState.facing).toBe(preHitFacing);
+    // AC3: velocity zeroed.
+    expect(postState.vx).toBe(0);
+    expect(postState.vy).toBe(0);
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
 
@@ -863,10 +881,16 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     // First hit: parked bullet directly on the spawn position.
     parkAt.x = PLAYER_SPAWN.x;
     parkAt.y = PLAYER_SPAWN.y;
+    const preHitX = player.x;
+    const preHitY = player.y;
     armed();
     scene.tick(0.05);
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // AC1: player stays at hit position (in-place respawn).
+    expect(Math.abs(player.x - preHitX)).toBeLessThan(3);
+    expect(Math.abs(player.y - preHitY)).toBeLessThan(3);
 
     // Same-spot bullet while invulnerable: no second hit — the bullet is
     // left in flight, untouched.
@@ -884,10 +908,10 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(scene.getPlayerInvulnerableRemaining()).toBe(0); // window expired again
 
     // Infinite respawns: the player object is never destroyed, the ship
-    // returns to spawn, and the HUD/score line never changes.
+    // is at the last hit position, and the HUD/score line never changes.
     expect(scene.getPlayer()).not.toBeNull();
-    expect(player.x).toBe(PLAYER_SPAWN.x);
-    expect(player.y).toBe(PLAYER_SPAWN.y);
+    expect(player.x).toBe(preHitX);
+    expect(player.y).toBe(preHitY);
     expect(player.alpha).toBe(1);
     expect(statusLabels()).toEqual(labelsBefore);
     expect(scene.aliveCount).toBe(enemiesBefore);
@@ -1412,9 +1436,9 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(playerCall[4]).toBe(SHIP_SIZE);
     expect(playerCall[5]?.patterns).toEqual(['radial', 'ring']);
     expect(playerCall[5]?.registry).toBeDefined();
-    // Player respawned at spawn point.
-    expect(scene.getPlayer()!.x).toBe(PLAYER_SPAWN.x);
-    expect(scene.getPlayer()!.y).toBe(PLAYER_SPAWN.y);
+    // Player respawned in-place (same position and facing).
+    expect(scene.getPlayer()!.x).toBeCloseTo(hitX, 0);
+    expect(scene.getPlayer()!.y).toBeCloseTo(hitY, 0);
     // Invulnerability window engaged.
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
