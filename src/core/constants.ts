@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_CONFIG } from './config';
+import { DEFAULT_RULES } from './rules';
 
 // ── Canvas ──────────────────────────────────────────────────────────
 
@@ -56,8 +57,13 @@ export const POWER_UP_LIFETIME = 12.5;
 /** Collection threshold: drops are collectible only above this percentage of full size (3). */
 export const POWER_UP_COLLECTION_THRESHOLD = 3;
 
-/** Interval between spawns in a round-robin cycle (seconds). Mirrors POWER_UP_LIFETIME so one drop is on screen at a time. */
-export const POWER_UP_SPAWN_INTERVAL = 12.5;
+/**
+ * Interval between spawns in a round-robin cycle (seconds). Sourced from the
+ * game-rules config default (`DEFAULT_RULES`, GDD §4.4) so the interval has a
+ * single source of truth; mirrors POWER_UP_LIFETIME so one drop is on screen
+ * at a time.
+ */
+export const POWER_UP_SPAWN_INTERVAL = DEFAULT_RULES.powerUpSpawnInterval;
 
 /** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 16 px = half of the doubled 32 px size (AH-0MTG5MGPZ00986B4). */
 export const POWER_UP_DROP_SIZE = 16;
