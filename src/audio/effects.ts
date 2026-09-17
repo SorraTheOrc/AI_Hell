@@ -300,8 +300,13 @@ export function _resetAudioContextForTests(): void {
 
 let audioCtx: AudioContext | null = null;
 
-/** Lazily creates the shared AudioContext, or returns null if unavailable. */
-function getAudioContext(): AudioContext | null {
+/**
+ * Lazily creates the shared AudioContext, or returns null if unavailable.
+ *
+ * Exported so entity modules (e.g. Boss.ts) reuse the single cached
+ * context instead of creating their own duplicate (AH-0MU4KPQHR008WX4R).
+ */
+export function getAudioContext(): AudioContext | null {
   if (audioCtx) return audioCtx;
   try {
     const Ctor =
@@ -316,8 +321,13 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
-/** Plays a single oscillator blip with a gain envelope. */
-function blip(
+/**
+ * Plays a single oscillator blip with a gain envelope.
+ *
+ * Exported so entity modules (e.g. Boss.ts) reuse the shared synthesis
+ * helper instead of duplicating it (AH-0MU4KPQHR008WX4R).
+ */
+export function blip(
   freqStart: number,
   freqEnd: number,
   duration: number,

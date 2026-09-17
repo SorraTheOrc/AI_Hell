@@ -8,12 +8,12 @@
  * is never made while a telegraph (tell) is scheduled.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
-import { BOSS_ATTACK_INTERVAL, Boss } from './Boss';
+import { BOSS_ATTACK_INTERVAL, Boss, playBossSpawnSound } from './Boss';
 
 class HarnessScene extends Phaser.Scene {
   constructor() {
@@ -162,5 +162,69 @@ describe('Boss SFX wiring (AH-0MU3VPIA900697E8)', () => {
     const bullets = boss.tryFireSpreadBullets(1_000_000);
     expect(bullets).toHaveLength(0);
     expect(fireSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── Shared audio context (AH-0MU4KPQHR008WX4R) ──────────────────────
+
+/**
+ * Minimal AudioContext stub that counts how many contexts are constructed.
+ * Boss audio must reuse the single effects.ts context, not create its own.
+ */
+class CountingAudioContext {
+  static instances = 0;
+  currentTime = 0;
+  sampleRate = 44100;
+  destination = {};
+
+  constructor() {
+    CountingAudioContext.instances += 1;
+  }
+
+  createOscillator(): unknown {
+    return {
+      type: 'sine',
+      frequency: {
+        setValueAtTime: () => {},
+        exponentialRampToValueAtTime: () => {},
+      },
+      connect: () => ({ connect: () => ({}) }),
+      start: () => {},
+      stop: () => {},
+    };
+  }
+
+  createGain(): unknown {
+    return {
+      gain: {
+        setValueAtTime: () => {},
+        exponentialRampToValueAtTime: () => {},
+      },
+      connect: () => ({}),
+    };
+  }
+}
+
+describe('Boss audio shares the effects.ts AudioContext (AH-0MU4KPQHR008WX4R)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      CountingAudioContext;
+    effectsModule._resetAudioContextForTests();
+    CountingAudioContext.instances = 0;
+  });
+
+  afterEach(() => {
+    effectsModule._resetAudioContextForTests();
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+    CountingAudioContext.instances = 0;
+  });
+
+  it('a Boss cue does not construct a second AudioContext after an effects cue', () => {
+    // An effects.ts cue lazily creates the shared context…
+    effectsModule.playSpawnSound();
+    // …and a Boss cue must reuse it rather than build its own.
+    playBossSpawnSound();
+
+    expect(CountingAudioContext.instances).toBe(1);
   });
 });

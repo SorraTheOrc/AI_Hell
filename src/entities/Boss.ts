@@ -29,7 +29,7 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
-import { playBossFireSound } from '../audio/effects';
+import { playBossFireSound, getAudioContext, blip } from '../audio/effects';
 import {
   resolvePatterns,
   spawnExplosionParticles,
@@ -107,56 +107,6 @@ export function playBossPhaseCue(phase: BossPhase): void {
   };
   const [start, end] = cues[phase] ?? cues[1];
   blip(start, end, 0.3, 'square', 0.1);
-}
-
-// ── Audio helpers (module-level, shared with effects.ts pattern) ────
-
-let bossAudioCtx: AudioContext | null = null;
-
-function getAudioContext(): AudioContext | null {
-  if (bossAudioCtx) return bossAudioCtx;
-  try {
-    const Ctor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctor) return null;
-    bossAudioCtx = new Ctor();
-  } catch {
-    bossAudioCtx = null;
-  }
-  return bossAudioCtx;
-}
-
-function blip(
-  freqStart: number,
-  freqEnd: number,
-  duration: number,
-  type: OscillatorType,
-  volume: number,
-): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-
-  osc.type = type;
-  osc.frequency.setValueAtTime(freqStart, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(
-    Math.max(1, freqEnd),
-    ctx.currentTime + duration,
-  );
-
-  gain.gain.setValueAtTime(volume, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    ctx.currentTime + duration,
-  );
-
-  osc.connect(gain).connect(ctx.destination);
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration + 0.02);
 }
 
 // ── Phase definitions ───────────────────────────────────────────────
