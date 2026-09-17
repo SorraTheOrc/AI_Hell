@@ -230,6 +230,9 @@ export class GymPowerUps extends Phaser.Scene {
       const step = Math.min(MAGNET_ATTRACTION_SPEED * dt, dist);
       drop.x += (dx / dist) * step;
       drop.y += (dy / dist) * step;
+      // AC1 — keep the visual position in sync with the logical position
+      // so the player sees the drop being pulled toward the ship.
+      drop.graphics.setPosition(drop.x, drop.y);
     }
   }
 
