@@ -24,6 +24,7 @@ import {
   LEVELS,
   type LevelDefinition,
   type WaveDefinition,
+  type WaveGroup,
 } from './Formations';
 
 // ── Event / spawn shapes ────────────────────────────────────────────
@@ -217,33 +218,7 @@ export class WaveManager {
   planSpawns(): EnemySpawn[] {
     const wave = this.currentWave();
     if (!wave) return [];
-
-    const spawns: EnemySpawn[] = [];
-    for (const groupDef of wave.groups) {
-      const buildOffsets = getFormationBuilder(groupDef.formation);
-      const offsets = buildOffsets(groupDef.count);
-      for (const offset of offsets) {
-        const { x, y } = computeFormationPosition(
-          groupDef.startX,
-          groupDef.startY,
-          offset,
-          groupDef.spacingX,
-          groupDef.spacingY,
-        );
-        spawns.push({
-          enemyKey: groupDef.enemyKey,
-          offset,
-          x,
-          y,
-          shootEnabled: wave.shootEnabled,
-          startX: groupDef.startX,
-          startY: groupDef.startY,
-          spacingX: groupDef.spacingX,
-          spacingY: groupDef.spacingY,
-        });
-      }
-    }
-    return spawns;
+    return planGroupSpawns(wave.groups, wave.shootEnabled);
   }
 
   // ── Progression ─────────────────────────────────────────────────
@@ -304,4 +279,43 @@ export class WaveManager {
     this._bossDefeated = true;
     return 'gameComplete';
   }
+}
+
+// ── Spawn planning helper ───────────────────────────────────────────
+
+/**
+ * Computes the concrete spawn list for a list of wave groups: one
+ * {@link EnemySpawn} per enemy, positioned by each group's formation
+ * builder. Shared by {@link WaveManager.planSpawns} and the boss minion
+ * planner (`waves/BossMinions.ts`). Pure — no Phaser dependency.
+ */
+export function planGroupSpawns(
+  groups: WaveGroup[],
+  shootEnabled: boolean,
+): EnemySpawn[] {
+  const spawns: EnemySpawn[] = [];
+  for (const groupDef of groups) {
+    const buildOffsets = getFormationBuilder(groupDef.formation);
+    for (const offset of buildOffsets(groupDef.count)) {
+      const { x, y } = computeFormationPosition(
+        groupDef.startX,
+        groupDef.startY,
+        offset,
+        groupDef.spacingX,
+        groupDef.spacingY,
+      );
+      spawns.push({
+        enemyKey: groupDef.enemyKey,
+        offset,
+        x,
+        y,
+        shootEnabled,
+        startX: groupDef.startX,
+        startY: groupDef.startY,
+        spacingX: groupDef.spacingX,
+        spacingY: groupDef.spacingY,
+      });
+    }
+  }
+  return spawns;
 }

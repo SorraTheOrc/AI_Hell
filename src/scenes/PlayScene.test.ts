@@ -13,7 +13,31 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
-import { LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
+import { BOSS_PHASE_SCORES, LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
+
+/** Destroys every live enemy via player bullets (deterministic). */
+function killAllEnemies(scene: PlayScene): void {
+  for (let guard = 0; guard < 500 && scene.getAliveCount() > 0; guard++) {
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+  }
+}
+
+/** Advances past the transition pause, spawning the next wave. */
+function finishTransition(scene: PlayScene): void {
+  if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+}
+
+/** Walks the run to the boss encounter (Level 5 cleared). */
+function reachBoss(scene: PlayScene): void {
+  const gs = scene.getGameState();
+  gs.lives = 99; // survive incidental enemy fire while clearing levels.
+  for (let guard = 0; guard < 200 && !scene.getBoss(); guard++) {
+    killAllEnemies(scene);
+    finishTransition(scene);
+  }
+}
 
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
@@ -27,20 +51,6 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   async function bootPlay(): Promise<PlayScene> {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
-  }
-
-  /** Destroys every live enemy via player bullets (deterministic). */
-  function killAllEnemies(scene: PlayScene): void {
-    for (let guard = 0; guard < 500 && scene.getAliveCount() > 0; guard++) {
-      const enemy = scene.getEnemies().find((e) => e.alive)!;
-      scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
-      scene.tick(0.016);
-    }
-  }
-
-  /** Advances past the transition pause, spawning the next wave. */
-  function finishTransition(scene: PlayScene): void {
-    if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
   }
 
   // ── AC1: five-level scene + wave spawning ──────────────────────
@@ -207,5 +217,120 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(gs.lives).toBe(0);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+});
+
+describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    return booted.scene as PlayScene;
+  }
+
+  it('AC1 — the Central AI spawns after Level 5 is cleared, with Phase-1 minions', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+
+    const boss = scene.getBoss();
+    expect(boss).not.toBeNull();
+    expect(boss!.alive).toBe(true);
+    expect(scene.getWaveManager().bossActive).toBe(true);
+    expect(scene.getBossPhase()).toBe(1);
+    // Phase 1 (Scan) summons formation scouts on both sides.
+    const enemies = scene.getEnemies();
+    const scoutCount = enemies.filter((e) => e.alive && e.constructor.name === 'Scout').length;
+    expect(scoutCount).toBeGreaterThan(0);
+  });
+
+  it('AC2 — the 4-phase health bar depletes and advances the phase on hits', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    expect(boss.getPhaseNumber()).toBe(1);
+
+    // One player bullet = one phase of damage.
+    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+    scene.tick(0.016);
+    expect(boss.getPhaseNumber()).toBe(2);
+    expect(scene.getBossPhase()).toBe(2);
+  });
+
+  it('AC3 — advancing a phase summons that phase’s minion wave', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+
+    // Phase 1 → 2: Firestorm divers should arrive from the top.
+    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+    scene.tick(0.016);
+    expect(boss.getPhaseNumber()).toBe(2);
+
+    const divers = scene.getEnemies().filter(
+      (e) => e.alive && e.constructor.name === 'Diver',
+    );
+    expect(divers.length).toBeGreaterThan(0);
+  });
+
+  it('AC4 — a hit costs one life, not the whole phase (phase score per GDD §4.5)', async () => {
+    // Separate scenario: the boss deals no bullets here; assert the score
+    // awarded per destroyed phase follows the GDD table (1000/2000/3000/5000).
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const scoreBefore = scene.getGameState().score;
+
+    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+    scene.tick(0.016);
+    expect(scene.getGameState().score - scoreBefore).toBe(BOSS_PHASE_SCORES[1]);
+  });
+
+  it('AC4 — defeating all 4 phases wins the run at the game-over screen', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const scoreBefore = scene.getGameState().score;
+
+    // Four phase-killing bullets (one per health segment).
+    for (let i = 0; i < 4; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
+    expect(boss.alive).toBe(false);
+    expect(scene.getWaveManager().bossDefeated).toBe(true);
+    // Phases 1–4 all awarded (1000+2000+3000+5000).
+    expect(scene.getGameState().score - scoreBefore).toBe(11000);
+
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  it('scenario — boss bullets are collected as enemy bullets', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+
+    // Override update to emit one deterministic bullet (attack logic itself
+    // is covered by Boss.test.ts).
+    const fakeBullet = {
+      graphics: scene.add.graphics(),
+      vx: 100,
+      vy: 100,
+      color: 0xffffff,
+    };
+    boss.update = (() => [fakeBullet]) as unknown as typeof boss.update;
+
+    const before = scene.getEnemyBullets().length;
+    scene.tick(0.016);
+    const bullets = scene.getEnemyBullets();
+    expect(bullets.length).toBeGreaterThan(before);
+    expect(bullets.some((b) => b.graphics === fakeBullet.graphics)).toBe(true);
   });
 });

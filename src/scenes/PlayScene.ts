@@ -66,6 +66,8 @@ import type { WasdKeysLike } from '../utils/input';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { WaveManager, type EnemySpawn } from '../waves/WaveManager';
+import { Boss } from '../entities/Boss';
+import { planMinionSpawns } from '../waves/BossMinions';
 
 // ── Scoring (GDD §4.5) ──────────────────────────────────────────────
 
@@ -81,6 +83,14 @@ export const SCORE_VALUES: Record<string, number> = {
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
 export const DEFAULT_SCORE_VALUE = 100;
+
+/** Points awarded per destroyed boss phase (GDD §4.5). */
+export const BOSS_PHASE_SCORES: Record<number, number> = {
+  1: 1000,
+  2: 2000,
+  3: 3000,
+  4: 5000,
+};
 
 // ── Tuning constants ────────────────────────────────────────────────
 
@@ -161,6 +171,9 @@ export class PlayScene extends Phaser.Scene {
   private enemyBullets: PlayEnemyBullet[] = [];
   private playerBullets: PlayerBullet[] = [];
   private drops: PlayDrop[] = [];
+
+  /** The Central AI boss, spawned after Level 5 (null until then). */
+  private boss: Boss | null = null;
 
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
@@ -260,6 +273,8 @@ export class PlayScene extends Phaser.Scene {
     this.hud = null;
     this.player?.destroy();
     this.player = null;
+    this.boss?.destroy();
+    this.boss = null;
     this.bannerText?.destroy();
     this.bannerText = null;
   }
@@ -283,13 +298,14 @@ export class PlayScene extends Phaser.Scene {
     if (this.transitionTimer > 0) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
       this._updateTransitionBanner();
-      if (this.transitionTimer === 0) this.spawnWave();
+      if (this.transitionTimer === 0) this._onTransitionComplete();
       this._refreshHudText();
       return;
     }
 
     this._moveEnemies(dt);
     this._collectEnemyFire();
+    this._updateBoss(dt);
 
     if (this.player) {
       this.player.tickWeaponTimers(dt * 1000);
@@ -421,24 +437,96 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * Boss trigger hook (child 5 replaces this with the real Central AI
-   * encounter). Default: begin the boss and, since no boss entity exists
-   * yet, complete the run as a victory.
+   * Called when the final level is wiped: begins the boss encounter and
+   * runs the transition banner, after which `_onTransitionComplete`
+   * spawns the Central AI.
    */
   protected onBossTriggered(): void {
     this.waveManager.beginBoss();
     this._startTransition();
-    this.spawnBoss();
   }
 
   /**
-   * Spawns the boss encounter (child 5 seam). The default implementation
-   * completes the run as a victory; child 5 overrides it to instantiate
-   * the Central AI boss.
+   * Called when a wave/level/boss transition ends: spawns the boss when
+   * the encounter is due, otherwise spawns the current wave.
+   */
+  private _onTransitionComplete(): void {
+    if (this.waveManager.bossActive && !this.boss) {
+      this.spawnBoss();
+    } else {
+      this.spawnWave();
+    }
+    if (this.bannerText) this.bannerText.setVisible(false);
+  }
+
+  /**
+   * Spawns the Central AI boss at the screen centre and summons its
+   * Phase-1 minion wave (GDD §4.3).
    */
   protected spawnBoss(): void {
-    this.waveManager.onBossDefeated();
-    this._finishRun(true);
+    this.boss = new Boss(this, {
+      x: GAME_WIDTH / 2,
+      y: GAME_HEIGHT / 2 - 80,
+      formationOffset: { row: 0, col: 0 },
+    });
+    this.add.existing(this.boss);
+    this._spawnMinions(1);
+  }
+
+  /**
+   * Advances the Boss state machine: attack telegraphing, bullet
+   * collection, and pulse-wave expansion (mirrors GymBoss). Boss bullets
+   * are tracked by the scene's enemy-bullet list; pulse waves are managed
+   * by the Boss itself.
+   */
+  private _updateBoss(dt: number): void {
+    const boss = this.boss;
+    if (!boss || !boss.alive) return;
+    if (this.player) boss.setAimTarget(this.player.x, this.player.y);
+
+    const bullets = boss.update(
+      this.time.now,
+      dt * 1000,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+    );
+    for (const bullet of bullets) {
+      if (!('isPulseWave' in bullet && bullet.isPulseWave)) {
+        this.enemyBullets.push(bullet as unknown as PlayEnemyBullet);
+      }
+    }
+    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
+  }
+
+  /** Spawns the minion wave for the given boss phase (GDD §4.3). */
+  private _spawnMinions(phase: number): void {
+    for (const spawn of planMinionSpawns(phase)) this._spawnEnemy(spawn);
+  }
+
+  /**
+   * Handles a player-bullet hit on the boss: consumes a phase, awards
+   * the phase score, summons that phase's minions, and completes the run
+   * as a victory when the boss dies (GDD §4.5).
+   */
+  private _damageBoss(): void {
+    const boss = this.boss;
+    if (!boss || !boss.alive) return;
+
+    const previousPhase = boss.getPhaseNumber();
+    const result = boss.takeDamage();
+    if (result === 0) {
+      // Boss destroyed — award the final phase's points, then win.
+      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.waveManager.onBossDefeated();
+      this._finishRun(true);
+      return;
+    }
+
+    // Phase advanced: award the destroyed phase's points (GDD §4.5).
+    this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+    if (result !== previousPhase) {
+      this._spawnMinions(result);
+    }
   }
 
   // ── Player input & fire ─────────────────────────────────────────
@@ -585,7 +673,7 @@ export class PlayScene extends Phaser.Scene {
   private _handleCollisions(): void {
     const playerHull = SHIP_SIZE / 2;
 
-    // 1. Player bullets vs enemies.
+    // 1. Player bullets vs enemies (and the boss).
     const keptBullets: PlayerBullet[] = [];
     for (const pb of this.playerBullets) {
       let spent = false;
@@ -599,6 +687,14 @@ export class PlayScene extends Phaser.Scene {
           this._onEnemyKilled(s);
           break;
         }
+      }
+      if (!spent && this.boss?.alive && this._overlaps(
+        pb.x, pb.y, PLAYER_BULLET_RADIUS, this.boss.x, this.boss.y, this.boss.getHitRadius(),
+      )) {
+        // Multi-hit boss: consume the bullet and damage a phase.
+        pb.destroy();
+        spent = true;
+        this._damageBoss();
       }
       if (!spent) keptBullets.push(pb);
     }
@@ -639,7 +735,8 @@ export class PlayScene extends Phaser.Scene {
     }
     this.enemyBullets = keptEnemy2;
 
-    // 4. Player body vs enemy body — both are hit.
+    // 4. Player body vs enemy body — both are hit. Ramming the boss only
+    //    costs the player a life (the boss cannot be killed by collision).
     if (this.invulnerable <= 0) {
       for (const s of this.spawned) {
         if (!s.entity.alive) continue;
@@ -650,6 +747,12 @@ export class PlayScene extends Phaser.Scene {
           this._hitPlayer();
           break;
         }
+      }
+      if (
+        this.boss?.alive &&
+        this._overlaps(this.player.x, this.player.y, playerHull, this.boss.x, this.boss.y, this.boss.getHitRadius())
+      ) {
+        this._hitPlayer();
       }
     }
   }
@@ -863,6 +966,16 @@ export class PlayScene extends Phaser.Scene {
   /** The player ship, or null after teardown. */
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  /** The Central AI boss, or null before it spawns. */
+  getBoss(): Boss | null {
+    return this.boss;
+  }
+
+  /** The boss's current health phase (1–4); 0 while no boss is present. */
+  getBossPhase(): number {
+    return this.boss ? this.boss.getPhaseNumber() : 0;
   }
 
   /** Live enemies (one per spawned entity, destroyed ones included). */
