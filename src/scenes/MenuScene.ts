@@ -21,6 +21,26 @@ const MENU_TEXT_COLOR = '#00ffff';
 const DEV_TEXT_COLOR = '#888888';
 
 /**
+ * Resumes the Web Audio context if it is suspended (autoplay policy
+ * compliance, GDD §6.7). No-op for sound managers without a WebAudio
+ * context (HTML5 / NoAudio fallbacks). Returns true when a resume was
+ * issued.
+ */
+export function resumeAudioContext(
+  sound: Phaser.Sound.BaseSoundManager,
+): boolean {
+  const mgr = sound as unknown as {
+    context?: { state?: string; resume?: () => void };
+  };
+  const ctx = mgr.context;
+  if (ctx?.state === 'suspended' && typeof ctx.resume === 'function') {
+    ctx.resume();
+    return true;
+  }
+  return false;
+}
+
+/**
  * Main menu scene — the entry point for the playable game.
  */
 export class MenuScene extends Phaser.Scene {
@@ -62,13 +82,10 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // Play Game click handler: initialise audio + start game scene
+    // Play Game click handler: initialise audio + start game scene
     playButton.on('pointerdown', () => {
       // Initialise the Web Audio context on user gesture (autoplay policy).
-      const mgr = this.sound as unknown as { context?: { state?: string; resume?: () => void } };
-      const ctx = mgr.context;
-      if (ctx?.state === 'suspended' && ctx.resume) {
-        ctx.resume();
-      }
+      resumeAudioContext(this.sound);
       this.scene.start('PlayScene');
     });
 
