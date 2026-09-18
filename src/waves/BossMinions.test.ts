@@ -28,6 +28,8 @@ describe('BossMinions — phase mechanic (GDD §4.3)', () => {
     expect(minionsForPhase(0)).toBeNull();
     expect(minionsForPhase(5)).toBeNull();
     expect(planMinionSpawns(99)).toEqual([]);
+    expect(minionCountForPhase(0)).toBe(0);
+    expect(minionCountForPhase(5)).toBe(0);
   });
 
   it('Phase 1 (Scan) spawns formation enemies on both sides', () => {

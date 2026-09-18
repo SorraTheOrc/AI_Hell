@@ -158,6 +158,25 @@ describe('GameOverScene — leaderboard stub (AC3)', () => {
     expect(readLeaderboard()).toEqual([]);
   });
 
+  it('renders populated leaderboard rows (top 3) when data exists', async () => {
+    saveScoreEntry({ initials: 'ZZZ', score: 9000 });
+    saveScoreEntry({ initials: 'YYY', score: 5000 });
+
+    const booted = await bootScene([GameOverScene, MenuScene]);
+    const scene = booted.scene as GameOverScene;
+    const texts = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text,
+    );
+    // No placeholder when entries exist…
+    expect(texts.some((t) => t.text === 'Leaderboard coming soon')).toBe(false);
+    // …and the top rows are rendered (rank, initials, score).
+    const rows = texts.find((t) => t.text.includes('ZZZ'));
+    expect(rows).toBeDefined();
+    expect(rows!.text).toContain('9000');
+    expect(rows!.text).toContain('YYY');
+    booted.game.destroy(true);
+  });
+
   it('submitting with Enter saves the score and returns to the menu', async () => {
     const booted = await bootScene([GameOverScene, MenuScene]);
     const scene = booted.scene as GameOverScene;

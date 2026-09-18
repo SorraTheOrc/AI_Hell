@@ -129,6 +129,13 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
     expect(enemyCountForLevel(5)).toBeLessThan(enemyCountForLevel(3));
     expect(enemyCountForLevel(5)).toBeGreaterThan(0);
   });
+
+  it('boundary — unknown levels report zero enemies and no definition', () => {
+    expect(getLevelDefinition(0)).toBeNull();
+    expect(getLevelDefinition(6)).toBeNull();
+    expect(enemyCountForLevel(0)).toBe(0);
+    expect(enemyCountForLevel(6)).toBe(0);
+  });
 });
 
 describe('WaveManager — lifecycle & spawn planning (AH-0MU72ZK3P006CH9G)', () => {
