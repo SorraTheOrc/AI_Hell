@@ -203,6 +203,10 @@ export class PlayScene extends Phaser.Scene {
   // ── Scene lifecycle ─────────────────────────────────────────────
 
   create(): void {
+    // Reset any state carried over from a previous session (restarts reuse
+    // the same scene instance — never leak stale enemies/bullets/timers).
+    this._resetRunState();
+
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
 
     // Player ship (auto-fire, weapons, effects).
@@ -232,6 +236,21 @@ export class PlayScene extends Phaser.Scene {
     this._announceLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this._teardown());
+  }
+
+  /** Clears all per-run state so a restarted session starts fresh. */
+  private _resetRunState(): void {
+    this.spawned = [];
+    this.enemyBullets = [];
+    this.playerBullets = [];
+    this.drops = [];
+    this.boss = null;
+    this.hitCount = 0;
+    this.invulnerable = 0;
+    this.blinkPhase = 0;
+    this.driftX = 0;
+    this.driftDir = 1;
+    this.transitionTimer = 0;
   }
 
   /** Builds the fixed score / lives / level text readouts. */

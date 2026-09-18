@@ -193,6 +193,12 @@ export class GameOverScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
       this.handleInitialsKey(event.key);
     });
+
+    // ── Hygiene on shutdown: drop transient input state. ──────────
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.initials = '';
+      this.initialsText = null;
+    });
   }
 
   // ── Public input model (unit-testable without real key events) ─
