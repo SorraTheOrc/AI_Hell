@@ -119,6 +119,18 @@ describe('P8 Extra Life (AC3): +1 life, start 3, cap 5', () => {
     reg.applyCollect('P8');
     expect(reg.speedMultiplier()).toBe(1);
   });
+
+  it('setLives drives the counter directly, clamped to [0, P8_LIVES_MAX]', () => {
+    const reg = new EffectsRegistry();
+    reg.setLives(2);
+    expect(reg.lives()).toBe(2);
+    reg.setLives(0);
+    expect(reg.lives()).toBe(0);
+    reg.setLives(-5);
+    expect(reg.lives()).toBe(0);
+    reg.setLives(99);
+    expect(reg.lives()).toBe(P8_LIVES_MAX);
+  });
 });
 
 describe('P9 Magnet (AC4): one permanent stack per pickup, cap 5', () => {

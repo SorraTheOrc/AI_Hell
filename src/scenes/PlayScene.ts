@@ -163,7 +163,6 @@ export class PlayScene extends Phaser.Scene {
   private hud: HUD | null = null;
 
   private scoreText: Phaser.GameObjects.Text | null = null;
-  private livesText: Phaser.GameObjects.Text | null = null;
   private levelText: Phaser.GameObjects.Text | null = null;
   private bannerText: Phaser.GameObjects.Text | null = null;
 
@@ -215,8 +214,8 @@ export class PlayScene extends Phaser.Scene {
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
 
-    // HUD (effects only — lives displayed separately from the run state).
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    // HUD (lives counter + active effects).
+    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
 
     this._buildHudText();
     addBackToIndexButton(this);
@@ -231,6 +230,7 @@ export class PlayScene extends Phaser.Scene {
 
     // Start the run.
     this.gameState.startGame();
+    this.effectsRegistry.setLives(this.gameState.lives);
     this.waveManager.beginGame();
     this.spawnWave();
     this._announceLevel();
@@ -253,27 +253,25 @@ export class PlayScene extends Phaser.Scene {
     this.transitionTimer = 0;
   }
 
-  /** Builds the fixed score / lives / level text readouts. */
+  /** Builds the fixed score / level text readouts (lives live in the HUD). */
   private _buildHudText(): void {
     this.scoreText = this.add
       .text(GAME_WIDTH - 10, 10, 'Score: 0', {
         fontFamily: 'monospace',
-        fontSize: '14px',
-        color: '#ffffff',
+        fontSize: '16px',
+        color: HUD_TEXT_COLOR,
       })
       .setOrigin(1, 0);
 
-    this.levelText = this.add.text(10, 10, 'Level 1', {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: HUD_TEXT_COLOR,
-    });
-
-    this.livesText = this.add.text(10, 28, `Lives: ${this.gameState.lives}`, {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: HUD_TEXT_COLOR,
-    });
+    // Level indicator sits top-centre so it never overlaps the HUD's
+    // top-left lives counter / effect rows.
+    this.levelText = this.add
+      .text(GAME_WIDTH / 2, 10, 'Level 1', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: HUD_TEXT_COLOR,
+      })
+      .setOrigin(0.5, 0);
   }
 
   /** Destroys scene-owned objects on shutdown (no leaks across sessions). */
@@ -805,6 +803,10 @@ export class PlayScene extends Phaser.Scene {
 
     this.hitCount += 1;
     this.gameState.loseLife();
+    // Push the authoritative run-state lives into the HUD's registry so the
+    // lives counter updates immediately (GDD §4.5 display).
+    this.effectsRegistry.setLives(this.gameState.lives);
+    this.hud?.refresh();
     playDestructionSound();
     this._spawnPlayerExplosion(this.player.x, this.player.y);
 
@@ -933,7 +935,11 @@ export class PlayScene extends Phaser.Scene {
       if (!effect) return;
       if (drop.dropId === 'P4') this._clearEnemyBullets();
       this.effectsRegistry.applyCollect(drop.dropId as PowerUpId);
-      if (drop.dropId === 'P8') this.gameState.addLife();
+      if (drop.dropId === 'P8') {
+        this.gameState.addLife();
+        // Keep the HUD lives counter aligned with the run state.
+        this.effectsRegistry.setLives(this.gameState.lives);
+      }
     }
     drop.graphics.destroy();
     try {
@@ -952,7 +958,6 @@ export class PlayScene extends Phaser.Scene {
 
   private _refreshHudText(): void {
     this.scoreText?.setText(`Score: ${this.gameState.score}`);
-    this.livesText?.setText(`Lives: ${this.gameState.lives}`);
     this.levelText?.setText(
       this.waveManager.level >= BOSS_LEVEL
         ? 'BOSS'
@@ -980,6 +985,11 @@ export class PlayScene extends Phaser.Scene {
   /** The active-effect registry. */
   getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
+  }
+
+  /** The in-game HUD (lives counter + active effects), or null after teardown. */
+  getHUD(): HUD | null {
+    return this.hud;
   }
 
   /** The player ship, or null after teardown. */

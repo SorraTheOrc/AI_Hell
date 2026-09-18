@@ -323,6 +323,16 @@ export class EffectsRegistry {
     return this._lives;
   }
 
+  /**
+   * Sets the lives counter directly (clamped to `[0, P8_LIVES_MAX]`).
+   * Lets the playable game drive the HUD from its authoritative run state
+   * (GameState) when a player is hit; P8 collection still uses
+   * `applyCollect('P8')`.
+   */
+  setLives(value: number): void {
+    this._lives = Math.max(0, Math.min(P8_LIVES_MAX, Math.floor(value)));
+  }
+
   /** Current permanent magnet stack count (P9); caps at 5. */
   magnetStacks(): number {
     return this._magnetStacks;
