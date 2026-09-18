@@ -1,11 +1,12 @@
 /**
  * Game over scene (GDD §5.2 — Game over screen).
  *
- * Displays the final score, prompts for 3-character initials entry
+ * Displays the final score, prompts for a 3-character initials entry
  * (leaderboard stub), and provides a "Return to Menu" button.
  *
- * The leaderboard section is stubbed — it shows a placeholder message
- * until AH-0MU6VSKZT006HBTR is completed.
+ * The leaderboard section is stubbed — it persists entries to localStorage
+ * (`ai_hell_leaderboard`) as a placeholder until AH-0MU6VSKZT006HBTR is
+ * completed.
  */
 
 import Phaser from 'phaser';
@@ -24,7 +25,59 @@ const VICTORY_COLOR = '#44ff44';
 const DIM_COLOR = '#666666';
 
 /** Initials input field width in characters. */
-const INITIALS_LENGTH = 3;
+export const INITIALS_LENGTH = 3;
+
+/** localStorage key for the leaderboard stub. */
+export const LEADERBOARD_STORAGE_KEY = 'ai_hell_leaderboard';
+
+/** One persisted leaderboard entry (stub schema). */
+export interface LeaderboardEntry {
+  initials: string;
+  score: number;
+}
+
+/** True when a key is an A–Z letter (case-insensitive). */
+export function isInitialsLetter(key: string): boolean {
+  return key.length === 1 && /^[A-Z]$/i.test(key);
+}
+
+/**
+ * Reads the stub leaderboard from localStorage (empty when absent/corrupt).
+ */
+export function readLeaderboard(): LeaderboardEntry[] {
+  try {
+    const raw = localStorage.getItem(LEADERBOARD_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (e): e is LeaderboardEntry =>
+          typeof e?.initials === 'string' && typeof e?.score === 'number',
+      )
+      .sort((a, b) => b.score - a.score);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Merges an entry into the stub leaderboard (sorted desc, capped at 10).
+ * Returns the updated list.
+ */
+export function saveScoreEntry(
+  entry: LeaderboardEntry,
+): LeaderboardEntry[] {
+  const entries = [...readLeaderboard(), entry]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+  try {
+    localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // localStorage may be unavailable (headless tests); ignore.
+  }
+  return entries;
+}
 
 /**
  * Game over scene — shows final score, accepts initials, and
@@ -40,9 +93,6 @@ export class GameOverScene extends Phaser.Scene {
   /** The current initials string being entered (empty on creation). */
   private initials: string;
 
-  /** The cursor position within the initials field (0–3). */
-  private cursorPos: number;
-
   /** The visible initials text game object. */
   private initialsText: Phaser.GameObjects.Text | null = null;
 
@@ -51,7 +101,6 @@ export class GameOverScene extends Phaser.Scene {
     this.won = false;
     this.finalScore = 0;
     this.initials = '';
-    this.cursorPos = 0;
   }
 
   /**
@@ -69,7 +118,7 @@ export class GameOverScene extends Phaser.Scene {
     // ── Game over header ─────────────────────────────────────────
     const headerColor = this.won ? VICTORY_COLOR : DEFEAT_COLOR;
     const headerText = this.won ? 'VICTORY' : 'DEFEAT';
-    this.add.text(GAME_WIDTH / 2, 100, headerText, {
+    this.add.text(GAME_WIDTH / 2, 80, headerText, {
       fontFamily: 'monospace',
       fontSize: '40px',
       color: headerColor,
@@ -78,7 +127,7 @@ export class GameOverScene extends Phaser.Scene {
     // ── Final score ──────────────────────────────────────────────
     this.add.text(
       GAME_WIDTH / 2,
-      180,
+      150,
       `Final Score: ${this.finalScore}`,
       {
         fontFamily: 'monospace',
@@ -88,7 +137,7 @@ export class GameOverScene extends Phaser.Scene {
     ).setOrigin(0.5);
 
     // ── Initials entry ───────────────────────────────────────────
-    this.add.text(GAME_WIDTH / 2, 250, 'Enter Initials:', {
+    this.add.text(GAME_WIDTH / 2, 220, 'Enter Initials:', {
       fontFamily: 'monospace',
       fontSize: '16px',
       color: DIM_COLOR,
@@ -96,8 +145,8 @@ export class GameOverScene extends Phaser.Scene {
 
     this.initialsText = this.add.text(
       GAME_WIDTH / 2,
-      290,
-      '___',
+      255,
+      this._initialsDisplay(),
       {
         fontFamily: 'monospace',
         fontSize: '28px',
@@ -106,21 +155,18 @@ export class GameOverScene extends Phaser.Scene {
     ).setOrigin(0.5);
 
     // ── Leaderboard stub ─────────────────────────────────────────
-    this.add.text(
-      GAME_WIDTH / 2,
-      360,
-      'Leaderboard coming soon',
-      {
-        fontFamily: 'monospace',
-        fontSize: '14px',
-        color: DIM_COLOR,
-      },
-    ).setOrigin(0.5);
+    this.add.text(GAME_WIDTH / 2, 320, 'LEADERBOARD', {
+      fontFamily: 'monospace',
+      fontSize: '14px',
+      color: DIM_COLOR,
+    }).setOrigin(0.5);
+
+    this._renderLeaderboard();
 
     // ── Return to Menu button ────────────────────────────────────
     const menuButton = this.add.text(
       GAME_WIDTH / 2,
-      430,
+      440,
       '←  Return to Menu',
       {
         fontFamily: 'monospace',
@@ -143,60 +189,86 @@ export class GameOverScene extends Phaser.Scene {
       this.scene.start('MenuScene');
     });
 
-    // ── Keyboard input for initials ──────────────────────────────
+    // ── Keyboard input for initials (thin DOM bridge) ────────────
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      // Accept A–Z only.
-      if (event.key.length === 1 && /^[A-Z]$/i.test(event.key)) {
-        if (this.initials.length < INITIALS_LENGTH) {
-          this.initials += event.key.toUpperCase();
-          this.cursorPos = this.initials.length;
-          this._updateInitialsDisplay();
-        }
-      }
-      // Backspace to delete.
-      if (event.key === 'Backspace' && this.initials.length > 0) {
-        this.initials = this.initials.slice(0, -1);
-        this.cursorPos = this.initials.length;
-        this._updateInitialsDisplay();
-      }
-      // Submit with Enter when 3 characters entered.
-      if (event.key === 'Enter' && this.initials.length === INITIALS_LENGTH) {
-        // Leaderboard stub: save to localStorage placeholder.
-        this._saveScore();
-        this.scene.start('MenuScene');
-      }
+      this.handleInitialsKey(event.key);
     });
   }
 
-  /**
-   * Updates the initials display with a cursor indicator.
-   */
-  private _updateInitialsDisplay(): void {
-    const display = this.initials.length < INITIALS_LENGTH
-      ? this.initials.padEnd(INITIALS_LENGTH, '_').slice(0, this.cursorPos + 1) + '|'
-      : this.initials;
-    this.initialsText?.setText(display);
+  // ── Public input model (unit-testable without real key events) ─
+
+  /** The initials entered so far (0–3 A–Z characters). */
+  getInitials(): string {
+    return this.initials;
+  }
+
+  /** The final score shown on this screen. */
+  getFinalScore(): number {
+    return this.finalScore;
+  }
+
+  /** Whether this session ended in victory. */
+  getWon(): boolean {
+    return this.won;
   }
 
   /**
-   * Stub: saves the score with initials to localStorage.
-   * The leaderboard work item will replace this with full persistence.
+   * Processes one keyboard key against the initials input. Letters are
+   * appended (up to {@link INITIALS_LENGTH}), Backspace deletes, Enter
+   * submits the score and returns to the menu. Returns true when the key
+   * was consumed.
    */
-  private _saveScore(): void {
-    try {
-      const key = 'ai_hell_leaderboard';
-      const existing: Array<{ score: number; initials: string }> = [];
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) existing.push(JSON.parse(raw));
-      } catch {
-        // Ignore corrupt data.
+  handleInitialsKey(key: string): boolean {
+    if (isInitialsLetter(key)) {
+      if (this.initials.length < INITIALS_LENGTH) {
+        this.initials += key.toUpperCase();
+        this._updateInitialsDisplay();
       }
-      existing.push({ score: this.finalScore, initials: this.initials });
-      existing.sort((a, b) => b.score - a.score);
-      localStorage.setItem(key, JSON.stringify(existing.slice(0, 10)));
-    } catch {
-      // localStorage may be unavailable in tests; silently ignore.
+      return true;
     }
+    if (key === 'Backspace' && this.initials.length > 0) {
+      this.initials = this.initials.slice(0, -1);
+      this._updateInitialsDisplay();
+      return true;
+    }
+    if (key === 'Enter' && this.initials.length === INITIALS_LENGTH) {
+      saveScoreEntry({ initials: this.initials, score: this.finalScore });
+      this.scene.start('MenuScene');
+      return true;
+    }
+    return false;
+  }
+
+  // ── Rendering helpers ──────────────────────────────────────────
+
+  /** The display string for the initials field (underscores while empty). */
+  private _initialsDisplay(): string {
+    return this.initials.padEnd(INITIALS_LENGTH, '_');
+  }
+
+  private _updateInitialsDisplay(): void {
+    this.initialsText?.setText(this._initialsDisplay());
+  }
+
+  /** Renders the stub leaderboard row (or the placeholder message). */
+  private _renderLeaderboard(): void {
+    const entries = readLeaderboard().slice(0, 3);
+    if (entries.length === 0) {
+      this.add.text(GAME_WIDTH / 2, 355, 'Leaderboard coming soon', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: DIM_COLOR,
+      }).setOrigin(0.5);
+      return;
+    }
+    const lines = entries.map(
+      (e, i) => `${i + 1}.  ${e.initials.padEnd(3, '_')}  ${e.score}`,
+    );
+    this.add.text(GAME_WIDTH / 2, 355, lines.join('\n'), {
+      fontFamily: 'monospace',
+      fontSize: '14px',
+      color: GAME_OVER_COLOR,
+      align: 'center',
+    }).setOrigin(0.5, 0);
   }
 }
