@@ -313,8 +313,16 @@ src/
 │                          for the combat gyms; `POWER_UP_SPAWN_INTERVAL` re-sources
 │                          from it in `../core/constants.ts`
 ├── scenes/
-│   ├── GymIndex.ts      — Dev-mode gym entry scene (sole scene in gameConfig):
-│   │                      discovers + lists gym scenes from scenes/gym/ (import.meta.glob)
+│   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
+│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click
+│   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
+│   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
+│   │                      to GameOverScene on win or loss
+│   ├── GameOverScene.ts — Game-over (implemented): final score, 3-letter initials,
+│   │                      leaderboard stub (localStorage), Return to Menu
+│   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
+│   │                      main menu's Gym Scene Index button; discovers + lists gym
+│   │                      scenes from scenes/gym/ via import.meta.glob)
 │   └── gym/
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")

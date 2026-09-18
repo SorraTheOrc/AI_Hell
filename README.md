@@ -349,9 +349,21 @@ wl create -t "Refactor Enemy Gym Scenes" -d "Create a work item to refactor the 
 wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. This work item will be dependent upon the completion of the first enemy scene. It should be the entry page for the game when run in dev mode."
 ```
 
-#### Gym Index Entry Scene
+#### The Playable Game (primary entry point)
 
-The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **entry scene** for the project: `npm run dev` / `npm run preview` boot straight into it (it is the sole scene registered in `src/core/gameConfig.ts`). It lists every gym scene for isolated testing:
+The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): five progressively harder levels (Levels 1–3 are formation-only, Level 4 introduces enemy fire, Level 5 is fewer enemies with predictable patterns) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via P8 Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. On game over the **GameOverScene** shows the final score, accepts 3-letter initials, and writes to the localStorage leaderboard stub; **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
+
+Flow / scene keys:
+
+- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Gym Scene Index (dev)** → `GymIndex`.
+- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score.
+- `GameOverScene` — final score, initials entry, leaderboard stub, return to menu.
+
+Run it with `npm run dev` and click **Play Game**.
+
+#### Gym Index Entry Scene (dev tooling)
+
+The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playground**: it is reachable from the main menu via the **Gym Scene Index (dev)** button (clearly marked as a developer tool) rather than being the boot scene. It lists every gym scene for isolated testing:
 
 - **Discovery is directory-dynamic (AC3):** the index enumerates `src/scenes/gym/` via Vite's `import.meta.glob` (see `src/utils/gymDiscovery.ts`) — there is no hard-coded scene list. Drop a new `Gym<Name>.ts` file into the folder and it appears on the index automatically (picked up on dev-server restart/HMR or rebuild, since `import.meta.glob` resolves at build time). `.test.ts` files are excluded, and the index itself lives outside the folder (`src/scenes/`) so it is never listed.
 - **Enemy sub-list (data-driven):** in addition to the gym scenes, the index enumerates every available `EnemyConfig` via `src/utils/enemyGymDiscovery.ts` (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()` under the `ai-hell-enemy-config:<key>` namespace) — one row per enemy (label `displayName`) under the **ENEMIES** header. Each row boots the single reusable scene `GymEnemies` with that enemy's key (`scene.start('GymEnemies', { enemyKey })`). Adding a new enemy via **Save As…** in the `GymEnemies` panel makes it appear here without editing `GymIndex.ts`. Bare `GymEnemies` is not listed as a plain scene.
