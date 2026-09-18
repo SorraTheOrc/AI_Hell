@@ -57,6 +57,14 @@ export interface EnemySpawn {
   y: number;
   /** Whether this enemy may fire projectiles (Level 4+). */
   shootEnabled: boolean;
+  /** Formation base x of this enemy's group (px). */
+  startX: number;
+  /** Formation base y of this enemy's group (px). */
+  startY: number;
+  /** Horizontal slot spacing of this enemy's group (px). */
+  spacingX: number;
+  /** Vertical slot spacing of this enemy's group (px). */
+  spacingY: number;
 }
 
 // ── WaveManager ─────────────────────────────────────────────────────
@@ -228,6 +236,10 @@ export class WaveManager {
           x,
           y,
           shootEnabled: wave.shootEnabled,
+          startX: groupDef.startX,
+          startY: groupDef.startY,
+          spacingX: groupDef.spacingX,
+          spacingY: groupDef.spacingY,
         });
       }
     }
