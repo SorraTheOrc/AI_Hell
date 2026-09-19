@@ -329,3 +329,96 @@ describe('WaveManager — progression (AH-0MU72ZK3P006CH9G)', () => {
     expect(wm.started).toBe(false);
   });
 });
+
+describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F)', () => {
+  it('registerDynamicSpawn increments the alive count by the supplied amount', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
+    wm.beginGame();
+    const before = wm.enemiesAlive;
+    wm.registerDynamicSpawn(2);
+    expect(wm.enemiesAlive).toBe(before + 2);
+  });
+
+  it('unregisterDynamicSpawn decrements the alive count by the supplied amount', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
+    wm.beginGame();
+    wm.registerDynamicSpawn(2);
+    wm.unregisterDynamicSpawn(1);
+    expect(wm.enemiesAlive).toBe(2 /* initial 2 */ + 2 - 1);
+  });
+
+  it('unregisterDynamicSpawn never drives the count below zero', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('scout', 'v', 2)])]);
+    wm.beginGame();
+    wm.unregisterDynamicSpawn(99);
+    expect(wm.enemiesAlive).toBe(0);
+  });
+
+  it('registerDynamicSpawn is a safe no-op before beginGame', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('scout', 'v', 2)])]);
+    expect(wm.enemiesAlive).toBe(0);
+    wm.registerDynamicSpawn(5);
+    expect(wm.enemiesAlive).toBe(0);
+  });
+
+  it('a full split chain (1 large -> 2 medium -> 4 small = 7) keeps enemiesAlive correct and does not clear early', () => {
+    // Two waves so the split-chain wipe emits a 'waveCleared' boundary
+    // instead of the final-level boss trigger.
+    const defs = [
+      level(1, 'Test', [
+        wave('asteroid', 'single', 1, false),
+        wave('scout', 'v', 1, false),
+      ]),
+    ];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+    expect(wm.waveNumber).toBe(1);
+    expect(wm.enemiesAlive).toBe(1);
+
+    // Destroy the large parent and register its 2 medium children.
+    wm.registerDynamicSpawn(2);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(2);
+
+    // Destroy the first medium and register its 2 small children.
+    wm.registerDynamicSpawn(2);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(3);
+
+    // Destroy the second medium and register its 2 small children.
+    wm.registerDynamicSpawn(2);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(4);
+
+    // Destroy the 4 small asteroids one by one — each stays 'continue'
+    // while children remain alive (the wave does not clear early).
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(3);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(2);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(1);
+
+    // 7th destruction wipes the wave and advances to wave 2.
+    expect(wm.onEnemyDestroyed()).toBe('waveCleared');
+    expect(wm.waveNumber).toBe(2);
+    expect(wm.enemiesAlive).toBe(1);
+  });
+
+  it('a registered child keeps the wave alive until every original AND child is destroyed', () => {
+    const defs = [level(1, 'Test', [wave('asteroid', 'single', 1, false)])];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+
+    // Parent destroyed, but 2 registered children still alive.
+    wm.registerDynamicSpawn(2);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(2);
+
+    // A child destroyed but one remains.
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+
+    // Final child destroyed → the wave is finally wiped (final level -> boss).
+    expect(wm.onEnemyDestroyed()).toBe('bossTriggered');
+  });
+});

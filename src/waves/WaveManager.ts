@@ -226,6 +226,35 @@ export class WaveManager {
     return planGroupSpawns(wave.groups, wave.shootEnabled);
   }
 
+  // ── Dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F) ──
+
+  /**
+   * Registers `count` dynamically spawned enemies (e.g. split asteroid
+   * children) so the wave's alive count tracks them and the wave does
+   * not clear early or stall. Must be called exactly once per spawned
+   * child before that child can be destroyed. Safe no-op when no regular
+   * wave is active (before `beginGame()`, boss due/active, run over).
+   */
+  registerDynamicSpawn(count: number): void {
+    if (!this._started || this._bossTriggered || this._bossActive || this._bossDefeated) {
+      return;
+    }
+    if (count > 0) this._enemiesAlive += count;
+  }
+
+  /**
+   * Unregisters `count` dynamically spawned enemies that are removed
+   * without a destruction event (e.g. an off-screen child is discarded).
+   * Never drives the counter below zero. Safe no-op when no regular wave
+   * is active.
+   */
+  unregisterDynamicSpawn(count: number): void {
+    if (!this._started || this._bossTriggered || this._bossActive || this._bossDefeated) {
+      return;
+    }
+    this._enemiesAlive = Math.max(0, this._enemiesAlive - count);
+  }
+
   // ── Progression ─────────────────────────────────────────────────
 
   /**
