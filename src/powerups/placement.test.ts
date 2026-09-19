@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_PLACEMENT_MAX_ATTEMPTS,
+  nudgeAwayFromDrops,
   RandomAvoidingPlacement,
   type PlacementContext,
   type PowerUpPlacement,
@@ -205,5 +206,40 @@ describe('RandomAvoidingPlacement', () => {
 
     expect(Number.isFinite(point.x)).toBe(true);
     expect(Number.isFinite(point.y)).toBe(true);
+  });
+});
+
+describe('nudgeAwayFromDrops (AH-0MU7JTFM5000R4ME)', () => {
+  it('returns the natural point unchanged when already separated', () => {
+    const p = nudgeAwayFromDrops([{ x: 0, y: 0 }], 100, 100, 40, 200, 200);
+    expect(p).toEqual({ x: 100, y: 100 });
+  });
+
+  it('keeps the separation even when drops stack on the same point', () => {
+    const existing: { x: number; y: number }[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p = nudgeAwayFromDrops(existing, 100, 100, 40, 200, 200);
+      if (!p) break;
+      existing.push(p);
+    }
+    expect(existing.length).toBe(4);
+    for (let i = 0; i < existing.length; i++) {
+      for (let j = i + 1; j < existing.length; j++) {
+        expect(
+          Math.hypot(existing[i].x - existing[j].x, existing[i].y - existing[j].y),
+        ).toBeGreaterThanOrEqual(40);
+      }
+    }
+  });
+
+  it('returns null when no in-bounds separated position exists', () => {
+    // The playfield is smaller than the minimum separation, so no in-bounds
+    // nudged point can move the drop far enough from (50, 50).
+    const p = nudgeAwayFromDrops([{ x: 50, y: 50 }], 50, 50, 200, 120, 120);
+    expect(p).toBeNull();
+  });
+
+  it('with no existing drops the natural point is always kept', () => {
+    expect(nudgeAwayFromDrops([], 42, 42, 40, 200, 200)).toEqual({ x: 42, y: 42 });
   });
 });

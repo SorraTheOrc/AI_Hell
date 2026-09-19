@@ -68,6 +68,14 @@ export const POWER_UP_SPAWN_INTERVAL = DEFAULT_RULES.powerUpSpawnInterval;
 /** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 16 px = half of the doubled 32 px size (AH-0MTG5MGPZ00986B4). */
 export const POWER_UP_DROP_SIZE = 16;
 
+/**
+ * Minimum centre-to-centre distance kept between live power-up drops on
+ * the field (px). Drops at the full 32 px size must not overlap, so the
+ * separation is strictly greater than 2 × POWER_UP_DROP_SIZE
+ * (AH-0MU7JTFM5000R4ME).
+ */
+export const POWER_UP_DROP_MIN_SEPARATION = 40;
+
 // ── Power-up drop bubble visuals (GDD §4.4, §7.1) ─────────────────
 // Tunable feel constants for the glowing bubble drawn around every
 // on-field drop (AH-0MTG5MGPZ00986B4). The bubble is purely visual:

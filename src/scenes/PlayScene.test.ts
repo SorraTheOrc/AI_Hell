@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
@@ -428,6 +429,26 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.isWaveTimerActive()).toBe(true);
     // The fresh countdown starts at the full limit.
     expect(scene.getWaveTimerRemaining()).toBeGreaterThan(WAVE_TIME_LIMIT_SECONDS - 2);
+  });
+
+  // ── Power-up drop separation (AH-0MU7JTFM5000R4ME) ─────────────
+
+  it('AH-0MU7JTFM5000R4ME AC3 — drops spawned at the same position keep minimum separation', async () => {
+    const scene = await bootPlay();
+    const x = GAME_WIDTH / 2;
+    const y = GAME_HEIGHT / 2;
+
+    for (let i = 0; i < 3; i++) scene.spawnPowerUpDrop('P5', x, y);
+
+    const drops = scene.getDrops();
+    expect(drops.length).toBe(3);
+    for (let i = 0; i < drops.length; i++) {
+      for (let j = i + 1; j < drops.length; j++) {
+        expect(Math.hypot(drops[i].x - drops[j].x, drops[i].y - drops[j].y)).toBeGreaterThanOrEqual(
+          POWER_UP_DROP_MIN_SEPARATION,
+        );
+      }
+    }
   });
 
   // ── Game over flow ─────────────────────────────────────────────

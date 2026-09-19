@@ -24,6 +24,7 @@ import {
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
   PLAYER_RESPAWN_INVULNERABLE,
+  POWER_UP_DROP_MIN_SEPARATION,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
   SHIP_SIZE,
@@ -53,6 +54,7 @@ import { EffectsRegistry } from '../powerups/effects';
 import { PowerUp, PowerUpState } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
+import { nudgeAwayFromDrops } from '../powerups/placement';
 import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
 import { addBackToIndexButton } from '../utils/gymNavigation';
@@ -962,10 +964,24 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * Spawns a drop of `id` at (x, y). Public so tests can place a
-   * deterministic drop.
+   * Spawns a drop of `id` at (x, y), nudged to keep the configured minimum
+   * separation from every live drop (AH-0MU7JTFM5000R4ME). Returns null
+   * when no separated in-bounds position exists (the drop is skipped).
+   * Public so tests can place a deterministic drop.
    */
   spawnPowerUpDrop(id: DropId, x: number, y: number): PlayDrop | null {
+    const placed = nudgeAwayFromDrops(
+      this.drops.map((d) => ({ x: d.x, y: d.y })),
+      x,
+      y,
+      POWER_UP_DROP_MIN_SEPARATION,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+    );
+    if (!placed) return null;
+    x = placed.x;
+    y = placed.y;
+
     const graphics = this.add.graphics();
     graphics.setPosition(x, y);
     if (isWeaponDrop(id)) {

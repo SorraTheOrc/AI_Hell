@@ -195,3 +195,69 @@ export class RandomAvoidingPlacement implements PowerUpPlacement {
     return deterministicFallback(context, minX, maxX, minY, maxY);
   }
 }
+
+// ── Drop separation (AH-0MU7JTFM5000R4ME) ──────────────────────────
+
+/** A live power-up drop the new spawn must keep clear of. */
+export interface DropBody {
+  /** World-space centre x (px). */
+  x: number;
+  /** World-space centre y (px). */
+  y: number;
+}
+
+/** Ring-search radius increment used when nudging a drop (px). */
+const NUDGE_RING_STEP = 12;
+
+/** Number of directions probed on each ring-search radius. */
+const NUDGE_DIRECTIONS = 12;
+
+/** Maximum nudge radius searched before giving up (px). */
+const NUDGE_MAX_RADIUS = 160;
+
+/**
+ * Returns a spawn position for a new drop that keeps at least
+ * `minSeparation` px from every existing live drop body. The natural
+ * point is returned unchanged when already clear; otherwise the point is
+ * nudged outward on concentric rings until a separated in-bounds position
+ * is found. Returns `null` when no such position exists — callers skip
+ * the drop rather than violate the separation invariant.
+ *
+ * Pure — no Phaser dependency, so it is unit-testable in isolation.
+ *
+ * @param existing — live drop bodies to keep clear of.
+ * @param x — natural spawn x (death position, px).
+ * @param y — natural spawn y (death position, px).
+ * @param minSeparation — minimum centre-to-centre distance (px).
+ * @param width / @param height — playfield bounds (px).
+ */
+export function nudgeAwayFromDrops(
+  existing: readonly DropBody[],
+  x: number,
+  y: number,
+  minSeparation: number,
+  width: number,
+  height: number,
+): { x: number; y: number } | null {
+  if (existing.length === 0) return { x, y };
+
+  const separated = (cx: number, cy: number): boolean =>
+    existing.every((d) => Math.hypot(d.x - cx, d.y - cy) >= minSeparation);
+
+  // Already far enough from every live drop — keep the natural point.
+  if (separated(x, y)) return { x, y };
+
+  // Nudge outward on concentric rings (deterministic direction order).
+  for (let radius = minSeparation; radius <= NUDGE_MAX_RADIUS; radius += NUDGE_RING_STEP) {
+    for (let i = 0; i < NUDGE_DIRECTIONS; i += 1) {
+      const angle = (i / NUDGE_DIRECTIONS) * Math.PI * 2;
+      const cx = x + Math.cos(angle) * radius;
+      const cy = y + Math.sin(angle) * radius;
+      if (cx < 0 || cx > width || cy < 0 || cy > height) continue;
+      if (separated(cx, cy)) return { x: cx, y: cy };
+    }
+  }
+
+  // No in-bounds separated position — the caller should skip this drop.
+  return null;
+}
