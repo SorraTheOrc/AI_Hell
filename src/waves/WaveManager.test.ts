@@ -81,13 +81,19 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
     expect(getLevelDefinition(6)).toBeNull();
   });
 
-  it('AC1 — Level 1 uses a single enemy type with no enemy fire', () => {
+  it('AC1 — Level 1 uses Scout V-formations plus a roaming Asteroid, with no enemy fire', () => {
     const l1 = getLevelDefinition(1)!;
     const keys = new Set(
       l1.waves.flatMap((w) => w.groups.map((g) => g.enemyKey)),
     );
-    expect(keys.size).toBe(1);
+    // Wave 1 pairs the standard Scout V-formation with one Asteroid group
+    // (E6 — GDD §4.1); Wave 2 is Scouts only.
+    expect(keys).toEqual(new Set(['scout', 'asteroid']));
     expect(l1.waves.every((w) => w.shootEnabled === false)).toBe(true);
+    // The asteroid group is present in Level 1 Wave 1 alongside Scouts.
+    const wave1 = l1.waves[0];
+    expect(wave1.groups.map((g) => g.enemyKey)).toContain('asteroid');
+    expect(wave1.groups.map((g) => g.enemyKey)).toContain('scout');
   });
 
   it('AC1 — Level 2 has mixed single-enemy waves (one group, >1 archetype), no fire', () => {

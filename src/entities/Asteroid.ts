@@ -143,6 +143,12 @@ export interface AsteroidConfig {
   rng?: () => number;
   /** Size tier — overrides the default for this entity. */
   sizeTier?: AsteroidSizeTier;
+  /** Initial velocity x (px/s); honours split-child specs (default: random heading). */
+  vx?: number;
+  /** Initial velocity y (px/s); honours split-child specs (default: random heading). */
+  vy?: number;
+  /** Rotation speed in rad/s (default: tier-derived). */
+  rotationSpeed?: number;
 }
 
 // ── Asteroid entity class ──────────────────────────────────────────
@@ -194,13 +200,20 @@ export class Asteroid extends BaseEnemy {
     // custom size (config override) preserves the tier's feel; with the
     // canonical tier size the ratio is 1 and the tier constants win.
     const scale = size / tierData.size;
-    this.rotationSpeed = tierData.rotationSpeed * scale;
+    this.rotationSpeed =
+      config.rotationSpeed ?? tierData.rotationSpeed * scale;
 
-    // Compute a constant velocity vector from a random heading.
-    const angle = Math.random() * Math.PI * 2;
-    const speed = tierData.speed * scale;
-    this._vx = Math.cos(angle) * speed;
-    this._vy = Math.sin(angle) * speed;
+    // Split-child spawns supply an exact velocity vector; otherwise a
+    // constant velocity vector is computed from a random heading.
+    if (config.vx !== undefined && config.vy !== undefined) {
+      this._vx = config.vx;
+      this._vy = config.vy;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = tierData.speed * scale;
+      this._vx = Math.cos(angle) * speed;
+      this._vy = Math.sin(angle) * speed;
+    }
 
     // Draw the unique body shape and add the shared graphics in the
     // canonical render order (body then explosion).
@@ -395,6 +408,9 @@ export class Asteroid extends BaseEnemy {
     const scene = this.scene as Phaser.Scene;
     const gameWidth = scene.scale.width;
     const gameHeight = scene.scale.height;
+
+    // Rotate continuously (size-scaled: small rotates fastest).
+    this.rotation += this.rotationSpeed * dt;
 
     // Update position.
     this.x += this._vx * dt;

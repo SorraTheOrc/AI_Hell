@@ -108,9 +108,15 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 1,
     name: 'Entry',
-    // Single enemy type (Scouts), simple movement — no enemy fire.
+    // Single enemy type (Scouts), simple movement — no enemy fire. A
+    // roaming Asteroid group joins Wave 1 (GDD §4.1 — E6 Asteroid): a
+    // non-firing rock that drifts in a straight line, wraps, and splits
+    // into two smaller rocks when shot.
     waves: [
-      noFire(group('scout', 'v', 6, { spacingX: 28, spacingY: 22 })),
+      noFire(
+        group('scout', 'v', 6, { spacingX: 28, spacingY: 22 }),
+        group('asteroid', 'single', 1, { startX: GAME_WIDTH * 0.6, startY: GAME_HEIGHT * 0.25 }),
+      ),
       noFire(group('scout', 'v', 8, { spacingX: 34, spacingY: 24 })),
     ],
   },

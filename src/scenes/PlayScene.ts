@@ -50,6 +50,7 @@ import {
   createPlayerBullet,
 } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import { Asteroid } from '../entities/Asteroid';
 import { EffectsRegistry } from '../powerups/effects';
 import { PowerUp, PowerUpState } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
@@ -81,6 +82,9 @@ export const SCORE_VALUES: Record<string, number> = {
   phaser: 250,
   swarm: 150,
   boss: 1000, // per phase; the full boss awards 1000+2000+3000+5000
+  // Asteroids: only small asteroids award points (50); large/medium award
+  // none (GDD §4.5, E6 Asteroid). The tier check happens in `_onEnemyKilled`.
+  asteroid: 50,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
@@ -442,6 +446,12 @@ export class PlayScene extends Phaser.Scene {
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
+      // Asteroids roam independently: constant-velocity straight-line
+      // motion with four-edge wrap (never formation drift).
+      if (s.enemyKey === 'asteroid') {
+        (s.entity as Asteroid).updatePosition(dt);
+        continue;
+      }
       s.entity.applyFormationPosition(
         s.startX + this.driftX,
         s.startY,
@@ -858,17 +868,61 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * Handles an enemy's destruction: awards score, rolls a power-up drop,
-   * and advances the wave/level state machine.
+   * Handles an enemy's destruction: awards score, splits asteroids,
+   * rolls a power-up drop, and advances the wave/level state machine.
    *
    * @param awardScore — false for collision kills (no points for ramming).
    */
   private _onEnemyKilled(s: SpawnedEnemy, awardScore = true): void {
-    if (awardScore) {
+    if (s.enemyKey === 'asteroid') {
+      // Asteroids: only the small tier awards points (50). Large and
+      // medium asteroids award none (GDD §4.5 — E6 Asteroid).
+      if (awardScore && (s.entity as Asteroid).getSizeTier() === 'small') {
+        this.gameState.addScore(SCORE_VALUES.asteroid ?? DEFAULT_SCORE_VALUE);
+      }
+      // A destroyed large/medium asteroid splits into two smaller rocks
+      // that continue the wave (wave-child accounting via WaveManager).
+      this._splitAsteroid(s);
+    } else if (awardScore) {
       this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
     }
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
     this._advanceAfterKill();
+  }
+
+  /**
+   * Splits a destroyed large/medium asteroid into exactly two smaller
+   * children moving in directions different from the parent and from each
+   * other. Children are registered with the WaveManager so the wave's
+   * alive count tracks them (the wave neither clears early nor stalls).
+   */
+  private _splitAsteroid(s: SpawnedEnemy): void {
+    const parent = s.entity as Asteroid;
+    const children = parent.getSplitChildren(parent.x, parent.y);
+    if (!children) return; // small tier — clean destruction, no children
+
+    for (const spec of children) {
+      const entity = new Asteroid(this, {
+        x: spec.x,
+        y: spec.y,
+        formationOffset: { row: 0, col: 0 },
+        sizeTier: spec.sizeTier,
+        vx: spec.vx,
+        vy: spec.vy,
+        rotationSpeed: spec.rotationSpeed,
+      });
+      this.add.existing(entity);
+      this.spawned.push({
+        entity,
+        enemyKey: 'asteroid',
+        startX: 0,
+        startY: 0,
+        spacingX: 0,
+        spacingY: 0,
+      });
+      // Register the dynamic child so `enemiesAlive` stays correct.
+      this.waveManager.registerDynamicSpawn(1);
+    }
   }
 
   /**

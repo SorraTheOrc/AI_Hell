@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import { Asteroid } from '../entities/Asteroid';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import {
@@ -582,5 +583,204 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const bullets = scene.getEnemyBullets();
     expect(bullets.length).toBeGreaterThan(before);
     expect(bullets.some((b) => b.graphics === fakeBullet.graphics)).toBe(true);
+  });
+});
+
+describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    return booted.scene as PlayScene;
+  }
+
+  /** Alive asteroid entities currently in the scene. */
+  function findAsteroids(scene: PlayScene): Asteroid[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is Asteroid => e instanceof Asteroid && e.alive);
+  }
+
+  it('AC1 — Level 1 Wave 1 spawns a large asteroid alongside the Scouts', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBe(1);
+    expect(asteroids[0].getSizeTier()).toBe('large');
+
+    // Wave accounting includes the asteroid: 6 scouts + 1 asteroid.
+    const waveDef = wm.currentWave()!;
+    const total = waveDef.groups.reduce((sum, g) => sum + g.count, 0);
+    expect(total).toBe(7);
+    expect(wm.enemiesAlive).toBe(total);
+    expect(scene.getAliveCount()).toBe(total);
+  });
+
+  it('AC3 — shooting the large asteroid spawns exactly 2 medium children in divergent directions', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const aliveBefore = wm.enemiesAlive; // 7
+
+    const large = findAsteroids(scene)[0];
+    const scoreBefore = scene.getGameState().score;
+
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+
+    // Parent destroyed; large tier awards no points.
+    expect(large.alive).toBe(false);
+    expect(scene.getGameState().score).toBe(scoreBefore);
+
+    // Exactly two medium children at the parent's position.
+    const children = findAsteroids(scene);
+    expect(children.length).toBe(2);
+    expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
+
+    // Both children registered with the WaveManager: 7 - 1 parent + 2 = 8.
+    expect(wm.enemiesAlive).toBe(aliveBefore + 1);
+
+    // Children move in directions different from each other (>= pi/3).
+    const a1 = Math.atan2(children[0].vy, children[0].vx);
+    const a2 = Math.atan2(children[1].vy, children[1].vx);
+    const delta = Math.abs(a1 - a2);
+    const wrapped = Math.min(delta, Math.PI * 2 - delta);
+    expect(wrapped).toBeGreaterThanOrEqual(Math.PI / 3 - 0.01);
+  });
+
+  it('AC3/AC4 — medium splits into 2 smalls (no score); small awards 50 points with no children', async () => {
+    const scene = await bootPlay();
+
+    // Split the large asteroid first.
+    const large = findAsteroids(scene)[0];
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(findAsteroids(scene).length).toBe(2);
+
+    // Shoot one medium — two small children; medium awards no points.
+    const medium = findAsteroids(scene)[0];
+    const scoreBeforeMedium = scene.getGameState().score;
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+    expect(medium.alive).toBe(false);
+    expect(scene.getGameState().score).toBe(scoreBeforeMedium);
+
+    const all = findAsteroids(scene);
+    const smalls = all.filter((a) => a.getSizeTier() === 'small');
+    const mediumsLeft = all.filter((a) => a.getSizeTier() === 'medium');
+    // Exactly two small children and the untouched second medium remain.
+    expect(smalls).toHaveLength(2);
+    expect(mediumsLeft).toHaveLength(1);
+  });
+
+  it('AC4 — shooting a small asteroid awards exactly 50 points and spawns no children', async () => {
+    const scene = await bootPlay();
+
+    // Split the full chain down to smalls: large -> 2 medium -> shoot both -> 4 smalls.
+    const large = findAsteroids(scene)[0];
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+
+    // Count before further scoring checks.
+    const childrenStep1 = findAsteroids(scene);
+    expect(childrenStep1).toHaveLength(2);
+    // Record the two mediums (they move slowly; re-locate each shot).
+    const mediumA = childrenStep1[0];
+    const mediumB = childrenStep1[1];
+    scene.spawnPlayerBullet(mediumA.x, mediumA.y, 0, 0);
+    scene.tick(0.016);
+    const smallsAfterA = findAsteroids(scene).filter((a) => a.getSizeTier() === 'small');
+    expect(smallsAfterA).toHaveLength(2);
+    scene.spawnPlayerBullet(mediumB.x, mediumB.y, 0, 0);
+    scene.tick(0.016);
+
+    const smalls = findAsteroids(scene).filter((a) => a.getSizeTier() === 'small');
+    expect(smalls).toHaveLength(4);
+
+    // Shoot one small: +50 points, no children from it.
+    const small = smalls[0];
+    const scoreBefore = scene.getGameState().score;
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+    expect(small.alive).toBe(false);
+    expect(scene.getGameState().score - scoreBefore).toBe(50);
+    // Remaining asteroids: 3 smalls (the other medium never existed — it was
+    // consumed as part of the chain above; exactly 3 smalls remain).
+    expect(findAsteroids(scene).filter((a) => a.getSizeTier() === 'small')).toHaveLength(3);
+  });
+
+  it('AC6 — the wave clears only after ALL split children are destroyed (no stall, no early clear)', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+
+    // Destroy everything: 6 scouts + full asteroid chain
+    // (1 large -> 2 medium -> 4 small = 7 asteroid enemies, 13 total).
+    killAllEnemies(scene);
+
+    // All enemies dead -> the wave wiped -> transition to Wave 2 loaded.
+    expect(scene.isTransitioning()).toBe(true);
+    expect(scene.getAliveCount()).toBe(0);
+    // Wave 2 is now current: the manager pre-loads its 8 Scouts (they are
+    // not spawned on screen until the transition completes).
+    expect(wm.waveNumber).toBe(2);
+    expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
+
+    finishTransition(scene);
+    expect(wm.waveNumber).toBe(2);
+    expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
+  });
+
+  it('AC5 — asteroids move independently of formation drift (constant velocity + wrap + rotation)', async () => {
+    const scene = await bootPlay();
+    const asteroid = findAsteroids(scene)[0];
+    const startX = asteroid.x;
+    const startY = asteroid.y;
+    const vx = asteroid.vx;
+    const vy = asteroid.vy;
+    const rotBefore = asteroid.rotation;
+
+    scene.tick(0.5);
+
+    // Still alive (slow drift away from the auto-fire lane).
+    expect(asteroid.alive).toBe(true);
+    // Position change is exactly velocity x dt — NOT the formation drift
+    // (which would add a fixed +14 px to x over 0.5 s for every group).
+    expect(asteroid.x - startX).toBeCloseTo(vx * 0.5, 4);
+    expect(asteroid.y - startY).toBeCloseTo(vy * 0.5, 4);
+    // Rotated continuously by rotationSpeed x dt.
+    expect(asteroid.rotation - rotBefore).toBeCloseTo(asteroid.rotationSpeed * 0.5, 3);
+  });
+
+  it('asteroid colliding with the player costs one life, destroys the asteroid, and still splits', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+
+    // Let auto-fire fire its opening volley, then park the ship on the
+    // asteroid so the body-collision path triggers (mirrors the scout ram test).
+    scene.tick(0.016);
+    const asteroid = findAsteroids(scene)[0];
+    const livesBefore = scene.getGameState().lives;
+    const scoreBefore = scene.getGameState().score;
+
+    player.setPosition(asteroid.x, asteroid.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: { x: number; y: number } })._movementState =
+      { ...state, x: asteroid.x, y: asteroid.y };
+    scene.tick(0.001);
+
+    // One life lost; the rammed asteroid is destroyed and splits into two
+    // medium children (the wave keeps tracking them); ramming awards 0 points.
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    expect(asteroid.alive).toBe(false);
+    expect(scene.getGameState().score).toBe(scoreBefore);
+    const children = findAsteroids(scene);
+    expect(children.length).toBe(2);
+    expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
   });
 });
