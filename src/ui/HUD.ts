@@ -37,7 +37,8 @@ const TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
 };
 
 /** Vertical spacing between HUD rows. */
-const ROW_HEIGHT = 22;
+export const HUD_ROW_HEIGHT = 22;
+const ROW_HEIGHT = HUD_ROW_HEIGHT;
 
 /** Horizontal offsets for the icon / name / value columns. */
 const ICON_X = 10;
@@ -156,12 +157,23 @@ export class HUD extends Phaser.GameObjects.Container {
     this.refresh();
   }
 
+  /**
+   * Y offset (container-relative) at which the first effect/weapon row
+   * starts. When the lives counter is shown it owns the top row, so the
+   * effect list is pushed below it to avoid overlap
+   * (AH-0MU7JTFY1006QA8I). Without lives the list starts at the top,
+   * keeping the gym HUD layout unchanged (AC3).
+   */
+  private _rowY(row: number): number {
+    return (this._showLives ? ROW_HEIGHT : 0) + row * ROW_HEIGHT;
+  }
+
   // ── Rendering helpers ─────────────────────────────────────────────
 
   /** Builds one display row (icon + name + value) from an active effect. */
   private _addRow(effect: ActiveEffect, row: number): void {
     const entry = getPowerUpById(effect.id);
-    const y = ROW_HEIGHT * row;
+    const y = this._rowY(row);
 
     const icon = new Phaser.GameObjects.Graphics(this.scene);
     drawPowerUpIcon(icon, entry.type, ICON_X, y + ROW_HEIGHT / 2, 8);
@@ -213,7 +225,7 @@ export class HUD extends Phaser.GameObjects.Container {
 
   /** Builds one weapon display row (icon + name + value). */
   private _addWeaponRow(weapon: WeaponEffect, row: number): void {
-    const y = ROW_HEIGHT * row;
+    const y = this._rowY(row);
 
     // Weapon icon.
     const icon = new Phaser.GameObjects.Graphics(this.scene);

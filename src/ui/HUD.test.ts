@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
-import { HUD, HUD_DEPTH } from './HUD';
+import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
 import { PowerUpType } from '../powerups/types';
 
@@ -205,6 +205,51 @@ describe('HUD AC5: reacts to registry changes', () => {
     destroy(game);
   });
 });
+describe('HUD lives list layout (AH-0MU7JTFY1006QA8I)', () => {
+  /** Rendered HUD texts, in container iteration order. */
+  function hudTexts(hud: HUD): Phaser.GameObjects.Text[] {
+    const list = (hud as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    return list.filter((c) => c instanceof Phaser.GameObjects.Text);
+  }
+
+  it('AC1 — with lives shown, the first effect row starts below the lives label', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5'); // timed row: Speed Boost
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const texts = hudTexts(hud);
+    const lives = texts.find((t) => t.text.startsWith('Lives: '));
+    const firstRow = texts.find((t) => t.text === 'Speed Boost');
+    expect(lives).toBeDefined();
+    expect(firstRow).toBeDefined();
+
+    // Bounds/y-order assertion: the effect list is pushed below the lives
+    // label, so its first row cannot overlap the label's vertical span.
+    expect(firstRow!.y).toBeGreaterThanOrEqual(
+      lives!.y + HUD_ROW_HEIGHT / 2,
+    );
+    destroy(game);
+  });
+
+  it('AC3 — without lives (gym combat), the first row stays at the top', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    const { game, hud } = await bootScene([BareScene]).then(({ game: g, scene }) => {
+      const h = new HUD(scene, reg, { showLives: false });
+      h.refresh();
+      return { game: g, hud: h };
+    });
+
+    const texts = hudTexts(hud);
+    const firstRow = texts.find((t) => t.text === 'Speed Boost');
+    expect(firstRow).toBeDefined();
+    // Nothing above the list — the row is at the container's top band.
+    expect(firstRow!.y).toBeLessThan(HUD_ROW_HEIGHT);
+    destroy(game);
+  });
+});
+
 describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
   it('renders a weapon row when a weapon is equipped', async () => {
     const reg = new EffectsRegistry();
