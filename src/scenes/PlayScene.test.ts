@@ -201,6 +201,41 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
   });
 
+  // ── Transient transition banner (AH-0MU7JTEMC006QPSN) ─────────
+
+  it('AH-0MU7JTEMC006QPSN AC1 — the level banner hides within ~2s while enemies remain alive', async () => {
+    const scene = await bootPlay();
+    // The level-start announcement is on screen when the wave begins.
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+    expect(scene.isBannerVisible()).toBe(true);
+
+    scene.tick(2.0);
+
+    // Enemies are still alive (the wave was not cleared), yet the banner
+    // must have cleared so it no longer obscures gameplay.
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+    expect(scene.isBannerVisible()).toBe(false);
+  });
+
+  it('AH-0MU7JTEMC006QPSN AC2 — the banner reappears on the next wave and hides again', async () => {
+    const scene = await bootPlay();
+
+    // Let the level-start banner expire first.
+    scene.tick(2.0);
+    expect(scene.isBannerVisible()).toBe(false);
+
+    // Clearing the wave starts a transition and announces it again.
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(scene.isBannerVisible()).toBe(true);
+
+    // The next wave spawns; its banner clears while enemies remain alive.
+    finishTransition(scene);
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+    scene.tick(2.0);
+    expect(scene.isBannerVisible()).toBe(false);
+  });
+
   // ── Game over flow ─────────────────────────────────────────────
 
   it('game over — losing the last life transitions to GameOverScene', async () => {

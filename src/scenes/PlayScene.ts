@@ -97,6 +97,13 @@ export const BOSS_PHASE_SCORES: Record<number, number> = {
 /** Seconds between a wave/level wipe and the next spawn. */
 export const LEVEL_TRANSITION_SECONDS = 1.5;
 
+/**
+ * Seconds a level/wave announcement banner stays on screen before it
+ * hides automatically (GDD §3 — transient transitions). Must be within
+ * the ~1.5–2 s window required by AH-0MU7JTEMC006QPSN.
+ */
+export const BANNER_DURATION_SECONDS = 1.5;
+
 /** Rightward formation drift speed (px/s). */
 const FORMATION_DRIFT_SPEED = 28;
 
@@ -189,6 +196,9 @@ export class PlayScene extends Phaser.Scene {
 
   private transitionTimer = 0;
 
+  /** Seconds left before the current banner hides itself (0 = hidden). */
+  private bannerTimer = 0;
+
   private dropSpawner: PowerUpSpawner<DropId> | null = null;
   private rng: () => number = Math.random;
 
@@ -251,6 +261,7 @@ export class PlayScene extends Phaser.Scene {
     this.driftX = 0;
     this.driftDir = 1;
     this.transitionTimer = 0;
+    this.bannerTimer = 0;
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -310,6 +321,10 @@ export class PlayScene extends Phaser.Scene {
   tick(dt: number): void {
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
+
+    // The announcement banner is transient: it always expires on its own
+    // timer, even while enemies remain alive (AH-0MU7JTEMC006QPSN).
+    this._advanceBanner(dt);
 
     // Level/wave transition pause: no spawns or collisions until done.
     if (this.transitionTimer > 0) {
@@ -429,13 +444,7 @@ export class PlayScene extends Phaser.Scene {
       this.waveManager.bossTriggered || this.waveManager.bossActive
         ? '⚠ BOSS ⚠'
         : `Level ${this.waveManager.level}`;
-    if (!this.bannerText) {
-      this.bannerText = this.add
-        .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, label, BANNER_STYLE)
-        .setOrigin(0.5)
-        .setDepth(500);
-    }
-    this.bannerText.setText(label).setVisible(true);
+    this._showBanner(label);
   }
 
   /** Shows the level announcement banner at level start. */
@@ -444,6 +453,14 @@ export class PlayScene extends Phaser.Scene {
       this.waveManager.level === BOSS_LEVEL
         ? '⚠ BOSS ⚠'
         : `Level ${this.waveManager.level}`;
+    this._showBanner(label);
+  }
+
+  /**
+   * Shows the banner with the supplied label and (re)starts its
+   * self-expiry timer so it always clears a bounded time later.
+   */
+  private _showBanner(label: string): void {
     if (!this.bannerText) {
       this.bannerText = this.add
         .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, label, BANNER_STYLE)
@@ -451,6 +468,20 @@ export class PlayScene extends Phaser.Scene {
         .setDepth(500);
     }
     this.bannerText.setText(label).setVisible(true);
+    this.bannerTimer = BANNER_DURATION_SECONDS;
+  }
+
+  /** Counts the banner's lifetime down and hides it when it expires. */
+  private _advanceBanner(dt: number): void {
+    if (this.bannerTimer <= 0) return;
+    this.bannerTimer = Math.max(0, this.bannerTimer - dt);
+    if (this.bannerTimer === 0) this._hideBanner();
+  }
+
+  /** Hides the banner and cancels any pending expiry. */
+  private _hideBanner(): void {
+    this.bannerTimer = 0;
+    this.bannerText?.setVisible(false);
   }
 
   /**
@@ -473,7 +504,7 @@ export class PlayScene extends Phaser.Scene {
     } else {
       this.spawnWave();
     }
-    if (this.bannerText) this.bannerText.setVisible(false);
+    this._hideBanner();
   }
 
   /**
@@ -1035,6 +1066,16 @@ export class PlayScene extends Phaser.Scene {
   /** True while a wave/level transition is in progress. */
   isTransitioning(): boolean {
     return this.transitionTimer > 0;
+  }
+
+  /** True while the level/wave announcement banner is on screen. */
+  isBannerVisible(): boolean {
+    return this.bannerText?.visible ?? false;
+  }
+
+  /** Current banner text (empty string when no banner has been shown yet). */
+  getBannerText(): string {
+    return this.bannerText?.text ?? '';
   }
 
   /** Seconds remaining on the transition pause (0 when not transitioning). */
