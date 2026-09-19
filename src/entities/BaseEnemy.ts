@@ -183,11 +183,11 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * when the enemy collides with a player bullet. Subclasses may override
    * `hideBody()` to hide type-specific graphics.
    */
-  destroySelf(): void {
+  destroySelf(scale = 1): void {
     if (!this._alive) return;
     this._alive = false;
     this.hideBody();
-    this.playExplosion();
+    this.playExplosion(scale);
   }
 
   /**
@@ -202,8 +202,11 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * Play the destruction explosion animation.
    * Audio is played by the scene at destruction time, not here
    * (design doc §7).
+   *
+   * @param scale — explosion geometry scale factor (1 = normal; the wave
+   *   time-limit penalty uses 10, AH-0MU7JTG9R002ZWA6).
    */
-  playExplosion(): void {
+  playExplosion(scale = 1): void {
     // Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
     // display-list child has `scene === undefined`; animating it here would
     // dereference undefined. Normal single-run destruction keeps the old
@@ -216,7 +219,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
       this.y,
       this._color,
       this._size,
-      { patterns: resolvePatterns(this.getExplosionPatternName()) },
+      { patterns: resolvePatterns(this.getExplosionPatternName()), scale },
     );
     if (handle) this.explosionHandles.push(handle);
   }

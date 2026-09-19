@@ -637,6 +637,22 @@ describe('spawnExplosionParticles (AC1–AC5)', () => {
     expect(large!.totalCount).toBeGreaterThanOrEqual(small!.totalCount);
   });
 
+  it('AC4: scale multiplies the explosion geometry (10x detonation)', () => {
+    const normal = spawnExplosionParticles(
+      makeStubScene() as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0xff0000, 16, { seed: 3, patterns: ['radial'] },
+    );
+    const scaled = spawnExplosionParticles(
+      makeStubScene() as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0xff0000, 16, { seed: 3, patterns: ['radial'], scale: 10 },
+    );
+    // Radii are proportional to the effective size (10x larger with scale 10).
+    expect(normal!.particles[0].radius).toBeGreaterThan(0);
+    expect(scaled!.particles[0].radius).toBeGreaterThan(normal!.particles[0].radius * 9);
+    // The count scales up too (clamped at the configured maximum).
+    expect(scaled!.totalCount).toBeGreaterThanOrEqual(normal!.totalCount);
+  });
+
   it('AC2: count override exposes tunable configuration', () => {
     const scene = makeStubScene();
     const handle = spawnExplosionParticles(

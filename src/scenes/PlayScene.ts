@@ -65,7 +65,7 @@ import {
 import type { WasdKeysLike } from '../utils/input';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import { loadEnemyConfig } from '../core/enemyConfig';
-import { WaveManager, type EnemySpawn } from '../waves/WaveManager';
+import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 
@@ -103,6 +103,22 @@ export const LEVEL_TRANSITION_SECONDS = 1.5;
  * the ~1.5–2 s window required by AH-0MU7JTEMC006QPSN.
  */
 export const BANNER_DURATION_SECONDS = 1.5;
+
+/**
+ * Seconds a regular wave may run before the time-limit penalty triggers
+ * (per-wave, resets each wave; tunable — default 30 s per
+ * AH-0MU7JTG9R002ZWA6 assumptions).
+ */
+export const WAVE_TIME_LIMIT_SECONDS = 30;
+
+/** Detonation scale factor applied to survivors on wave-timeout (10x). */
+export const WAVE_TIMEOUT_EXPLOSION_SCALE = 10;
+
+/** Wave time-limit bar geometry (top-centre, above the level readout). */
+const WAVE_TIMER_BAR_X = GAME_WIDTH * 0.25;
+const WAVE_TIMER_BAR_Y = 2;
+const WAVE_TIMER_BAR_WIDTH = GAME_WIDTH * 0.5;
+const WAVE_TIMER_BAR_HEIGHT = 6;
 
 /** Rightward formation drift speed (px/s). */
 const FORMATION_DRIFT_SPEED = 28;
@@ -199,6 +215,15 @@ export class PlayScene extends Phaser.Scene {
   /** Seconds left before the current banner hides itself (0 = hidden). */
   private bannerTimer = 0;
 
+  /** Seconds remaining on the active wave's time limit (0 when inactive). */
+  private waveTimer = 0;
+
+  /** Whether the wave time-limit is currently counting down. */
+  private waveTimerActive = false;
+
+  /** Rendered wave time-limit bar (top of the screen). */
+  private waveTimerBar: Phaser.GameObjects.Graphics | null = null;
+
   private dropSpawner: PowerUpSpawner<DropId> | null = null;
   private rng: () => number = Math.random;
 
@@ -264,6 +289,8 @@ export class PlayScene extends Phaser.Scene {
     this.driftDir = 1;
     this.transitionTimer = 0;
     this.bannerTimer = 0;
+    this.waveTimer = 0;
+    this.waveTimerActive = false;
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -308,6 +335,8 @@ export class PlayScene extends Phaser.Scene {
     this.boss = null;
     this.bannerText?.destroy();
     this.bannerText = null;
+    this.waveTimerBar?.destroy();
+    this.waveTimerBar = null;
   }
 
   // ── Frame loop ──────────────────────────────────────────────────
@@ -355,10 +384,14 @@ export class PlayScene extends Phaser.Scene {
     }
 
     this._advanceBullets(dt);
-    if (!transitioning) this._handleCollisions();
+    if (!transitioning) {
+      this._handleCollisions();
+      this._advanceWaveTimer(dt);
+    }
     this._updateInvulnerability(dt);
     this._updateDrops(dt);
     this._refreshHudText();
+    this._drawWaveTimer();
   }
 
   // ── Wave spawning & progression ─────────────────────────────────
@@ -375,6 +408,7 @@ export class PlayScene extends Phaser.Scene {
     }
     this.driftX = 0;
     this.driftDir = 1;
+    this._startWaveTimer();
   }
 
   /** Instantiates one enemy from its spawn descriptor. */
@@ -442,6 +476,9 @@ export class PlayScene extends Phaser.Scene {
   /** Begins the brief pause before the next wave/level spawns. */
   private _startTransition(): void {
     this.transitionTimer = LEVEL_TRANSITION_SECONDS;
+    // The time-limit is paused/hidden while the transition runs; the next
+    // wave restarts a fresh countdown (AH-0MU7JTG9R002ZWA6).
+    this._hideWaveTimer();
     this._updateTransitionBanner();
   }
 
@@ -530,6 +567,8 @@ export class PlayScene extends Phaser.Scene {
     });
     this.add.existing(this.boss);
     this._spawnMinions(1);
+    // No per-wave time limit applies to the boss encounter.
+    this._hideWaveTimer();
   }
 
   /**
@@ -842,6 +881,20 @@ export class PlayScene extends Phaser.Scene {
       playDestructionSound();
       return;
     }
+    this._loseLife();
+  }
+
+  /**
+   * Costs one life using the standard penalty flow (respawn with
+   * invulnerability, or the normal game-over flow at 0 lives). Shield
+   * absorption is NOT applied here — callers opt in via `_hitPlayer`;
+   * the wave time-limit penalty always costs exactly one life
+   * (AH-0MU7JTG9R002ZWA6).
+   *
+   * @param explodeShip — whether to play the ship explosion VFX.
+   */
+  private _loseLife(explodeShip = true): void {
+    if (!this.player) return;
 
     this.hitCount += 1;
     this.gameState.loseLife();
@@ -850,7 +903,7 @@ export class PlayScene extends Phaser.Scene {
     this.effectsRegistry.setLives(this.gameState.lives);
     this.hud?.refresh();
     playDestructionSound();
-    this._spawnPlayerExplosion(this.player.x, this.player.y);
+    if (explodeShip) this._spawnPlayerExplosion(this.player.x, this.player.y);
 
     if (this.gameState.lives <= 0) {
       this._finishRun(false);
@@ -996,6 +1049,105 @@ export class PlayScene extends Phaser.Scene {
     this.enemyBullets = [];
   }
 
+  // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────
+
+  /** Starts the countdown for the active (regular) wave; hidden for the boss. */
+  private _startWaveTimer(): void {
+    if (
+      this.waveManager.bossTriggered ||
+      this.waveManager.bossActive ||
+      this.waveManager.bossDefeated
+    ) {
+      this._hideWaveTimer();
+      return;
+    }
+    this.waveTimer = WAVE_TIME_LIMIT_SECONDS;
+    this.waveTimerActive = true;
+  }
+
+  /** Stops/hides the wave time-limit (transition pause, boss, expiry). */
+  private _hideWaveTimer(): void {
+    this.waveTimerActive = false;
+    this.waveTimer = 0;
+  }
+
+  /** Counts the wave time-limit down; detonates survivors on expiry. */
+  private _advanceWaveTimer(dt: number): void {
+    if (!this.waveTimerActive) return;
+    this.waveTimer = Math.max(0, this.waveTimer - dt);
+    if (this.waveTimer <= 0) this._timeoutWave();
+  }
+
+  /**
+   * Wave time-limit expired. If enemies remain, every survivor detonates
+   * at 10x scale and the run loses exactly one life (running the normal
+   * game-over flow at 0 lives), then the wave advances. If no enemies
+   * remain, nothing happens (AC3).
+   */
+  private _timeoutWave(): void {
+    const survivors = this.spawned.filter((s) => s.entity.alive);
+    if (survivors.length === 0) {
+      // No enemies left to detonate — the penalty does not apply.
+      this._hideWaveTimer();
+      return;
+    }
+    for (const s of survivors) {
+      s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
+    }
+    this._loseLife(false);
+    this._advanceAfterTimeout();
+  }
+
+  /**
+   * Advances the wave/level state machine after a timeout wiped the whole
+   * active wave: replays one destruction per remaining enemy so the
+   * manager emits exactly one clear event, then reacts like any other wipe.
+   */
+  private _advanceAfterTimeout(): void {
+    const wm = this.waveManager;
+    let event: WaveEvent = 'continue';
+    const defeated = wm.enemiesAlive;
+    for (let i = 0; i < defeated; i += 1) event = wm.onEnemyDestroyed();
+    switch (event) {
+      case 'continue':
+        return;
+      case 'waveCleared':
+        this._startTransition();
+        return;
+      case 'levelCleared':
+        this._announceLevel();
+        this._startTransition();
+        return;
+      case 'bossTriggered':
+        this.onBossTriggered();
+        return;
+      case 'gameComplete':
+        return;
+    }
+  }
+
+  /** Redraws the horizontal wave time-limit bar (hidden when inactive). */
+  private _drawWaveTimer(): void {
+    if (!this.waveTimerBar) {
+      this.waveTimerBar = this.add.graphics();
+      this.waveTimerBar.setDepth(400);
+    }
+    const g = this.waveTimerBar;
+    g.clear();
+    if (!this.waveTimerActive) {
+      g.setVisible(false);
+      return;
+    }
+    g.setVisible(true);
+    // Background track.
+    g.fillStyle(0x111111, 0.85);
+    g.fillRect(WAVE_TIMER_BAR_X, WAVE_TIMER_BAR_Y, WAVE_TIMER_BAR_WIDTH, WAVE_TIMER_BAR_HEIGHT);
+    // Depleting fill.
+    const ratio = Math.max(0, Math.min(1, this.waveTimer / WAVE_TIME_LIMIT_SECONDS));
+    g.fillStyle(0x00ffff, 1);
+    g.fillRect(WAVE_TIMER_BAR_X, WAVE_TIMER_BAR_Y, WAVE_TIMER_BAR_WIDTH * ratio, WAVE_TIMER_BAR_HEIGHT);
+  }
+
   // ── HUD & run end ───────────────────────────────────────────────
 
   private _refreshHudText(): void {
@@ -1073,6 +1225,27 @@ export class PlayScene extends Phaser.Scene {
   /** True while a wave/level transition is in progress. */
   isTransitioning(): boolean {
     return this.transitionTimer > 0;
+  }
+
+  /** Whether the wave time-limit is currently counting down. */
+  isWaveTimerActive(): boolean {
+    return this.waveTimerActive;
+  }
+
+  /** Seconds remaining on the wave time-limit (0 when inactive). */
+  getWaveTimerRemaining(): number {
+    return this.waveTimer;
+  }
+
+  /** The rendered wave time-limit bar, or null before the first draw. */
+  getWaveTimerBar(): Phaser.GameObjects.Graphics | null {
+    return this.waveTimerBar;
+  }
+
+  /** Sets the wave time-limit remaining (tuning/test seam). */
+  setWaveTimerRemaining(seconds: number): void {
+    this.waveTimer = Math.max(0, seconds);
+    this.waveTimerActive = this.waveTimer > 0;
   }
 
   /** True while the level/wave announcement banner is on screen. */

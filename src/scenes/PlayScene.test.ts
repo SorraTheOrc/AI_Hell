@@ -8,12 +8,38 @@
  * level transitions, and the game-over flow.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
-import { BOSS_PHASE_SCORES, LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
+import {
+  BOSS_PHASE_SCORES,
+  LEVEL_TRANSITION_SECONDS,
+  PlayScene,
+  WAVE_TIME_LIMIT_SECONDS,
+  WAVE_TIMEOUT_EXPLOSION_SCALE,
+} from './PlayScene';
+
+/**
+ * Records the `scale` option of every `spawnExplosionParticles` call so
+ * the wave-timeout test can assert the 10x detonation scale through the
+ * real VFX module (wrapping, not replacing, its behaviour).
+ */
+const waveVfx = vi.hoisted(() => ({ scales: [] as number[] }));
+
+vi.mock('../vfx/explosionParticles', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../vfx/explosionParticles')>();
+  return {
+    ...actual,
+    spawnExplosionParticles: (
+      ...args: Parameters<typeof actual.spawnExplosionParticles>
+    ) => {
+      waveVfx.scales.push(args[5]?.scale ?? 1);
+      return actual.spawnExplosionParticles(...args);
+    },
+  };
+});
 
 /** Destroys every live enemy via player bullets (deterministic). */
 function killAllEnemies(scene: PlayScene): void {
@@ -331,6 +357,77 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
     expect(scene.isTransitioning()).toBe(false);
     expect(scene.getAliveCount()).toBeGreaterThan(0);
+  });
+
+  // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ───────────────────────
+
+  it('AH-0MU7JTG9R002ZWA6 AC1 — the timer bar runs at level start and depletes', async () => {
+    const scene = await bootPlay();
+
+    // The countdown starts at the full limit (some slack for the Phaser
+    // loop draining a few frames during the boot delay).
+    expect(scene.isWaveTimerActive()).toBe(true);
+    expect(scene.getWaveTimerRemaining()).toBeGreaterThan(WAVE_TIME_LIMIT_SECONDS - 2);
+    expect(scene.getWaveTimerBar()?.visible).toBe(true);
+
+    scene.setWaveTimerRemaining(1.0);
+    scene.tick(0.4);
+    expect(scene.getWaveTimerRemaining()).toBeGreaterThan(0);
+    expect(scene.getWaveTimerRemaining()).toBeLessThanOrEqual(0.6);
+
+    scene.tick(0.7);
+    expect(scene.getWaveTimerRemaining()).toBe(0);
+  });
+
+  it('AH-0MU7JTG9R002ZWA6 AC2/AC4 — expiry detonates survivors at 10x, costs one life, and advances the wave', async () => {
+    const scene = await bootPlay();
+    waveVfx.scales.length = 0;
+    const livesBefore = scene.getGameState().lives;
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    // All survivors detonated at 10x scale.
+    expect(scene.getAliveCount()).toBe(0);
+    expect(waveVfx.scales.some((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE)).toBe(true);
+
+    // Exactly one life lost and the wave advanced.
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    expect(scene.getWaveManager().waveNumber).toBe(2);
+  });
+
+  it('AH-0MU7JTG9R002ZWA6 AC3 — expiry with no enemies remaining costs no life', async () => {
+    const scene = await bootPlay();
+    const livesBefore = scene.getGameState().lives;
+
+    // Remove every enemy without clearing the wave (behavioural seam).
+    for (const e of scene.getEnemies()) e.destroySelf();
+    expect(scene.getAliveCount()).toBe(0);
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(scene.getAliveCount()).toBe(0);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(scene.isWaveTimerActive()).toBe(false);
+  });
+
+  it('AH-0MU7JTG9R002ZWA6 AC4 — the timer resets per wave and is hidden during transitions', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+
+    expect(scene.isWaveTimerActive()).toBe(true);
+
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(scene.isWaveTimerActive()).toBe(false);
+
+    finishTransition(scene);
+    expect(wm.waveNumber).toBe(2);
+    expect(scene.isWaveTimerActive()).toBe(true);
+    // The fresh countdown starts at the full limit.
+    expect(scene.getWaveTimerRemaining()).toBeGreaterThan(WAVE_TIME_LIMIT_SECONDS - 2);
   });
 
   // ── Game over flow ─────────────────────────────────────────────

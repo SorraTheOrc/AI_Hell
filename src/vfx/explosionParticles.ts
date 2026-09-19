@@ -458,6 +458,13 @@ export interface SpawnExplosionOptions {
   /** PRNG seed override (default `Date.now()`-derived). */
   seed?: number;
   /**
+   * Scale factor applied to the explosion geometry (particle radius,
+   * speed, and count). Defaults to 1. A value of e.g. 10 produces the
+   * "10x-scale" detonation used by the wave time-limit penalty
+   * (AH-0MU7JTG9R002ZWA6).
+   */
+  scale?: number;
+  /**
    * Optional Graphics registry (e.g. `playerExplosions`) — the handle's
    * Graphics is pushed here on spawn and spliced on completion, so a
    * SHUTDOWN handler can destroy leftovers exactly like the existing
@@ -528,25 +535,27 @@ export function spawnExplosionParticles(
   if (!scene) return null;
 
   const patterns = opts.patterns ?? ['radial'];
-  const totalCount = opts.count ?? scaledCount(size);
+  const scale = opts.scale ?? 1;
+  const effSize = size * scale;
+  const totalCount = opts.count ?? scaledCount(effSize);
   const lifespan = opts.lifespan ?? EXPLOSION_LIFESPAN_MS;
   const rng = createRng(opts.seed ?? Date.now());
 
   // Split the count across patterns (deterministic remainder).
   const counts = totalCount > 0 ? combinePatterns(patterns, totalCount) : [];
 
-  // Generate particles for each pattern group.
+  // Generate particles for each pattern group (geometry scaled by `scale`).
   const particles: Particle[] = [];
   for (let i = 0; i < patterns.length; i++) {
     const count = counts[i];
     if (count <= 0) continue;
     const pattern = patterns[i];
     if (pattern === 'radial') {
-      particles.push(...generateRadialBurst(count, 0, 0, size, baseColor, rng));
+      particles.push(...generateRadialBurst(count, 0, 0, effSize, baseColor, rng));
     } else if (pattern === 'ring') {
-      particles.push(...generateRingBurst(count, 0, 0, size, baseColor, rng));
+      particles.push(...generateRingBurst(count, 0, 0, effSize, baseColor, rng));
     } else {
-      particles.push(...generateImplosionBurst(count, 0, 0, size, baseColor, rng));
+      particles.push(...generateImplosionBurst(count, 0, 0, effSize, baseColor, rng));
     }
   }
 
