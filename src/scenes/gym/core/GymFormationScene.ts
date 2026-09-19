@@ -112,6 +112,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
     spacingY: number,
   ): void;
   /**
+   * Optional: advances a non-formation (roaming) enemy's own motion for
+   * this frame (e.g. Asteroid straight-line drift + four-edge wrap +
+   * continuous rotation). Formation enemies omit it — the base scene
+   * positions them through `applyFormationPosition`. The scene calls this
+   * BEFORE `applyFormationPosition`; roaming entities' formation method is
+   * expected to be a no-op.
+   */
+  updatePosition?(dt: number): void;
+  /**
    * Optional: receives the player's live world position so aimed fire
    * (Scout shots, Diver dives, Swarm bursts, Phaser patterns) targets the
    * player each frame instead of the fixed bottom-centre stand-in.
@@ -268,6 +277,13 @@ export interface EnemyFormationConfig<
   ): TEntity;
   /** Collects any bullets the entity fires this frame (empty if none). */
   collectBullets(entity: TEntity, now: number): TBullet[];
+  /**
+   * Optional: called after an entity is destroyed (player bullet, body
+   * ram, or the EXPLODE button) once its `destroySelf()` has run. Lets a
+   * scene spawn replacement/dynamic entities into the live formation list
+   * (e.g. Asteroid split children, GDD §4.1 — E6 Asteroid).
+   */
+  onEntityDestroyed?(entity: TEntity): void;
 }
 
 /** Monospace neon HUD button style (matches the existing gym HUD). */
@@ -516,6 +532,8 @@ export class GymFormationScene<
     } else {
       playDestructionSound();
     }
+    // Dynamic-replacement seam (Asteroid split children, GDD §4.1).
+    this.config.onEntityDestroyed?.(victim);
     this.statusText.setText(
       `exploded: ${victim.offset.row}:${victim.offset.col} — ${this.config.statusLabel}: ${this.aliveCount}`,
     );
@@ -1064,6 +1082,10 @@ export class GymFormationScene<
 
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
+      // Roaming enemies (e.g. Asteroid) advance their own straight-line
+      // motion + wrap + rotation; a no-op for formation enemies.
+      entity.updatePosition?.(dt);
+
       entity.applyFormationPosition(
         this.formationBaseX,
         this.formationBaseY,
@@ -1235,6 +1257,8 @@ export class GymFormationScene<
             } else {
               playDestructionSound();
             }
+            // Dynamic-replacement seam (Asteroid split children).
+            this.config.onEntityDestroyed?.(entity);
           }
           pb.destroy();
           spent = true;
@@ -1323,6 +1347,8 @@ export class GymFormationScene<
           if (entity.playDestructionAudio) {
             entity.playDestructionAudio();
           }
+          // Dynamic-replacement seam (Asteroid split children).
+          this.config.onEntityDestroyed?.(entity);
           this._hitPlayer();
           break;
         }

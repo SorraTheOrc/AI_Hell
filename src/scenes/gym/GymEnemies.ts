@@ -34,6 +34,7 @@ import {
   buildSpawnIntervalSlider,
 } from '../../utils/gymPowerUpControl';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
+import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
 
@@ -142,6 +143,32 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>
       createEnemyFromConfig(scene, cfg, x, y, offset),
     collectBullets,
+    // Asteroid split seam (GDD §4.1 — E6 Asteroid): a destroyed large/medium
+    // rock spawns exactly two smaller children that join the live formation
+    // list, so the EXPLODE button and player bullets both cascade splits and
+    // the wipe→respawn cycle only fires once the whole chain is cleared.
+    onEntityDestroyed: (entity: EnemyEntity): void => {
+      if (!(entity instanceof Asteroid)) return;
+      const parent = entity as Asteroid;
+      const children = parent.getSplitChildren(parent.x, parent.y);
+      if (!children) return; // small tier — clean destruction
+      const scene = parent.scene as Phaser.Scene;
+      if (!scene) return;
+      const live = (scene as unknown as { entities: EnemyEntity[] }).entities;
+      for (const spec of children) {
+        const child = new Asteroid(scene, {
+          x: spec.x,
+          y: spec.y,
+          formationOffset: { row: 0, col: 0 },
+          sizeTier: spec.sizeTier,
+          vx: spec.vx,
+          vy: spec.vy,
+          rotationSpeed: spec.rotationSpeed,
+        });
+        scene.add.existing(child);
+        live.push(child);
+      }
+    },
   };
 }
 

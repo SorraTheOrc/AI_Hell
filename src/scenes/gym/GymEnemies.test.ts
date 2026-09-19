@@ -16,6 +16,7 @@ import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/e
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from './GymEnemies';
+import { Asteroid } from '../../entities/Asteroid';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
@@ -124,6 +125,18 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.formationX).toBeGreaterThanOrEqual(cfg.startX - 1);
     expect(scene.formationX).toBeLessThanOrEqual(cfg.startX + cfg.driftSpeed * 0.3 + 2);
     expect(scene.formationY).toBeCloseTo(cfg.startY, 0);
+
+    // The roaming Asteroid is a non-formation enemy: its position is driven
+    // by its own constant-velocity updatePosition (straight-line drift +
+    // wrap + rotation), not by a formation slot. It still spawns near its
+    // configured start with a small boot-delay drift budget.
+    if (key === 'asteroid') {
+      const e = scene.formationEntities[0];
+      expect(Math.abs(e.x - cfg.startX)).toBeLessThan(40);
+      expect(Math.abs(e.y - cfg.startY)).toBeLessThan(40);
+      return;
+    }
+
     // For non-orbital/swarm kinds, each entity sits on its slot (Scout wiggles ±2px).
     // Phaser orbits around the base (spacing unused) and Swarm weaves (±30% spacing),
     // so only assert slot fidelity for v/diver/rect/single.
@@ -864,5 +877,154 @@ describe('GymEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () 
     expect(document.getElementById('enemy-gym-panel')).not.toBeNull();
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
     expect(document.getElementById('enemy-gym-panel')).toBeNull();
+  });
+});
+
+describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  async function bootAsteroidGym(): Promise<GymEnemies> {
+    const key = 'asteroid';
+    class Wrapper extends GymEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: key });
+      }
+    }
+    Object.defineProperty(Wrapper, 'name', { value: 'Wrapper_asteroid_gym_test' });
+    booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
+    return booted.scene as unknown as GymEnemies;
+  }
+
+  function liveAsteroids(scene: GymEnemies): Asteroid[] {
+    return scene.formationEntities.filter(
+      (e): e is Asteroid => e instanceof Asteroid && e.alive,
+    );
+  }
+
+  it('asteroid is selectable in the gym — spawns as a large tier enemy', async () => {
+    const scene = await bootAsteroidGym();
+
+    const asteroids = liveAsteroids(scene);
+    expect(asteroids.length).toBe(1);
+    expect(asteroids[0].getSizeTier()).toBe('large');
+    expect(asteroids[0].alive).toBe(true);
+    expect(scene.activeEnemyKey).toBe('asteroid');
+  });
+
+  it('asteroid renders correctly — procedural neon grey body visible', async () => {
+    const scene = await bootAsteroidGym();
+    const asteroid = liveAsteroids(scene)[0];
+
+    // The body is drawn (a stroked path) and tinted with the grey palette.
+    expect(bodyStrokeColor(asteroid as unknown as Phaser.GameObjects.GameObject)).toBe(0x888888);
+  });
+
+  it('asteroids rotate and drift independently in the gym (no formation drift)', async () => {
+    const scene = await bootAsteroidGym();
+    const asteroid = liveAsteroids(scene)[0];
+    const startX = asteroid.x;
+    const startY = asteroid.y;
+    const vx = asteroid.vx;
+    const vy = asteroid.vy;
+    const rotBefore = asteroid.rotation;
+
+    scene.tick(0.5);
+
+    expect(asteroid.alive).toBe(true);
+    // Independent straight-line constant velocity — NOT formation drift
+    // (the asteroid config's driftSpeed is 0, so baseX never moves).
+    expect(asteroid.x - startX).toBeCloseTo(vx * 0.5, 4);
+    expect(asteroid.y - startY).toBeCloseTo(vy * 0.5, 4);
+    // Continuous rotation is applied.
+    expect(asteroid.rotation - rotBefore).toBeCloseTo(asteroid.rotationSpeed * 0.5, 3);
+  });
+
+  it('EXPLODE on the large asteroid spawns exactly 2 medium children (split chain)', async () => {
+    const scene = await bootAsteroidGym();
+    expect(scene.aliveCount).toBe(1);
+
+    // Explode the (only) large asteroid.
+    scene.explodeRandom();
+    let asteroids = liveAsteroids(scene);
+    expect(scene.aliveCount).toBe(2);
+    expect(asteroids.length).toBe(2);
+    expect(asteroids.every((a) => a.getSizeTier() === 'medium')).toBe(true);
+
+    // Child directions differ from each other by >= pi/3.
+    const a1 = Math.atan2(asteroids[0].vy, asteroids[0].vx);
+    const a2 = Math.atan2(asteroids[1].vy, asteroids[1].vx);
+    const delta = Math.abs(a1 - a2);
+    const wrapped = Math.min(delta, Math.PI * 2 - delta);
+    expect(wrapped).toBeGreaterThanOrEqual(Math.PI / 3 - 0.01);
+
+    // Explode until the whole chain is cleared (2 mediums -> 4 smalls) —
+    // the wipe only starts once EVERY split child is destroyed.
+    let guard = 0;
+    while (scene.aliveCount > 0 && guard++ < 20) {
+      scene.explodeRandom();
+    }
+    expect(scene.aliveCount).toBe(0);
+    expect(guard).toBeLessThanOrEqual(7); // 1 large + 2 medium + 4 small = 7 detonations
+    // Wipe -> respawn countdown starts on the next tick, then 3 s later a
+    // fresh large asteroid returns (mirrors the core wipe idiom above).
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    scene.tick(3.5);
+    const respawned = liveAsteroids(scene);
+    expect(respawned.length).toBe(1);
+    expect(respawned[0].getSizeTier()).toBe('large');
+  });
+
+  it('a player bullet destroying the asteroid spawns split children', async () => {
+    const scene = await bootAsteroidGym();
+    const asteroid = liveAsteroids(scene)[0];
+
+    const pb = scene.spawnPlayerBullet(asteroid.x, asteroid.y, 0, 0);
+    scene.tick(0.05);
+
+    // Bullet consumed, parent destroyed, 2 medium children take its place.
+    expect(asteroid.alive).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(pb);
+    const children = liveAsteroids(scene);
+    expect(children.length).toBe(2);
+    expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
+
+    // Split again via bullet on one medium -> 2 smalls.
+    const medium = children[0];
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.05);
+    const afterMedium = liveAsteroids(scene);
+    expect(
+      afterMedium.filter((a) => a.getSizeTier() === 'small').length,
+    ).toBe(2);
+    expect(
+      afterMedium.filter((a) => a.getSizeTier() === 'medium').length,
+    ).toBe(1);
+  });
+
+  it('asteroids never fire in the gym even when SHOOT is toggled on', async () => {
+    const scene = await bootAsteroidGym();
+    const before = scene.activeBullets.length;
+
+    scene.toggleShooting(); // SHOOT: ON
+    for (let i = 0; i < 5; i++) scene.tick(0.1);
+
+    // No enemy bullets ever produced; the toggle cannot arm asteroids.
+    expect(scene.activeBullets.length).toBe(before);
+    for (const asteroid of liveAsteroids(scene)) {
+      expect(asteroid.shootEnabled).toBe(false);
+    }
   });
 });
