@@ -115,7 +115,7 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Level | Theme | Enemy Count | Enemy-Fired Bullets | Description |
 |-------|-------|-------------|---------------------|-------------|
-| 1 | Entry | Moderate | No | Introduction to formation waves; simple movement patterns |
+| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus a roaming, self-splitting Asteroid group in Wave 1 — simple movement patterns, no enemy bullets |
 | 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
 | 3 | The Core | Large | No | Dense formations; maximum positional threat |
 | 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
@@ -164,6 +164,27 @@ The following rules govern how enemy entities interact with each other and with 
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: High (positional threat in dense formations).
 - **Fires**: No (Levels 1–3); yes, coordinated burst (Level 4).
+
+#### E6 — Asteroid
+- **Behavior**: Free-roaming rock that drifts in a **straight line at constant
+  speed**, wrapping around all four screen edges (matching the player ship's
+  wrap). Rotates continuously; rotation speed is size-scaled (small fastest).
+  **Never fires bullets**, at any level — `shootEnabled` has no effect.
+- **Appearance**: Jagged procedural neon polygon (grey), in three size tiers:
+  large (28 px), medium (18 px), small (12 px). Speeds: large ≈ 18 px/s
+  (Tank-like), medium 27 px/s, small 36 px/s — slow overall.
+- **Health**: 1 HP — destroyed by a single player bullet.
+- **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
+  children at its position; a `medium` spawns two `small`; a `small` destroys
+  cleanly. Children move in directions different from the parent and from each
+  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
+  and every spawned child counts toward the wave's alive target (dynamic
+  spawn registration in `WaveManager`).
+- **Threat level**: Low–Medium (drifting, escalating hazard; no bullets).
+- **Collision**: passes through other enemies (GDD §2.6 — no enemy–enemy
+  collision); colliding with the player is destructive to the player (GDD §2.3
+  enemy-body → lose-one-life model).
+- **Fires**: Never.
 
 ### 4.2 Wave / Formation Structures
 
@@ -231,6 +252,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | Destroy E3 Tank | 300 |
 | Destroy E4 Phaser | 250 |
 | Destroy E5 Swarm | 150 |
+| Destroy E6 Asteroid (small only) | 50 (large/medium award none) |
 | Destroy Boss Phase 1 | 1000 |
 | Destroy Boss Phase 2 | 2000 |
 | Destroy Boss Phase 3 | 3000 |

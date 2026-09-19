@@ -20,6 +20,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
+| E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | Boss | The Central AI | §4.3 | 4 attack phases, multi-hit health (4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
 All enemies are **1 HP** (single bullet destroys them, except the Boss which is
@@ -27,6 +28,51 @@ multi-hit) and **never collide with each other** (GDD §2.6) — no collision
 system is installed in the gym scenes.
 
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN)
+
+### 1.2 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
+
+The Asteroid is the first **non-formation** enemy: it does not use the
+formation-drift model at all. It drifts in a straight line at constant
+velocity, wraps around all four screen edges (matching the player ship's
+wrap), rotates continuously, and **never fires** — `shootEnabled` is a
+no-op setter and the effective shot pattern is always `none`.
+
+**Three size tiers** (`src/entities/Asteroid.ts`):
+
+| Tier | Half-size | Speed | Rotation | Colour |
+|------|-----------|-------|----------|--------|
+| large | 28 px | 18 px/s (≈ Tank) | 0.5 rad/s | 0x888888 |
+| medium | 18 px | 27 px/s | 0.9 rad/s | 0xaaaa88 |
+| small | 12 px | 36 px/s | 1.4 rad/s | 0xccccaa |
+
+**Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
+children at its position; a `medium` spawns two `small`; a `small` destroys
+cleanly with no children (the chain from one large is 1 + 2 + 4 = **7**
+destroyed enemies). `getSplitChildren()` returns the child specs (tier +
+position + velocity + rotation); the two children always move in directions
+**different from the parent and from each other** (≥ π/3 separation).
+
+**Wave-aware splitting**: dynamically spawned children MUST be registered with
+the `WaveManager` — the scene calls `registerDynamicSpawn(n)` when spawning
+children and they count toward `enemiesAlive`, so the wave neither clears
+early nor stalls. See `PlayScene._splitAsteroid`.
+
+**Scoring** (GDD §4.5): large and medium asteroids award **no** points; small
+asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
+`PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
+always.
+
+**Wave placement**: an asteroid group (`formationKind: 'single'`, count 1)
+joins Level 1 Wave 1 in `src/waves/Formations.ts` alongside the Scout
+V-formation. The asteroid config defaults to the large tier; smaller tiers
+appear only as split children.
+
+**Gym support**: the asteroid is selectable in the enemy gym (auto-discovery
+via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
+optional `updatePosition(dt)` on `FormationSceneEntity` (roamer motion) and
+optional `onEntityDestroyed(entity)` on `EnemyFormationConfig` (dynamic split
+children) — so EXPLODE, player bullets and body-rams all cascade splits and
+the wipe→respawn cycle runs only once the whole chain is cleared.
 
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
 (`src/core/enemyConfig.ts`) — a JSON-serializable record of formation,
