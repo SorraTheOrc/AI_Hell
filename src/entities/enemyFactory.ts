@@ -8,6 +8,7 @@
 
 import Phaser from 'phaser';
 
+import { Asteroid } from './Asteroid';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
@@ -18,7 +19,7 @@ import type { EnemyConfig } from '../core/enemyConfig';
 import { SWARM_CLUSTER_COUNT } from './Swarm';
 import { SWARM_CLUSTER_ROW_STRIDE } from '../utils/formations';
 
-export type EnemyEntity = Scout | Diver | Tank | PhaserEntity | Swarm;
+export type EnemyEntity = Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid;
 
 /** Build one entity of the right type from the config key / formationKind. */
 export function createEnemyFromConfig(
@@ -40,6 +41,8 @@ export function createEnemyFromConfig(
   };
 
   switch (config.key) {
+    case 'asteroid':
+      return new Asteroid(scene, { x, y, formationOffset: offset, ...opts });
     case 'diver':
       return new Diver(scene, { x, y, formationOffset: offset, ...opts });
     case 'tank':

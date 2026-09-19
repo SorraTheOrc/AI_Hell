@@ -22,7 +22,7 @@ import {
   deleteEnemyConfig,
 } from './enemyConfig';
 
-const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss'];
+const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid'];
 
 function clearEnemyStorage(): void {
   // Remove only namespaced keys to avoid wiping ai-hell-ship-config in shared tests;
@@ -63,6 +63,20 @@ describe('EnemyConfig schema', () => {
     expect(DEFAULT_ENEMY_CONFIGS.diver.burstCount).toBe(4);
     expect(DEFAULT_ENEMY_CONFIGS.tank.burstCount).toBe(10);
     expect(DEFAULT_ENEMY_CONFIGS.swarm.bulletColor).toBe(0x00ccff);
+  });
+
+  it('asteroid seed config is a non-firing single roamer with large-tier defaults', () => {
+    const asteroid = DEFAULT_ENEMY_CONFIGS.asteroid;
+    expect(asteroid).toBeDefined();
+    expect(asteroid.displayName).toBe('Asteroid');
+    // Non-formation roamer: single count, no formation drift.
+    expect(asteroid.formationKind).toBe('single');
+    expect(asteroid.count).toBe(1);
+    // Large tier is the config default.
+    expect(asteroid.size).toBe(28);
+    expect(asteroid.color).toBe(0x888888);
+    // Asteroids never fire.
+    expect(asteroid.shotPattern).toBe('none');
   });
 
   it('every seed supplies a shotProbability fraction (AC1: swarm 0.25, others 1.0)', () => {

@@ -237,6 +237,33 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     burstCount: 8,
     shotProbability: 1.0,
   },
+  asteroid: {
+    key: 'asteroid',
+    displayName: 'Asteroid',
+    // Non-formation roamer: a single free-floating rock that drifts in a
+    // straight line, wraps at screen edges, and splits when destroyed
+    // (see src/entities/Asteroid.ts). 'single' keeps the gym index and
+    // spawn planner happy; the entity ignores formation movement entirely.
+    formationKind: 'single',
+    count: 1,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 0,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.3,
+    // Large tier is the config default (28 px); medium/small tiers are
+    // produced by split children at runtime.
+    size: 28,
+    color: 0x888888,
+    bulletColor: 0x888888,
+    bulletSize: 3,
+    // Asteroids never fire (GDD §4.1 — E6 Asteroid).
+    shotPattern: 'none',
+    fireInterval: 1000,
+    bulletSpeed: 100,
+    burstCount: 1,
+    shotProbability: 1.0,
+  },
 };
 
 export const DEFAULT_ENEMY_KEYS = Object.keys(DEFAULT_ENEMY_CONFIGS);
