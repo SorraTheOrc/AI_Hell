@@ -28,7 +28,7 @@ import {
   SHIP_COLOR,
   SHIP_SIZE,
 } from '../core/constants';
-import { BOSS_LEVEL, GameState } from '../core/GameState';
+import { GameState } from '../core/GameState';
 import {
   DEFAULT_RULES,
   loadRules,
@@ -242,6 +242,8 @@ export class PlayScene extends Phaser.Scene {
     this.gameState.startGame();
     this.effectsRegistry.setLives(this.gameState.lives);
     this.waveManager.beginGame();
+    // The campaign labels need the started WaveManager (level/wave counts).
+    this._refreshHudText();
     this.spawnWave();
     this._announceLevel();
 
@@ -275,9 +277,10 @@ export class PlayScene extends Phaser.Scene {
       .setOrigin(1, 0);
 
     // Level indicator sits top-centre so it never overlaps the HUD's
-    // top-left lives counter / effect rows.
+    // top-left lives counter / effect rows. The text is filled in by
+    // `_refreshHudText()` once the WaveManager has started (below).
     this.levelText = this.add
-      .text(GAME_WIDTH / 2, 10, 'Level 1', {
+      .text(GAME_WIDTH / 2, 10, '', {
         fontFamily: 'monospace',
         fontSize: '14px',
         color: HUD_TEXT_COLOR,
@@ -438,22 +441,26 @@ export class PlayScene extends Phaser.Scene {
     this._updateTransitionBanner();
   }
 
+  /**
+   * The shared level/wave progress label used by both the persistent HUD
+   * readout and the transition banner, e.g. `Level 1 of 5, Wave 1 of 2`.
+   * During the boss encounter it collapses to just `Boss` (no numeric
+   * level/wave), per AH-0MU7JTEY3004EXR2.
+   */
+  private _progressLabel(): string {
+    const wm = this.waveManager;
+    if (wm.bossTriggered || wm.bossActive || wm.bossDefeated) return 'Boss';
+    return `Level ${wm.level} of ${wm.levelCount}, Wave ${wm.waveNumber} of ${wm.waveCount}`;
+  }
+
   /** Shows/updates the centred transition banner. */
   private _updateTransitionBanner(): void {
-    const label =
-      this.waveManager.bossTriggered || this.waveManager.bossActive
-        ? '⚠ BOSS ⚠'
-        : `Level ${this.waveManager.level}`;
-    this._showBanner(label);
+    this._showBanner(this._progressLabel());
   }
 
   /** Shows the level announcement banner at level start. */
   private _announceLevel(): void {
-    const label =
-      this.waveManager.level === BOSS_LEVEL
-        ? '⚠ BOSS ⚠'
-        : `Level ${this.waveManager.level}`;
-    this._showBanner(label);
+    this._showBanner(this._progressLabel());
   }
 
   /**
@@ -989,11 +996,7 @@ export class PlayScene extends Phaser.Scene {
 
   private _refreshHudText(): void {
     this.scoreText?.setText(`Score: ${this.gameState.score}`);
-    this.levelText?.setText(
-      this.waveManager.level >= BOSS_LEVEL
-        ? 'BOSS'
-        : `Level ${this.waveManager.level}`,
-    );
+    this.levelText?.setText(this._progressLabel());
   }
 
   /** Transitions to GameOverScene with the final score. */
@@ -1071,6 +1074,14 @@ export class PlayScene extends Phaser.Scene {
   /** True while the level/wave announcement banner is on screen. */
   isBannerVisible(): boolean {
     return this.bannerText?.visible ?? false;
+  }
+
+  /**
+   * The persistent level/wave progress readout text, e.g.
+   * `Level 1 of 5, Wave 1 of 2` (or `Boss` during the boss encounter).
+   */
+  getLevelText(): string {
+    return this.levelText?.text ?? '';
   }
 
   /** Current banner text (empty string when no banner has been shown yet). */

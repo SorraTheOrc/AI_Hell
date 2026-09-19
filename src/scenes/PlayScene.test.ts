@@ -236,6 +236,39 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.isBannerVisible()).toBe(false);
   });
 
+  // ── Level/wave progress labels (AH-0MU7JTEY3004EXR2) ───────────
+
+  it('AH-0MU7JTEY3004EXR2 AC1/AC2 — level start shows the same progress label in the HUD and banner', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const expected = `Level 1 of 5, Wave 1 of ${wm.waveCount}`;
+
+    expect(scene.getLevelText()).toBe(expected);
+    expect(scene.getBannerText()).toBe(expected);
+  });
+
+  it('AH-0MU7JTEY3004EXR2 AC4 — the label advances on a wave change', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+
+    killAllEnemies(scene);
+    finishTransition(scene);
+
+    const expected = `Level 1 of 5, Wave 2 of ${wm.waveCount}`;
+    expect(wm.waveNumber).toBe(2);
+    expect(scene.getLevelText()).toBe(expected);
+    expect(scene.getBannerText()).toBe(expected);
+  });
+
+  it('AH-0MU7JTEY3004EXR2 AC3 — the boss encounter shows "Boss" instead of a numeric level', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+
+    expect(scene.getWaveManager().bossActive).toBe(true);
+    expect(scene.getLevelText()).toBe('Boss');
+    expect(scene.getBannerText()).toBe('Boss');
+  });
+
   // ── Game over flow ─────────────────────────────────────────────
 
   it('game over — losing the last life transitions to GameOverScene', async () => {

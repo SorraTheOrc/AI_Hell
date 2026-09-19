@@ -151,6 +151,7 @@ describe('WaveManager — lifecycle & spawn planning (AH-0MU72ZK3P006CH9G)', () 
     expect(wm.levelName).toBe('Entry');
     expect(wm.waveNumber).toBe(1);
     expect(wm.waveCount).toBe(LEVELS[0].waves.length);
+    expect(wm.levelCount).toBe(LEVELS.length);
     expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
     expect(wm.enemiesAlive).toBeGreaterThan(0);
   });

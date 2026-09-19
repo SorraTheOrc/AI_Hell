@@ -151,6 +151,11 @@ export class WaveManager {
     return this.currentLevel()?.waves.length ?? 0;
   }
 
+  /** Total number of regular levels in the campaign (excludes the boss). */
+  get levelCount(): number {
+    return this.levels.length;
+  }
+
   /** Whether the active level is the final (pre-boss) level. */
   get isFinalLevel(): boolean {
     return this._levelIndex >= this.levels.length - 1;
