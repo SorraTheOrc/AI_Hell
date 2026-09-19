@@ -329,19 +329,23 @@ export class PlayScene extends Phaser.Scene {
     // timer, even while enemies remain alive (AH-0MU7JTEMC006QPSN).
     this._advanceBanner(dt);
 
-    // Level/wave transition pause: no spawns or collisions until done.
-    if (this.transitionTimer > 0) {
+    // Level/wave transition pause. Enemy spawning, enemy movement/fire and
+    // enemy-based collisions are suspended, but the player stays in full
+    // control (input, physics and auto-fire) and cannot be hit
+    // (AH-0MU7JTF9W008B8HW).
+    const transitioning = this.transitionTimer > 0;
+    if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
       this._updateTransitionBanner();
       if (this.transitionTimer === 0) this._onTransitionComplete();
-      this._refreshHudText();
-      return;
+    } else {
+      this._moveEnemies(dt);
+      this._collectEnemyFire();
+      this._updateBoss(dt);
     }
 
-    this._moveEnemies(dt);
-    this._collectEnemyFire();
-    this._updateBoss(dt);
-
+    // Player input, thrust and auto-fire run in every phase, including the
+    // wave/level transition pause.
     if (this.player) {
       this.player.tickWeaponTimers(dt * 1000);
       const input = this._readPlayerInput();
@@ -351,7 +355,7 @@ export class PlayScene extends Phaser.Scene {
     }
 
     this._advanceBullets(dt);
-    this._handleCollisions();
+    if (!transitioning) this._handleCollisions();
     this._updateInvulnerability(dt);
     this._updateDrops(dt);
     this._refreshHudText();

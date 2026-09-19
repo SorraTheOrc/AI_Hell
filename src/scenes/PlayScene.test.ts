@@ -269,6 +269,70 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getBannerText()).toBe('Boss');
   });
 
+  // ── Player control during transitions (AH-0MU7JTF9W008B8HW) ────
+
+  it('AH-0MU7JTF9W008B8HW AC1/AC5 — the ship moves during a transition pause', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const cursors = (scene as unknown as {
+      cursors: { right: { isDown: boolean } };
+    }).cursors;
+
+    // Wipe the wave to enter the transition pause.
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+
+    const xBefore = player.x;
+    cursors.right.isDown = true;
+    scene.tick(0.1);
+    cursors.right.isDown = false;
+
+    // Still paused (0.1 s < 1.5 s transition), yet the input was honoured.
+    expect(scene.isTransitioning()).toBe(true);
+    expect(player.x).toBeGreaterThan(xBefore);
+  });
+
+  it('AH-0MU7JTF9W008B8HW AC2 — the ship keeps auto-firing during the pause', async () => {
+    const scene = await bootPlay();
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // Advance well past the cannon's fire interval while still paused.
+    scene.tick(0.5);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MU7JTF9W008B8HW AC3 — no life is lost during the pause', async () => {
+    const scene = await bootPlay();
+    const gs = scene.getGameState();
+    const player = scene.getPlayer()!;
+
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // Park an enemy bullet on the ship: collisions are suspended during the
+    // transition, so the run must not lose a life.
+    scene.spawnEnemyBullet(player.x, player.y, 0, 0);
+    const livesBefore = gs.lives;
+    scene.tick(0.2);
+
+    expect(scene.isTransitioning()).toBe(true);
+    expect(gs.lives).toBe(livesBefore);
+    expect(scene.getHitCount()).toBe(0);
+  });
+
+  it('AH-0MU7JTF9W008B8HW AC4 — the next wave spawns and gameplay resumes after the pause', async () => {
+    const scene = await bootPlay();
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+
+    finishTransition(scene);
+
+    expect(scene.isTransitioning()).toBe(false);
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+  });
+
   // ── Game over flow ─────────────────────────────────────────────
 
   it('game over — losing the last life transitions to GameOverScene', async () => {
