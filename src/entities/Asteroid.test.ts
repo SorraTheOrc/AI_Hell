@@ -43,19 +43,19 @@ describe('Asteroid tier constants and data', () => {
     expect(ASTEROID_TIER_DATA.small).toBeDefined();
   });
 
-  it('large tier has the correct size (28 px half-size)', () => {
-    expect(ASTEROID_LARGE_SIZE).toBe(28);
-    expect(ASTEROID_TIER_DATA.large.size).toBe(28);
+  it('large tier has the correct size (42 px half-size)', () => {
+    expect(ASTEROID_LARGE_SIZE).toBe(42);
+    expect(ASTEROID_TIER_DATA.large.size).toBe(42);
   });
 
-  it('medium tier has the correct size (18 px half-size)', () => {
-    expect(ASTEROID_MEDIUM_SIZE).toBe(18);
-    expect(ASTEROID_TIER_DATA.medium.size).toBe(18);
+  it('medium tier has the correct size (27 px half-size)', () => {
+    expect(ASTEROID_MEDIUM_SIZE).toBe(27);
+    expect(ASTEROID_TIER_DATA.medium.size).toBe(27);
   });
 
-  it('small tier has the correct size (12 px half-size)', () => {
-    expect(ASTEROID_SMALL_SIZE).toBe(12);
-    expect(ASTEROID_TIER_DATA.small.size).toBe(12);
+  it('small tier has the correct size (18 px half-size)', () => {
+    expect(ASTEROID_SMALL_SIZE).toBe(18);
+    expect(ASTEROID_TIER_DATA.small.size).toBe(18);
   });
 
   it('speeds are size-scaled: large ~18 px/s, medium faster, small fastest', () => {

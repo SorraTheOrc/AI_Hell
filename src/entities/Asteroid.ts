@@ -40,7 +40,7 @@ export const ASTEROID_COLOR = 0x888888;
 // ── Size tier constants ────────────────────────────────────────────
 
 /** Large asteroid half-size in px. */
-export const ASTEROID_LARGE_SIZE = 28;
+export const ASTEROID_LARGE_SIZE = 42;
 /** Large asteroid speed in px/s. */
 export const ASTEROID_LARGE_SPEED = 18;
 /** Large asteroid rotation speed in rad/s. */
@@ -49,7 +49,7 @@ export const ASTEROID_LARGE_ROTATION_SPEED = 0.5;
 export const ASTEROID_LARGE_COLOR = 0x888888;
 
 /** Medium asteroid half-size in px. */
-export const ASTEROID_MEDIUM_SIZE = 18;
+export const ASTEROID_MEDIUM_SIZE = 27;
 /** Medium asteroid speed in px/s. */
 export const ASTEROID_MEDIUM_SPEED = 27;
 /** Medium asteroid rotation speed in rad/s. */
@@ -58,7 +58,7 @@ export const ASTEROID_MEDIUM_ROTATION_SPEED = 0.9;
 export const ASTEROID_MEDIUM_COLOR = 0xaaaa88;
 
 /** Small asteroid half-size in px. */
-export const ASTEROID_SMALL_SIZE = 12;
+export const ASTEROID_SMALL_SIZE = 18;
 /** Small asteroid speed in px/s. */
 export const ASTEROID_SMALL_SPEED = 36;
 /** Small asteroid rotation speed in rad/s. */
