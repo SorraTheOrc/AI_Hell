@@ -187,3 +187,157 @@ describe('SettingsScene — SFX volume slider + mute toggle (AH-0MUA8BEUR006RWCI
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
   });
 });
+// ── Key-binding remapping (AH-0MUA8BGE0006UAU4) ────────────────────
+
+describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  async function bootSettings(): Promise<SettingsScene> {
+    booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
+    await new Promise((r) => setTimeout(r, 150));
+    return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+  }
+
+  /** Moves focus from `volume` to a control label via ArrowDown. */
+  async function focusLabel(label: string): Promise<void> {
+    const labels = (
+      booted!.game.scene.getScene('SettingsScene') as SettingsScene
+    ).getControlLabels();
+    const target = labels.indexOf(label);
+    for (let i = 0; i < target; i++) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  // ── AC1 — action list ───────────────────────────────────────────
+
+  it('AC1 — lists every remappable action with its current binding', async () => {
+    const scene = await bootSettings();
+    const bindings = scene.getBindings();
+    for (const action of ['moveUp', 'moveDown', 'moveLeft', 'moveRight', 'layerDrop', 'pauseToggle'] as const) {
+      expect(bindings[action]).toBe(DEFAULT_BINDINGS[action]);
+    }
+    // The rendered rows reflect the bindings.
+    expect(scene.getBinding('moveUp')).toBe('w');
+    expect(scene.getBinding('layerDrop')).toBe('s');
+    expect(scene.getBinding('pauseToggle')).toBe('Escape');
+  });
+
+  // ── AC2 — rebind + persistence ──────────────────────────────────
+
+  it('AC2 — rebinding updates the binding and persists it', async () => {
+    const scene = await bootSettings();
+
+    const conflict = scene.rebind('moveUp', 'i');
+
+    expect(conflict).toBeNull();
+    expect(scene.getBinding('moveUp')).toBe('i');
+    expect(loadSettings().bindings.moveUp).toBe('i');
+    // Other bindings are untouched.
+    expect(loadSettings().bindings.moveDown).toBe('s');
+  });
+
+  it('AC2 — binding changes round-trip across a simulated reload', async () => {
+    const scene = await bootSettings();
+    scene.rebind('moveLeft', 'j');
+    scene.rebind('moveRight', 'l');
+
+    booted!.game.destroy(true);
+    booted = null;
+    const scene2 = await bootSettings();
+
+    expect(scene2.getBinding('moveLeft')).toBe('j');
+    expect(scene2.getBinding('moveRight')).toBe('l');
+    expect(scene2.getBinding('moveUp')).toBe('w');
+  });
+
+  // ── AC3 — conflict warning ──────────────────────────────────────
+
+  it('AC3 — rebinding onto another action key warns but still rebinds', async () => {
+    const scene = await bootSettings();
+
+    // moveRight's default is 'd'; rebind moveUp onto 'd'.
+    const conflict = scene.rebind('moveUp', 'd');
+
+    expect(conflict).toBe('moveRight');
+    expect(scene.getBinding('moveUp')).toBe('d');
+    expect(scene.getConflictMessage()).toContain('Move Right');
+    expect(loadSettings().bindings.moveUp).toBe('d');
+  });
+
+  it('AC3 — the intentional S overlap is not treated as a conflict', async () => {
+    const scene = await bootSettings();
+
+    // moveDown and layerDrop both default to 's' — an intentional overlap.
+    const conflict = scene.rebind('layerDrop', 's');
+
+    expect(conflict).toBeNull();
+    expect(scene.getConflictMessage()).toBe('');
+    expect(scene.getBinding('layerDrop')).toBe('s');
+  });
+
+  // ── AC4 — reset ─────────────────────────────────────────────────
+
+  it('AC4 — Reset to defaults restores and persists the default bindings', async () => {
+    const scene = await bootSettings();
+    scene.rebind('moveUp', 'i');
+    scene.rebind('moveDown', 'k');
+    expect(loadSettings().bindings.moveUp).toBe('i');
+
+    scene.resetBindings();
+
+    expect(scene.getBindings()).toEqual(DEFAULT_BINDINGS);
+    expect(loadSettings().bindings).toEqual(DEFAULT_BINDINGS);
+    // Any stale conflict warning is cleared.
+    expect(scene.getConflictMessage()).toBe('');
+  });
+
+  // ── AC5 — keyboard operation ────────────────────────────────────
+
+  it('AC5 — keyboard: Enter starts capture and the next key rebinds', async () => {
+    const scene = await bootSettings();
+
+    await focusLabel('moveUp');
+    expect(scene.getFocusedLabel()).toBe('moveUp');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(scene.isCapturing()).toBe('moveUp');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(scene.isCapturing()).toBeNull();
+    expect(scene.getBinding('moveUp')).toBe('i');
+    expect(loadSettings().bindings.moveUp).toBe('i');
+  });
+
+  it('AC5 — ESC cancels a pending rebind without changing the binding', async () => {
+    const scene = await bootSettings();
+    scene.beginCapturing('moveUp');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(scene.isCapturing()).toBeNull();
+    expect(scene.getBinding('moveUp')).toBe('w');
+  });
+
+  it('AC5 — modifier keys are ignored during capture', async () => {
+    const scene = await bootSettings();
+    scene.beginCapturing('moveUp');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift' }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(scene.isCapturing()).toBe('moveUp');
+    expect(scene.getBinding('moveUp')).toBe('w');
+  });
+});

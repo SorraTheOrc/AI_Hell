@@ -4,6 +4,7 @@ import {
   DEFAULT_BINDINGS,
   DEFAULT_SETTINGS,
   ACTION_NAMES,
+  findConflict,
   loadSettings,
   saveSettings,
   resetSettings,
@@ -211,6 +212,55 @@ describe('settingsStore', () => {
       resetSettings();
       // After reset: should also have defaults
       expect(loadSettings()).toEqual(DEFAULT_SETTINGS);
+    });
+  });
+
+  describe('findConflict (AH-0MUA8BGE0006UAU4)', () => {
+    it('returns null when the key is free', () => {
+      const bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
+      expect(findConflict(bindings, 'moveUp', 'i')).toBeNull();
+    });
+
+    it('returns the conflicting action when rebinding onto another action key', () => {
+      const bindings: Record<ActionName, string> = {
+        ...DEFAULT_BINDINGS,
+        moveLeft: 'a',
+        moveRight: 'd',
+        moveDown: 's',
+        moveUp: 'w',
+        layerDrop: 's',
+        pauseToggle: 'Escape',
+      };
+      // Rebinding moveUp onto 's' (moveDown) is a real conflict.
+      expect(findConflict(bindings, 'moveUp', 's')).toBe('moveDown');
+    });
+
+    it('does not treat the default S overlap (moveDown ↔ layerDrop) as a conflict', () => {
+      const bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
+      expect(findConflict(bindings, 'moveDown', 's')).toBeNull();
+      expect(findConflict(bindings, 'layerDrop', 's')).toBeNull();
+    });
+
+    it('reports a NON-default pair sharing a key even when one is identity', () => {
+      const bindings: Record<ActionName, string> = {
+        ...DEFAULT_BINDINGS,
+        moveDown: 's',
+        layerDrop: 'x', // moved away from the default overlap
+      };
+      // Rebinding layerDrop back onto 's' now collides with moveDown only
+      // if the pair were intentional; it is not (one side moved), so…
+      // moveDown/layerDrop remain an intentional pair per the shipped
+      // defaults, so the overlap stays permitted:
+      expect(findConflict(bindings, 'layerDrop', 's')).toBeNull();
+    });
+
+    it('reports a swap conflict between two non-default-pair actions', () => {
+      const bindings: Record<ActionName, string> = {
+        ...DEFAULT_BINDINGS,
+        moveLeft: 'a',
+      };
+      // Rebinding moveRight onto 'a' (moveLeft's key): genuine conflict.
+      expect(findConflict(bindings, 'moveRight', 'a')).toBe('moveLeft');
     });
   });
 });

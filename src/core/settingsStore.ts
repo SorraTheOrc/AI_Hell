@@ -67,6 +67,41 @@ export const ACTION_NAMES: ActionName[] = [
   'pauseToggle',
 ];
 
+/**
+ * Binding pairs the shipped defaults intentionally share (GDD §5.1 / plan
+ * decision: `S` is both move-down and layer-drop). These overlaps are not
+ * treated as conflicts by `findConflict()`.
+ */
+const INTENTIONAL_OVERLAPS: ReadonlyArray<[ActionName, ActionName]> = [
+  ['moveDown', 'layerDrop'],
+];
+
+/** Whether the given pair is one of the shipped defaults' intentional overlaps. */
+function isIntentionalOverlap(a: ActionName, b: ActionName): boolean {
+  return INTENTIONAL_OVERLAPS.some(
+    ([x, y]) => (x === a && y === b) || (x === b && y === a),
+  );
+}
+
+/**
+ * Returns the first other action whose current binding shares `key` with
+ * `action`, or `null` when the key is free. The intentional default overlap
+ * (`S` shared by move-down and layer-drop) is never reported as a conflict.
+ */
+export function findConflict(
+  bindings: Record<ActionName, string>,
+  action: ActionName,
+  key: string,
+): ActionName | null {
+  for (const other of ACTION_NAMES) {
+    if (other === action) continue;
+    if (bindings[other] !== key) continue;
+    if (isIntentionalOverlap(action, other)) continue;
+    return other;
+  }
+  return null;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 /**
