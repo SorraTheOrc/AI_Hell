@@ -20,6 +20,7 @@ import {
   sceneClassFromModule,
 } from '../utils/gymDiscovery';
 import { discoverEnemyGymEntries, type EnemyGymEntry } from '../utils/enemyGymDiscovery';
+import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 
 /** Index title text (asserted by tests). */
 export const GYM_INDEX_TITLE = 'GYM INDEX';
@@ -35,6 +36,9 @@ export class GymIndex extends Phaser.Scene {
   }
 
   create(): void {
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
+
     // Genuine scene entries (GymPlayer, GymBoss, etc.). Filter out
     // GymEnemies — it is no longer listed as a bare scene; individual
     // enemies appear via the per-config list below instead. Keeps the
