@@ -20,6 +20,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
+| E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | Boss | The Central AI | §4.3 | 4 attack phases, multi-hit health (4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
 All enemies are **1 HP** (single bullet destroys them, except the Boss which is
@@ -27,6 +28,51 @@ multi-hit) and **never collide with each other** (GDD §2.6) — no collision
 system is installed in the gym scenes.
 
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN)
+
+### 1.2 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
+
+The Asteroid is the first **non-formation** enemy: it does not use the
+formation-drift model at all. It drifts in a straight line at constant
+velocity, wraps around all four screen edges (matching the player ship's
+wrap), rotates continuously, and **never fires** — `shootEnabled` is a
+no-op setter and the effective shot pattern is always `none`.
+
+**Three size tiers** (`src/entities/Asteroid.ts`):
+
+| Tier | Half-size | Speed | Rotation | Colour |
+|------|-----------|-------|----------|--------|
+| large | 28 px | 18 px/s (≈ Tank) | 0.5 rad/s | 0x888888 |
+| medium | 18 px | 27 px/s | 0.9 rad/s | 0xaaaa88 |
+| small | 12 px | 36 px/s | 1.4 rad/s | 0xccccaa |
+
+**Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
+children at its position; a `medium` spawns two `small`; a `small` destroys
+cleanly with no children (the chain from one large is 1 + 2 + 4 = **7**
+destroyed enemies). `getSplitChildren()` returns the child specs (tier +
+position + velocity + rotation); the two children always move in directions
+**different from the parent and from each other** (≥ π/3 separation).
+
+**Wave-aware splitting**: dynamically spawned children MUST be registered with
+the `WaveManager` — the scene calls `registerDynamicSpawn(n)` when spawning
+children and they count toward `enemiesAlive`, so the wave neither clears
+early nor stalls. See `PlayScene._splitAsteroid`.
+
+**Scoring** (GDD §4.5): large and medium asteroids award **no** points; small
+asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
+`PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
+always.
+
+**Wave placement**: an asteroid group (`formationKind: 'single'`, count 1)
+joins Level 1 Wave 1 in `src/waves/Formations.ts` alongside the Scout
+V-formation. The asteroid config defaults to the large tier; smaller tiers
+appear only as split children.
+
+**Gym support**: the asteroid is selectable in the enemy gym (auto-discovery
+via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
+optional `updatePosition(dt)` on `FormationSceneEntity` (roamer motion) and
+optional `onEntityDestroyed(entity)` on `EnemyFormationConfig` (dynamic split
+children) — so EXPLODE, player bullets and body-rams all cascade splits and
+the wipe→respawn cycle runs only once the whole chain is cleared.
 
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
 (`src/core/enemyConfig.ts`) — a JSON-serializable record of formation,
@@ -215,15 +261,20 @@ for reference implementations (the base class drives them).
    and `addBackToIndexButton()` are handled by the base class — do not
    re-add them. Entity-specific fire sounds go in `src/audio/effects.ts`
    and are orchestrated where the shots are produced: Swarm plays a
-   scene-level volley burst sound at the point of shooting (no warning
-   cue); Scout uses a per-entity two-phase tell — an advance cue (≥ 500 ms
+   single buzzing volley burst sound (`playSwarmBurstSound()`) from its
+   entity-level `tryFireBurstBullet()` (no warning cue); Scout uses a
+   per-entity two-phase tell — an advance cue (≥ 500 ms
    lead) at tell start, with the fire sound scheduled to start exactly at
    the cue's end so the two flow back-to-back with no dead gap; Phaser
-   uses the same two-phase tell pattern; Tank plays a scene-level
-   mechanical-whine advance cue flowing with **no gap** into a heavy
-   cannon-thump fire sound, one cue+thump pair per radial burst at the
-   point of shooting (the whine's ≥ 500 ms duration provides the advance
-   lead); Diver plays `playDiverFireSound()` (short low/nasal crack)
+   uses the same two-phase tell pattern (`playPhaserAdvanceCue()` +
+   `playPhaserFireSound()`, scheduled at the cue's end); Tank plays an
+   entity-level `playTankAdvanceCue()` mechanical-whine flowing with
+   **no gap** into a heavy `playTankFireSound()` cannon thump, one
+   cue+thump pair per radial burst inside `tryFireRadialBurst()` (the
+   whine's ≥ 500 ms duration provides the advance
+   lead); the Boss keeps its per-phase telegraph cue (`playBossPhaseCue()`)
+   and plays `playBossFireSound()` once per attack volley; Diver plays
+   `playDiverFireSound()` (short low/nasal crack)
    exactly once per spread burst from its entity-level `tryFireSpreadBurst()`
    (no advance cue — the fire sound alone is the tell).
    Audio-character decisions are made **per-enemy at implementation
@@ -271,10 +322,10 @@ for reference implementations (the base class drives them).
 | Scene | Entity | Formation | Fire pattern | Audio |
 |-------|--------|-----------|--------------|-------+-------|
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
-| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
-| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (scene-level, one cue+thump pair per burst, no gap between cue and thump) |
-| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (scene-level, once per volley, at point of shooting) |
-| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | none |
+| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); dive-phase sounds — `playDiverDiveStartSound()` once at the FORMATION→DIVING transition plus a refcounted shared sustained dive voice (`playDiveSound()`/`stopDiveSound()`, ~2 s, stopped at DIVING→RETURNING / destroy); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
+| `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
+| `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
+| `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
 
 ---
 
@@ -296,6 +347,21 @@ must call `lineStyle()`/`fillStyle()` **after** `clear()`, otherwise the
 body renders with the default style (near-invisible white outlines in a
 browser — no console error, headless tests stay green). This is regression
 tested in `src/entities/Scout.test.ts`.
+
+The failure mode is not limited to an invisible body. Phaser's WebGL
+renderer keeps the current stroke tint in a **module-global**
+(`strokeTint` in `GraphicsWebGLRenderer.js`), not per Graphics object: a
+`strokePath()` with no `LINE_STYLE` queued before it reuses whatever the
+previously rendered Graphics left behind. A body with its style wiped by
+`clear()` therefore *inherits an unrelated colour* that changes whenever
+another Graphics redraws (e.g. the player's per-frame thrust flames), and
+because only the **first-rendered** body has no preceding sibling to set a
+sane tint, the "wrong" colour appears to move to the next entity as the
+first is destroyed. `Tank` hit this variant (AH-0MTVYBL2L0085G6G): its
+outer hexagon had no `lineStyle()` after `clear()`, so the first alive tank
+changed colour with thrust input and on destruction. Body colour must be
+owned by the entity; add a regression test whenever an entity gains a new
+`_drawBody()` (Scout, Diver, Swarm and Tank each have one).
 
 ### 4.3 Test accessor convention
 
@@ -398,9 +464,16 @@ Resolved in the base class `GymFormationScene._handleCollisions` each tick:
    destruction — bullets pass through *aliens* per GDD §2.6, but not each
    other).
 3. Enemy bullets → player hull (`SHIP_SIZE/2` = 10 + bullet 6): ship
-   explosion + SFX, `getPlayerHitCount()` increments, the ship respawns at
-   its spawn position with short invulnerability; **infinite lives** — the
+   explosion + SFX, `getPlayerHitCount()` increments, the ship respawns
+   **in-place** at its current position and orientation (velocity zeroed) with
+   a scale-pulse VFX (ship expands to 150% then contracts back to 100%),
+   followed by a short invulnerability window; **infinite lives** — the
    demonstration never ends.
+
+> **Initial spawn unchanged:** the player still spawns centre screen
+> (`PLAYER_SPAWN = { x: 480, y: 270 }`) at scene start; only the *post-hit
+> respawn* is in-place. Supersedes the respawn clause of AH-0MTVYBCUW008BEQT
+> AC4 ("the respawn position matches the initial spawn position").
 
 ### 7.3 Live aim tracking
 
@@ -466,6 +539,7 @@ convention and will follow it when built: spawn the player via the same
 | `bulletColor` / `bulletSize` | `number` | Bullet colour / radius. |
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
 | `fireInterval` | `number` | ms between volleys. |
+| `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | px/s. |
 | `burstCount` | `number` | Burst / radial spoke count. |
 | `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. |
@@ -490,12 +564,23 @@ fall back to Scout; Swarm's `clusterIndex` is `row / SWARM_CLUSTER_ROW_STRIDE`).
 
 ### 8.4 Entity seam
 
-`Scout`/`Diver`/`Tank`/`Phaser`/`Swarm` (`src/entities/*.ts`) accept an
+`Scout`/`Diver`/`Tank`/`Phaser`/`Swarm`/`Boss` (`src/entities/*.ts`) accept an
 optional seam config (`size? color? bulletColor? bulletSize? bulletSpeed?
-fireInterval? burstCount?`) and store `private readonly _*` fields derived as
-`config.xxx ?? CONST` so hard-coded constants remain the default and old tests
-stay green. Getters (`effectiveSize`, `effectiveColor`, …) are used by the
-entity's own drawing/fire paths.
+fireInterval? burstCount? shotProbability? rng?`) and store `private readonly
+_*` fields derived as `config.xxx ?? CONST` so hard-coded constants remain the
+default and old tests stay green. Getters (`effectiveSize`, `effectiveColor`, …)
+are used by the entity's own drawing/fire paths.
+
+**Shot probability gate:** each entity stores `_shotProbability`
+(`config.shotProbability ?? 1.0`) and an injectable `_rng`
+(`config.rng ?? Math.random`). When the fire interval elapses the entity rolls
+`this._rng() < this._shotProbability` at the *decision point*: on success it
+continues the existing fire path; on failure it consumes the cycle
+(`_lastFireTime/_lastBurstTime = now`) and produces no bullet. For the tell
+entities (Scout/Phaser) the roll happens *before* a tell is scheduled, so a
+skipped cycle never plays an advance cue with no shot; Diver/Tank/Swarm gate at
+their interval check; the Boss gates in `_shouldFire` *after* its telegraph
+guard (never while a telegraph is scheduled).
 
 ### 8.5 Gym surface — GymEnemies + editor panel
 
@@ -507,7 +592,7 @@ seam.
 
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
-`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/bulletSpeed/burstCount`,
+`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
 plus **Save** (overwrite active key) and **Save As…** (sanitize → validate →
 duplicate check via `listEnemyConfigKeys()`, displayName = raw input).
@@ -574,15 +659,16 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 | Enemy | Advance cue | Fire sound | Scope & timing |
 |-------|-------------|------------|----------------|
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
-| E2 Diver | none (no advance cue — fire sound alone is the tell) | `playDiverFireSound()` — short low/nasal crack | **entity-level**, exactly once per spread burst inside `tryFireSpreadBurst()` |
-| E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **scene-level**, one cue+thump pair per radial burst at the point of shooting — the cue flows with **no gap** into the thump |
-| E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **scene-level** volley burst, once per volley at the point of shooting |
-| Boss | none | none | no audio today (see §3.2 table) |
+| E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at DIVING→RETURNING, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
+| E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **entity-level**, one cue+thump pair per radial burst inside `tryFireRadialBurst()` — the cue flows with **no gap** into the thump |
+| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
+| E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **entity-level** volley burst, once per volley inside `tryFireBurstBullet()` |
+| Boss | `playBossPhaseCue()` — per-phase telegraph tone (retained) | `playBossFireSound()` — deep resonant boom (in `src/audio/effects.ts`) | **entity-level**, once per volley in each attack method (`tryFireSpreadBullets`, `tryFireSpiralBullets`, `tryFirePulseBullets`, `tryFireDesperationBullets`) |
 
 Orchestration rule: entity-specific fire sounds are invoked **where the shots
-are produced** — the scene's `collectBullets` callback for scene-level sounds
-(Swarm, Tank), or the entity's own fire/tell logic for entity-level sounds
-(Scout) — never re-added in a thin scene class.
+are produced** — the entity's own fire/tell logic (Tank's `tryFireRadialBurst`,
+Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
+Scout's two-phase tell) — never re-added in a thin scene class.
 
 ### Explode / destruction
 

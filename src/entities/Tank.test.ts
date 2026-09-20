@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
 import {
   colorToHSL,
   EXPLOSION_HUE_JITTER_DEG,
@@ -49,6 +50,49 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
 
     expect(tank.alive).toBe(true);
     expect(TANK_COLOR).toBe(0xff6600); // neon orange per GDD §4.1
+  });
+
+  it('strokes the hexagon with TANK_COLOR applied AFTER the buffer clear (browser render regression, AH-0MTVYBL2L0085G6G)', async () => {
+    // Graphics is command-buffered: clear() wipes any styles queued before it.
+    // The tank's outer hexagon had no lineStyle() queued after clear(), so in
+    // a real browser it inherited Phaser's module-global leftover stroke tint
+    // instead of the tank colour — the first-rendered tank changed colour with
+    // unrelated redraws (e.g. the player's per-frame thrust flames) and the
+    // "wrong" tank moved to the next alive one on destruction. Assert the
+    // hexagon's effective stroke is TANK_COLOR, i.e. queued after the last
+    // clear. Phaser Graphics command ids (src/gameobjects/graphics/Commands.js).
+    const LINE_STYLE = 6;
+    const STROKE_PATH = 9;
+
+    booted = await bootScene([HarnessScene]);
+    const tank = makeTank(100, 100);
+
+    // The body is the container child whose buffer contains a stroked path
+    // (the explosion layer's buffer is empty until a destruction).
+    const children = (tank as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    const body = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics &&
+        c.commandBuffer.includes(STROKE_PATH),
+    );
+    expect(body, 'expected a body Graphics child with a stroked path').toBeDefined();
+
+    const buf: number[] = body!.commandBuffer as number[];
+    const firstStrokeIdx = buf.indexOf(STROKE_PATH);
+    let lineStyleIdx = -1;
+    for (let i = firstStrokeIdx - 1; i >= 0; i--) {
+      if (buf[i] === LINE_STYLE) {
+        lineStyleIdx = i;
+        break;
+      }
+    }
+    expect(
+      lineStyleIdx,
+      'outer hexagon stroked with no explicit lineStyle after clear()',
+    ).toBeGreaterThanOrEqual(0);
+    // LINE_STYLE layout: [id, lineWidth, color, alpha].
+    expect(buf[lineStyleIdx + 1]).toBe(2.5);
+    expect(buf[lineStyleIdx + 2]).toBe(TANK_COLOR);
   });
 
   it('AC2 — fires a full-circle radial burst with evenly spaced directions (direction-agnostic)', async () => {
@@ -149,5 +193,129 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
       // +0.5° allows for hex↔HSL round-trip precision at the jitter edge.
       expect(delta).toBeLessThanOrEqual(EXPLOSION_HUE_JITTER_DEG + 0.5);
     }
+  });
+});
+
+describe('Tank — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('a forced-success roll produces a full radial burst when the interval elapses', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = new Tank(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1, burstCount: TANK_BURST_COUNT,
+    });
+    tank.shootEnabled = true;
+    expect(tank.tryFireRadialBurst(1_000_000)).toHaveLength(TANK_BURST_COUNT);
+  });
+
+  it('a forced-failure roll consumes the cycle with no bullets', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = new Tank(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9, burstCount: TANK_BURST_COUNT,
+    });
+    tank.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(tank.tryFireRadialBurst(t0)).toHaveLength(0);
+    expect(tank.tryFireRadialBurst(t0 + TANK_FIRE_INTERVAL - 1)).toHaveLength(0);
+    // Next elapsed cycle rolls again (also forced failure).
+    expect(tank.tryFireRadialBurst(t0 + TANK_FIRE_INTERVAL)).toHaveLength(0);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const tank = new Tank(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 }, burstCount: TANK_BURST_COUNT,
+    });
+    tank.shootEnabled = true;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    expect(tank.tryFireRadialBurst(1_000_000)).toHaveLength(TANK_BURST_COUNT);
+    spy.mockRestore();
+  });
+});
+// ── AC1: Tank SFX wiring (AH-0MU3VPIA900697E8) ─────────────────────
+
+describe('Tank SFX wiring (AH-0MU3VPIA900697E8)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeTank(
+    x: number,
+    y: number,
+  ): Tank {
+    return new Tank(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('plays both playTankAdvanceCue and playTankFireSound on tryFireRadialBurst', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const tank = makeTank(100, 100);
+    const t0 = 1_000_000;
+
+    tank.shootEnabled = true;
+    const bullets = tank.tryFireRadialBurst(t0);
+
+    expect(bullets).toHaveLength(TANK_BURST_COUNT);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+
+    // Advance cue fires before fire sound.
+    const advanceOrder = advanceSpy.mock.invocationCallOrder[0];
+    const fireOrder = fireSpy.mock.invocationCallOrder[0];
+    expect(advanceOrder).toBeLessThan(fireOrder);
+  });
+
+  it('plays SFX exactly once per burst cycle, not per bullet', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const tank = makeTank(100, 100);
+    const t0 = 1_000_000;
+
+    tank.shootEnabled = true;
+    tank.tryFireRadialBurst(t0);
+
+    // Even though TANK_BURST_COUNT bullets are spawned, SFX fires once.
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not play SFX when shotProbability fails', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playTankAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playTankFireSound');
+
+    const tank = new Tank(booted.scene, {
+      x: 100,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+      shotProbability: 0,
+    });
+
+    tank.shootEnabled = true;
+    const bullets = tank.tryFireRadialBurst(1_000_000);
+
+    expect(bullets).toHaveLength(0);
+    expect(advanceSpy).not.toHaveBeenCalled();
+    expect(fireSpy).not.toHaveBeenCalled();
   });
 });

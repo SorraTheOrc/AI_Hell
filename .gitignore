@@ -34,4 +34,7 @@ pnpm-debug.log*
 # herdr downtime marker
 .herdr-downtime-disabled
 
+# Generated daily standup reports (automated artefacts, never committed)
+standups/
+
 ### End of Worklog Specific Ignores

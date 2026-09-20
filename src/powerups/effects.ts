@@ -37,6 +37,7 @@ import {
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
 } from '../core/constants';
+import type { WeaponId } from '../utils/weapons';
 
 // Re-export the magnet tuning values for convenience.
 export {
@@ -44,6 +45,9 @@ export {
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
 };
+
+// Re-export weapon type for consumers.
+export type { WeaponId };
 
 // ── Tunable effect values ───────────────────────────────────────────
 
@@ -63,7 +67,20 @@ export const P9_MAX_STACKS = 5;
 export const P3_SHIELD_DURATION = 15;
 export const P6_PHASE_DURATION = 3;
 
+/** Duration in seconds for timed weapon effects (GDD §4.4). */
+export const WEAPON_EFFECT_DURATION = 10;
+
 // ── Active-effect model (consumed by the HUD) ─────────────────────────
+
+/** A weapon effect entry displayed in the HUD. */
+export interface WeaponEffect {
+  /** Weapon identifier (e.g. "spread", "dual", "rapid"). */
+  weaponId: WeaponId;
+  /** Full duration in seconds (timed weapons). */
+  duration: number;
+  /** Remaining seconds until expiry. */
+  remaining: number;
+}
 
 export interface ActiveEffect {
   /** Power-up ID (e.g. "P5"). */
@@ -125,6 +142,8 @@ export class EffectsRegistry {
   private _magnetStacks = 0;
   /** Stored teleport uses (P7), FIFO — pushed on collect, shifted on Space. */
   private _teleportStacks = 0;
+  /** Active timed weapons: each weapon has its own countdown. */
+  private _weapons: Map<WeaponId, WeaponEffect> = new Map();
 
   /**
    * Applies the effect of a collected power-up.
@@ -137,6 +156,13 @@ export class EffectsRegistry {
    * - P9: +1 permanent stack, capped at P9_MAX_STACKS (no-op beyond).
    */
   applyCollect(id: PowerUpId): void {
+    this._applyPowerUpEffect(id);
+  }
+
+  /**
+   * Internal: applies the effect of a collected power-up ID.
+   */
+  private _applyPowerUpEffect(id: PowerUpId): void {
     const entry = getPowerUpById(id);
 
     switch (entry.type) {
@@ -189,13 +215,21 @@ export class EffectsRegistry {
   }
 
   /**
-   * Advances timers by `dt` seconds, removing expired effects.
+   * Advances timers by `dt` seconds, removing expired effects and weapons.
    */
   tick(dt: number): void {
+    // Expire timed power-up effects.
     for (const [id, effect] of this._timed) {
       effect.remaining -= dt;
       if (effect.remaining <= 0) {
         this._timed.delete(id);
+      }
+    }
+    // Expire timed weapons.
+    for (const [weaponId, weapon] of this._weapons) {
+      weapon.remaining -= dt;
+      if (weapon.remaining <= 0) {
+        this._weapons.delete(weaponId);
       }
     }
   }
@@ -289,15 +323,68 @@ export class EffectsRegistry {
     return this._lives;
   }
 
+  /**
+   * Sets the lives counter directly (clamped to `[0, P8_LIVES_MAX]`).
+   * Lets the playable game drive the HUD from its authoritative run state
+   * (GameState) when a player is hit; P8 collection still uses
+   * `applyCollect('P8')`.
+   */
+  setLives(value: number): void {
+    this._lives = Math.max(0, Math.min(P8_LIVES_MAX, Math.floor(value)));
+  }
+
   /** Current permanent magnet stack count (P9); caps at 5. */
   magnetStacks(): number {
     return this._magnetStacks;
   }
 
+  // ── Weapon accessors ──────────────────────────────────────────────
+
+  /** Current active timed weapons (id → remaining seconds). */
+  activeWeapons(): WeaponEffect[] {
+    return Array.from(this._weapons.values());
+  }
+
+  /** Whether a specific timed weapon is currently active. */
+  hasWeapon(weaponId: WeaponId): boolean {
+    return this._weapons.has(weaponId);
+  }
+
+  /**
+   * Applies the effect of a collected weapon (spread, dual, rapid):
+   * equips it for the full duration, refreshing the timer if it is
+   * already active. Returns true when freshly equipped, false when
+   * already active (refreshed).
+   */
+  applyWeapon(weaponId: WeaponId): boolean {
+    const existing = this._weapons.get(weaponId);
+    if (existing) {
+      existing.remaining = WEAPON_EFFECT_DURATION;
+      return false; // already active, refreshed
+    }
+    this._weapons.set(weaponId, {
+      weaponId,
+      duration: WEAPON_EFFECT_DURATION,
+      remaining: WEAPON_EFFECT_DURATION,
+    });
+    return true;
+  }
+
+  /**
+   * Resets all timed weapons (Reset drop effect). Returns true if
+   * weapons were actually present.
+   */
+  tryResetWeapons(): boolean {
+    if (this._weapons.size === 0) return false;
+    this._weapons.clear();
+    return true;
+  }
+
   /**
    * Snapshot of the active timed effects plus permanent stack/lives state —
    * the aggregated model the standalone HUD renders from. P7 teleport is
-   * included as a stack entry when any uses are stored.
+   * included as a stack entry when any uses are stored. Weapons are
+   * exposed separately via `activeWeapons()`.
    */
   activeEffects(): ActiveEffect[] {
     const result: ActiveEffect[] = [];
@@ -324,5 +411,16 @@ export class EffectsRegistry {
       });
     }
     return result;
+  }
+
+  /**
+   * Resets the entire registry to initial state (for scene restart).
+   */
+  reset(): void {
+    this._timed.clear();
+    this._lives = P8_LIVES_START;
+    this._magnetStacks = 0;
+    this._teleportStacks = 0;
+    this._weapons.clear();
   }
 }

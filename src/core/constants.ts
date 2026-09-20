@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_CONFIG } from './config';
+import { DEFAULT_RULES } from './rules';
 
 // ── Canvas ──────────────────────────────────────────────────────────
 
@@ -56,11 +57,24 @@ export const POWER_UP_LIFETIME = 12.5;
 /** Collection threshold: drops are collectible only above this percentage of full size (3). */
 export const POWER_UP_COLLECTION_THRESHOLD = 3;
 
-/** Interval between spawns in a round-robin cycle (seconds). Mirrors POWER_UP_LIFETIME so one drop is on screen at a time. */
-export const POWER_UP_SPAWN_INTERVAL = 12.5;
+/**
+ * Interval between spawns in a round-robin cycle (seconds). Sourced from the
+ * game-rules config default (`DEFAULT_RULES`, GDD §4.4) so the interval has a
+ * single source of truth; mirrors POWER_UP_LIFETIME so one drop is on screen
+ * at a time.
+ */
+export const POWER_UP_SPAWN_INTERVAL = DEFAULT_RULES.powerUpSpawnInterval;
 
 /** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 16 px = half of the doubled 32 px size (AH-0MTG5MGPZ00986B4). */
 export const POWER_UP_DROP_SIZE = 16;
+
+/**
+ * Minimum centre-to-centre distance kept between live power-up drops on
+ * the field (px). Drops at the full 32 px size must not overlap, so the
+ * separation is strictly greater than 2 × POWER_UP_DROP_SIZE
+ * (AH-0MU7JTFM5000R4ME).
+ */
+export const POWER_UP_DROP_MIN_SEPARATION = 40;
 
 // ── Power-up drop bubble visuals (GDD §4.4, §7.1) ─────────────────
 // Tunable feel constants for the glowing bubble drawn around every
@@ -92,6 +106,18 @@ export const MAGNET_ATTRACTION_SPEED = 120;
 /** Render depth of the standalone HUD — above gameplay objects. */
 export const HUD_DEPTH = 1000;
 
+// ── Entity collision hit radii (GDD §2.6) ──────────────────────────
+
+/**
+ * Gameplay buffer (px) added to each entity's visual half-size when
+ * computing its hit radius for circle-vs-circle collision. Covers
+ * visual stroke thickness and small visual uncertainty.
+ *
+ * Increase to make enemies easier to hit; decrease for tighter,
+ * "pixel-perfect" feel. Default: 2 px.
+ */
+export const HIT_RADIUS_BUFFER_PX = 2;
+
 // ── Weapon power-ups (GDD §4.4, GymWeapons gym) ────────────────────
 
 /**
@@ -105,6 +131,14 @@ export const WEAPON_DROP_LIFETIME = 7;
  * only above this percentage of full size (3).
  */
 export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
+
+/**
+ * Duration (ms) each weapon power-up (Spread, Dual, Rapid) stays active
+ * after collection before it times out and stops firing (GDD §4.4).
+ * 10 000 ms = 10 s, from the moment of collection, per weapon. The
+ * permanent cannon has no timer and never expires.
+ */
+export const WEAPON_TIMEOUT_MS = 10000;
 
 /** Base radius of a weapon drop on the field (px), scaled by lifecycle.
  * Mirrors `POWER_UP_DROP_SIZE` (16 px — half the doubled 32 px size)
@@ -123,11 +157,10 @@ export const PLAYER_RESPAWN_INVULNERABLE = 1.5;
 
 /**
  * Default spawn position for the keyboard-controlled player in the
- * Enemy Gym scenes: top-right corner, clear of every formation and
- * firing rightward off-screen so boot-time auto-fire never interferes
- * with formation or wait-based tests.
+ * Enemy Gym scenes: centre screen, clear of HUD elements and enemy
+ * formations. The player ship is clearly visible on scene boot.
  */
-export const PLAYER_SPAWN = { x: 920, y: 30 } as const;
+export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 
 // ── Combat gym — threat-coupled power-ups (GDD §4.4, GymPowerUpsCombat) ─
 
@@ -145,3 +178,11 @@ export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 
 /** Blink half-period while invulnerable after a hit (seconds). */
 export const COMBAT_HIT_BLINK_INTERVAL = 0.1;
+
+// ── Player hit VFX (AH-0MU3VQ0JR009CSIN) ──────────────────────────
+
+/** Peak scale factor for the player-hit scale pulse VFX (1.5× normal). */
+export const PLAYER_HIT_SCALE_PEAK = 1.5;
+
+/** Duration of the player-hit scale pulse: expand + contract cycle (seconds). */
+export const PLAYER_HIT_SCALE_PULSE_DURATION = 0.4;

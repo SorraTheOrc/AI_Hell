@@ -1,8 +1,26 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import {
+  GAME_WIDTH,
+  GAME_HEIGHT,
+  POWER_UP_DROP_SIZE,
+  SHIP_SIZE,
+} from '../../core/constants';
+import { loadRules } from '../../core/rules';
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import {
+  RoundRobinSpawner,
+  WeightedRandomSpawner,
+  type PowerUpSpawner,
+} from '../../powerups/spawner';
+import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
+import type { DropId, PowerUpId } from '../../powerups/types';
+import {
+  createSeededRng,
+  isClearOfBodies,
+  stubBody,
+} from '../../test/powerUpTestFixtures';
 import {
   GymBoss,
   BOSS_FORMATION_START_X,
@@ -288,5 +306,223 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     await new Promise((r) => setTimeout(r, 500));
     const baseXAfter = scene.formationX;
     expect(baseXAfter).toBe(baseXBefore);
+  });
+});
+
+describe('GymBoss — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 15;
+
+  /** Boots GymBoss with a deterministic, short-interval power-up layer. */
+  class PowerUpGymBoss extends GymBoss {
+    init(): void {
+      // Reassign a per-instance clone: `this.config` is the shared
+      // module-level BOSS_CONFIG, so mutating it would leak into every
+      // later GymBoss instance.
+      this.config = {
+        ...this.config,
+        powerUps: {
+          spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+          placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+          spawnInterval: INTERVAL,
+        },
+      };
+    }
+  }
+
+  it('AC1/AC3 — spawns one drop at a time and never overlaps the boss or player', async () => {
+    booted = await bootScene([PowerUpGymBoss as unknown as typeof Phaser.Scene]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      scene.tick(INTERVAL);
+      expect(scene.getPowerUpDrops()).toHaveLength(1);
+
+      const drop = scene.getPowerUpDrops()[0];
+      const boss = scene.formationBoss;
+      const bodies = [stubBody(boss.x, boss.y, boss.getHitRadius())];
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    }
+  });
+});
+
+describe('GymBoss — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots GymBoss whose spawner yields only weapon drops (at the player). */
+  function makeWeaponBoss(spawner: PowerUpSpawner<DropId>): typeof Phaser.Scene {
+    class WeaponGymBoss extends GymBoss {
+      init(): void {
+        this.config = {
+          ...this.config,
+          powerUps: {
+            spawner,
+            placement: {
+              place: (context) => ({ x: context.player.x, y: context.player.y }),
+            },
+            spawnInterval: 1000,
+          },
+        };
+      }
+    }
+    return WeaponGymBoss as unknown as typeof Phaser.Scene;
+  }
+
+  it('AC4 — a weapon drop is collectible and equips the weapon in the registry', async () => {
+    booted = await bootScene([
+      makeWeaponBoss(
+        new WeightedRandomSpawner<DropId>(['dual'], createSeededRng(1)),
+      ),
+    ]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    // The boot loop advances the drop past the 3% threshold, so the
+    // 'dual' drop spawned on the ship is collected and equipped.
+    expect(scene.getEffectsRegistry().hasWeapon('dual')).toBe(true);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
+
+  it('AC3 — spawns a weapon drop never overlapping the boss or player', async () => {
+    booted = await bootScene([
+      makeWeaponBoss(
+        new WeightedRandomSpawner<DropId>(
+          ['spread', 'dual', 'rapid'],
+          createSeededRng(2),
+        ),
+      ),
+    ]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    // Place away from the player by re-rolling with the avoiding
+    // placement, then assert the surviving drop avoids the bodies.
+    scene.setPowerUpPlacement(
+      new RandomAvoidingPlacement({ rng: createSeededRng(3) }),
+    );
+    scene.tick(1000);
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop).toBeDefined();
+    expect(drop.weaponDropId).toBeDefined();
+
+    const boss = scene.formationBoss;
+    const bodies = [stubBody(boss.x, boss.y, boss.getHitRadius())];
+    const player = scene.getPlayer();
+    if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+    expect(
+      isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+    ).toBe(true);
+  });
+});
+
+describe('GymBoss — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots GymBoss whose first drop lands on the ship and is a P8. */
+  class CollectGymBoss extends GymBoss {
+    init(): void {
+      const atPlayer: PowerUpPlacement = {
+        place: (context) => ({ x: context.player.x, y: context.player.y }),
+      };
+      // Reassign a per-instance clone: `this.config` is the shared
+      // module-level BOSS_CONFIG, so mutating it would leak into every
+      // later GymBoss instance.
+      this.config = {
+        ...this.config,
+        powerUps: {
+          spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+          placement: atPlayer,
+          spawnInterval: 1000,
+        },
+      };
+    }
+  }
+
+  it('AC2/AC5 — a drop collected on the ship applies its effect and the HUD renders', async () => {
+    booted = await bootScene([CollectGymBoss as unknown as typeof Phaser.Scene]);
+    const scene = booted.scene as unknown as GymBoss;
+
+    expect(scene.getHUD()).not.toBeNull();
+    expect(scene.getEffectsRegistry().lives()).toBe(4);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+  });
+});
+
+describe('GymBoss — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('boss-gym-panel')?.remove();
+  });
+
+  function getSlider(): HTMLInputElement {
+    const slider = document.querySelector<HTMLInputElement>(
+      '#power-up-spawn-interval',
+    );
+    expect(slider, 'spawn-interval slider missing').not.toBeNull();
+    return slider!;
+  }
+
+  it('AC1 — renders the spawn-interval slider panel', async () => {
+    booted = await bootScene([GymBoss]);
+
+    expect(document.getElementById('boss-gym-panel')).not.toBeNull();
+    expect(getSlider().value).toBe('12.5');
+  });
+
+  it('AC2/AC3/AC4 — changing the slider applies live and persists across a reboot', async () => {
+    booted = await bootScene([GymBoss]);
+    const scene = booted.scene as GymBoss;
+
+    const slider = getSlider();
+    slider.value = '5';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(scene.getPowerUpSpawnInterval()).toBe(5);
+    expect(loadRules().powerUpSpawnInterval).toBe(5);
+
+    booted.game.destroy(true);
+    booted = null;
+    booted = await bootScene([GymBoss]);
+    const rested = booted.scene as GymBoss;
+
+    expect(rested.getPowerUpSpawnInterval()).toBe(5);
+    expect(getSlider().value).toBe('5');
+  });
+
+  it('AC5 — SHUTDOWN removes the spawn-interval panel from the DOM', async () => {
+    booted = await bootScene([GymBoss]);
+    const scene = booted.scene as GymBoss;
+
+    expect(document.getElementById('boss-gym-panel')).not.toBeNull();
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(document.getElementById('boss-gym-panel')).toBeNull();
   });
 });

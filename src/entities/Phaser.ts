@@ -18,12 +18,11 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
+import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
+import { playPhaserAdvanceCue, playPhaserFireSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-  type ExplosionHandle,
-} from '../vfx/explosionParticles';
+import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 // ── Visual / behaviour tuning (per GDD §4.1) ────────────────────────
 
@@ -81,6 +80,15 @@ export interface PhaserConfig {
   bulletSpeed?: number;
   fireInterval?: number;
   burstCount?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this phaser fires when the interval
+   * elapses (per shot cycle). Defaults to `1.0` (current behaviour). The
+   * roll happens at the tell decision point, so a skipped cycle never
+   * plays an advance cue.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -94,18 +102,13 @@ export interface PhaserBullet {
   vy: number;
 }
 
-export class PhaserEntity extends Phaser.GameObjects.Container {
+export class PhaserEntity extends BaseEnemy {
+  // ── Phaser-specific fields ───────────────────────────────────────
+
   private readonly ringGraphics: Phaser.GameObjects.Graphics;
   private readonly coreGraphics: Phaser.GameObjects.Graphics;
-  private readonly explosionGraphics: Phaser.GameObjects.Graphics;
-  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
-  private readonly explosionHandles: ExplosionHandle[] = [];
   private readonly tellGraphics: Phaser.GameObjects.Graphics;
-  private readonly formationOffset: FormationOffset;
 
-  private _alive = true;
-  private _shootEnabled = false;
-  private _lastFireTime = 0;
   /** Seconds (local phase) when the tell (warning) animation started. */
   private _tellStartTime = 0;
   private _isTelling = false;
@@ -118,28 +121,28 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
   private _localPhase = 0;
   /** Aim point for the radial pattern — the fixed bottom-centre stand-in by default. */
   private readonly target: Phaser.Math.Vector2;
-  private readonly _size: number;
   private readonly _colorNumber: number;
-  private readonly _bulletColor: number;
-  private readonly _bulletSize: number;
-  private readonly _bulletSpeed: number;
-  private readonly _fireInterval: number;
   private readonly _burstCount: number;
 
   // ── Construction ─────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: PhaserConfig) {
-    super(scene, config.x, config.y);
+    const baseConfig: BaseEnemyConfig = {
+      formationOffset: config.formationOffset,
+      size: config.size ?? PHASER_SIZE,
+      color: config.color ?? PHASER_COLOR_NUMBER,
+      bulletColor: config.bulletColor ?? PHASER_BULLET_COLOR,
+      bulletSize: config.bulletSize ?? PHASER_BULLET_SIZE,
+      bulletSpeed: config.bulletSpeed ?? PHASER_BULLET_SPEED,
+      fireInterval: config.fireInterval ?? PHASER_FIRE_INTERVAL,
+      shotProbability: config.shotProbability,
+      rng: config.rng,
+    };
+    super(scene, config.x, config.y, baseConfig);
 
-    this.formationOffset = config.formationOffset;
     // Each Phaser gets a unique orbital phase based on its offset index.
     this._orbitalPhase = this._computeOrbitalPhase(config.formationOffset);
-    this._size = config.size ?? PHASER_SIZE;
     this._colorNumber = config.color ?? PHASER_COLOR_NUMBER;
-    this._bulletColor = config.bulletColor ?? PHASER_BULLET_COLOR;
-    this._bulletSize = config.bulletSize ?? PHASER_BULLET_SIZE;
-    this._bulletSpeed = config.bulletSpeed ?? PHASER_BULLET_SPEED;
-    this._fireInterval = config.fireInterval ?? PHASER_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? 8;
     // Aim point defaults to the bottom-centre stand-in (simulated player).
     this.target = new Phaser.Math.Vector2(
@@ -161,7 +164,6 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.add(this.coreGraphics);
 
     // Explosion graphics.
-    this.explosionGraphics = scene.add.graphics();
     this.explosionGraphics.setDepth(3);
     this.add(this.explosionGraphics);
 
@@ -169,6 +171,11 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.tellGraphics = scene.add.graphics();
     this.tellGraphics.setDepth(0);
     this.add(this.tellGraphics);
+  }
+
+  /** VFX pattern name for Phaser explosions. */
+  protected getExplosionPatternName(): string {
+    return 'phaser';
   }
 
   /**
@@ -182,7 +189,7 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
   // ── Drawing ──────────────────────────────────────────────────────
 
-  private _drawBody(): void {
+  protected _drawBody(): void {
     this.ringGraphics.clear();
     const half = this._size / 2;
 
@@ -193,46 +200,12 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     this.ringGraphics.strokeCircle(0, 0, half + 4);
   }
 
-  /**
-   * Plays the destruction animation: expanding, fading rings.
-   * The body is hidden immediately and the explosion graphics are
-   * cleaned up when the tween completes.
-   *
-   * NOTE: intentionally plays NO destruction sound here — the shared
-   * `playDestructionSound()` is owned by `GymFormationScene.explodeRandom()`
-   * and is already called once per destruction (design doc §7 no-double-play
-   * rule). Adding a call here would double-play.
-   *
-   * Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
-   * display-list child has `scene === undefined`; animating it here would
-   * dereference undefined. Normal single-run destruction keeps the old
-   * behaviour exactly (the guard never triggers on a live object).
-   */
-  playExplosion(): void {
-    if (!this.scene) return;
-    const scene = this.scene as Phaser.Scene;
-    const handle = spawnExplosionParticles(
-      scene,
-      this.x,
-      this.y,
-      this._colorNumber,
-      this._size,
-      { patterns: resolvePatterns('phaser') },
-    );
-    if (handle) this.explosionHandles.push(handle);
-  }
-
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
   getExplosionHandles(): ExplosionHandle[] {
     return this.explosionHandles.slice();
   }
 
   // ── Public state ─────────────────────────────────────────────────
-
-  /** Whether this Phaser is alive (not yet destroyed). */
-  get alive(): boolean {
-    return this._alive;
-  }
 
   /** Whether this Phaser currently fires. */
   get shootEnabled(): boolean {
@@ -260,13 +233,10 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
     }
   }
 
-  get offset(): FormationOffset {
-    return { ...this.formationOffset };
-  }
-
   get effectiveSize(): number { return this._size; }
   get effectiveColor(): number { return this._colorNumber; }
   get effectiveBurstCount(): number { return this._burstCount; }
+
   /** Whether the Phaser is currently in its tell (warning) state. */
   get isTelling(): boolean {
     return this._isTelling;
@@ -289,16 +259,28 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
   // ── Behaviour ────────────────────────────────────────────────────
 
+  /** Whether the Phaser's visible body (ring) is currently shown. */
+  get bodyVisible(): boolean {
+    return this.ringGraphics.alpha > 0 && this.ringGraphics.visible;
+  }
+
   /**
-   * Destroys the Phaser: hides the body and plays the explosion animation.
-   * No-op if already destroyed.
+   * Hides the ring and core (the Phaser's visible body) on destruction.
    */
-  destroySelf(): void {
-    if (!this._alive) return;
-    this._alive = false;
+  protected hideBody(): void {
     this.ringGraphics.setAlpha(0);
     this.coreGraphics.setAlpha(0);
-    this.playExplosion();
+  }
+
+  /**
+   * Destroys Phaser-specific graphics (ring, core, tell) in addition to
+   * the shared body graphics.
+   */
+  protected destroyGraphics(): void {
+    super.destroyGraphics();
+    this.ringGraphics.destroy();
+    this.coreGraphics.destroy();
+    this.tellGraphics.destroy();
   }
 
   /**
@@ -320,6 +302,8 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       // Fire in 8 radial directions, rotated so one spoke points exactly
       // at the aim target (stand-in by default, live player position when
       // the scene pushes it). The 8-spoke radial shape is unchanged.
+      // The fire sound was already scheduled at tell start (cue end), so
+      // this branch plays no additional audio (no double-play).
       const bullets: PhaserBullet[] = [];
       const baseAngle = Math.atan2(
         this.target.y - this.y,
@@ -331,17 +315,19 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       });
 
       for (const dir of directions) {
-        const graphics = this.scene.add.graphics();
-        graphics.fillStyle(this._bulletColor, 1);
-        graphics.fillCircle(0, 0, this._bulletSize);
-        graphics.setPosition(this.x, this.y);
-        graphics.setDepth(3);
+        const { graphics, color } = createBullet({
+          scene: this.scene,
+          color: this._bulletColor,
+          size: this._bulletSize,
+          x: this.x,
+          y: this.y,
+        });
 
         // Normalise direction.
         const mag = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
         bullets.push({
           graphics,
-          color: this._bulletColor,
+          color,
           vx: (dir.dx / mag) * this._bulletSpeed,
           vy: (dir.dy / mag) * this._bulletSpeed,
         });
@@ -349,7 +335,13 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       return bullets;
     }
 
-    // Start the tell animation — this is the warning phase.
+    // Start the tell animation — roll the shot probability at this
+    // decision point BEFORE entering the tell, so a failed roll consumes
+    // the cycle without playing an advance cue (tell/RNG constraint).
+    if (!(this._rng() < this._shotProbability)) {
+      this._lastFireTime = now;
+      return [];
+    }
     this._isTelling = true;
     // Store the local phase (in seconds) so applyFormationPosition can
     // compute tell elapsed without accessing scene.time.now.
@@ -397,9 +389,12 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
       if (tellElapsed < PHASER_ADVANCE_CUE_DURATION) {
         // During the tell, pulse the ring to warn the player.
         this._drawTell(tellElapsed);
-        // Play advance audio cue at the start of the tell (once).
+        // Play the two-phase audio tell at the start of the tell (once):
+        // the advance cue now, and the fire sound scheduled at the cue's
+        // end (matching the Scout pattern — no dead gap).
         if (tellElapsed < 50) {
-          this._playAdvanceCue();
+          playPhaserAdvanceCue();
+          playPhaserFireSound();
         }
       }
     }
@@ -414,55 +409,5 @@ export class PhaserEntity extends Phaser.GameObjects.Container {
 
     this.tellGraphics.lineStyle(2, this._colorNumber, alpha);
     this.tellGraphics.strokeCircle(0, 0, radius);
-  }
-
-  /** Plays the advance audio cue (≥ 500 ms before fire). */
-  private _playAdvanceCue(): void {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(660, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(
-      Math.max(1, 880),
-      ctx.currentTime + PHASER_ADVANCE_CUE_DURATION / 1000,
-    );
-
-    gain.gain.setValueAtTime(0.08, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + PHASER_ADVANCE_CUE_DURATION / 1000);
-
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + PHASER_ADVANCE_CUE_DURATION / 1000 + 0.02);
-  }
-
-  destroy(fromScene?: boolean): void {
-    this.ringGraphics.destroy();
-    this.coreGraphics.destroy();
-    this.explosionGraphics.destroy();
-    this.tellGraphics.destroy();
-    // Scene-level particle Graphics are NOT display-list children —
-    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
-    for (const handle of this.explosionHandles) handle.destroy();
-    this.explosionHandles.length = 0;
-    super.destroy(fromScene);
-  }
-}
-
-/** Lazily creates the shared AudioContext, or returns null if unavailable. */
-function getAudioContext(): AudioContext | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const Ctor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctor) return null;
-    return new Ctor();
-  } catch {
-    return null;
   }
 }

@@ -15,12 +15,11 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
+import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
+import { playSwarmBurstSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-  type ExplosionHandle,
-} from '../vfx/explosionParticles';
+import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -66,6 +65,14 @@ export interface SwarmConfig {
   bulletSize?: number;
   bulletSpeed?: number;
   fireInterval?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this member fires when the burst
+   * interval elapses (per shot cycle). Defaults to `1.0` (current
+   * behaviour). A failed roll consumes the cycle with no bullet.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -82,25 +89,12 @@ export interface SwarmBullet {
  * A Swarm enemy entity that moves in tight, fast-moving clusters with
  * sudden direction changes.
  */
-export class Swarm extends Phaser.GameObjects.Container {
-  private readonly bodyGraphics: Phaser.GameObjects.Graphics;
-  private readonly explosionGraphics: Phaser.GameObjects.Graphics;
-  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
-  private readonly explosionHandles: ExplosionHandle[] = [];
+export class Swarm extends BaseEnemy {
+  // ── Swarm-specific fields ────────────────────────────────────────
+
   private readonly target: Phaser.Math.Vector2;
-  private readonly formationOffset: FormationOffset;
   /** Which cluster this member belongs to (0..SWARM_CLUSTER_COUNT-1). */
   private readonly clusterIdx: number;
-
-  private _alive = true;
-  private _shootEnabled = false;
-  private _lastBurstTime = 0;
-  private readonly _size: number;
-  private readonly _color: number;
-  private readonly _bulletColor: number;
-  private readonly _bulletSize: number;
-  private readonly _bulletSpeed: number;
-  private readonly _fireInterval: number;
 
   // Per-cluster phase — each cluster drifts with a different angular phase
   // so members weave around each other naturally.
@@ -118,16 +112,20 @@ export class Swarm extends Phaser.GameObjects.Container {
     config: SwarmConfig,
     clusterIndex: number,
   ) {
-    super(scene, config.x, config.y);
+    const baseConfig: BaseEnemyConfig = {
+      formationOffset: config.formationOffset,
+      size: config.size ?? SWARM_SIZE,
+      color: config.color ?? SWARM_COLOR,
+      bulletColor: config.bulletColor ?? SWARM_BULLET_COLOR,
+      bulletSize: config.bulletSize ?? SWARM_BULLET_SIZE,
+      bulletSpeed: config.bulletSpeed ?? SWARM_BULLET_SPEED,
+      fireInterval: config.fireInterval ?? SWARM_BURST_INTERVAL,
+      shotProbability: config.shotProbability,
+      rng: config.rng,
+    };
+    super(scene, config.x, config.y, baseConfig);
 
-    this.formationOffset = config.formationOffset;
     this.clusterIdx = clusterIndex;
-    this._size = config.size ?? SWARM_SIZE;
-    this._color = config.color ?? SWARM_COLOR;
-    this._bulletColor = config.bulletColor ?? SWARM_BULLET_COLOR;
-    this._bulletSize = config.bulletSize ?? SWARM_BULLET_SIZE;
-    this._bulletSpeed = config.bulletSpeed ?? SWARM_BULLET_SPEED;
-    this._fireInterval = config.fireInterval ?? SWARM_BURST_INTERVAL;
 
     // Each cluster gets a unique angular phase so they weave differently.
     const phaseStep = (Math.PI * 2) / SWARM_CLUSTER_COUNT;
@@ -140,16 +138,14 @@ export class Swarm extends Phaser.GameObjects.Container {
       scene.scale.height - 40,
     );
 
-    // Body — small diamond (rotated square) in neon blue.
-    this.bodyGraphics = scene.add.graphics();
+    // Draw the unique shape and add shared graphics in canonical order.
     this._drawBody();
-    this.bodyGraphics.setDepth(1);
-    this.add(this.bodyGraphics);
+    this.addSharedGraphics();
+  }
 
-    // Explosion bursts.
-    this.explosionGraphics = scene.add.graphics();
-    this.explosionGraphics.setDepth(2);
-    this.add(this.explosionGraphics);
+  /** VFX pattern name for Swarm explosions. */
+  protected getExplosionPatternName(): string {
+    return 'swarm';
   }
 
   // ── Drawing ──────────────────────────────────────────────────────
@@ -158,7 +154,7 @@ export class Swarm extends Phaser.GameObjects.Container {
    * Draws a diamond shape (square rotated 45°) centred at (0, 0).
    * Style is applied AFTER clear() (see note in _drawBody).
    */
-  private _drawBody(): void {
+  protected _drawBody(): void {
     this.bodyGraphics.clear();
     const half = this._size / 2;
 
@@ -178,29 +174,6 @@ export class Swarm extends Phaser.GameObjects.Container {
     this.bodyGraphics.strokePath();
   }
 
-  /**
-   * Plays the destruction animation: expanding, fading rings.
-   * The body is hidden immediately and the explosion graphics are
-   * cleaned up when the tween completes.
-   */
-  playExplosion(): void {
-    // Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
-    // display-list child has `scene === undefined`; animating it here would
-    // dereference undefined. Normal single-run destruction keeps the old
-    // behaviour exactly (the guard never triggers on a live object).
-    if (!this.scene) return;
-    const scene = this.scene as Phaser.Scene;
-    const handle = spawnExplosionParticles(
-      scene,
-      this.x,
-      this.y,
-      this._color,
-      this._size,
-      { patterns: resolvePatterns('swarm') },
-    );
-    if (handle) this.explosionHandles.push(handle);
-  }
-
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
   getExplosionHandles(): ExplosionHandle[] {
     return this.explosionHandles.slice();
@@ -208,25 +181,13 @@ export class Swarm extends Phaser.GameObjects.Container {
 
   // ── Public state ─────────────────────────────────────────────────
 
-  get alive(): boolean {
-    return this._alive;
-  }
-
-  get bodyVisible(): boolean {
-    return this.bodyGraphics.alpha > 0 && this.bodyGraphics.visible;
-  }
-
   get shootEnabled(): boolean {
     return this._shootEnabled;
   }
 
   set shootEnabled(value: boolean) {
     this._shootEnabled = value;
-    if (!value) this._lastBurstTime = 0;
-  }
-
-  get offset(): FormationOffset {
-    return { ...this.formationOffset };
+    if (!value) this._lastFireTime = 0;
   }
 
   /** The position aimed at when firing (defaults to the bottom-centre stand-in). */
@@ -244,18 +205,12 @@ export class Swarm extends Phaser.GameObjects.Container {
 
   get effectiveSize(): number { return this._size; }
   get effectiveColor(): number { return this._color; }
+
   get clusterIndex(): number {
     return this.clusterIdx;
   }
 
   // ── Behaviour ────────────────────────────────────────────────────
-
-  destroySelf(): void {
-    if (!this._alive) return;
-    this._alive = false;
-    this.bodyGraphics.setAlpha(0);
-    this.playExplosion();
-  }
 
   /**
    * Fires a coordinated burst volley: multiple swarm members fire
@@ -272,8 +227,15 @@ export class Swarm extends Phaser.GameObjects.Container {
    */
   tryFireBurstBullet(now: number): SwarmBullet | null {
     if (!this._shootEnabled || !this._alive) return null;
-    if (now - this._lastBurstTime < this._fireInterval) return null;
-    this._lastBurstTime = now;
+    if (now - this._lastFireTime < this._fireInterval) return null;
+    // Per-cycle probability gate: consume the cycle first so a failed roll
+    // cannot retry-until-success within the same cycle (average volley
+    // density = shotProbability × member count per cycle for the swarm).
+    this._lastFireTime = now;
+    if (!(this._rng() < this._shotProbability)) return null;
+
+    // Swarm coordinated burst: single buzzing whoosh per volley.
+    playSwarmBurstSound();
 
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;
@@ -282,15 +244,17 @@ export class Swarm extends Phaser.GameObjects.Container {
     const spread = (Math.random() - 0.5) * 0.3;
     const angle = baseAngle + spread;
 
-    const graphics = this.scene.add.graphics();
-    graphics.fillStyle(this._bulletColor, 1);
-    graphics.fillCircle(0, 0, this._bulletSize);
-    graphics.setPosition(this.x, this.y);
-    graphics.setDepth(3);
+    const { graphics, color } = createBullet({
+      scene: this.scene,
+      color: this._bulletColor,
+      size: this._bulletSize,
+      x: this.x,
+      y: this.y,
+    });
 
     return {
       graphics,
-      color: this._bulletColor,
+      color,
       vx: Math.cos(angle) * this._bulletSpeed,
       vy: Math.sin(angle) * this._bulletSpeed,
     };
@@ -315,8 +279,6 @@ export class Swarm extends Phaser.GameObjects.Container {
     if (!this._alive) return;
 
     // Base formation position from the scene.
-    const baseOffsetCol = this.formationOffset.col;
-    const baseOffsetRow = this.formationOffset.row;
 
     // ── Cluster drift ─────────────────────────────────────────────
     // Phase advances each frame; the sine wave produces smooth
@@ -347,21 +309,10 @@ export class Swarm extends Phaser.GameObjects.Container {
       0.25;
 
     // ── Final position ────────────────────────────────────────────
-    const x = baseX + baseOffsetCol * spacingX + driftX;
-    const y = baseY + baseOffsetRow * spacingY + driftY;
-    this.setPosition(x, y);
+    const base = this.computeFormationPosition(baseX, baseY, spacingX, spacingY);
+    this.setPosition(base.x + driftX, base.y + driftY);
 
     // Diamond rotation: slight tilt based on movement direction.
     this.bodyGraphics.rotation = Math.atan2(driftY, driftX) * 0.15;
-  }
-
-  destroy(fromScene?: boolean): void {
-    this.bodyGraphics.destroy();
-    this.explosionGraphics.destroy();
-    // Scene-level particle Graphics are NOT display-list children —
-    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
-    for (const handle of this.explosionHandles) handle.destroy();
-    this.explosionHandles.length = 0;
-    super.destroy(fromScene);
   }
 }

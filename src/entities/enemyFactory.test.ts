@@ -10,6 +10,7 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
+import { Asteroid, ASTEROID_LARGE_ROTATION_SPEED, ASTEROID_LARGE_SPEED } from './Asteroid';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
@@ -94,7 +95,7 @@ describe('Config-aware entity seam', () => {
   it('createEnemyFromConfig maps keys to the right entity class and threads opts', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
-    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm'] as const) {
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid'] as const) {
       const cfg = { ...DEFAULT_ENEMY_CONFIGS[key], color: 0xabcdef, size: 99 };
       const e = createEnemyFromConfig(scene, cfg as any, 10, 10, { row: 0, col: 0 });
       expect((e as any).effectiveColor).toBe(0xabcdef);
@@ -104,8 +105,30 @@ describe('Config-aware entity seam', () => {
       if (key === 'tank') expect(e instanceof Tank).toBe(true);
       if (key === 'phaser') expect(e instanceof PhaserEntity).toBe(true);
       if (key === 'swarm') expect(e instanceof Swarm).toBe(true);
+      if (key === 'asteroid') expect(e instanceof Asteroid).toBe(true);
       e.destroy(true);
     }
+  });
+
+  it("createEnemyFromConfig('asteroid') returns an Asteroid with large-tier defaults", async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const cfg = { ...DEFAULT_ENEMY_CONFIGS.asteroid };
+    const e = createEnemyFromConfig(scene, cfg, 100, 100, { row: 0, col: 0 });
+    expect(e instanceof Asteroid).toBe(true);
+    const asteroid = e as Asteroid;
+    // Config default tier is large.
+    expect(asteroid.getSizeTier()).toBe('large');
+    expect(asteroid.effectiveSize).toBe(42);
+    expect(asteroid.effectiveColor).toBe(0x888888);
+    // Speed and rotation match the large-tier constants.
+    const speed = Math.sqrt(asteroid.vx ** 2 + asteroid.vy ** 2);
+    expect(speed).toBeCloseTo(ASTEROID_LARGE_SPEED, 1);
+    expect(asteroid.currentRotationSpeed).toBeCloseTo(ASTEROID_LARGE_ROTATION_SPEED, 5);
+    // Never fires.
+    expect(asteroid.shootEnabled).toBe(false);
+    expect(asteroid.effectiveShotPattern).toBe('none');
+    asteroid.destroy(true);
   });
 
   it('custom/unknown key falls back to Scout while preserving visuals', async () => {
@@ -116,5 +139,43 @@ describe('Config-aware entity seam', () => {
     expect(e instanceof Scout).toBe(true);
     expect((e as any).effectiveColor).toBe(0x999999);
     e.destroy(true);
+  });
+
+  // ── shotProbability threading (AH-0MU0F1T2H003B4K0, AC5) ─────────
+
+  it('createEnemyFromConfig threads shotProbability into every dispatched entity', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm'] as const) {
+      const cfg = { ...DEFAULT_ENEMY_CONFIGS[key], shotProbability: 0.25 };
+      const e = createEnemyFromConfig(scene, cfg, 10, 10, { row: 0, col: 0 });
+      expect((e as unknown as { _shotProbability: number })._shotProbability).toBe(0.25);
+      e.destroy(true);
+    }
+    // Unknown custom key falls back to Scout but still receives the value.
+    const custom = { ...DEFAULT_ENEMY_CONFIGS.scout, key: 'custom-p', shotProbability: 0.5 };
+    const c = createEnemyFromConfig(scene, custom, 10, 10, { row: 0, col: 0 });
+    expect(c instanceof Scout).toBe(true);
+    expect((c as unknown as { _shotProbability: number })._shotProbability).toBe(0.5);
+    c.destroy(true);
+  });
+
+  it('threaded shotProbability gates firing behaviourally (p=0 skips, p=1 fires)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+
+    const skip = createEnemyFromConfig(
+      scene, { ...DEFAULT_ENEMY_CONFIGS.swarm, shotProbability: 0 }, 10, 10, { row: 0, col: 0 },
+    ) as Swarm;
+    skip.shootEnabled = true;
+    expect(skip.tryFireBurstBullet(1_000_000)).toBeNull();
+    skip.destroy(true);
+
+    const fire = createEnemyFromConfig(
+      scene, { ...DEFAULT_ENEMY_CONFIGS.swarm, shotProbability: 1 }, 10, 10, { row: 0, col: 0 },
+    ) as Swarm;
+    fire.shootEnabled = true;
+    expect(fire.tryFireBurstBullet(1_000_000)).not.toBeNull();
+    fire.destroy(true);
   });
 });

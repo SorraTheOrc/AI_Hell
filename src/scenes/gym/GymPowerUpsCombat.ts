@@ -9,7 +9,7 @@
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (does not damage
  *   1-HP scouts, GDD §4.4); no enemy damage.
  * - **P6 Phase Shift** — 3 s intangibility, pass-through enemies/bullets.
- * - **P7 Teleport** — stored FIFO stacks; Space teleports to the nearest
+ * - **P7 Teleport** — stored FIFO stacks; S or ↓ teleports to the nearest
  *   safe spot free of enemies/bullets in the direction of travel,
  *   clamped to screen bounds; grants P6 (3 s) on arrival. If no safe
  *   spot exists, teleports to the nearest on-screen position along
@@ -35,7 +35,7 @@
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *
- * Teleport (Space): consumes one P7 stack FIFO, warps to the nearest safe
+ * Teleport (S/↓): consumes one P7 stack FIFO, warps to the nearest safe
  * spot along the heading ray, clamped to screen bounds, then applies P6.
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
@@ -57,6 +57,12 @@ import {
   getPowerUpById,
 } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
+import { findTeleportDestination } from '../../powerups/teleport';
+export { findTeleportDestination } from '../../powerups/teleport';
+import {
+  resolvePatterns,
+  spawnExplosionParticles,
+} from '../../vfx/explosionParticles';
 import {
   playPowerUpCollectSound,
   playDestructionSound,
@@ -73,10 +79,12 @@ import { buildVFormationOffsets } from '../../utils/formations';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  PLAYER_HIT_SCALE_PEAK,
+  PLAYER_HIT_SCALE_PULSE_DURATION,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
+  SHIP_COLOR,
   SHIP_SIZE,
-  TELEPORT_SAFE_RADIUS,
   COMBAT_HIT_INVULNERABLE_DURATION,
   COMBAT_HIT_BLINK_INTERVAL,
 } from '../../core/constants';
@@ -104,98 +112,6 @@ const COMBAT_DRIFT_SPEED = 18;
 /** Hit radii used for player collision checks (px). */
 const ENEMY_HIT_RADIUS = SCOUT_SIZE / 2 + 4;
 const BULLET_HIT_RADIUS = 5;
-
-/** Screen margin when clamping the teleport destination. */
-const TELEPORT_MARGIN = SHIP_SIZE / 2 + 4;
-
-// ── Safe-spot resolution (P7, GDD §4.4) ─────────────────────────
-
-/**
- * Finds the nearest safe teleport destination along the heading ray.
- * Samples candidates along the ray plus a fallback grid; picks the
- * closest candidate whose disc (TELEPORT_SAFE_RADIUS) contains no
- * enemy/bullet, clamped to screen bounds (TELEPORT_MARGIN inset).
- * If no safe candidate exists, returns the furthest ray point clamped
- * on-screen (nearest on-screen position along the heading, per GDD).
- */
-export function findTeleportDestination(
-  fromX: number,
-  fromY: number,
-  headingRad: number,
-  enemies: Array<{ x: number; y: number }>,
-  bullets: Array<{ x: number; y: number }>,
-  width: number,
-  height: number,
-): { x: number; y: number } {
-  const ux = Math.cos(headingRad);
-  const uy = Math.sin(headingRad);
-  const safeRadius = TELEPORT_SAFE_RADIUS;
-
-  function isSafe(x: number, y: number): boolean {
-    for (const e of enemies) {
-      if (Math.hypot(e.x - x, e.y - y) < safeRadius + ENEMY_HIT_RADIUS) return false;
-    }
-    for (const b of bullets) {
-      if (Math.hypot(b.x - x, b.y - y) < safeRadius + BULLET_HIT_RADIUS) return false;
-    }
-    return true;
-  }
-
-  function clamp(x: number, y: number): { x: number; y: number } {
-    return {
-      x: Math.max(TELEPORT_MARGIN, Math.min(width - TELEPORT_MARGIN, x)),
-      y: Math.max(TELEPORT_MARGIN, Math.min(height - TELEPORT_MARGIN, y)),
-    };
-  }
-
-  // Candidates along the heading ray at increasing distances.
-  const rayDistances = [80, 160, 240, 360, 480, 640];
-  const candidates: Array<{ x: number; y: number; dist: number }> = [];
-
-  for (const d of rayDistances) {
-    const p = clamp(fromX + ux * d, fromY + uy * d);
-    // Skip candidates that barely moved (heading into wall).
-    if (Math.hypot(p.x - fromX, p.y - fromY) < 10) continue;
-    candidates.push({ ...p, dist: d });
-  }
-
-  // Fallback grid candidates (screen quadrants) — ensure coverage when
-  // the ray is blocked the whole way.
-  const grid: Array<{ x: number; y: number }> = [
-    { x: width * 0.25, y: height * 0.25 },
-    { x: width * 0.75, y: height * 0.25 },
-    { x: width * 0.25, y: height * 0.75 },
-    { x: width * 0.75, y: height * 0.75 },
-    { x: width * 0.5, y: height * 0.5 },
-  ];
-  for (const g of grid) {
-    const d = Math.hypot(g.x - fromX, g.y - fromY);
-    // Prefer ray direction: penalise grid points behind the heading.
-    const dot = (g.x - fromX) * ux + (g.y - fromY) * uy;
-    const penalty = dot < 0 ? 1000 : 0;
-    candidates.push({ ...g, dist: d + penalty });
-  }
-
-  candidates.sort((a, b) => a.dist - b.dist);
-
-  for (const c of candidates) {
-    if (isSafe(c.x, c.y)) return { x: c.x, y: c.y };
-  }
-
-  // No safe spot — return the furthest ray point clamped on-screen
-  // (nearest on-screen position along the heading, per GDD), which is
-  // the last ray candidate.
-  const lastRay = candidates.find(
-    (c) => Math.abs(c.x - fromX) > 1 || Math.abs(c.y - fromY) > 1,
-  );
-  if (lastRay) {
-    // Walk further along heading until hitting the margin, then clamp.
-    let x = fromX + ux * 1000;
-    let y = fromY + uy * 1000;
-    return clamp(x, y);
-  }
-  return clamp(fromX + ux * 80, fromY + uy * 80);
-}
 
 // ── Active drop model ──────────────────────────────────────────────
 
@@ -226,7 +142,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   // Input
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
-  private spaceKey: Phaser.Input.Keyboard.Key | undefined;
+  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
+  private downKey: Phaser.Input.Keyboard.Key | undefined;
   private fourDirHandler = new FourDirectionalInputHandler();
   private asteroidsHandler = new AsteroidsInputHandler();
 
@@ -234,6 +151,9 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private playerHitCount = 0;
   private playerInvulnerable = 0;
   private playerBlinkPhase = 0;
+
+  // Player death VFX (tracks explosion Graphics for tests/SHUTDOWN).
+  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
@@ -257,6 +177,12 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     addBackToIndexButton(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
 
+    // Clean up on shutdown to prevent stale references on restart.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      for (const exp of this.playerExplosions) exp.destroy();
+      this.playerExplosions.length = 0;
+    });
+
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
     this.bombNoticeLabel = this.add.text(GAME_WIDTH / 2, 24, '', {
@@ -269,7 +195,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    this.spaceKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.teleportKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+    this.downKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
 
     // Spawn the small scout formation.
     const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
@@ -297,7 +224,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.shootButton.setInteractive({ useHandCursor: true });
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'P3 Shield · P4 Bomb · P6 Phase · P7 Teleport (Space) — scouts fire aimed shots', {
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'P3 Shield · P4 Bomb · P6 Phase · P7 Teleport (S/↓) — scouts fire aimed shots', {
       fontFamily: 'monospace',
       fontSize: '11px',
       color: '#555555',
@@ -317,7 +244,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
    * One deterministic simulation step (seconds). Drives ship movement,
    * formation drift, scout aim + firing, bullet lifecycle, spawner,
    * drop lifecycles, collection (with P4 bomb), effect timers,
-   * teleport (Space), hit response, and HUD.
+   * teleport (S/↓), hit response, and HUD.
    */
   tick(dt: number): void {
     if (!this.player) return;
@@ -327,7 +254,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     if (input) this.player.setInput(input);
     this.player.physicsTick(dt, this.scale.width, this.scale.height);
 
-    // ── Teleport (Space) — before hit checks so arrival phase protects ─
+    // ── Teleport (S/↓) — before hit checks so arrival phase protects ─
     this._handleTeleport();
 
     // ── Formation drift ─────────────────────────────────────────
@@ -542,15 +469,20 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     }
   }
 
-  // ── Teleport (P7, Space) ─────────────────────────────────────────
+  // ── Teleport (P7, S/↓) ─────────────────────────────────────────
 
   private _handleTeleport(): void {
-    if (!this.player || !this.spaceKey) return;
+    if (!this.player || !this.teleportKey) return;
     // Phaser Key JustDown check; in headless tests we also expose
     // `triggerTeleport()` so tests don't need to fake keyboard state.
+    // Accept S key or down arrow as activation keys.
     const justDown = (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
-      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.spaceKey)
-      : this.spaceKey.isDown;
+      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.teleportKey)
+      : this.teleportKey.isDown;
+    const justDownDown = this.downKey ? (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
+      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.downKey)
+      : this.downKey.isDown : false;
+    if (!justDown && !justDownDown) return;
     // To avoid auto-repeat every frame while Space is held, only act on
     // the first frame isDown becomes true. The headless JustDown helper
     // already gates this; for fallback isDown we gate via a flag.
@@ -582,6 +514,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
       bullets,
       this.scale.width,
       this.scale.height,
+      { enemyHitRadius: ENEMY_HIT_RADIUS, bulletHitRadius: BULLET_HIT_RADIUS },
     );
 
     // Consume one stack FIFO and grant P6 phase shift at landing.
@@ -651,15 +584,31 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     if (!this.player) return;
     this.playerHitCount += 1;
     try { playDestructionSound(); } catch { /* ignore */ }
-    this.player.setPosition(GAME_WIDTH / 2, GAME_HEIGHT / 2);
-    const state = this.player.getMovementState();
-    (this.player as unknown as { _movementState: { x: number; y: number; vx: number; vy: number } })._movementState = {
-      ...state,
-      x: GAME_WIDTH / 2,
-      y: GAME_HEIGHT / 2,
-      vx: 0,
-      vy: 0,
-    };
+
+    // Particle burst VFX at the player's hit position.
+    spawnExplosionParticles(
+      this,
+      this.player.x,
+      this.player.y,
+      SHIP_COLOR,
+      SHIP_SIZE,
+      {
+        patterns: resolvePatterns('player'),
+        registry: this.playerExplosions,
+      },
+    );
+
+    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
+    this.tweens.add({
+      targets: this.player,
+      scale: PLAYER_HIT_SCALE_PEAK,
+      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
+      yoyo: true,
+      ease: 'Power2',
+    });
+
+    // In-place respawn: preserve position and facing, zero velocity.
+    this.player.respawnInPlace();
     this._startInvulnerability();
   }
 
@@ -700,6 +649,10 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   /** Whether the bomb notice is currently visible (for tests). */
   isBombNoticeVisible(): boolean {
     return this.bombNoticeTimer > 0;
+  }
+  /** Player explosion VFX graphics (empty once tweens end; for tests). */
+  getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
+    return this.playerExplosions.slice();
   }
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */

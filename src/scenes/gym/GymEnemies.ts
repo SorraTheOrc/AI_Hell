@@ -29,7 +29,12 @@ import { getFormationBuilder } from '../../utils/formations';
 import { PLAYER_SPAWN, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { playSpawnSound } from '../../audio/effects';
+import {
+  applyAndPersistSpawnInterval,
+  buildSpawnIntervalSlider,
+} from '../../utils/gymPowerUpControl';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
+import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
 
@@ -60,6 +65,7 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   size: { min: 6, max: 80, step: 1 },
   bulletSize: { min: 1, max: 12, step: 1 },
   fireInterval: { min: 100, max: 5000, step: 50 },
+  shotProbability: { min: 0, max: 1, step: 0.05 },
   bulletSpeed: { min: 40, max: 600, step: 5 },
   burstCount: { min: 1, max: 24, step: 1 },
 };
@@ -130,9 +136,39 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     statusLabel: cfg.displayName.toLowerCase(),
     hintText: `${cfg.displayName} — ${cfg.formationKind} formation (config-driven)`,
     player: { ...PLAYER_SPAWN },
+    // Opt-in power-up layer: one drop at a time on the rules interval,
+    // weighted-random ID (P3–P9 plus weapon drops) and
+    // enemy/player-avoiding placement.
+    powerUps: {},
     createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>
       createEnemyFromConfig(scene, cfg, x, y, offset),
     collectBullets,
+    // Asteroid split seam (GDD §4.1 — E6 Asteroid): a destroyed large/medium
+    // rock spawns exactly two smaller children that join the live formation
+    // list, so the EXPLODE button and player bullets both cascade splits and
+    // the wipe→respawn cycle only fires once the whole chain is cleared.
+    onEntityDestroyed: (entity: EnemyEntity): void => {
+      if (!(entity instanceof Asteroid)) return;
+      const parent = entity as Asteroid;
+      const children = parent.getSplitChildren(parent.x, parent.y);
+      if (!children) return; // small tier — clean destruction
+      const scene = parent.scene as Phaser.Scene;
+      if (!scene) return;
+      const live = (scene as unknown as { entities: EnemyEntity[] }).entities;
+      for (const spec of children) {
+        const child = new Asteroid(scene, {
+          x: spec.x,
+          y: spec.y,
+          formationOffset: { row: 0, col: 0 },
+          sizeTier: spec.sizeTier,
+          vx: spec.vx,
+          vy: spec.vy,
+          rotationSpeed: spec.rotationSpeed,
+        });
+        scene.add.existing(child);
+        live.push(child);
+      }
+    },
   };
 }
 
@@ -208,6 +244,13 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
 
     utilRow.append(respawn, togglePlayer);
     panel.appendChild(utilRow);
+
+    // Live spawn-interval control (power-up cadence, live-tunable).
+    const spawnControl = buildSpawnIntervalSlider((seconds) => {
+      this.setPowerUpSpawnInterval(seconds);
+      applyAndPersistSpawnInterval(seconds);
+    });
+    panel.appendChild(spawnControl.row);
 
     // Save / Save As row.
     const actions = document.createElement('div');
@@ -389,6 +432,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       if ('_bulletSpeed' in e) (e as Record<string, unknown>)['_bulletSpeed'] = config.bulletSpeed;
       if ('_fireInterval' in e) (e as Record<string, unknown>)['_fireInterval'] = config.fireInterval;
       if ('_burstCount' in e) (e as Record<string, unknown>)['_burstCount'] = config.burstCount;
+      if ('_shotProbability' in e) (e as Record<string, unknown>)['_shotProbability'] = config.shotProbability;
     }
   }
 

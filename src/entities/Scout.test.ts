@@ -406,4 +406,52 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(bullet.vy).toBeLessThan(0);
     expect(bullet.vx).toBeGreaterThan(0);
   });
+
+  // ── Shot probability gate (AH-0MU0F1T2H003B4K0) ─────────────────
+
+  it('fires when the injected roll succeeds (tell then shot)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const success = new Scout(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1,
+    });
+    success.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(success.tryFireAimedBullet(t0)).toBeNull(); // tell starts
+    expect(success.isTelling).toBe(true);
+    expect(success.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
+  });
+
+  it('a failed roll consumes the cycle and never starts a tell (no cue with no shot)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const skip = new Scout(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9,
+    });
+    const cue = vi.spyOn(effectsModule, 'playScoutAdvanceCue');
+    skip.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(skip.tryFireAimedBullet(t0)).toBeNull();
+    expect(skip.isTelling).toBe(false);
+    expect(cue).not.toHaveBeenCalled();
+
+    // Cycle consumed: within the same interval nothing happens...
+    expect(skip.tryFireAimedBullet(t0 + SCOUT_FIRE_INTERVAL - 1)).toBeNull();
+    // ...and the next elapsed cycle rolls again (forced failure again).
+    expect(skip.tryFireAimedBullet(t0 + SCOUT_FIRE_INTERVAL)).toBeNull();
+    expect(skip.isTelling).toBe(false);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = makeScout(100, 100);
+    scout.shootEnabled = true;
+    const t0 = 1_000_000;
+    // Math.random() ∈ [0, 1), so rng() < 1.0 is always true.
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    expect(scout.tryFireAimedBullet(t0)).toBeNull(); // tell
+    expect(scout.isTelling).toBe(true);
+    expect(scout.tryFireAimedBullet(t0 + SCOUT_ADVANCE_CUE_DURATION)).not.toBeNull();
+    spy.mockRestore();
+  });
 });

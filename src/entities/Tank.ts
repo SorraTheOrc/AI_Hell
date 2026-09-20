@@ -15,12 +15,14 @@
 
 import Phaser from 'phaser';
 
-import { FormationOffset } from '../utils/formations';
+import { createBullet } from './bulletUtils';
+import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import {
-  resolvePatterns,
-  spawnExplosionParticles,
-  type ExplosionHandle,
-} from '../vfx/explosionParticles';
+  playTankAdvanceCue,
+  playTankFireSound,
+} from '../audio/effects';
+import { FormationOffset } from '../utils/formations';
+import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
 
@@ -66,6 +68,14 @@ export interface TankConfig {
   bulletSpeed?: number;
   fireInterval?: number;
   burstCount?: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that this tank fires when the interval
+   * elapses (per shot cycle). Defaults to `1.0` (current behaviour). A
+   * failed roll consumes the cycle with no bullets.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 /**
@@ -78,60 +88,58 @@ export interface TankBullet {
   vy: number;
 }
 
-export class Tank extends Phaser.GameObjects.Container {
-  private readonly bodyGraphics: Phaser.GameObjects.Graphics;
-  private readonly explosionGraphics: Phaser.GameObjects.Graphics;
-  /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
-  private readonly explosionHandles: ExplosionHandle[] = [];
-  private readonly formationOffset: FormationOffset;
+export class Tank extends BaseEnemy {
+  // ── Tank-specific fields ─────────────────────────────────────────
 
-  private _alive = true;
-  private _shootEnabled = false;
-  private _lastFireTime = 0;
   private _holdTimer = 0;
   private _moveInterval = TANK_HOLD_POSITION_SECONDS;
   private _driftPhase = 0;
   private _directionX = 1;
-  private readonly _size: number;
-  private readonly _color: number;
-  private readonly _bulletColor: number;
-  private readonly _bulletSize: number;
-  private readonly _bulletSpeed: number;
-  private readonly _fireInterval: number;
   private readonly _burstCount: number;
 
   // ── Construction ─────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: TankConfig) {
-    super(scene, config.x, config.y);
+    const baseConfig: BaseEnemyConfig = {
+      formationOffset: config.formationOffset,
+      size: config.size ?? TANK_SIZE,
+      color: config.color ?? TANK_COLOR,
+      bulletColor: config.bulletColor ?? TANK_BULLET_COLOR,
+      bulletSize: config.bulletSize ?? TANK_BULLET_SIZE,
+      bulletSpeed: config.bulletSpeed ?? TANK_BULLET_SPEED,
+      fireInterval: config.fireInterval ?? TANK_FIRE_INTERVAL,
+      shotProbability: config.shotProbability,
+      rng: config.rng,
+    };
+    super(scene, config.x, config.y, baseConfig);
 
-    this.formationOffset = config.formationOffset;
-    this._size = config.size ?? TANK_SIZE;
-    this._color = config.color ?? TANK_COLOR;
-    this._bulletColor = config.bulletColor ?? TANK_BULLET_COLOR;
-    this._bulletSize = config.bulletSize ?? TANK_BULLET_SIZE;
-    this._bulletSpeed = config.bulletSpeed ?? TANK_BULLET_SPEED;
-    this._fireInterval = config.fireInterval ?? TANK_FIRE_INTERVAL;
     this._burstCount = config.burstCount ?? TANK_BURST_COUNT;
 
-    // Body — larger hexagonal shape in orange.
-    this.bodyGraphics = scene.add.graphics();
-    this.bodyGraphics.lineStyle(2.5, this._color, 1);
+    // Draw the unique shape and add shared graphics in canonical order.
     this._drawBody();
-    this.bodyGraphics.setDepth(1);
-    this.add(this.bodyGraphics);
+    this.addSharedGraphics();
+  }
 
-    // Explosion layer.
-    this.explosionGraphics = scene.add.graphics();
-    this.explosionGraphics.setDepth(2);
-    this.add(this.explosionGraphics);
+  /** VFX pattern name for Tank explosions. */
+  protected getExplosionPatternName(): string {
+    return 'tank';
   }
 
   // ── Drawing ──────────────────────────────────────────────────────
 
-  private _drawBody(): void {
+  protected _drawBody(): void {
     this.bodyGraphics.clear();
     const half = this._size / 2;
+
+    // Style MUST be applied AFTER clear(): Graphics is command-buffered and
+    // clear() wipes any styles queued before it. Without this the outer
+    // hexagon was stroked with Phaser's leftover module-global stroke tint
+    // (GraphicsWebGLRenderer's `strokeTint` is not reset per object), so the
+    // first-rendered tank's colour leaked from whatever rendered previously —
+    // it changed with the player's per-frame thrust flames and appeared to
+    // move to the next alive tank on destruction (AH-0MTVYBL2L0085G6G).
+    // Matches the Scout/Diver/Swarm pattern (docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §4.2).
+    this.bodyGraphics.lineStyle(2.5, this._color, 1);
 
     // Hexagon pointing right (blocky/tank-like silhouette).
     this.bodyGraphics.beginPath();
@@ -152,27 +160,6 @@ export class Tank extends Phaser.GameObjects.Container {
     this.bodyGraphics.strokePath();
   }
 
-  /**
-   * Plays the destruction animation: expanding, fading rings.
-   */
-  playExplosion(): void {
-    // Belt-and-braces null-scene guard (AH-0MTPLHLZ3006MOC4): a destroyed
-    // display-list child has `scene === undefined`; animating it here would
-    // dereference undefined. Normal single-run destruction keeps the old
-    // behaviour exactly (the guard never triggers on a live object).
-    if (!this.scene) return;
-    const scene = this.scene as Phaser.Scene;
-    const handle = spawnExplosionParticles(
-      scene,
-      this.x,
-      this.y,
-      this._color,
-      this._size,
-      { patterns: resolvePatterns('tank') },
-    );
-    if (handle) this.explosionHandles.push(handle);
-  }
-
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
   getExplosionHandles(): ExplosionHandle[] {
     return this.explosionHandles.slice();
@@ -184,14 +171,6 @@ export class Tank extends Phaser.GameObjects.Container {
   get effectiveColor(): number { return this._color; }
   get effectiveBurstCount(): number { return this._burstCount; }
 
-  get alive(): boolean {
-    return this._alive;
-  }
-
-  get bodyVisible(): boolean {
-    return this.bodyGraphics.alpha > 0 && this.bodyGraphics.visible;
-  }
-
   get shootEnabled(): boolean {
     return this._shootEnabled;
   }
@@ -201,23 +180,12 @@ export class Tank extends Phaser.GameObjects.Container {
     if (!value) this._lastFireTime = 0;
   }
 
-  get offset(): FormationOffset {
-    return { ...this.formationOffset };
-  }
-
   /** Speed at which this tank's formation drifts (px/s). */
   get driftSpeed(): number {
     return TANK_FORMATION_DRIFT_SPEED;
   }
 
   // ── Behaviour ────────────────────────────────────────────────────
-
-  destroySelf(): void {
-    if (!this._alive) return;
-    this._alive = false;
-    this.bodyGraphics.setAlpha(0);
-    this.playExplosion();
-  }
 
   /**
    * Fires a radial burst if shoot mode is on, alive, and interval elapsed.
@@ -226,7 +194,14 @@ export class Tank extends Phaser.GameObjects.Container {
   tryFireRadialBurst(now: number): TankBullet[] {
     if (!this._shootEnabled || !this._alive) return [];
     if (now - this._lastFireTime < this._fireInterval) return [];
+    // Per-cycle probability gate: consume the cycle first so a failed roll
+    // cannot retry-until-success within the same cycle.
     this._lastFireTime = now;
+    if (!(this._rng() < this._shotProbability)) return [];
+
+    // Two-phase audio tell: mechanical whine (advance cue) → cannon thump.
+    playTankAdvanceCue();
+    playTankFireSound();
 
     const bullets: TankBullet[] = [];
     for (let i = 0; i < this._burstCount; i++) {
@@ -234,13 +209,15 @@ export class Tank extends Phaser.GameObjects.Container {
       const vx = Math.cos(angle) * this._bulletSpeed;
       const vy = Math.sin(angle) * this._bulletSpeed;
 
-      const graphics = this.scene.add.graphics();
-      graphics.fillStyle(this._bulletColor, 1);
-      graphics.fillCircle(0, 0, this._bulletSize);
-      graphics.setPosition(this.x, this.y);
-      graphics.setDepth(3);
+      const { graphics, color } = createBullet({
+        scene: this.scene,
+        color: this._bulletColor,
+        size: this._bulletSize,
+        x: this.x,
+        y: this.y,
+      });
 
-      bullets.push({ graphics, color: this._bulletColor, vx, vy });
+      bullets.push({ graphics, color, vx, vy });
     }
     return bullets;
   }
@@ -277,18 +254,7 @@ export class Tank extends Phaser.GameObjects.Container {
 
     const slowX = this._directionX * TANK_FORMATION_DRIFT_SPEED * 0.3 * dt;
 
-    const x = baseX + this.formationOffset.col * spacingX + bobX + slowX;
-    const y = baseY + this.formationOffset.row * spacingY;
-    this.setPosition(x, y);
-  }
-
-  destroy(fromScene?: boolean): void {
-    this.bodyGraphics.destroy();
-    this.explosionGraphics.destroy();
-    // Scene-level particle Graphics are NOT display-list children —
-    // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
-    for (const handle of this.explosionHandles) handle.destroy();
-    this.explosionHandles.length = 0;
-    super.destroy(fromScene);
+    const base = this.computeFormationPosition(baseX, baseY, spacingX, spacingY);
+    this.setPosition(base.x + bobX + slowX, base.y);
   }
 }

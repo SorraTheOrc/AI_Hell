@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 
 import { Game } from './Game';
 
-describe('Game (gym index entry, AC2)', () => {
+describe('Game (menu entry, AC1 — boot scene is MenuScene)', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
   });
@@ -14,12 +14,12 @@ describe('Game (gym index entry, AC2)', () => {
 
   const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
 
-  it('boots the GymIndex scene, renders a canvas and ticks the game loop', async () => {
+  it('boots the MenuScene, renders a canvas and ticks the game loop', async () => {
     const game = new Game();
 
     await tick();
 
-    const scene = game.phaser.scene.getScene('GymIndex');
+    const scene = game.phaser.scene.getScene('MenuScene');
     expect(scene).toBeDefined();
 
     let ticks = 0;
@@ -40,13 +40,28 @@ describe('Game (gym index entry, AC2)', () => {
     expect(document.querySelector('#game-container canvas')).toBeNull();
   });
 
-  it('makes GymIndex the sole default entry scene (no other scene auto-starts)', async () => {
+  it('makes MenuScene the sole default entry scene (no other scene auto-starts)', async () => {
     const game = new Game();
 
     await tick();
 
     const running = game.phaser.scene.getScenes(true);
-    expect(running.map((s) => (s as Phaser.Scene).scene.key)).toEqual(['GymIndex']);
+    expect(running.map((s) => (s as Phaser.Scene).scene.key)).toEqual(['MenuScene']);
+
+    game.destroy();
+  });
+
+  it('registers PlayScene and GameOverScene for navigation (no auto-start)', async () => {
+    const game = new Game();
+
+    await tick();
+
+    const play = game.phaser.scene.getScene('PlayScene');
+    const gameOver = game.phaser.scene.getScene('GameOverScene');
+    expect(play).toBeDefined();
+    expect(gameOver).toBeDefined();
+    expect(play!.sys.isActive()).toBe(false);
+    expect(gameOver!.sys.isActive()).toBe(false);
 
     game.destroy();
   });

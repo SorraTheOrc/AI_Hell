@@ -184,3 +184,47 @@ describe('PowerUpSpawner interface: interchangeable implementations', () => {
     }
   });
 });
+// ── Generic WeightedRandomSpawner with weapon/drop IDs ─────────────
+
+describe('WeightedRandomSpawner generic over DropId (AH-0MU3VOQKH005YOBH)', () => {
+  type DropId = PowerUpId | 'spread' | 'dual' | 'rapid' | 'reset';
+
+  const DROPS: DropId[] = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'spread', 'dual', 'rapid', 'reset'];
+
+  it('yields only IDs from its pool', () => {
+    const s = new WeightedRandomSpawner<DropId>(DROPS, makeSeededRng(1));
+    for (let i = 0; i < 100; i++) {
+      expect(DROPS).toContain(s.next());
+    }
+  });
+
+  it('applies per-ID weights across mixed power-up/weapon IDs', () => {
+    const s = new WeightedRandomSpawner<DropId>(DROPS, makeSeededRng(2));
+    // Make one weapon dominant so a deterministic count emerges.
+    for (const id of DROPS) s.setWeight(id, 1);
+    s.setWeight('dual', 25);
+
+    const counts = new Map<DropId, number>();
+    const N = 1000;
+    for (let i = 0; i < N; i++) {
+      const id = s.next();
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    // Total weight = 10 (other IDs) + 25 (dual) = 35.
+    expect(counts.get('dual')! / N).toBeCloseTo(25 / 35, 1);
+    expect((counts.get('P3') ?? 0) / N).toBeCloseTo(1 / 35, 1);
+  });
+
+  it('falls back to the first tracked ID when all weights are zero', () => {
+    const s = new WeightedRandomSpawner<DropId>(DROPS, makeSeededRng(3));
+    for (const id of DROPS) s.setWeight(id, 0);
+    expect(s.next()).toBe('P3');
+  });
+
+  it('getWeight/setWeight round-trip for weapon IDs', () => {
+    const s = new WeightedRandomSpawner<DropId>(DROPS);
+    s.setWeight('rapid', 7);
+    expect(s.getWeight('rapid')).toBe(7);
+    expect(s.getWeight('spread')).toBe(1); // initial equal weight
+  });
+});

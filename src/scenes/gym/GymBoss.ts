@@ -39,6 +39,10 @@ import {
   BossBullet,
 } from '../../entities/Boss';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import {
+  applyAndPersistSpawnInterval,
+  buildSpawnIntervalSlider,
+} from '../../utils/gymPowerUpControl';
 import { FormationOffset } from '../../utils/formations';
 import {
   EnemyFormationConfig,
@@ -90,6 +94,10 @@ const BOSS_CONFIG: EnemyFormationConfig<
     x: BOSS_PLAYER_SPAWN_X,
     y: BOSS_PLAYER_SPAWN_Y,
   },
+  // Opt-in power-up layer: one drop at a time on the rules interval,
+  // weighted-random ID (P3–P9 plus weapon drops) and
+  // boss/player-avoiding placement.
+  powerUps: {},
   createEntity: (
     scene: Phaser.Scene,
     x: number,
@@ -117,15 +125,23 @@ export class GymBoss extends GymFormationScene<
   BossBullet | PulseWaveBullet
 > {
   private damageButton!: Phaser.GameObjects.Text;
+  private panel: HTMLDivElement | null = null;
 
   constructor() {
     super(BOSS_CONFIG);
   }
 
-  /** Override create to add the damage button and custom initialisation. */
+  /** Override create to add the damage button, panel and custom initialisation. */
   override create(): void {
     // Call the base class create to get HUD + back button.
     super.create();
+
+    // ── Spawn-interval control panel (live-tunable power-up cadence) ──
+    this._buildPanel();
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.panel?.remove();
+      this.panel = null;
+    });
 
     // ── Damage button (right side, under SHOOT) ───────────────────
     const shootButton = this.shootButton;
@@ -172,6 +188,28 @@ export class GymBoss extends GymFormationScene<
 
     // Advance pulse waves (radius-based, not velocity-based).
     boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
+  }
+
+  // ── Spawn-interval control panel ────────────────────────────────
+
+  /** Builds the plain-DOM spawn-interval slider (removed on SHUTDOWN). */
+  private _buildPanel(): void {
+    const host = document.querySelector('#game-container') ?? document.body;
+    // Remove a stale panel left behind by a previous test/game instance.
+    document.getElementById('boss-gym-panel')?.remove();
+
+    const panel = document.createElement('div');
+    panel.id = 'boss-gym-panel';
+    panel.className = 'gym-panel';
+
+    const control = buildSpawnIntervalSlider((seconds) => {
+      this.setPowerUpSpawnInterval(seconds);
+      applyAndPersistSpawnInterval(seconds);
+    });
+    panel.appendChild(control.row);
+
+    host.appendChild(panel);
+    this.panel = panel;
   }
 
   // ── Damage button handler ───────────────────────────────────────
