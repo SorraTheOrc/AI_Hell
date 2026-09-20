@@ -40,6 +40,9 @@ const TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
 export const HUD_ROW_HEIGHT = 22;
 const ROW_HEIGHT = HUD_ROW_HEIGHT;
 
+/** Extra vertical gap between the lives label and the first effect row. */
+const LIVES_GAP = 4;
+
 /** Horizontal offsets for the icon / name / value columns. */
 const ICON_X = 10;
 const NAME_X = 24;
@@ -165,7 +168,7 @@ export class HUD extends Phaser.GameObjects.Container {
    * keeping the gym HUD layout unchanged (AC3).
    */
   private _rowY(row: number): number {
-    return (this._showLives ? ROW_HEIGHT : 0) + row * ROW_HEIGHT;
+    return (this._showLives ? ROW_HEIGHT + LIVES_GAP : 0) + row * ROW_HEIGHT;
   }
 
   // ── Rendering helpers ─────────────────────────────────────────────
