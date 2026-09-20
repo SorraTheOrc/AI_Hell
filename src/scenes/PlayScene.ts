@@ -56,6 +56,7 @@ import { PowerUp, PowerUpState } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
+import { applyMagnetAttraction } from '../powerups/magnet';
 import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
 import { addBackToIndexButton } from '../utils/gymNavigation';
@@ -1059,6 +1060,9 @@ export class PlayScene extends Phaser.Scene {
 
   /** Advances drop lifecycles and resolves fly-over collection. */
   private _updateDrops(dt: number): void {
+    // ── Magnet attraction (P9) ──────────────────────────────────
+    this._applyMagnet(dt);
+
     const kept: PlayDrop[] = [];
     for (const drop of this.drops) {
       drop.powerUp.advance(dt);
@@ -1071,6 +1075,14 @@ export class PlayScene extends Phaser.Scene {
       kept.push(drop);
     }
     this.drops = kept;
+  }
+
+  /** P9: pulls collectible drops within range toward the player ship. */
+  private _applyMagnet(dt: number): void {
+    if (!this.player) return;
+    const stacks = this.effectsRegistry.magnetStacks();
+    if (stacks <= 0) return;
+    applyMagnetAttraction(this.drops, this.player, stacks, dt);
   }
 
   /** Collects the drop when it overlaps the player's hull. */

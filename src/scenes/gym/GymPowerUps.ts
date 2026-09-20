@@ -32,6 +32,7 @@ import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import { getPowerUpById, PowerUpId } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
+import { applyMagnetAttraction } from '../../powerups/magnet';
 import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
@@ -50,7 +51,6 @@ import {
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
   SHIP_SIZE,
-  MAGNET_ATTRACTION_SPEED,
 } from '../../core/constants';
 
 /** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9). */
@@ -219,26 +219,7 @@ export class GymPowerUps extends Phaser.Scene {
     if (!this.player) return;
     const stacks = this.effectsRegistry.magnetStacks();
     if (stacks <= 0) return;
-
-    const radius = this._magnetRadius(stacks);
-    for (const drop of this.drops) {
-      if (!drop.powerUp.canCollect()) continue;
-      const dx = this.player.x - drop.x;
-      const dy = this.player.y - drop.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist <= 0.001 || dist > radius) continue;
-      const step = Math.min(MAGNET_ATTRACTION_SPEED * dt, dist);
-      drop.x += (dx / dist) * step;
-      drop.y += (dy / dist) * step;
-      // AC1 — keep the visual position in sync with the logical position
-      // so the player sees the drop being pulled toward the ship.
-      drop.graphics.setPosition(drop.x, drop.y);
-    }
-  }
-
-  /** Magnet attraction radius: 2× ship size, +50% per stack. */
-  private _magnetRadius(stacks: number): number {
-    return 2 * SHIP_SIZE * (1 + 0.5 * stacks);
+    applyMagnetAttraction(this.drops, this.player, stacks, dt);
   }
 
   /**
