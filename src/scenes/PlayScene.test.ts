@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
+import * as effectsModule from '../audio/effects';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { GameOverScene } from './GameOverScene';
@@ -1112,5 +1113,51 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     // No enemies harmed by the bomb.
     expect(scene.getAliveCount()).toBe(aliveBefore);
+  });
+
+  // ── Per-weapon fire audio (AH-0MU8QVQQV006T0KI) ──────────────────
+
+  it('auto-firing the cannon plays the cannon cue once per volley', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+    const scene = await bootPlay();
+    // Boot already fired an opening volley; clear so we assert only the
+    // shots fired below.
+    vi.clearAllMocks();
+
+    scene.tick(0.5); // cannon cooldown (400 ms) elapsed → fires
+
+    expect(cannonSound).toHaveBeenCalledTimes(1);
+    // No other weapon's cue plays while the cannon is the only weapon.
+    expect(spreadSound).not.toHaveBeenCalled();
+  });
+
+  it('equipping spread/dual/rapid plays the corresponding per-weapon cue', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
+    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    vi.clearAllMocks();
+
+    // Spread: equip and wait past its fire rate. The permanently-active
+    // cannon fires too (cumulative model), so both cues play per volley.
+    player.equipWeapon('spread');
+    scene.tick(0.7); // spread fires every 600 ms
+    expect(spreadSound).toHaveBeenCalledTimes(1);
+    expect(cannonSound).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+
+    // Dual.
+    player.equipWeapon('dual');
+    scene.tick(0.5); // dual fires every 300 ms
+    expect(dualSound).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+
+    // Rapid.
+    player.equipWeapon('rapid');
+    scene.tick(0.2); // rapid fires every 125 ms
+    expect(rapidSound).toHaveBeenCalledTimes(1);
   });
 });

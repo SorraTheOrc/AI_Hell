@@ -39,9 +39,13 @@ import {
   type WeaponWeights,
 } from '../core/rules';
 import {
+  playCannonFireSound,
   playDestructionSound,
+  playDualFireSound,
   playPowerUpCollectSound,
+  playRapidFireSound,
   playSpawnSound,
+  playSpreadFireSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import {
@@ -700,11 +704,33 @@ export class PlayScene extends Phaser.Scene {
     if (fired.length === 0) return;
     const headingDeg = (this.player.getHeading() * 180) / Math.PI;
     for (const weaponId of fired) {
+      // One shoot cue per firing weapon per volley (not per bullet),
+      // mirroring GymWeapons._playShootCue. Safe no-op without an
+      // AudioContext.
+      this._playShootCue(weaponId);
       const def = this.player.getWeaponDef(weaponId);
       for (const bd of createBulletsFromHeading(def, headingDeg, this.player.x, this.player.y)) {
         const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
         this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
       }
+    }
+  }
+
+  /** Plays the shoot cue for one firing weapon (one per shot, keyed off id). */
+  private _playShootCue(weaponId: WeaponId): void {
+    switch (weaponId) {
+      case 'cannon':
+        playCannonFireSound();
+        break;
+      case 'spread':
+        playSpreadFireSound();
+        break;
+      case 'dual':
+        playDualFireSound();
+        break;
+      case 'rapid':
+        playRapidFireSound();
+        break;
     }
   }
 
