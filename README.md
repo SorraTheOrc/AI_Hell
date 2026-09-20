@@ -355,9 +355,13 @@ The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene
 
 Flow / scene keys:
 
-- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Gym Scene Index (dev)** → `GymIndex`.
+- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Settings** → `SettingsScene` (origin `MenuScene`), **Gym Scene Index (dev)** → `GymIndex`.
 - `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score.
+- `PauseScene` — in-game pause menu: pressing **ESC** during play freezes the run and shows **Resume / Settings / Quit** (pointer- and keyboard-operable, default focus on Resume). Resume or **ESC** again continues the run exactly where it paused; **Quit** returns to the main menu.
+- `SettingsScene` — settings screen shared by the pause menu and the main menu: an **SFX volume slider** (0.0–1.0), an **SFX mute toggle**, and **key-binding remapping** (press-a-key to rebind, conflict warnings, **Reset to defaults**). All persisted to `ai_hell_settings` (see below); **Back** returns to wherever it was opened from.
 - `GameOverScene` — final score, initials entry, leaderboard stub, return to menu.
+
+> **Pause, settings & rebinding** — ESC toggles the pause menu (the pause key, movement keys and layer-drop key are rebindable in SettingsScene; arrow keys remain built-in movement defaults). Settings changes apply live and persist to `localStorage` under `ai_hell_settings` (`sfxVolume`, `sfxMuted`, `bindings`) across reloads.
 
 Run it with `npm run dev` and click **Play Game**.
 

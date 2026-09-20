@@ -336,10 +336,19 @@ src/
 │                          from it in `../core/constants.ts`
 ├── scenes/
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
+│   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click
 │   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
-│   │                      to GameOverScene on win or loss
+│   │                      to GameOverScene on win or loss; **ESC pauses** the run and
+│   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable)
+│   ├── PauseScene.ts    — In-game pause menu (implemented): full-screen replacement scene
+│   │                      with Resume / Settings / Quit (pointer + keyboard), launched by
+│   │                      PlayScene's ESC toggle; resume continues the run exactly
+│   ├── SettingsScene.ts — Settings screen (implemented): SFX volume slider (0.0–1.0),
+│   │                      SFX mute toggle, and key-binding remapping with conflict
+│   │                      warnings + Reset to defaults; persisted to `ai_hell_settings`;
+│   │                      Back returns to the origin scene (PauseScene or MenuScene)
 │   ├── GameOverScene.ts — Game-over (implemented): final score, 3-letter initials,
 │   │                      leaderboard stub (localStorage), Return to Menu
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
@@ -489,7 +498,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Key | Content |
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
-| `ai_hell_settings` | Sound volume (0.0–1.0), SFX mute toggle, control bindings |
+| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, layer-drop, pause toggle). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.
@@ -524,6 +533,8 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Boss | `#ff0000` (red) — phases shift to brighter red | Central AI |
 | Power-ups | `#ffffff` (white) with colored aura | All power-ups |
 | UI text | `#00ffff` (cyan) | HUD, menus |
+
+> **Pause menu & settings** — the in-game pause menu (`PauseScene`) and the settings screen (`SettingsScene`) render as full-screen replacement scenes in the same neon palette: cyan text on a near-black background, with the focused keyboard control highlighted in white (GDD §7.1).
 
 ### 7.2 Visual Style
 
