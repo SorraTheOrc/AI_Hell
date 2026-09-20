@@ -989,4 +989,76 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(scene.getGameState().lives).toBe(livesBefore);
     expect(scene.isPlayerInvulnerable()).toBe(true);
   });
+
+  // ── P6 Phase Shift ghost visual (AH-0MU8QVC9Y008R8I5) ────────────
+
+  it('P6 phase shift renders the ship as a semi-transparent ghost (alpha 0.45)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect a P6 phase shift.
+    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isPhased).toBe(true);
+
+    expect(scene.isPhaseGhostActive()).toBe(true);
+    // Ghost alpha applied after the visuals update on the next tick.
+    player.setAlpha(1);
+    scene.tick(0.016);
+    expect(player.alpha).toBeCloseTo(0.45);
+  });
+
+  it('P6 expiry restores full ship alpha', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect a P6 phase shift.
+    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isPhased).toBe(true);
+
+    // Ghost alpha on the next tick.
+    scene.tick(0.016);
+    expect(player.alpha).toBeCloseTo(0.45);
+
+    // Advance past the 3 s duration.
+    for (let i = 0; i < 188; i++) scene.tick(0.016); // ~3 s
+    expect(registry.isPhased).toBe(false);
+    scene.tick(0.016);
+    expect(player.alpha).toBeCloseTo(1);
+  });
+
+  it('P6 ghost alpha defers to the post-hit invulnerability blink', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect a P6 phase shift (phased → ghosted).
+    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isPhased).toBe(true);
+
+    // Apply the ghost alpha first (phased → 0.45).
+    player.setAlpha(1);
+    scene.tick(0.016);
+    expect(player.alpha).toBeCloseTo(0.45);
+
+    // Start the post-hit invulnerability blink while phase is still active
+    // (phase grants pass-through, so the blink is started via the same
+    // timer the shield-absorb path uses). The ghost must NOT clobber it.
+    (scene as unknown as { invulnerable: number }).invulnerable = 1;
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // After the visuals update, the blink alpha wins over the ghost alpha.
+    scene.tick(0.016);
+    expect(player.alpha).not.toBeCloseTo(0.45);
+  });
 });
