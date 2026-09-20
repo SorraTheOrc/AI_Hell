@@ -369,11 +369,12 @@ The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playg
 - **Enemy sub-list (data-driven):** in addition to the gym scenes, the index enumerates every available `EnemyConfig` via `src/utils/enemyGymDiscovery.ts` (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()` under the `ai-hell-enemy-config:<key>` namespace) — one row per enemy (label `displayName`) under the **ENEMIES** header. Each row boots the single reusable scene `GymEnemies` with that enemy's key (`scene.start('GymEnemies', { enemyKey })`). Adding a new enemy via **Save As…** in the `GymEnemies` panel makes it appear here without editing `GymIndex.ts`. Bare `GymEnemies` is not listed as a plain scene.
 - **Labels & ordering (AC4):** each gym entry's label strips the leading `Gym` from the file/class name (`GymScout` → `Scout`, `GymPlayer` → `Player`) and entries are sorted alphabetically; enemy entries sort by `displayName`. Selecting an entry starts that scene immediately (gym scenes by class-name key, enemy rows as `GymEnemies` with `enemyKey`).
 - **Back to the list (AC5):** every gym scene shows a shared "← INDEX" button (`src/utils/gymNavigation.ts`) that switches back to `GymIndex` — no reload needed.
+- **Back to the menu (ESC):** press **ESC** in the gym index or any gym scene to return to the **main menu** (`MenuScene`) immediately — shared `addBackToMenuOnEsc()` in `src/utils/gymNavigation.ts`. Unlike the "← INDEX" button (which returns to the gym index), ESC always exits back to the main menu.
 
 #### Adding a New Gym Scene (convention)
 
 1. Create `src/scenes/gym/Gym<Name>.ts` with `export class Gym<Name> extends Phaser.Scene` (key `Gym<Name>`). No registry edit needed — the index discovers it automatically.
-2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index.
+2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index, and `addBackToMenuOnEsc(this)` so **ESC** returns to the main menu.
 3. Add a `Gym<Name>.test.ts` next to it (excluded from the index automatically).
 
 #### Adding a New Enemy (convention)
