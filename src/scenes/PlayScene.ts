@@ -58,6 +58,10 @@ import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import { applyMagnetAttraction } from '../powerups/magnet';
 import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
+import {
+  findTeleportDestination,
+  type TeleportBody,
+} from '../powerups/teleport';
 import { HUD } from '../ui/HUD';
 import { addBackToIndexButton } from '../utils/gymNavigation';
 import { angleToVelocity, createBulletsFromHeading, type WeaponId } from '../utils/weapons';
@@ -206,6 +210,9 @@ export class PlayScene extends Phaser.Scene {
 
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
+  /** P7 Teleport activation keys: S and ↓ (JustDown semantics). */
+  private teleportKey: Phaser.Input.Keyboard.Key | null = null;
+  private downKey: Phaser.Input.Keyboard.Key | null = null;
   private fourDirHandler = new FourDirectionalInputHandler();
   private asteroidsHandler = new AsteroidsInputHandler();
 
@@ -255,6 +262,11 @@ export class PlayScene extends Phaser.Scene {
     this.add.existing(this.player);
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
+    // P7 Teleport keys: S and ↓ (JustDown semantics, mirrors the gyms).
+    this.teleportKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    this.downKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
@@ -386,6 +398,9 @@ export class PlayScene extends Phaser.Scene {
       this.player.tickWeaponTimers(dt * 1000);
       // P5 live boost: scale thrust/max-speed each frame (mirror gym).
       this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
+      // P7 Teleport (S/↓ JustDown) — runs before physics so the warp
+      // position is consumed by this frame's physics.
+      this._handleTeleport();
       const input = this._readPlayerInput();
       if (input) this.player.setInput(input);
       this.player.physicsTick(dt, this.scale.width, this.scale.height);
@@ -1131,6 +1146,83 @@ export class PlayScene extends Phaser.Scene {
   private _clearEnemyBullets(): void {
     for (const b of this.enemyBullets) b.graphics.destroy();
     this.enemyBullets = [];
+  }
+
+  // ── Teleport (P7, S/↓) ──────────────────────────────────────────
+
+  /** Handles the S / ↓ key press for a P7 teleport (JustDown semantics). */
+  private _handleTeleport(): void {
+    if (!this.player || !this.teleportKey) return;
+    const JustDown = (
+      Phaser.Input.Keyboard as unknown as {
+        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
+      }
+    ).JustDown;
+    const sDown = JustDown
+      ? JustDown(this.teleportKey)
+      : this.teleportKey.isDown;
+    const downDown = this.downKey
+      ? JustDown
+        ? JustDown(this.downKey)
+        : this.downKey.isDown
+      : false;
+    if (sDown || downDown) this.triggerTeleport();
+  }
+
+  /**
+   * Consumes one P7 teleport stack and warps the player to the nearest
+   * safe spot along the heading (granting P6 on arrival via the
+   * registry). Public so tests can trigger it deterministically without
+   * faking keyboard state. Returns true when a teleport was performed.
+   */
+  triggerTeleport(): boolean {
+    if (!this.player) return false;
+    if (!this.effectsRegistry.hasTeleport()) return false;
+
+    const heading = this.player.getHeading();
+    const enemies: TeleportBody[] = this.spawned
+      .filter((s) => s.entity.alive)
+      .map((s) => ({
+        x: s.entity.x,
+        y: s.entity.y,
+        radius: s.entity.getHitRadius(),
+      }));
+    const bullets: TeleportBody[] = this.enemyBullets.map((b) => ({
+      x: b.graphics.x,
+      y: b.graphics.y,
+      radius: 5,
+    }));
+    // The boss is a body the destination must also avoid.
+    if (this.boss?.alive) {
+      enemies.push({ x: this.boss.x, y: this.boss.y, radius: this.boss.getHitRadius() });
+    }
+
+    const dest = findTeleportDestination(
+      this.player.x,
+      this.player.y,
+      heading,
+      enemies,
+      bullets,
+      this.scale.width,
+      this.scale.height,
+      {
+        enemyHitRadius: 12,
+        bulletHitRadius: 5,
+      },
+    );
+
+    // Consume one stack FIFO and grant P6 phase shift at the landing spot.
+    this.effectsRegistry.consumeTeleport();
+    this.player.setPosition(dest.x, dest.y);
+    // Keep the movement state's position in sync with the new position
+    // (physicsTick uses the internal state as its base).
+    const state = this.player.getMovementState();
+    (
+      this.player as unknown as {
+        _movementState: { x: number; y: number };
+      }
+    )._movementState = { ...state, x: dest.x, y: dest.y };
+    return true;
   }
 
   // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────

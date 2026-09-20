@@ -868,4 +868,78 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(remaining2).toBeGreaterThan(remainingBeforeSecond);
     expect(remaining2).toBeCloseTo(10, 1);
   });
+
+  // ── P7 Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
+
+  it('P7 teleport with a stack warps the player, consumes the stack and grants P6', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect a P7 to gain a teleport stack.
+    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.teleportStacks()).toBe(1);
+
+    // Move the ship off-centre so the safe-spot search picks a new location.
+    player.setPosition(300, 400);
+    const beforeX = player.x;
+    const beforeY = player.y;
+
+    expect(scene.triggerTeleport()).toBe(true);
+
+    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(true); // P6 granted on arrival
+    expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
+    expect(player.x).toBeGreaterThanOrEqual(0);
+    expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(player.y).toBeGreaterThanOrEqual(0);
+    expect(player.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+
+  it('P7 teleport with zero stacks is a no-op', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    expect(registry.hasTeleport()).toBe(false);
+    const beforeX = player.x;
+    const beforeY = player.y;
+
+    expect(scene.triggerTeleport()).toBe(false);
+
+    // Player did not move; no P6 granted; still zero stacks.
+    expect(player.x).toBeCloseTo(beforeX);
+    expect(player.y).toBeCloseTo(beforeY);
+    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(false);
+  });
+
+  it('P7 destination avoids live enemies (lands away from an enemy body)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect a P7 stack.
+    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.teleportStacks()).toBe(1);
+
+    // Park the ship inside a live enemy so the only safe spot is away from it.
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(enemy.x, enemy.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: { x: number; y: number } })._movementState =
+      { ...state, x: enemy.x, y: enemy.y };
+
+    expect(scene.triggerTeleport()).toBe(true);
+
+    // The landing spot must not overlap the enemy body.
+    const distFromEnemy = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+    expect(distFromEnemy).toBeGreaterThan(enemy.getHitRadius());
+  });
 });
