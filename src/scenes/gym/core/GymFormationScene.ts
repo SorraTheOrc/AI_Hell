@@ -21,12 +21,16 @@ import {
   GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
+  PLAYER_HIT_SCALE_PEAK,
+  PLAYER_HIT_SCALE_PULSE_DURATION,
   PLAYER_RESPAWN_INVULNERABLE,
+  POWER_UP_DROP_SIZE,
   SHIP_COLOR,
   SHIP_SIZE,
 } from '../../../core/constants';
 import {
   playDestructionSound,
+  playPowerUpCollectSound,
   playSpawnSound,
 } from '../../../audio/effects';
 import { addBackToIndexButton } from '../../../utils/gymNavigation';
@@ -53,6 +57,35 @@ import {
   ControlInput,
   FourDirectionalInputHandler,
 } from '../../../utils/movementModel';
+import {
+  loadRules,
+  POWER_UP_WEIGHT_IDS,
+  WEAPON_WEIGHT_IDS,
+  type PowerUpWeights,
+  type WeaponWeights,
+} from '../../../core/rules';
+import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
+import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
+import { EffectsRegistry } from '../../../powerups/effects';
+import { findTeleportDestination } from '../../../powerups/teleport';
+import {
+  RandomAvoidingPlacement,
+  type PlacementContext,
+  type PowerUpPlacement,
+} from '../../../powerups/placement';
+import {
+  WeightedRandomSpawner,
+  type PowerUpSpawner,
+} from '../../../powerups/spawner';
+import {
+  getPowerUpById,
+  isWeaponDrop,
+  type DropId,
+  type PowerUpId,
+  type WeaponDropId,
+} from '../../../powerups/types';
+import type { WeaponId } from '../../../utils/weapons';
+import { HUD } from '../../../ui/HUD';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -79,6 +112,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
     spacingY: number,
   ): void;
   /**
+   * Optional: advances a non-formation (roaming) enemy's own motion for
+   * this frame (e.g. Asteroid straight-line drift + four-edge wrap +
+   * continuous rotation). Formation enemies omit it — the base scene
+   * positions them through `applyFormationPosition`. The scene calls this
+   * BEFORE `applyFormationPosition`; roaming entities' formation method is
+   * expected to be a no-op.
+   */
+  updatePosition?(dt: number): void;
+  /**
    * Optional: receives the player's live world position so aimed fire
    * (Scout shots, Diver dives, Swarm bursts, Phaser patterns) targets the
    * player each frame instead of the fixed bottom-centre stand-in.
@@ -104,6 +146,14 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * generic destruction sound.
    */
   takeDamage?(): number | void;
+  /**
+   * Hit radius (px) used for circle-vs-circle collision checks.
+   *
+   * Each entity returns a value proportional to its visual half-size
+   * plus `HIT_RADIUS_BUFFER_PX`, so the hit circle matches the visual
+   * bounds rather than using the flat default.
+   */
+  getHitRadius(): number;
 }
 
 /** Contract a bullet must satisfy for the base scene to own its lifecycle. */
@@ -127,6 +177,47 @@ export interface PlayerFormationConfig {
   x: number;
   /** Initial spawn y (px). */
   y: number;
+}
+
+/** Optional power-up layer configuration for a formation scene. */
+export interface PowerUpLayerConfig {
+  /**
+   * Injectable ID spawner. Defaults to a `WeightedRandomSpawner` over
+   * P3–P9 plus the weapon drops (spread, dual, rapid, reset) using the
+   * game-rules weights.
+   */
+  spawner?: PowerUpSpawner<DropId>;
+  /**
+   * Injectable placement strategy. Defaults to `RandomAvoidingPlacement`
+   * (seeded from `rng`).
+   */
+  placement?: PowerUpPlacement;
+  /** Injectable RNG used to build the default spawner and placement. */
+  rng?: () => number;
+  /**
+   * Seconds between spawns. Defaults to the interval from the game-rules
+   * config (`loadRules().powerUpSpawnInterval`).
+   */
+  spawnInterval?: number;
+  /** Minimum distance from the screen edge for a drop (px). */
+  margin?: number;
+}
+
+/** A live power-up drop owned by the scene. */
+export interface FormationSceneDrop {
+  /** The drop's grow → hold → shrink → despawn lifecycle. */
+  powerUp: PowerUp;
+  /** The power-up ID. */
+  id: PowerUpId;
+  /** The weapon drop ID (spread/dual/rapid/reset) when this is a weapon drop. */
+  weaponDropId?: WeaponDropId;
+  /** The unified drop ID (power-up or weapon). */
+  dropId: DropId;
+  /** Fixed world-space position at spawn time (px). */
+  x: number;
+  y: number;
+  /** The drawn bubble + icon. */
+  graphics: Phaser.GameObjects.Graphics;
 }
 
 /** Per-scene configuration for a formation gym scene. */
@@ -171,6 +262,12 @@ export interface EnemyFormationConfig<
    * {@link DEFAULT_BULLET_HIT_RADIUS}.
    */
   bulletHitRadius?: number;
+  /**
+   * Opt-in power-up layer. When present, the scene spawns power-up drops
+   * (one at a time) on the configured interval, choosing the ID through a
+   * `PowerUpSpawner` and the position through a `PowerUpPlacement`.
+   */
+  powerUps?: PowerUpLayerConfig;
   /** Creates one enemy at the given absolute position with its offset. */
   createEntity(
     scene: Phaser.Scene,
@@ -180,6 +277,13 @@ export interface EnemyFormationConfig<
   ): TEntity;
   /** Collects any bullets the entity fires this frame (empty if none). */
   collectBullets(entity: TEntity, now: number): TBullet[];
+  /**
+   * Optional: called after an entity is destroyed (player bullet, body
+   * ram, or the EXPLODE button) once its `destroySelf()` has run. Lets a
+   * scene spawn replacement/dynamic entities into the live formation list
+   * (e.g. Asteroid split children, GDD §4.1 — E6 Asteroid).
+   */
+  onEntityDestroyed?(entity: TEntity): void;
 }
 
 /** Monospace neon HUD button style (matches the existing gym HUD). */
@@ -196,6 +300,9 @@ const DEFAULT_ENTITY_HIT_RADIUS = 20;
 
 /** Default hit radius (px) of an enemy bullet when no config is given. */
 const DEFAULT_BULLET_HIT_RADIUS = 6;
+
+/** Default placement margin (px) from the screen edge for power-up drops. */
+const DEFAULT_POWER_UP_PLACEMENT_MARGIN = 24;
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 const PLAYER_BLINK_INTERVAL = 0.1;
@@ -231,8 +338,6 @@ export class GymFormationScene<
   protected playerBullets: PlayerBullet[] = [];
 
   // Player hit/respawn state (only meaningful when `config.player` set).
-  private playerSpawnX = 0;
-  private playerSpawnY = 0;
   private playerHitCount = 0;
   /** Seconds of invulnerability remaining after a hit (blinks while > 0). */
   private playerInvulnerable = 0;
@@ -260,6 +365,23 @@ export class GymFormationScene<
   protected shootButton!: Phaser.GameObjects.Text;
   protected explodeButton!: Phaser.GameObjects.Text;
   protected statusText!: Phaser.GameObjects.Text;
+
+  // Power-up layer (opt-in via `config.powerUps`).
+  private powerUpsEnabled = false;
+  private powerUpDrops: FormationSceneDrop[] = [];
+  private powerUpSpawner: PowerUpSpawner<DropId> | null = null;
+  private powerUpPlacement: PowerUpPlacement | null = null;
+  private powerUpSpawnInterval = 0;
+  private powerUpSpawnTimer = 0;
+  private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
+  private powerUpSpawnCount = 0;
+  /** Shared active-effect registry (effects applied by collected drops). */
+  private effectsRegistry = new EffectsRegistry();
+  /** Standalone HUD rendering the active effects (null when disabled). */
+  private hud: HUD | null = null;
+  /** S / ↓ keys consumed by the P7 teleport (only when a player exists). */
+  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
+  private downKey: Phaser.Input.Keyboard.Key | undefined;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -293,8 +415,6 @@ export class GymFormationScene<
         x: config.player.x,
         y: config.player.y,
       });
-      this.playerSpawnX = config.player.x;
-      this.playerSpawnY = config.player.y;
       // Graphics objects are not auto-added to the display list either.
       this.add.existing(this.player);
       this.cursors = this.input.keyboard?.createCursorKeys();
@@ -330,6 +450,9 @@ export class GymFormationScene<
 
     // ── Back to gym index ───────────────────────────────────────────
     addBackToIndexButton(this);
+
+    // ── Optional power-up layer (opt-in via config.powerUps) ────────
+    this._initPowerUpLayer();
 
     // Ensure any stale countdown state from a prior create() (e.g. after
     // a manual _onRespawn that rebuilt the formation) is cleared so a
@@ -373,6 +496,15 @@ export class GymFormationScene<
 
       // Reset scene toggle state so a fresh create() starts clean.
       this.shootEnabled = false;
+
+      // Tear down any power-up drops owned by the scene.
+      for (const drop of this.powerUpDrops) drop.graphics.destroy();
+      this.powerUpDrops = [];
+      this.powerUpSpawnCount = 0;
+      this.hud?.destroy();
+      this.hud = null;
+      this.teleportKey = undefined;
+      this.downKey = undefined;
     });
   }
 
@@ -400,6 +532,8 @@ export class GymFormationScene<
     } else {
       playDestructionSound();
     }
+    // Dynamic-replacement seam (Asteroid split children, GDD §4.1).
+    this.config.onEntityDestroyed?.(victim);
     this.statusText.setText(
       `exploded: ${victim.offset.row}:${victim.offset.col} — ${this.config.statusLabel}: ${this.aliveCount}`,
     );
@@ -410,6 +544,335 @@ export class GymFormationScene<
     this.shootEnabled = !this.shootEnabled;
     for (const entity of this.entities) entity.shootEnabled = this.shootEnabled;
     this.shootButton.setText(this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF');
+  }
+
+  // ── Power-up layer (spawning, cadence, placement) ────────────────
+
+  /** Initialises the opt-in power-up layer and spawns the first drop. */
+  private _initPowerUpLayer(): void {
+    const cfg = this.config.powerUps;
+    if (!cfg) {
+      this.powerUpsEnabled = false;
+      return;
+    }
+
+    this.powerUpsEnabled = true;
+    const rules = loadRules();
+    const rng = cfg.rng ?? Math.random;
+
+    this.powerUpPlacement =
+      cfg.placement ?? new RandomAvoidingPlacement({ rng });
+    this.powerUpSpawner =
+      cfg.spawner ??
+      this._buildDefaultPowerUpSpawner(
+        rules.powerUpWeights,
+        rules.weaponWeights,
+        rng,
+      );
+    this.powerUpSpawnInterval =
+      cfg.spawnInterval ?? rules.powerUpSpawnInterval;
+    this.powerUpPlacementMargin =
+      cfg.margin ?? DEFAULT_POWER_UP_PLACEMENT_MARGIN;
+    this.powerUpSpawnTimer = this.powerUpSpawnInterval;
+
+    // Fresh registry + standalone HUD per scene start (lives visible so
+    // P8 is observable).
+    this.effectsRegistry = new EffectsRegistry();
+    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
+
+    // P7 teleport keys (only meaningful when a player is present).
+    if (this.player) {
+      this.teleportKey = this.input.keyboard?.addKey(
+        Phaser.Input.Keyboard.KeyCodes.S,
+      );
+      this.downKey = this.input.keyboard?.addKey(
+        Phaser.Input.Keyboard.KeyCodes.DOWN,
+      );
+    }
+
+    // One drop on screen immediately so the layer is observable at boot.
+    this._spawnPowerUpDrop();
+  }
+
+  /**
+   * Builds the default weighted-random spawner over power-up IDs AND
+   * weapon drops (spread, dual, rapid, reset) using the rules weights.
+   */
+  private _buildDefaultPowerUpSpawner(
+    powerUpWeights: PowerUpWeights,
+    weaponWeights: WeaponWeights,
+    rng: () => number,
+  ): PowerUpSpawner<DropId> {
+    const ids: DropId[] = [...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS];
+    const spawner = new WeightedRandomSpawner<DropId>(ids, rng);
+    for (const id of POWER_UP_WEIGHT_IDS) {
+      spawner.setWeight(id, powerUpWeights[id]);
+    }
+    for (const id of WEAPON_WEIGHT_IDS) {
+      spawner.setWeight(id, weaponWeights[id]);
+    }
+    return spawner;
+  }
+
+  /** Snapshot of the live bodies a drop must avoid (enemies + player). */
+  private _powerUpPlacementContext(): PlacementContext {
+    const enemies = this.entities
+      .filter((entity) => entity.alive)
+      .map((entity) => ({
+        x: entity.x,
+        y: entity.y,
+        radius: entity.getHitRadius(),
+      }));
+    const player = this.player
+      ? { x: this.player.x, y: this.player.y, radius: SHIP_SIZE / 2 }
+      : { x: -1e6, y: -1e6, radius: 0 };
+
+    return {
+      width: GAME_WIDTH,
+      height: GAME_HEIGHT,
+      margin: this.powerUpPlacementMargin,
+      dropRadius: POWER_UP_DROP_SIZE,
+      enemies,
+      player,
+    };
+  }
+
+  /** Spawns one drop at a placement-strategy position (cadence path). */
+  private _spawnPowerUpDrop(): void {
+    if (
+      !this.powerUpsEnabled ||
+      !this.powerUpSpawner ||
+      !this.powerUpPlacement
+    ) {
+      return;
+    }
+
+    const id = this.powerUpSpawner.next();
+    const { x, y } = this.powerUpPlacement.place(
+      this._powerUpPlacementContext(),
+    );
+    this.spawnPowerUpDrop(id, x, y);
+    this.powerUpSpawnCount += 1;
+  }
+
+  /**
+   * Spawns a drop of *id* at (x, y). Weapon drops (spread/dual/rapid/
+   * reset) are rendered with the weapon icon; power-up drops with the
+   * power-up icon. Public so tests (and future live controls) can place
+   * a deterministic drop; returns null when the power-up layer is
+   * disabled.
+   */
+  spawnPowerUpDrop(
+    id: DropId,
+    x: number,
+    y: number,
+  ): FormationSceneDrop | null {
+    if (!this.powerUpsEnabled) return null;
+
+    const graphics = this.add.graphics();
+    graphics.setPosition(x, y);
+    if (isWeaponDrop(id)) {
+      drawWeaponDrop(graphics, id, 0, 0, POWER_UP_DROP_SIZE);
+    } else {
+      drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
+    }
+    graphics.setScale(0);
+
+    const drop: FormationSceneDrop = {
+      powerUp: new PowerUp(isWeaponDrop(id) ? 'P3' : id),
+      id: isWeaponDrop(id) ? 'P3' : id,
+      weaponDropId: isWeaponDrop(id) ? id : undefined,
+      dropId: id,
+      x,
+      y,
+      graphics,
+    };
+    this.powerUpDrops.push(drop);
+    return drop;
+  }
+
+  /**
+   * Advances drop lifecycles, resolves fly-over collection, spawns the
+   * next drop when the configured interval has elapsed and no previous
+   * drop is still live (one drop on screen at a time), handles P7
+   * teleport, ticks the effects registry and refreshes the HUD.
+   */
+  private _updatePowerUpLayer(dt: number): void {
+    if (!this.powerUpsEnabled) return;
+
+    this._handleTeleport();
+
+    const kept: FormationSceneDrop[] = [];
+    for (const drop of this.powerUpDrops) {
+      drop.powerUp.advance(dt);
+      drop.graphics.setScale(drop.powerUp.currentScale);
+      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
+        kept.push(drop);
+      } else {
+        drop.graphics.destroy();
+      }
+    }
+    this.powerUpDrops = kept;
+
+    this._collectOverlappingDrops();
+
+    this.powerUpSpawnTimer -= dt;
+    if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
+      this._spawnPowerUpDrop();
+      this.powerUpSpawnTimer = this.powerUpSpawnInterval;
+    }
+
+    this.effectsRegistry.tick(dt);
+    this.hud?.refresh();
+  }
+
+  // ── Drop collection (fly-over) ───────────────────────────────────
+
+  /** Collects any collectible drop overlapping the player's hull. */
+  private _collectOverlappingDrops(): void {
+    if (!this.player) return;
+    const hull = SHIP_SIZE / 2;
+
+    const kept: FormationSceneDrop[] = [];
+    for (const drop of this.powerUpDrops) {
+      if (drop.powerUp.canCollect() && this._dropOverlapsShip(drop, hull)) {
+        this._collectDrop(drop);
+      } else {
+        kept.push(drop);
+      }
+    }
+    this.powerUpDrops = kept;
+  }
+
+  /** Whether a drop's current radius overlaps the player's hull. */
+  private _dropOverlapsShip(drop: FormationSceneDrop, hull: number): boolean {
+    if (!this.player) return false;
+    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
+    return (
+      Math.hypot(this.player.x - drop.x, this.player.y - drop.y) <=
+      hull + dropRadius
+    );
+  }
+
+  /**
+   * Applies a collected drop through the shared `EffectsRegistry`. P4
+   * also clears on-screen enemy bullets (without damaging enemies).
+   * Weapon drops equip the weapon through the registry (or reset the
+   * ship to the cannon).
+   */
+  private _collectDrop(drop: FormationSceneDrop): void {
+    // Weapon drops use the drop's own lifecycle as a collect-gate; the
+    // underlying PowerUp is a placeholder so tryCollect always succeeds
+    // once growing is complete. The registry tracks the weapon for the
+    // HUD, and the player ship's active set is updated so the weapon
+    // actually fires through auto-fire.
+    if (drop.weaponDropId) {
+      if (drop.weaponDropId === 'reset') {
+        this.effectsRegistry.tryResetWeapons();
+        this.player?.resetWeapon();
+      } else {
+        this.effectsRegistry.applyWeapon(drop.weaponDropId as WeaponId);
+        this.player?.equipWeapon(drop.weaponDropId as WeaponId);
+      }
+      drop.powerUp.tryCollect();
+      drop.graphics.destroy();
+      try {
+        playPowerUpCollectSound();
+      } catch {
+        // Audio is best-effort (headless tests have no AudioContext).
+      }
+      return;
+    }
+
+    const effect = drop.powerUp.tryCollect();
+    if (!effect) return;
+
+    if (drop.id === 'P4') {
+      this._clearEnemyBullets();
+    }
+    this.effectsRegistry.applyCollect(drop.id);
+    drop.graphics.destroy();
+    try {
+      playPowerUpCollectSound();
+    } catch {
+      // Audio is best-effort (headless tests have no AudioContext).
+    }
+  }
+
+  /** Clears all on-screen enemy bullets (P4 bomb — no enemy damage). */
+  private _clearEnemyBullets(): void {
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets.length = 0;
+  }
+
+  // ── Teleport (P7, S/↓) ───────────────────────────────────────────
+
+  /** Handles the S / ↓ key press for a P7 teleport. */
+  private _handleTeleport(): void {
+    if (!this.player || !this.teleportKey) return;
+    const JustDown = (
+      Phaser.Input.Keyboard as unknown as {
+        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
+      }
+    ).JustDown;
+    const sDown = JustDown
+      ? JustDown(this.teleportKey)
+      : this.teleportKey.isDown;
+    const downDown = this.downKey
+      ? JustDown
+        ? JustDown(this.downKey)
+        : this.downKey.isDown
+      : false;
+    if (sDown || downDown) this.triggerTeleport();
+  }
+
+  /**
+   * Consumes one P7 teleport stack and warps the player to the nearest
+   * safe spot along the heading (granting P6 on arrival via the
+   * registry). Public so tests can trigger it deterministically without
+   * faking keyboard state. Returns true when a teleport was performed.
+   */
+  triggerTeleport(): boolean {
+    if (!this.player || !this.powerUpsEnabled) return false;
+    if (!this.effectsRegistry.hasTeleport()) return false;
+
+    const heading = this.player.getHeading();
+    const enemies = this.entities
+      .filter((entity) => entity.alive)
+      .map((entity) => ({
+        x: entity.x,
+        y: entity.y,
+        radius: entity.getHitRadius(),
+      }));
+    const bullets = this.bullets.map((bullet) => ({
+      x: bullet.graphics.x,
+      y: bullet.graphics.y,
+    }));
+
+    const dest = findTeleportDestination(
+      this.player.x,
+      this.player.y,
+      heading,
+      enemies,
+      bullets,
+      this.scale.width,
+      this.scale.height,
+      {
+        enemyHitRadius: this.getEntityHitRadius(),
+        bulletHitRadius: this.getBulletHitRadius(),
+      },
+    );
+
+    // Consume one stack FIFO and grant P6 phase shift at the landing spot.
+    this.effectsRegistry.consumeTeleport();
+    this.player.setPosition(dest.x, dest.y);
+    const state = this.player.getMovementState();
+    (
+      this.player as unknown as {
+        _movementState: { x: number; y: number };
+      }
+    )._movementState = { ...state, x: dest.x, y: dest.y };
+    return true;
   }
 
   // ── Public test accessors ────────────────────────────────────────
@@ -462,6 +925,66 @@ export class GymFormationScene<
   /** The player ship (null when the config omitted `player`). */
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  /** Whether the opt-in power-up layer is active for this scene. */
+  isPowerUpLayerEnabled(): boolean {
+    return this.powerUpsEnabled;
+  }
+
+  /** Shared active-effect registry (effects applied by collected drops). */
+  getEffectsRegistry(): EffectsRegistry {
+    return this.effectsRegistry;
+  }
+
+  /** The standalone effects HUD (null when the power-up layer is disabled). */
+  getHUD(): HUD | null {
+    return this.hud;
+  }
+
+  /** The live power-up drops currently on screen. */
+  getPowerUpDrops(): FormationSceneDrop[] {
+    return [...this.powerUpDrops];
+  }
+
+  /** Cumulative number of drops spawned since the scene started. */
+  getPowerUpSpawnCount(): number {
+    return this.powerUpSpawnCount;
+  }
+
+  /** The configured seconds between spawns. */
+  getPowerUpSpawnInterval(): number {
+    return this.powerUpSpawnInterval;
+  }
+
+  /** The active ID spawner (null when the layer is disabled). */
+  getPowerUpSpawner(): PowerUpSpawner<DropId> | null {
+    return this.powerUpSpawner;
+  }
+
+  /** Replaces the ID spawner (used by tests and live controls). */
+  setPowerUpSpawner(spawner: PowerUpSpawner<DropId>): void {
+    this.powerUpSpawner = spawner;
+  }
+
+  /** The active placement strategy (null when the layer is disabled). */
+  getPowerUpPlacement(): PowerUpPlacement | null {
+    return this.powerUpPlacement;
+  }
+
+  /** Replaces the placement strategy (used by tests). */
+  setPowerUpPlacement(placement: PowerUpPlacement): void {
+    this.powerUpPlacement = placement;
+  }
+
+  /**
+   * Updates the spawn interval (seconds). Ignored when not a positive
+   * finite value. The next spawn uses the new cadence.
+   */
+  setPowerUpSpawnInterval(seconds: number): void {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    this.powerUpSpawnInterval = seconds;
+    this.powerUpSpawnTimer = seconds;
   }
 
   /** Player bullets currently in flight. */
@@ -559,6 +1082,10 @@ export class GymFormationScene<
 
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
+      // Roaming enemies (e.g. Asteroid) advance their own straight-line
+      // motion + wrap + rotation; a no-op for formation enemies.
+      entity.updatePosition?.(dt);
+
       entity.applyFormationPosition(
         this.formationBaseX,
         this.formationBaseY,
@@ -591,6 +1118,10 @@ export class GymFormationScene<
 
     // ── Player ship: input → thrust, auto-fire, bullet lifecycle ──
     if (this.player) {
+      // Advance timed weapon countdowns (collected weapon drops expire
+      // after 10 s, mirroring GymWeapons) before auto-fire so an expired
+      // weapon stops firing this frame.
+      this.player.tickWeaponTimers(dt * 1000);
       const input = this._readPlayerInput();
       if (input) this.player.setInput(input);
       this.player.physicsTick(dt, this.scale.width, this.scale.height);
@@ -601,6 +1132,9 @@ export class GymFormationScene<
       this._handleCollisions();
       this._updatePlayerInvulnerability(dt);
     }
+
+    // ── Optional power-up layer: cadence + drop lifecycles ───────────
+    this._updatePowerUpLayer(dt);
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
@@ -622,25 +1156,30 @@ export class GymFormationScene<
   }
 
   /**
-   * Auto-fires the equipped weapon toward the direction of travel when
-   * its cooldown has elapsed (mirrors GymWeapons' auto-fire).
+   * Auto-fires every active weapon toward the direction of travel when
+   * its cooldown has elapsed (mirrors GymWeapons' auto-fire). Combat
+   * scenes only ever have the permanent cannon active, so behaviour is
+   * unchanged: one cannon volley per 400 ms cycle.
    */
   private _autoFire(dt: number): void {
     if (!this.player) return;
-    if (!this.player.tryFire(dt)) return;
+    const firedWeapons = this.player.tryFire(dt);
+    if (firedWeapons.length === 0) return;
 
     const headingDeg = (this.player.getHeading() * 180) / Math.PI;
-    const weaponDef = this.player.getWeaponDef();
-    const bulletDescs = createBulletsFromHeading(
-      weaponDef,
-      headingDeg,
-      this.player.x,
-      this.player.y,
-    );
+    for (const weaponId of firedWeapons) {
+      const weaponDef = this.player.getWeaponDef(weaponId);
+      const bulletDescs = createBulletsFromHeading(
+        weaponDef,
+        headingDeg,
+        this.player.x,
+        this.player.y,
+      );
 
-    for (const bd of bulletDescs) {
-      const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-      this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
+      for (const bd of bulletDescs) {
+        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
+        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
+      }
     }
   }
 
@@ -684,7 +1223,6 @@ export class GymFormationScene<
   private _handleCollisions(): void {
     if (!this.player) return;
 
-    const entityHitRadius = this.getEntityHitRadius();
     const bulletHitRadius = this.getBulletHitRadius();
     const playerHull = SHIP_SIZE / 2;
 
@@ -705,7 +1243,7 @@ export class GymFormationScene<
             PLAYER_BULLET_RADIUS,
             entity.x,
             entity.y,
-            entityHitRadius,
+            entity.getHitRadius(),
           )
         ) {
           if (entity.takeDamage) {
@@ -719,6 +1257,8 @@ export class GymFormationScene<
             } else {
               playDestructionSound();
             }
+            // Dynamic-replacement seam (Asteroid split children).
+            this.config.onEntityDestroyed?.(entity);
           }
           pb.destroy();
           spent = true;
@@ -797,7 +1337,7 @@ export class GymFormationScene<
             playerHull,
             entity.x,
             entity.y,
-            entityHitRadius,
+            entity.getHitRadius(),
           )
         ) {
           entity.destroySelf();
@@ -807,6 +1347,8 @@ export class GymFormationScene<
           if (entity.playDestructionAudio) {
             entity.playDestructionAudio();
           }
+          // Dynamic-replacement seam (Asteroid split children).
+          this.config.onEntityDestroyed?.(entity);
           this._hitPlayer();
           break;
         }
@@ -816,15 +1358,28 @@ export class GymFormationScene<
 
   /**
    * Player hit: records the hit, plays the destruction sound, spawns the
-   * explosion VFX at the ship position, respawns the player at the spawn
-   * point with a short invulnerability window, and resets the blink phase.
+   * explosion VFX at the ship position, plays a scale-pulse VFX on the
+   * ship (expand to 150% → contract back to 100%), respawns the player
+   * in-place (same position and facing, velocity zeroed) with a short
+   * invulnerability window, and resets the blink phase.
    */
   private _hitPlayer(): void {
     if (!this.player) return;
     this.playerHitCount += 1;
     playDestructionSound();
     this._spawnPlayerExplosion(this.player.x, this.player.y);
-    this.player.respawn(this.playerSpawnX, this.playerSpawnY);
+
+    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
+    this.tweens.add({
+      targets: this.player,
+      scale: PLAYER_HIT_SCALE_PEAK,
+      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
+      yoyo: true,
+      ease: 'Power2',
+    });
+
+    // In-place respawn: preserve position and facing, zero velocity.
+    this.player.respawnInPlace();
     this.playerInvulnerable = PLAYER_RESPAWN_INVULNERABLE;
     this.playerBlinkPhase = 0;
     this.player.setAlpha(1);

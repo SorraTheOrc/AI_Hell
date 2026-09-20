@@ -290,13 +290,23 @@ export function _resetAudioContextForTests(): void {
     teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
   }
   thrusterHum = null;
+  if (diverDiveSound) {
+    teardownDiveSound(diverDiveSound.ctx.currentTime, 0);
+  }
+  diverDiveSound = null;
+  diverDiveSoundRefCount = 0;
   audioCtx = null;
 }
 
 let audioCtx: AudioContext | null = null;
 
-/** Lazily creates the shared AudioContext, or returns null if unavailable. */
-function getAudioContext(): AudioContext | null {
+/**
+ * Lazily creates the shared AudioContext, or returns null if unavailable.
+ *
+ * Exported so entity modules (e.g. Boss.ts) reuse the single cached
+ * context instead of creating their own duplicate (AH-0MU4KPQHR008WX4R).
+ */
+export function getAudioContext(): AudioContext | null {
   if (audioCtx) return audioCtx;
   try {
     const Ctor =
@@ -311,8 +321,13 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
-/** Plays a single oscillator blip with a gain envelope. */
-function blip(
+/**
+ * Plays a single oscillator blip with a gain envelope.
+ *
+ * Exported so entity modules (e.g. Boss.ts) reuse the shared synthesis
+ * helper instead of duplicating it (AH-0MU4KPQHR008WX4R).
+ */
+export function blip(
   freqStart: number,
   freqEnd: number,
   duration: number,
@@ -575,6 +590,63 @@ export function playSwarmBurstSound(): void {
 // ── Scout enemy cues (GDD §4.1 — E1 Scout) ─────────────────────────
 
 /**
+ * Duration (seconds) of the Phaser advance-cue rising sine.
+ *
+ * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playPhaserFireSound()` can
+ * schedule its shot to start exactly at the cue's end time, flowing
+ * back-to-back with no dead gap between warning and shot.
+ */
+export const PHASER_ADVANCE_CUE_DURATION = 0.6;
+
+/**
+ * Rising warning blip — E4 Phaser firing advance cue (GDD §7.3).
+ *
+ * A rising sine (660 → 880 Hz) over `PHASER_ADVANCE_CUE_DURATION`
+ * (≥ 500 ms) that replaces the inline `_playAdvanceCue()` previously
+ * defined in `Phaser.ts`. Pitched lower than the Scout cue to stay
+ * distinct. Called at tell start, before `playPhaserFireSound()`.
+ * Safe no-op without an AudioContext.
+ */
+export function playPhaserAdvanceCue(): void {
+  blip(660, 880, PHASER_ADVANCE_CUE_DURATION, 'sine', 0.08);
+}
+
+/**
+ * Quick sharp blip — E4 Phaser fire sound (GDD §7.3).
+ *
+ * A short triangle-wave sweep (1000 → 500 Hz, ~80 ms) — sharper
+ * than the Scout fire sound to distinguish the orbital phaser's
+ * aimed shot. Very short (≤ 100 ms) to avoid cacophony when
+ * multiple Phasers fire simultaneously. Scheduled at
+ * `currentTime + PHASER_ADVANCE_CUE_DURATION` (the cue's end time)
+ * so that, when called back-to-back with `playPhaserAdvanceCue()`
+ * in the same tick, it flows with no dead gap. Safe no-op without
+ * an AudioContext.
+ */
+export function playPhaserFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime + PHASER_ADVANCE_CUE_DURATION;
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(1000, t);
+  osc.frequency.exponentialRampToValueAtTime(
+    Math.max(1, 500),
+    t + 0.08,
+  );
+
+  gain.gain.setValueAtTime(0.12, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.1);
+}
+
+/**
  * Duration (seconds) of the Scout advance-cue rising blip.
  *
  * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playScoutFireSound()` can
@@ -601,6 +673,198 @@ export function playScoutAdvanceCue(): void {
 }
 
 // ── Diver enemy cues (GDD §4.1 — E2 Diver) ─────────────────────────
+
+/**
+ * Duration (seconds) of the sustained dive sound — matches `DIVER_DIVE_DURATION`.
+ *
+ * The dive sound plays from the FORMATION→DIVING transition until the
+ * DIVING→RETURNING transition, so the envelope must cover the full
+ * ~2 s dive arc. Tied to `Diver.DIVER_DIVE_DURATION` in `Diver.ts`.
+ */
+export const DIVER_DIVE_SOUND_DURATION = 2;
+
+/**
+ * Rising whoosh / crack — E2 Diver dive-start cue (AH-0MTVYC6E8005YN6F).
+ *
+ * A short rising sawtooth sweep (150 → 600 Hz, ~250 ms) layered with
+ * filtered white noise for a "breach" character — evokes the diver
+ * suddenly breaking formation and plunging toward the player. Played
+ * exactly once at the FORMATION→DIVING transition (in `_startDive()`),
+ * distinct from the fire crack, the destruction sound, and all other
+ * enemy cues. Safe no-op without an AudioContext.
+ */
+export function playDiverDiveStartSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const dur = 0.25;
+
+  // Rising sawtooth: the "crack" / whoosh ascent.
+  const osc = ctx.createOscillator();
+  const oscGain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(150, t);
+  osc.frequency.exponentialRampToValueAtTime(600, t + dur);
+  oscGain.gain.setValueAtTime(0.12, t);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(oscGain).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+
+  // Noise layer: adds the "whoosh" texture of breaking through water.
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(300, t);
+  noiseFilter.frequency.exponentialRampToValueAtTime(1200, t + dur);
+  noiseFilter.Q.setValueAtTime(0.8, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.06, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ctx.destination);
+  noise.start(t);
+  noise.stop(t + dur + 0.02);
+}
+
+// ── Diver sustained dive sound ──────────────────────────────────────
+//
+// A continuous noise-sweep texture that plays while a diver is in
+// the DIVING state (≈ 2 s). Concurrent divers share one refcounted
+// voice: the first playDiveSound() creates the nodes, overlapping
+// dives only bump the refcount, and the nodes are torn down when the
+// last active dive calls stopDiveSound(). This keeps entity wiring
+// simple (plain start/stop calls, no per-dive handles) while tolerating
+// overlapping dives. The sound is bounded: start at FORMATION→DIVING,
+// stop at DIVING→RETURNING, destroySelf(), or destroy(). No oscillator
+// leak on destruction.
+
+interface DiverDiveSoundState {
+  ctx: AudioContext;
+  /** Band-pass filtered white-noise source for the dive whoosh texture. */
+  noise: AudioBufferSourceNode;
+  /** Filter shaping noise into a jet-like dive roar. */
+  filter: BiquadFilterNode;
+  gain: GainNode;
+}
+
+let diverDiveSound: DiverDiveSoundState | null = null;
+/** Active dive count holding the shared dive-sound voice. */
+let diverDiveSoundRefCount = 0;
+
+/** For tests: returns the current dive sound state (or null if not started). */
+export function _getDiverDiveSoundStateForTests(): DiverDiveSoundState | null {
+  return diverDiveSound;
+}
+
+/** For tests: returns how many active dives hold the shared voice. */
+export function _getDiverDiveSoundRefCountForTests(): number {
+  return diverDiveSoundRefCount;
+}
+
+/**
+ * Internal: tears down all dive sound AudioNodes and clears state.
+ */
+function teardownDiveSound(ctxTime: number, stopOffset: number): void {
+  try {
+    if (!diverDiveSound) return;
+    diverDiveSound.gain.gain.cancelScheduledValues(ctxTime);
+    diverDiveSound.gain.gain.setValueAtTime(0, ctxTime);
+    diverDiveSound.noise.stop(ctxTime + stopOffset);
+  } catch { /* already stopped / no ctx */ }
+  diverDiveSound = null;
+  diverDiveSoundRefCount = 0;
+}
+
+/**
+ * Starts (or shares) the sustained dive sound — continuous whoosh texture
+ * during the ~2 s dive (AH-0MTVYC6E8005YN6F).
+ *
+ * A band-pass filtered white-noise sweep (300 → 900 Hz) through a gain
+ * node, producing a jet-engine-like roar that evokes the diver charging
+ * through water toward the player. The voice is shared and refcounted:
+ * a second concurrent dive only bumps the hold count instead of stealing
+ * or duplicating the first diver's nodes.
+ *
+ * Safe no-op without an AudioContext.
+ */
+export function playDiveSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  // Shared voice already live (another diver mid-dive) → just refcount.
+  if (diverDiveSound) {
+    diverDiveSoundRefCount += 1;
+    return;
+  }
+
+  // Create a fresh noise source for this dive instance.
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    ctx.sampleRate * DIVER_DIVE_SOUND_DURATION,
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = true;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(300, ctx.currentTime);
+  filter.frequency.exponentialRampToValueAtTime(
+    900,
+    ctx.currentTime + DIVER_DIVE_SOUND_DURATION,
+  );
+  filter.Q.setValueAtTime(0.6, ctx.currentTime);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.1, ctx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.1);
+  gain.gain.setValueAtTime(0.1, ctx.currentTime + DIVER_DIVE_SOUND_DURATION - 0.2);
+  gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + DIVER_DIVE_SOUND_DURATION);
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+  noise.start(ctx.currentTime);
+  noise.stop(ctx.currentTime + DIVER_DIVE_SOUND_DURATION + 0.02);
+
+  diverDiveSound = { ctx, noise, filter, gain };
+  diverDiveSoundRefCount = 1;
+}
+
+/**
+ * Releases one dive's hold on the sustained dive sound.
+ *
+ * Called when a dive ends (DIVING→RETURNING), when the diver is
+ * destroyed mid-dive, or on scene teardown. The shared voice is torn
+ * down only when the last active dive releases it, so overlapping
+ * dives never cut each other off. Safe no-op if no sound is playing.
+ */
+export function stopDiveSound(): void {
+  if (!diverDiveSound) return;
+  // Other dives still active → release one hold, keep the voice live.
+  if (diverDiveSoundRefCount > 1) {
+    diverDiveSoundRefCount -= 1;
+    return;
+  }
+  teardownDiveSound(diverDiveSound.ctx.currentTime, 0.02);
+}
 
 /**
  * Short low/nasal crack — E2 Diver fire sound (GDD §7.3).
@@ -699,6 +963,47 @@ export function playScoutFireSound(): void {
   osc.connect(gain).connect(ctx.destination);
   osc.start(t);
   osc.stop(t + 0.14);
+}
+
+// ── Boss enemy cues (GDD §4.3) ────────────────────────────────────
+
+/**
+ * Deep resonant boom — Central AI Boss fire sound (GDD §7.3).
+ *
+ * A heavy sawtooth fall (200 → 50 Hz over 200 ms) layered with a
+ * low sine undertone — evokes the Boss's overwhelming firepower.
+ * Called once per volley (Spread / Spiral / Pulse / Desperation)
+ * at the start of each attack phase, alongside the per-phase
+ * `playBossPhaseCue()` telegraph. Safe no-op without an AudioContext.
+ */
+export function playBossFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Main boom: low sawtooth fall.
+  const boom = ctx.createOscillator();
+  const boomGain = ctx.createGain();
+  boom.type = 'sawtooth';
+  boom.frequency.setValueAtTime(200, t);
+  boom.frequency.exponentialRampToValueAtTime(50, t + 0.2);
+  boomGain.gain.setValueAtTime(0.3, t);
+  boomGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  boom.connect(boomGain).connect(ctx.destination);
+  boom.start(t);
+  boom.stop(t + 0.22);
+
+  // Low sine body for weight.
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = 'sine';
+  body.frequency.setValueAtTime(60, t);
+  body.frequency.exponentialRampToValueAtTime(30, t + 0.2);
+  bodyGain.gain.setValueAtTime(0.2, t);
+  bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  body.connect(bodyGain).connect(ctx.destination);
+  body.start(t);
+  body.stop(t + 0.22);
 }
 
 // ── Player weapon shoot cues (GDD §2.3, §7.3) ─────────────────────

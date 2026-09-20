@@ -77,6 +77,16 @@ export interface EnemyConfig {
   bulletSpeed: number;
   /** Burst / radial-spoke count (e.g. Tank radial 10, Diver burst 4, Phaser radial 8). */
   burstCount: number;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that an individual enemy fires on any
+   * given shot cycle, evaluated once per cycle at the fire decision point
+   * (when the interval elapses / the tell starts). A failed roll consumes
+   * the cycle: no bullet is emitted and no tell cue is played.
+   *
+   * Defaults to `1.0` for every seed except the E5 Swarm (`0.25`), so a
+   * 15-member cluster cannot out-damage every other encounter.
+   */
+  shotProbability: number;
 
   /**
    * Extensible passthrough — future tuning axes can be added here without
@@ -123,6 +133,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 1200,
     bulletSpeed: 200,
     burstCount: 1,
+    shotProbability: 1.0,
   },
   diver: {
     key: 'diver',
@@ -142,6 +153,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 1000,
     bulletSpeed: 220,
     burstCount: 4,
+    shotProbability: 1.0,
   },
   tank: {
     key: 'tank',
@@ -161,6 +173,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 2400,
     bulletSpeed: 150,
     burstCount: 10,
+    shotProbability: 1.0,
   },
   phaser: {
     key: 'phaser',
@@ -180,6 +193,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 2000,
     bulletSpeed: 180,
     burstCount: 8,
+    shotProbability: 1.0,
   },
   swarm: {
     key: 'swarm',
@@ -199,6 +213,9 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 900,
     bulletSpeed: 180,
     burstCount: 1,
+    // Only a quarter of the 15-member cluster fires per cycle, so the
+    // coordinated volley stays a threat without becoming a bullet wall.
+    shotProbability: 0.25,
   },
   boss: {
     key: 'boss',
@@ -209,7 +226,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     spacingY: 0,
     driftSpeed: 0,
     startX: GAME_WIDTH / 2,
-    startY: GAME_HEIGHT / 2 - 30,
+    startY: GAME_HEIGHT / 2 - 100,
     size: 50,
     color: 0xff0000,
     bulletColor: 0xffffff,
@@ -218,6 +235,34 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     fireInterval: 1200,
     bulletSpeed: 160,
     burstCount: 8,
+    shotProbability: 1.0,
+  },
+  asteroid: {
+    key: 'asteroid',
+    displayName: 'Asteroid',
+    // Non-formation roamer: a single free-floating rock that drifts in a
+    // straight line, wraps at screen edges, and splits when destroyed
+    // (see src/entities/Asteroid.ts). 'single' keeps the gym index and
+    // spawn planner happy; the entity ignores formation movement entirely.
+    formationKind: 'single',
+    count: 1,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 0,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.3,
+    // Large tier is the config default (42 px); medium/small tiers are
+    // produced by split children at runtime.
+    size: 42,
+    color: 0x888888,
+    bulletColor: 0x888888,
+    bulletSize: 3,
+    // Asteroids never fire (GDD §4.1 — E6 Asteroid).
+    shotPattern: 'none',
+    fireInterval: 1000,
+    bulletSpeed: 100,
+    burstCount: 1,
+    shotProbability: 1.0,
   },
 };
 
@@ -290,6 +335,7 @@ export function loadEnemyConfig(key: string): EnemyConfig {
     fireInterval: 1200,
     bulletSpeed: 200,
     burstCount: 1,
+    shotProbability: 1.0,
   };
 
   const store = storage();

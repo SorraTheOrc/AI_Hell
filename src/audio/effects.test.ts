@@ -25,6 +25,14 @@ import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
+  playDiverFireSound,
+  playDiverDestructionSound,
+  playDiverDiveStartSound,
+  playDiveSound,
+  stopDiveSound,
+  DIVER_DIVE_SOUND_DURATION,
+  _getDiverDiveSoundStateForTests,
+  _getDiverDiveSoundRefCountForTests,
   THRUSTER_HUM_MAX_VOLUME,
   THRUSTER_HUM_GROWTH_TIME,
   THRUSTER_HUM_SHRINK_MULTIPLIER,
@@ -32,6 +40,16 @@ import {
   stopThrusterSound,
   _resetThrusterHumForTests,
   _resetAudioContextForTests,
+  playTankAdvanceCue,
+  playTankFireSound,
+  TANK_ADVANCE_CUE_DURATION,
+  playSwarmBurstSound,
+  playScoutAdvanceCue,
+  playScoutFireSound,
+  playPhaserAdvanceCue,
+  playPhaserFireSound,
+  PHASER_ADVANCE_CUE_DURATION,
+  playBossFireSound,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -171,11 +189,11 @@ class RecordingAudioContext {
       buffer: null,
       loop: false,
       connect: () => ({ connect: () => ({}) }),
-      start: (_t: number) => {
-        rec.startTime = 0;
+      start: (t: number) => {
+        rec.startTime = t;
       },
-      stop: (_t: number) => {
-        rec.stopTime = 0;
+      stop: (t: number) => {
+        rec.stopTime = t;
       },
     };
   }
@@ -184,7 +202,11 @@ class RecordingAudioContext {
   createBiquadFilter(): unknown {
     return {
       type: 'lowpass' as const,
-      frequency: { setValueAtTime: () => {} },
+      frequency: {
+        setValueAtTime: () => {},
+        exponentialRampToValueAtTime: () => {},
+        linearRampToValueAtTime: () => {},
+      },
       Q: { setValueAtTime: () => {} },
       connect: () => ({}),
     };
@@ -272,6 +294,115 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
     }
+  });
+
+  it('diver dive sounds also degrade to safe no-ops (AH-0MTVYC6E8005YN6F)', () => {
+    expect(() => playDiverDiveStartSound()).not.toThrow();
+    expect(() => playDiveSound()).not.toThrow();
+    expect(() => stopDiveSound()).not.toThrow();
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+});
+
+describe('diver dive sounds — synthesis + lifecycle (AH-0MTVYC6E8005YN6F)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // re-prime after the reset cleared the cache
+  });
+
+  it('dive-start cue: rising sawtooth + noise whoosh, ~250 ms, ≤ 0.2 volume', () => {
+    const snap = snapshot();
+    playDiverDiveStartSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Sawtooth ascent layer + noise texture layer.
+    expect(oscs).toHaveLength(2);
+    const sweep = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(sweep).toBeDefined();
+    expect(sweep.freqEvents[0].value).toBe(150);
+    const lastSweep = sweep.freqEvents[sweep.freqEvents.length - 1];
+    expect(lastSweep.value).toBe(600);
+    expect(sweep.stopTime! - sweep.startTime!).toBeGreaterThanOrEqual(0.25);
+    expect(sweep.stopTime! - sweep.startTime!).toBeLessThanOrEqual(0.3);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('dive-start cue is distinct from the fire crack and destruction fall', () => {
+    const snap = snapshot();
+    playDiverFireSound();
+    playDiverDestructionSound();
+    playDiverDiveStartSound();
+    const oscs = newOscillators(snap);
+
+    // Fire = 280→120 over 80 ms; destruction main = 280→40 over 350 ms;
+    // dive-start = 150→600 rising over 250 ms — unique rising contour.
+    const contours = oscs
+      .filter((o) => o.type === 'sawtooth')
+      .map((o) => ({
+        start: o.freqEvents[0].value,
+        end: o.freqEvents[o.freqEvents.length - 1].value,
+      }));
+    const rising = contours.filter((c) => c.end > c.start);
+    expect(rising).toHaveLength(1);
+    expect(rising[0].start).toBe(150);
+    expect(rising[0].end).toBe(600);
+  });
+
+  it('sustained dive sound: starts nodes, stops cleanly, state clears', () => {
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    playDiveSound();
+    expect(_getDiverDiveSoundStateForTests()).not.toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(1);
+    stopDiveSound();
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+
+  it('sustained dive sound: envelope covers the ~2 s dive duration', () => {
+    expect(DIVER_DIVE_SOUND_DURATION).toBe(2);
+    const snap = snapshot();
+    playDiveSound();
+    const oscs = newOscillators(snap);
+    // One noise texture node; its stop window covers the full dive + tail.
+    expect(oscs).toHaveLength(1);
+    expect(oscs[0].type).toBe('noise');
+    expect(oscs[0].stopTime! - oscs[0].startTime!).toBeGreaterThanOrEqual(
+      DIVER_DIVE_SOUND_DURATION,
+    );
+    stopDiveSound();
+  });
+
+  it('sustained dive sound: overlapping starts share one voice, last stop frees it', () => {
+    playDiveSound();
+    const first = _getDiverDiveSoundStateForTests();
+    playDiveSound(); // second concurrent diver
+    // Same shared voice, refcount bumped — no node duplication.
+    expect(_getDiverDiveSoundStateForTests()).toBe(first);
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(2);
+    stopDiveSound(); // first diver ends
+    expect(_getDiverDiveSoundStateForTests()).not.toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(1);
+    stopDiveSound(); // last diver ends → teardown
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+
+  it('stopDiveSound is a safe no-op when no dive sound is active', () => {
+    expect(_getDiverDiveSoundStateForTests()).toBeNull();
+    expect(() => stopDiveSound()).not.toThrow();
   });
 });
 
@@ -667,5 +798,260 @@ describe('thruster hum — gain envelope + lifecycle (AH-0MTFOSOHN001Q620)', () 
     // Jet-engine layer: white-noise source (type='noise' in mock) adds whoosh.
     expect(types).toContain('noise');
     expect(types).not.toContain('sawtooth');
+  });
+});
+
+// ── Enemy fire SFX — synthesis + no-op (AH-0MU3VPIA900697E8) ───────
+
+describe('enemy fire SFX — safe no-op fallback', () => {
+  beforeEach(() => {
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('Tank advance cue + fire sound degrade to safe no-ops', () => {
+    expect(() => playTankAdvanceCue()).not.toThrow();
+    expect(() => playTankFireSound()).not.toThrow();
+  });
+
+  it('Swarm burst sound degrades to safe no-op', () => {
+    expect(() => playSwarmBurstSound()).not.toThrow();
+  });
+
+  it('Phaser advance cue + fire sound degrade to safe no-ops', () => {
+    expect(() => playPhaserAdvanceCue()).not.toThrow();
+    expect(() => playPhaserFireSound()).not.toThrow();
+  });
+
+  it('Boss fire sound degrades to safe no-op', () => {
+    expect(() => playBossFireSound()).not.toThrow();
+  });
+});
+
+describe('Tank SFX — mechanical whine + cannon thump (AH-0MU3VPIA900697E8)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('advance cue: two-layer sawtooth/square, rises ~150→320 Hz, ~600 ms', () => {
+    const snap = snapshot();
+    playTankAdvanceCue();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+    // Two oscillator layers (sawtooth whine + square sub).
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+    const whine = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(whine.freqEvents[0].value).toBe(150);
+    const lastWhine = whine.freqEvents[whine.freqEvents.length - 1];
+    expect(lastWhine.value).toBe(320);
+    expect(whine.stopTime! - whine.startTime!).toBeGreaterThanOrEqual(0.58);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('fire sound: deep sawtooth fall ~90→28 Hz, ~350 ms', () => {
+    const snap = snapshot();
+    playTankFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+    const thump = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(thump.freqEvents[0].value).toBe(90);
+    const lastThump = thump.freqEvents[thump.freqEvents.length - 1];
+    expect(lastThump.value).toBe(28);
+    expect(thump.stopTime! - thump.startTime!).toBeGreaterThanOrEqual(0.34);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.35);
+  });
+
+  it('advance cue duration matches TANK_ADVANCE_CUE_DURATION constant', () => {
+    expect(TANK_ADVANCE_CUE_DURATION).toBe(0.6);
+  });
+});
+
+describe('Swarm SFX — buzzing whoosh (AH-0MU3VPIA900697E8)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('burst sound: low buzzing pulse + sweeping whoosh, ~200 ms', () => {
+    const snap = snapshot();
+    playSwarmBurstSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+    // Two oscillators: sawtooth buzz + sine whoosh.
+    expect(oscs).toHaveLength(2);
+    const buzz = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(buzz.freqEvents[0].value).toBe(120);
+    expect(buzz.stopTime! - buzz.startTime!).toBeLessThanOrEqual(0.22);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+});
+
+describe('Phaser SFX — rising sine cue + sharp blip (AH-0MU3VPIA900697E8)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('advance cue: rising sine 660→880 Hz, ~600 ms', () => {
+    const snap = snapshot();
+    playPhaserAdvanceCue();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+    expect(oscs).toHaveLength(1);
+    expect(oscs[0].type).toBe('sine');
+    expect(oscs[0].freqEvents[0].value).toBe(660);
+    const last = oscs[0].freqEvents[oscs[0].freqEvents.length - 1];
+    expect(last.value).toBe(880);
+    expect(oscs[0].stopTime! - oscs[0].startTime!).toBeGreaterThanOrEqual(0.58);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('fire sound: short triangle sweep 1000→500 Hz, ~80 ms', () => {
+    const snap = snapshot();
+    playPhaserFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+    expect(oscs).toHaveLength(1);
+    expect(oscs[0].type).toBe('triangle');
+    expect(oscs[0].freqEvents[0].value).toBe(1000);
+    const last = oscs[0].freqEvents[oscs[0].freqEvents.length - 1];
+    expect(last.value).toBe(500);
+    expect(oscs[0].stopTime! - oscs[0].startTime!).toBeLessThanOrEqual(0.1);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('advance cue duration matches PHASER_ADVANCE_CUE_DURATION constant', () => {
+    expect(PHASER_ADVANCE_CUE_DURATION).toBe(0.6);
+  });
+
+  it('Phaser advance cue is distinct from Scout (660→880 vs 880→1320)', () => {
+    const snap = snapshot();
+    playPhaserAdvanceCue();
+    const phaserOscs = newOscillators(snap);
+    expect(phaserOscs).toHaveLength(1);
+    expect(phaserOscs[0].freqEvents[0].value).toBe(660);
+    expect(
+      phaserOscs[0].freqEvents[phaserOscs[0].freqEvents.length - 1].value,
+    ).toBe(880);
+    // Scout cue: 880→1320 (same shared context, next oscillator slot).
+    playScoutAdvanceCue();
+    const scoutOscs = newOscillators(snap);
+    const scout = scoutOscs[scoutOscs.length - 1];
+    expect(scout.freqEvents[0].value).toBe(880);
+    expect(scout.freqEvents[scout.freqEvents.length - 1].value).toBe(1320);
+  });
+});
+
+describe('Boss SFX — deep resonant boom (AH-0MU3VPIA900697E8)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('fire sound: heavy sawtooth fall 200→50 Hz + sine body ~200 ms', () => {
+    const snap = snapshot();
+    playBossFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+    // Two oscillators: sawtooth boom + sine body.
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+    const boom = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(boom.freqEvents[0].value).toBe(200);
+    const lastBoom = boom.freqEvents[boom.freqEvents.length - 1];
+    expect(lastBoom.value).toBe(50);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.35);
+  });
+});
+
+// ── AC1: all enemy fire SFX function ordering (back-to-back, no gap) ──
+
+describe('enemy fire SFX — no gap between advance cue and fire sound (AC1, AH-0MU3VPIA900697E8)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('Tank: playTankAdvanceCue then playTankFireSound flow with no gap', () => {
+    // playTankFireSound internally schedules at currentTime + TANK_ADVANCE_CUE_DURATION
+    // so back-to-back calls produce no gap.
+    const snap = snapshot();
+    playTankAdvanceCue();
+    playTankFireSound();
+    const oscs = newOscillators(snap);
+    // Advance cue: two layers. Fire sound: two layers. Total 4 oscillators.
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(4);
+    // The fire sound oscillators start at t + 0.6 (the cue duration).
+    const fireOscs = oscs.filter((o) => o.type === 'sawtooth' && o.freqEvents[0].value === 90);
+    expect(fireOscs).toHaveLength(1);
+    // Fire starts at cue end time — no gap.
+    const cueEnd = oscs.find((o) => o.type === 'sawtooth')!.stopTime! - 0.02;
+    expect(fireOscs[0].startTime!).toBeGreaterThan(cueEnd - 0.01);
+  });
+
+  it('Scout: playScoutAdvanceCue then playScoutFireSound flow with no gap', () => {
+    const snap = snapshot();
+    playScoutAdvanceCue();
+    playScoutFireSound();
+    const oscs = newOscillators(snap);
+    // Advance cue: 1 oscillator. Fire sound: 1 oscillator. Total 2.
+    expect(oscs).toHaveLength(2);
+    // Fire sound scheduled at cue end time.
+    const cueEnd = oscs[0].stopTime! - 0.02;
+    expect(oscs[1].startTime!).toBeGreaterThan(cueEnd - 0.01);
   });
 });

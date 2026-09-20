@@ -6,15 +6,19 @@
  * plus utilities to convert a heading into absolute bullet angles and
  * velocities.
  *
- * Weapons are **persistent** (GDD §4.4 revision): they remain equipped
- * indefinitely until replaced by another weapon power-up. The **cannon**
- * is the starting/default weapon; a **reset** power-up returns to it.
+ * Weapons are **cumulative and timed** (GDD §4.4 revision): collecting a
+ * weapon power-up (Spread, Dual, Rapid) **adds** it to the ship's active
+ * set for **10 seconds** (each with its own independent countdown from the
+ * moment of collection), after which it expires and stops firing. The
+ * **cannon** is the permanent starting weapon — always active, never
+ * expires; a **reset** power-up clears all timed weapons, leaving only the
+ * cannon.
  *
  * Four weapons:
- * - **cannon** — single bullet straight ahead (default starting weapon)
- * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading
- * - **dual**   — 2 bullets offset perpendicular (±90°) to heading
- * - **rapid**  — single bullets at a much higher fire rate
+ * - **cannon** — single bullet straight ahead (permanent default starting weapon)
+ * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
+ * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
+ * - **rapid**  — single bullets at a much higher fire rate (timed)
  *
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
@@ -28,6 +32,15 @@
  * `'reset'` drop type returns the ship to it (not a weapon itself).
  */
 export type WeaponId = 'cannon' | 'spread' | 'dual' | 'rapid';
+
+/**
+ * Returns true when the weapon is a timed power-up (Spread, Dual, Rapid)
+ * — collected weapons that expire after `WEAPON_TIMEOUT_MS`. The cannon
+ * is the only permanent weapon (never expires).
+ */
+export function isTimedWeapon(id: WeaponId): boolean {
+  return id !== 'cannon';
+}
 
 // ── Tunable weapon constants (fire rates, bullet tuning) ────────────
 

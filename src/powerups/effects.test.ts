@@ -119,6 +119,18 @@ describe('P8 Extra Life (AC3): +1 life, start 3, cap 5', () => {
     reg.applyCollect('P8');
     expect(reg.speedMultiplier()).toBe(1);
   });
+
+  it('setLives drives the counter directly, clamped to [0, P8_LIVES_MAX]', () => {
+    const reg = new EffectsRegistry();
+    reg.setLives(2);
+    expect(reg.lives()).toBe(2);
+    reg.setLives(0);
+    expect(reg.lives()).toBe(0);
+    reg.setLives(-5);
+    expect(reg.lives()).toBe(0);
+    reg.setLives(99);
+    expect(reg.lives()).toBe(P8_LIVES_MAX);
+  });
 });
 
 describe('P9 Magnet (AC4): one permanent stack per pickup, cap 5', () => {
@@ -337,5 +349,79 @@ describe('combat hit model (AC8): hit immunity via shield / phase', () => {
     expect(reg.isHitImmune).toBe(true);
     reg.tick(3.1);
     expect(reg.isHitImmune).toBe(false);
+  });
+});
+describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym', () => {
+  it('equips a weapon with the full 10 s duration', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    expect(reg.hasWeapon('spread')).toBe(true);
+    const weapons = reg.activeWeapons();
+    expect(weapons).toHaveLength(1);
+    expect(weapons[0].weaponId).toBe('spread');
+    expect(weapons[0].duration).toBe(10);
+    expect(weapons[0].remaining).toBe(10);
+  });
+
+  it('equips distinct weapons independently and expires them on tick', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    reg.applyWeapon('dual');
+    expect(reg.activeWeapons()).toHaveLength(2);
+
+    reg.tick(10.1);
+    expect(reg.activeWeapons()).toHaveLength(0);
+    expect(reg.hasWeapon('spread')).toBe(false);
+  });
+
+  it('refreshes an active weapon to full duration instead of stacking', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('rapid');
+    reg.tick(6);
+    expect(reg.activeWeapons()[0].remaining).toBeCloseTo(4);
+
+    reg.applyWeapon('rapid');
+    expect(reg.activeWeapons()[0].remaining).toBe(10);
+    expect(reg.activeWeapons()).toHaveLength(1);
+  });
+
+  it('Reset clears every active weapon', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    reg.applyWeapon('dual');
+    expect(reg.tryResetWeapons()).toBe(true);
+    expect(reg.activeWeapons()).toHaveLength(0);
+
+    // Weapons collected after the reset equip normally.
+    expect(reg.applyWeapon('rapid')).toBe(true);
+    expect(reg.hasWeapon('rapid')).toBe(true);
+  });
+
+  it('Reset with no active weapons is a no-op', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.tryResetWeapons()).toBe(false);
+  });
+
+  it('weapon effects are independent of power-up effects in the same registry', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    reg.applyCollect('P3');
+    reg.applyCollect('P9');
+
+    expect(reg.activeWeapons()).toHaveLength(1);
+    expect(reg.activeEffects().map((e) => e.id).sort()).toEqual(['P3', 'P9']);
+    expect(reg.hasWeapon('spread')).toBe(true);
+  });
+
+  it('reset() clears weapon state for a scene restart', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('dual');
+    reg.applyCollect('P8');
+    expect(reg.lives()).toBe(4);
+
+    reg.reset();
+    expect(reg.activeWeapons()).toHaveLength(0);
+    expect(reg.hasWeapon('dual')).toBe(false);
+    expect(reg.lives()).toBe(3);
   });
 });

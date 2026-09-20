@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.4 (2026-09-20)
+### Features
+- Weapon pickups now stack and last 10 seconds, so you can unleash multiple firing patterns at once. (AH-0MTV7RITM009LJF6)
+- Swarm enemies now fire less often, making large groups fairer to fight. (AH-0MU0F1T2H003B4K0)
+- All enemy attacks now have distinct sound cues, so you can hear and react to incoming fire. (AH-0MU3VPIA900697E8)
+- Your ship now stays put when hit, flashing bigger and smaller instead of teleporting away. (AH-0MU3VQ0JR009CSIN)
+- Play 5 levels and a boss fight with lives, score, and a main menu. (AH-0MTZWZ1MQ004L552)
+- Shoot asteroids in Level 1 — they split into smaller, faster rocks, and only the smallest ones score points. (AH-0MU8BZ2ZM004J47F)
+- Clearer level and wave info, smoother transitions, and a new wave timer that punishes slow play. (AH-0MU7JTEA6002GE37)
+- Power-ups now show their full effects and sounds in the main game. (AH-0MU8QTLYN003JV8M)
+- Teleport now activates with S or the down arrow instead of Space. (AH-0MTV7KAGZ006ER8R)
+- Divers now whoosh when they dive, so you can hear incoming attacks. (AH-0MTVYC6E8005YN6F)
+- Enemy hitboxes now match their visual size, so hits feel fair and precise. (AH-0MTVYCDIQ005DVAD)
+- Divers now pause briefly at the bottom of their dive, making attacks easier to read and dodge. (AH-0MU0EIDQQ003S1JT)
+- Power-ups now drop in enemy and boss gyms, so you can grab them mid-fight. (AH-0MU3VOQKH005YOBH)
+- Asteroids are now 50% bigger, making them easier to spot and hit. (AH-0MU8TT75E007RGW4)
+- Asteroids now each have a unique random shape. (AH-0MU8UZMCC0003LXT)
+### Bug Fixes
+- Your ship now spawns centered on screen in gym scenes instead of hidden in the corner. (AH-0MTVYBCUW008BEQT)
+- Power-up drops now visibly slide toward your ship when the Magnet is active. (AH-0MTV6NZ6A000GPVG)
+- Tanks now stay orange at all times, no longer flickering green when you use thrusters. (AH-0MTVYBL2L0085G6G)
+- Release announcements now post to Discord again. (AH-0MTXLWCWO005OSCZ)
+### Other
+- Enemies now behave more consistently, so combat feels fairer and more predictable. (AH-0MU3X86GT001YM5D)
+- Generated standup reports no longer clutter the project, keeping updates running smoothly. (AH-0MU480XW8009160C)
+
 ## v0.1.3 (2026-09-12)
 ### Features
 - Thrusters now sound like a smooth jet-engine roar instead of a harsh buzz. (AH-0MTK9ZSOX009SB1K)

@@ -208,3 +208,169 @@ describe('Phaser entity (E4 phaser, GDD §4.1 — telegraph rules + live aim)', 
     });
   });
 });
+
+describe('Phaser — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('a forced-success roll starts the tell then fires a radial burst', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = new PhaserEntity(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1, burstCount: 8,
+    });
+    phaser.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell starts
+    expect(phaser.isTelling).toBe(true);
+    const bullets = phaser.tryFireRadialBullets(t0 + PHASER_ADVANCE_CUE_DURATION);
+    expect(bullets).toHaveLength(8);
+    expect(phaser.isTelling).toBe(false);
+  });
+
+  it('a forced-failure roll consumes the cycle and never starts a tell', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = new PhaserEntity(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9, burstCount: 8,
+    });
+    phaser.shootEnabled = true;
+    const t0 = 1_000_000;
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]);
+    expect(phaser.isTelling).toBe(false);
+    // Consumed cycle: nothing within the interval, next elapsed cycle rolls again.
+    expect(phaser.tryFireRadialBullets(t0 + PHASER_FIRE_INTERVAL - 1)).toEqual([]);
+    expect(phaser.tryFireRadialBullets(t0 + PHASER_FIRE_INTERVAL)).toEqual([]);
+    expect(phaser.isTelling).toBe(false);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = new PhaserEntity(booted.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 }, burstCount: 8,
+    });
+    phaser.shootEnabled = true;
+    const t0 = 1_000_000;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell
+    expect(phaser.isTelling).toBe(true);
+    const bullets = phaser.tryFireRadialBullets(t0 + PHASER_ADVANCE_CUE_DURATION);
+    spy.mockRestore();
+    expect(bullets).toHaveLength(8);
+  });
+});
+// ── AC3: Phaser SFX wiring (AH-0MU3VPIA900697E8) ───────────────────
+
+describe('Phaser SFX wiring (AH-0MU3VPIA900697E8)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makePhaser(config: Partial<PhaserConfig> = {}): PhaserEntity {
+    return new PhaserEntity(booted!.scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 }, burstCount: 8,
+      ...config,
+    });
+  }
+
+  it('plays playPhaserAdvanceCue + playPhaserFireSound back-to-back at tell start', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playPhaserAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playPhaserFireSound');
+
+    const phaser = makePhaser();
+    const t0 = 1_000_000;
+    phaser.shootEnabled = true;
+
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell starts
+    expect(phaser.isTelling).toBe(true);
+    // The tell visual + audio run in applyFormationPosition on the first
+    // frame after the tell starts (audio plays within the first 50 ms).
+    phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+
+    // Advance cue fires before the fire sound.
+    const advanceOrder = advanceSpy.mock.invocationCallOrder[0];
+    const fireOrder = fireSpy.mock.invocationCallOrder[0];
+    expect(advanceOrder).toBeLessThan(fireOrder);
+
+    // No additional audio per subsequent tell frame — exactly one pair.
+    phaser.applyFormationPosition(240, 300, 0.1, 0, 0);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('plays no additional fire SFX when the volley fires (already scheduled at tell start)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playPhaserAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playPhaserFireSound');
+
+    const phaser = makePhaser();
+    const t0 = 1_000_000;
+    phaser.shootEnabled = true;
+
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell starts
+    phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+
+    const bullets = phaser.tryFireRadialBullets(t0 + PHASER_ADVANCE_CUE_DURATION);
+    expect(bullets).toHaveLength(8);
+    // No double-play: the firing branch adds no audio.
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a full cycle: one advance cue + one fire sound per burst', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playPhaserAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playPhaserFireSound');
+
+    const phaser = makePhaser();
+    const t0 = 1_000_000;
+    phaser.shootEnabled = true;
+
+    // First cycle.
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]); // tell
+    phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+    expect(phaser.tryFireRadialBullets(t0 + PHASER_ADVANCE_CUE_DURATION))
+      .toHaveLength(8); // fire
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(fireSpy).toHaveBeenCalledTimes(1);
+
+    // Second cycle.
+    const t1 = t0 + PHASER_ADVANCE_CUE_DURATION + PHASER_FIRE_INTERVAL;
+    expect(phaser.tryFireRadialBullets(t1)).toEqual([]); // tell
+    phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+    expect(phaser.tryFireRadialBullets(t1 + PHASER_ADVANCE_CUE_DURATION))
+      .toHaveLength(8); // fire
+    expect(advanceSpy).toHaveBeenCalledTimes(2);
+    expect(fireSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not play SFX when shotProbability fails (no tell)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const advanceSpy = vi.spyOn(effectsModule, 'playPhaserAdvanceCue');
+    const fireSpy = vi.spyOn(effectsModule, 'playPhaserFireSound');
+
+    const phaser = makePhaser({ shotProbability: 0.25, rng: () => 0.9 });
+    const t0 = 1_000_000;
+    phaser.shootEnabled = true;
+
+    expect(phaser.tryFireRadialBullets(t0)).toEqual([]);
+    phaser.applyFormationPosition(240, 300, 0.016, 0, 0);
+    expect(phaser.isTelling).toBe(false);
+    expect(advanceSpy).not.toHaveBeenCalled();
+    expect(fireSpy).not.toHaveBeenCalled();
+  });
+});

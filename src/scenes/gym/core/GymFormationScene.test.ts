@@ -4,7 +4,12 @@ import * as explosionModule from '../../../vfx/explosionParticles';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
-import { GAME_HEIGHT, GAME_WIDTH, SHIP_COLOR } from '../../../core/constants';
+import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  POWER_UP_DROP_SIZE,
+  SHIP_COLOR,
+} from '../../../core/constants';
 import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
@@ -18,21 +23,48 @@ import {
   FormationSceneBullet,
   FormationSceneEntity,
   GymFormationScene,
+  type PowerUpLayerConfig,
 } from './GymFormationScene';
+import { RoundRobinSpawner, WeightedRandomSpawner } from '../../../powerups/spawner';
+import {
+  RandomAvoidingPlacement,
+  type PowerUpPlacement,
+} from '../../../powerups/placement';
+import {
+  isWeaponDrop,
+  WEAPON_DROP_IDS,
+  type DropId,
+  type PowerUpId,
+} from '../../../powerups/types';
+import {
+  createSeededRng,
+  isClearOfBodies,
+  stubBody,
+} from '../../../test/powerUpTestFixtures';
 
 /** Minimal entity the base class drives (mirrors the real enemy contract). */
 class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEntity {
   alive = true;
   shootEnabled = false;
   readonly offset: FormationOffset;
+  private readonly _hitRadius: number;
 
-  constructor(scene: Phaser.Scene, offset: FormationOffset) {
+  constructor(
+    scene: Phaser.Scene,
+    offset: FormationOffset,
+    hitRadius = 10,
+  ) {
     super(scene, 0, 0);
     this.offset = offset;
+    this._hitRadius = hitRadius;
   }
 
   destroySelf(): void {
     this.alive = false;
+  }
+
+  getHitRadius(): number {
+    return this._hitRadius;
   }
 
   applyFormationPosition(
@@ -101,6 +133,7 @@ function makeStubScene(
   player?: { x: number; y: number },
   collision?: { entityHitRadius?: number; bulletHitRadius?: number },
   entityType: typeof StubEnemy = StubEnemy,
+  powerUps?: PowerUpLayerConfig,
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
     sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
@@ -115,9 +148,11 @@ function makeStubScene(
     player,
     entityHitRadius: collision?.entityHitRadius,
     bulletHitRadius: collision?.bulletHitRadius,
+    powerUps,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
-      const enemy = new entityType(scene, offset);
+      const hitRadius = collision?.entityHitRadius ?? 10;
+      const enemy = new entityType(scene, offset, hitRadius);
       enemy.setPosition(x, y);
       return enemy;
     },
@@ -621,7 +656,7 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
   /** Player spawn far from the formation so auto-fire bullets never
    *  interfere with collision assertions (bullets fly right/off-screen,
    *  away from the formation at x ≈ 240–360). */
-  const PLAYER_SPAWN = { x: 920, y: 30 };
+  const PLAYER_SPAWN = { x: 480, y: 270 };
 
   /**
    * Boots a scene with a one-shot enemy-bullet "parking" collect: only
@@ -782,32 +817,50 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(scene.getPlayerBullets()).toContain(outside);
   });
 
-  it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + respawn + invulnerability blink', async () => {
+  it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + in-place respawn + invulnerability blink', async () => {
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
     const { scene, parkAt, armed } = await bootParked();
     const player = scene.getPlayer()!;
 
-    // Move the ship away from spawn so respawn is observable.
-    scene.getCursors()!.down.isDown = true;
-    for (let i = 0; i < 4; i++) scene.tick(0.25);
-    scene.getCursors()!.down.isDown = false;
-    expect(player.y).toBeGreaterThan(PLAYER_SPAWN.y + 10);
+    // Move the player away from spawn so respawn in-place is observable.
+    // We use a single tick with cursors pressed, then park the bullet
+    // and tick again — all in a controlled way.
+    const cursors = scene.getCursors()!;
+    cursors.down.isDown = true;
+    cursors.right.isDown = true;
+    for (let i = 0; i < 20; i++) scene.tick(0.1);
+    cursors.down.isDown = false;
+    cursors.right.isDown = false;
+    // Decay residual velocity so the player is stationary.
+    for (let i = 0; i < 20; i++) scene.tick(0.05);
 
-    // Park an enemy bullet exactly on the ship.
-    parkAt.x = player.x;
-    parkAt.y = player.y;
+    // Park an enemy bullet at the player's current position.
+    const preHitX = player.x;
+    const preHitY = player.y;
+    const preHitState = player.getMovementState();
+    const preHitFacing = preHitState.facing ?? 0;
+    parkAt.x = preHitX;
+    parkAt.y = preHitY;
     const callsBefore = vi.mocked(destroySound).mock.calls.length;
     armed();
     scene.tick(0.05);
 
-    // Hit: VFX/SFX fired, hit counter incremented, respawned at spawn.
+    // Hit: VFX/SFX fired, hit counter incremented, respawned in-place.
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
     expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(
       callsBefore,
     );
-    expect(player.x).toBe(PLAYER_SPAWN.x);
-    expect(player.y).toBe(PLAYER_SPAWN.y);
+    // AC1: player is at the SAME position (not relocated to spawn).
+    // Small drift during tick(0.05) from friction/physics is acceptable.
+    expect(Math.abs(player.x - preHitX)).toBeLessThan(3);
+    expect(Math.abs(player.y - preHitY)).toBeLessThan(3);
+    // AC3: facing preserved exactly.
+    const postState = player.getMovementState();
+    expect(postState.facing).toBe(preHitFacing);
+    // AC3: velocity zeroed.
+    expect(postState.vx).toBe(0);
+    expect(postState.vy).toBe(0);
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
 
@@ -833,10 +886,16 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     // First hit: parked bullet directly on the spawn position.
     parkAt.x = PLAYER_SPAWN.x;
     parkAt.y = PLAYER_SPAWN.y;
+    const preHitX = player.x;
+    const preHitY = player.y;
     armed();
     scene.tick(0.05);
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // AC1: player stays at hit position (in-place respawn).
+    expect(Math.abs(player.x - preHitX)).toBeLessThan(3);
+    expect(Math.abs(player.y - preHitY)).toBeLessThan(3);
 
     // Same-spot bullet while invulnerable: no second hit — the bullet is
     // left in flight, untouched.
@@ -854,10 +913,10 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(scene.getPlayerInvulnerableRemaining()).toBe(0); // window expired again
 
     // Infinite respawns: the player object is never destroyed, the ship
-    // returns to spawn, and the HUD/score line never changes.
+    // is at the last hit position, and the HUD/score line never changes.
     expect(scene.getPlayer()).not.toBeNull();
-    expect(player.x).toBe(PLAYER_SPAWN.x);
-    expect(player.y).toBe(PLAYER_SPAWN.y);
+    expect(player.x).toBe(preHitX);
+    expect(player.y).toBe(preHitY);
     expect(player.alpha).toBe(1);
     expect(statusLabels()).toEqual(labelsBefore);
     expect(scene.aliveCount).toBe(enemiesBefore);
@@ -1076,7 +1135,7 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
       return [b];
     };
     booted = await bootScene([
-      makeStubScene(collect, { x: 920, y: 30 }),
+      makeStubScene(collect, { x: 480, y: 270 }),
     ]);
     const scene = booted!.scene as BootedScene;
 
@@ -1298,7 +1357,7 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     booted = null;
   });
 
-  const PLAYER_SPAWN = { x: 920, y: 30 };
+  const PLAYER_SPAWN = { x: 480, y: 270 };
 
   async function bootWithPlayer(): Promise<BootedScene> {
     booted = await bootScene([
@@ -1382,9 +1441,9 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(playerCall[4]).toBe(SHIP_SIZE);
     expect(playerCall[5]?.patterns).toEqual(['radial', 'ring']);
     expect(playerCall[5]?.registry).toBeDefined();
-    // Player respawned at spawn point.
-    expect(scene.getPlayer()!.x).toBe(PLAYER_SPAWN.x);
-    expect(scene.getPlayer()!.y).toBe(PLAYER_SPAWN.y);
+    // Player respawned in-place (same position and facing).
+    expect(scene.getPlayer()!.x).toBeCloseTo(hitX, 0);
+    expect(scene.getPlayer()!.y).toBeCloseTo(hitY, 0);
     // Invulnerability window engaged.
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
@@ -1432,8 +1491,8 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(target.alive).toBe(true);
   });
 
-  it('AC3 — collision uses the entity hit radius from getEntityHitRadius()', async () => {
-    // Use a custom (small) entity hit radius.
+  it('AC3 — collision uses the entity hit radius from getHitRadius()', async () => {
+    // Use a custom (small) entity hit radius via getHitRadius().
     const smallRadius = 5;
     booted = await bootScene([
       makeStubScene(() => [], PLAYER_SPAWN, { entityHitRadius: smallRadius }),
@@ -1500,5 +1559,451 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(target.alive).toBe(aliveBefore);
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
     expect(scene.getPlayerHitCount()).toBe(0);
+  });
+});
+
+describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 15;
+
+  /** Deterministic layer: round-robin IDs, seeded placement, short interval. */
+  function deterministicLayer(): PowerUpLayerConfig {
+    return {
+      spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+      placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+      spawnInterval: INTERVAL,
+    };
+  }
+
+  async function bootWithLayer(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  it('AC1 — is disabled by default (no drops without a config block)', async () => {
+    booted = await bootScene([makeStubScene(() => [], { x: 480, y: 270 })]);
+    const scene = booted.scene as BootedScene;
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(false);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    scene.tick(INTERVAL * 2);
+    expect(scene.getPowerUpSpawnCount()).toBe(0);
+  });
+
+  it('AC1 — spawns exactly one drop immediately when enabled', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+    expect(scene.getPowerUpDrops()).toHaveLength(1);
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+  });
+
+  it('AC1 — keeps one drop at a time and re-spawns on the configured interval', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+    expect(scene.getPowerUpSpawnCount()).toBe(1);
+
+    scene.tick(INTERVAL);
+    expect(scene.getPowerUpDrops()).toHaveLength(1);
+    expect(scene.getPowerUpSpawnCount()).toBe(2);
+
+    scene.tick(INTERVAL);
+    expect(scene.getPowerUpDrops()).toHaveLength(1);
+    expect(scene.getPowerUpSpawnCount()).toBe(3);
+  });
+
+  it('AC1 — never exposes more than one drop when ticked in small steps', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    for (let i = 0; i < 300; i += 1) {
+      scene.tick(0.1); // 30 s total — several spawn cycles
+      expect(scene.getPowerUpDrops().length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('AC2 — selects the spawn ID through the injected PowerUpSpawner', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    const ids = [scene.getPowerUpDrops()[0].id];
+    for (let i = 0; i < 3; i += 1) {
+      scene.tick(INTERVAL);
+      ids.push(scene.getPowerUpDrops()[0].id);
+    }
+
+    expect(ids).toEqual(['P3', 'P4', 'P6', 'P7']);
+  });
+
+  it('AC3 — positions the drop through the injected placement strategy', async () => {
+    const fixed: PowerUpPlacement = { place: () => ({ x: 123, y: 45 }) };
+    const scene = await bootWithLayer({
+      spawner: new RoundRobinSpawner<PowerUpId>(['P3']),
+      placement: fixed,
+      spawnInterval: INTERVAL,
+    });
+
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop.x).toBe(123);
+    expect(drop.y).toBe(45);
+    expect(drop.graphics.x).toBe(123);
+    expect(drop.graphics.y).toBe(45);
+  });
+
+  it('AC3 — never places a drop on a live enemy or the player', async () => {
+    const scene = await bootWithLayer(deterministicLayer());
+
+    // Tick to a fresh spawn each cycle so the enemy positions are final
+    // for the frame in which the drop was placed.
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      scene.tick(INTERVAL);
+      const drop = scene.getPowerUpDrops()[0];
+      const bodies = scene.formationEntities
+        .filter((enemy) => enemy.alive)
+        .map((enemy) => stubBody(enemy.x, enemy.y, enemy.getHitRadius()));
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    }
+  });
+
+  it('AC6 — applies a live interval change via setPowerUpSpawnInterval', async () => {
+    const scene = await bootWithLayer({
+      ...deterministicLayer(),
+      spawnInterval: 1000,
+    });
+    expect(scene.getPowerUpSpawnInterval()).toBe(1000);
+
+    scene.setPowerUpSpawnInterval(5);
+    expect(scene.getPowerUpSpawnInterval()).toBe(5);
+
+    const before = scene.getPowerUpSpawnCount();
+    scene.tick(20); // despawns the current drop and triggers the next spawn
+    expect(scene.getPowerUpSpawnCount()).toBe(before + 1);
+  });
+});
+
+describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9NQ0006613)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  // Long interval so cadence spawns never interfere with the assertions.
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  async function boot(
+    powerUps: PowerUpLayerConfig,
+    collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
+  ): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(collect, { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  function layer(id: PowerUpId, placement: PowerUpPlacement): PowerUpLayerConfig {
+    return {
+      spawner: new RoundRobinSpawner<PowerUpId>([id]),
+      placement,
+      spawnInterval: INTERVAL,
+    };
+  }
+
+  it('AC1 — fly-over collection is gated at 3% scale and hull overlap', async () => {
+    const scene = await boot(layer('P3', CLEAR));
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+
+    // Scale 0: on the ship but below the 3% collection threshold.
+    expect(drop.powerUp.canCollect()).toBe(false);
+    scene.tick(0.01); // 2% — still below the threshold
+    expect(drop.powerUp.canCollect()).toBe(false);
+    expect(scene.getPowerUpDrops()).toContain(drop);
+
+    scene.tick(0.1); // 22% — collectible and overlapping the hull
+    expect(scene.getPowerUpDrops()).not.toContain(drop);
+  });
+
+  it('AC2 — collecting applies the effect through the shared EffectsRegistry', async () => {
+    const scene = await boot(layer('P9', CLEAR));
+    const player = scene.getPlayer()!;
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(0);
+
+    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.tick(0.1);
+
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(1);
+  });
+
+  it('AC3 — renders the standalone HUD with lives counter and active-effect rows', async () => {
+    const scene = await boot(layer('P9', CLEAR));
+    const hud = scene.getHUD();
+    expect(hud).not.toBeNull();
+    expect(hud!.getLivesLabel()).toBe('Lives: 3');
+
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.tick(0.1);
+    hud!.refresh();
+
+    expect(hud!.getRows().some((row) => row.id === 'P9')).toBe(true);
+  });
+
+  it('AC4 — P8 updates the lives counter', async () => {
+    const scene = await boot(layer('P8', CLEAR));
+    const player = scene.getPlayer()!;
+    expect(scene.getEffectsRegistry().lives()).toBe(3);
+
+    scene.spawnPowerUpDrop('P8', player.x, player.y);
+    scene.tick(0.1);
+
+    expect(scene.getEffectsRegistry().lives()).toBe(4);
+  });
+
+  it('AC4 — P9 stacks (capped at five)', async () => {
+    const scene = await boot(layer('P9', CLEAR));
+    const player = scene.getPlayer()!;
+
+    for (let i = 0; i < 6; i += 1) {
+      scene.spawnPowerUpDrop('P9', player.x, player.y);
+      scene.tick(0.1);
+    }
+
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(5);
+  });
+
+  it('AC4 — P4 clears on-screen enemy bullets without damaging enemies', async () => {
+    const collect = (enemy: StubEnemy) => [new StubBullet(enemy.scene, 0, 0)];
+    const scene = await boot(layer('P4', CLEAR), collect);
+
+    // Let the formation produce a batch of on-screen enemy bullets.
+    scene.tick(0.05);
+    expect(scene.activeBullets.length).toBeGreaterThan(0);
+    const aliveBefore = scene.aliveCount;
+
+    // Collect a P4 on the ship — the bomb clears every on-screen bullet.
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop('P4', player.x, player.y);
+    scene.tick(0.05);
+
+    expect(scene.activeBullets).toHaveLength(0);
+    expect(scene.aliveCount).toBe(aliveBefore);
+  });
+
+  it('AC4 — P7 teleport consumes a stack, moves the ship and grants P6', async () => {
+    const scene = await boot(layer('P7', CLEAR));
+    const player = scene.getPlayer()!;
+
+    // Collect a P7 to gain a teleport stack.
+    scene.spawnPowerUpDrop('P7', player.x, player.y);
+    scene.tick(0.1);
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.teleportStacks()).toBe(1);
+
+    // Move the ship off the grid-centre fallback so the safe-spot search
+    // must pick a genuinely different landing position.
+    player.setPosition(300, 400);
+    const beforeX = player.x;
+    const beforeY = player.y;
+    expect(scene.triggerTeleport()).toBe(true);
+
+    expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(true);
+    expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
+    expect(player.x).toBeGreaterThanOrEqual(0);
+    expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(player.y).toBeGreaterThanOrEqual(0);
+    expect(player.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+});
+
+describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0MU3VOQKH005YOBH)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  async function boot(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  /** A placement that drops the next drop straight on the ship. */
+  function atPlayer(): PowerUpPlacement {
+    return { place: (context) => ({ x: context.player.x, y: context.player.y }) };
+  }
+
+  it('AC — the default spawner includes every weapon drop in its pool', async () => {
+    // No injected spawner: the scene builds the default weighted-random
+    // spawner from the rules weights, which must now include weapon IDs.
+    const scene = await boot({
+      placement: new RandomAvoidingPlacement({ rng: createSeededRng(7) }),
+      rng: createSeededRng(42),
+      spawnInterval: 1,
+    });
+
+    const seen = new Set<DropId>();
+    // Drive many spawn cycles through the default spawner. Each tick
+    // (> 12.5 s) despawns the current drop and spawns the next.
+    for (let i = 0; i < 400; i += 1) {
+      scene.tick(13);
+      const drop = scene.getPowerUpDrops()[0];
+      if (drop) seen.add(drop.dropId);
+    }
+
+    // Every weapon drop ID must be reachable from the default pool.
+    for (const weaponId of WEAPON_DROP_IDS) {
+      expect(seen.has(weaponId)).toBe(true);
+    }
+    // Power-up IDs remain in the pool.
+    expect([...seen].some((id) => id.startsWith('P'))).toBe(true);
+  });
+
+  it('AC — a weapon drop is rendered with the weapon icon and carries weaponDropId', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    });
+
+    const drop = scene.getPowerUpDrops()[0];
+    expect(drop).toBeDefined();
+    expect(drop.dropId).toBe('spread');
+    expect(drop.weaponDropId).toBe('spread');
+    expect(isWeaponDrop(drop.dropId)).toBe(true);
+  });
+
+  it('AC — collecting a weapon drop equips it through the shared EffectsRegistry', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+
+    // Spawn a deterministic weapon drop on the ship and collect it.
+    scene.spawnPowerUpDrop('dual', player.x, player.y);
+    scene.tick(0.1);
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.hasWeapon('dual')).toBe(true);
+    expect(registry.activeWeapons().map((w) => w.weaponId)).toContain('dual');
+    // The player ship's active set is updated so the weapon actually fires.
+    expect(player.hasWeapon('dual')).toBe(true);
+  });
+
+  it('AC — an equipped weapon expires in both the registry and on the ship after 10 s', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: 1000,
+    });
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.hasWeapon('spread')).toBe(true);
+    expect(player.hasWeapon('spread')).toBe(true);
+
+    // Advance past the 10 s weapon duration.
+    scene.tick(10.1);
+    expect(registry.hasWeapon('spread')).toBe(false);
+    expect(player.hasWeapon('spread')).toBe(false);
+  });
+
+  it('AC — the Reset drop clears every active weapon', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.spawnPowerUpDrop('rapid', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.activeWeapons()).toHaveLength(2);
+    expect(player.hasWeapon('spread')).toBe(true);
+    expect(player.hasWeapon('rapid')).toBe(true);
+
+    scene.spawnPowerUpDrop('reset', player.x, player.y);
+    scene.tick(0.1);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(player.hasWeapon('spread')).toBe(false);
+    expect(player.hasWeapon('rapid')).toBe(false);
+  });
+
+  it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
+    const scene = await boot({
+      spawner: new WeightedRandomSpawner<DropId>(
+        [...WEAPON_DROP_IDS, 'P3'],
+        createSeededRng(3),
+      ),
+      placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
+      spawnInterval: INTERVAL,
+    });
+
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      scene.tick(INTERVAL);
+      const drop = scene.getPowerUpDrops()[0];
+      expect(drop).toBeDefined();
+      const bodies = scene.formationEntities
+        .filter((enemy) => enemy.alive)
+        .map((enemy) => stubBody(enemy.x, enemy.y, enemy.getHitRadius()));
+      const player = scene.getPlayer();
+      if (player) bodies.push(stubBody(player.x, player.y, SHIP_SIZE / 2));
+      expect(
+        isClearOfBodies(stubBody(drop.x, drop.y, POWER_UP_DROP_SIZE), bodies),
+      ).toBe(true);
+    }
+  });
+
+  it('AC — the HUD renders active weapon rows alongside power-up rows', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+    const hud = scene.getHUD();
+    expect(hud).not.toBeNull();
+
+    scene.spawnPowerUpDrop('spread', player.x, player.y);
+    scene.tick(0.1);
+    hud!.refresh();
+
+    expect(
+      (
+        hud as unknown as {
+          list: Phaser.GameObjects.GameObject[];
+        }
+      ).list.some(
+        (c) =>
+          c instanceof Phaser.GameObjects.Text &&
+          c.text === 'Weapon: spread',
+      ),
+    ).toBe(true);
   });
 });

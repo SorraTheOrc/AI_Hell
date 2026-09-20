@@ -177,6 +177,34 @@ describe('GymPowerUps AC3: overlap collection applies the effect', () => {
     expect(drop.y).toBeCloseTo(before.y, 3);
   });
 
+  it('AC1 — the drop graphics position tracks the logical position during magnet pull', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+
+    // Activate P9.
+    scene.spawnDrop('P9', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(registry.magnetStacks()).toBe(1);
+
+    // Place a P5 drop 30 px right of the ship.
+    const drop = scene.spawnDrop('P5', 510, 270);
+    scene.advanceDrops(0.5); // grow to full size
+
+    const beforeGraphics = { x: drop.graphics.x, y: drop.graphics.y };
+    expect(drop.graphics.x).toBeCloseTo(drop.x, 5);
+    expect(drop.graphics.y).toBeCloseTo(drop.y, 5);
+
+    scene.tick(0.5); // magnet pulls the drop
+
+    // The graphics must have moved with the logical position.
+    expect(drop.graphics.x).toBeLessThan(beforeGraphics.x); // moved left
+    expect(drop.graphics.y).toBeCloseTo(beforeGraphics.y, 3);
+    // Visual position must match logical position.
+    expect(drop.graphics.x).toBeCloseTo(drop.x, 5);
+    expect(drop.graphics.y).toBeCloseTo(drop.y, 5);
+  });
+
   it('a fully-grown P8 drop collected under the ship increments lives', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();

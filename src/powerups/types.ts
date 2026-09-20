@@ -16,6 +16,19 @@
 
 export type PowerUpId = 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9';
 
+/**
+ * A weapon power-up ID that the game can spawn as a field drop
+ * (spread, dual, rapid) plus the reset drop. The permanent cannon is
+ * never spawned as a drop.
+ */
+export type WeaponDropId = 'spread' | 'dual' | 'rapid' | 'reset';
+
+/**
+ * Every drop the combat gyms can spawn: power-up IDs (P3–P9) plus the
+ * weapon drop IDs (spread, dual, rapid, reset).
+ */
+export type DropId = PowerUpId | WeaponDropId;
+
 // ── Power-up types ──────────────────────────────────────────────────
 
 export enum PowerUpType {
@@ -109,6 +122,22 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
 
 /** Power-up IDs cycled by the combat gym round-robin spawner. */
 export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['P3', 'P4', 'P6', 'P7'] as const;
+
+/**
+ * Weapon drop IDs the combat gyms can spawn alongside power-ups.
+ * Reset returns the ship to the cannon.
+ */
+export const WEAPON_DROP_IDS: readonly WeaponDropId[] = [
+  'spread',
+  'dual',
+  'rapid',
+  'reset',
+] as const;
+
+/** Determines whether a drop ID is a weapon drop. */
+export function isWeaponDrop(id: DropId): id is WeaponDropId {
+  return (WEAPON_DROP_IDS as readonly string[]).includes(id);
+}
 
 /**
  * Looks up a catalogue entry by ID.

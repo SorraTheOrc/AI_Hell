@@ -29,7 +29,7 @@
 | **A / Arrow Left** | Move left |
 | **D / Arrow Right** | Move right |
 | **Auto-fire** | Continuous (always active) |
-| **Space** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
+| **S / ↓** | Activate teleport power-up (teleport to nearest safe spot in direction of travel; consumes one Teleport per use) |
 
 > **Control schemes:** the ship honours the player's **saved control scheme**,
 > applied in every gym scene (enemy, power-up and weapons) via
@@ -61,13 +61,13 @@
 
 ### 2.3 Combat Mechanics
 
-- **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). The fire rate and shot pattern depend on the **equipped weapon** (§4.4): the default **Cannon** fires a single bullet straight ahead every ~400 ms; weapon power-ups (Spread/Dual/Rapid) replace it persistently with their own pattern and rate before returning to the Cannon via the **Reset** power-up.
+- **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). The fire rate and shot pattern depend on the **active weapons** (§4.4): the permanent **Cannon** fires a single bullet straight ahead every ~400 ms; weapon power-ups (Spread/Dual/Rapid) are **cumulative and timed** — each collected power-up is **added** to the active set for **10 seconds** (independent countdown per weapon) and **all** active weapons fire simultaneously, each at its own rate, before the timed ones silently expire (Reset clears them instantly, leaving only the Cannon).
 - **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **P8 – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
 - **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
-- **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with Space), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **Space bar** activates the teleport power-up while the player holds at least one Teleport power-up.
+- **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with S or ↓), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **S key or ↓** activates the teleport power-up while the player holds at least one Teleport power-up.
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
 ### 2.4 The "Enemies Are the Bullets" Design
@@ -115,7 +115,7 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Level | Theme | Enemy Count | Enemy-Fired Bullets | Description |
 |-------|-------|-------------|---------------------|-------------|
-| 1 | Entry | Moderate | No | Introduction to formation waves; simple movement patterns |
+| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus a roaming, self-splitting Asteroid group in Wave 1 — simple movement patterns, no enemy bullets |
 | 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
 | 3 | The Core | Large | No | Dense formations; maximum positional threat |
 | 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
@@ -165,6 +165,27 @@ The following rules govern how enemy entities interact with each other and with 
 - **Threat level**: High (positional threat in dense formations).
 - **Fires**: No (Levels 1–3); yes, coordinated burst (Level 4).
 
+#### E6 — Asteroid
+- **Behavior**: Free-roaming rock that drifts in a **straight line at constant
+  speed**, wrapping around all four screen edges (matching the player ship's
+  wrap). Rotates continuously; rotation speed is size-scaled (small fastest).
+  **Never fires bullets**, at any level — `shootEnabled` has no effect.
+- **Appearance**: Jagged procedural neon polygon (grey), in three size tiers:
+  large (28 px), medium (18 px), small (12 px). Speeds: large ≈ 18 px/s
+  (Tank-like), medium 27 px/s, small 36 px/s — slow overall.
+- **Health**: 1 HP — destroyed by a single player bullet.
+- **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
+  children at its position; a `medium` spawns two `small`; a `small` destroys
+  cleanly. Children move in directions different from the parent and from each
+  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
+  and every spawned child counts toward the wave's alive target (dynamic
+  spawn registration in `WaveManager`).
+- **Threat level**: Low–Medium (drifting, escalating hazard; no bullets).
+- **Collision**: passes through other enemies (GDD §2.6 — no enemy–enemy
+  collision); colliding with the player is destructive to the player (GDD §2.3
+  enemy-body → lose-one-life model).
+- **Fires**: Never.
+
 ### 4.2 Wave / Formation Structures
 
 Each level consists of one or more **waves** of enemies. A wave is a set of enemies that spawn together, execute their pattern, and are cleared when all are destroyed.
@@ -198,27 +219,29 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
-| P1 | **Spread Shot** | Fires a 3-bullet fan (-30°/0°/+30° relative to heading) **until replaced** (persistent, no timer) | Triple-line neon arc |
-| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) **until replaced** (persistent, no timer) | Firing-rate waveform |
+| P1 | **Spread Shot** | Fires a 3-bullet fan (-30°/0°/+30° relative to heading) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Triple-line neon arc |
+| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Firing-rate waveform |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
-| P7 | **Teleport** *(collectable)* | Press Space to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
+| P7 | **Teleport** *(collectable)* | Press S or ↓ to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
 | P9 | **Magnet** *(permanent, passive)* | Collecting this power-up permanently attracts **all power-up drops on screen** — including rare types such as P8 Extra Life — toward the player ship, making pickups easier to grab during dense bullet patterns. It is a **permanent** effect for the rest of the run (no activation key required, nothing is consumed), unlike the timed P1–P6 effects. Collecting additional Magnets **stacks**, increasing the attraction radius by **+50% per stack**, starting from a **base radius of 2× the player ship size**, up to a **cap of 5 stacks**. The attraction speed is **slower than the ship's movement speed**, so the player must still move toward the power-up — or remain stationary for it to drift in — to collect it. | Horseshoe magnet with neon glow |
 
 > **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
 
-> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when Space is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
+> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when S or ↓ is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
 
 > **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
 
-> **P1 / P2 (Weapon Power-Ups) — Persistent until replaced:** Weapon power-ups (P1 Spread Shot, P2 Rapid Fire, plus the new Dual and Reset drops) are **persistent** — they remain equipped **indefinitely** until the player collects a different weapon power-up. This is a **deviation from the original timed (10 s) semantics** defined above; the operator decided that weapon power-ups should persist like the P9 Magnet, making weapon selection meaningful rather than fleeting. A fourth power-up drop, **Reset**, returns the ship to the default Cannon.
+> **P1 / P2 (Weapon Power-Ups) — Cumulative and timed (10 s):** Weapon power-ups (P1 Spread Shot, P2 Rapid Fire, plus Dual) are **cumulative and timed** — collecting one **adds** it to the ship's active set for **10 seconds**, with its own independent countdown from the moment of collection (re-collecting resets only that weapon's timer). All active weapons fire simultaneously, each at its own fire rate; the **Cannon** is permanent and never times out. A fourth power-up drop, **Reset**, clears **all** timed weapons, leaving only the Cannon.
 
-> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **persistent** (non-timed) semantics per operator decision, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and instant weapon switching on collection. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the weapon slot + fire cooldown and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
+> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), per-weapon fire cooldowns (`tryFire` returns every active weapon that fired this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
 
-> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, Space → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. Space consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
+> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
+
+> **Implemented in the combat formation gyms (§6.4, `src/scenes/gym/GymEnemies.ts` / `src/scenes/gym/GymBoss.ts`, AH-0MU3VOQKH005YOBH):** From here the enemy-bearing formation gyms run a **shared opt-in power-up layer** in `GymFormationScene`: a `WeightedRandomSpawner` over **the full drop pool — P3–P9 power-ups plus the weapon drops (Spread → Dual, Rapid, Reset)** seeded from the game-rules config (`src/core/rules.ts`), a `RandomAvoidingPlacement` strategy (`src/powerups/placement.ts`) that avoids live enemy bodies and the player, **one drop on screen at a time** on the configured interval (default **12.5 s**), fly-over collection (≥ 3 % scale + hull overlap) applied through the shared `EffectsRegistry`, and the standalone HUD with the lives counter visible (one row per active effect, plus one row per equipped weapon). The §4.4 rarity guidance is encoded as **relative weights** — standard power-up IDs (P3–P7, P9) default to **4** and **P8 Extra Life** to **1**, while each weapon drop (spread/dual/rapid/reset) defaults to **2** so weapons appear alongside standard effects without dominating them; the existing `WeightedRandomSpawner` normalises them internally. Collecting a weapon drop equips it through the registry for 10 s (independent countdown per weapon); the **Reset** drop clears every active weapon. A **live spawn-interval slider** (`src/utils/gymPowerUpControl.ts`) tunes the cadence of the running scene and persists the value through the rules config, so the interval is no longer a compile-time constant.
 
 ### 4.5 Scoring System
 
@@ -229,6 +252,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | Destroy E3 Tank | 300 |
 | Destroy E4 Phaser | 250 |
 | Destroy E5 Swarm | 150 |
+| Destroy E6 Asteroid (small only) | 50 (large/medium award none) |
 | Destroy Boss Phase 1 | 1000 |
 | Destroy Boss Phase 2 | 2000 |
 | Destroy Boss Phase 3 | 3000 |
@@ -304,10 +328,23 @@ src/
 ├── core/
 │   ├── Game.ts          — Main game class, scene management
 │   ├── GameState.ts     — Game state (lives, score, level)
-│   └── Input.ts         — Input handling (keyboard, auto-fire)
+│   ├── Input.ts         — Input handling (keyboard, auto-fire)
+│   └── rules.ts         — General game-rules config (implemented): localStorage-backed
+│                          `loadRules()` / `saveRules()` holding the power-up spawn
+│                          interval (default 12.5 s) and per-ID drop weights (P3–P9)
+│                          for the combat gyms; `POWER_UP_SPAWN_INTERVAL` re-sources
+│                          from it in `../core/constants.ts`
 ├── scenes/
-│   ├── GymIndex.ts      — Dev-mode gym entry scene (sole scene in gameConfig):
-│   │                      discovers + lists gym scenes from scenes/gym/ (import.meta.glob)
+│   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
+│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click
+│   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
+│   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
+│   │                      to GameOverScene on win or loss
+│   ├── GameOverScene.ts — Game-over (implemented): final score, 3-letter initials,
+│   │                      leaderboard stub (localStorage), Return to Menu
+│   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
+│   │                      main menu's Gym Scene Index button; discovers + lists gym
+│   │                      scenes from scenes/gym/ via import.meta.glob)
 │   └── gym/
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
@@ -315,7 +352,7 @@ src/
 │       ├── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
 │       ├── GymPowerUpsCombat.ts — combat-coupled power-up gym (key GymPowerUpsCombat, label "PowerUpsCombat"):
-│       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (Space)
+│       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (S/↓)
 │       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
 │       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
@@ -342,6 +379,13 @@ src/
 │   ├── spawner.ts       — Pluggable spawner strategy layer: PowerUpSpawner interface,
 │   │                      RoundRobinSpawner (deterministic gym drops),
 │   │                      WeightedRandomSpawner (semi-random in-game drops with mid-run weight tuning)
+│   ├── placement.ts     — Pluggable avoiding placement strategy (implemented):
+│   │                      PowerUpPlacement interface + RandomAvoidingPlacement
+│   │                      (random in-margin position clear of live enemy bodies/player,
+│   │                      retry limit + deterministic fallback)
+│   ├── teleport.ts      — Shared P7 safe-spot resolver (implemented):
+│   │                      findTeleportDestination reused by GymPowerUpsCombat and
+│   │                      the combat base (ray + grid candidates, clamped to screen)
 │   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
 │   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
 │   └── icons.ts         — Code-drawn neon power-up icons (shield/bomb/phase/teleport/speed/life/magnet)
@@ -365,7 +409,10 @@ src/
     ├── collision.ts     — Collision detection
     ├── math.ts          — Helper math functions
     ├── gymDiscovery.ts  — Gym-scene discovery (import.meta.glob, .test.ts filter, labels, sort)
-    └── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
+    ├── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
+    └── gymPowerUpControl.ts — Live spawn-interval slider (implemented): plain-DOM range input
+                           mounted in GymEnemies/GymBoss that applies the new cadence to the
+                           running scene and persists it via the rules config (stable DOM id)
 assets/
 ├── images/              — Neon vector graphics (placeholder_ prefix)
 └── audio/               — No external audio assets (all SFX are procedural; see §7.3)
@@ -508,7 +555,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Category | Event | Sound Character | Volume | Lead Time |
 |----------|-------|-----------------|--------|-----------|
 | **Interactions** | Power-up pickup | Bright, ascending blip | Medium-high | Immediate |
-| **Interactions** | Teleport activate (Space) | Short whoosh + portal effect | Medium | Immediate |
+| **Interactions** | Teleport activate (S/↓) | Short whoosh + portal effect | Medium | Immediate |
 | **Impacts** | Player hit (life lost) | Low, jarring zap | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
@@ -554,8 +601,8 @@ enemies get:
 | Thruster hum (held thrust) | Continuous jet-engine roar | Triangle 60 Hz + sine 35 Hz rumble + band-pass filtered white noise (700–1100 Hz) whoosh, thrust-scaled (≤ 0.15) | ≤ 0.15 |
 
 - **Thruster hum** — single ship-level continuous jet-engine roar (NOT per-engine flame port), synthesised as a soft triangle fundamental (60 Hz) with a sine undertone (35 Hz) for low rumble plus white noise through a band-pass filter (700–1100 Hz, Q 0.6–1.1) for jet-engine whoosh; filtered noise is the dominant texture, all through one reused gain node; gain follows `getEngineSoundLevel` level `min(1, thrustAcceleration / FLAME_REF_THRUST)` (GDD §2.2 `ShipConfig`), so the tuning slider is audible (half thrust → ~0.5 level). Contour: smooth fade-in ramping over `THRUSTER_HUM_GROWTH_TIME` (30 ms at reference thrust) and ~4× quicker decay when thrust stops (mirrors the flame growth/shrink timing), with no clicks on retrigger; volume ≤ 0.15 (within the "≤ 0.2" ceiling for all player cues). Driven per-frame by `Player.preUpdate` → `getEngineSoundLevel(state, input, thrustAcceleration)` → `updateThrusterSound(level)` for both `fourDirectional` (any arrow/WASD) and `asteroids` (forward/turn) schemes; stops on release, respawn, player destroy, or scene shutdown so no audio nodes leak.
-- **Shoot cues play once per shot** (not once per bullet), keyed off the
-  equipped weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
+- **Shoot cues play once per shot** (not once per bullet), keyed off each
+  firing weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
 - **Pickup activation cues** are unique per pickup type and distinct from the
 generic collection chime and weapon-change arpeggio, so the player knows at a
 glance which bonus was collected.
@@ -615,7 +662,7 @@ All clarifying questions and their answers from the intake process are captured 
 4. **Engine selected** — Phaser (TypeScript/HTML5) is the locked engine choice. The engine policy bans UI-heavy engines (Godot/Unity); Phaser satisfies the code-first constraint.
 5. **Living document** — The GDD is not rigid; it may be edited during development with worklog-tracked changes.
 6. **Local leaderboard** — Simple `localStorage` for the MVP; no backend required.
-7. **Controls** — WASD/Arrow keys, auto-fire, Space for teleport power-up.
+7. **Controls** — WASD/Arrow keys, auto-fire, S or ↓ for teleport power-up.
 8. **Tron-inspired neon vector aesthetic** — Confirmed.
 9. **Magnet power-up (P9)** — Confirmed via interactive intake for AH-0MT7VE4SX0005A8V:
    - **Duration/stacking model** (Q: "Temporary timed effect or permanent upgrade?") — Answer: **permanent**; each pickup permanently increases the attraction radius for the rest of the run.

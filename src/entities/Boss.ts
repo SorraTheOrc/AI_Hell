@@ -26,7 +26,10 @@
 
 import Phaser from 'phaser';
 
+import { createBullet } from './bulletUtils';
 import { FormationOffset } from '../utils/formations';
+import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { playBossFireSound, getAudioContext, blip } from '../audio/effects';
 import {
   resolvePatterns,
   spawnExplosionParticles,
@@ -106,56 +109,6 @@ export function playBossPhaseCue(phase: BossPhase): void {
   blip(start, end, 0.3, 'square', 0.1);
 }
 
-// ── Audio helpers (module-level, shared with effects.ts pattern) ────
-
-let bossAudioCtx: AudioContext | null = null;
-
-function getAudioContext(): AudioContext | null {
-  if (bossAudioCtx) return bossAudioCtx;
-  try {
-    const Ctor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctor) return null;
-    bossAudioCtx = new Ctor();
-  } catch {
-    bossAudioCtx = null;
-  }
-  return bossAudioCtx;
-}
-
-function blip(
-  freqStart: number,
-  freqEnd: number,
-  duration: number,
-  type: OscillatorType,
-  volume: number,
-): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-
-  osc.type = type;
-  osc.frequency.setValueAtTime(freqStart, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(
-    Math.max(1, freqEnd),
-    ctx.currentTime + duration,
-  );
-
-  gain.gain.setValueAtTime(volume, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    ctx.currentTime + duration,
-  );
-
-  osc.connect(gain).connect(ctx.destination);
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration + 0.02);
-}
-
 // ── Phase definitions ───────────────────────────────────────────────
 
 /** The four attack phases of the Central AI Boss. */
@@ -192,6 +145,14 @@ export interface BossConfig {
   y: number;
   /** Offset within the formation (unused for Boss, but required by the interface). */
   formationOffset: FormationOffset;
+  /**
+   * Chance (fraction `0.0`–`1.0`) that the Boss fires when an attack cycle
+   * is eligible. Defaults to `1.0` (current behaviour). A failed roll
+   * consumes the cycle.
+   */
+  shotProbability?: number;
+  /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
+  rng?: () => number;
 }
 
 // ── Bullet types ────────────────────────────────────────────────────
@@ -241,6 +202,8 @@ export class Boss extends Phaser.GameObjects.Container {
 
   private _alive = true;
   private _shootEnabled = true; // Boss always "shoots" (pattern-driven)
+  private readonly _shotProbability: number;
+  private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
   private _healthSegmentsRemaining = BOSS_PHASE_COUNT;
@@ -268,6 +231,8 @@ export class Boss extends Phaser.GameObjects.Container {
     super(scene, config.x, config.y);
 
     this.formationOffset = config.formationOffset;
+    this._shotProbability = config.shotProbability ?? 1.0;
+    this._rng = config.rng ?? Math.random;
 
     // Body — a hexagonal/geometric shape in neon red.
     this.bodyGraphics = scene.add.graphics();
@@ -458,8 +423,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Spread pattern (Phase 1): fires bullets in a wide arc.
    */
   tryFireSpreadBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
@@ -472,6 +440,9 @@ export class Boss extends Phaser.GameObjects.Container {
       const angle = startAngle - t * spreadAngle;
       bullets.push(this._createBullet(angle, speed));
     }
+    // Play the Boss fire sound once per volley (alongside the phase cue telegraph).
+    playBossFireSound();
+
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
   }
@@ -480,8 +451,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Spiral pattern (Phase 2): bullets spiral outward from the Boss.
    */
   tryFireSpiralBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
@@ -492,6 +466,9 @@ export class Boss extends Phaser.GameObjects.Container {
       bullets.push(this._createBullet(angle, speed));
     }
     this._attackAngle += 0.3; // rotate the spiral next volley
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
+
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
   }
@@ -500,8 +477,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Pulse pattern (Phase 3): a screen-wide wave + aimed shots.
    */
   tryFirePulseBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const bullets: BossBullet[] = [];
 
@@ -535,6 +515,9 @@ export class Boss extends Phaser.GameObjects.Container {
       bullets.push(this._createBullet(angle, speed));
     }
 
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
+
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
   }
@@ -543,8 +526,11 @@ export class Boss extends Phaser.GameObjects.Container {
    * Desperation pattern (Phase 4): all patterns combined at higher speed.
    */
   tryFireDesperationBullets(now: number): BossBullet[] {
-    if (!this._shouldFire(now)) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
 
     const bullets: BossBullet[] = [];
     const speed = this._bulletSpeed();
@@ -588,6 +574,9 @@ export class Boss extends Phaser.GameObjects.Container {
       pulseRadius: BOSS_CORE_GLOW_RADIUS,
     });
 
+    // Play the Boss fire sound once per volley.
+    playBossFireSound();
+
     this._lastAttackTime = now; // mark volley as fired
     return bullets;
   }
@@ -626,7 +615,14 @@ export class Boss extends Phaser.GameObjects.Container {
       this._currentPhaseNumber === 4
         ? BOSS_DESPERATION_ATTACK_INTERVAL
         : BOSS_ATTACK_INTERVAL;
-    return now - this._lastAttackTime >= interval;
+    if (now - this._lastAttackTime < interval) return false;
+    // Probability gate at the fire decision point: a failed roll consumes
+    // this cycle so the next volley rolls again (default 1.0 — unchanged).
+    if (!(this._rng() < this._shotProbability)) {
+      this._lastAttackTime = now;
+      return false;
+    }
+    return true;
   }
 
   private _bulletSpeed(): number {
@@ -636,15 +632,17 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   private _createBullet(angle: number, speed: number): BossBullet {
-    const graphics = (this.scene as Phaser.Scene).add.graphics();
-    graphics.fillStyle(BOSS_BULLET_COLOR, 1);
-    graphics.fillCircle(0, 0, BOSS_BULLET_SIZE);
-    graphics.setPosition(this.x, this.y);
-    graphics.setDepth(3);
+    const { graphics, color } = createBullet({
+      scene: this.scene as Phaser.Scene,
+      color: BOSS_BULLET_COLOR,
+      size: BOSS_BULLET_SIZE,
+      x: this.x,
+      y: this.y,
+    });
 
     return {
       graphics,
-      color: BOSS_BULLET_COLOR,
+      color,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
     };
@@ -720,6 +718,17 @@ export class Boss extends Phaser.GameObjects.Container {
 
   get alive(): boolean {
     return this._alive;
+  }
+
+  /**
+   * Hit radius (px) used for collision checks against this entity.
+   *
+   * Returns `BOSS_RADIUS + HIT_RADIUS_BUFFER_PX` (50 + 2 = 52 px).
+   * The Boss's visual radius is 50 px; this adds a small gameplay
+   * buffer for visual stroke thickness.
+   */
+  getHitRadius(): number {
+    return BOSS_RADIUS + HIT_RADIUS_BUFFER_PX;
   }
 
   get shootEnabled(): boolean {

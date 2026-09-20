@@ -17,8 +17,10 @@ import {
   DIVER_DIVE_DURATION,
   DIVER_DIVE_APEX_FRACTION,
   DIVER_FIRE_INTERVAL,
+  DIVER_PAUSE_DURATION,
   Diver,
   DiverState,
+  DiverConfig,
   FormationOffset,
 } from './Diver';
 
@@ -129,6 +131,172 @@ describe('Diver entity (E2 diver, GDD §4.1 — live aim tracking)', () => {
     expect(diver.x).toBeCloseTo(pointA.x, 5);
     expect(diver.y).toBeCloseTo(pointA.y, 5);
     expect(Math.abs(diver.y - pointB.y)).toBeGreaterThan(5);
+  });
+});
+
+describe('Diver entity — dive SFX (AH-0MTVYC6E8005YN6F)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    // Restore (not just clear) so the cleanup stopDiveSound() below runs
+    // on the real function and is not recorded by any test's spy.
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    // Reset module-level dive sound state.
+    effectsModule.stopDiveSound();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset });
+  }
+
+  /**
+   * Advances ticks until the diver reaches the target state (or gives up
+   * after maxTicks). Returns the ticks used.
+   */
+  function advanceToState(
+    diver: Diver,
+    baseX: number,
+    baseY: number,
+    target: DiverState,
+    maxTicks = 50,
+  ): void {
+    for (let i = 0; i < maxTicks && diver.behaviourState !== target; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+  }
+
+  it('AC — dive-start cue fires exactly once per dive transition', async () => {
+    booted = await bootScene([HarnessScene]);
+    const spy = vi.spyOn(effectsModule, 'playDiverDiveStartSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Hold in formation until the dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Dive completes, returns through RETURNING to FORMATION (no extra cue).
+    advanceToState(diver, baseX, baseY, DiverState.FORMATION);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Next dive cycle fires the cue again.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — sustained dive sound start/stop pair is called at correct lifecycle points', async () => {
+    booted = await bootScene([HarnessScene]);
+    const startSpy = vi.spyOn(effectsModule, 'playDiveSound');
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Before dive: neither function called.
+    expect(startSpy).toHaveBeenCalledTimes(0);
+    expect(stopSpy).toHaveBeenCalledTimes(0);
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+
+    // Dive completes → RETURNING (stop called at DIVING→RETURNING)
+    // → FORMATION.
+    advanceToState(diver, baseX, baseY, DiverState.FORMATION);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+
+    // Next dive cycle: start again.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — no oscillator leak when destroyed mid-dive (stopDiveSound called)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Destroy mid-dive.
+    diver.destroySelf();
+    expect(diver.alive).toBe(false);
+    // stopDiveSound must be called to prevent oscillator leak.
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC — no oscillator leak on destroy() (stopDiveSound called)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY);
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Call destroy() (full teardown).
+    diver.destroy();
+    // stopDiveSound must be called to prevent oscillator leak.
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC — overlapping dives pair start/stop per diver (shared-voice refcount covered in effects.test.ts)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const startSpy = vi.spyOn(effectsModule, 'playDiveSound');
+    const stopSpy = vi.spyOn(effectsModule, 'stopDiveSound');
+
+    const baseX = 400;
+    const baseY = 300;
+    const diverA = makeDiver(baseX, baseY, { row: 0, col: 0 });
+    const diverB = makeDiver(baseX, baseY, { row: 1, col: 1 });
+
+    // Both divers hold into DIVING — one sustained-sound start each.
+    advanceToState(diverA, baseX, baseY, DiverState.DIVING);
+    advanceToState(diverB, baseX, baseY, DiverState.DIVING);
+    expect(diverA.behaviourState).toBe(DiverState.DIVING);
+    expect(diverB.behaviourState).toBe(DiverState.DIVING);
+    expect(startSpy).toHaveBeenCalledTimes(2);
+
+    // Diver A destroyed mid-dive releases its hold exactly once.
+    diverA.destroySelf();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+
+    // Diver B ending its dive releases the second hold — starts and
+    // stops stay paired even with overlapping dives.
+    advanceToState(diverB, baseX, baseY, DiverState.FORMATION);
+    expect(stopSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC — dive sounds degrade to no-ops in headless (no AudioContext)', async () => {
+    // These functions must never throw even without a working AudioContext.
+    // The effects module is shared; we just verify the calls are safe.
+    expect(() => effectsModule.playDiverDiveStartSound()).not.toThrow();
+    expect(() => effectsModule.playDiveSound()).not.toThrow();
+    expect(() => effectsModule.stopDiveSound()).not.toThrow();
+    expect(effectsModule._getDiverDiveSoundStateForTests()).toBeNull();
   });
 });
 
@@ -391,10 +559,22 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
       }
       expect(diver.behaviourState).toBe(DiverState.DIVING);
 
-      // Advance the dive to completion so we enter RETURNING state.
+      // Advance the dive to completion (enters PAUSING), then advance
+      // past the pause to reach RETURNING.
       const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.05);
       for (let i = 0; i < diveTicks; i++) {
         diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+      }
+      expect(diver.behaviourState).toBe(DiverState.PAUSING);
+
+      // Advance past the pause duration.
+      let pausingTicks = 0;
+      while (
+        diver.behaviourState === DiverState.PAUSING &&
+        pausingTicks < 20
+      ) {
+        diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
+        pausingTicks++;
       }
       expect(diver.behaviourState).toBe(DiverState.RETURNING);
 
@@ -449,5 +629,253 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
       expect(() => diver.destroySelf()).not.toThrow();
       expect(diver.alive).toBe(false);
     });
+  });
+});
+
+describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset });
+  }
+
+  function makeDiverWithConfig(
+    x: number,
+    y: number,
+    offset: FormationOffset,
+    config: Partial<DiverConfig> & { pauseDuration?: number },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset, ...config });
+  }
+
+  function advanceToState(
+    diver: Diver,
+    baseX: number,
+    baseY: number,
+    target: DiverState,
+    maxTicks = 50,
+  ): void {
+    for (let i = 0; i < maxTicks && diver.behaviourState !== target; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+  }
+
+  it('AC1 — PAUSING exists in DiverState enum', async () => {
+    expect((DiverState as unknown as Record<string, string>).PAUSING).toBe(
+      'pausing',
+    );
+  });
+
+  it('AC2 — DIVER_PAUSE_DURATION constant defaults to 500', async () => {
+    expect(DIVER_PAUSE_DURATION).toBe(500);
+  });
+
+  it('AC5a — diver enters PAUSING state immediately after dive completes', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    expect(diver.behaviourState).toBe(DiverState.DIVING);
+
+    // Advance the dive to completion — diver should enter PAUSING, not RETURNING.
+    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    for (let i = 0; i < diveTicks; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+    expect(diver.behaviourState).toBe(DiverState.PAUSING);
+  });
+
+  it('AC5e — position is held during the pause (no x/y movement)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+
+    // Hold until dive starts, then advance dive to completion.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    for (let i = 0; i < diveTicks; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+    expect(diver.behaviourState).toBe(DiverState.PAUSING);
+
+    const pauseStartX = diver.x;
+    const pauseStartY = diver.y;
+
+    // Advance through the entire pause duration.
+    advanceToState(
+      diver,
+      baseX,
+      baseY,
+      DiverState.RETURNING,
+      Math.ceil((DIVER_PAUSE_DURATION + 500) / 50),
+    );
+
+    // Position at the end of pause should match position at start of pause
+    // (position held during pause).
+    expect(diver.x).toBeCloseTo(pauseStartX, 1);
+    expect(diver.y).toBeCloseTo(pauseStartY, 1);
+  });
+
+  it('AC5d — diver transitions to RETURNING after pause elapses', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+
+    // Advance dive to completion (enter PAUSING).
+    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    for (let i = 0; i < diveTicks; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+    expect(diver.behaviourState).toBe(DiverState.PAUSING);
+
+    // Advance past pause duration — should transition to RETURNING.
+    advanceToState(
+      diver,
+      baseX,
+      baseY,
+      DiverState.RETURNING,
+      Math.ceil((DIVER_PAUSE_DURATION + 500) / 50),
+    );
+    expect(diver.behaviourState).toBe(DiverState.RETURNING);
+  });
+
+  it('AC5b — pause duration defaults to 500 ms (DIVER_PAUSE_DURATION)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+
+    // Advance dive to completion.
+    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    for (let i = 0; i < diveTicks; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+    expect(diver.behaviourState).toBe(DiverState.PAUSING);
+
+    // Advance with small ticks until we exit PAUSING.
+    let pausingTicks = 0;
+    while (
+      diver.behaviourState === DiverState.PAUSING &&
+      pausingTicks < 200
+    ) {
+      diver.applyFormationPosition(baseX, baseY, 0.1, 26, 22);
+      pausingTicks++;
+    }
+
+    // The pause should have lasted approximately 500ms (5 ticks of 100ms).
+    // Allow a small tolerance for tick timing.
+    expect(pausingTicks).toBeGreaterThanOrEqual(4);
+    expect(pausingTicks).toBeLessThanOrEqual(8);
+    expect(diver.behaviourState).toBe(DiverState.RETURNING);
+  });
+
+  it('AC5c — configurable pauseDuration overrides the default', async () => {
+    booted = await bootScene([HarnessScene]);
+    const baseX = 400;
+    const baseY = 300;
+    const customPause = 1500;
+    const diver = makeDiverWithConfig(baseX, baseY, { row: 0, col: 0 }, {
+      pauseDuration: customPause,
+    });
+
+    // Hold until dive starts.
+    advanceToState(diver, baseX, baseY, DiverState.DIVING);
+
+    // Advance dive to completion.
+    const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
+    for (let i = 0; i < diveTicks; i++) {
+      diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
+    }
+    expect(diver.behaviourState).toBe(DiverState.PAUSING);
+
+    // Advance with small ticks — should take ~1500ms at 100ms ticks.
+    let pausingTicks = 0;
+    while (
+      diver.behaviourState === DiverState.PAUSING &&
+      pausingTicks < 400
+    ) {
+      diver.applyFormationPosition(baseX, baseY, 0.1, 26, 22);
+      pausingTicks++;
+    }
+
+    // Custom pause of 1500ms → ~15 ticks of 100ms.
+    expect(pausingTicks).toBeGreaterThanOrEqual(13);
+    expect(pausingTicks).toBeLessThanOrEqual(18);
+    expect(diver.behaviourState).toBe(DiverState.RETURNING);
+  });
+});
+
+describe('Diver — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('a forced-success roll produces a full spread burst when the interval elapses', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = new Diver(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.1, burstCount: 4,
+    });
+    diver.shootEnabled = true;
+    const bullets = diver.tryFireSpreadBurst(1_000_000);
+    expect(bullets.length).toBe(4);
+  });
+
+  it('a forced-failure roll consumes the cycle with no burst and leaves dive state untouched', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = new Diver(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      shotProbability: 0.25, rng: () => 0.9, burstCount: 4,
+    });
+    diver.shootEnabled = true;
+    const t0 = 1_000_000;
+
+    // Skipped: no bullets emitted, cycle consumed.
+    expect(diver.tryFireSpreadBurst(t0)).toEqual([]);
+    expect(diver.tryFireSpreadBurst(t0 + DIVER_FIRE_INTERVAL - 1)).toEqual([]);
+
+    // The next elapsed cycle rolls again (also forced failure).
+    expect(diver.tryFireSpreadBurst(t0 + DIVER_FIRE_INTERVAL)).toEqual([]);
+    // Dive state machine was never entered/corrupted by the skipped fire.
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+  });
+
+  it('defaults shotProbability to 1.0 when omitted and always fires', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = new Diver(booted.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, burstCount: 4,
+    });
+    diver.shootEnabled = true;
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
+    const bullets = diver.tryFireSpreadBurst(1_000_000);
+    spy.mockRestore();
+    expect(bullets.length).toBe(4);
   });
 });

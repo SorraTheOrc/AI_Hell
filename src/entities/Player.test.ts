@@ -14,6 +14,7 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
+import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
@@ -643,14 +644,123 @@ describe('Player ship entity', () => {
     expect(third).toBeGreaterThan(second);
   });
 
-  // ── Weapon system: heading, equip, auto-fire ─────────────────────
+  // ── Weapon system: cumulative collection + timed weapons (AC1–AC6) ──
 
-  it('starts equipped with the cannon weapon (AC1, AC2)', async () => {
+  it('starts with only the permanent cannon active, which never expires (AC1, AC2)', async () => {
     const scene = await bootPlayerScene();
     await tick();
 
     const player = playerOf(scene);
     expect(player).toBeDefined();
+    expect(player!.getActiveWeapons()).toEqual(['cannon']);
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+
+    // The cannon has no timer: even huge advances leave it active (AC2).
+    player!.tickWeaponTimers(WEAPON_TIMEOUT_MS * 100);
+    expect(player!.getActiveWeapons()).toEqual(['cannon']);
+  });
+
+  it('equipWeapon adds weapons to the active set without replacing (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+
+    // Collecting Spread adds it alongside the cannon — no replacement.
+    player!.equipWeapon('spread');
+    expect(player!.getActiveWeapons()).toEqual(['cannon', 'spread']);
+    expect(player!.hasWeapon('spread')).toBe(true);
+
+    // Collecting Dual on top → all three active simultaneously (fully cumulative).
+    player!.equipWeapon('dual');
+    expect(player!.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
+  });
+
+  it('equipping the cannon is a no-op — it is already active (AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    expect(player!.getEquippedWeapon()).toBe('cannon');
+    player!.equipWeapon('cannon');
+    expect(player!.getActiveWeapons()).toEqual(['cannon']);
+  });
+
+  it('each timed weapon has its own independent 10 s countdown (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Spread collected at t = 0 s...
+    player!.equipWeapon('spread');
+    player!.tickWeaponTimers(5000); // t = 5 s — spread has 5 s left
+
+    // ...Dual collected at t = 5 s — independent timer (expires at t = 15 s).
+    player!.equipWeapon('dual');
+    expect(player!.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
+
+    // t = 10 s: spread expires (collected at 0); dual still has 5 s left.
+    player!.tickWeaponTimers(5000);
+    expect(player!.getActiveWeapons()).toEqual(['cannon', 'dual']);
+
+    // t = 15 s: dual expires too.
+    player!.tickWeaponTimers(5000);
+    expect(player!.getActiveWeapons()).toEqual(['cannon']);
+  });
+
+  it('re-collecting a timed weapon resets only its own timer (AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.equipWeapon('spread');
+    player!.equipWeapon('dual');
+    player!.tickWeaponTimers(8000); // t = 8 s — both have 2 s left
+
+    // Re-collect Spread at t = 8 s → only Spread's timer resets to 10 s.
+    player!.equipWeapon('spread');
+    player!.tickWeaponTimers(3000); // t = 11 s
+    // Dual (2 s left at t = 8) expired; Spread (7 s left) remains active.
+    expect(player!.getActiveWeapons()).toEqual(['cannon', 'spread']);
+  });
+
+  it('expired timed weapons are removed from the active set and stop firing (AC2, AC3)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.equipWeapon('rapid');
+    expect(player!.tryFire(0.5)).toEqual(['cannon', 'rapid']); // 500 ms ≥ both rates
+
+    // Wait past the 10 s timeout: rapid silently expires and never fires again.
+    player!.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
+    expect(player!.getActiveWeapons()).toEqual(['cannon']);
+    expect(player!.tryFire(0.5)).toEqual(['cannon']);
+  });
+
+  it('resetWeapon clears all timed weapons, leaving only the cannon (AC4)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+    player!.equipWeapon('spread');
+    player!.equipWeapon('dual');
+    player!.equipWeapon('rapid');
+    expect(player!.getActiveWeapons().length).toBe(4);
+
+    player!.resetWeapon();
+    expect(player!.getActiveWeapons()).toEqual(['cannon']);
+    expect(player!.hasWeapon('spread')).toBe(false);
     expect(player!.getEquippedWeapon()).toBe('cannon');
   });
 
@@ -699,125 +809,81 @@ describe('Player ship entity', () => {
     expect(player!.getHeading()).toBe(0);
   });
 
-  it('equipWeapon swaps to the given weapon (AC2)', async () => {
+  it('getEquippedWeapon reports the most recently collected weapon (backward compat)', async () => {
     const scene = await bootPlayerScene();
     await tick();
 
     const player = playerOf(scene);
+    expect(player).toBeDefined();
     expect(player!.getEquippedWeapon()).toBe('cannon');
 
     player!.equipWeapon('spread');
     expect(player!.getEquippedWeapon()).toBe('spread');
+    player!.equipWeapon('dual');
+    expect(player!.getEquippedWeapon()).toBe('dual');
 
-    player!.equipWeapon('rapid');
-    expect(player!.getEquippedWeapon()).toBe('rapid');
-  });
-
-  it('resetWeapon returns to cannon (AC2)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
-
-    const player = playerOf(scene);
-    player!.equipWeapon('spread');
-    expect(player!.getEquippedWeapon()).toBe('spread');
-
-    player!.resetWeapon();
+    // When the most recent timed weapon expires, the view falls back to cannon.
+    player!.tickWeaponTimers(WEAPON_TIMEOUT_MS);
     expect(player!.getEquippedWeapon()).toBe('cannon');
   });
 
-  it('getWeaponDef returns the correct definition for the equipped weapon', async () => {
+  it('getWeaponDef returns the definition for a specific weapon, or the primary by default', async () => {
     const scene = await bootPlayerScene();
     await tick();
 
     const player = playerOf(scene);
+    expect(player).toBeDefined();
 
     // Cannon: single bullet, 400 ms fire rate.
-    expect(player!.getWeaponDef().id).toBe('cannon');
-    expect(player!.getWeaponDef().offsets).toEqual([0]);
-    expect(player!.getWeaponDef().fireRateMs).toBe(400);
+    expect(player!.getWeaponDef('cannon').id).toBe('cannon');
+    expect(player!.getWeaponDef('cannon').offsets).toEqual([0]);
+    expect(player!.getWeaponDef('cannon').fireRateMs).toBe(400);
 
+    // Per-id lookup works for any catalogue weapon.
+    expect(player!.getWeaponDef('spread').offsets).toHaveLength(3);
+    expect(player!.getWeaponDef('rapid').fireRateMs).toBe(125);
+
+    // No-arg form defaults to the most-recently collected weapon.
     player!.equipWeapon('rapid');
     expect(player!.getWeaponDef().id).toBe('rapid');
-    expect(player!.getWeaponDef().offsets).toEqual([0]);
-    expect(player!.getWeaponDef().fireRateMs).toBe(125);
   });
 
-  it('tryFire fires once then blocks until cooldown elapses (AC1)', async () => {
+  it('tryFire fires every active weapon, each at its own independent rate (AC3)', async () => {
     const scene = await bootPlayerScene();
     await tick();
 
     const player = playerOf(scene);
-    player!.equipWeapon('cannon'); // 400 ms fire rate
+    expect(player).toBeDefined();
 
-    // First call: ready to fire.
-    const fired1 = player!.tryFire(0.5); // 500 ms > 400 ms → fires
-    expect(fired1).toBe(true);
+    // Freshly collected weapon fires immediately alongside the cannon.
+    player!.equipWeapon('rapid'); // rapid 125 ms, cannon 400 ms
+    expect(player!.tryFire(0.5)).toEqual(['cannon', 'rapid']);
+
+    // +100 ms: below both rates → nothing fires.
+    expect(player!.tryFire(0.1)).toEqual([]);
+
+    // +50 ms → 150 ms total ≥ 125 (rapid only, cannon at 250 < 400).
+    expect(player!.tryFire(0.05)).toEqual(['rapid']);
+
+    // +300 ms → cannon (450 ≥ 400) and rapid (both due) fire together.
+    expect(player!.tryFire(0.3)).toEqual(['cannon', 'rapid']);
+  });
+
+  it('tryFire with only the cannon fires at the 400 ms rate (AC3)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // First call: cannon is ready (cooldown 0).
+    expect(player!.tryFire(0.5)).toEqual(['cannon']); // 500 ms > 400 ms
 
     // Second call immediately: cooldown not elapsed.
-    const fired2 = player!.tryFire(0.1); // 100 ms < 400 ms → blocked
-    expect(fired2).toBe(false);
+    expect(player!.tryFire(0.1)).toEqual([]); // 100 ms < 400 ms → blocked
 
-    // After remaining cooldown: fires again.
-    const fired3 = player!.tryFire(0.35); // 350 ms more → 450 ms total ≥ 400 ms
-    expect(fired3).toBe(true);
-  });
-
-  it('tryFire with rapid weapon fires much faster (AC1)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
-
-    const player = playerOf(scene);
-    player!.equipWeapon('rapid'); // 125 ms fire rate
-
-    // At 125 ms intervals, should fire every time.
-    expect(player!.tryFire(0.125)).toBe(true);
-    expect(player!.tryFire(0.125)).toBe(true);
-    expect(player!.tryFire(0.125)).toBe(true);
-  });
-
-  it('tryFire with spread weapon blocks between shots (AC1)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
-
-    const player = playerOf(scene);
-    player!.equipWeapon('spread'); // 600 ms fire rate
-
-    // First shot at 600 ms.
-    expect(player!.tryFire(0.6)).toBe(true);
-    // Next shot blocked at 100 ms.
-    expect(player!.tryFire(0.1)).toBe(false);
-    // After 500 ms more (total 1100 ms ≥ 600 ms), fires again.
-    expect(player!.tryFire(0.5)).toBe(true);
-  });
-
-  it('tickFireCooldown decrements the cooldown (AC1)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
-
-    const player = playerOf(scene);
-    player!.equipWeapon('cannon');
-
-    // Fire once to set cooldown.
-    player!.tryFire(0.5);
-    expect(player!.getFireCooldown()).toBeGreaterThan(0);
-
-    // Tick cooldown forward.
-    player!.tickFireCooldown(100);
-    expect(player!.getFireCooldown()).toBeLessThanOrEqual(300);
-  });
-
-  it('isFireReady returns true when cooldown has elapsed', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
-
-    const player = playerOf(scene);
-    expect(player!.isFireReady()).toBe(true);
-
-    player!.tryFire(0.5);
-    expect(player!.isFireReady()).toBe(false);
-
-    player!.tickFireCooldown(500);
-    expect(player!.isFireReady()).toBe(true);
+    // After remaining cooldown: fires again (450 ms total ≥ 400 ms).
+    expect(player!.tryFire(0.35)).toEqual(['cannon']);
   });
 });
 

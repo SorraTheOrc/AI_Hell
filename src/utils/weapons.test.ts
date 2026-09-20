@@ -29,6 +29,7 @@ import {
   WEAPON_DUAL_FIRE_RATE,
   WEAPON_RAPID_FIRE_RATE,
   BULLET_SPEED,
+  isTimedWeapon,
 } from './weapons';
 
 describe('WEAPON_CATALOGUE', () => {
@@ -71,6 +72,18 @@ describe('WEAPON_CATALOGUE', () => {
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_CANNON_FIRE_RATE);
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_SPREAD_FIRE_RATE);
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_DUAL_FIRE_RATE);
+  });
+});
+
+describe('isTimedWeapon (GDD §4.4 — cumulative + timed model)', () => {
+  test('the cannon is the only permanent weapon — never times out', () => {
+    expect(isTimedWeapon('cannon')).toBe(false);
+  });
+
+  test('every weapon power-up (Spread, Dual, Rapid) is timed', () => {
+    expect(isTimedWeapon('spread')).toBe(true);
+    expect(isTimedWeapon('dual')).toBe(true);
+    expect(isTimedWeapon('rapid')).toBe(true);
   });
 });
 
