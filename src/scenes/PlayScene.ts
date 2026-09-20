@@ -244,6 +244,13 @@ export class PlayScene extends Phaser.Scene {
 
   private transitionTimer = 0;
 
+  /**
+   * Whether the simulation is frozen by the pause menu (parent
+   * AH-0MU9LPZ0G0015292). While `true`, `tick()` short-circuits so no
+   * subsystem advances.
+   */
+  private paused = false;
+
   /** Seconds left before the current banner hides itself (0 = hidden). */
   private bannerTimer = 0;
 
@@ -306,6 +313,13 @@ export class PlayScene extends Phaser.Scene {
     this._buildHudText();
     addBackToIndexButton(this);
 
+    // ESC toggles the pause menu (parent AH-0MU9LPZ0G0015292). Registered
+    // here because the keyboard plugin is torn down on scene shutdown, so
+    // there is no cross-session listener leak.
+    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.repeat) this.togglePause();
+    });
+
     // Power-up drop pool.
     const rules = loadRules();
     this.dropSpawner = this._buildDropSpawner(
@@ -343,6 +357,7 @@ export class PlayScene extends Phaser.Scene {
     this.waveTimer = 0;
     this.waveTimerActive = false;
     this.shieldBubbleDrawn = false;
+    this.paused = false;
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -407,6 +422,12 @@ export class PlayScene extends Phaser.Scene {
    * lifecycles, collisions, power-up drops, and level transitions.
    */
   tick(dt: number): void {
+    // Pause freeze (parent AH-0MU9LPZ0G0015292): while paused nothing
+    // advances — enemies stop moving/firing, projectiles and timers
+    // freeze, and the player is frozen and cannot be hit. Resuming
+    // continues from this exact state with no time counted.
+    if (this.paused) return;
+
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
 
@@ -1589,6 +1610,42 @@ export class PlayScene extends Phaser.Scene {
   /** True while a wave/level transition is in progress. */
   isTransitioning(): boolean {
     return this.transitionTimer > 0;
+  }
+
+  // ── Pause control (parent AH-0MU9LPZ0G0015292) ──────────────────
+
+  /**
+   * Freezes (`true`) or resumes (`false`) the simulation. While paused,
+   * `tick()` short-circuits so no subsystem advances: enemies stop
+   * moving and firing, projectiles and countdown timers freeze, and the
+   * player is frozen and invulnerable. Resuming continues from the exact
+   * paused state with no elapsed time counted.
+   */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+  }
+
+  /** Whether the simulation is currently frozen by the pause menu. */
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  /**
+   * Runtime ESC handler: toggles the paused state. On the pause edge it
+   * hands off to the full-screen `PauseScene` when one is registered
+   * (registered by the PauseScene child in `gameConfig.ts`); the hand-off
+   * is guarded so it is a harmless no-op before that scene exists.
+   */
+  togglePause(): void {
+    if (this.paused) {
+      this.setPaused(false);
+      return;
+    }
+    this.setPaused(true);
+    if (this.scene.manager.getScene('PauseScene')) {
+      this.scene.pause();
+      this.scene.launch('PauseScene', { origin: 'PlayScene' });
+    }
   }
 
   /** Whether the wave time-limit is currently counting down. */

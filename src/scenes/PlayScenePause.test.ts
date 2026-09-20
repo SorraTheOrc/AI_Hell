@@ -3,12 +3,10 @@
  * (AH-0MUA8B8B1008JLAN — test-first child of the In-game menu epic
  * AH-0MU9LPZ0G0015292).
  *
- * These tests pin the pause contract for the implementation child
- * AH-0MUA8BC9B008FGEJ, which adds the public `setPaused()` seam and the ESC
- * toggle to PlayScene. The whole suite is gated with `describe.skip` until
- * that child lands, so this commit keeps the build green; child #4 removes
- * the `.skip` and makes every assertion pass. They are NOT placeholders —
- * every test asserts observable PlayScene behaviour through the public API.
+ * These tests pin the pause contract implemented by AH-0MUA8BC9B008FGEJ,
+ * which added the public `setPaused()` seam and the ESC toggle to
+ * PlayScene. Every test asserts observable PlayScene behaviour through
+ * the public API.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -38,7 +36,7 @@ function pressKey(key: string): void {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
 
-describe.skip('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN, activated by AH-0MUA8BC9B008FGEJ)', () => {
+describe('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
