@@ -384,6 +384,8 @@ export class PlayScene extends Phaser.Scene {
     // wave/level transition pause.
     if (this.player) {
       this.player.tickWeaponTimers(dt * 1000);
+      // P5 live boost: scale thrust/max-speed each frame (mirror gym).
+      this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
       const input = this._readPlayerInput();
       if (input) this.player.setInput(input);
       this.player.physicsTick(dt, this.scale.width, this.scale.height);

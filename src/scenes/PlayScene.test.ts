@@ -783,4 +783,89 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(children.length).toBe(2);
     expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
   });
+
+  // ── P5 Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
+
+  it('P5 active → speed multiplier applied to player movement config', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Default: no P5 active, multiplier = 1.
+    const configDefault = player.getMovementConfig();
+    expect(registry.speedMultiplier()).toBe(1);
+
+    // Activate P5 via direct collection (drop under ship at full size).
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    expect(drop.powerUp.canCollect()).toBe(true);
+
+    // Collect it in one tick (registry gets updated).
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.speedMultiplier()).toBe(1.5);
+
+    // The multiplier is applied at the TOP of tick(), before _updateDrops.
+    // So the boosted config takes effect on the NEXT tick call.
+    scene.tick(0.016);
+    const configP5 = player.getMovementConfig();
+    expect(configP5.thrust).toBeCloseTo(configDefault.thrust * 1.5);
+    expect(configP5.maxSpeed).toBeCloseTo(configDefault.maxSpeed * 1.5);
+  });
+
+  it('P5 expired → multiplier back to 1', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Activate P5.
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.speedMultiplier()).toBe(1.5);
+
+    // Advance past the 10 s duration.
+    for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
+    scene.tick(0.5); // past 10 s
+
+    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.speedMultiplier()).toBe(1);
+    expect(player.getMovementConfig().thrust).toBeCloseTo(
+      player.getMovementConfig().thrust, // back to base
+    );
+  });
+
+  it('re-collecting P5 refreshes the duration', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect first P5.
+    const drop1 = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop1.powerUp.advance(0.05);
+    player.setPosition(drop1.x, drop1.y);
+    scene.tick(0.016);
+    expect(registry.isActive('P5')).toBe(true);
+
+    // Advance ~3 seconds so the timer ticks down.
+    for (let i = 0; i < 188; i++) scene.tick(0.016); // ~3 s
+    expect(registry.isActive('P5')).toBe(true);
+    const remainingBeforeSecond = registry.remaining('P5')!;
+
+    // Collect a second P5 — should refresh the timer to full.
+    const drop2 = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop2.powerUp.advance(0.05);
+    player.setPosition(drop2.x, drop2.y);
+    scene.tick(0.016);
+    expect(registry.isActive('P5')).toBe(true);
+    const remaining2 = registry.remaining('P5')!;
+
+    // The second collection refreshed the timer to near full duration.
+    expect(remaining2).toBeGreaterThan(remainingBeforeSecond);
+    expect(remaining2).toBeCloseTo(10, 1);
+  });
 });
