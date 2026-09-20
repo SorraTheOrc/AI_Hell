@@ -84,6 +84,38 @@ function isIntentionalOverlap(a: ActionName, b: ActionName): boolean {
 }
 
 /**
+ * Returns a complete, valid binding map. Missing entries, non-string values
+ * and blank strings fall back to `DEFAULT_BINDINGS` (AC3).
+ */
+export function resolveBindings(
+  stored?: Partial<Record<ActionName, string>>,
+): Record<ActionName, string> {
+  const resolved: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
+  if (!stored) return resolved;
+  for (const action of ACTION_NAMES) {
+    const value = stored[action];
+    if (typeof value === 'string' && value.trim() !== '') {
+      resolved[action] = value;
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Resolves a single action's binding, falling back to its default when the
+ * stored value is missing, non-string or blank.
+ */
+export function keyFor(
+  bindings: Record<ActionName, string> | Partial<Record<ActionName, string>> | undefined,
+  action: ActionName,
+): string {
+  const value = bindings?.[action];
+  return typeof value === 'string' && value.trim() !== ''
+    ? value
+    : DEFAULT_BINDINGS[action];
+}
+
+/**
  * Returns the first other action whose current binding shares `key` with
  * `action`, or `null` when the key is free. The intentional default overlap
  * (`S` shared by move-down and layer-drop) is never reported as a conflict.
@@ -142,7 +174,7 @@ export function loadSettings(): SettingsRecord {
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      bindings: { ...DEFAULT_BINDINGS, ...(parsed.bindings as Record<string, string> | undefined) },
+      bindings: resolveBindings(parsed.bindings as Partial<Record<ActionName, string>> | undefined),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -5,7 +5,9 @@ import {
   DEFAULT_SETTINGS,
   ACTION_NAMES,
   findConflict,
+  keyFor,
   loadSettings,
+  resolveBindings,
   saveSettings,
   resetSettings,
   type SettingsRecord,
@@ -261,6 +263,47 @@ describe('settingsStore', () => {
       };
       // Rebinding moveRight onto 'a' (moveLeft's key): genuine conflict.
       expect(findConflict(bindings, 'moveRight', 'a')).toBe('moveLeft');
+    });
+  });
+
+  describe('resolveBindings / keyFor fallback (AC3, AH-0MUA8BK1E001UZUC)', () => {
+    it('returns the defaults when nothing is stored', () => {
+      expect(resolveBindings(undefined)).toEqual(DEFAULT_BINDINGS);
+    });
+
+    it('keeps valid stored values and fills the rest from defaults', () => {
+      const resolved = resolveBindings({ moveUp: 'i' } as Partial<Record<ActionName, string>>);
+      expect(resolved.moveUp).toBe('i');
+      expect(resolved.moveDown).toBe(DEFAULT_BINDINGS.moveDown);
+    });
+
+    it('falls back for blank / non-string stored values', () => {
+      const resolved = resolveBindings({
+        moveUp: '',
+        moveLeft: '   ',
+        moveRight: undefined as unknown as string,
+      } as Partial<Record<ActionName, string>>);
+      expect(resolved.moveUp).toBe(DEFAULT_BINDINGS.moveUp);
+      expect(resolved.moveLeft).toBe(DEFAULT_BINDINGS.moveLeft);
+      expect(resolved.moveRight).toBe(DEFAULT_BINDINGS.moveRight);
+    });
+
+    it('keyFor returns the stored value when valid', () => {
+      expect(keyFor({ ...DEFAULT_BINDINGS, moveUp: 'i' }, 'moveUp')).toBe('i');
+    });
+
+    it('keyFor falls back to the default for a blank/missing value', () => {
+      expect(keyFor({ moveUp: '' } as Partial<Record<ActionName, string>>, 'moveUp')).toBe('w');
+      expect(keyFor(undefined, 'pauseToggle')).toBe('Escape');
+    });
+
+    it('loadSettings validates stored bindings', () => {
+      mockLocalStorage({
+        ai_hell_settings: JSON.stringify({ bindings: { moveUp: 'i', moveDown: '' } }),
+      });
+      const loaded = loadSettings();
+      expect(loaded.bindings.moveUp).toBe('i');
+      expect(loaded.bindings.moveDown).toBe(DEFAULT_BINDINGS.moveDown);
     });
   });
 });

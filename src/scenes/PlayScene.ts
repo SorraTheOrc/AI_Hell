@@ -84,6 +84,14 @@ import {
 import type { WasdKeysLike } from '../utils/input';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import {
+  DEFAULT_BINDINGS,
+  keyFor,
+  loadSettings,
+  resolveBindings,
+  type ActionName,
+} from '../core/settingsStore';
+import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
@@ -227,6 +235,9 @@ export class PlayScene extends Phaser.Scene {
   private fourDirHandler = new FourDirectionalInputHandler();
   private asteroidsHandler = new AsteroidsInputHandler();
 
+  /** Resolved DOM key name that toggles pause (from the bindings). */
+  private pauseKeyName = 'Escape';
+
   private hitCount = 0;
   private invulnerable = 0;
   private blinkPhase = 0;
@@ -286,10 +297,10 @@ export class PlayScene extends Phaser.Scene {
     this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
     this.add.existing(this.player);
     this.cursors = this.input.keyboard?.createCursorKeys();
-    this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    // P7 Teleport keys: S and ↓ (JustDown semantics, mirrors the gyms).
-    this.teleportKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    // Movement / layer-drop / pause keys come from `ai_hell_settings`
+    // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
+    this._applyBindings();
+    // P7 Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
     this.downKey =
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
     // P3 Shield bubble — rendered above gameplay (below the HUD).
@@ -317,7 +328,7 @@ export class PlayScene extends Phaser.Scene {
     // here because the keyboard plugin is torn down on scene shutdown, so
     // there is no cross-session listener leak.
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.repeat) this.togglePause();
+      if (event.key === this.pauseKeyName && !event.repeat) this.togglePause();
     });
 
     // Power-up drop pool.
@@ -338,6 +349,36 @@ export class PlayScene extends Phaser.Scene {
     this._announceLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this._teardown());
+    // A rebind made in SettingsScene must take effect when the player
+    // returns to the paused game (parent AH-0MU9LPZ0G0015292).
+    this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
+  }
+
+  /**
+   * Reads the persisted `ai_hell_settings` bindings and creates the Phaser
+   * keys for movement, layer-drop/teleport and the pause toggle. Arrow keys
+   * remain always-available movement defaults. Called on create and again
+   * on RESUME so a rebind takes effect immediately on return to the game.
+   */
+  private _applyBindings(): void {
+    const bindings = resolveBindings(loadSettings().bindings);
+    this.pauseKeyName = keyFor(bindings, 'pauseToggle');
+
+    const kb = this.input.keyboard;
+    if (!kb) {
+      this.wasd = undefined;
+      this.teleportKey = null;
+      return;
+    }
+    const keyForAction = (action: ActionName) =>
+      kb.addKey(resolveKeyCode(bindings[action], DEFAULT_BINDINGS[action]));
+    this.wasd = {
+      W: keyForAction('moveUp'),
+      A: keyForAction('moveLeft'),
+      S: keyForAction('moveDown'),
+      D: keyForAction('moveRight'),
+    } as WasdKeysLike;
+    this.teleportKey = keyForAction('layerDrop');
   }
 
   /** Clears all per-run state so a restarted session starts fresh. */

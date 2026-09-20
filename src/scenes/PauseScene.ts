@@ -21,6 +21,7 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { loadSettings, resolveBindings } from '../core/settingsStore';
 import type { PlayScene } from './PlayScene';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
@@ -45,11 +46,23 @@ export class PauseScene extends Phaser.Scene {
   private controls: PauseControl[] = [];
   private focusedIndex = 0;
 
+  /** Configured DOM key names for pause / up / down (from the bindings). */
+  private pauseKeyName = 'Escape';
+  private upKeyName = 'w';
+  private downKeyName = 's';
+
   constructor() {
     super('PauseScene');
   }
 
   create(): void {
+    // Menu navigation honours the configured bindings (parent
+    // AH-0MU9LPZ0G0015292): the pause key resumes, the move up/down keys
+    // cycle focus — alongside the built-in arrow/Tab defaults.
+    const bindings = resolveBindings(loadSettings().bindings);
+    this.pauseKeyName = bindings.pauseToggle;
+    this.upKeyName = bindings.moveUp;
+    this.downKeyName = bindings.moveDown;
     // Full-screen opaque background — a replacement screen, not an overlay.
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, PAUSE_BACKGROUND).setOrigin(0);
 
@@ -121,28 +134,28 @@ export class PauseScene extends Phaser.Scene {
   private _bindKeyboard(): void {
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
       if (event.repeat) return;
-      switch (event.key) {
-        case 'Escape':
-          this.resumeGame();
-          break;
-        case 'Tab':
-        case 'ArrowDown':
-        case 'ArrowRight':
-          event.preventDefault?.();
-          this._moveFocus(1);
-          break;
-        case 'ArrowUp':
-        case 'ArrowLeft':
-          event.preventDefault?.();
-          this._moveFocus(-1);
-          break;
-        case 'Enter':
-        case ' ':
-          event.preventDefault?.();
-          this.activateFocused();
-          break;
-        default:
-          break;
+      if (event.key === this.pauseKeyName) {
+        this.resumeGame();
+        return;
+      }
+      if (
+        event.key === 'Tab' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowRight' ||
+        event.key === this.downKeyName
+      ) {
+        event.preventDefault?.();
+        this._moveFocus(1);
+      } else if (
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowLeft' ||
+        event.key === this.upKeyName
+      ) {
+        event.preventDefault?.();
+        this._moveFocus(-1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault?.();
+        this.activateFocused();
       }
     });
   }

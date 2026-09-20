@@ -28,6 +28,7 @@ import {
   DEFAULT_SETTINGS,
   findConflict,
   loadSettings,
+  resolveBindings,
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
@@ -114,6 +115,11 @@ export class SettingsScene extends Phaser.Scene {
   /** Action currently awaiting a key press, or null when not capturing. */
   private capturing: ActionName | null = null;
 
+  /** Configured DOM key names for back / up / down (from the bindings). */
+  private pauseKeyName = 'Escape';
+  private upKeyName = 'w';
+  private downKeyName = 's';
+
   constructor() {
     super('SettingsScene');
   }
@@ -126,6 +132,12 @@ export class SettingsScene extends Phaser.Scene {
     this.sfxVolume = settings.sfxVolume;
     this.sfxMuted = settings.sfxMuted;
     this.bindings = { ...settings.bindings };
+    // Menu navigation honours the configured bindings (parent
+    // AH-0MU9LPZ0G0015292): pause key = Back, move up/down = focus cycle.
+    const configured = resolveBindings(settings.bindings);
+    this.pauseKeyName = configured.pauseToggle;
+    this.upKeyName = configured.moveUp;
+    this.downKeyName = configured.moveDown;
     setSfxVolume(this.sfxVolume);
     setSfxMuted(this.sfxMuted);
 
@@ -497,32 +509,27 @@ export class SettingsScene extends Phaser.Scene {
         this._handleCaptureKey(event);
         return;
       }
-      switch (event.key) {
-        case 'Escape':
-          this.goBack();
-          break;
-        case 'Tab':
-        case 'ArrowDown':
-          event.preventDefault?.();
-          this._moveFocus(1);
-          break;
-        case 'ArrowUp':
-          event.preventDefault?.();
-          this._moveFocus(-1);
-          break;
-        case 'ArrowRight':
-          this.controls[this.focusedIndex]?.onRight?.();
-          break;
-        case 'ArrowLeft':
-          this.controls[this.focusedIndex]?.onLeft?.();
-          break;
-        case 'Enter':
-        case ' ':
-          event.preventDefault?.();
-          this._activateFocused();
-          break;
-        default:
-          break;
+      if (event.key === this.pauseKeyName) {
+        this.goBack();
+        return;
+      }
+      if (
+        event.key === 'Tab' ||
+        event.key === 'ArrowDown' ||
+        event.key === this.downKeyName
+      ) {
+        event.preventDefault?.();
+        this._moveFocus(1);
+      } else if (event.key === 'ArrowUp' || event.key === this.upKeyName) {
+        event.preventDefault?.();
+        this._moveFocus(-1);
+      } else if (event.key === 'ArrowRight') {
+        this.controls[this.focusedIndex]?.onRight?.();
+      } else if (event.key === 'ArrowLeft') {
+        this.controls[this.focusedIndex]?.onLeft?.();
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault?.();
+        this._activateFocused();
       }
     });
   }
