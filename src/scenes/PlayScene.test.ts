@@ -15,6 +15,7 @@ import * as effectsModule from '../audio/effects';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { GameOverScene } from './GameOverScene';
+import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import {
   BOSS_PHASE_SCORES,
@@ -1224,5 +1225,82 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     await collectDropInPlay(scene, 'reset');
     expect(resetSound).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Per-enemy destruction audio (AH-0MU8QW2XS001HE2A) ───────────
+
+  /** Walks forward until the current wave contains an entity with the seam. */
+  function findSeamEnemy(scene: PlayScene): EnemyEntity | null {
+    return (
+      scene.getEnemies().find((e) => typeof (e as { playDestructionAudio?: unknown }).playDestructionAudio === 'function') ??
+      null
+    );
+  }
+
+  it('bullet kill of a Diver plays the diver destruction sound', async () => {
+    vi.restoreAllMocks(); // fresh spies (config does not restore between tests)
+    const scene = await bootPlay();
+
+    // Walk to a wave containing an entity with the destruction-audio seam
+    // (Divers appear in Level 2 Wave 2; these waves are non-firing).
+    let seam = findSeamEnemy(scene);
+    for (let guard = 0; guard < 30 && !seam; guard++) {
+      killAllEnemies(scene);
+      finishTransition(scene);
+      seam = findSeamEnemy(scene);
+    }
+    expect(seam).not.toBeNull();
+
+    const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+
+    // Kill the Diver with a player bullet.
+    scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(diverSound).toHaveBeenCalledTimes(1);
+    // The generic sound is NOT used when the entity exposes the seam.
+    expect(genericSound).not.toHaveBeenCalled();
+  });
+
+  it('a generic enemy (Scout) plays the generic destruction sound', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const enemy = scene.getEnemies().find((e) => !(e as { playDestructionAudio?: unknown }).playDestructionAudio)!;
+
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(genericSound).toHaveBeenCalledTimes(1);
+  });
+
+  it('player-body-vs-enemy collision plays the entity destruction audio exactly once', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+
+    // Walk to a wave containing a seam entity (Diver).
+    let seam = findSeamEnemy(scene);
+    for (let guard = 0; guard < 30 && !seam; guard++) {
+      killAllEnemies(scene);
+      finishTransition(scene);
+      seam = findSeamEnemy(scene);
+    }
+    expect(seam).not.toBeNull();
+
+    const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
+
+    // Let auto-fire fire its opening volley, then park the ship on the Diver
+    // so the body-collision path triggers (mirrors the scout ram test).
+    scene.tick(0.016);
+    player.setPosition(seam!.x, seam!.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: { x: number; y: number } })._movementState =
+      { ...state, x: seam!.x, y: seam!.y };
+    scene.tick(0.001);
+
+    expect(diverSound).toHaveBeenCalledTimes(1);
   });
 });

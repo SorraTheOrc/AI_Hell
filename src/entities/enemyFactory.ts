@@ -19,7 +19,17 @@ import type { EnemyConfig } from '../core/enemyConfig';
 import { SWARM_CLUSTER_COUNT } from './Swarm';
 import { SWARM_CLUSTER_ROW_STRIDE } from '../utils/formations';
 
-export type EnemyEntity = Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid;
+/**
+ * Optional per-entity seam: plays the entity-specific destruction sound
+ * (mirrors the combat gym base). When present, scenes prefer it over the
+ * shared `playDestructionSound()` so the entity's destruction sound plays
+ * exactly once.
+ */
+interface DestructionAudioSeam {
+  playDestructionAudio?(): void;
+}
+
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid) & DestructionAudioSeam;
 
 /** Build one entity of the right type from the config key / formationKind. */
 export function createEnemyFromConfig(

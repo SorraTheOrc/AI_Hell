@@ -850,6 +850,20 @@ export class PlayScene extends Phaser.Scene {
 
   // ── Collisions ──────────────────────────────────────────────────
 
+  /**
+   * Plays the enemy's destruction audio, preferring the entity's
+   * `playDestructionAudio()` seam (e.g. Diver → playDiverDestructionSound,
+   * Boss → playBossDestructionSound) and falling back to the shared
+   * `playDestructionSound()` otherwise (mirrors GymFormationScene).
+   */
+  private _playEnemyDestruction(entity: EnemyEntity): void {
+    if (entity.playDestructionAudio) {
+      entity.playDestructionAudio();
+    } else {
+      playDestructionSound();
+    }
+  }
+
   /** Circle-vs-circle overlap test. */
   private _overlaps(
     ax: number, ay: number, ar: number,
@@ -869,7 +883,7 @@ export class PlayScene extends Phaser.Scene {
         if (!s.entity.alive) continue;
         if (this._overlaps(pb.x, pb.y, PLAYER_BULLET_RADIUS, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
           s.entity.destroySelf();
-          playDestructionSound();
+          this._playEnemyDestruction(s.entity);
           pb.destroy();
           spent = true;
           this._onEnemyKilled(s);
@@ -930,7 +944,7 @@ export class PlayScene extends Phaser.Scene {
         if (!s.entity.alive) continue;
         if (this._overlaps(this.player.x, this.player.y, playerHull, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
           s.entity.destroySelf();
-          playDestructionSound();
+          this._playEnemyDestruction(s.entity);
           this._onEnemyKilled(s, false);
           this._hitPlayer();
           break;
