@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { MenuScene } from '../scenes/MenuScene';
 import { PlayScene } from '../scenes/PlayScene';
 import { PauseScene } from '../scenes/PauseScene';
+import { SettingsScene } from '../scenes/SettingsScene';
 import { GameOverScene } from '../scenes/GameOverScene';
 import { GymIndex } from '../scenes/GymIndex';
 import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
@@ -28,7 +29,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [MenuScene, PlayScene, PauseScene, GameOverScene, GymIndex],
+    scene: [MenuScene, PlayScene, PauseScene, SettingsScene, GameOverScene, GymIndex],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
