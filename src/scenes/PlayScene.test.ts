@@ -942,4 +942,51 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const distFromEnemy = Math.hypot(player.x - enemy.x, player.y - enemy.y);
     expect(distFromEnemy).toBeGreaterThan(enemy.getHitRadius());
   });
+
+  // ── P3 Shield bubble visual (AH-0MU8QV3O9008JVNQ) ───────────────
+
+  it('P3 shield bubble is rendered while the shield is active', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+
+    // Collect a P3 shield.
+    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isShielded).toBe(true);
+
+    // Visuals update at the TOP of tick (before drop collection), so the
+    // bubble appears from the NEXT tick onward.
+    scene.tick(0.016);
+    expect(scene.isShieldBubbleVisible()).toBe(true);
+  });
+
+  it('P3 shield absorbs a hit: bubble disappears, invulnerability blink starts, no life lost', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    const livesBefore = scene.getGameState().lives;
+
+    // Collect a P3 shield (park an enemy bullet far away so auto-fire
+    // damage during setup does not interfere — the shield is fresh).
+    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isShielded).toBe(true);
+
+    // Park an enemy bullet on the ship: the shield absorbs it.
+    scene.spawnEnemyBullet(player.x, player.y, 0, 0);
+    scene.tick(0.016);
+
+    // Shield popped, no life lost, brief invulnerability blink active.
+    expect(registry.isShielded).toBe(false);
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
 });

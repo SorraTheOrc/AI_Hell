@@ -220,6 +220,10 @@ export class PlayScene extends Phaser.Scene {
   private invulnerable = 0;
   private blinkPhase = 0;
   private playerExplosions: Phaser.GameObjects.Graphics[] = [];
+  /** Shield bubble (P3) — drawn around the ship while shielded, cleared on absorb. */
+  private shieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the bubble was actually drawn in the last visual update. */
+  private shieldBubbleDrawn = false;
 
   private driftX = 0;
   private driftDir = 1;
@@ -267,6 +271,9 @@ export class PlayScene extends Phaser.Scene {
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
     this.downKey =
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
+    // P3 Shield bubble — rendered above gameplay (below the HUD).
+    this.shieldBubble = this.add.graphics();
+    this.shieldBubble.setDepth(50);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
@@ -310,6 +317,7 @@ export class PlayScene extends Phaser.Scene {
     this.bannerTimer = 0;
     this.waveTimer = 0;
     this.waveTimerActive = false;
+    this.shieldBubbleDrawn = false;
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -346,6 +354,8 @@ export class PlayScene extends Phaser.Scene {
     this.drops = [];
     for (const e of this.playerExplosions) e.destroy();
     this.playerExplosions = [];
+    this.shieldBubble?.destroy();
+    this.shieldBubble = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -413,6 +423,7 @@ export class PlayScene extends Phaser.Scene {
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
+    this._updateVisuals();
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
@@ -951,8 +962,11 @@ export class PlayScene extends Phaser.Scene {
     if (!this.player) return;
 
     if (this.effectsRegistry.tryAbsorbShield()) {
-      // Shield absorbs the hit — no life lost, brief visual pulse.
+      // Shield absorbs the hit — no life lost. The bubble pops (P3 removed
+      // from the registry) and the player gets a brief invulnerability
+      // blink so the absorb is observable (mirrors GymPowerUpsCombat).
       playDestructionSound();
+      this._startInvulnerability();
       return;
     }
     this._loseLife();
@@ -992,6 +1006,12 @@ export class PlayScene extends Phaser.Scene {
       ease: 'Power2',
     });
     this.player.respawnInPlace();
+    this._startInvulnerability();
+  }
+
+  /** Starts the brief post-hit invulnerability blink (mirrors the gym). */
+  private _startInvulnerability(): void {
+    if (!this.player) return;
     this.invulnerable = PLAYER_RESPAWN_INVULNERABLE;
     this.blinkPhase = 0;
     this.player.setAlpha(1);
@@ -1004,6 +1024,38 @@ export class PlayScene extends Phaser.Scene {
     const visible = Math.floor(this.blinkPhase / BLINK_INTERVAL) % 2 === 0;
     this.player.setAlpha(visible ? 1 : 0.3);
     if (this.invulnerable <= 0) this.player.setAlpha(1);
+  }
+
+  // ── Power-up visuals (P3 shield bubble, P6 phase ghost) ──────────
+
+  /**
+   * Updates effect visuals each tick: the P3 shield bubble is drawn around
+   * the ship while shielded (lineStyle + low-alpha fill, radius
+   * SHIP_SIZE × 1.6, mirrors GymPowerUpsCombat) and cleared otherwise, and
+   * the P6 phase ghost alpha is applied when phased.
+   */
+  private _updateVisuals(): void {
+    // Shield bubble: drawn around the ship while P3 is active.
+    if (this.shieldBubble && this.player) {
+      this.shieldBubble.clear();
+      this.shieldBubbleDrawn = false;
+      if (this.effectsRegistry.isShielded) {
+        this.shieldBubble.lineStyle(2, 0x3399ff, 0.9);
+        this.shieldBubble.strokeCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
+        this.shieldBubble.fillStyle(0x3399ff, 0.12);
+        this.shieldBubble.fillCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
+        this.shieldBubbleDrawn = true;
+      }
+    }
+    // Phase ghost: semi-transparent ship while P6 is active (keeps the
+    // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
+    if (this.player) {
+      if (this.effectsRegistry.isPhased) {
+        if (this.invulnerable <= 0) this.player.setAlpha(0.45);
+      } else if (this.invulnerable <= 0) {
+        this.player.setAlpha(1);
+      }
+    }
   }
 
   private _spawnPlayerExplosion(x: number, y: number): void {
@@ -1361,6 +1413,16 @@ export class PlayScene extends Phaser.Scene {
   /** The player ship, or null after teardown. */
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  /** Whether the P3 shield bubble was drawn in the last visual update (for tests). */
+  isShieldBubbleVisible(): boolean {
+    return this.shieldBubbleDrawn;
+  }
+
+  /** Whether the P6 phase ghost is currently active (for tests). */
+  isPhaseGhostActive(): boolean {
+    return this.effectsRegistry.isPhased;
   }
 
   /** The Central AI boss, or null before it spawns. */
