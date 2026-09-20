@@ -251,9 +251,9 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     driftSpeed: 0,
     startX: GAME_WIDTH * 0.5,
     startY: GAME_HEIGHT * 0.3,
-    // Large tier is the config default (28 px); medium/small tiers are
+    // Large tier is the config default (42 px); medium/small tiers are
     // produced by split children at runtime.
-    size: 28,
+    size: 42,
     color: 0x888888,
     bulletColor: 0x888888,
     bulletSize: 3,

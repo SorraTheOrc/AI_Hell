@@ -119,7 +119,7 @@ describe('Config-aware entity seam', () => {
     const asteroid = e as Asteroid;
     // Config default tier is large.
     expect(asteroid.getSizeTier()).toBe('large');
-    expect(asteroid.effectiveSize).toBe(28);
+    expect(asteroid.effectiveSize).toBe(42);
     expect(asteroid.effectiveColor).toBe(0x888888);
     // Speed and rotation match the large-tier constants.
     const speed = Math.sqrt(asteroid.vx ** 2 + asteroid.vy ** 2);

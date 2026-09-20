@@ -73,7 +73,7 @@ describe('EnemyConfig schema', () => {
     expect(asteroid.formationKind).toBe('single');
     expect(asteroid.count).toBe(1);
     // Large tier is the config default.
-    expect(asteroid.size).toBe(28);
+    expect(asteroid.size).toBe(42);
     expect(asteroid.color).toBe(0x888888);
     // Asteroids never fire.
     expect(asteroid.shotPattern).toBe('none');
