@@ -1160,4 +1160,69 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.2); // rapid fires every 125 ms
     expect(rapidSound).toHaveBeenCalledTimes(1);
   });
+
+  // ── Per-type pickup activation audio (AH-0MU8QVX9G008P8ML) ──────
+
+  /** Collects a fully-grown drop under the player via one tick. */
+  async function collectDropInPlay(scene: PlayScene, id: string): Promise<void> {
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop(id as never, player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+  }
+
+  it('P5/P8/P9 collections play the dedicated per-type activation cue', async () => {
+    const speedSound = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
+    const lifeSound = vi.spyOn(effectsModule, 'playExtraLifeCollectSound');
+    const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
+    const genericSound = vi.spyOn(effectsModule, 'playPowerUpCollectSound');
+    const scene = await bootPlay();
+    vi.clearAllMocks();
+
+    await collectDropInPlay(scene, 'P5');
+    expect(speedSound).toHaveBeenCalledTimes(1);
+
+    await collectDropInPlay(scene, 'P8');
+    expect(lifeSound).toHaveBeenCalledTimes(1);
+
+    await collectDropInPlay(scene, 'P9');
+    expect(magnetSound).toHaveBeenCalledTimes(1);
+
+    // No generic chime for the types with dedicated cues.
+    expect(genericSound).not.toHaveBeenCalled();
+  });
+
+  it('types without a dedicated cue fall back to the generic chime', async () => {
+    const genericSound = vi.spyOn(effectsModule, 'playPowerUpCollectSound');
+    const scene = await bootPlay();
+    vi.clearAllMocks();
+
+    // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated cue yet.
+    for (const id of ['P3', 'P4', 'P6', 'P7']) {
+      await collectDropInPlay(scene, id);
+    }
+    expect(genericSound).toHaveBeenCalledTimes(4);
+  });
+
+  it('weapon drop collections play the per-weapon pickup cue', async () => {
+    const spreadSound = vi.spyOn(effectsModule, 'playSpreadPickupSound');
+    const dualSound = vi.spyOn(effectsModule, 'playDualPickupSound');
+    const rapidSound = vi.spyOn(effectsModule, 'playRapidPickupSound');
+    const resetSound = vi.spyOn(effectsModule, 'playResetPickupSound');
+    const scene = await bootPlay();
+    vi.clearAllMocks();
+
+    await collectDropInPlay(scene, 'spread');
+    expect(spreadSound).toHaveBeenCalledTimes(1);
+
+    await collectDropInPlay(scene, 'dual');
+    expect(dualSound).toHaveBeenCalledTimes(1);
+
+    await collectDropInPlay(scene, 'rapid');
+    expect(rapidSound).toHaveBeenCalledTimes(1);
+
+    await collectDropInPlay(scene, 'reset');
+    expect(resetSound).toHaveBeenCalledTimes(1);
+  });
 });

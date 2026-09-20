@@ -42,10 +42,17 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
+  playDualPickupSound,
+  playExtraLifeCollectSound,
+  playMagnetCollectSound,
   playPowerUpCollectSound,
   playRapidFireSound,
+  playRapidPickupSound,
+  playResetPickupSound,
   playSpawnSound,
+  playSpeedBoostCollectSound,
   playSpreadFireSound,
+  playSpreadPickupSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import {
@@ -1238,8 +1245,52 @@ export class PlayScene extends Phaser.Scene {
       }
     }
     drop.graphics.destroy();
+    this._playPickupCue(drop);
+  }
+
+  /**
+   * Plays the per-type pickup activation cue for a collected drop
+   * (GDD §7.3 — unique cue per pickup type, distinct from the generic
+   * collection chime). Where no dedicated cue exists in the audio module
+   * for a type, the generic chime plays as fallback. Safe no-op without
+   * an AudioContext (audio is best-effort in headless tests).
+   */
+  private _playPickupCue(drop: PlayDrop): void {
     try {
-      playPowerUpCollectSound();
+      if (drop.weaponDropId) {
+        switch (drop.weaponDropId) {
+          case 'reset':
+            playResetPickupSound();
+            break;
+          case 'spread':
+            playSpreadPickupSound();
+            break;
+          case 'dual':
+            playDualPickupSound();
+            break;
+          case 'rapid':
+            playRapidPickupSound();
+            break;
+          default:
+            playPowerUpCollectSound();
+        }
+        return;
+      }
+      switch (drop.dropId) {
+        case 'P5':
+          playSpeedBoostCollectSound();
+          break;
+        case 'P8':
+          playExtraLifeCollectSound();
+          break;
+        case 'P9':
+          playMagnetCollectSound();
+          break;
+        default:
+          // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated
+          // cue in the audio module yet — generic chime fallback.
+          playPowerUpCollectSound();
+      }
     } catch {
       // Audio is best-effort in headless tests.
     }
