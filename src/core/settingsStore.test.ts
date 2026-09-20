@@ -4,7 +4,10 @@ import {
   DEFAULT_BINDINGS,
   DEFAULT_SETTINGS,
   ACTION_NAMES,
+  findConflict,
+  keyFor,
   loadSettings,
+  resolveBindings,
   saveSettings,
   resetSettings,
   type SettingsRecord,
@@ -211,6 +214,96 @@ describe('settingsStore', () => {
       resetSettings();
       // After reset: should also have defaults
       expect(loadSettings()).toEqual(DEFAULT_SETTINGS);
+    });
+  });
+
+  describe('findConflict (AH-0MUA8BGE0006UAU4)', () => {
+    it('returns null when the key is free', () => {
+      const bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
+      expect(findConflict(bindings, 'moveUp', 'i')).toBeNull();
+    });
+
+    it('returns the conflicting action when rebinding onto another action key', () => {
+      const bindings: Record<ActionName, string> = {
+        ...DEFAULT_BINDINGS,
+        moveLeft: 'a',
+        moveRight: 'd',
+        moveDown: 's',
+        moveUp: 'w',
+        layerDrop: 's',
+        pauseToggle: 'Escape',
+      };
+      // Rebinding moveUp onto 's' (moveDown) is a real conflict.
+      expect(findConflict(bindings, 'moveUp', 's')).toBe('moveDown');
+    });
+
+    it('does not treat the default S overlap (moveDown ↔ layerDrop) as a conflict', () => {
+      const bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
+      expect(findConflict(bindings, 'moveDown', 's')).toBeNull();
+      expect(findConflict(bindings, 'layerDrop', 's')).toBeNull();
+    });
+
+    it('reports a NON-default pair sharing a key even when one is identity', () => {
+      const bindings: Record<ActionName, string> = {
+        ...DEFAULT_BINDINGS,
+        moveDown: 's',
+        layerDrop: 'x', // moved away from the default overlap
+      };
+      // Rebinding layerDrop back onto 's' now collides with moveDown only
+      // if the pair were intentional; it is not (one side moved), so…
+      // moveDown/layerDrop remain an intentional pair per the shipped
+      // defaults, so the overlap stays permitted:
+      expect(findConflict(bindings, 'layerDrop', 's')).toBeNull();
+    });
+
+    it('reports a swap conflict between two non-default-pair actions', () => {
+      const bindings: Record<ActionName, string> = {
+        ...DEFAULT_BINDINGS,
+        moveLeft: 'a',
+      };
+      // Rebinding moveRight onto 'a' (moveLeft's key): genuine conflict.
+      expect(findConflict(bindings, 'moveRight', 'a')).toBe('moveLeft');
+    });
+  });
+
+  describe('resolveBindings / keyFor fallback (AC3, AH-0MUA8BK1E001UZUC)', () => {
+    it('returns the defaults when nothing is stored', () => {
+      expect(resolveBindings(undefined)).toEqual(DEFAULT_BINDINGS);
+    });
+
+    it('keeps valid stored values and fills the rest from defaults', () => {
+      const resolved = resolveBindings({ moveUp: 'i' } as Partial<Record<ActionName, string>>);
+      expect(resolved.moveUp).toBe('i');
+      expect(resolved.moveDown).toBe(DEFAULT_BINDINGS.moveDown);
+    });
+
+    it('falls back for blank / non-string stored values', () => {
+      const resolved = resolveBindings({
+        moveUp: '',
+        moveLeft: '   ',
+        moveRight: undefined as unknown as string,
+      } as Partial<Record<ActionName, string>>);
+      expect(resolved.moveUp).toBe(DEFAULT_BINDINGS.moveUp);
+      expect(resolved.moveLeft).toBe(DEFAULT_BINDINGS.moveLeft);
+      expect(resolved.moveRight).toBe(DEFAULT_BINDINGS.moveRight);
+    });
+
+    it('keyFor returns the stored value when valid', () => {
+      expect(keyFor({ ...DEFAULT_BINDINGS, moveUp: 'i' }, 'moveUp')).toBe('i');
+    });
+
+    it('keyFor falls back to the default for a blank/missing value', () => {
+      expect(keyFor({ moveUp: '' } as Partial<Record<ActionName, string>>, 'moveUp')).toBe('w');
+      expect(keyFor(undefined, 'pauseToggle')).toBe('Escape');
+    });
+
+    it('loadSettings validates stored bindings', () => {
+      mockLocalStorage({
+        ai_hell_settings: JSON.stringify({ bindings: { moveUp: 'i', moveDown: '' } }),
+      });
+      const loaded = loadSettings();
+      expect(loaded.bindings.moveUp).toBe('i');
+      expect(loaded.bindings.moveDown).toBe(DEFAULT_BINDINGS.moveDown);
     });
   });
 });

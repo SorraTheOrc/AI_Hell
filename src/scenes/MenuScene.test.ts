@@ -16,6 +16,8 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
+import { PauseScene } from './PauseScene';
+import { SettingsScene } from './SettingsScene';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
@@ -153,5 +155,71 @@ describe('resumeAudioContext (GDD §6.7 autoplay policy)', () => {
       context: { state: 'suspended', resume: 'nope' },
     } as unknown as Phaser.Sound.BaseSoundManager;
     expect(resumeAudioContext(sound)).toBe(false);
+  });
+});
+describe('MenuScene — Settings button (AH-0MUA8BLMA003U18N)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([
+      MenuScene,
+      PlayScene,
+      PauseScene,
+      SettingsScene,
+      GameOverScene,
+      GymIndex,
+    ]);
+    return booted!.scene as MenuScene;
+  }
+
+  it('AC1 — renders an interactive Settings button', async () => {
+    const scene = await bootMenu();
+    const settings = findText(scene, '⚙  Settings');
+    expect(settings.input?.enabled).toBe(true);
+  });
+
+  it('AC1 — activating Settings opens SettingsScene', async () => {
+    const scene = await bootMenu();
+    expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
+
+    findText(scene, '⚙  Settings').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+  });
+
+  it('AC2 — Back from menu-opened settings returns to MenuScene', async () => {
+    const scene = await bootMenu();
+    findText(scene, '⚙  Settings').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 200));
+
+    const settings = booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+    settings.goBack();
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
+  });
+
+  it('AC3 — entering settings resumes a suspended audio context', async () => {
+    const scene = await bootMenu();
+    const resume = vi.fn();
+    Object.defineProperty(scene, 'sound', {
+      value: { context: { state: 'suspended', resume } },
+      configurable: true,
+    });
+
+    findText(scene, '⚙  Settings').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(resume).toHaveBeenCalledOnce();
+    expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
   });
 });

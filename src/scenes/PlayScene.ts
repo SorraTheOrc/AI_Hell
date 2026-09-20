@@ -84,6 +84,14 @@ import {
 import type { WasdKeysLike } from '../utils/input';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import {
+  DEFAULT_BINDINGS,
+  keyFor,
+  loadSettings,
+  resolveBindings,
+  type ActionName,
+} from '../core/settingsStore';
+import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
@@ -227,6 +235,9 @@ export class PlayScene extends Phaser.Scene {
   private fourDirHandler = new FourDirectionalInputHandler();
   private asteroidsHandler = new AsteroidsInputHandler();
 
+  /** Resolved DOM key name that toggles pause (from the bindings). */
+  private pauseKeyName = 'Escape';
+
   private hitCount = 0;
   private invulnerable = 0;
   private blinkPhase = 0;
@@ -243,6 +254,13 @@ export class PlayScene extends Phaser.Scene {
   private driftDir = 1;
 
   private transitionTimer = 0;
+
+  /**
+   * Whether the simulation is frozen by the pause menu (parent
+   * AH-0MU9LPZ0G0015292). While `true`, `tick()` short-circuits so no
+   * subsystem advances.
+   */
+  private paused = false;
 
   /** Seconds left before the current banner hides itself (0 = hidden). */
   private bannerTimer = 0;
@@ -279,10 +297,10 @@ export class PlayScene extends Phaser.Scene {
     this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
     this.add.existing(this.player);
     this.cursors = this.input.keyboard?.createCursorKeys();
-    this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    // P7 Teleport keys: S and ↓ (JustDown semantics, mirrors the gyms).
-    this.teleportKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    // Movement / layer-drop / pause keys come from `ai_hell_settings`
+    // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
+    this._applyBindings();
+    // P7 Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
     this.downKey =
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
     // P3 Shield bubble — rendered above gameplay (below the HUD).
@@ -306,6 +324,13 @@ export class PlayScene extends Phaser.Scene {
     this._buildHudText();
     addBackToIndexButton(this);
 
+    // ESC toggles the pause menu (parent AH-0MU9LPZ0G0015292). Registered
+    // here because the keyboard plugin is torn down on scene shutdown, so
+    // there is no cross-session listener leak.
+    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+      if (event.key === this.pauseKeyName && !event.repeat) this.togglePause();
+    });
+
     // Power-up drop pool.
     const rules = loadRules();
     this.dropSpawner = this._buildDropSpawner(
@@ -324,6 +349,36 @@ export class PlayScene extends Phaser.Scene {
     this._announceLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this._teardown());
+    // A rebind made in SettingsScene must take effect when the player
+    // returns to the paused game (parent AH-0MU9LPZ0G0015292).
+    this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
+  }
+
+  /**
+   * Reads the persisted `ai_hell_settings` bindings and creates the Phaser
+   * keys for movement, layer-drop/teleport and the pause toggle. Arrow keys
+   * remain always-available movement defaults. Called on create and again
+   * on RESUME so a rebind takes effect immediately on return to the game.
+   */
+  private _applyBindings(): void {
+    const bindings = resolveBindings(loadSettings().bindings);
+    this.pauseKeyName = keyFor(bindings, 'pauseToggle');
+
+    const kb = this.input.keyboard;
+    if (!kb) {
+      this.wasd = undefined;
+      this.teleportKey = null;
+      return;
+    }
+    const keyForAction = (action: ActionName) =>
+      kb.addKey(resolveKeyCode(bindings[action], DEFAULT_BINDINGS[action]));
+    this.wasd = {
+      W: keyForAction('moveUp'),
+      A: keyForAction('moveLeft'),
+      S: keyForAction('moveDown'),
+      D: keyForAction('moveRight'),
+    } as WasdKeysLike;
+    this.teleportKey = keyForAction('layerDrop');
   }
 
   /** Clears all per-run state so a restarted session starts fresh. */
@@ -343,6 +398,7 @@ export class PlayScene extends Phaser.Scene {
     this.waveTimer = 0;
     this.waveTimerActive = false;
     this.shieldBubbleDrawn = false;
+    this.paused = false;
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -407,6 +463,12 @@ export class PlayScene extends Phaser.Scene {
    * lifecycles, collisions, power-up drops, and level transitions.
    */
   tick(dt: number): void {
+    // Pause freeze (parent AH-0MU9LPZ0G0015292): while paused nothing
+    // advances — enemies stop moving/firing, projectiles and timers
+    // freeze, and the player is frozen and cannot be hit. Resuming
+    // continues from this exact state with no time counted.
+    if (this.paused) return;
+
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
 
@@ -1589,6 +1651,42 @@ export class PlayScene extends Phaser.Scene {
   /** True while a wave/level transition is in progress. */
   isTransitioning(): boolean {
     return this.transitionTimer > 0;
+  }
+
+  // ── Pause control (parent AH-0MU9LPZ0G0015292) ──────────────────
+
+  /**
+   * Freezes (`true`) or resumes (`false`) the simulation. While paused,
+   * `tick()` short-circuits so no subsystem advances: enemies stop
+   * moving and firing, projectiles and countdown timers freeze, and the
+   * player is frozen and invulnerable. Resuming continues from the exact
+   * paused state with no elapsed time counted.
+   */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+  }
+
+  /** Whether the simulation is currently frozen by the pause menu. */
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  /**
+   * Runtime ESC handler: toggles the paused state. On the pause edge it
+   * hands off to the full-screen `PauseScene` when one is registered
+   * (registered by the PauseScene child in `gameConfig.ts`); the hand-off
+   * is guarded so it is a harmless no-op before that scene exists.
+   */
+  togglePause(): void {
+    if (this.paused) {
+      this.setPaused(false);
+      return;
+    }
+    this.setPaused(true);
+    if (this.scene.manager.getScene('PauseScene')) {
+      this.scene.pause();
+      this.scene.launch('PauseScene', { origin: 'PlayScene' });
+    }
   }
 
   /** Whether the wave time-limit is currently counting down. */

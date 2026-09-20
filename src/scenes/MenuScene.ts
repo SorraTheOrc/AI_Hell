@@ -1,9 +1,11 @@
 /**
  * Main menu scene (GDD §5.1 — Main menu).
  *
- * The boot scene that greets the player with two buttons:
+ * The boot scene that greets the player with buttons:
  * - **Play Game** — starts a new game session at Level 1 and initializes
  *   the Phaser Audio context (Web Audio autoplay policy compliance, GDD §6.7).
+ * - **Settings** — opens the shared settings screen (audio + controls)
+ *   before starting a session (parent AH-0MU9LPZ0G0015292).
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
  *   for testing individual gym components.
  *
@@ -89,10 +91,40 @@ export class MenuScene extends Phaser.Scene {
       this.scene.start('PlayScene');
     });
 
+    // ── Settings button ───────────────────────────────────────
+    // Opens the same settings screen as the pause menu, before starting a
+    // game (parent AH-0MU9LPZ0G0015292 AC6). Initialising the audio
+    // context on the gesture keeps GDD §6.7 autoplay compliance intact.
+    const settingsButton = this.add.text(
+      GAME_WIDTH / 2,
+      320,
+      '⚙  Settings',
+      {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 14, y: 7 },
+      },
+    ).setOrigin(0.5);
+    settingsButton.setInteractive({ useHandCursor: true });
+
+    settingsButton.on('pointerover', () => {
+      settingsButton.setStyle({ color: '#88ffff' });
+    });
+    settingsButton.on('pointerout', () => {
+      settingsButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    settingsButton.on('pointerdown', () => {
+      resumeAudioContext(this.sound);
+      this.scene.start('SettingsScene', { origin: 'MenuScene' });
+    });
+
     // ── Gym Scene Index button (dev tool) ────────────────────────
     const devButton = this.add.text(
       GAME_WIDTH / 2,
-      340,
+      390,
       '⚙  Gym Scene Index (dev)',
       {
         fontFamily: 'monospace',
@@ -116,7 +148,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // ── Subtitle ─────────────────────────────────────────────────
-    this.add.text(GAME_WIDTH / 2, 420, 'Defeat 5 levels then the Central AI', {
+    this.add.text(GAME_WIDTH / 2, 450, 'Defeat 5 levels then the Central AI', {
       fontFamily: 'monospace',
       fontSize: '14px',
       color: '#444444',

@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 
 import { MenuScene } from '../scenes/MenuScene';
 import { PlayScene } from '../scenes/PlayScene';
+import { PauseScene } from '../scenes/PauseScene';
+import { SettingsScene } from '../scenes/SettingsScene';
 import { GameOverScene } from '../scenes/GameOverScene';
 import { GymIndex } from '../scenes/GymIndex';
 import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
@@ -17,7 +19,7 @@ import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
  * - **Play Game** → starts Level 1 of the playable game (`PlayScene`).
  * - **Gym Scene Index** → navigates to the dev-only `GymIndex` scene.
  *
- * All four scenes are registered here so Phaser knows their keys for
+ * All game scenes are registered here so Phaser knows their keys for
  * `scene.start()` transitions. The game starts in `MenuScene` by default.
  */
 export function buildGameConfig(): Phaser.Types.Core.GameConfig {
@@ -27,7 +29,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [MenuScene, PlayScene, GameOverScene, GymIndex],
+    scene: [MenuScene, PlayScene, PauseScene, SettingsScene, GameOverScene, GymIndex],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
