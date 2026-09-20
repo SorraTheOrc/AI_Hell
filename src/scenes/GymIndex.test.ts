@@ -17,6 +17,7 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../utils/gymNavigation';
 import { GymIndex, GYM_INDEX_TITLE } from './GymIndex';
 import { GymBoss } from './gym/GymBoss';
+import { MenuScene } from './MenuScene';
 
 /** Finds an on-screen text by label. */
 function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -200,6 +201,49 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     );
     expect(header).toBeDefined();
     expect(Math.round(header!.x)).toBe(rightCol);
+  });
+});
+
+describe('GymIndex — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+  });
+
+  it('pressing ESC switches from GymIndex to MenuScene', async () => {
+    // Boot both scenes so MenuScene is registered but not active.
+    booted = await bootScene([GymIndex, MenuScene]);
+    const scene = booted!.scene as GymIndex;
+    expect(scene.sys.isActive()).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+
+    // Fire a KeyboardEvent with key 'Escape'.
+    // Phaser's keyboard manager listens on window (inputKeyboardEventTarget),
+    // so dispatch on window rather than document.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(scene.sys.isActive()).toBe(false);
+  });
+
+  it('pressing a non-ESC key does not switch scenes', async () => {
+    booted = await bootScene([GymIndex, MenuScene]);
+    const scene = booted!.scene as GymIndex;
+    expect(scene.sys.isActive()).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+
+    // Fire a non-ESC key.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(scene.sys.isActive()).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
   });
 });
 
