@@ -33,7 +33,7 @@ import {
   playPowerUpCollectSound,
   playSpawnSound,
 } from '../../../audio/effects';
-import { addBackToIndexButton } from '../../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
 import {
@@ -450,6 +450,9 @@ export class GymFormationScene<
 
     // ── Back to gym index ───────────────────────────────────────────
     addBackToIndexButton(this);
+
+    // ── ESC key — return to main menu (AH-0MU9LRTK3004KR04) ────────
+    addBackToMenuOnEsc(this);
 
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
