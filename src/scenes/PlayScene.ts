@@ -224,6 +224,9 @@ export class PlayScene extends Phaser.Scene {
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
+  /** P4 Bomb notice — brief centred 'BOMB!' flash after collection. */
+  private bombNoticeLabel: Phaser.GameObjects.Text | null = null;
+  private bombNoticeTimer = 0;
 
   private driftX = 0;
   private driftDir = 1;
@@ -274,6 +277,17 @@ export class PlayScene extends Phaser.Scene {
     // P3 Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
+    // P4 Bomb notice — centred flash, hidden until a bomb is collected.
+    this.bombNoticeLabel = this.add
+      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, '', {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: '#ff4444',
+        backgroundColor: '#1a1a1a',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5)
+      .setVisible(false);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
@@ -356,6 +370,8 @@ export class PlayScene extends Phaser.Scene {
     this.playerExplosions = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
+    this.bombNoticeLabel?.destroy();
+    this.bombNoticeLabel = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -423,7 +439,7 @@ export class PlayScene extends Phaser.Scene {
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
-    this._updateVisuals();
+    this._updateVisuals(dt);
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
@@ -1034,7 +1050,7 @@ export class PlayScene extends Phaser.Scene {
    * SHIP_SIZE × 1.6, mirrors GymPowerUpsCombat) and cleared otherwise, and
    * the P6 phase ghost alpha is applied when phased.
    */
-  private _updateVisuals(): void {
+  private _updateVisuals(dt: number): void {
     // Shield bubble: drawn around the ship while P3 is active.
     if (this.shieldBubble && this.player) {
       this.shieldBubble.clear();
@@ -1055,6 +1071,11 @@ export class PlayScene extends Phaser.Scene {
       } else if (this.invulnerable <= 0) {
         this.player.setAlpha(1);
       }
+    }
+    // Bomb notice: brief centred flash after P4 collection.
+    if (this.bombNoticeTimer > 0) {
+      this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
+      if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
     }
   }
 
@@ -1179,7 +1200,10 @@ export class PlayScene extends Phaser.Scene {
     } else {
       const effect = drop.powerUp.tryCollect();
       if (!effect) return;
-      if (drop.dropId === 'P4') this._clearEnemyBullets();
+      if (drop.dropId === 'P4') {
+        this._clearEnemyBullets();
+        this._flashBombNotice();
+      }
       this.effectsRegistry.applyCollect(drop.dropId as PowerUpId);
       if (drop.dropId === 'P8') {
         this.gameState.addLife();
@@ -1198,6 +1222,12 @@ export class PlayScene extends Phaser.Scene {
   private _clearEnemyBullets(): void {
     for (const b of this.enemyBullets) b.graphics.destroy();
     this.enemyBullets = [];
+  }
+
+  /** Shows the brief centred 'BOMB! Bullets cleared' notice (mirrors the gym). */
+  private _flashBombNotice(): void {
+    this.bombNoticeTimer = 1.2;
+    this.bombNoticeLabel?.setText('BOMB! Bullets cleared').setVisible(true);
   }
 
   // ── Teleport (P7, S/↓) ──────────────────────────────────────────
@@ -1418,6 +1448,11 @@ export class PlayScene extends Phaser.Scene {
   /** Whether the P3 shield bubble was drawn in the last visual update (for tests). */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
+  }
+
+  /** Whether the P4 bomb notice is currently visible (for tests). */
+  isBombNoticeVisible(): boolean {
+    return this.bombNoticeLabel?.visible ?? false;
   }
 
   /** Whether the P6 phase ghost is currently active (for tests). */
