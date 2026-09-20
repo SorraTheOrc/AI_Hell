@@ -69,7 +69,7 @@ import {
   playSpawnSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
-import { addBackToIndexButton } from '../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -175,6 +175,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.add.existing(this.player);
 
     addBackToIndexButton(this);
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
 
     // Clean up on shutdown to prevent stale references on restart.

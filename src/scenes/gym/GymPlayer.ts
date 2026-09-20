@@ -40,7 +40,7 @@ import {
   ShipConfig,
   ControlScheme,
 } from '../../core/config';
-import { addBackToIndexButton } from '../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 
 /** Slider ranges for the numeric ship config values. */
 const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -101,6 +101,8 @@ export class GymPlayer extends Phaser.Scene {
 
     // Shared "← INDEX" button so the tester can return to the gym index.
     addBackToIndexButton(this);
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
     // A Graphics built via `new` is not on the scene display list until
     // added — without this the ship is never rendered.
     this.add.existing(this.player);

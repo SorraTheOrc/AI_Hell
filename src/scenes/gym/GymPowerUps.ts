@@ -39,7 +39,7 @@ import {
   playMagnetCollectSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
-import { addBackToIndexButton } from '../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -105,6 +105,8 @@ export class GymPowerUps extends Phaser.Scene {
 
     // Shared "← INDEX" button (AC5 of the parent), reused by every gym.
     addBackToIndexButton(this);
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
 
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);

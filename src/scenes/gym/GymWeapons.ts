@@ -62,7 +62,7 @@ import {
   playResetPickupSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
-import { addBackToIndexButton } from '../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -133,6 +133,8 @@ export class GymWeapons extends Phaser.Scene {
 
     // Shared "← INDEX" button (reused by every gym).
     addBackToIndexButton(this);
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys(
