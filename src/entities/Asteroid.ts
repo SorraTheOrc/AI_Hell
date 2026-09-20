@@ -248,14 +248,14 @@ export class Asteroid extends BaseEnemy {
     // Distribute angles somewhat evenly with some jitter.
     for (let i = 0; i < numVertices; i++) {
       const baseAngle = (i / numVertices) * Math.PI * 2;
-      const jitter = (Math.random() - 0.5) * 0.4; // ±0.2 rad jitter
+      const jitter = (this._rng() - 0.5) * 0.4; // ±0.2 rad jitter
       angles.push(baseAngle + jitter);
     }
 
     // Compute vertices with radial variation.
     const vertices: { x: number; y: number }[] = [];
     for (const angle of angles) {
-      const radialVariation = 0.7 + Math.random() * 0.3; // 0.7–1.0 × radius
+      const radialVariation = 0.7 + this._rng() * 0.3; // 0.7–1.0 × radius
       vertices.push({
         x: Math.cos(angle) * radius * radialVariation,
         y: Math.sin(angle) * radius * radialVariation,

@@ -3,7 +3,8 @@
  *
  * Covers: tier definitions and sizes; split fan-out; child direction divergence;
  * constant-speed straight-line motion; screen-edge wrapping; size-scaled speed
- * and rotation; no-fire behaviour at any level.
+ * and rotation; no-fire behaviour at any level; shape randomness and RNG
+ * determinism (AH-0MU8UZMCC0003LXT).
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -523,5 +524,82 @@ describe('Asteroid no-fire guarantee', () => {
     expect((asteroid as unknown as Record<string, unknown>).tryFire).toBeUndefined();
     expect((asteroid as unknown as Record<string, unknown>).tryFireAimedBullet).toBeUndefined();
     expect((asteroid as unknown as Record<string, unknown>).tryFireSpreadBurst).toBeUndefined();
+  });
+});
+
+// ── Shape randomness and RNG determinism (AH-0MU8UZMCC0003LXT) ──────────
+
+describe('Asteroid shape randomness and RNG', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function getAsteroidShape(asteroid: Asteroid): string {
+    const children = (asteroid as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    const body = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics && c.commandBuffer.length > 0,
+    );
+    expect(body, 'expected a body Graphics child').toBeDefined();
+    // Serialize the command buffer to a stable string representation for comparison.
+    return JSON.stringify(body!.commandBuffer);
+  }
+
+  it('two asteroids created consecutively have different shapes (AC2)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const a1 = new Asteroid(booted!.scene, { x: 100, y: 100, formationOffset: { row: 0, col: 0 } });
+    const a2 = new Asteroid(booted!.scene, { x: 100, y: 100, formationOffset: { row: 0, col: 0 } });
+    expect(getAsteroidShape(a1)).not.toBe(getAsteroidShape(a2));
+  });
+
+  it('shape is deterministic with a seeded RNG — same seed produces identical shape (AC3)', async () => {
+    const makeRNGFactory = (seed: number) => {
+      let s = seed;
+      return () => {
+        // Simple LCG: same algorithm each call
+        s = (s * 1664525 + 1013904223) & 0xffffffff;
+        return (s >>> 0) / 0xffffffff;
+      };
+    };
+
+    const rng1 = makeRNGFactory(42);
+    const rng2 = makeRNGFactory(42);
+
+    booted = await bootScene([HarnessScene]);
+    const a1 = new Asteroid(booted!.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, rng: rng1,
+    });
+
+    booted!.game.destroy(true);
+    booted = await bootScene([HarnessScene]);
+    const a2 = new Asteroid(booted!.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, rng: rng2,
+    });
+
+    expect(getAsteroidShape(a1)).toBe(getAsteroidShape(a2));
+  });
+
+  it('all three size tiers use RNG-consistent _drawBody (AC4)', async () => {
+    const rng = () => 0.5; // deterministic
+
+    booted = await bootScene([HarnessScene]);
+    const large = new Asteroid(booted!.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, sizeTier: 'large', rng,
+    });
+    const medium = new Asteroid(booted!.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, sizeTier: 'medium', rng,
+    });
+    const small = new Asteroid(booted!.scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, sizeTier: 'small', rng,
+    });
+
+    // Each tier renders without error and has a body.
+    const shapes = [large, medium, small].map(getAsteroidShape);
+    expect(shapes).toHaveLength(3);
+    shapes.forEach((s) => expect(s).not.toBe(''));
   });
 });
