@@ -75,9 +75,10 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymPowerUpsCombat',
       'GymWeapons',
     ]);
-    // Enemy section: one entry per seed config (+ any Save As entries)
+    // Enemy section: one entry per seed config (+ any Save As entries); boss
+    // excluded — GymBoss is the canonical boss scene (AH-0MUAYB28C004KK7X).
     const enemyKeys = scene.listedEnemyScenes.map((s) => s.enemyKey).sort();
-    expect(enemyKeys).toEqual(expect.arrayContaining(['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss'].sort()));
+    expect(enemyKeys).toEqual(expect.arrayContaining(['scout', 'diver', 'tank', 'phaser', 'swarm'].sort()));
     expect(scene.listedEnemyScenes.every((s) => s.key === `GymEnemies:${s.enemyKey}`)).toBe(true);
 
     // No .test.ts module leaks into the list, and the index itself is not

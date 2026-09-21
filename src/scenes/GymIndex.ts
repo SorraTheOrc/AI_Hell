@@ -54,8 +54,9 @@ export class GymIndex extends Phaser.Scene {
 
     // Enemy-config entries — one per saved/seed archetype, routed to
     // GymEnemies with the enemyKey param. Ensure GymEnemies is registered
-    // once (so scene.start('GymEnemies', { enemyKey }) works).
-    this.enemyEntries = discoverEnemyGymEntries();
+    // once (so scene.start('GymEnemies', { enemyKey }) works). Filter out
+    // boss — the dedicated GymBoss scene is the canonical entry (AH-0MUAYB28C004KK7X).
+    this.enemyEntries = discoverEnemyGymEntries().filter((e) => e.enemyKey !== 'boss');
     if (this.enemyEntries.length > 0 && !this.scene.manager.getScene('GymEnemies')) {
       // Reuse the class discovered via glob if available; otherwise lazy import.
       const enemiesModule = all.find((e) => e.key === 'GymEnemies')?.module;
