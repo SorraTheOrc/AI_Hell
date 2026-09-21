@@ -1303,4 +1303,64 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(diverSound).toHaveBeenCalledTimes(1);
   });
+
+  // ── Powerup reset on game restart (AH-0MU9KSFMQ005SAT1) ─────────────
+
+  it('AC1 — restarting PlayScene clears all active powerup effects', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    /** Collects a fully-grown drop under the player (one tick). */
+    const collect = (id: string): void => {
+      const drop = scene.spawnPowerUpDrop(id as never, player.x, player.y)!;
+      for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+      player.setPosition(drop.x, drop.y);
+      scene.tick(0.016);
+    };
+
+    // Collect one of each effect category: timed (P5 speed, P8 life,
+    // P3 shield, P6 phase), permanent stacks (P9 magnet, P7 teleport) and a
+    // weapon pickup ('spread').
+    collect('P5');
+    collect('P8');
+    collect('P3');
+    collect('P6');
+    collect('P9');
+    collect('P7');
+    collect('spread');
+
+    // Verify each category was active before the restart (AC1).
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.isPhased).toBe(true);
+    expect(registry.lives()).toBe(4);
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
+    expect(registry.activeWeapons().length).toBeGreaterThan(0);
+
+    // Simulate game restart: same as MenuScene → PlayScene. The restart is
+    // queued by the SceneManager, so pump the loop before asserting.
+    scene.scene.start('PlayScene');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Phaser reuses the same scene instance — verify it is still active.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+
+    // Re-fetch the instance in case Phaser recreated the scene.
+    const restarted = booted!.game.scene.getScene(
+      'PlayScene',
+    ) as PlayScene;
+    const restartedRegistry = restarted.getEffectsRegistry();
+
+    // AC1/AC3 — every effect category is back to its default.
+    expect(restartedRegistry.activeEffects()).toHaveLength(0);
+    expect(restartedRegistry.isShielded).toBe(false);
+    expect(restartedRegistry.isPhased).toBe(false);
+    expect(restartedRegistry.speedMultiplier()).toBe(1);
+    expect(restartedRegistry.magnetStacks()).toBe(0);
+    expect(restartedRegistry.hasTeleport()).toBe(false);
+    expect(restartedRegistry.activeWeapons()).toHaveLength(0);
+    expect(restartedRegistry.lives()).toBe(3);
+  });
 });

@@ -399,6 +399,7 @@ export class PlayScene extends Phaser.Scene {
     this.waveTimerActive = false;
     this.shieldBubbleDrawn = false;
     this.paused = false;
+    this.effectsRegistry.reset();
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
