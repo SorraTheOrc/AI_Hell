@@ -219,7 +219,11 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   },
   boss: {
     key: 'boss',
-    displayName: 'Boss',
+    // Plain single-enemy archetype — NOT the multi-phase Central AI. The
+    // real boss is the dedicated `GymBoss` scene, surfaced on the gym index
+    // as the "Boss" ENEMIES row. This archetype is labelled "Boss Swarm"
+    // so the two are not confused (AH-0MUAYB28C004KK7X).
+    displayName: 'Boss Swarm',
     formationKind: 'single',
     count: 1,
     spacingX: 0,

@@ -54,14 +54,15 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
   it('AC3+AC4 — discovers the gym folder, excludes .test.ts, sorts alphabetically by label', async () => {
     const scene = await bootIndex();
 
-    // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver, GymSwarm,
-    // GymPowerUpsUtility, GymWeapons are on disk. GymBoss is excluded — the boss
-    // belongs in the enemy list as a single "Boss" entry (AH-0MUAYB28C004KK7X).
-    // Labels strip the leading "Gym" and are sorted alphabetically.
-    // GymEnemies is no longer listed as a bare scene — individual enemies
-    // appear via listedEnemyScenes instead (one entry per EnemyConfig).
-    // 5 legacy per-enemy gyms (Scout/Diver/Tank/Phaser/Swarm) have been retired
-    // (AH-0MTHG5JVP006U6K7) — individual enemies now appear via listedEnemyScenes.
+    // GymPlayer, GymMinerals, GymPowerUpsUtility, GymWeapons and
+    // GymPowerUpsCombat are on disk. GymBoss is excluded from the *plain
+    // scene list* (left column) — the real, multi-phase boss is surfaced as
+    // the dedicated "Boss" row in the ENEMIES column instead
+    // (AH-0MUAYB28C004KK7X). Labels strip the leading "Gym" and are sorted
+    // alphabetically. GymEnemies is likewise not listed as a bare scene —
+    // individual enemies appear via listedEnemyScenes (one entry per
+    // EnemyConfig). The 5 legacy per-enemy gyms
+    // (Scout/Diver/Tank/Phaser/Swarm) were retired (AH-0MTHG5JVP006U6K7).
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Minerals',
       'Player',
@@ -76,13 +77,21 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymPowerUpsUtility',
       'GymWeapons',
     ]);
-    // Enemy section: one entry per seed config (+ any Save As entries);
-    // boss is included as the canonical boss enemy entry (AH-0MUAYB28C004KK7X).
-    const enemyKeys = scene.listedEnemyScenes.map((s) => s.enemyKey).sort();
-    expect(enemyKeys).toEqual(
-      expect.arrayContaining(['boss', 'scout', 'diver', 'tank', 'phaser', 'swarm'].sort()),
-    );
-    expect(scene.listedEnemyScenes.every((s) => s.key === `GymEnemies:${s.enemyKey}`)).toBe(true);
+    // Right column: one config row per seed archetype plus the dedicated
+    // GymBoss row. AC2 — every seed enemy config is present and unchanged
+    // (the `boss` key keeps its key and only changes its display label).
+    const enemyKeys = scene.listedEnemyScenes
+      .filter((s) => s.enemyKey)
+      .map((s) => s.enemyKey)
+      .sort();
+    expect(enemyKeys).toEqual(['asteroid', 'boss', 'diver', 'phaser', 'scout', 'swarm', 'tank']);
+    expect(
+      scene.listedEnemyScenes
+        .filter((s) => s.enemyKey)
+        .every((s) => s.key === `GymEnemies:${s.enemyKey}`),
+    ).toBe(true);
+    // The dedicated boss row is a scene row (no enemyKey) labelled "Boss".
+    expect(scene.listedEnemyScenes.find((s) => s.sceneKey === 'GymBoss')?.label).toBe('Boss');
 
     // No .test.ts module leaks into the list, and the index itself is not
     // listed (it lives outside the globbed folder).
@@ -92,19 +101,39 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     }
   });
 
-  it('AC4 — registers discovered scenes and clicking an entry starts it immediately', async () => {
+  it('AC1 — the real boss is a "Boss" ENEMIES row that boots GymBoss', async () => {
     const scene = await bootIndex();
 
-    // The index registers every discovered scene so scene.start(key) works.
+    // The index registers every discovered left-column scene so scene.start(key) works.
     for (const { key } of scene.listedScenes) {
       expect(booted!.game.scene.getScene(key)).not.toBeNull();
     }
 
-    // Click the "Boss" enemy entry — GymEnemies should start with boss key.
+    // The real (multi-phase Central AI) boss is the dedicated GymBoss row.
+    const bossRow = scene.listedEnemyScenes.find((s) => s.sceneKey === 'GymBoss');
+    expect(bossRow?.label).toBe('Boss');
+
     findText(scene, 'Boss').emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
 
+    expect(booted!.game.scene.isActive('GymBoss')).toBe(true);
+    expect(booted!.game.scene.isActive('GymEnemies')).toBe(false);
+  });
+
+  it('AC2 — the boss config archetype is labelled "Boss Swarm" and boots GymEnemies with enemyKey boss', async () => {
+    const scene = await bootIndex();
+
+    const bossSwarm = scene.listedEnemyScenes.find((s) => s.enemyKey === 'boss');
+    expect(bossSwarm?.label).toBe('Boss Swarm');
+
+    findText(scene, 'Boss Swarm').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
     expect(booted!.game.scene.isActive('GymEnemies')).toBe(true);
+    const enemies = booted!.game.scene.getScene('GymEnemies') as unknown as {
+      activeEnemyKey: string;
+    };
+    expect(enemies.activeEnemyKey).toBe('boss');
   });
 });
 
@@ -187,9 +216,12 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     // (GAME_WIDTH * 0.67) and non-enemy entries use left-column (GAME_WIDTH * 0.33).
     const { GAME_WIDTH } = await import('../core/constants');
     const rightCol = Math.round(GAME_WIDTH * 0.67);
-    // Boss is an enemy entry → right column.
+    // The real boss row is in the ENEMIES column → right column.
     const bossText = findText(idx, 'Boss');
     expect(Math.round(bossText.x)).toBe(rightCol);
+    // The plain boss config row ("Boss Swarm") is also in the right column.
+    const bossSwarmText = findText(idx, 'Boss Swarm');
+    expect(Math.round(bossSwarmText.x)).toBe(rightCol);
     // Scout is an enemy entry → right column.
     const scoutEntry = idx.listedEnemyScenes.find((s) => s.enemyKey === 'scout');
     expect(scoutEntry).toBeDefined();

@@ -96,10 +96,13 @@ by `{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
 formation/bullet behaviour from the loaded config. The gym index (`GymIndex`)
 enumerates enemy configs — one clickable row per config (label
 `displayName`) that boots `GymEnemies` with that `enemyKey` — rather than
-hard-coded per-enemy scenes. The boss config appears as a single **"Boss"**
-row in the **ENEMIES** column; the dedicated `GymBoss` scene is excluded
-from the plain scene list so the boss is never listed twice
-(AH-0MUAYB28C004KK7X). Legacy `GymScout`/`GymDiver`/… scenes have been
+hard-coded per-enemy scenes. The `boss` config row appears in the
+**ENEMIES** column labelled **"Boss Swarm"** (it is a plain single-enemy
+archetype, not the multi-phase Central AI). The dedicated `GymBoss` scene is
+surfaced as the **"Boss"** row in that same ENEMIES column and boots
+`GymBoss` directly; it is excluded from the plain scene list (left column) so
+the real boss is not duplicated as a bare scene (AH-0MUAYB28C004KK7X). Legacy
+`GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymEnemies.test.ts`
 keyed by `enemyKey`.
 
@@ -608,10 +611,13 @@ Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
 
 The gym index discovers enemies via `src/utils/enemyGymDiscovery.ts`
 (`discoverEnemyGymEntries()` → `{ key: 'GymEnemies:<slug>', label,
- enemyKey }[]`, sorted by label) and routes each row to
-`scene.start('GymEnemies', { enemyKey })`. Bare `GymEnemies` is excluded
-from the plain scene list; `GymBoss` is likewise excluded so the boss
-appears only as the **"Boss"** ENEMIES row (AH-0MUAYB28C004KK7X). Save As
+ enemyKey }[]`, sorted by label) and routes each config row to
+`scene.start('GymEnemies', { enemyKey })`. The ENEMIES column also carries a
+dedicated **"Boss"** row (scene key `GymBoss`) that boots the multi-phase
+`GymBoss` scene directly; the plain `boss` config archetype is labelled
+**"Boss Swarm"**. Bare `GymEnemies` is excluded from the plain scene list, and
+`GymBoss` is likewise excluded there (it appears only as the "Boss" ENEMIES
+row) so the real boss is not duplicated (AH-0MUAYB28C004KK7X). Save As
 enemies appear on next index load without code changes.
 
 ### 8.6 Adding a new enemy (convention)
