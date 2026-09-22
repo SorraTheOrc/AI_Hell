@@ -34,6 +34,11 @@ import { getPowerUpById, PowerUpId } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
 import { applyMagnetAttraction } from '../../powerups/magnet';
 import {
+  spawnCollectAnimation,
+  type CollectAnimationHandle,
+} from '../../powerups/collectAnimation';
+import {
+  playPowerUpCollectPopSound,
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
@@ -73,12 +78,16 @@ export interface ActiveDrop {
   y: number;
   /** Graphics object rendering the drop's glowing bubble + icon (scaled by lifecycle). */
   graphics: Phaser.GameObjects.Graphics;
+  /** True once collected and playing its absorb VFX (AC4). */
+  absorbing?: boolean;
 }
 
 export class GymPowerUpsUtility extends Phaser.Scene {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
+  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
+  private collectAnimations: CollectAnimationHandle[] = [];
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner(NON_COMBAT_ORDER);
   /** Index into the deterministic spawn positions. */
@@ -110,6 +119,12 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
+
+    // Release any in-flight absorb animations on shutdown/restart.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      for (const anim of this.collectAnimations) anim.destroy();
+      this.collectAnimations = [];
+    });
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys(
@@ -155,6 +170,8 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
     // ── Overlap collection (gated by the >3% scale threshold) ──
     this._collectOverlapping();
+    // Advance the absorb VFX for collected drops (cosmetic only).
+    this._updateCollectAnimations(dt);
 
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
@@ -201,6 +218,8 @@ export class GymPowerUpsUtility extends Phaser.Scene {
   advanceDrops(dt: number): void {
     const kept: ActiveDrop[] = [];
     for (const drop of this.drops) {
+      // An absorbing drop is owned by its animation — never re-process it.
+      if (drop.absorbing) continue;
       drop.powerUp.advance(dt);
       // Bubble + icon scale tracks the lifecycle scale factor (0 → 1 → 0).
       drop.graphics.setScale(drop.powerUp.currentScale);
@@ -234,7 +253,7 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     const hull = SHIP_SIZE / 2;
     const kept: ActiveDrop[] = [];
     for (const drop of this.drops) {
-      if (drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
+      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
         this._collectDrop(drop);
       } else {
         kept.push(drop);
@@ -256,23 +275,53 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     if (!effect) return;
     this.effectsRegistry.applyCollect(effect.id as PowerUpId);
 
-    // Remove the drop's visuals (bubble + icon) from the display list.
-    drop.graphics.destroy();
+    // Mark the drop so the overlap gate cannot re-collect it while the
+    // absorb animation plays (AC4).
+    drop.absorbing = true;
+    // Start the cosmetic absorb VFX; the Graphics stays alive until the
+    // animation completes, then is destroyed (AC3).
+    this._startCollectAnimation(drop);
 
     // AC — non-combat pickup activation audio: each pickup type plays
-    // a unique activation sound on collection (previously none played
-    // at all). Safe no-op without an AudioContext.
-    switch (effect.id) {
-      case 'P5':
-        playSpeedBoostCollectSound();
-        break;
-      case 'P8':
-        playExtraLifeCollectSound();
-        break;
-      case 'P9':
-        playMagnetCollectSound();
-        break;
+    // a unique activation sound on collection, plus the generic pop.
+    // Safe no-op without an AudioContext.
+    try {
+      playPowerUpCollectPopSound();
+      switch (effect.id) {
+        case 'P5':
+          playSpeedBoostCollectSound();
+          break;
+        case 'P8':
+          playExtraLifeCollectSound();
+          break;
+        case 'P9':
+          playMagnetCollectSound();
+          break;
+      }
+    } catch {
+      // Audio is best-effort (headless tests have no AudioContext).
     }
+  }
+
+  /** Starts the absorb animation for a collected drop (AC3). */
+  private _startCollectAnimation(drop: ActiveDrop): void {
+    const shipX = this.player?.x ?? drop.x;
+    const shipY = this.player?.y ?? drop.y;
+    this.collectAnimations.push(
+      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
+    );
+  }
+
+  /** Advances in-flight absorb animations and prunes completed handles. */
+  private _updateCollectAnimations(dt: number): void {
+    if (this.collectAnimations.length === 0) return;
+    const kept: CollectAnimationHandle[] = [];
+    for (const handle of this.collectAnimations) {
+      if (this.player) handle.setAttractor(this.player.x, this.player.y);
+      handle.update(dt);
+      if (!handle.isComplete()) kept.push(handle);
+    }
+    this.collectAnimations = kept;
   }
 
   // ── Input ─────────────────────────────────────────────────────────
@@ -313,6 +362,11 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
   getDrops(): ActiveDrop[] {
     return [...this.drops];
+  }
+
+  /** In-flight absorb animations for collected drops (test seam). */
+  getCollectAnimations(): CollectAnimationHandle[] {
+    return [...this.collectAnimations];
   }
 
   getHud(): HUD | null {

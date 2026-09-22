@@ -11,7 +11,7 @@
  * AH-0MTC2P6G3007PJ40 — "Create combat gym scene for combat-coupled
  * power-ups with low-level enemy threats"
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -21,6 +21,8 @@ import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
+import * as effectsModule from '../../audio/effects';
+import * as collectAnimationModule from '../../powerups/collectAnimation';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -477,5 +479,68 @@ describe('GymPowerUpsCombat AC1: shared back button', () => {
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
     booted!.game.destroy(true);
+  });
+});
+
+describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function boot(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted!.scene as GymPowerUpsCombat;
+  }
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P3', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P3', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    scene.tick(0.5);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false);
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await boot();
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop('P3', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    scene.tick(0.5);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 });

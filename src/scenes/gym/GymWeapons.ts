@@ -52,6 +52,7 @@ import { drawWeaponDrop, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
+  playPowerUpCollectPopSound,
   playCannonFireSound,
   playSpreadFireSound,
   playDualFireSound,
@@ -79,6 +80,10 @@ import {
 } from '../../core/constants';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
+import {
+  spawnCollectAnimation,
+  type CollectAnimationHandle,
+} from '../../powerups/collectAnimation';
 
 /** A weapon-drop type: one of the three weapons, or 'reset'. */
 type DropType = WeaponId | 'reset';
@@ -103,11 +108,15 @@ interface ActiveDrop {
   graphics: Phaser.GameObjects.Graphics;
   /** Whether the despawn sound has already played for this drop. */
   despawnSoundPlayed: boolean;
+  /** True once collected and playing its absorb VFX (AC4). */
+  absorbing?: boolean;
 }
 
 export class GymWeapons extends Phaser.Scene {
   private player: Player | null = null;
   private drops: ActiveDrop[] = [];
+  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
+  private collectAnimations: CollectAnimationHandle[] = [];
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner<DropType>(ROUND_ROBIN_ORDER);
   /** Countdown to the next round-robin spawn (starts at 0 → immediate first drop). */
@@ -144,6 +153,12 @@ export class GymWeapons extends Phaser.Scene {
     // Spawn the first drop immediately, then cycle every lifetime (AC3).
     this._spawnRoundRobin();
     this.spawnTimer = WEAPON_DROP_LIFETIME;
+
+    // Release any in-flight absorb animations on shutdown/restart.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      for (const anim of this.collectAnimations) anim.destroy();
+      this.collectAnimations = [];
+    });
   }
 
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */
@@ -192,6 +207,8 @@ export class GymWeapons extends Phaser.Scene {
 
     // ── Overlap collection (gated by the ≥ 3% scale threshold) ─
     this.collectOverlapping();
+    // Advance the absorb VFX for collected drops (cosmetic only).
+    this._updateCollectAnimations(dt);
   }
 
   // ── Auto-fire (AC1, AC3) ─────────────────────────────────────────
@@ -326,6 +343,8 @@ export class GymWeapons extends Phaser.Scene {
   advanceDrops(dt: number): void {
     const kept: ActiveDrop[] = [];
     for (const drop of this.drops) {
+      // An absorbing drop is owned by its animation — never re-process it.
+      if (drop.absorbing) continue;
       drop.powerUp.advance(dt);
       // Icon scale tracks the lifecycle scale factor (0 → 1 → 0).
       drop.graphics.setScale(drop.powerUp.currentScale);
@@ -361,7 +380,7 @@ export class GymWeapons extends Phaser.Scene {
     const kept: ActiveDrop[] = [];
     for (const drop of this.drops) {
       // Collection gated by the shared ≥ 3% scale lifecycle (AC4).
-      if (drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
+      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
         this._collectDrop(drop);
       } else {
         kept.push(drop);
@@ -407,8 +426,37 @@ export class GymWeapons extends Phaser.Scene {
       }
     }
 
-    // Remove the drop's visuals.
-    drop.graphics.destroy();
+    // Mark the drop so the overlap gate cannot re-collect it while the
+    // absorb animation plays (AC4); keep the Graphics alive until the
+    // animation completes (AC3).
+    drop.absorbing = true;
+    this._startCollectAnimation(drop);
+
+    // Generic pop plays alongside the per-type weapon pickup cue (AC1).
+    try {
+      playPowerUpCollectPopSound();
+    } catch { /* ignore */ }
+  }
+
+  /** Starts the absorb animation for a collected drop (AC3). */
+  private _startCollectAnimation(drop: ActiveDrop): void {
+    const shipX = this.player?.x ?? drop.x;
+    const shipY = this.player?.y ?? drop.y;
+    this.collectAnimations.push(
+      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
+    );
+  }
+
+  /** Advances in-flight absorb animations and prunes completed handles. */
+  private _updateCollectAnimations(dt: number): void {
+    if (this.collectAnimations.length === 0) return;
+    const kept: CollectAnimationHandle[] = [];
+    for (const handle of this.collectAnimations) {
+      if (this.player) handle.setAttractor(this.player.x, this.player.y);
+      handle.update(dt);
+      if (!handle.isComplete()) kept.push(handle);
+    }
+    this.collectAnimations = kept;
   }
 
   // ── Input ─────────────────────────────────────────────────────────
@@ -445,6 +493,11 @@ export class GymWeapons extends Phaser.Scene {
 
   getDrops(): ActiveDrop[] {
     return [...this.drops];
+  }
+
+  /** In-flight absorb animations for collected drops (test seam). */
+  getCollectAnimations(): CollectAnimationHandle[] {
+    return [...this.collectAnimations];
   }
 
   getBullets(): PlayerBullet[] {

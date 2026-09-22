@@ -14,6 +14,7 @@ import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
+import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymPowerUpsUtility } from './GymPowerUpsUtility';
 import {
   POWER_UP_DROP_SIZE,
@@ -528,5 +529,68 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
 
     expect(registry.isActive('P5')).toBe(false);
     expect(scene.getDrops().length).toBeGreaterThan(0); // drop still on field
+  });
+});
+
+describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
+  }
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    scene.tick(0.5);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false);
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootPowerUps();
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    scene.tick(0.5);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 });

@@ -24,6 +24,7 @@ import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
+import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 
 describe('GymWeapons AC1/AC3: gym index discovery', () => {
@@ -729,5 +730,67 @@ describe('GymWeapons — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)'
     scene.collectOverlapping();
 
     expect(player.getEquippedWeapon()).toBe('dual');
+  });
+});
+
+describe('GymWeapons — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.collectOverlapping();
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.collectOverlapping();
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    scene.tick(0.5);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false);
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop('spread', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.collectOverlapping();
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    scene.tick(0.5);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 });
