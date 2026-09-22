@@ -99,11 +99,17 @@ export class FocusManager {
     this.focusStyle = {
       color: DEFAULT_FOCUS_COLOR,
       stroke: DEFAULT_FOCUS_STROKE,
-      strokeWidth: DEFAULT_FOCUS_STROKE_WIDTH,
+      // Phaser Text uses `strokeThickness` (not `strokeWidth`).
+      strokeThickness: DEFAULT_FOCUS_STROKE_WIDTH,
       ...focusStyleOverride,
     };
     this.unfocusStyle = {
       color: DEFAULT_UNFOCUS_COLOR,
+      // Explicitly clear the focus border: Phaser's Text.setStyle merges
+      // with the existing style, so omitting these would leave the focused
+      // control's stroke visible on the previously-focused control.
+      stroke: '',
+      strokeThickness: 0,
       ...unfocusStyleOverride,
     };
   }

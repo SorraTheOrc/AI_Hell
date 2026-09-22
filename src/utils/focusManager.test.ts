@@ -269,7 +269,15 @@ describe('FocusManager — visible focus style (AC6)', () => {
     const style = fm.getFocusStyle();
     expect(style).toHaveProperty('color');
     expect(style).toHaveProperty('stroke');
-    expect(style).toHaveProperty('strokeWidth');
+    expect(style).toHaveProperty('strokeThickness');
+  });
+
+  it('the unfocus style explicitly clears the focus border', () => {
+    fm = new FocusManager();
+    // Phaser's setStyle merges, so the border must be cleared explicitly or
+    // a previously-focused control would keep its stroke (exactly one
+    // control must appear focused).
+    expect(fm.getUnfocusStyle()).toHaveProperty('strokeThickness', 0);
   });
 });
 

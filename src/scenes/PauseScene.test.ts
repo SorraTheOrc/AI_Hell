@@ -200,3 +200,85 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
   });
 });
+describe('PauseScene — shared FocusManager integration (AH-0MUBZUQBL0080B88)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, PauseScene, MenuScene, GameOverScene]);
+    return booted.scene as PlayScene;
+  }
+
+  async function openPause(): Promise<PauseScene> {
+    pressKey('Escape');
+    await settle();
+    return booted!.game.scene.getScene('PauseScene') as PauseScene;
+  }
+
+  it('AC1 — Resume is focused by default with the shared focus highlight', async () => {
+    await bootPlay();
+    const scene = await openPause();
+
+    const resume = scene.getControl('▶  Resume')!;
+    expect(scene.getFocusedLabel()).toBe('▶  Resume');
+    // The shared focus style adds a stroke border.
+    expect(resume.style.stroke).toBeTruthy();
+    expect(resume.style.strokeThickness).toBeGreaterThan(0);
+  });
+
+  it('AC1 — moving focus clears the border from the previous control', async () => {
+    await bootPlay();
+    const scene = await openPause();
+
+    const resume = scene.getControl('▶  Resume')!;
+    pressKey('Tab');
+    await settle();
+
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+    // The previously-focused control must no longer render a border.
+    expect(resume.style.strokeThickness).toBe(0);
+  });
+
+  it('AC2 — the configured move down/up keys cycle focus', async () => {
+    await bootPlay();
+    const scene = await openPause();
+
+    // Default moveDown binding is 's'.
+    pressKey('s');
+    await settle();
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+
+    pressKey('s');
+    await settle();
+    expect(scene.getFocusedLabel()).toBe('✕  Quit');
+
+    // Default moveUp binding is 'w'.
+    pressKey('w');
+    await settle();
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+  });
+
+  it('AC2 — all controls are reachable in focus order', async () => {
+    await bootPlay();
+    const scene = await openPause();
+
+    expect(scene.getControlLabels()).toEqual([
+      '▶  Resume',
+      '⚙  Settings',
+      '✕  Quit',
+    ]);
+  });
+
+  it('AC4 — pointerover moves focus to the hovered control', async () => {
+    await bootPlay();
+    const scene = await openPause();
+
+    scene.getControl('✕  Quit')!.emit('pointerover');
+    expect(scene.getFocusedLabel()).toBe('✕  Quit');
+  });
+});

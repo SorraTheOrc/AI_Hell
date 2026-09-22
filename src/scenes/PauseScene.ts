@@ -4,10 +4,12 @@
  *
  * Shown full-screen while `PlayScene` is paused. Offers **Resume**,
  * **Settings** and **Quit**; all three are pointer- and keyboard-operable.
- * Keyboard navigation is deliberately scene-local (a minimal focus list
- * with Tab/arrow cycling and Enter/Space activation) — the reusable
- * `FocusManager` is deferred to the Keyboard-only-control item
- * (AH-0MU9LKQEP008LCX9), per the producer's scope decision.
+ * Keyboard navigation uses the shared in-canvas `FocusManager`
+ * (AH-0MU9LKQEP008LCX9): **Resume** is focused by default, Tab / Shift+Tab
+ * and the arrow keys cycle focus with wrap-around, and Enter / Space
+ * activate the focused control. The configured pause key (default ESC)
+ * resumes, and the configured move up/down keys additionally cycle focus
+ * alongside the built-in arrow defaults.
  *
  * Lifecycle: `PlayScene` pauses itself at the SceneManager level and
  * launches this scene, so gameplay state is preserved exactly. Resume
@@ -22,6 +24,7 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { loadSettings, resolveBindings } from '../core/settingsStore';
+import { FocusManager } from '../utils/focusManager';
 import type { PlayScene } from './PlayScene';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
@@ -44,7 +47,12 @@ interface PauseControl {
 
 export class PauseScene extends Phaser.Scene {
   private controls: PauseControl[] = [];
-  private focusedIndex = 0;
+
+  /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
+  private focusManager = new FocusManager(
+    { color: PAUSE_FOCUS_COLOR, stroke: '#ffffff', strokeThickness: 3 },
+    { color: PAUSE_DIM_COLOR },
+  );
 
   /** Configured DOM key names for pause / up / down (from the bindings). */
   private pauseKeyName = 'Escape';
@@ -63,6 +71,10 @@ export class PauseScene extends Phaser.Scene {
     this.pauseKeyName = bindings.pauseToggle;
     this.upKeyName = bindings.moveUp;
     this.downKeyName = bindings.moveDown;
+    this.focusManager = new FocusManager(
+      { color: PAUSE_FOCUS_COLOR, stroke: '#ffffff', strokeThickness: 3 },
+      { color: PAUSE_DIM_COLOR },
+    );
     // Full-screen opaque background — a replacement screen, not an overlay.
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, PAUSE_BACKGROUND).setOrigin(0);
 
@@ -78,14 +90,17 @@ export class PauseScene extends Phaser.Scene {
     this._addControl('▶  Resume', 280, () => this.resumeGame());
     this._addControl('⚙  Settings', 350, () => this.openSettings());
     this._addControl('✕  Quit', 420, () => this.quitToMenu());
-    this._setFocus(0);
 
     this._bindKeyboard();
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.focusManager.shutdown();
+    });
   }
 
   // ── Controls ────────────────────────────────────────────────────
 
-  /** Builds one neon text button and adds it to the focus list. */
+  /** Builds one neon text button and registers it with the focus manager. */
   private _addControl(
     label: string,
     y: number,
@@ -104,77 +119,71 @@ export class PauseScene extends Phaser.Scene {
     text.on('pointerover', () => this._setFocusByLabel(label));
     text.on('pointerdown', () => activate());
 
-    this.controls.push({ label, text, activate });
+    const control: PauseControl = { label, text, activate };
+    this.controls.push(control);
+    // Registering the first control focuses it by default (AC1).
+    this.focusManager.register(text, () => control.activate());
     return text;
   }
 
-  /** Applies the focused visual style to the control at `index`. */
-  private _setFocus(index: number): void {
-    const count = this.controls.length;
-    if (count === 0) return;
-    this.focusedIndex = ((index % count) + count) % count;
-    this.controls.forEach((control, i) => {
-      control.text.setStyle({
-        color: i === this.focusedIndex ? PAUSE_FOCUS_COLOR : PAUSE_DIM_COLOR,
-      });
-    });
-  }
-
-  /** Moves the focus by `delta` with wrap-around. */
-  private _moveFocus(delta: number): void {
-    this._setFocus(this.focusedIndex + delta);
-  }
-
+  /** Moves focus to the control with the given label (hover). */
   private _setFocusByLabel(label: string): void {
     const index = this.controls.findIndex((c) => c.label === label);
-    if (index >= 0) this._setFocus(index);
+    if (index >= 0) this.focusManager.setFocusedIndex(index);
   }
 
-  /** Wires the scene-local keyboard navigation and ESC-to-resume. */
+  /**
+   * Wires keyboard navigation. The shared focus manager owns Tab / arrows /
+   * Enter / Space; this scene adds the configured pause and move up/down
+   * bindings on top.
+   */
   private _bindKeyboard(): void {
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      if (event.repeat) return;
-      if (event.key === this.pauseKeyName) {
-        this.resumeGame();
-        return;
-      }
-      if (
-        event.key === 'Tab' ||
-        event.key === 'ArrowDown' ||
-        event.key === 'ArrowRight' ||
-        event.key === this.downKeyName
-      ) {
-        event.preventDefault?.();
-        this._moveFocus(1);
-      } else if (
-        event.key === 'ArrowUp' ||
-        event.key === 'ArrowLeft' ||
-        event.key === this.upKeyName
-      ) {
-        event.preventDefault?.();
-        this._moveFocus(-1);
-      } else if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault?.();
-        this.activateFocused();
-      }
+      this.handlePauseKey(event);
     });
+  }
+
+  /**
+   * Processes one keyboard event and returns true when it was consumed.
+   *
+   * The configured pause key resumes; the configured move up/down keys
+   * cycle focus; everything else is delegated to the shared focus manager.
+   */
+  handlePauseKey(event: KeyboardEvent): boolean {
+    if (event.repeat) return false;
+    if (event.key === this.pauseKeyName) {
+      event.preventDefault?.();
+      this.resumeGame();
+      return true;
+    }
+    if (event.key === this.downKeyName) {
+      event.preventDefault?.();
+      this.focusManager.cycleFocus(1);
+      return true;
+    }
+    if (event.key === this.upKeyName) {
+      event.preventDefault?.();
+      this.focusManager.cycleFocus(-1);
+      return true;
+    }
+    return this.focusManager.handleKey(event);
   }
 
   // ── Actions ─────────────────────────────────────────────────────
 
   /** Activates the currently focused control (keyboard Enter/Space). */
   activateFocused(): void {
-    this.controls[this.focusedIndex]?.activate();
+    this.focusManager.activateFocused();
   }
 
   /** Number of focusable controls. */
   getControlCount(): number {
-    return this.controls.length;
+    return this.focusManager.getControlCount();
   }
 
   /** Display label of the currently focused control ('' when none). */
   getFocusedLabel(): string {
-    return this.controls[this.focusedIndex]?.label ?? '';
+    return this.controls[this.focusManager.getFocusedIndex()]?.label ?? '';
   }
 
   /** All control labels in focus order. */
