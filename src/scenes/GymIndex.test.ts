@@ -55,7 +55,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     const scene = await bootIndex();
 
     // GymPlayer, GymPhaser, GymScout, GymTank, GymDiver, GymSwarm,
-    // GymPowerUps, GymWeapons are on disk. GymBoss is excluded — the boss
+    // GymPowerUpsUtility, GymWeapons are on disk. GymBoss is excluded — the boss
     // belongs in the enemy list as a single "Boss" entry (AH-0MUAYB28C004KK7X).
     // Labels strip the leading "Gym" and are sorted alphabetically.
     // GymEnemies is no longer listed as a bare scene — individual enemies
@@ -64,14 +64,14 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // (AH-0MTHG5JVP006U6K7) — individual enemies now appear via listedEnemyScenes.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Player',
-      'PowerUps',
       'PowerUpsCombat',
+      'PowerUpsUtility',
       'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymPlayer',
-      'GymPowerUps',
       'GymPowerUpsCombat',
+      'GymPowerUpsUtility',
       'GymWeapons',
     ]);
     // Enemy section: one entry per seed config (+ any Save As entries);

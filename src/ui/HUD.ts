@@ -1,7 +1,7 @@
 /**
  * Standalone power-up HUD (GDD §6.4 — `src/ui/HUD.ts`).
  *
- * A Phaser Container subclass attachable to ANY scene (the GymPowerUps
+ * A Phaser Container subclass attachable to ANY scene (the GymPowerUpsUtility
  * gym, the combat gym, the main game). It renders above gameplay
  * (`HUD_DEPTH`) and displays, from the shared EffectsRegistry:
  *

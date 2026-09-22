@@ -43,7 +43,7 @@ export const THRUST_FLAME_INNER_COLOR = DEFAULT_CONFIG.thrustFlameInnerColor;
 /** Linear deceleration rate when no thrust is applied (px/s²). */
 export const FRICTION_DECELERATION = DEFAULT_CONFIG.frictionDeceleration;
 
-// ── Power-up lifecycle (GDD §4.4, GymPowerUps gym) ─────────────────
+// ── Power-up lifecycle (GDD §4.4, GymPowerUpsUtility gym) ─────────────────
 
 /** Time in seconds for a power-up drop to grow from scale 0 to full size. */
 export const POWER_UP_GROW_DURATION = 0.5;

@@ -445,7 +445,7 @@ combat testbeds.
   - **Asteroids scheme:** `W`/Arrow Up thrust the ship **forward** (in its
     current facing direction), `A`/Arrow Left turn it **left**, and
     `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
-  `GymPowerUps` and `GymWeapons` implement the same scheme-aware routing in
+  `GymPowerUpsUtility` and `GymWeapons` implement the same scheme-aware routing in
   their own `_readInput` methods.
 
   > **Data-driven successor:** the per-scene wiring described in this §7

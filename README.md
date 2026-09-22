@@ -426,9 +426,9 @@ The E5 Swarm (GDD §4.1) — the fast-moving, unpredictable cluster attacker —
 
 The scene is reachable from the gym index ("Swarm" entry) and returns to it via the "← INDEX" button. Coverage: `src/entities/Swarm.test.ts` + `src/scenes/gym/GymSwarm.test.ts` verify cluster geometry, drift bounds, pass-through (no collision), explode, shoot toggle and coordinated burst speed.
 
-#### GymPowerUps Gym Scene
+#### GymPowerUpsUtility Gym Scene
 
-The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups P5 Speed Boost, P8 Extra Life and P9 Magnet (GDD §4.4):
+The GymPowerUpsUtility gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups P5 Speed Boost, P8 Extra Life and P9 Magnet (GDD §4.4):
 
 - `src/powerups/PowerUp.ts` — base drop class: delta-time grow → hold → shrink → despawn lifecycle, collection gated at **>3%** of full-size scale.
 - `src/powerups/spawner.ts` — pluggable spawner strategy layer: `PowerUpSpawner` interface, `RoundRobinSpawner` (deterministic gym behaviour: P5 → P8 → P9) and `WeightedRandomSpawner` (semi-random in-game drops; per-ID weights tunable mid-run).
@@ -436,9 +436,9 @@ The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collect
 - `src/powerups/effects.ts` — engine-agnostic active-effects registry: P5 timed +50% speed (refresh on re-collect, never additive), P8 lives (start 3, cap 5), P9 permanent magnet stacks (cap 5; radius `2× ship size + 50% per stack`; attraction at `MAGNET_ATTRACTION_SPEED`, slower than ship max speed).
 - `src/powerups/icons.ts` — code-drawn neon icons shared by field drops and the HUD, plus the glowing drop bubble (`drawDropBubble`) and combined drop drawers (`drawPowerUpDrop`/`drawWeaponDrop`): every on-field drop renders a neon bubble (soft glow halo + crisp ring in the per-type aura colour) around its icon, `POWER_UP_DROP_SIZE` set to **16 px** (half the initial 32 px doubling; `POWER_UP_BUBBLE_*` constants tunable in `src/core/constants.ts`; visual only — collection radius stays `DROP_SIZE × scale + hull`).
 - `src/ui/HUD.ts` — **standalone HUD** (Phaser Container, depth above gameplay) attachable to any scene: per-effect rows (icon, name, remaining-seconds timer or `xN` stack count) plus a lives counter.
-- `src/scenes/gym/GymPowerUps.ts` — the scene: round-robin spawning via `RoundRobinSpawner` (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), per-drop Graphics (glowing bubble + icon) scaled with the grow/hold/shrink lifecycle and destroyed on collect/despawn, overlap collection gated at >3% scale (pickup radius = `POWER_UP_DROP_SIZE × scale + hull`, doubled at full scale), magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
+- `src/scenes/gym/GymPowerUpsUtility.ts` — the scene: round-robin spawning via `RoundRobinSpawner` (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), per-drop Graphics (glowing bubble + icon) scaled with the grow/hold/shrink lifecycle and destroyed on collect/despawn, overlap collection gated at >3% scale (pickup radius = `POWER_UP_DROP_SIZE × scale + hull`, doubled at full scale), magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
 
-The scene is reachable from the gym index ("PowerUps" entry). It is reused as the shared power-up lifecycle/HUD foundation by the combat power-up gym. Coverage: `src/powerups/*.test.ts` + `src/scenes/gym/GymPowerUps.test.ts` (+ `HUD.test.ts`) verify lifecycle timing, round-robin order, threshold, effect semantics, HUD model and scene behaviour.
+The scene is reachable from the gym index ("PowerUpsUtility" entry). It is reused as the shared power-up lifecycle/HUD foundation by the combat power-up gym. Coverage: `src/powerups/*.test.ts` + `src/scenes/gym/GymPowerUpsUtility.test.ts` (+ `HUD.test.ts`) verify lifecycle timing, round-robin order, threshold, effect semantics, HUD model and scene behaviour.
 
 #### Power-up spawning in the combat gyms (`GymEnemies` / `GymBoss`)
 

@@ -75,7 +75,7 @@ export interface ActiveDrop {
   graphics: Phaser.GameObjects.Graphics;
 }
 
-export class GymPowerUps extends Phaser.Scene {
+export class GymPowerUpsUtility extends Phaser.Scene {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
@@ -93,7 +93,7 @@ export class GymPowerUps extends Phaser.Scene {
   private asteroidsHandler = new AsteroidsInputHandler();
 
   constructor() {
-    super({ key: 'GymPowerUps' });
+    super({ key: 'GymPowerUpsUtility' });
   }
 
   create(): void {
