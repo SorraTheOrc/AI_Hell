@@ -476,13 +476,19 @@ export class PlayScene extends Phaser.Scene {
     this._advanceBanner(dt);
 
     // Level/wave transition pause. Enemy spawning, enemy movement/fire and
-    // enemy-based collisions are suspended, but the player stays in full
-    // control (input, physics and auto-fire) and cannot be hit
+    // enemy-based collisions are suspended, but carried-over asteroids
+    // continue moving and are shootable/hitable (AH-0MU8TWF1H007OG2L).
+    // The player stays in full control (input, physics and auto-fire)
+    // and cannot be hit by enemy bullets during the pause
     // (AH-0MU7JTF9W008B8HW).
     const transitioning = this.transitionTimer > 0;
     if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
       this._updateTransitionBanner();
+      // Asteroids continue their straight-line motion during transition.
+      this._moveAsteroids(dt);
+      // Asteroid-vs-player-bullet and asteroid-vs-player collisions remain active.
+      this._handleAsteroidCollisions();
       if (this.transitionTimer === 0) this._onTransitionComplete();
     } else {
       this._moveEnemies(dt);
@@ -1489,10 +1495,12 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * Wave time-limit expired. If enemies remain, every survivor detonates
-   * at 10x scale and the run loses exactly one life (running the normal
-   * game-over flow at 0 lives), then the wave advances. If no enemies
-   * remain, nothing happens (AC3).
+   * Wave time-limit expired. If enemies remain, every non-asteroid survivor
+   * detonates at 10x scale and the run loses exactly one life (running the
+   * normal game-over flow at 0 lives), then the wave advances. Asteroids
+   * survive the timeout (they are not detonated) and are re-registered with
+   * the WaveManager so they gate the next wave's clear (AH-0MU8TWF1H007OG2L).
+   * If no enemies remain, nothing happens (AC3).
    */
   private _timeoutWave(): void {
     const survivors = this.spawned.filter((s) => s.entity.alive);
@@ -1501,11 +1509,23 @@ export class PlayScene extends Phaser.Scene {
       this._hideWaveTimer();
       return;
     }
-    for (const s of survivors) {
+
+    // Asteroids survive the timeout — separate them from detonatable enemies.
+    const survivingAsteroids = survivors.filter((s) => s.enemyKey === 'asteroid');
+    const detonateList = survivors.filter((s) => s.enemyKey !== 'asteroid');
+
+    // Detonate all non-asteroid survivors at 10x scale.
+    for (const s of detonateList) {
       s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
     }
     this._loseLife(false);
     this._advanceAfterTimeout();
+
+    // Re-register surviving asteroids so the WaveManager tracks them
+    // for the next wave (prevents early wave-clear, AH-0MU8TWF1H007OG2L).
+    if (survivingAsteroids.length > 0) {
+      this.waveManager.registerDynamicSpawn(survivingAsteroids.length);
+    }
   }
 
   /**
@@ -1533,6 +1553,76 @@ export class PlayScene extends Phaser.Scene {
         return;
       case 'gameComplete':
         return;
+    }
+  }
+
+  /**
+   * Move carried-over asteroids during the transition pause.
+   * Asteroids use constant-velocity straight-line motion with four-edge wrap
+   * and rotation — independent of formation drift.
+   */
+  private _moveAsteroids(dt: number): void {
+    for (const s of this.spawned) {
+      if (!s.entity.alive) continue;
+      if (s.enemyKey === 'asteroid') {
+        (s.entity as Asteroid).updatePosition(dt);
+      }
+    }
+  }
+
+  /**
+   * Handle asteroid-vs-player-bullet and asteroid-vs-player collisions
+   * during the transition pause. Enemy bullets and enemy-based collisions
+   * remain suspended (AH-0MU8TWF1H007OG2L).
+   */
+  private _handleAsteroidCollisions(): void {
+    const playerHull = SHIP_SIZE / 2;
+
+    // 1. Player bullets vs asteroids (and the boss).
+    const keptBullets: PlayerBullet[] = [];
+    for (const pb of this.playerBullets) {
+      let spent = false;
+      for (const s of this.spawned) {
+        if (!s.entity.alive) continue;
+        if (s.enemyKey !== 'asteroid') continue;
+        if (this._overlaps(pb.x, pb.y, PLAYER_BULLET_RADIUS, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
+          s.entity.destroySelf();
+          this._playEnemyDestruction(s.entity);
+          pb.destroy();
+          spent = true;
+          this._onEnemyKilled(s);
+          break;
+        }
+      }
+      if (!spent && this.boss?.alive && this._overlaps(
+        pb.x, pb.y, PLAYER_BULLET_RADIUS, this.boss.x, this.boss.y, this.boss.getHitRadius(),
+      )) {
+        // Multi-hit boss: consume the bullet and damage a phase.
+        pb.destroy();
+        spent = true;
+        this._damageBoss();
+      }
+      if (!spent) keptBullets.push(pb);
+    }
+    this.playerBullets = keptBullets;
+
+    if (!this.player || this.effectsRegistry.isPhased) return;
+
+    // 2. Player body vs asteroid body — both are hit.
+    if (this.invulnerable <= 0) {
+      for (const s of this.spawned) {
+        if (!s.entity.alive) continue;
+        if (s.enemyKey !== 'asteroid') continue;
+        if (this._overlaps(
+          this.player.x, this.player.y, playerHull, s.entity.x, s.entity.y, s.entity.getHitRadius(),
+        )) {
+          this._hitPlayer();
+          s.entity.destroySelf();
+          this._playEnemyDestruction(s.entity);
+          this._onEnemyKilled(s, false);
+          break;
+        }
+      }
     }
   }
 
