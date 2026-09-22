@@ -203,3 +203,10 @@ export const MINERAL_COLOR = 0xffdd44;
  * objects (body/graphics depth 1) but below UI elements.
  */
 export const MINERAL_DEPTH = 2;
+
+/**
+ * Maximum scatter radius (px) for mineral drops re-spawned when an enemy
+ * carrying minerals is destroyed. Each drop lands somewhere within this
+ * radius of the explosion site.
+ */
+export const MINERAL_REDROP_SCATTER_RADIUS = 40;
