@@ -17,6 +17,10 @@
  *     repeated Enter does not silently move the selection).
  * - {@link FocusManager.shutdown} removes the keyboard listener and clears
  *   the registry.
+ * - {@link FocusManager.handleKey} processes a keydown event directly;
+ *   scenes with extra text input (e.g. an initials field) can route text
+ *   keys themselves and delegate focus keys to the manager instead of
+ *   using {@link FocusManager.attachKeyboard}.
  *
  * ## Usage pattern
  *

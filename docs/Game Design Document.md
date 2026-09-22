@@ -42,6 +42,36 @@
 > Note: turn right is bound to **D** (not S); S remains the 4-directional
 > backward thrust binding only.
 
+#### Menu & UI navigation (keyboard)
+
+Gameplay is fully keyboard-driven, and every menu-style scene is too — no
+mouse is ever required. Because the game renders to a single Phaser canvas
+(no native DOM controls, so browser Tab-focus does not apply), menu
+navigation uses a reusable **in-canvas focus model** implemented by
+`FocusManager` (`src/utils/focusManager.ts`), shared by the main menu and
+the game-over screen (the in-game pause menu follows the same model).
+
+| Input | Action |
+|-------|--------|
+| **Tab** / **Arrow Down** / **Arrow Right** | Move focus forward (wraps) |
+| **Shift+Tab** / **Arrow Up** / **Arrow Left** | Move focus backward (wraps) |
+| **Enter** / **Space** | Activate the focused control |
+
+- The **primary control is focused by default** and shown with a visible
+  focus style (brighter colour + highlight border); exactly one control is
+  focused at a time.
+- **Menu (`MenuScene`):** *Play Game* is focused by default, so pressing
+  **Enter** starts a run; **Tab**/arrows cycle through *Play Game* →
+  *Settings* → *Gym Scene Index (dev)*.
+- **Game over (`GameOverScene`):** the initials field is focused by default
+  and **A–Z** / **Backspace** edit it; **Tab**/arrows move focus to
+  *Return to Menu*. **Enter** auto-submits when the initials are complete;
+  **Enter**/**Space** on the button also submits and returns to the menu.
+- Focus keys call `preventDefault()` so the page does not scroll or the
+  browser move focus while the game has keyboard focus.
+- Pointer interaction is unchanged: hovering still highlights a control and
+  clicking still activates it (keyboard support is additive).
+
 ### 2.2 Movement
 
 - **Thrust-based Newtonian movement** — space physics with thrust input and tunable linear deceleration (friction). The player ship moves on a 2D plane (not lane-based); velocity changes via thrust input and, when no direction key is held, decays toward zero.
@@ -279,6 +309,16 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 - **Display**: Shown on the game-over screen; accessible from the main menu.
 - **Content**: Rank, initials, score, date.
 
+#### Keyboard entry (game-over screen)
+
+The game-over screen follows the shared in-canvas focus model (§2.1, *Menu &
+UI navigation*): the **initials field is focused by default** and accepts
+**A–Z** (uppercase, up to 3 characters) and **Backspace**. **Tab** / arrow
+keys move focus to **Return to Menu**, and **Enter** / **Space** activate the
+focused control. **Enter** on the initials field auto-submits once three
+letters are entered, persisting the score before returning to the main menu.
+Pointer entry (clicking **Return to Menu**) continues to work unchanged.
+
 ### 5.2 Data Model
 
 ```json
@@ -337,7 +377,8 @@ src/
 ├── scenes/
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
-│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click
+│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
+│   │                      FocusManager keyboard navigation (default focus on Play Game)
 │   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
 │   │                      to GameOverScene on win or loss; **ESC pauses** the run and
@@ -350,7 +391,8 @@ src/
 │   │                      warnings + Reset to defaults; persisted to `ai_hell_settings`;
 │   │                      Back returns to the origin scene (PauseScene or MenuScene)
 │   ├── GameOverScene.ts — Game-over (implemented): final score, 3-letter initials,
-│   │                      leaderboard stub (localStorage), Return to Menu
+│   │                      leaderboard stub (localStorage), Return to Menu; FocusManager
+│   │                      keyboard navigation (initials field focused by default)
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
 │   │                      scenes from scenes/gym/ via import.meta.glob)
@@ -417,6 +459,9 @@ src/
 └── utils/
     ├── collision.ts     — Collision detection
     ├── math.ts          — Helper math functions
+    ├── focusManager.ts  — Reusable in-canvas focus model (implemented): register/unregister
+    │                      focusable controls, Tab/Shift+Tab/arrow cycling with wrap-around,
+    │                      Enter/Space activation, visible focus style, shutdown cleanup
     ├── gymDiscovery.ts  — Gym-scene discovery (import.meta.glob, .test.ts filter, labels, sort)
     ├── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
     └── gymPowerUpControl.ts — Live spawn-interval slider (implemented): plain-DOM range input

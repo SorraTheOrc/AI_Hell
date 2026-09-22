@@ -355,15 +355,17 @@ The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene
 
 Flow / scene keys:
 
-- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Settings** → `SettingsScene` (origin `MenuScene`), **Gym Scene Index (dev)** → `GymIndex`.
-- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score.
+- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Settings** → `SettingsScene` (origin `MenuScene`), **Gym Scene Index (dev)** → `GymIndex`. **Play Game** is focused by default; **Tab**/arrow keys cycle focus, **Enter**/**Space** activate.
+- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score. Gameplay is fully keyboard-driven (WASD/arrows move, **S**/**↓** drops a layer, auto-fire is continuous) — no mouse is required.
 - `PauseScene` — in-game pause menu: pressing **ESC** during play freezes the run and shows **Resume / Settings / Quit** (pointer- and keyboard-operable, default focus on Resume). Resume or **ESC** again continues the run exactly where it paused; **Quit** returns to the main menu.
 - `SettingsScene` — settings screen shared by the pause menu and the main menu: an **SFX volume slider** (0.0–1.0), an **SFX mute toggle**, and **key-binding remapping** (press-a-key to rebind, conflict warnings, **Reset to defaults**). All persisted to `ai_hell_settings` (see below); **Back** returns to wherever it was opened from.
-- `GameOverScene` — final score, initials entry, leaderboard stub, return to menu.
+- `GameOverScene` — final score, initials entry, leaderboard stub, return to menu. The initials field is focused by default (**A–Z** / **Backspace** edit it); **Tab**/arrow keys move focus to **Return to Menu**.
 
 > **Pause, settings & rebinding** — ESC toggles the pause menu (the pause key, movement keys and layer-drop key are rebindable in SettingsScene; arrow keys remain built-in movement defaults). Settings changes apply live and persist to `localStorage` under `ai_hell_settings` (`sfxVolume`, `sfxMuted`, `bindings`) across reloads.
 
-Run it with `npm run dev` and click **Play Game**.
+> **Keyboard-only navigation** — the whole game is playable without a mouse. Menu-style scenes use a shared in-canvas focus model (`src/utils/focusManager.ts`, `FocusManager`): the primary control is focused by default and highlighted, **Tab** / **Shift+Tab** and the arrow keys cycle focus with wrap-around, and **Enter** / **Space** activate the focused control. On the menu, **Play Game** is focused by default, so pressing **Enter** starts a game; on game over, type your initials and press **Enter** (auto-submit) or **Tab** to **Return to Menu** and press **Enter**. Pointer interaction still works unchanged.
+
+Run it with `npm run dev` and either click **Play Game** or press **Enter**.
 
 #### Gym Index Entry Scene (dev tooling)
 
