@@ -9,6 +9,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
@@ -17,6 +18,7 @@ import { Asteroid } from '../entities/Asteroid';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
+import { PauseScene } from './PauseScene';
 import {
   BOSS_PHASE_SCORES,
   LEVEL_TRANSITION_SECONDS,
@@ -1362,5 +1364,135 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(restartedRegistry.hasTeleport()).toBe(false);
     expect(restartedRegistry.activeWeapons()).toHaveLength(0);
     expect(restartedRegistry.lives()).toBe(3);
+  });
+});
+
+describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, PauseScene, GameOverScene, MenuScene]);
+    return booted.scene as PlayScene;
+  }
+
+  /** A faked Phaser key exposing only `isDown`. */
+  interface KeyLike {
+    isDown: boolean;
+  }
+
+  /** Exposes the scene's keyboard input objects for deterministic driving. */
+  function inputState(scene: PlayScene): {
+    cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
+    wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
+    teleportKey: Phaser.Input.Keyboard.Key | null;
+  } {
+    return scene as unknown as {
+      cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
+      wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
+      teleportKey: Phaser.Input.Keyboard.Key | null;
+    };
+  }
+
+  it('AC1 — WASD moves the ship without any pointer input', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const { wasd } = inputState(scene);
+
+    const xBefore = player.x;
+    wasd.D.isDown = true;
+    scene.tick(0.1);
+    wasd.D.isDown = false;
+    expect(player.x).toBeGreaterThan(xBefore);
+
+    const yBefore = player.y;
+    wasd.W.isDown = true;
+    scene.tick(0.1);
+    wasd.W.isDown = false;
+    expect(player.y).toBeLessThan(yBefore);
+  });
+
+  it('AC1 — arrow keys move the ship without any pointer input', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const { cursors } = inputState(scene);
+
+    const xBefore = player.x;
+    cursors.left.isDown = true;
+    scene.tick(0.1);
+    cursors.left.isDown = false;
+    expect(player.x).toBeLessThan(xBefore);
+
+    const yBefore = player.y;
+    cursors.down.isDown = true;
+    scene.tick(0.1);
+    cursors.down.isDown = false;
+    expect(player.y).toBeGreaterThan(yBefore);
+  });
+
+  it('AC1 — auto-fire needs no pointer input', async () => {
+    const scene = await bootPlay();
+    // The run may already have fired during boot; record the baseline.
+    const before = scene.getPlayerBullets().length;
+
+    // Advance past the cannon's fire interval without any pointer event.
+    scene.tick(0.5);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(before);
+  });
+
+  it('AC1 — the S/↓ layer-drop key triggers a P7 teleport', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Gain a teleport stack.
+    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.teleportStacks()).toBe(1);
+
+    // Move off-centre, then simulate the layer-drop key being just-pressed.
+    player.setPosition(300, 400);
+    const beforeX = player.x;
+    const beforeY = player.y;
+    const { teleportKey } = inputState(scene);
+    expect(teleportKey).not.toBeNull();
+    (teleportKey as unknown as { _justDown: boolean })._justDown = true;
+    scene.tick(0.016);
+
+    // The warp consumed the stack and moved the ship.
+    expect(registry.teleportStacks()).toBe(0);
+    expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
+  });
+
+  it('AC2 — Tab/Enter do not interfere with gameplay (no focus manager active)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const xBefore = player.x;
+    const yBefore = player.y;
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    scene.tick(0.1);
+
+    // No menu opened, no navigation, and the ship is unaffected.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+    expect(player.x).toBeCloseTo(xBefore);
+    expect(player.y).toBeCloseTo(yBefore);
+  });
+
+  it('AC2 — no FocusManager instance is attached to PlayScene', async () => {
+    const scene = await bootPlay();
+    expect(
+      (scene as unknown as { focusManager?: unknown }).focusManager,
+    ).toBeUndefined();
   });
 });
