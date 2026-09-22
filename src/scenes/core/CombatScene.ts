@@ -298,10 +298,12 @@ export abstract class CombatScene<
 
   /**
    * Scene hook for the player-hit lifecycle. Default (generic gym):
-   * run the shared damage VFX + in-place respawn + invulnerability. The
-   * game overrides this to route through its shield/lives flow.
+   * records the hit, then runs the shared damage VFX + in-place respawn +
+   * invulnerability. The game overrides this to route through its
+   * shield/lives flow.
    */
   protected onPlayerHit(player: Player): void {
+    this.playerHitCount += 1;
     this.applyPlayerHit(player);
   }
 
@@ -559,13 +561,13 @@ export abstract class CombatScene<
   }
 
   /**
-   * Player hit: records the hit, then dispatches to the scene hooks.
-   * Shield-style absorption is optional via {@link tryAbsorbPlayerHit}.
+   * Player hit: dispatches to the scene hooks. Shield-style absorption
+   * is optional via {@link tryAbsorbPlayerHit}; the hit counter is owned
+   * by the scene's hit lifecycle (so an absorbed hit need not count).
    */
   protected _hitPlayer(): void {
     const player = this.getPlayer();
     if (!player) return;
-    this.playerHitCount += 1;
     if (this.tryAbsorbPlayerHit(player)) return;
     this.onPlayerHit(player);
   }

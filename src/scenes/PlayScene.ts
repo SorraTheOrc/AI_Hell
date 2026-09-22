@@ -21,13 +21,10 @@ import {
   GAME_WIDTH,
   MINERAL_SIZE,
   PLAYER_BULLET_RADIUS,
-  PLAYER_BULLET_SPEED,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
-  PLAYER_RESPAWN_INVULNERABLE,
   POWER_UP_DROP_MIN_SEPARATION,
   POWER_UP_DROP_SIZE,
-  SHIP_COLOR,
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState } from '../core/GameState';
@@ -60,7 +57,6 @@ import { Player } from '../entities/Player';
 import {
   PlayerBullet,
   advanceAndCull,
-  createPlayerBullet,
 } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import { Asteroid } from '../entities/Asteroid';
@@ -78,23 +74,13 @@ import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import { applyMagnetAttraction } from '../powerups/magnet';
 import {
-  spawnCollectAnimation,
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
 import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
-import {
-  findTeleportDestination,
-  type TeleportBody,
-} from '../powerups/teleport';
+import { type TeleportBody } from '../powerups/teleport';
 import { HUD } from '../ui/HUD';
-import { angleToVelocity, createBulletsFromHeading, type WeaponId } from '../utils/weapons';
-import {
-  AsteroidsInputHandler,
-  FourDirectionalInputHandler,
-  type ControlInput,
-} from '../utils/movementModel';
+import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
-import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import {
   DEFAULT_BINDINGS,
@@ -107,6 +93,9 @@ import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
+import {
+  CombatScene,
+} from './core/CombatScene';
 
 // ── Scoring (GDD §4.5) ──────────────────────────────────────────────
 
@@ -171,9 +160,6 @@ const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 /** Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %). */
 export const POWER_UP_DROP_CHANCE = 0.18;
 
-/** Blink half-period while invulnerable after a hit (seconds). */
-const BLINK_INTERVAL = 0.1;
-
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
 
@@ -221,7 +207,11 @@ interface PlayDrop {
 /**
  * The playable game scene — manages the 5 levels + boss encounter.
  */
-export class PlayScene extends Phaser.Scene {
+export class PlayScene extends CombatScene<
+  EnemyEntity,
+  PlayEnemyBullet,
+  PlayDrop
+> {
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -238,10 +228,7 @@ export class PlayScene extends Phaser.Scene {
 
   private spawned: SpawnedEnemy[] = [];
   private enemyBullets: PlayEnemyBullet[] = [];
-  private playerBullets: PlayerBullet[] = [];
   private drops: PlayDrop[] = [];
-  /** In-flight absorb animations for collected drops (AH-0MUBYXR280018HST). */
-  private collectAnimations: CollectAnimationHandle[] = [];
   /** Live mineral collectables on the field (GDD §4.5). */
   private minerals: Mineral[] = [];
   /** Whether the hold-full power-up choice is currently open. */
@@ -254,21 +241,9 @@ export class PlayScene extends Phaser.Scene {
   /** The Central AI boss, spawned after Level 5 (null until then). */
   private boss: Boss | null = null;
 
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  /** P7 Teleport activation keys: S and ↓ (JustDown semantics). */
-  private teleportKey: Phaser.Input.Keyboard.Key | null = null;
-  private downKey: Phaser.Input.Keyboard.Key | null = null;
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
-
   /** Resolved DOM key name that toggles pause (from the bindings). */
   private pauseKeyName = 'Escape';
 
-  private hitCount = 0;
-  private invulnerable = 0;
-  private blinkPhase = 0;
-  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
   /** Shield bubble (P3) — drawn around the ship while shielded, cleared on absorb. */
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
@@ -424,7 +399,7 @@ export class PlayScene extends Phaser.Scene {
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.boss = null;
-    this.hitCount = 0;
+    this.playerHitCount = 0;
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.driftX = 0;
@@ -828,30 +803,12 @@ export class PlayScene extends Phaser.Scene {
 
   // ── Player input & fire ─────────────────────────────────────────
 
-  private _readPlayerInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
-  }
-
-  private _autoFire(dt: number): void {
-    if (!this.player) return;
-    const fired = this.player.tryFire(dt);
-    if (fired.length === 0) return;
-    const headingDeg = (this.player.getHeading() * 180) / Math.PI;
-    for (const weaponId of fired) {
-      // One shoot cue per firing weapon per volley (not per bullet),
-      // mirroring GymWeapons._playShootCue. Safe no-op without an
-      // AudioContext.
-      this._playShootCue(weaponId);
-      const def = this.player.getWeaponDef(weaponId);
-      for (const bd of createBulletsFromHeading(def, headingDeg, this.player.x, this.player.y)) {
-        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
-      }
-    }
+  /**
+   * Plays the per-weapon shoot cue when a weapon fires — the hook for
+   * the shared {@link CombatScene._autoFire}.
+   */
+  protected override onWeaponFired(weaponId: WeaponId): void {
+    this._playShootCue(weaponId);
   }
 
   /** Plays the shoot cue for one firing weapon (one per shot, keyed off id). */
@@ -870,22 +827,6 @@ export class PlayScene extends Phaser.Scene {
         playRapidFireSound();
         break;
     }
-  }
-
-  /**
-   * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s.
-   * Public so tests can place bullets deterministically.
-   */
-  spawnPlayerBullet(
-    x: number,
-    y: number,
-    vx: number,
-    vy: number,
-    color = 0x00ffff,
-  ): PlayerBullet {
-    const bullet = createPlayerBullet(this, x, y, color, PLAYER_BULLET_RADIUS, vx, vy);
-    this.playerBullets.push(bullet);
-    return bullet;
   }
 
   /**
@@ -995,129 +936,103 @@ export class PlayScene extends Phaser.Scene {
     }
   }
 
-  /** Circle-vs-circle overlap test. */
-  private _overlaps(
-    ax: number, ay: number, ar: number,
-    bx: number, by: number, br: number,
-  ): boolean {
-    return Math.hypot(ax - bx, ay - by) <= ar + br;
+  // ── Shared collision hooks ──────────────────────────────────────
+
+  /** Live enemy entities for the shared collision pass. */
+  protected override getEnemyEntities(): readonly EnemyEntity[] {
+    return this.spawned.map((s) => s.entity);
   }
 
-  private _handleCollisions(): void {
+  /** Replaces the enemy-bullet collection after a shared collision pass. */
+  protected override setEnemyBullets(bullets: PlayEnemyBullet[]): void {
+    this.enemyBullets = bullets;
+  }
+
+  /** The game skips bullet/ram collisions while the player is P6-phased. */
+  protected override isPlayerPhased(): boolean {
+    return this.effectsRegistry.isPhased;
+  }
+
+  /** Enemy destroyed by a player bullet: award score and advance waves. */
+  protected override onEnemyDestroyed(enemy: EnemyEntity): void {
+    const s = this.spawned.find((candidate) => candidate.entity === enemy);
+    if (s) this._onEnemyKilled(s);
+  }
+
+  /**
+   * Player bullet hits the boss: consume the bullet and damage a phase
+   * (the multi-hit boss is not handled by the generic enemy loop).
+   */
+  protected override onPlayerBulletHitsBoss(pb: PlayerBullet): boolean {
+    if (
+      this.boss?.alive &&
+      this._overlaps(
+        pb.x, pb.y, PLAYER_BULLET_RADIUS,
+        this.boss.x, this.boss.y, this.boss.getHitRadius(),
+      )
+    ) {
+      pb.destroy();
+      this._damageBoss();
+      return true;
+    }
+    return false;
+  }
+
+  /** Ramming an enemy destroys it but awards no score. */
+  protected override onPlayerRamsEnemy(enemy: EnemyEntity): void {
+    const s = this.spawned.find((candidate) => candidate.entity === enemy);
+    if (!s) return;
+    enemy.destroySelf();
+    this._playEnemyDestruction(enemy);
+    this._onEnemyKilled(s, false);
+  }
+
+  /** Ramming the boss only costs the player a life. */
+  protected override onPlayerRamsBoss(): boolean {
+    if (!this.player || !this.boss?.alive) return false;
     const playerHull = SHIP_SIZE / 2;
+    return this._overlaps(
+      this.player.x, this.player.y, playerHull,
+      this.boss.x, this.boss.y, this.boss.getHitRadius(),
+    );
+  }
 
-    // 1. Player bullets vs enemies (and the boss).
-    const keptBullets: PlayerBullet[] = [];
-    for (const pb of this.playerBullets) {
-      let spent = false;
+  /** Mineral collection/absorption runs between the shared collision passes. */
+  protected override onAfterBulletVsBullet(): void {
+    this._handleMinerals();
+  }
+
+  /**
+   * Minerals (GDD §4.5): the player collects them; non-asteroid enemies
+   * absorb them. Neither contact causes damage, and bullets pass straight
+   * through (no mineral bullet pass exists).
+   */
+  private _handleMinerals(): void {
+    if (!this.player) return;
+    const hull = SHIP_SIZE / 2;
+    const keptMinerals: Mineral[] = [];
+    for (const mineral of this.minerals) {
+      if (!mineral.alive) continue;
+      if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)) {
+        this._collectMineral(mineral);
+        continue;
+      }
+      let absorbed = false;
       for (const s of this.spawned) {
-        if (!s.entity.alive) continue;
-        if (this._overlaps(pb.x, pb.y, PLAYER_BULLET_RADIUS, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
-          s.entity.destroySelf();
-          this._playEnemyDestruction(s.entity);
-          pb.destroy();
-          spent = true;
-          this._onEnemyKilled(s);
+        if (!s.entity.alive || s.enemyKey === 'asteroid') continue;
+        if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
+          s.entity.collectMineral();
+          mineral.handleOverlap('enemy');
+          absorbed = true;
           break;
         }
       }
-      if (!spent && this.boss?.alive && this._overlaps(
-        pb.x, pb.y, PLAYER_BULLET_RADIUS, this.boss.x, this.boss.y, this.boss.getHitRadius(),
-      )) {
-        // Multi-hit boss: consume the bullet and damage a phase.
-        pb.destroy();
-        spent = true;
-        this._damageBoss();
-      }
-      if (!spent) keptBullets.push(pb);
+      if (!absorbed) keptMinerals.push(mineral);
     }
-    this.playerBullets = keptBullets;
-
-    // 2. Player bullets vs enemy bullets — both destroyed.
-    const keptEnemy: PlayEnemyBullet[] = [];
-    for (const eb of this.enemyBullets) {
-      let consumed = false;
-      for (let i = 0; i < this.playerBullets.length; i++) {
-        const pb = this.playerBullets[i];
-        if (this._overlaps(pb.x, pb.y, PLAYER_BULLET_RADIUS, eb.graphics.x, eb.graphics.y, 5)) {
-          pb.destroy();
-          this.playerBullets.splice(i, 1);
-          eb.graphics.destroy();
-          consumed = true;
-          break;
-        }
-      }
-      if (!consumed) keptEnemy.push(eb);
+    for (const mineral of this.minerals) {
+      if (!keptMinerals.includes(mineral)) mineral.destroy();
     }
-    this.enemyBullets = keptEnemy;
-
-    // 2b. Minerals (GDD §4.5): the player collects them; non-asteroid
-    //     enemies absorb them. Neither contact causes damage, and bullets
-    //     pass straight through (no mineral bullet pass exists).
-    if (this.player) {
-      const hull = SHIP_SIZE / 2;
-      const keptMinerals: Mineral[] = [];
-      for (const mineral of this.minerals) {
-        if (!mineral.alive) continue;
-        if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)) {
-          this._collectMineral(mineral);
-          continue;
-        }
-        let absorbed = false;
-        for (const s of this.spawned) {
-          if (!s.entity.alive || s.enemyKey === 'asteroid') continue;
-          if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
-            s.entity.collectMineral();
-            mineral.handleOverlap('enemy');
-            absorbed = true;
-            break;
-          }
-        }
-        if (!absorbed) keptMinerals.push(mineral);
-      }
-      for (const mineral of this.minerals) {
-        if (!keptMinerals.includes(mineral)) mineral.destroy();
-      }
-      this.minerals = keptMinerals;
-    }
-
-    if (!this.player || this.effectsRegistry.isPhased) return;
-
-    // 3. Enemy bullets vs player.
-    const keptEnemy2: PlayEnemyBullet[] = [];
-    for (const eb of this.enemyBullets) {
-      if (
-        this.invulnerable <= 0 &&
-        this._overlaps(eb.graphics.x, eb.graphics.y, 5, this.player.x, this.player.y, playerHull)
-      ) {
-        this._hitPlayer();
-        eb.graphics.destroy();
-      } else {
-        keptEnemy2.push(eb);
-      }
-    }
-    this.enemyBullets = keptEnemy2;
-
-    // 4. Player body vs enemy body — both are hit. Ramming the boss only
-    //    costs the player a life (the boss cannot be killed by collision).
-    if (this.invulnerable <= 0) {
-      for (const s of this.spawned) {
-        if (!s.entity.alive) continue;
-        if (this._overlaps(this.player.x, this.player.y, playerHull, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
-          s.entity.destroySelf();
-          this._playEnemyDestruction(s.entity);
-          this._onEnemyKilled(s, false);
-          this._hitPlayer();
-          break;
-        }
-      }
-      if (
-        this.boss?.alive &&
-        this._overlaps(this.player.x, this.player.y, playerHull, this.boss.x, this.boss.y, this.boss.getHitRadius())
-      ) {
-        this._hitPlayer();
-      }
-    }
+    this.minerals = keptMinerals;
   }
 
   /**
@@ -1192,20 +1107,24 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * Player hit: absorb with a shield if active, otherwise lose a life and
-   * either respawn with invulnerability or end the run.
+   * Player hit: absorb with a shield if active, otherwise lose a life
+   * and either respawn with invulnerability or end the run — the game's
+   * hook for the shared {@link CombatScene._hitPlayer} flow.
    */
-  private _hitPlayer(): void {
-    if (!this.player) return;
-
+  protected override tryAbsorbPlayerHit(): boolean {
     if (this.effectsRegistry.tryAbsorbShield()) {
       // Shield absorbs the hit — no life lost. The bubble pops (P3 removed
       // from the registry) and the player gets a brief invulnerability
       // blink so the absorb is observable (mirrors GymPowerUpsCombat).
       playDestructionSound();
       this._startInvulnerability();
-      return;
+      return true;
     }
+    return false;
+  }
+
+  /** Unabsorbed hit: run the standard lose-life / respawn flow. */
+  protected override onPlayerHit(): void {
     this._loseLife();
   }
 
@@ -1221,7 +1140,7 @@ export class PlayScene extends Phaser.Scene {
   private _loseLife(explodeShip = true): void {
     if (!this.player) return;
 
-    this.hitCount += 1;
+    this.playerHitCount += 1;
     this.gameState.loseLife();
     // Push the authoritative run-state lives into the HUD's registry so the
     // lives counter updates immediately (GDD §4.5 display).
@@ -1244,23 +1163,6 @@ export class PlayScene extends Phaser.Scene {
     });
     this.player.respawnInPlace();
     this._startInvulnerability();
-  }
-
-  /** Starts the brief post-hit invulnerability blink (mirrors the gym). */
-  private _startInvulnerability(): void {
-    if (!this.player) return;
-    this.invulnerable = PLAYER_RESPAWN_INVULNERABLE;
-    this.blinkPhase = 0;
-    this.player.setAlpha(1);
-  }
-
-  private _updateInvulnerability(dt: number): void {
-    if (!this.player || this.invulnerable <= 0) return;
-    this.invulnerable = Math.max(0, this.invulnerable - dt);
-    this.blinkPhase += dt;
-    const visible = Math.floor(this.blinkPhase / BLINK_INTERVAL) % 2 === 0;
-    this.player.setAlpha(visible ? 1 : 0.3);
-    if (this.invulnerable <= 0) this.player.setAlpha(1);
   }
 
   // ── Power-up visuals (P3 shield bubble, P6 phase ghost) ──────────
@@ -1298,14 +1200,6 @@ export class PlayScene extends Phaser.Scene {
       this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
       if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
     }
-  }
-
-  private _spawnPlayerExplosion(x: number, y: number): void {
-    const handle = spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
-      patterns: resolvePatterns('player'),
-      registry: this.playerExplosions,
-    });
-    void handle;
   }
 
   // ── Power-up drops ──────────────────────────────────────────────
@@ -1394,22 +1288,6 @@ export class PlayScene extends Phaser.Scene {
     this._updateCollectAnimations(dt);
   }
 
-  /**
-   * Advances every in-flight absorb animation, re-pointing it at the ship's
-   * current world position, and prunes those that complete (the animation
-   * destroys its own Graphics on completion).
-   */
-  private _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (this.player) handle.setAttractor(this.player.x, this.player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
-    }
-    this.collectAnimations = kept;
-  }
-
   /** P9: pulls collectible drops within range toward the player ship. */
   private _applyMagnet(dt: number): void {
     if (!this.player) return;
@@ -1432,54 +1310,16 @@ export class PlayScene extends Phaser.Scene {
     return true;
   }
 
-  private _collectDrop(drop: PlayDrop): void {
-    if (drop.weaponDropId) {
-      if (drop.weaponDropId === 'reset') {
-        this.effectsRegistry.tryResetWeapons();
-        this.player?.resetWeapon();
-      } else {
-        this.effectsRegistry.applyWeapon(drop.weaponDropId as WeaponId);
-        this.player?.equipWeapon(drop.weaponDropId as WeaponId);
-      }
-    } else {
-      const effect = drop.powerUp.tryCollect();
-      if (!effect) return;
-      if (drop.dropId === 'P4') {
-        this._clearEnemyBullets();
-        this._flashBombNotice();
-      }
-      this.effectsRegistry.applyCollect(drop.dropId as PowerUpId);
-      if (drop.dropId === 'P8') {
-        this.gameState.addLife();
-        // Keep the HUD lives counter aligned with the run state.
-        this.effectsRegistry.setLives(this.gameState.lives);
-      }
-    }
-    // Collection confirmed — mark the drop so the overlap gate can never
-    // re-collect it while the absorb animation plays (AC5).
-    drop.absorbing = true;
-    // Start the cosmetic "sucked into the ship" absorb; the Graphics stays
-    // alive until the animation completes, then is destroyed (AC3, AC4).
-    this._startCollectAnimation(drop);
-    this._playPickupCue(drop);
-  }
-
   /**
-   * Starts the absorb animation for a collected drop, using the ship's
-   * current world position as the attractor. The helper degrades to a safe
-   * no-op when the Graphics is unavailable.
+   * Game extras after a power-up is collected: the P4 bomb notice, and the
+   * P8 extra life (keeping the HUD lives counter aligned with run state).
    */
-  private _startCollectAnimation(drop: PlayDrop): void {
-    const shipX = this.player?.x ?? drop.x;
-    const shipY = this.player?.y ?? drop.y;
-    const handle = spawnCollectAnimation(
-      drop.graphics,
-      drop.x,
-      drop.y,
-      shipX,
-      shipY,
-    );
-    this.collectAnimations.push(handle);
+  protected override onPowerUpCollected(drop: PlayDrop): void {
+    if (drop.dropId === 'P4') this._flashBombNotice();
+    if (drop.dropId === 'P8') {
+      this.gameState.addLife();
+      this.effectsRegistry.setLives(this.gameState.lives);
+    }
   }
 
   /**
@@ -1489,7 +1329,7 @@ export class PlayScene extends Phaser.Scene {
    * for a type, the generic chime plays as fallback. Safe no-op without
    * an AudioContext (audio is best-effort in headless tests).
    */
-  private _playPickupCue(drop: PlayDrop): void {
+  protected override _playPickupCue(drop: PlayDrop): void {
     try {
       // Generic collection pop — immediate tactile feedback on every pickup
       // (AH-0MUBYXR280018HST); plays alongside the per-type cue below.
@@ -1533,11 +1373,6 @@ export class PlayScene extends Phaser.Scene {
     }
   }
 
-  private _clearEnemyBullets(): void {
-    for (const b of this.enemyBullets) b.graphics.destroy();
-    this.enemyBullets = [];
-  }
-
   /** Shows the brief centred 'BOMB! Bullets cleared' notice (mirrors the gym). */
   private _flashBombNotice(): void {
     this.bombNoticeTimer = 1.2;
@@ -1546,79 +1381,10 @@ export class PlayScene extends Phaser.Scene {
 
   // ── Teleport (P7, S/↓) ──────────────────────────────────────────
 
-  /** Handles the S / ↓ key press for a P7 teleport (JustDown semantics). */
-  private _handleTeleport(): void {
-    if (!this.player || !this.teleportKey) return;
-    const JustDown = (
-      Phaser.Input.Keyboard as unknown as {
-        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
-      }
-    ).JustDown;
-    const sDown = JustDown
-      ? JustDown(this.teleportKey)
-      : this.teleportKey.isDown;
-    const downDown = this.downKey
-      ? JustDown
-        ? JustDown(this.downKey)
-        : this.downKey.isDown
-      : false;
-    if (sDown || downDown) this.triggerTeleport();
-  }
-
-  /**
-   * Consumes one P7 teleport stack and warps the player to the nearest
-   * safe spot along the heading (granting P6 on arrival via the
-   * registry). Public so tests can trigger it deterministically without
-   * faking keyboard state. Returns true when a teleport was performed.
-   */
-  triggerTeleport(): boolean {
-    if (!this.player) return false;
-    if (!this.effectsRegistry.hasTeleport()) return false;
-
-    const heading = this.player.getHeading();
-    const enemies: TeleportBody[] = this.spawned
-      .filter((s) => s.entity.alive)
-      .map((s) => ({
-        x: s.entity.x,
-        y: s.entity.y,
-        radius: s.entity.getHitRadius(),
-      }));
-    const bullets: TeleportBody[] = this.enemyBullets.map((b) => ({
-      x: b.graphics.x,
-      y: b.graphics.y,
-      radius: 5,
-    }));
-    // The boss is a body the destination must also avoid.
-    if (this.boss?.alive) {
-      enemies.push({ x: this.boss.x, y: this.boss.y, radius: this.boss.getHitRadius() });
-    }
-
-    const dest = findTeleportDestination(
-      this.player.x,
-      this.player.y,
-      heading,
-      enemies,
-      bullets,
-      this.scale.width,
-      this.scale.height,
-      {
-        enemyHitRadius: 12,
-        bulletHitRadius: 5,
-      },
-    );
-
-    // Consume one stack FIFO and grant P6 phase shift at the landing spot.
-    this.effectsRegistry.consumeTeleport();
-    this.player.setPosition(dest.x, dest.y);
-    // Keep the movement state's position in sync with the new position
-    // (physicsTick uses the internal state as its base).
-    const state = this.player.getMovementState();
-    (
-      this.player as unknown as {
-        _movementState: { x: number; y: number };
-      }
-    )._movementState = { ...state, x: dest.x, y: dest.y };
-    return true;
+  /** The boss is a body a P7 teleport destination must also avoid. */
+  protected override getAdditionalTeleportBodies(): TeleportBody[] {
+    if (!this.boss?.alive) return [];
+    return [{ x: this.boss.x, y: this.boss.y, radius: this.boss.getHitRadius() }];
   }
 
   // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────
@@ -2110,7 +1876,7 @@ export class PlayScene extends Phaser.Scene {
 
   /** Number of times the player has been hit. */
   getHitCount(): number {
-    return this.hitCount;
+    return this.playerHitCount;
   }
 
   /** True while the player is invulnerable after a hit. */

@@ -1478,8 +1478,8 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     // Directly set the invulnerability window so the player-vs-enemy-body
     // collision below is ignored. (Enemy-bullet → player collision would
     // also work, but the stub has no enemy fire.)
-    (scene as any).playerInvulnerable = 1.0;
-    (scene as any).playerBlinkPhase = 0;
+    (scene as any).invulnerable = 1.0;
+    (scene as any).blinkPhase = 0;
 
     // Now push the player into a different enemy — should be ignored due to invulnerability.
     placePlayerAtEntity(scene, target);
@@ -1536,7 +1536,7 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
 
     // Clear the invulnerability window set by the first hit so the
     // second collision is not silently skipped.
-    (scene as any).playerInvulnerable = 0;
+    (scene as any).invulnerable = 0;
 
     // Push into second enemy.
     const e2 = scene.formationEntities[1];
