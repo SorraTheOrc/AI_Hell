@@ -194,3 +194,135 @@ describe('GameOverScene — leaderboard stub (AC3)', () => {
     booted.game.destroy(true);
   });
 });
+describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function boot(): Promise<GameOverScene> {
+    booted = await bootScene([GameOverScene, MenuScene]);
+    return booted.scene as GameOverScene;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: GameOverScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** The rendered initials field (text '___' while empty). */
+  function initialsField(scene: GameOverScene): Phaser.GameObjects.Text {
+    const found = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === '___',
+    );
+    expect(found).toBeDefined();
+    return found!;
+  }
+
+  it('AC1 — initials field is focused by default with a visible highlight', async () => {
+    const scene = await boot();
+    expect(scene.getFocusedIndex()).toBe(0);
+    expect(scene.getControlCount()).toBe(2);
+    expect(initialsField(scene).style.stroke).toBeTruthy();
+  });
+
+  it('AC2 — Tab moves focus from initials to the Return to Menu button', async () => {
+    const scene = await boot();
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedIndex()).toBe(1);
+  });
+
+  it('AC2 — Shift+Tab moves focus back to the initials field', async () => {
+    const scene = await boot();
+    pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab', shiftKey: true });
+    expect(scene.getFocusedIndex()).toBe(0);
+  });
+
+  it('AC5 — A–Z and Backspace edit the initials while the field is focused', async () => {
+    const scene = await boot();
+    pressKey(scene, { key: 'a' });
+    pressKey(scene, { key: 'B' });
+    pressKey(scene, { key: 'c' });
+    expect(scene.getInitials()).toBe('ABC');
+
+    pressKey(scene, { key: 'Backspace' });
+    expect(scene.getInitials()).toBe('AB');
+  });
+
+  it('AC5 — letters do not type while the button is focused', async () => {
+    const scene = await boot();
+    pressKey(scene, { key: 'Tab' }); // focus button
+    expect(scene.getFocusedIndex()).toBe(1);
+    pressKey(scene, { key: 'X' });
+    expect(scene.getInitials()).toBe('');
+  });
+
+  it('AC4 — Enter auto-submits complete initials and returns to the menu', async () => {
+    const scene = await boot();
+    scene.init({ score: 777 });
+    pressKey(scene, { key: 'A' });
+    pressKey(scene, { key: 'B' });
+    pressKey(scene, { key: 'C' });
+
+    pressKey(scene, { key: 'Enter' });
+    expect(readLeaderboard()).toEqual([{ initials: 'ABC', score: 777 }]);
+
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('AC4 — Enter with incomplete initials does NOT return to the menu', async () => {
+    const scene = await boot();
+    pressKey(scene, { key: 'A' });
+    pressKey(scene, { key: 'Enter' });
+
+    await new Promise((r) => setTimeout(r, 200));
+    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    expect(readLeaderboard()).toEqual([]);
+  });
+
+  it('AC3 — Enter on the focused button submits complete initials and returns', async () => {
+    const scene = await boot();
+    scene.init({ score: 321 });
+    pressKey(scene, { key: 'A' });
+    pressKey(scene, { key: 'B' });
+    pressKey(scene, { key: 'C' });
+    pressKey(scene, { key: 'Tab' }); // focus button
+    expect(scene.getFocusedIndex()).toBe(1);
+
+    pressKey(scene, { key: 'Enter' });
+    expect(readLeaderboard()).toEqual([{ initials: 'ABC', score: 321 }]);
+
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('AC3 — Space on the button returns to the menu even without complete initials', async () => {
+    const scene = await boot();
+    pressKey(scene, { key: 'Tab' }); // focus button
+    pressKey(scene, { key: ' ' });
+
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(readLeaderboard()).toEqual([]);
+  });
+
+  it('AC6 — pointerdown on the button still returns to the menu', async () => {
+    const scene = await boot();
+    const button = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === '←  Return to Menu',
+    );
+    button!.emit('pointerdown');
+
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+});

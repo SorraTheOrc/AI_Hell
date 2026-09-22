@@ -4,6 +4,12 @@
  * Displays the final score, prompts for a 3-character initials entry
  * (leaderboard stub), and provides a "Return to Menu" button.
  *
+ * Keyboard navigation (AH-0MU9LKQEP008LCX9-C3) is provided by the shared
+ * {@link FocusManager}: the initials field is focused by default, Tab and
+ * the arrow keys move focus to the Return to Menu button (and back), and
+ * Enter/Space activate the focused control. A–Z and Backspace edit the
+ * initials while the field is focused. Pointer handlers are unchanged.
+ *
  * The leaderboard section is stubbed — it persists entries to localStorage
  * (`ai_hell_leaderboard`) as a placeholder until AH-0MU6VSKZT006HBTR is
  * completed.
@@ -12,6 +18,7 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { FocusManager } from '../utils/focusManager';
 
 /** Neon-cyan colour for game over text. */
 const GAME_OVER_COLOR = '#00ffff';
@@ -96,6 +103,12 @@ export class GameOverScene extends Phaser.Scene {
   /** The visible initials text game object. */
   private initialsText: Phaser.GameObjects.Text | null = null;
 
+  /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
+  private focusManager = new FocusManager();
+
+  /** Focus index of the initials field (registration order: 0). */
+  private initialsFocusIndex = 0;
+
   constructor() {
     super('GameOverScene');
     this.won = false;
@@ -112,6 +125,8 @@ export class GameOverScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.focusManager = new FocusManager();
+
     // ── Background ───────────────────────────────────────────────
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
 
@@ -189,19 +204,60 @@ export class GameOverScene extends Phaser.Scene {
       this.scene.start('MenuScene');
     });
 
-    // ── Keyboard input for initials (thin DOM bridge) ────────────
+    // ── Keyboard focus (AH-0MU9LKQEP008LCX9-C3) ──────────────────
+    // The initials field is registered first, so it is focused by default.
+    // Text keys (A–Z / Backspace) are routed to the initials model only
+    // while the field is focused; all focus keys are owned by the manager.
+    const initialsField = this.initialsText;
+    if (initialsField) {
+      this.initialsFocusIndex = this.focusManager.register(
+        initialsField,
+        () => this.submitInitials(),
+      );
+    }
+    this.focusManager.register(menuButton, () =>
+      this.submitScoreAndReturn(),
+    );
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      this.handleInitialsKey(event.key);
+      this.handleKey(event);
     });
 
     // ── Hygiene on shutdown: drop transient input state. ──────────
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.focusManager.shutdown();
       this.initials = '';
       this.initialsText = null;
     });
   }
 
   // ── Public input model (unit-testable without real key events) ─
+
+  /**
+   * Routes one keyboard event: while the initials field is focused, A–Z
+   * and Backspace edit the initials; everything else (Tab / arrows /
+   * Enter / Space) is handled by the shared focus manager. Returns true
+   * when the key was consumed.
+   */
+  handleKey(event: KeyboardEvent): boolean {
+    if (event.repeat) return false;
+    if (this.focusManager.getFocusedIndex() === this.initialsFocusIndex) {
+      if (isInitialsLetter(event.key) || event.key === 'Backspace') {
+        this.handleInitialsKey(event.key);
+        return true;
+      }
+    }
+    return this.focusManager.handleKey(event);
+  }
+
+  /** Focus index of the currently focused control (−1 when none). */
+  getFocusedIndex(): number {
+    return this.focusManager.getFocusedIndex();
+  }
+
+  /** Number of focusable controls (initials field + Return to Menu). */
+  getControlCount(): number {
+    return this.focusManager.getControlCount();
+  }
 
   /** The initials entered so far (0–3 A–Z characters). */
   getInitials(): string {
@@ -238,11 +294,32 @@ export class GameOverScene extends Phaser.Scene {
       return true;
     }
     if (key === 'Enter' && this.initials.length === INITIALS_LENGTH) {
-      saveScoreEntry({ initials: this.initials, score: this.finalScore });
-      this.scene.start('MenuScene');
+      this.submitInitials();
       return true;
     }
     return false;
+  }
+
+  /**
+   * Submits the score and returns to the menu when the initials are
+   * complete; a no-op otherwise. This is the action for the initials field
+   * (Enter auto-submit, AC4).
+   */
+  submitInitials(): void {
+    if (this.initials.length !== INITIALS_LENGTH) return;
+    saveScoreEntry({ initials: this.initials, score: this.finalScore });
+    this.scene.start('MenuScene');
+  }
+
+  /**
+   * Returns to the menu from the Return to Menu button, persisting the
+   * score first when the initials are complete (AC3).
+   */
+  submitScoreAndReturn(): void {
+    if (this.initials.length === INITIALS_LENGTH) {
+      saveScoreEntry({ initials: this.initials, score: this.finalScore });
+    }
+    this.scene.start('MenuScene');
   }
 
   // ── Rendering helpers ──────────────────────────────────────────

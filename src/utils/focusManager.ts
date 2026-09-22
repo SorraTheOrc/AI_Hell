@@ -241,14 +241,26 @@ export class FocusManager {
   attachKeyboard(scene: Phaser.Scene): void {
     this._scene = scene;
     this._keyHandler = (event: KeyboardEvent) => {
-      if (event.repeat) return;
-
-      const handled = this._handleKey(event);
-      if (handled && typeof event.preventDefault === 'function') {
-        event.preventDefault();
-      }
+      this.handleKey(event);
     };
     scene.input.keyboard?.on('keydown', this._keyHandler);
+  }
+
+  /**
+   * Processes one keydown event and returns whether it was consumed.
+   *
+   * Tab / Shift+Tab / arrow keys cycle focus (wrap-around); Enter / Space
+   * activate the focused control. Scenes with additional text-input
+   * handling (for example an initials field) can call this directly instead
+   * of {@link attachKeyboard}, routing text keys themselves first.
+   */
+  handleKey(event: KeyboardEvent): boolean {
+    if (event.repeat) return false;
+    const handled = this._handleKey(event);
+    if (handled && typeof event.preventDefault === 'function') {
+      event.preventDefault();
+    }
+    return handled;
   }
 
   /**
