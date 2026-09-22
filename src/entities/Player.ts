@@ -179,8 +179,8 @@ export class Player extends Phaser.GameObjects.Graphics {
   // countdown from collection and its own per-weapon fire cooldown
   // (GDD §4.4 revision).
 
-  /** Permanent weapons — always active, never expire (currently only the cannon). */
-  private readonly _permanentWeapons: ReadonlySet<WeaponId> = new Set(['cannon']);
+  /** Permanent weapons — always active, never expire (cannon + chosen permanents). */
+  private readonly _permanentWeapons: Set<WeaponId> = new Set(['cannon']);
   /** Collected timed weapons → remaining lifetime in ms (10 s each, independent countdown). */
   private _weaponTimers: Map<WeaponId, number> = new Map();
   /** Per-weapon fire cooldown in ms — each active weapon fires at its own rate (0 = ready). */
@@ -567,12 +567,23 @@ export class Player extends Phaser.GameObjects.Graphics {
    * cannon is permanent and collecting it is a no-op.
    *
    * @param weaponId — The weapon power-up to add ('spread' | 'dual' | 'rapid').
+   * @param permanent — When true, the weapon is granted permanently for the
+   *   current run (used by the hold-full choice) and never expires.
    */
-  equipWeapon(weaponId: WeaponId): void {
+  equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!isTimedWeapon(weaponId)) {
       return; // cannon is always active and never times out (AC2)
     }
     if (!WEAPON_CATALOGUE[weaponId]) {
+      return;
+    }
+    if (permanent) {
+      // Permanent for the run: active forever, no countdown to tick down.
+      this._permanentWeapons.add(weaponId);
+      this._weaponTimers.delete(weaponId);
+      this._weaponCooldowns.delete(weaponId);
+      this._primaryWeapon = weaponId;
+      this._readyFire(weaponId);
       return;
     }
     // Fresh independent 10 s countdown from the moment of collection (AC2).
@@ -585,10 +596,15 @@ export class Player extends Phaser.GameObjects.Graphics {
    * Clears all timed weapons (Spread, Dual, Rapid), leaving only the
    * permanent cannon (AC4 — Reset power-up). The Reset power-up itself
    * is never a weapon and is never added to the active set.
+   *
+   * Also clears any hold-full choice weapons granted permanently for the
+   * run — a Reset returns the ship to the bare cannon.
    */
   resetWeapon(): void {
     this._weaponTimers.clear();
     this._weaponCooldowns.clear();
+    this._permanentWeapons.clear();
+    this._permanentWeapons.add('cannon');
     this._primaryWeapon = 'cannon';
     this._readyFire('cannon');
   }
