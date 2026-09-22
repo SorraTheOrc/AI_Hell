@@ -39,12 +39,15 @@ export class GymIndex extends Phaser.Scene {
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
-    // Genuine scene entries (GymPlayer, GymBoss, etc.). Filter out
+    // Genuine scene entries (GymPlayer, etc.). Filter out
     // GymEnemies — it is no longer listed as a bare scene; individual
-    // enemies appear via the per-config list below instead. Keeps the
-    // index focused (one entry per enemy archetype, not a redundant blob).
+    // enemies appear via the per-config list below instead. Filter out
+    // GymBoss — the boss belongs in the enemy list as a single entry
+    // rather than appearing as a separate scene (AH-0MUAYB28C004KK7X).
     const all = discoverGymScenes(loadGymSceneModules());
-    this.entries = all.filter((e) => e.key !== 'GymEnemies');
+    this.entries = all.filter(
+      (e) => e.key !== 'GymEnemies' && e.key !== 'GymBoss',
+    );
     for (const entry of this.entries) {
       if (!this.scene.manager.getScene(entry.key)) {
         const sceneClass = sceneClassFromModule(entry.module, entry.key);
@@ -54,9 +57,10 @@ export class GymIndex extends Phaser.Scene {
 
     // Enemy-config entries — one per saved/seed archetype, routed to
     // GymEnemies with the enemyKey param. Ensure GymEnemies is registered
-    // once (so scene.start('GymEnemies', { enemyKey }) works). Filter out
-    // boss — the dedicated GymBoss scene is the canonical entry (AH-0MUAYB28C004KK7X).
-    this.enemyEntries = discoverEnemyGymEntries().filter((e) => e.enemyKey !== 'boss');
+    // once (so scene.start('GymEnemies', { enemyKey }) works). The boss
+    // entry appears here (label "Boss") as the canonical boss enemy
+    // entry; GymBoss scene is filtered from the scene list above.
+    this.enemyEntries = discoverEnemyGymEntries();
     if (this.enemyEntries.length > 0 && !this.scene.manager.getScene('GymEnemies')) {
       // Reuse the class discovered via glob if available; otherwise lazy import.
       const enemiesModule = all.find((e) => e.key === 'GymEnemies')?.module;
