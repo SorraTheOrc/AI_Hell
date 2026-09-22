@@ -13,7 +13,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
-import { GameOverScene } from './GameOverScene';
+import { GameOverScene, readLeaderboard } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -210,5 +210,127 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     clickText(over, '←  Return to Menu');
     await sleep(300);
     expect(game.scene.isActive('MenuScene')).toBe(true);
+  });
+});
+describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () => {
+  let game: Phaser.Game | null = null;
+
+  afterEach(() => {
+    game?.destroy(true);
+    game = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+  });
+
+  /** Dispatches a keydown through a scene's keyboard plugin. */
+  function pressKey(scene: Phaser.Scene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** Kills the player in PlayScene, landing on GameOverScene. */
+  async function die(play: PlayScene, gameInstance: Phaser.Game): Promise<void> {
+    const gs = play.getGameState();
+    gs.lives = 1;
+    const player = play.getPlayer()!;
+    play.spawnEnemyBullet(player.x, player.y, 0, 0);
+    play.tick(0.016);
+    await sleep(300);
+    expect(gameInstance.scene.isActive('GameOverScene')).toBe(true);
+  }
+
+  it('AC1+AC2+AC3 — the full loop is drivable by keyboard (no pointer events)', async () => {
+    game = await bootAllGames();
+    const menu = game.scene.getScene('MenuScene');
+    expect(game.scene.isActive('MenuScene')).toBe(true);
+
+    // Menu → PlayScene: Play Game is focused by default.
+    pressKey(menu, { key: 'Enter' });
+    await sleep(300);
+    expect(game.scene.isActive('PlayScene')).toBe(true);
+    expect(game.scene.isActive('MenuScene')).toBe(false);
+
+    // Earn a score, then die.
+    const play = game.scene.getScene('PlayScene') as PlayScene;
+    const enemy = play.getEnemies().find((e) => e.alive)!;
+    play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    play.tick(0.016);
+    const scoreAtDeath = play.getGameState().score;
+    expect(scoreAtDeath).toBeGreaterThan(0);
+    await die(play, game);
+
+    // GameOver: type initials by keyboard, Tab to the button, Enter to return.
+    const over = game.scene.getScene('GameOverScene') as GameOverScene;
+    // Score is handed off from PlayScene to GameOverScene (AC3).
+    expect(over.getFinalScore()).toBe(scoreAtDeath);
+    pressKey(over, { key: 'a' });
+    pressKey(over, { key: 'b' });
+    pressKey(over, { key: 'c' });
+    expect(over.getInitials()).toBe('ABC');
+    pressKey(over, { key: 'Tab' });
+    expect(over.getFocusedIndex()).toBe(1);
+    pressKey(over, { key: 'Enter' });
+    await sleep(300);
+
+    expect(game.scene.isActive('MenuScene')).toBe(true);
+    expect(game.scene.isActive('GameOverScene')).toBe(false);
+    expect(readLeaderboard()).toContainEqual({ initials: 'ABC', score: scoreAtDeath });
+  });
+
+  it('AC2 — Enter auto-submits the initials without reaching the button', async () => {
+    game = await bootAllGames();
+    const menu = game.scene.getScene('MenuScene');
+    pressKey(menu, { key: 'Enter' });
+    await sleep(300);
+
+    const play = game.scene.getScene('PlayScene') as PlayScene;
+    await die(play, game);
+
+    const over = game.scene.getScene('GameOverScene') as GameOverScene;
+    pressKey(over, { key: 'x' });
+    pressKey(over, { key: 'y' });
+    pressKey(over, { key: 'z' });
+    pressKey(over, { key: 'Enter' });
+    await sleep(300);
+
+    expect(game.scene.isActive('MenuScene')).toBe(true);
+    expect(readLeaderboard()).toContainEqual({ initials: 'XYZ', score: 0 });
+  });
+
+  it('AC4 — repeated keyboard-driven sessions leave no stale state', async () => {
+    game = await bootAllGames();
+
+    for (let i = 0; i < 2; i++) {
+      const menu = game.scene.getScene('MenuScene');
+      pressKey(menu, { key: 'Enter' });
+      await sleep(300);
+
+      const play = game.scene.getScene('PlayScene') as PlayScene;
+      if (play.isTransitioning()) play.tick(1.6);
+      play.tick(3);
+      await die(play, game);
+
+      const over = game.scene.getScene('GameOverScene') as GameOverScene;
+      pressKey(over, { key: 'a' });
+      pressKey(over, { key: 'b' });
+      pressKey(over, { key: 'c' });
+      pressKey(over, { key: 'Enter' });
+      await sleep(300);
+      expect(game.scene.isActive('MenuScene')).toBe(true);
+    }
+
+    // Third session boots a clean PlayScene.
+    const menu = game.scene.getScene('MenuScene');
+    pressKey(menu, { key: 'Enter' });
+    await sleep(300);
+
+    const play = game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getEnemyBullets().length).toBe(0);
+    expect(play.getHitCount()).toBe(0);
+    expect(document.querySelectorAll('#game-container canvas')).toHaveLength(1);
   });
 });
