@@ -13,6 +13,7 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
+import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { GameOverScene } from './GameOverScene';
@@ -1485,6 +1486,60 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     await collectDropInPlay(scene, 'reset');
     expect(resetSound).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Collection absorb VFX + pop SFX (AH-0MUBYXR280018HST) ────────
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+
+    // The VFX is started with the drop's position and kept alive — not
+    // destroyed on the collection frame.
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).toHaveLength(0); // removed from active drops
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    for (let i = 0; i < 10; i++) scene.tick(0.05);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false); // destroyed on completion
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootPlay();
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    // Keep ticking while the drop is absorbed — it must not re-collect.
+    for (let i = 0; i < 4; i++) scene.tick(0.05);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 
   // ── Per-enemy destruction audio (AH-0MU8QW2XS001HE2A) ───────────

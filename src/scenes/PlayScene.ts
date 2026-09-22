@@ -46,6 +46,7 @@ import {
   playDualPickupSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
+  playPowerUpCollectPopSound,
   playPowerUpCollectSound,
   playRapidFireSound,
   playRapidPickupSound,
@@ -76,6 +77,10 @@ import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../po
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import { applyMagnetAttraction } from '../powerups/magnet';
+import {
+  spawnCollectAnimation,
+  type CollectAnimationHandle,
+} from '../powerups/collectAnimation';
 import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
 import {
   findTeleportDestination,
@@ -206,6 +211,11 @@ interface PlayDrop {
   x: number;
   y: number;
   graphics: Phaser.GameObjects.Graphics;
+  /**
+   * True once the drop has been collected and is playing its absorb VFX —
+   * the overlap gate must not re-collect it (AC5, AH-0MUBYXR280018HST).
+   */
+  absorbing?: boolean;
 }
 
 /**
@@ -230,6 +240,8 @@ export class PlayScene extends Phaser.Scene {
   private enemyBullets: PlayEnemyBullet[] = [];
   private playerBullets: PlayerBullet[] = [];
   private drops: PlayDrop[] = [];
+  /** In-flight absorb animations for collected drops (AH-0MUBYXR280018HST). */
+  private collectAnimations: CollectAnimationHandle[] = [];
   /** Live mineral collectables on the field (GDD §4.5). */
   private minerals: Mineral[] = [];
   /** Whether the hold-full power-up choice is currently open. */
@@ -404,6 +416,10 @@ export class PlayScene extends Phaser.Scene {
     this.enemyBullets = [];
     this.playerBullets = [];
     this.drops = [];
+    // Release any in-flight absorb animations — their drops are no longer
+    // in `this.drops`, so this is their only teardown path.
+    for (const anim of this.collectAnimations) anim.destroy();
+    this.collectAnimations = [];
     this.minerals = [];
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
@@ -454,6 +470,8 @@ export class PlayScene extends Phaser.Scene {
     this.playerBullets = [];
     for (const d of this.drops) d.graphics.destroy();
     this.drops = [];
+    for (const anim of this.collectAnimations) anim.destroy();
+    this.collectAnimations = [];
     for (const m of this.minerals) m.destroy();
     this.minerals = [];
     for (const e of this.playerExplosions) e.destroy();
@@ -1358,6 +1376,8 @@ export class PlayScene extends Phaser.Scene {
 
     const kept: PlayDrop[] = [];
     for (const drop of this.drops) {
+      // An absorbing drop is owned by its animation — never re-process it.
+      if (drop.absorbing) continue;
       drop.powerUp.advance(dt);
       drop.graphics.setScale(drop.powerUp.currentScale);
       if (drop.powerUp.state === PowerUpState.DESPAWNED) {
@@ -1368,6 +1388,26 @@ export class PlayScene extends Phaser.Scene {
       kept.push(drop);
     }
     this.drops = kept;
+
+    // Advance the absorb VFX for collected drops (cosmetic only — the
+    // gameplay effect already fired on overlap, AC1/AC4).
+    this._updateCollectAnimations(dt);
+  }
+
+  /**
+   * Advances every in-flight absorb animation, re-pointing it at the ship's
+   * current world position, and prunes those that complete (the animation
+   * destroys its own Graphics on completion).
+   */
+  private _updateCollectAnimations(dt: number): void {
+    if (this.collectAnimations.length === 0) return;
+    const kept: CollectAnimationHandle[] = [];
+    for (const handle of this.collectAnimations) {
+      if (this.player) handle.setAttractor(this.player.x, this.player.y);
+      handle.update(dt);
+      if (!handle.isComplete()) kept.push(handle);
+    }
+    this.collectAnimations = kept;
   }
 
   /** P9: pulls collectible drops within range toward the player ship. */
@@ -1381,6 +1421,7 @@ export class PlayScene extends Phaser.Scene {
   /** Collects the drop when it overlaps the player's hull. */
   private _collectIfOverlapping(drop: PlayDrop): boolean {
     if (!this.player) return false;
+    if (drop.absorbing) return false;
     if (!drop.powerUp.canCollect()) return false;
     const hull = SHIP_SIZE / 2;
     const radius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
@@ -1414,8 +1455,31 @@ export class PlayScene extends Phaser.Scene {
         this.effectsRegistry.setLives(this.gameState.lives);
       }
     }
-    drop.graphics.destroy();
+    // Collection confirmed — mark the drop so the overlap gate can never
+    // re-collect it while the absorb animation plays (AC5).
+    drop.absorbing = true;
+    // Start the cosmetic "sucked into the ship" absorb; the Graphics stays
+    // alive until the animation completes, then is destroyed (AC3, AC4).
+    this._startCollectAnimation(drop);
     this._playPickupCue(drop);
+  }
+
+  /**
+   * Starts the absorb animation for a collected drop, using the ship's
+   * current world position as the attractor. The helper degrades to a safe
+   * no-op when the Graphics is unavailable.
+   */
+  private _startCollectAnimation(drop: PlayDrop): void {
+    const shipX = this.player?.x ?? drop.x;
+    const shipY = this.player?.y ?? drop.y;
+    const handle = spawnCollectAnimation(
+      drop.graphics,
+      drop.x,
+      drop.y,
+      shipX,
+      shipY,
+    );
+    this.collectAnimations.push(handle);
   }
 
   /**
@@ -1427,6 +1491,9 @@ export class PlayScene extends Phaser.Scene {
    */
   private _playPickupCue(drop: PlayDrop): void {
     try {
+      // Generic collection pop — immediate tactile feedback on every pickup
+      // (AH-0MUBYXR280018HST); plays alongside the per-type cue below.
+      playPowerUpCollectPopSound();
       if (drop.weaponDropId) {
         switch (drop.weaponDropId) {
           case 'reset':
@@ -1824,6 +1891,11 @@ export class PlayScene extends Phaser.Scene {
   /** Live power-up drops. */
   getDrops(): PlayDrop[] {
     return this.drops.slice();
+  }
+
+  /** In-flight absorb animations for collected drops (test seam). */
+  getCollectAnimations(): CollectAnimationHandle[] {
+    return this.collectAnimations.slice();
   }
 
   /** True while a wave/level transition is in progress. */
