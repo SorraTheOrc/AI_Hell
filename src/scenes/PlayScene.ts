@@ -19,6 +19,7 @@ import Phaser from 'phaser';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  MINERAL_SIZE,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_HIT_SCALE_PEAK,
@@ -62,7 +63,14 @@ import {
 } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import { Asteroid } from '../entities/Asteroid';
+import type { AsteroidSizeTier } from '../entities/Asteroid';
+import { Mineral } from '../entities/Mineral';
 import { EffectsRegistry } from '../powerups/effects';
+import {
+  randomChoiceStrategy,
+  type ChoiceOption,
+  type ChoiceStrategy,
+} from '../powerups/choice';
 import { PowerUp, PowerUpState } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
@@ -222,6 +230,14 @@ export class PlayScene extends Phaser.Scene {
   private enemyBullets: PlayEnemyBullet[] = [];
   private playerBullets: PlayerBullet[] = [];
   private drops: PlayDrop[] = [];
+  /** Live mineral collectables on the field (GDD §4.5). */
+  private minerals: Mineral[] = [];
+  /** Whether the hold-full power-up choice is currently open. */
+  private mineralChoiceOpen = false;
+  /** The options currently offered by the hold-full choice. */
+  private mineralChoiceOptions: ChoiceOption[] = [];
+  /** Pluggable policy that selects the offered options. */
+  private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
 
   /** The Central AI boss, spawned after Level 5 (null until then). */
   private boss: Boss | null = null;
@@ -340,6 +356,9 @@ export class PlayScene extends Phaser.Scene {
     // Start the run.
     this.gameState.startGame();
     this.effectsRegistry.setLives(this.gameState.lives);
+    // Hold capacity comes from the game-rules config (GDD §4.5).
+    this.gameState.mineralCapacity = loadRules().mineralHoldCapacity;
+    this._syncMineralHud();
     this.waveManager.beginGame();
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
@@ -385,6 +404,9 @@ export class PlayScene extends Phaser.Scene {
     this.enemyBullets = [];
     this.playerBullets = [];
     this.drops = [];
+    this.minerals = [];
+    this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
     this.boss = null;
     this.hitCount = 0;
     this.invulnerable = 0;
@@ -432,6 +454,8 @@ export class PlayScene extends Phaser.Scene {
     this.playerBullets = [];
     for (const d of this.drops) d.graphics.destroy();
     this.drops = [];
+    for (const m of this.minerals) m.destroy();
+    this.minerals = [];
     for (const e of this.playerExplosions) e.destroy();
     this.playerExplosions = [];
     this.shieldBubble?.destroy();
@@ -1009,6 +1033,36 @@ export class PlayScene extends Phaser.Scene {
     }
     this.enemyBullets = keptEnemy;
 
+    // 2b. Minerals (GDD §4.5): the player collects them; non-asteroid
+    //     enemies absorb them. Neither contact causes damage, and bullets
+    //     pass straight through (no mineral bullet pass exists).
+    if (this.player) {
+      const hull = SHIP_SIZE / 2;
+      const keptMinerals: Mineral[] = [];
+      for (const mineral of this.minerals) {
+        if (!mineral.alive) continue;
+        if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)) {
+          this._collectMineral(mineral);
+          continue;
+        }
+        let absorbed = false;
+        for (const s of this.spawned) {
+          if (!s.entity.alive || s.enemyKey === 'asteroid') continue;
+          if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
+            s.entity.collectMineral();
+            mineral.handleOverlap('enemy');
+            absorbed = true;
+            break;
+          }
+        }
+        if (!absorbed) keptMinerals.push(mineral);
+      }
+      for (const mineral of this.minerals) {
+        if (!keptMinerals.includes(mineral)) mineral.destroy();
+      }
+      this.minerals = keptMinerals;
+    }
+
     if (!this.player || this.effectsRegistry.isPhased) return;
 
     // 3. Enemy bullets vs player.
@@ -1068,6 +1122,19 @@ export class PlayScene extends Phaser.Scene {
       this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
     }
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    // Mineral drops (GDD §4.5): a destroyed small asteroid leaves a mineral
+    // at the site; large/medium asteroids do not (their small split children
+    // do). A non-asteroid enemy re-drops a fraction of the minerals it
+    // absorbed while alive.
+    if (s.enemyKey === 'asteroid') {
+      if ((s.entity as Asteroid).getSizeTier() === 'small') {
+        this.spawnMineralAt(s.entity.x, s.entity.y);
+      }
+    } else {
+      this.minerals.push(
+        ...s.entity.spawnMineralDrops(s.entity.x, s.entity.y, this.rng),
+      );
+    }
     this._advanceAfterKill();
   }
 
@@ -1798,6 +1865,131 @@ export class PlayScene extends Phaser.Scene {
       this.scene.pause();
       this.scene.launch('PauseScene', { origin: 'PlayScene' });
     }
+  }
+
+  // ── Minerals & the hold-full choice (GDD §4.5) ──────────────────
+
+  /** Live mineral collectables currently on the field (copy). */
+  getMinerals(): Mineral[] {
+    return [...this.minerals];
+  }
+
+  /**
+   * Spawns a mineral collectable at (x, y) and registers it on the field.
+   * Public so the scene wiring and gym can place minerals deterministically.
+   */
+  spawnMineralAt(x: number, y: number): Mineral {
+    const mineral = new Mineral(this, { x, y });
+    this.minerals.push(mineral);
+    return mineral;
+  }
+
+  /**
+   * Spawns an asteroid of the given size tier at (x, y) and registers it as
+   * a wave spawn. Public so tests and the mineral gym can place asteroids
+   * deterministically.
+   */
+  spawnAsteroidAt(x: number, y: number, sizeTier: AsteroidSizeTier): Asteroid {
+    const entity = new Asteroid(this, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+      sizeTier,
+    });
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: 'asteroid',
+      startX: 0,
+      startY: 0,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
+    return entity;
+  }
+
+  /** Whether the hold-full choice overlay is currently open. */
+  isMineralChoiceOpen(): boolean {
+    return this.mineralChoiceOpen;
+  }
+
+  /** The options currently offered by the hold-full choice (copy). */
+  getMineralChoiceOptions(): ChoiceOption[] {
+    return [...this.mineralChoiceOptions];
+  }
+
+  /** Overrides the pluggable choice strategy (see `powerups/choice`). */
+  setMineralChoiceStrategy(strategy: ChoiceStrategy): void {
+    this.mineralChoiceStrategy = strategy;
+  }
+
+  /**
+   * Opens the hold-full power-up choice: draws three distinct options from
+   * the strategy and pauses play at the SceneManager level (mirroring
+   * `PauseScene`), launching `MineralChoiceScene` when it is registered.
+   * Returns the offered options. Idempotent while already open.
+   */
+  openMineralChoice(): ChoiceOption[] {
+    if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, this.rng);
+    this.mineralChoiceOpen = true;
+    this.setPaused(true);
+    if (this.scene.manager.getScene('MineralChoiceScene')) {
+      this.scene.pause();
+      this.scene.launch('MineralChoiceScene', { origin: 'PlayScene' });
+    }
+    return [...this.mineralChoiceOptions];
+  }
+
+  /**
+   * Resolves the hold-full choice: applies the chosen option to the player
+   * permanently for the run, resumes play, and resets the hold to 0 carrying
+   * any overflow (store = collected − capacity). Returns the chosen option,
+   * or null for an out-of-range index.
+   */
+  selectMineralChoice(index: number): ChoiceOption | null {
+    const option = this.mineralChoiceOptions[index];
+    if (!option) return null;
+    this._applyChoicePermanently(option);
+    this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
+    this.gameState.resolveHold();
+    this._syncMineralHud();
+    this.setPaused(false);
+    // Resume the SceneManager-level pause that accompanied the overlay.
+    if (this.scene.manager.getScene('MineralChoiceScene')) {
+      this.scene.resume();
+    }
+    return option;
+  }
+
+  /** Applies a chosen option permanently for the current run. */
+  private _applyChoicePermanently(option: ChoiceOption): void {
+    if (isWeaponDrop(option.id)) {
+      const weaponId = option.id as WeaponId;
+      this.effectsRegistry.applyWeapon(weaponId, true);
+      this.player?.equipWeapon(weaponId, true);
+    } else {
+      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
+    }
+  }
+
+  /** Collects a mineral: adds it to the hold and opens the choice when full. */
+  private _collectMineral(mineral: Mineral): void {
+    if (!mineral.alive) return;
+    mineral.handleOverlap('player');
+    this.gameState.addMinerals(loadRules().mineralCollectAmount);
+    this._syncMineralHud();
+    if (this.gameState.isHoldFull()) this.openMineralChoice();
+  }
+
+  /** Mirrors the GameState hold onto the HUD mineral counter row. */
+  private _syncMineralHud(): void {
+    this.hud?.setMineralStore(
+      this.gameState.minerals,
+      this.gameState.mineralCapacity,
+    );
   }
 
   /** Whether the wave time-limit is currently counting down. */
