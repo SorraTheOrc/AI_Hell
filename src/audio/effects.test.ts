@@ -25,6 +25,8 @@ import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
+  playPowerUpCollectSound,
+  playPowerUpCollectPopSound,
   playDiverFireSound,
   playDiverDestructionSound,
   playDiverDiveStartSound,
@@ -290,6 +292,8 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playSpeedBoostCollectSound,
       playExtraLifeCollectSound,
       playMagnetCollectSound,
+      playPowerUpCollectSound,
+      playPowerUpCollectPopSound,
     ];
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
@@ -628,6 +632,63 @@ describe('player pickup activation cues — oscillator parameters (AC3, AC4, AC6
     expect(oscs[1].type).toBe('sine');
     expect(startFreq([oscs[1]])).toBe(80);
     expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+});
+
+// ── Power-up collection pop SFX (AH-0MUAYB3OU0087H9W) ───────────
+//
+// Parent brief AC1/AC3/AC4: a short (≤ 100 ms), percussive pop that is
+// audibly distinct from the two-tone ascending collection chime.
+
+describe('power-up collection pop SFX — synthesis (AH-0MUBYSNGU0051XVO)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+  });
+
+  it('pop: short percussive sawtooth fall + noise transient, ≤ 100 ms, ≤ 0.2 volume', () => {
+    const snap = snapshot();
+    playPowerUpCollectPopSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Sawtooth transient + noise texture layer.
+    expect(oscs).toHaveLength(2);
+    const pop = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(pop).toBeDefined();
+    expect(pop.freqEvents[0].value).toBe(600);
+    const lastPop = pop.freqEvents[pop.freqEvents.length - 1];
+    expect(lastPop.value).toBe(100);
+    // Stop window includes a 20 ms tail; the core burst is ≤ 100 ms.
+    expect(pop.stopTime! - pop.startTime!).toBeLessThanOrEqual(0.1);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('pop is distinct from the collection chime (no sine two-tone ascent)', () => {
+    const snap = snapshot();
+    playPowerUpCollectSound();
+    const chimeOscs = newOscillators(snap);
+    const chimeOscCount = chimeOscs.length;
+
+    const popSnap = { oscStart: snapshot().oscStart };
+    playPowerUpCollectPopSound();
+    const popOscs = mockCtx().oscillators.slice(popSnap.oscStart);
+
+    // The chime is a sine two-tone ascent; the pop is a sawtooth fall.
+    expect(chimeOscs.every((o) => o.type === 'sine')).toBe(true);
+    const popSaw = popOscs.find((o) => o.type === 'sawtooth')!;
+    expect(popSaw).toBeDefined();
+    expect(popSaw.freqEvents[0].value).toBeGreaterThan(
+      popSaw.freqEvents[popSaw.freqEvents.length - 1].value,
+    );
+    // Sanity: the chime genuinely created oscillators (not a false pass).
+    expect(chimeOscCount).toBeGreaterThan(0);
   });
 });
 

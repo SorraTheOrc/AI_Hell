@@ -586,6 +586,59 @@ export function playPowerUpCollectSound(): void {
 }
 
 /**
+ * Short percussive pop — power-up collection cue (parent AH-0MUAYB3OU0087H9W).
+ *
+ * A very short (≤ 80 ms) sawtooth burst (600 → 100 Hz) layered with
+ * filtered white noise for a tactile "pop" character — distinct from
+ * the existing two-tone ascending chime (`playPowerUpCollectSound()`).
+ * Designed to give players an immediate, satisfying tactile response
+ * on collection. Safe no-op without an AudioContext.
+ */
+export function playPowerUpCollectPopSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const dur = 0.08; // ≤ 100 ms, 80 ms burst
+
+  // Main pop: quick sawtooth fall — punchy transient.
+  const osc = ctx.createOscillator();
+  const oscGain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(600, t);
+  osc.frequency.exponentialRampToValueAtTime(100, t + dur);
+  oscGain.gain.setValueAtTime(0.15, t);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(oscGain).connect(ensureMasterGain(ctx));
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+
+  // Noise texture: adds the sharp transient "thwack" of a pop.
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'highpass';
+  noiseFilter.frequency.setValueAtTime(2000, t);
+  noiseFilter.Q.setValueAtTime(1.0, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.1, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.8);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + dur + 0.02);
+}
+
+/**
  * A distinctive whoosh — weapon change cue (weapon power-up collected,
  * replacing the current weapon).  Different from the collection chime
  * to signal "armed with new weapon".
