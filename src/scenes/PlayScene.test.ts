@@ -396,7 +396,6 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const scene = await bootPlay();
     waveVfx.scales.length = 0;
     const livesBefore = scene.getGameState().lives;
-    const aliveBefore = scene.getAliveCount();
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
@@ -470,7 +469,6 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     waveVfx.scales.length = 0;
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
-    const nonAsteroidCount = scene.getAliveCount() - asteroids.length;
 
     // Time out the wave.
     scene.setWaveTimerRemaining(0.05);
@@ -532,7 +530,6 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const wm = scene.getWaveManager();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
-    const asteroidCount = asteroids.length;
 
     // Time out the wave to trigger transition.
     scene.setWaveTimerRemaining(0.05);
@@ -545,6 +542,97 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // re-registered asteroids add them back.
     const aliveCount = scene.getAliveCount();
     expect(wm.enemiesAlive).toBe(aliveCount);
+  });
+
+  // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
+
+  it('AH-0MUCG5SWH008104P AC1 — carried-over asteroids continue moving during transition', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroid = asteroids[0];
+
+    // Time out the wave to enter the transition period.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // Tick through the transition; the asteroid should move.
+    const xMid = asteroid.x;
+    const yMid = asteroid.y;
+    scene.tick(LEVEL_TRANSITION_SECONDS * 0.5);
+
+    // Position changed — asteroid is moving during transition.
+    expect(Math.abs(asteroid.x - xMid)).toBeGreaterThan(0);
+    expect(Math.abs(asteroid.y - yMid)).toBeGreaterThan(0);
+  });
+
+  it('AH-0MUCG5SWH008104P AC3 — ramming a carried-over asteroid during transition costs a life', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroid = asteroids[0];
+    const livesAtBoot = scene.getGameState().lives;
+
+    // Time out the wave to enter the transition period.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+    // The timeout penalty costs one life and grants brief invulnerability.
+    expect(scene.getGameState().lives).toBe(livesAtBoot - 1);
+
+    // Clear the post-hit invulnerability so the ram can register during
+    // the transition (test seam; invulnerability itself is covered elsewhere).
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    // Park the ship on the asteroid (mirrors the scout/asteroid ram tests);
+    // the internal movement state must be updated too or physics moves it back.
+    const player = scene.getPlayer()!;
+    player.setPosition(asteroid.x, asteroid.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: { x: number; y: number } })._movementState =
+      { ...state, x: asteroid.x, y: asteroid.y };
+    scene.tick(0.001);
+
+    // Ramming during the transition costs another life and destroys the asteroid.
+    expect(scene.getGameState().lives).toBe(livesAtBoot - 2);
+    expect(asteroid.alive).toBe(false);
+  });
+
+  it('AH-0MUCG5SWH008104P AC4 — no new enemy bullets spawn and no further life is lost during transition', async () => {
+    const scene = await bootPlay();
+
+    // Time out the wave to enter the transition period.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+    const livesAfterTimeout = scene.getGameState().lives;
+    const enemyBulletsAtTransitionStart = scene.getEnemyBullets().length;
+
+    // Tick through the transition (player not overlapping any asteroid).
+    scene.tick(LEVEL_TRANSITION_SECONDS * 0.5);
+
+    // Enemy fire is suspended — no new enemy bullets spawn during transition.
+    expect(scene.getEnemyBullets().length).toBeLessThanOrEqual(enemyBulletsAtTransitionStart);
+    // No further life is lost during the transition.
+    expect(scene.getGameState().lives).toBe(livesAfterTimeout);
+  });
+
+  it('AH-0MUCG5SWH008104P AC5 — un-destroyed carried-over asteroids persist after transition', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+
+    // Time out the wave.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // Let the transition complete.
+    finishTransition(scene);
+
+    // The carried-over asteroid(s) are still alive after the transition.
+    expect(findAsteroids(scene).length).toBe(asteroids.length);
   });
 
   // ── Power-up drop separation (AH-0MU7JTFM5000R4ME) ─────────────
