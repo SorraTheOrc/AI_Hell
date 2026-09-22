@@ -74,7 +74,6 @@ import {
   type TeleportBody,
 } from '../powerups/teleport';
 import { HUD } from '../ui/HUD';
-import { addBackToIndexButton } from '../utils/gymNavigation';
 import { angleToVelocity, createBulletsFromHeading, type WeaponId } from '../utils/weapons';
 import {
   AsteroidsInputHandler,
@@ -322,7 +321,6 @@ export class PlayScene extends Phaser.Scene {
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
 
     this._buildHudText();
-    addBackToIndexButton(this);
 
     // ESC toggles the pause menu (parent AH-0MU9LPZ0G0015292). Registered
     // here because the keyboard plugin is torn down on scene shutdown, so
