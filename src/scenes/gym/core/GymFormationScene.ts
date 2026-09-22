@@ -19,6 +19,7 @@ import Phaser from 'phaser';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  MINERAL_SIZE,
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_HIT_SCALE_PEAK,
@@ -86,6 +87,13 @@ import {
 } from '../../../powerups/types';
 import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
+import { Mineral } from '../../../entities/Mineral';
+import { Asteroid } from '../../../entities/Asteroid';
+import {
+  randomChoiceStrategy,
+  type ChoiceOption,
+  type ChoiceStrategy,
+} from '../../../powerups/choice';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -379,6 +387,21 @@ export class GymFormationScene<
   private effectsRegistry = new EffectsRegistry();
   /** Standalone HUD rendering the active effects (null when disabled). */
   private hud: HUD | null = null;
+
+  // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
+
+  /** Live mineral collectables seeded across the play area. */
+  private minerals: Mineral[] = [];
+  /** Cumulative minerals seeded since the gym started. */
+  private mineralsSeeded = 0;
+  /** Run-scoped mineral hold for the gym demo. */
+  private mineralHold = 0;
+  /** Hold capacity (from the game-rules config). */
+  private mineralCapacity = 20;
+  /** Whether the hold-full choice overlay is currently open. */
+  private mineralChoiceOpen = false;
+  /** Pluggable choice strategy for the hold-full overlay. */
+  private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
   /** S / ↓ keys consumed by the P7 teleport (only when a player exists). */
   private teleportKey: Phaser.Input.Keyboard.Key | undefined;
   private downKey: Phaser.Input.Keyboard.Key | undefined;
@@ -457,6 +480,9 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
+    // ── Mineral layer: seed 100 random minerals + HUD counter ───────
+    this._initMineralLayer();
+
     // Ensure any stale countdown state from a prior create() (e.g. after
     // a manual _onRespawn that rebuilt the formation) is cleared so a
     // fresh scene never starts mid-countdown.
@@ -504,6 +530,10 @@ export class GymFormationScene<
       for (const drop of this.powerUpDrops) drop.graphics.destroy();
       this.powerUpDrops = [];
       this.powerUpSpawnCount = 0;
+      for (const mineral of this.minerals) mineral.destroy();
+      this.minerals = [];
+      this.mineralHold = 0;
+      this.mineralChoiceOpen = false;
       this.hud?.destroy();
       this.hud = null;
       this.teleportKey = undefined;
@@ -945,6 +975,161 @@ export class GymFormationScene<
     return this.hud;
   }
 
+  // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
+
+  /**
+   * Seeds `count` random mineral collectables across the play area
+   * (default 100 for the gyms). Returns the spawned minerals.
+   */
+  seedMinerals(count: number): Mineral[] {
+    const seeded: Mineral[] = [];
+    for (let i = 0; i < count; i++) {
+      const x = 20 + Math.random() * (GAME_WIDTH - 40);
+      const y = 20 + Math.random() * (GAME_HEIGHT - 120);
+      const mineral = new Mineral(this, { x, y });
+      this.minerals.push(mineral);
+      seeded.push(mineral);
+    }
+    this.mineralsSeeded += count;
+    return seeded;
+  }
+
+  /** Cumulative number of minerals seeded since the gym started. */
+  getSeededMineralCount(): number {
+    return this.mineralsSeeded;
+  }
+
+  /** Live mineral collectables currently on the field (copy). */
+  getMinerals(): Mineral[] {
+    return [...this.minerals];
+  }
+
+  /** Current gym mineral hold value. */
+  getMineralHold(): number {
+    return this.mineralHold;
+  }
+
+  /** Current gym mineral hold capacity. */
+  getMineralCapacity(): number {
+    return this.mineralCapacity;
+  }
+
+  /** Whether the hold-full choice overlay is open. */
+  isMineralChoiceOpen(): boolean {
+    return this.mineralChoiceOpen;
+  }
+
+  /** Overrides the pluggable choice strategy. */
+  setMineralChoiceStrategy(strategy: ChoiceStrategy): void {
+    this.mineralChoiceStrategy = strategy;
+  }
+
+  /** Creates the mineral HUD and seeds the field; called from `create()`. */
+  private _initMineralLayer(): void {
+    this.mineralCapacity = loadRules().mineralHoldCapacity;
+    this.mineralHold = 0;
+    this.mineralChoiceOpen = false;
+    this.mineralsSeeded = 0;
+    if (!this.hud) {
+      this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    }
+    this.hud.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this.seedMinerals(100);
+  }
+
+  /**
+   * Player collects overlapping minerals into the hold; non-asteroid
+   * enemies absorb them. Asteroids are inert to minerals.
+   */
+  private _updateMinerals(): void {
+    if (this.minerals.length === 0) return;
+    const hull = SHIP_SIZE / 2;
+    const kept: Mineral[] = [];
+    for (const mineral of this.minerals) {
+      if (!mineral.alive) continue;
+
+      if (
+        this.player &&
+        this._collide(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)
+      ) {
+        mineral.handleOverlap('player');
+        this.mineralHold = Math.min(
+          this.mineralCapacity,
+          this.mineralHold + loadRules().mineralCollectAmount,
+        );
+        this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
+        if (this.mineralHold >= this.mineralCapacity && !this.mineralChoiceOpen) {
+          this.openMineralChoice();
+        }
+        continue;
+      }
+
+      let absorbed = false;
+      for (const entity of this.entities) {
+        if (!entity.alive || entity instanceof Asteroid) continue;
+        const collector = entity as unknown as { collectMineral?: () => void };
+        if (!collector.collectMineral) continue;
+        if (
+          this._collide(
+            mineral.x,
+            mineral.y,
+            MINERAL_SIZE,
+            entity.x,
+            entity.y,
+            entity.getHitRadius(),
+          )
+        ) {
+          collector.collectMineral();
+          mineral.handleOverlap('enemy');
+          absorbed = true;
+          break;
+        }
+      }
+      if (!absorbed) kept.push(mineral);
+    }
+    for (const mineral of this.minerals) {
+      if (!kept.includes(mineral)) mineral.destroy();
+    }
+    this.minerals = kept;
+  }
+
+  /**
+   * Opens the hold-full choice overlay, pausing the gym scene and launching
+   * `MineralChoiceScene`. The pick is applied permanently and the hold reset.
+   */
+  openMineralChoice(): ChoiceOption[] {
+    if (this.mineralChoiceOpen) return [];
+    const options = this.mineralChoiceStrategy.choose(3);
+    this.mineralChoiceOpen = true;
+    this.scene.launch('MineralChoiceScene', {
+      options,
+      onSelect: (index: number) => this.selectMineralChoice(index, options),
+    });
+    this.scene.pause();
+    return options;
+  }
+
+  /**
+   * Applies the chosen option permanently for the gym run, resumes the gym
+   * scene, and resets the hold.
+   */
+  selectMineralChoice(index: number, options: ChoiceOption[]): ChoiceOption | null {
+    const option = options[index];
+    if (!option) return null;
+    if (option.kind === 'weapon') {
+      const weaponId = option.id as WeaponId;
+      this.effectsRegistry.applyWeapon(weaponId, true);
+      this.player?.equipWeapon(weaponId, true);
+    } else {
+      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
+    }
+    this.mineralChoiceOpen = false;
+    this.mineralHold = 0;
+    this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this.scene.resume();
+    return option;
+  }
+
   /** The live power-up drops currently on screen. */
   getPowerUpDrops(): FormationSceneDrop[] {
     return [...this.powerUpDrops];
@@ -1135,6 +1320,9 @@ export class GymFormationScene<
       this._handleCollisions();
       this._updatePlayerInvulnerability(dt);
     }
+
+    // ── Mineral layer: collection + hold-full choice ────────────────
+    this._updateMinerals();
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);

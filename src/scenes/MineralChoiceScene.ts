@@ -32,6 +32,8 @@ const CHOICE_BACKDROP_ALPHA = 0.75;
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
   private controls: Phaser.GameObjects.Text[] = [];
+  /** Optional generic selection handler (used by the gyms). */
+  private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
 
   constructor() {
     super('MineralChoiceScene');
@@ -41,10 +43,19 @@ export class MineralChoiceScene extends Phaser.Scene {
    * @param data.options — the options to present (defaults to the strategy's
    *   three picks).
    * @param data.strategy — pluggable strategy used when `options` is absent.
+   * @param data.onSelect — generic selection handler; when omitted the
+   *   overlay forwards to the registered `PlayScene`.
    */
-  init(data: { options?: ChoiceOption[]; strategy?: ChoiceStrategy } = {}): void {
+  init(
+    data: {
+      options?: ChoiceOption[];
+      strategy?: ChoiceStrategy;
+      onSelect?: (index: number, option: ChoiceOption) => void;
+    } = {},
+  ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
     this.options = data.options ?? strategy.choose(3);
+    this.onSelect = data.onSelect ?? null;
   }
 
   create(): void {
@@ -103,10 +114,14 @@ export class MineralChoiceScene extends Phaser.Scene {
     const option = this.options[index];
     if (!option) return null;
 
-    const play = this.scene.manager.getScene('PlayScene') as PlayScene | null;
-    if (play) {
-      play.selectMineralChoice(index);
-      this.scene.resume('PlayScene');
+    if (this.onSelect) {
+      this.onSelect(index, option);
+    } else {
+      const play = this.scene.manager.getScene('PlayScene') as PlayScene | null;
+      if (play) {
+        play.selectMineralChoice(index);
+        this.scene.resume('PlayScene');
+      }
     }
     this.scene.stop();
     return option;
