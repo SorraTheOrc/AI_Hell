@@ -683,11 +683,33 @@ export class PlayScene extends Phaser.Scene {
    */
   private _onTransitionComplete(): void {
     if (this.waveManager.bossActive && !this.boss) {
+      // Carried-over asteroids do not belong in the boss encounter: destroy
+      // them before the boss spawns (no split children) — AH-0MU8TWF1H007OG2L.
+      this._clearAsteroidsOnBossEntry();
       this.spawnBoss();
     } else {
       this.spawnWave();
     }
     this._hideBanner();
+  }
+
+  /**
+   * Destroys every alive carried-over asteroid when the boss encounter is
+   * due. Uses the normal destruction VFX but deliberately bypasses
+   * `_onEnemyKilled()` so `_splitAsteroid()` does not spawn children
+   * (AH-0MU8TWF1H007OG2L).
+   */
+  private _clearAsteroidsOnBossEntry(): void {
+    for (const s of this.spawned) {
+      if (!s.entity.alive) continue;
+      if (s.enemyKey !== 'asteroid') continue;
+      s.entity.destroySelf();
+      this._playEnemyDestruction(s.entity);
+    }
+    // Drop the destroyed asteroids so no stale entries linger into the boss fight.
+    this.spawned = this.spawned.filter(
+      (s) => s.entity.alive || s.enemyKey !== 'asteroid',
+    );
   }
 
   /**

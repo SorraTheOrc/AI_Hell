@@ -71,6 +71,24 @@ function reachBoss(scene: PlayScene): void {
   }
 }
 
+/**
+ * Walks the run to the boss encounter by repeatedly letting the wave timer
+ * expire, so the Level-1 asteroid is carried over every wave/level boundary
+ * (AH-0MU8TWF1H007OG2L). Non-asteroid enemies detonate on each timeout.
+ */
+function timeOutToBoss(scene: PlayScene): void {
+  const gs = scene.getGameState();
+  gs.lives = 99; // absorb the per-timeout life penalty.
+  for (let guard = 0; guard < 200 && !scene.getBoss(); guard++) {
+    if (scene.isTransitioning()) {
+      finishTransition(scene);
+      continue;
+    }
+    scene.setWaveTimerRemaining(0.001);
+    scene.tick(0.01);
+  }
+}
+
 /** Alive asteroid entities currently in the scene. */
 function findAsteroids(scene: PlayScene): Asteroid[] {
   return scene
@@ -786,6 +804,47 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const bullets = scene.getEnemyBullets();
     expect(bullets.length).toBeGreaterThan(before);
     expect(bullets.some((b) => b.graphics === fakeBullet.graphics)).toBe(true);
+  });
+
+  // ── Boss-entry asteroid cleanup (AH-0MUCG5TIU000VPVO) ──────────
+
+  it('AH-0MUCG5TIU000VPVO AC1/AC2/AC5 — carried-over asteroids are destroyed on boss entry with no split children', async () => {
+    const scene = await bootPlay();
+    timeOutToBoss(scene);
+
+    // The boss spawned and no carried-over asteroid survived.
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getWaveManager().bossActive).toBe(true);
+    expect(findAsteroids(scene).length).toBe(0);
+    expect(scene.getAliveCount()).toBeGreaterThan(0); // boss + minions remain
+  });
+
+  it('AH-0MUCG5TIU000VPVO AC3 — the boss spawn path is otherwise unchanged (Phase-1 minions arrive)', async () => {
+    const scene = await bootPlay();
+    timeOutToBoss(scene);
+
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getBossPhase()).toBe(1);
+    const scouts = scene
+      .getEnemies()
+      .filter((e) => e.alive && e.constructor.name === 'Scout');
+    expect(scouts.length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MUCG5TIU000VPVO AC4 — normal (non-boss) transitions still carry asteroids over', async () => {
+    const scene = await bootPlay();
+    const asteroidsBefore = findAsteroids(scene);
+    expect(asteroidsBefore.length).toBeGreaterThan(0);
+
+    // Time out Level 1 Wave 1 and complete the transition to Wave 2.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+
+    // The asteroid carried over into the next wave.
+    expect(findAsteroids(scene).length).toBe(asteroidsBefore.length);
+    expect(scene.getWaveManager().bossActive).toBe(false);
   });
 });
 
