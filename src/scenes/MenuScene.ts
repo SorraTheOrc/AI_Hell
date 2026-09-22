@@ -9,6 +9,12 @@
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
  *   for testing individual gym components.
  *
+ * Keyboard navigation (AH-0MU9LKQEP008LCX9-C2) is provided by a shared
+ * {@link FocusManager}: Play Game is focused by default, Tab and the arrow
+ * keys cycle focus among the three controls (wrapping), and Enter/Space
+ * activate the focused control. Pointer handlers are unchanged (keyboard
+ * support is additive).
+ *
  * Styling follows the neon-cyan / dark background palette from the GDD
  * colour scheme (§7.1).
  */
@@ -16,6 +22,7 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { FocusManager } from '../utils/focusManager';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
@@ -46,11 +53,20 @@ export function resumeAudioContext(
  * Main menu scene — the entry point for the playable game.
  */
 export class MenuScene extends Phaser.Scene {
+  /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
+  private focusManager = new FocusManager();
+
+  /** The focusable controls in focus order (label + text object). */
+  private controls: { label: string; text: Phaser.GameObjects.Text }[] = [];
+
   constructor() {
     super('MenuScene');
   }
 
   create(): void {
+    this.focusManager = new FocusManager();
+    this.controls = [];
+
     // ── Background ───────────────────────────────────────────────
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
 
@@ -83,13 +99,13 @@ export class MenuScene extends Phaser.Scene {
       playButton.setStyle({ color: MENU_TEXT_COLOR });
     });
 
-    // Play Game click handler: initialise audio + start game scene
-    // Play Game click handler: initialise audio + start game scene
     playButton.on('pointerdown', () => {
       // Initialise the Web Audio context on user gesture (autoplay policy).
       resumeAudioContext(this.sound);
       this.scene.start('PlayScene');
     });
+
+    this.controls.push({ label: '▶  Play Game', text: playButton });
 
     // ── Settings button ───────────────────────────────────────
     // Opens the same settings screen as the pause menu, before starting a
@@ -121,6 +137,8 @@ export class MenuScene extends Phaser.Scene {
       this.scene.start('SettingsScene', { origin: 'MenuScene' });
     });
 
+    this.controls.push({ label: '⚙  Settings', text: settingsButton });
+
     // ── Gym Scene Index button (dev tool) ────────────────────────
     const devButton = this.add.text(
       GAME_WIDTH / 2,
@@ -147,11 +165,44 @@ export class MenuScene extends Phaser.Scene {
       this.scene.start('GymIndex');
     });
 
+    this.controls.push({ label: '⚙  Gym Scene Index (dev)', text: devButton });
+
     // ── Subtitle ─────────────────────────────────────────────────
     this.add.text(GAME_WIDTH / 2, 450, 'Defeat 5 levels then the Central AI', {
       fontFamily: 'monospace',
       fontSize: '14px',
       color: '#444444',
     }).setOrigin(0.5);
+
+    // ── Keyboard focus (AH-0MU9LKQEP008LCX9-C2) ──────────────────
+    // Register controls in visual order; the first (Play Game) is focused
+    // by default. The action callbacks mirror the pointerdown handlers so
+    // activation behaves identically for keyboard and pointer input. The
+    // shared FocusManager owns Tab / arrow cycling and Enter / Space
+    // activation — the scene contains no ad-hoc key routing.
+    this.focusManager.register(playButton, () => {
+      resumeAudioContext(this.sound);
+      this.scene.start('PlayScene');
+    });
+    this.focusManager.register(settingsButton, () => {
+      resumeAudioContext(this.sound);
+      this.scene.start('SettingsScene', { origin: 'MenuScene' });
+    });
+    this.focusManager.register(devButton, () => {
+      this.scene.start('GymIndex');
+    });
+    this.focusManager.attachKeyboard(this);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.focusManager.shutdown();
+    });
+  }
+
+  // ── Public query helpers (unit-testable) ───────────────────────
+
+  /** Display label of the currently focused control ('' when none). */
+  getFocusedLabel(): string {
+    const index = this.focusManager.getFocusedIndex();
+    return this.controls[index]?.label ?? '';
   }
 }

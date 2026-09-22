@@ -11,83 +11,84 @@
  * - Shutdown removes keyboard listeners and clears the registry.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
 import { FocusManager } from './focusManager';
 
-/* ─── helpers ──────────────────────────────────────────────────── */
+/** Creates a lightweight text-gameobject double with a spy on `setStyle`. */
+function makeControl(label: string): Phaser.GameObjects.Text {
+  return { text: label, setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+}
 
-/** Stub a minimal scene that exposes `add.text` and `input.keyboard`. */
-async function bootWithFocusManager(
-  sceneClass: typeof Phaser.Scene,
-  onSceneCreate: (
-    scene: Phaser.Scene,
-    fm: FocusManager,
-  ) => void,
-): Promise<{ game: Phaser.Game; scene: Phaser.Scene; fm: FocusManager }> {
-  const game = new Phaser.Game({
-    type: Phaser.AUTO,
-    width: 800,
-    height: 600,
-    backgroundColor: '#000000',
-    parent: document.body,
-    scene: [
-      {
-        key: 'TestScene',
-        extends: sceneClass,
-        create(this: Phaser.Scene) {
-          // Delegate to the caller for scene-specific setup.
-          onSceneCreate(this, fm);
-        },
+/** Creates a lightweight scene double exposing `input.keyboard.on/off`. */
+function makeScene(): Phaser.Scene {
+  return {
+    input: {
+      keyboard: {
+        on: vi.fn(),
+        off: vi.fn(),
       },
-    ],
-  });
+    },
+  } as unknown as Phaser.Scene;
+}
 
-  await new Promise((r) => setTimeout(r, 150));
-  const scene = game.scene.getScenes(true)[0]!;
-  return { game, scene, fm };
+/** The registered keydown handler from `attachKeyboard`. */
+function keyHandler(scene: Phaser.Scene): (e: KeyboardEvent) => void {
+  const on = vi.mocked(scene.input.keyboard!.on);
+  return on.mock.calls[0][1] as (e: KeyboardEvent) => void;
 }
 
 let fm: FocusManager | null = null;
-let bootedGame: Phaser.Game | null = null;
 
 afterEach(() => {
   fm?.shutdown();
-  bootedGame?.destroy(true);
   fm = null;
-  bootedGame = null;
 });
 
 /* ─── AC1 — register / unregister ─────────────────────────────── */
 
 describe('FocusManager — register / unregister (AC1)', () => {
   it('register adds a control and returns its index', () => {
-    const focusable = {
-      text: 'dummy',
-      setStyle: vi.fn(),
-    } as unknown as Phaser.GameObjects.Text;
-    const action = vi.fn();
+    const control = makeControl('dummy');
     fm = new FocusManager();
 
-    const idx = fm.register(focusable, action);
-    expect(idx).toBe(0);
+    expect(fm.register(control, vi.fn())).toBe(0);
     expect(fm.getControlCount()).toBe(1);
   });
 
   it('unregister removes a control and reduces count', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f1 = makeControl('a');
+    const f2 = makeControl('b');
     fm = new FocusManager();
 
-    const i1 = fm.register(f1, vi.fn());
-    const i2 = fm.register(f2, vi.fn());
+    expect(fm.register(f1, vi.fn())).toBe(0);
+    expect(fm.register(f2, vi.fn())).toBe(1);
     expect(fm.getControlCount()).toBe(2);
 
-    fm.unregister(f1);
+    expect(fm.unregister(f1)).toBe(0);
     expect(fm.getControlCount()).toBe(1);
-    expect(i1).toBe(0); // unregister returns the index
+  });
+
+  it('unregister returns −1 for an unknown control', () => {
+    const known = makeControl('a');
+    const unknown = makeControl('b');
+    fm = new FocusManager();
+    fm.register(known, vi.fn());
+
+    expect(fm.unregister(unknown)).toBe(-1);
+  });
+
+  it('unregistering the focused control moves focus to a remaining control', () => {
+    const f1 = makeControl('a');
+    const f2 = makeControl('b');
+    fm = new FocusManager();
+    fm.register(f1, vi.fn());
+    fm.register(f2, vi.fn());
+
+    fm.unregister(f1);
+    expect(fm.getFocusedIndex()).toBe(0);
+    expect(fm.getControlCount()).toBe(1);
   });
 });
 
@@ -95,17 +96,16 @@ describe('FocusManager — register / unregister (AC1)', () => {
 
 describe('FocusManager — default focus (AC2)', () => {
   it('focuses the first registered control by default', () => {
-    const f1 = { text: 'first', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'second', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f1 = makeControl('first');
+    const f2 = makeControl('second');
     fm = new FocusManager();
 
     fm.register(f1, vi.fn());
     fm.register(f2, vi.fn());
 
     expect(fm.getFocusedIndex()).toBe(0);
-    // First control should have the focus style applied.
+    // First control receives the focus style; the second the unfocus style.
     expect(f1.setStyle).toHaveBeenCalledWith(fm.getFocusStyle());
-    // Second control gets the unfocus style on registration.
     expect(f2.setStyle).toHaveBeenCalledWith(fm.getUnfocusStyle());
   });
 });
@@ -114,47 +114,31 @@ describe('FocusManager — default focus (AC2)', () => {
 
 describe('FocusManager — Tab cycling (AC3)', () => {
   it('Tab cycles forward through controls', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f3 = { text: 'c', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b'), makeControl('c')];
     fm = new FocusManager();
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
-    fm.register(f3, vi.fn());
-
-    // Tab forward → index 1.
     fm.cycleFocus(1);
     expect(fm.getFocusedIndex()).toBe(1);
-    // Tab forward → index 2.
     fm.cycleFocus(1);
     expect(fm.getFocusedIndex()).toBe(2);
   });
 
   it('Shift+Tab cycles backward', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
-
-    // Start at 0; backward wraps to last.
     fm.cycleFocus(-1);
     expect(fm.getFocusedIndex()).toBe(1);
-
-    // Backward again wraps to 0.
     fm.cycleFocus(-1);
     expect(fm.getFocusedIndex()).toBe(0);
   });
 
   it('wrap-around: forward from last goes to first', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
     fm.cycleFocus(1); // → 1
     fm.cycleFocus(1); // → wraps to 0
@@ -162,21 +146,17 @@ describe('FocusManager — Tab cycling (AC3)', () => {
   });
 
   it('wrap-around: backward from first goes to last', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
     fm.cycleFocus(-1); // → wraps to 1
     expect(fm.getFocusedIndex()).toBe(1);
   });
 
   it('a single control stays focused on Tab', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
     fm = new FocusManager();
-    fm.register(f1, vi.fn());
+    fm.register(makeControl('a'), vi.fn());
     fm.cycleFocus(1);
     expect(fm.getFocusedIndex()).toBe(0);
   });
@@ -186,37 +166,28 @@ describe('FocusManager — Tab cycling (AC3)', () => {
 
 describe('FocusManager — arrow-key cycling (AC4)', () => {
   it('ArrowDown cycles forward (same as Tab)', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
     fm.cycleFocus(1);
     expect(fm.getFocusedIndex()).toBe(1);
   });
 
   it('ArrowUp cycles backward (same as Shift+Tab)', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
     fm.cycleFocus(-1);
     expect(fm.getFocusedIndex()).toBe(1);
   });
 
   it('arrow keys wrap around', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f3 = { text: 'c', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b'), makeControl('c')];
     fm = new FocusManager();
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
-    fm.register(f3, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
 
-    // Down × 3 wraps: 0→1→2→0
     fm.cycleFocus(1);
     fm.cycleFocus(1);
     fm.cycleFocus(1);
@@ -230,12 +201,9 @@ describe('FocusManager — Enter / Space activation (AC5)', () => {
   it('Enter invokes the focused control action callback', () => {
     const action1 = vi.fn();
     const action2 = vi.fn();
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
     fm = new FocusManager();
-
-    fm.register(f1, action1);
-    fm.register(f2, action2);
+    fm.register(makeControl('a'), action1);
+    fm.register(makeControl('b'), action2);
 
     fm.activateFocused();
     expect(action1).toHaveBeenCalledOnce();
@@ -244,23 +212,25 @@ describe('FocusManager — Enter / Space activation (AC5)', () => {
 
   it('Space invokes the focused control action callback', () => {
     const action = vi.fn();
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
     fm = new FocusManager();
-    fm.register(f1, action);
+    fm.register(makeControl('a'), action);
 
     fm.activateFocused();
     expect(action).toHaveBeenCalledOnce();
   });
 
-  it('activation moves focus forward (convenience for next control)', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+  it('activation does NOT move focus (conventional menu behaviour)', () => {
     fm = new FocusManager();
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    fm.register(makeControl('a'), vi.fn());
+    fm.register(makeControl('b'), vi.fn());
 
     fm.activateFocused();
-    expect(fm.getFocusedIndex()).toBe(1);
+    expect(fm.getFocusedIndex()).toBe(0);
+  });
+
+  it('activation with no controls is a safe no-op', () => {
+    fm = new FocusManager();
+    expect(() => fm!.activateFocused()).not.toThrow();
   });
 });
 
@@ -268,38 +238,30 @@ describe('FocusManager — Enter / Space activation (AC5)', () => {
 
 describe('FocusManager — visible focus style (AC6)', () => {
   it('the focused control receives the focus style', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f1 = makeControl('a');
     fm = new FocusManager();
-
     fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    fm.register(makeControl('b'), vi.fn());
 
     expect(f1.setStyle).toHaveBeenCalledWith(fm.getFocusStyle());
   });
 
-  it('moving focus updates styles: previous restores, new gets focus style', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f3 = { text: 'c', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+  it('moving focus repaints: previous gets unfocus, new gets focus style', () => {
+    const f1 = makeControl('a');
+    const f2 = makeControl('b');
+    const f3 = makeControl('c');
     fm = new FocusManager();
+    [f1, f2, f3].forEach((c) => fm!.register(c, vi.fn()));
 
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
-    fm.register(f3, vi.fn());
-
-    // Focus is on f1 (index 0).
     expect(f1.setStyle).toHaveBeenCalledWith(fm.getFocusStyle());
-    // f2 and f3 should have the unfocused style.
     expect(f2.setStyle).toHaveBeenCalledWith(fm.getUnfocusStyle());
     expect(f3.setStyle).toHaveBeenCalledWith(fm.getUnfocusStyle());
 
-    // Move to f2.
     fm.setFocusedIndex(1);
 
-    expect(f1.setStyle).toHaveBeenCalledWith(fm.getUnfocusStyle());
-    expect(f2.setStyle).toHaveBeenCalledWith(fm.getFocusStyle());
-    expect(f3.setStyle).toHaveBeenCalledWith(fm.getUnfocusStyle());
+    expect(f1.setStyle).toHaveBeenLastCalledWith(fm.getUnfocusStyle());
+    expect(f2.setStyle).toHaveBeenLastCalledWith(fm.getFocusStyle());
+    expect(f3.setStyle).toHaveBeenLastCalledWith(fm.getUnfocusStyle());
   });
 
   it('focus style defaults to bright colour + highlight border', () => {
@@ -314,15 +276,31 @@ describe('FocusManager — visible focus style (AC6)', () => {
 /* ─── AC7 — shutdown cleanup ──────────────────────────────────── */
 
 describe('FocusManager — shutdown cleanup (AC7)', () => {
-  it('shutdown clears the registry', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+  it('shutdown clears the registry and resets focus', () => {
     fm = new FocusManager();
-    fm.register(f1, vi.fn());
+    fm.register(makeControl('a'), vi.fn());
     expect(fm.getControlCount()).toBe(1);
 
     fm.shutdown();
     expect(fm.getControlCount()).toBe(0);
     expect(fm.getFocusedIndex()).toBe(-1);
+  });
+
+  it('shutdown removes the keyboard listener from the scene', () => {
+    fm = new FocusManager();
+    fm.register(makeControl('a'), vi.fn());
+    const scene = makeScene();
+    fm.attachKeyboard(scene);
+
+    const on = vi.mocked(scene.input.keyboard!.on);
+    expect(on).toHaveBeenCalledOnce();
+
+    fm.shutdown();
+
+    const off = vi.mocked(scene.input.keyboard!.off);
+    expect(off).toHaveBeenCalledOnce();
+    expect(off.mock.calls[0][0]).toBe('keydown');
+    expect(off.mock.calls[0][1]).toBe(on.mock.calls[0][1]);
   });
 
   it('shutdown is idempotent', () => {
@@ -336,144 +314,117 @@ describe('FocusManager — shutdown cleanup (AC7)', () => {
 
 describe('FocusManager — keyboard event integration (AC8)', () => {
   it('keydown Tab cycles focus forward', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-
-    const scene = {
-      input: {
-        keyboard: {
-          on: vi.fn(),
-        },
-      },
-    } as unknown as Phaser.Scene;
-
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
+    const scene = makeScene();
     fm.attachKeyboard(scene);
 
-    // Simulate Tab keydown.
-    const handler = (vi.mocked(scene.input.keyboard.on).mock.calls[0][1] as (e: KeyboardEvent) => void);
-    handler({ key: 'Tab', repeat: false, preventDefault: vi.fn() } as KeyboardEvent);
+    keyHandler(scene)({
+      key: 'Tab',
+      repeat: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
 
     expect(fm.getFocusedIndex()).toBe(1);
   });
 
   it('keydown Shift+Tab cycles focus backward', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-
-    const scene = {
-      input: {
-        keyboard: {
-          on: vi.fn(),
-        },
-      },
-    } as unknown as Phaser.Scene;
-
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
+    const scene = makeScene();
     fm.attachKeyboard(scene);
 
-    const handler = (vi.mocked(scene.input.keyboard.on).mock.calls[0][1] as (e: KeyboardEvent) => void);
-    handler({
+    keyHandler(scene)({
       key: 'Tab',
       shiftKey: true,
       repeat: false,
       preventDefault: vi.fn(),
-    } as KeyboardEvent);
+    } as unknown as KeyboardEvent);
 
     expect(fm.getFocusedIndex()).toBe(1); // wraps from 0 to last
   });
 
   it('keydown ArrowDown cycles focus forward', () => {
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
-    const f2 = { text: 'b', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
+    const f = [makeControl('a'), makeControl('b')];
     fm = new FocusManager();
-
-    const scene = {
-      input: {
-        keyboard: {
-          on: vi.fn(),
-        },
-      },
-    } as unknown as Phaser.Scene;
-
-    fm.register(f1, vi.fn());
-    fm.register(f2, vi.fn());
+    f.forEach((c) => fm!.register(c, vi.fn()));
+    const scene = makeScene();
     fm.attachKeyboard(scene);
 
-    const handler = (vi.mocked(scene.input.keyboard.on).mock.calls[0][1] as (e: KeyboardEvent) => void);
-    handler({ key: 'ArrowDown', repeat: false, preventDefault: vi.fn() } as KeyboardEvent);
+    keyHandler(scene)({
+      key: 'ArrowDown',
+      repeat: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
 
     expect(fm.getFocusedIndex()).toBe(1);
   });
 
-  it('keydown Enter activates focused control', () => {
+  it('keydown Enter activates the focused control', () => {
     const action = vi.fn();
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
     fm = new FocusManager();
-
-    const scene = {
-      input: {
-        keyboard: {
-          on: vi.fn(),
-        },
-      },
-    } as unknown as Phaser.Scene;
-
-    fm.register(f1, action);
+    fm.register(makeControl('a'), action);
+    const scene = makeScene();
     fm.attachKeyboard(scene);
 
-    const handler = (vi.mocked(scene.input.keyboard.on).mock.calls[0][1] as (e: KeyboardEvent) => void);
-    handler({ key: 'Enter', repeat: false, preventDefault: vi.fn() } as KeyboardEvent);
+    const preventDefault = vi.fn();
+    keyHandler(scene)({
+      key: 'Enter',
+      repeat: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
 
     expect(action).toHaveBeenCalledOnce();
+    expect(preventDefault).toHaveBeenCalledOnce();
   });
 
-  it('keydown Space activates focused control', () => {
+  it('keydown Space activates the focused control', () => {
     const action = vi.fn();
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
     fm = new FocusManager();
-
-    const scene = {
-      input: {
-        keyboard: {
-          on: vi.fn(),
-        },
-      },
-    } as unknown as Phaser.Scene;
-
-    fm.register(f1, action);
+    fm.register(makeControl('a'), action);
+    const scene = makeScene();
     fm.attachKeyboard(scene);
 
-    const handler = (vi.mocked(scene.input.keyboard.on).mock.calls[0][1] as (e: KeyboardEvent) => void);
-    handler({ key: ' ', repeat: false, preventDefault: vi.fn() } as KeyboardEvent);
+    keyHandler(scene)({
+      key: ' ',
+      repeat: false,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
 
     expect(action).toHaveBeenCalledOnce();
   });
 
   it('keydown with repeat flag is ignored', () => {
     const action = vi.fn();
-    const f1 = { text: 'a', setStyle: vi.fn() } as unknown as Phaser.GameObjects.Text;
     fm = new FocusManager();
-
-    const scene = {
-      input: {
-        keyboard: {
-          on: vi.fn(),
-        },
-      },
-    } as unknown as Phaser.Scene;
-
-    fm.register(f1, action);
+    fm.register(makeControl('a'), action);
+    const scene = makeScene();
     fm.attachKeyboard(scene);
 
-    const handler = (vi.mocked(scene.input.keyboard.on).mock.calls[0][1] as (e: KeyboardEvent) => void);
-    handler({ key: 'Enter', repeat: true, preventDefault: vi.fn() } as KeyboardEvent);
+    keyHandler(scene)({
+      key: 'Enter',
+      repeat: true,
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent);
 
-    // Repeated key should not trigger activation.
     expect(action).not.toHaveBeenCalled();
+  });
+
+  it('unhandled keys are not consumed', () => {
+    fm = new FocusManager();
+    fm.register(makeControl('a'), vi.fn());
+    const scene = makeScene();
+    fm.attachKeyboard(scene);
+
+    const preventDefault = vi.fn();
+    keyHandler(scene)({
+      key: 'q',
+      repeat: false,
+      preventDefault,
+    } as unknown as KeyboardEvent);
+
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });

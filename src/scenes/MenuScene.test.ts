@@ -223,3 +223,136 @@ describe('MenuScene — Settings button (AH-0MUA8BLMA003U18N)', () => {
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
   });
 });
+
+describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([
+      MenuScene,
+      PlayScene,
+      PauseScene,
+      SettingsScene,
+      GameOverScene,
+      GymIndex,
+    ]);
+    return booted!.scene as MenuScene;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('AC1 — Play Game is focused by default with a visible highlight', async () => {
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    const play = findText(scene, '▶  Play Game');
+    // Focus highlight applies a white stroke border.
+    expect(play.style.stroke).toBeTruthy();
+  });
+
+  it('AC2 — Tab cycles focus: Play → Settings → Gym Index → Play (wrap)', async () => {
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+  });
+
+  it('AC3 — ArrowDown cycles in the same order and wraps', async () => {
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+  });
+
+  it('AC2 — Shift+Tab cycles focus backward with wrap', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab', shiftKey: true });
+    expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+
+    pressKey(scene, { key: 'Tab', shiftKey: true });
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+  });
+
+  it('AC4 — Enter on focused Play Game starts PlayScene with audio resume', async () => {
+    const scene = await bootMenu();
+    const resume = vi.fn();
+    Object.defineProperty(scene, 'sound', {
+      value: { context: { state: 'suspended', resume } },
+      configurable: true,
+    });
+
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(resume).toHaveBeenCalledOnce();
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+  });
+
+  it('AC4 — Space on focused Play Game starts PlayScene', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: ' ' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+  });
+
+  it('AC5 — Enter on focused Settings opens SettingsScene', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+  });
+
+  it('AC6 — Enter on focused Gym Scene Index opens GymIndex', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+
+    pressKey(scene, { key: ' ' });
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+  });
+
+  it('AC7 — pointerdown still navigates (regression preserved)', async () => {
+    const scene = await bootMenu();
+    findText(scene, '▶  Play Game').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+  });
+});
