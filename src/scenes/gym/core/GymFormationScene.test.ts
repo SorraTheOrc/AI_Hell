@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as effectsModule from '../../../audio/effects';
 import * as explosionModule from '../../../vfx/explosionParticles';
+import * as collectAnimationModule from '../../../powerups/collectAnimation';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../../test/gameHarness';
@@ -2005,5 +2006,75 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
           c.text === 'Weapon: spread',
       ),
     ).toBe(true);
+  });
+});
+
+describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005Y30S)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  async function boot(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
+    ]);
+    return booted.scene as BootedScene;
+  }
+
+  function layer(id: PowerUpId): PowerUpLayerConfig {
+    return {
+      spawner: new RoundRobinSpawner<PowerUpId>([id]),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    };
+  }
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await boot(layer('P9'));
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P9', player.x, player.y)!;
+
+    scene.tick(0.1);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPowerUpDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await boot(layer('P9'));
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P9', player.x, player.y)!;
+
+    scene.tick(0.1);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    for (let i = 0; i < 10; i++) scene.tick(0.05);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false);
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await boot(layer('P9'));
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop('P9', player.x, player.y);
+
+    scene.tick(0.1);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 4; i++) scene.tick(0.05);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 });

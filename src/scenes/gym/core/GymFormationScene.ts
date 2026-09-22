@@ -31,6 +31,7 @@ import {
 } from '../../../core/constants';
 import {
   playDestructionSound,
+  playPowerUpCollectPopSound,
   playPowerUpCollectSound,
   playSpawnSound,
 } from '../../../audio/effects';
@@ -68,6 +69,10 @@ import {
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
+import {
+  spawnCollectAnimation,
+  type CollectAnimationHandle,
+} from '../../../powerups/collectAnimation';
 import { findTeleportDestination } from '../../../powerups/teleport';
 import {
   RandomAvoidingPlacement,
@@ -226,6 +231,11 @@ export interface FormationSceneDrop {
   y: number;
   /** The drawn bubble + icon. */
   graphics: Phaser.GameObjects.Graphics;
+  /**
+   * True once the drop has been collected and is playing its absorb VFX —
+   * the overlap gate must not re-collect it (AC5, AH-0MUBYXRFT005Y30S).
+   */
+  absorbing?: boolean;
 }
 
 /** Per-scene configuration for a formation gym scene. */
@@ -377,6 +387,8 @@ export class GymFormationScene<
   // Power-up layer (opt-in via `config.powerUps`).
   private powerUpsEnabled = false;
   private powerUpDrops: FormationSceneDrop[] = [];
+  /** In-flight absorb animations for collected drops (AH-0MUBYXRFT005Y30S). */
+  private collectAnimations: CollectAnimationHandle[] = [];
   private powerUpSpawner: PowerUpSpawner<DropId> | null = null;
   private powerUpPlacement: PowerUpPlacement | null = null;
   private powerUpSpawnInterval = 0;
@@ -529,6 +541,8 @@ export class GymFormationScene<
       // Tear down any power-up drops owned by the scene.
       for (const drop of this.powerUpDrops) drop.graphics.destroy();
       this.powerUpDrops = [];
+      for (const anim of this.collectAnimations) anim.destroy();
+      this.collectAnimations = [];
       this.powerUpSpawnCount = 0;
       for (const mineral of this.minerals) mineral.destroy();
       this.minerals = [];
@@ -737,6 +751,8 @@ export class GymFormationScene<
 
     const kept: FormationSceneDrop[] = [];
     for (const drop of this.powerUpDrops) {
+      // An absorbing drop is owned by its animation — never re-process it.
+      if (drop.absorbing) continue;
       drop.powerUp.advance(dt);
       drop.graphics.setScale(drop.powerUp.currentScale);
       if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
@@ -748,6 +764,8 @@ export class GymFormationScene<
     this.powerUpDrops = kept;
 
     this._collectOverlappingDrops();
+    // Advance the absorb VFX for collected drops (cosmetic only).
+    this._updateCollectAnimations(dt);
 
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
@@ -768,7 +786,11 @@ export class GymFormationScene<
 
     const kept: FormationSceneDrop[] = [];
     for (const drop of this.powerUpDrops) {
-      if (drop.powerUp.canCollect() && this._dropOverlapsShip(drop, hull)) {
+      if (
+        !drop.absorbing &&
+        drop.powerUp.canCollect() &&
+        this._dropOverlapsShip(drop, hull)
+      ) {
         this._collectDrop(drop);
       } else {
         kept.push(drop);
@@ -808,28 +830,66 @@ export class GymFormationScene<
         this.player?.equipWeapon(drop.weaponDropId as WeaponId);
       }
       drop.powerUp.tryCollect();
-      drop.graphics.destroy();
-      try {
-        playPowerUpCollectSound();
-      } catch {
-        // Audio is best-effort (headless tests have no AudioContext).
+    } else {
+      const effect = drop.powerUp.tryCollect();
+      if (!effect) return;
+
+      if (drop.id === 'P4') {
+        this._clearEnemyBullets();
       }
-      return;
+      this.effectsRegistry.applyCollect(drop.id);
     }
 
-    const effect = drop.powerUp.tryCollect();
-    if (!effect) return;
+    // Collection confirmed — mark the drop so the overlap gate can never
+    // re-collect it while the absorb animation plays (AC5).
+    drop.absorbing = true;
+    // Start the cosmetic "sucked into the ship" absorb; the Graphics stays
+    // alive until the animation completes, then is destroyed (AC3, AC4).
+    this._startCollectAnimation(drop);
+    this._playPickupCue();
+  }
 
-    if (drop.id === 'P4') {
-      this._clearEnemyBullets();
-    }
-    this.effectsRegistry.applyCollect(drop.id);
-    drop.graphics.destroy();
+  /**
+   * Plays the collection cues: the new generic pop plus the existing
+   * generic collection chime. Safe no-op without an AudioContext
+   * (headless tests).
+   */
+  private _playPickupCue(): void {
     try {
+      playPowerUpCollectPopSound();
       playPowerUpCollectSound();
     } catch {
       // Audio is best-effort (headless tests have no AudioContext).
     }
+  }
+
+  /**
+   * Starts the absorb animation for a collected drop, using the ship's
+   * current world position as the attractor. Safe no-op when the Graphics
+   * is unavailable.
+   */
+  private _startCollectAnimation(drop: FormationSceneDrop): void {
+    const shipX = this.player?.x ?? drop.x;
+    const shipY = this.player?.y ?? drop.y;
+    this.collectAnimations.push(
+      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
+    );
+  }
+
+  /**
+   * Advances every in-flight absorb animation, re-pointing it at the ship's
+   * current world position, and prunes those that complete (the animation
+   * destroys its own Graphics on completion).
+   */
+  private _updateCollectAnimations(dt: number): void {
+    if (this.collectAnimations.length === 0) return;
+    const kept: CollectAnimationHandle[] = [];
+    for (const handle of this.collectAnimations) {
+      if (this.player) handle.setAttractor(this.player.x, this.player.y);
+      handle.update(dt);
+      if (!handle.isComplete()) kept.push(handle);
+    }
+    this.collectAnimations = kept;
   }
 
   /** Clears all on-screen enemy bullets (P4 bomb — no enemy damage). */
@@ -1133,6 +1193,11 @@ export class GymFormationScene<
   /** The live power-up drops currently on screen. */
   getPowerUpDrops(): FormationSceneDrop[] {
     return [...this.powerUpDrops];
+  }
+
+  /** In-flight absorb animations for collected drops (test seam). */
+  getCollectAnimations(): CollectAnimationHandle[] {
+    return [...this.collectAnimations];
   }
 
   /** Cumulative number of drops spawned since the scene started. */
