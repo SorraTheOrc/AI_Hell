@@ -13,14 +13,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
-import {
-  GAME_HEIGHT,
-  GAME_WIDTH,
-  // Mineral constants (added by the implementation child)
-  // MINERAL_SIZE,
-  // MINERAL_COLOR,
-  // MINERAL_DEPTH,
-} from '../../core/constants';
 import { Mineral, MineralConfig } from '../Mineral';
 
 class HarnessScene extends Phaser.Scene {
