@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import { PLAYER_BULLET_SPEED } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -278,15 +279,24 @@ describe('CombatScene — shared combat core hook contract', () => {
 
   // ── AC3 — hook dispatch ───────────────────────────────────────────
 
-  it('AC3 — _autoFire dispatches onWeaponFired and spawns bullets per weapon', async () => {
+  it('AC3 — _autoFire dispatches onWeaponFired once per firing weapon and spawns bullets per weapon', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
+    const activeWeapons = player.getActiveWeapons();
 
     scene.runAutoFire(10);
 
-    expect(scene.hooks.some((h) => h.startsWith('onWeaponFired:'))).toBe(true);
+    const fired = scene.hooks.filter((h) => h.startsWith('onWeaponFired:'));
+    expect(fired).toHaveLength(activeWeapons.length);
+    expect(activeWeapons.length).toBeGreaterThan(0);
     expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
-    expect(player.getActiveWeapons().length).toBeGreaterThan(0);
+    // Every bullet travels at the shared PLAYER_BULLET_SPEED.
+    for (const bullet of scene.getPlayerBullets()) {
+      expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
+        PLAYER_BULLET_SPEED,
+        5,
+      );
+    }
   });
 
   it('AC3/AC4 — _autoFire is a no-op without a player', async () => {

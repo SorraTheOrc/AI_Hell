@@ -644,6 +644,22 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
     expect(scene.getPlayerBullets()).toHaveLength(0);
     scene.getCursors()!.right.isDown = false;
   });
+
+  it('AC3 — the gym onWeaponFired hook is a no-op (no game shoot cue)', async () => {
+    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    vi.clearAllMocks();
+
+    scene.getCursors()!.right.isDown = true;
+    scene.tick(0.5);
+    scene.getCursors()!.right.isDown = false;
+
+    // The shared _autoFire fired bullets but the gym hook stays silent.
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+    expect(cannonSound).not.toHaveBeenCalled();
+  });
 });
 
 describe('GymFormationScene — collision detection and player hit/respawn (core scene AC1–AC5)', () => {
