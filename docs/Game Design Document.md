@@ -273,6 +273,17 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **Implemented in the combat formation gyms (§6.4, `src/scenes/gym/GymEnemies.ts` / `src/scenes/gym/GymBoss.ts`, AH-0MU3VOQKH005YOBH):** From here the enemy-bearing formation gyms run a **shared opt-in power-up layer** in `GymFormationScene`: a `WeightedRandomSpawner` over **the full drop pool — P3–P9 power-ups plus the weapon drops (Spread → Dual, Rapid, Reset)** seeded from the game-rules config (`src/core/rules.ts`), a `RandomAvoidingPlacement` strategy (`src/powerups/placement.ts`) that avoids live enemy bodies and the player, **one drop on screen at a time** on the configured interval (default **12.5 s**), fly-over collection (≥ 3 % scale + hull overlap) applied through the shared `EffectsRegistry`, and the standalone HUD with the lives counter visible (one row per active effect, plus one row per equipped weapon). The §4.4 rarity guidance is encoded as **relative weights** — standard power-up IDs (P3–P7, P9) default to **4** and **P8 Extra Life** to **1**, while each weapon drop (spread/dual/rapid/reset) defaults to **2** so weapons appear alongside standard effects without dominating them; the existing `WeightedRandomSpawner` normalises them internally. Collecting a weapon drop equips it through the registry for 10 s (independent countdown per weapon); the **Reset** drop clears every active weapon. A **live spawn-interval slider** (`src/utils/gymPowerUpControl.ts`) tunes the cadence of the running scene and persists the value through the rules config, so the interval is no longer a compile-time constant.
 
+#### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
+
+Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
+
+- **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected.
+- **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as `Minerals: n/20`, resets on `GameState.startGame()`, and is never written to the leaderboard.
+- **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries.
+- **Permanent pick**: the chosen option is applied to the player **permanently for the current run** — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
+- **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
+- **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
+
 ### 4.5 Scoring System
 
 | Action | Points |
@@ -382,7 +393,10 @@ src/
 │   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
 │   │                      to GameOverScene on win or loss; **ESC pauses** the run and
-│   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable)
+│   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable);
+│   │                      mineral drops/hold and the hold-full power-up choice overlay
+│   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (3 distinct options, paused
+│   │                      SceneManager overlay; applies the pick permanently, resumes, resets hold)
 │   ├── PauseScene.ts    — In-game pause menu (implemented): full-screen replacement scene
 │   │                      with Resume / Settings / Quit (pointer + keyboard), launched by
 │   │                      PlayScene's ESC toggle; resume continues the run exactly
@@ -399,6 +413,9 @@ src/
 │   └── gym/
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
+│       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
+│       │                   small-asteroid mineral drops, hold fill + HUD counter,
+│       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals)
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
@@ -412,6 +429,8 @@ src/
 │                           drops (7 s lifetime, persistent weapon switching)
 ├── entities/
 │   ├── Player.ts        — Player ship (auto-fire, weapon slot)
+│   ├── Mineral.ts       — Mineral collectable (small gold dot; collected by the player,
+│   │                      absorbed by non-asteroid enemies; inert to bullets/asteroids)
 │   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, off-screen cull)
 │   ├── Enemy.ts         — Base enemy class
 │   ├── Scout.ts         — E1 Scout
@@ -438,6 +457,8 @@ src/
 │   │                      findTeleportDestination reused by GymPowerUpsCombat and
 │   │                      the combat base (ray + grid candidates, clamped to screen)
 │   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
+│   ├── choice.ts        — Pluggable hold-full choice strategy (default: 3 distinct random
+│   │                      picks from P3–P9 + Spread/Dual/Rapid; graceful degradation)
 │   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
 │   └── icons.ts         — Code-drawn neon power-up icons (shield/bomb/phase/teleport/speed/life/magnet)
 ├── waves/

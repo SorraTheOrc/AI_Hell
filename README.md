@@ -467,6 +467,22 @@ The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire a
 
 The scene is reachable from the gym index ("Weapons" entry). Coverage: `src/utils/weapons.test.ts` (pattern math, fire rates, `isTimedWeapon`, round-robin order, heading fallback) + `src/scenes/gym/GymWeapons.test.ts` (auto-discovery, ship presence, auto-fire, cumulative collection/timed expiry/reset, round-robin, grow/shrink, collection gating) + `src/entities/Player.test.ts` (heading, cumulative collection, per-weapon timers/expiry, per-rate auto-fire).
 
+#### Minerals, the Ship's Hold & the Power-Up Choice (`GymMinerals`)
+
+Asteroids drop **minerals** — small, stationary gold dots — which fill a run-scoped **ship's hold**; when the hold fills, the game pauses for a **power-up choice** (GDD §4.4.1).
+
+- `src/entities/Mineral.ts` — the collectable: a small gold dot that persists until collected, is collected by the player on overlap, is absorbed by **non-asteroid enemies**, is inert to bullets and asteroids, and deals no damage.
+- `src/core/GameState.ts` — the ship's hold: `minerals`/`mineralCapacity` (default 20), `addMinerals(n)` (caps at capacity, returns overflow), `isHoldFull()`, `resolveHold()` (reset to 0 carrying the overflow). Run-scoped (reset by `startGame()`, never written to the leaderboard).
+- `src/core/rules.ts` — mineral tunables with the usual defaults + corrupt-JSON fallback: `mineralCollectAmount` (1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
+- `src/entities/BaseEnemy.ts` — per-enemy mineral accounting (`collectMineral()` / `mineralCount`) and the 25–50 % re-drop on death (`mineralRedropCount()` / `spawnMineralDrops()`); `Asteroid` overrides `collectMineral()` as a no-op.
+- `src/powerups/choice.ts` — the **pluggable** choice strategy: the default draws **three distinct** options uniformly at random from the full drop pool (P3–P9 + Spread/Dual/Rapid) and degrades gracefully below three entries.
+- `src/powerups/effects.ts` / `src/entities/Player.ts` — permanent-effect support: `applyCollect(id, true)` / `applyWeapon(id, true)` and `equipWeapon(id, true)` mark a chosen effect permanent so it never expires for the run (cleared on reset).
+- `src/scenes/MineralChoiceScene.ts` — the modal hold-full overlay: three distinct options, pointer + number-key selection, paused at the SceneManager level (mirroring `PauseScene`); the pick is applied permanently, play resumes, and the hold resets with overflow.
+- `src/scenes/PlayScene.ts` — wires the full loop: small asteroid kills drop minerals, player/enemy overlap collection, enemy re-drop on death, the HUD counter (`Minerals: n/20`), and the hold-full choice.
+- `src/scenes/gym/GymMinerals.ts` — the **asteroids-only** gym demonstrating the whole mechanic (auto-discovered as the "Minerals" index entry); every formation gym also seeds **100 random minerals** on create (`GymFormationScene`).
+
+Coverage: `src/entities/__tests__/Mineral.test.ts`, `src/entities/__tests__/BaseEnemy.minerals.test.ts`, `src/core/__tests__/GameState.minerals.test.ts`, `src/ui/__tests__/HUD.minerals.test.ts`, `src/powerups/__tests__/choice.test.ts`, `src/powerups/__tests__/effects.permanent.test.ts`, `src/scenes/__tests__/MineralChoiceScene.test.ts`, `src/scenes/__tests__/PlayScene.minerals.test.ts` and `src/scenes/gym/GymMinerals.test.ts`.
+
 #### Boss (Central AI) Gym Scene
 
 The Boss gym scene (Create Boss (Central AI) gym scene) is a standalone Phaser scene demonstrating the Boss — "The Central AI" from GDD §4.3: the final-challenge multi-phase enemy with a large neon hexagonal body, a pulsing central core, a 4-phase health bar, and distinct attack patterns per phase. It composes the shared `GymFormationScene` core library with a single-entity `Boss`:
