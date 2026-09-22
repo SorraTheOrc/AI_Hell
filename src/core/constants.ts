@@ -186,3 +186,20 @@ export const PLAYER_HIT_SCALE_PEAK = 1.5;
 
 /** Duration of the player-hit scale pulse: expand + contract cycle (seconds). */
 export const PLAYER_HIT_SCALE_PULSE_DURATION = 0.4;
+
+// ── Minerals (AH-0MUBVGI62004ED9Q) ─────────────────────────────────
+
+/**
+ * Half-size (radius) of a mineral collectable in px. Small gold dot —
+ * noticeably smaller than the ship (SHIP_SIZE/2) for visual clarity.
+ */
+export const MINERAL_SIZE = 5;
+
+/** Mineral body colour — gold (hex). */
+export const MINERAL_COLOR = 0xffdd44;
+
+/**
+ * Render depth for mineral collectables — above regular gameplay
+ * objects (body/graphics depth 1) but below UI elements.
+ */
+export const MINERAL_DEPTH = 2;

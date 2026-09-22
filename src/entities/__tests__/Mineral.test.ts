@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import { MINERAL_COLOR, MINERAL_DEPTH, MINERAL_SIZE } from '../../core/constants';
 import { Mineral, MineralConfig } from '../Mineral';
 
 class HarnessScene extends Phaser.Scene {
@@ -23,19 +24,18 @@ class HarnessScene extends Phaser.Scene {
 
 describe('Mineral constants', () => {
   it('defines MINERAL_SIZE as a small gold dot radius', () => {
-    // Implementation child adds this constant.
-    // expect(typeof MINERAL_SIZE).toBe('number');
-    // expect(MINERAL_SIZE).toBeGreaterThan(0);
-    // expect(MINERAL_SIZE).toBeLessThan(10); // small, not ship-sized
+    expect(typeof MINERAL_SIZE).toBe('number');
+    expect(MINERAL_SIZE).toBeGreaterThan(0);
+    expect(MINERAL_SIZE).toBeLessThan(10); // small, not ship-sized
   });
 
   it('defines MINERAL_COLOR as gold', () => {
-    // expect(MINERAL_COLOR).toBe(0xffdd44); // gold hex
+    expect(MINERAL_COLOR).toBe(0xffdd44); // gold hex
   });
 
   it('defines MINERAL_DEPTH above regular gameplay objects', () => {
-    // expect(typeof MINERAL_DEPTH).toBe('number');
-    // expect(MINERAL_DEPTH).toBeGreaterThan(1); // above body/explode depth
+    expect(typeof MINERAL_DEPTH).toBe('number');
+    expect(MINERAL_DEPTH).toBeGreaterThan(1); // above body/explode depth
   });
 });
 
