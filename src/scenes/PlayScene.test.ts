@@ -188,18 +188,57 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(enemy.alive).toBe(false);
   });
 
-  it('AC2 — enemy bullets wrap across the screen edges', async () => {
+  it('AC2 — enemy bullets wrap across all four screen edges', async () => {
     const scene = await bootPlay();
     scene.getPlayer()!.setPosition(50, 50); // keep the player clear
+    const step = 350 * 0.05; // distance travelled in one 0.05 s tick
 
-    const eb = scene.spawnEnemyBullet(GAME_WIDTH - 5, 300, 350, 0, 0xff4444, 10);
-    scene.tick(0.05); // 350 × 0.05 = 17.5 px → crosses the right seam
+    // Each case crosses one edge within a single tick and must reappear on
+    // the opposite edge (never culled off-screen).
+    const cases: Array<{
+      name: string;
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      expectX: number;
+      expectY: number;
+    }> = [
+      { name: 'right → left', x: GAME_WIDTH - 1, y: 300, vx: 350, vy: 0,
+        expectX: GAME_WIDTH - 1 + step - GAME_WIDTH, expectY: 300 },
+      { name: 'left → right', x: 1, y: 300, vx: -350, vy: 0,
+        expectX: 1 - step + GAME_WIDTH, expectY: 300 },
+      { name: 'bottom → top', x: 470, y: GAME_HEIGHT - 1, vx: 0, vy: 350,
+        expectX: 470, expectY: GAME_HEIGHT - 1 + step - GAME_HEIGHT },
+      { name: 'top → bottom', x: 470, y: 1, vx: 0, vy: -350,
+        expectX: 470, expectY: 1 - step + GAME_HEIGHT },
+    ];
+
+    for (const c of cases) {
+      const eb = scene.spawnEnemyBullet(c.x, c.y, c.vx, c.vy, 0xff4444, 10);
+      scene.tick(0.05);
+      expect(scene.getEnemyBullets(), c.name).toContain(eb);
+      expect(eb.graphics.x, c.name).toBeCloseTo(c.expectX, 5);
+      expect(eb.graphics.y, c.name).toBeCloseTo(c.expectY, 5);
+      // Wrapped on-screen, not culled off-screen.
+      expect(eb.graphics.x, c.name).toBeGreaterThanOrEqual(0);
+      expect(eb.graphics.x, c.name).toBeLessThan(GAME_WIDTH);
+      expect(eb.graphics.y, c.name).toBeGreaterThanOrEqual(0);
+      expect(eb.graphics.y, c.name).toBeLessThan(GAME_HEIGHT);
+    }
+  });
+
+  it('AC2 — enemy bullets wrap both axes at once (corner case)', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50);
+    const step = 350 * 0.05;
+
+    const eb = scene.spawnEnemyBullet(GAME_WIDTH - 1, GAME_HEIGHT - 1, 350, 350, 0xff4444, 10);
+    scene.tick(0.05);
 
     expect(scene.getEnemyBullets()).toContain(eb);
-    // Wrapped to the left edge instead of being culled off-screen.
-    expect(eb.graphics.x).toBeCloseTo(GAME_WIDTH - 5 + 350 * 0.05 - GAME_WIDTH, 5);
-    expect(eb.graphics.x).toBeGreaterThanOrEqual(0);
-    expect(eb.graphics.x).toBeLessThan(GAME_WIDTH);
+    expect(eb.graphics.x).toBeCloseTo(GAME_WIDTH - 1 + step - GAME_WIDTH, 5);
+    expect(eb.graphics.y).toBeCloseTo(GAME_HEIGHT - 1 + step - GAME_HEIGHT, 5);
   });
 
   it('AC3 — enemy bullets expire by lifetime, never by off-screen position', async () => {
