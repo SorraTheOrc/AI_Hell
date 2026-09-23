@@ -35,7 +35,8 @@ const VALID_CONTROL_SCHEMES: ControlScheme[] = [
 
 // ── Enemy config column order (for serialization) ──────────────────
 
-const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
+/** Stable column order for the enemy-config CSV. Exported for plugin validation. */
+export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'key', 'displayName', 'formationKind', 'count', 'spacingX', 'spacingY',
   'driftSpeed', 'startX', 'startY', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
@@ -44,7 +45,8 @@ const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
 
 // ── Ship config column order (for serialization) ───────────────────
 
-const SHIP_COLUMN_ORDER: (keyof ShipConfig)[] = [
+/** Stable column order for the ship-config CSV. Exported for plugin validation. */
+export const SHIP_COLUMN_ORDER: (keyof ShipConfig)[] = [
   'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
   'shipColor', 'thrustFlameColor', 'thrustFlameInnerColor',
   'frictionDeceleration', 'controlScheme', 'asteroidsRotationSpeed',
@@ -160,7 +162,9 @@ function parseCsvLine(line: string): string[] {
  * Supports both Unix (`\n`) and Windows (`\r\n`) line endings.
  */
 export function parseCsvRows(csv: string): Record<string, string>[] {
-  const lines = csv.split(/\r?\n/);
+  // Strip a leading UTF-8 BOM (U+FEFF) so the first header is not polluted.
+  const source = csv.charCodeAt(0) === 0xfeff ? csv.slice(1) : csv;
+  const lines = source.split(/\r?\n/);
   let header: string[] | null = null;
   const records: Record<string, string>[] = [];
 
@@ -196,6 +200,9 @@ export function parseCsvRows(csv: string): Record<string, string>[] {
 // ── AC3: Validation result type ─────────────────────────────────────
 
 export interface ValidationResult {
+  /** True when no validation errors were found. */
+  ok: boolean;
+  /** Human-readable error messages (empty when `ok` is true). */
   errors: string[];
 }
 
@@ -240,7 +247,28 @@ export function validateEnemyConfig(
     errors.push(`Invalid key format: "${row.key}" — must be lowercase, numbers, hyphens only`);
   }
 
-  return { errors };
+  // Validate malformed numbers.
+  const numericFields = [
+    'count', 'spacingX', 'spacingY', 'driftSpeed', 'startX', 'startY',
+    'size', 'bulletSize', 'fireInterval', 'bulletSpeed', 'bulletLifetime',
+    'burstCount', 'shotProbability',
+  ];
+  for (const field of numericFields) {
+    const val = row[field];
+    if (val != null && val.trim() !== '' && Number.isNaN(Number(val))) {
+      errors.push(`Malformed number for ${field}: "${val}"`);
+    }
+  }
+
+  // Validate hex colours.
+  for (const field of ['color', 'bulletColor']) {
+    const val = row[field];
+    if (val != null && val.trim() !== '' && !/^0x[0-9a-fA-F]{6}$/.test(val)) {
+      errors.push(`Invalid hex colour for ${field}: "${val}"`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
 }
 
 /**
@@ -270,7 +298,27 @@ export function validateShipConfig(
     errors.push(`Invalid controlScheme: "${row.controlScheme}". Valid values: ${VALID_CONTROL_SCHEMES.join(', ')}`);
   }
 
-  return { errors };
+  // Validate malformed numbers.
+  const numericFields: (keyof ShipConfig)[] = [
+    'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
+    'frictionDeceleration', 'asteroidsRotationSpeed',
+  ];
+  for (const field of numericFields) {
+    const val = row[field];
+    if (val != null && val.trim() !== '' && Number.isNaN(Number(val))) {
+      errors.push(`Malformed number for ${String(field)}: "${val}"`);
+    }
+  }
+
+  // Validate hex colours.
+  for (const field of ['shipColor', 'thrustFlameColor', 'thrustFlameInnerColor']) {
+    const val = row[field];
+    if (val != null && val.trim() !== '' && !/^0x[0-9a-fA-F]{6}$/.test(val)) {
+      errors.push(`Invalid hex colour for ${field}: "${val}"`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
 }
 
 // ── AC2: coerceEnemyConfig ──────────────────────────────────────────
@@ -376,6 +424,14 @@ export function serializeEnemyConfigs(configs: EnemyConfig[]): string {
 const SHIP_HEX_COLOUR_FIELDS: Set<string> = new Set([
   'shipColor', 'thrustFlameColor', 'thrustFlameInnerColor',
 ]);
+
+/**
+ * Convert a single typed `ShipConfig` to a CSV string.
+ * Convenience wrapper around {@link serializeShipConfigs}.
+ */
+export function serializeShipConfig(config: ShipConfig): string {
+  return serializeShipConfigs([config]);
+}
 
 /**
  * Convert typed `ShipConfig` objects to a CSV string.

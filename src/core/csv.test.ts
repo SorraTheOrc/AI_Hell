@@ -803,3 +803,102 @@ describe('Edge cases', () => {
     expect(JSON.stringify(row)).toBe(originalRow);
   });
 });
+
+// ── Codec AC refinements (AH-0MUE7Y2940000LVE) ──────────────────────
+
+describe('Codec AC refinements (AH-0MUE7Y2940000LVE)', () => {
+  it('parseCsvRows strips a leading BOM (U+FEFF)', async () => {
+    const m = await loadCsvModule();
+    const source = '\uFEFFkey,displayName\nscout,Scout';
+    const rows = m.parseCsvRows(source);
+    expect(rows.length).toBe(1);
+    expect(rows[0].key).toBe('scout');
+    expect(rows[0].displayName).toBe('Scout');
+  });
+
+  it('ValidationResult includes an ok boolean that is true for valid rows', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'test', displayName: 'Test', formationKind: 'v',
+      count: '1', spacingX: '26', spacingY: '22', driftSpeed: '40',
+      startX: '100', startY: '200', size: '16',
+      color: '0xff0000', bulletColor: '0x000000', bulletSize: '3',
+      shotPattern: 'none', fireInterval: '1000', bulletSpeed: '200',
+      bulletLifetime: '1.5', burstCount: '1', shotProbability: '1.0',
+    };
+    const result = m.validateEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('ValidationResult ok is false when errors are present', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateEnemyConfig({}, DEFAULT_ENEMY_CONFIGS);
+    expect(result.ok).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it('validator reports malformed numbers', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'test', displayName: 'Test', formationKind: 'v',
+      count: 'not-a-number', spacingX: '26', spacingY: '22', driftSpeed: '40',
+      startX: '100', startY: '200', size: '16',
+      color: '0xff0000', bulletColor: '0x000000', bulletSize: '3',
+      shotPattern: 'none', fireInterval: '1000', bulletSpeed: '200',
+      bulletLifetime: '1.5', burstCount: '1', shotProbability: '1.0',
+    };
+    const result = m.validateEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e: string) => e.toLowerCase().includes('malformed'))).toBe(true);
+  });
+
+  it('validator reports invalid hex colours', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'test', displayName: 'Test', formationKind: 'v',
+      count: '1', spacingX: '26', spacingY: '22', driftSpeed: '40',
+      startX: '100', startY: '200', size: '16',
+      color: 'nope', bulletColor: '0x000000', bulletSize: '3',
+      shotPattern: 'none', fireInterval: '1000', bulletSpeed: '200',
+      bulletLifetime: '1.5', burstCount: '1', shotProbability: '1.0',
+    };
+    const result = m.validateEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e: string) => e.toLowerCase().includes('hex'))).toBe(true);
+  });
+
+  it('exports stable ENEMY_COLUMN_ORDER and SHIP_COLUMN_ORDER constants', async () => {
+    const m = await loadCsvModule();
+    expect(Array.isArray(m.ENEMY_COLUMN_ORDER)).toBe(true);
+    expect(Array.isArray(m.SHIP_COLUMN_ORDER)).toBe(true);
+    expect(m.ENEMY_COLUMN_ORDER).toContain('key');
+    expect(m.ENEMY_COLUMN_ORDER).toContain('shotProbability');
+    expect(m.SHIP_COLUMN_ORDER).toContain('thrustAcceleration');
+    expect(m.SHIP_COLUMN_ORDER).toContain('controlScheme');
+  });
+
+  it('serializeShipConfig (singular) produces the same output as serializeShipConfigs([config])', async () => {
+    const m = await loadCsvModule();
+    const single = m.serializeShipConfig(DEFAULT_CONFIG);
+    const plural = m.serializeShipConfigs([DEFAULT_CONFIG]);
+    expect(single).toBe(plural);
+    const rows = m.parseCsvRows(single);
+    expect(rows.length).toBe(1);
+    expect(rows[0].controlScheme).toBe(DEFAULT_CONFIG.controlScheme);
+  });
+
+  it('validator reports malformed ship numbers', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      thrustAcceleration: 'bad', maxSpeed: '175', shipSize: '20',
+      thrustFlameLength: '0.75', shipColor: '0x00ffff',
+      thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
+      frictionDeceleration: '100', controlScheme: 'fourDirectional',
+      asteroidsRotationSpeed: '3',
+    };
+    const result = m.validateShipConfig(row, DEFAULT_CONFIG);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e: string) => e.toLowerCase().includes('malformed'))).toBe(true);
+  });
+});
