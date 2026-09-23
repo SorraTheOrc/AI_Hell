@@ -10,6 +10,14 @@
  * concrete scene supplies only its entity-specific configuration via
  * {@link EnemyFormationConfig}.
  *
+ * **Shared combat core:** this class extends
+ * {@link CombatScene} (`src/scenes/core/CombatScene.ts`), so collision
+ * resolution, player hits, auto-fire, drop collection, teleports and
+ * player explosions are the *same code* the shipped `PlayScene` runs.
+ * This class supplies the gym participant accessors (`entities`,
+ * `bullets`) and config-driven hooks (teleport gate, bullet hit radius,
+ * `config.onEntityDestroyed`).
+ *
  * **Discovery note:** this file lives in the `core/` subfolder, so the
  * gym index glob (`src/scenes/gym/*.ts`) never lists it as a scene.
  */

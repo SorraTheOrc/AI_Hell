@@ -112,9 +112,25 @@ keyed by `enemyKey`.
 
 ### 2.1 What the core library is
 
-`src/scenes/gym/core/GymFormationScene.ts` is a generic
-`Phaser.Scene` base class (type parameters `<TEntity, TBullet>`) that
-encapsulates everything the first three enemy gym scenes duplicated:
+`src/scenes/gym/core/GymFormationScene.ts` is a generic base class that
+**extends the shared `src/scenes/core/CombatScene.ts` abstract combat
+core** (type parameters `<TEntity, TBullet>`) and encapsulates everything
+the first three enemy gym scenes duplicated:
+
+- **Shared combat/lifecycle core** — inherited from `CombatScene`
+  (AH-0MUD8E015004C4JO), the same base `PlayScene` extends. It defines the
+  eight combat/lifecycle template methods exactly once
+  (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`,
+  `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`,
+  `_readPlayerInput`) and dispatches to overridable hooks. The gym supplies
+  its participant accessors (`getEnemyEntities()` → `entities`,
+  `getEnemyBullets()`/`setEnemyBullets()` → `bullets`) and its hooks
+  (`canTeleport()` → `powerUpsEnabled`, `getEnemyBulletRadius()` →
+  `config.bulletHitRadius`, `onEnemyDestroyed()` →
+  `config.onEntityDestroyed`, teleport-radius hooks); the game supplies its
+  own. Bullet-vs-bullet impact feedback is likewise hosted once in the
+  shared path. The shipped game and the gyms therefore cannot diverge on
+  collision, auto-fire, drops, teleport or player-hit behaviour.
 
 - **Formation spawn** — builds offsets, creates each entity at
   `(baseX + col * spacingX, baseY + row * spacingY)`, and calls
@@ -440,7 +456,8 @@ combat testbeds.
 - **Input:** the base scene binds the cursor keys (arrows) AND `W/A/S/D`,
   clamped to the game bounds; `maxSpeed` 175 px/s. The bound keys are
   routed through the player's **saved control scheme** — keyed off
-  `player.getScheme()` inside `GymFormationScene._readPlayerInput`, which
+  `player.getScheme()` inside the shared
+  `CombatScene._readPlayerInput` (inherited by `GymFormationScene`), which
   dispatches to `FourDirectionalInputHandler` (default) or
   `AsteroidsInputHandler` (both in `src/utils/movementModel.ts`):
   - **4-directional scheme (default):** arrows and `W/A/S/D` move the ship
@@ -462,13 +479,16 @@ combat testbeds.
 
 ### 7.2 Collisions & respawn
 
-Resolved in the base class `GymFormationScene._handleCollisions` each tick:
+Resolved in the shared `CombatScene._handleCollisions` (inherited by
+`GymFormationScene`; the same path `PlayScene` uses) each tick:
 
 1. Player bullets → enemies (hit radius 20): enemy destroyed (`alive=false`,
    1 HP) + explosion SFX; the bullet is consumed.
 2. Player bullets → enemy bullets (radii 3 + 6): both consumed (mutual
    destruction — bullets pass through *aliens* per GDD §2.6, but not each
-   other).
+   other). The shared `onBulletVsBulletImpact` hook then plays the dedicated
+   `playBulletDestructionSound()` cue and spawns the small impact flash
+   (`src/vfx/bulletImpact.ts`).
 3. Enemy bullets → player hull (`SHIP_SIZE/2` = 10 + bullet 6): ship
    explosion + SFX, `getPlayerHitCount()` increments, the ship respawns
    **in-place** at its current position and orientation (velocity zeroed) with

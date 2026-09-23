@@ -388,11 +388,27 @@ src/
 │                          for the combat gyms; `POWER_UP_SPAWN_INTERVAL` re-sources
 │                          from it in `../core/constants.ts`
 ├── scenes/
+│   ├── core/
+│   │   └── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
+│   │                      defines the eight combat/lifecycle template methods exactly
+│   │                      once (`_handleCollisions`, `_hitPlayer`, `_autoFire`,
+│   │                      `_collectDrop`, `_spawnPlayerExplosion`, `_clearEnemyBullets`,
+│   │                      `_handleTeleport`, `_readPlayerInput`) plus the overridable
+│   │                      hook contract (participant accessors + `onWeaponFired`,
+│   │                      `onEnemyDestroyed`, `onPlayerHit`, `tryAbsorbPlayerHit`,
+│   │                      `onPowerUpCollected`, `canTeleport`, `onBulletVsBulletImpact`, …);
+│   │                      extended by both `PlayScene` and `GymFormationScene` so the
+│   │                      shipped game and the gyms share one combat code path and cannot
+│   │                      drift apart. Hosts the shared bullet-vs-bullet impact feedback
+│   │                      (`src/vfx/bulletImpact.ts` + `playBulletDestructionSound`).
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
 │   │                      FocusManager keyboard navigation (default focus on Play Game)
-│   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
+│   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
+│   │                      base (implementing its hooks for boss multi-hit, asteroid split,
+│   │                      mineral absorption, wave accounting, lives/game-over and the P4
+│   │                      bomb notice); WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
 │   │                      to GameOverScene on win or loss; **ESC pauses** the run and
 │   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable);
@@ -413,6 +429,13 @@ src/
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
 │   │                      scenes from scenes/gym/ via import.meta.glob)
 │   └── gym/
+│       ├── core/
+│       │   └── GymFormationScene.ts — Shared gym formation base (implemented): extends the
+│       │                      shared `scenes/core/CombatScene`, generic over the entity/bullet
+│       │                      types and driven by an `EnemyFormationConfig`; owns formation
+│       │                      spawn/drift/respawn, the opt-in power-up layer and the
+│       │                      enemy-only mode. Concrete E1–E5 gyms and GymEnemies/GymBoss
+│       │                      supply only their entity-specific config.
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
@@ -611,6 +634,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 - **Player hull**: Direction-neutral regular hexagon (flat top/bottom, circumradius = `shipSize / 2`), neon outline only (no fill), with four small engine ports at the top, bottom, left, and right cardinal points. The hexagon's 60° rotational symmetry means the hull never implies a heading — in a thrust-based 360°-movement game the player has no fixed forward direction, so thrust intent is read from the engine flames, not the silhouette. Enemy ships keep directional silhouettes (chevrons/darts in §4.1) since they do fly with a heading.
 - **Animations**: Smooth, fluid motion for formations; sharp, precise motion for bullets.
 - **Power-up collection absorb**: Collected drops are "sucked into the ship" over ≤ 0.3 s by a shared absorb animation (`src/powerups/collectAnimation.ts`) — position converges on the ship's world position, scale shrinks to zero, and the shape shears/rotates toward the hull before the `Graphics` is destroyed. One generic treatment covers all drop types (power-ups and weapon drops); it is cosmetic only and never delays the applied effect. See §7.3.
+- **Bullet-vs-bullet impact flash**: When a player bullet shoots down an enemy bullet, a brief small flash/glow appears at the impact point (`src/vfx/bulletImpact.ts`, `resolveBulletVsBulletImpact()`) — a warm-white filled circle that fades and scales up slightly over ~120 ms before destroying itself. Deliberately NOT the full particle burst (bullets are only ~3 px radius). It is invoked from the single shared `CombatScene.onBulletVsBulletImpact` path used by both `PlayScene` and `GymFormationScene`.
 - **Particle effects**: Minimal — use for explosions (enemy destruction, player death). Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
 - **Explosion patterns**: Three burst patterns are available — **radial** (uniform random directions with a speed spread), **ring/shell** (particles on a shared circle forming an expanding ring), and **implosion-then-burst** (particles drift inward for ~100 ms, then burst outward). Each entity type is assigned one, two, or three patterns (even split of the size-scaled count across them) via the single `EXPLOSION_PATTERNS_BY_TYPE` map; death paths call `resolvePatterns(type)` rather than hard-coding patterns:
 
@@ -640,6 +664,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
+| **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
 | **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
 | **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |

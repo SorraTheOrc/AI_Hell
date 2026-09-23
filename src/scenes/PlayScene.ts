@@ -7,6 +7,14 @@
  * resolves collisions, applies power-up collection, and advances levels
  * automatically when a wave/level is cleared.
  *
+ * **Shared combat core:** extends {@link CombatScene}
+ * (`src/scenes/core/CombatScene.ts`), which owns collision resolution,
+ * player hits, auto-fire, drop collection, teleports, player explosions
+ * and bullet clearing. This scene supplies the game's hooks (boss
+ * multi-hit, asteroid split, mineral absorption, wave accounting,
+ * lives/game-over, the P4 bomb notice). The gym formation base runs the
+ * same shared path, so the game and gyms cannot diverge.
+ *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
  *
  * Determinism: `update()` delegates to the public `tick(dt)` step, which
