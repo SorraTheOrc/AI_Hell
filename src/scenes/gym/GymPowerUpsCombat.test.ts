@@ -158,13 +158,17 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     player.setPosition(480, 270);
 
     // SHOOT starts ON — the tell phase lasts 0.6 s then fires on the next
-    // tick past the 1.2 s interval. Drive ~3 s of simulation.
-    for (let i = 0; i < 200; i++) {
+    // tick past the 1.2 s interval. Drive until a bullet appears, polling
+    // each tick so the assertion does not sit on the bullet-lifetime expiry
+    // boundary (AH-0MU960UTE001PTV0) and stays robust to the harness's
+    // background game loop.
+    let bullets = scene.getEnemyBullets();
+    for (let i = 0; i < 400 && bullets.length === 0; i++) {
       scene.tick(1 / 60);
+      bullets = scene.getEnemyBullets();
     }
 
     // At least one bullet should be on screen.
-    const bullets = scene.getEnemyBullets();
     expect(bullets.length).toBeGreaterThan(0);
 
     // Bullets are Graphics objects.
@@ -291,10 +295,12 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // SHOOT starts ON — generate bullets without toggling.
-    for (let i = 0; i < 200; i++) {
-      scene.tick(1 / 60);
-    }
+    // Place enemy bullets deterministically so the assertion tests the P4
+    // clear itself, not scout fire cadence vs bullet lifetime
+    // (AH-0MU960UTE001PTV0 — shorter lifetimes made the previous
+    // tick-until-bullets-exist approach timing-fragile).
+    scene.spawnEnemyBullet(200, 100, 0, 0);
+    scene.spawnEnemyBullet(300, 150, 0, 0);
     const bulletsBefore = scene.getEnemyBullets();
     expect(bulletsBefore.length).toBeGreaterThan(0);
 

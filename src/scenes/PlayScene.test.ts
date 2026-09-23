@@ -255,6 +255,24 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getEnemyBullets()).not.toContain(eb);
   });
 
+  it('AC3/AC5 — a player bullet that expires is destroyed (no stationary bullet left on screen)', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50);
+
+    const pb = scene.spawnPlayerBullet(100, 100, 0, 0, 0x00ffff, 0.1);
+    expect(scene.getPlayerBullets()).toContain(pb);
+
+    scene.tick(0.05); // 0.05 < 0.1 — still alive and rendered
+    expect(scene.getPlayerBullets()).toContain(pb);
+    expect(pb.active).toBe(true);
+    expect(scene.children.list).toContain(pb);
+
+    scene.tick(0.06); // 0.11 ≥ 0.1 — expired: removed AND destroyed
+    expect(scene.getPlayerBullets()).not.toContain(pb);
+    expect(pb.active).toBe(false);
+    expect(scene.children.list).not.toContain(pb);
+  });
+
   it('AC4 — an enemy bullet overlapping the player costs one life', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

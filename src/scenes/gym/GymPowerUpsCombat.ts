@@ -716,7 +716,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     graphics.fillStyle(0xff4444, 1);
     graphics.fillCircle(0, 0, 3);
     graphics.setPosition(x, y);
-    const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy, lifetime: 3.0, elapsed: 0 };
+    const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy, lifetime: 1.5, elapsed: 0 };
     this.scoutBullets.push(b);
     return b;
   }

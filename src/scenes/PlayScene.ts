@@ -846,7 +846,7 @@ export class PlayScene extends CombatScene<
    * Used by tests (and the boss integration) to place bullets
    * deterministically without relying on entity fire timers.
    *
-   * @param lifetime - Bullet lifetime in seconds (default 3.0 s).
+   * @param lifetime - Bullet lifetime in seconds (default 1.5 s).
    */
   spawnEnemyBullet(
     x: number,
@@ -854,7 +854,7 @@ export class PlayScene extends CombatScene<
     vx: number,
     vy: number,
     color = 0xff4444,
-    lifetime = 3.0,
+    lifetime = 1.5,
   ): PlayEnemyBullet {
     const graphics = this.add.graphics();
     graphics.fillStyle(color, 1);

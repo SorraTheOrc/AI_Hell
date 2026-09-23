@@ -69,14 +69,14 @@ export const DUAL_SIDE_OFFSET = 8;
  * is tuned independently (AH-0MU960UTE001PTV0).
  */
 export const WEAPON_BULLET_LIFETIME = {
-  /** Cannon — long reach for the default weapon (~1050 px). */
-  cannon: 3.0,
-  /** Spread — slightly shorter than cannon (~980 px). */
-  spread: 2.8,
-  /** Dual — matches spread (~980 px). */
-  dual: 2.8,
-  /** Rapid — short reach balanced by its high fire rate (~525 px). */
-  rapid: 1.5,
+  /** Cannon — long reach for the default weapon (~525 px). */
+  cannon: 1.5,
+  /** Spread — slightly shorter than cannon (~490 px). */
+  spread: 1.4,
+  /** Dual — matches spread (~490 px). */
+  dual: 1.4,
+  /** Rapid — short reach balanced by its high fire rate (~262 px). */
+  rapid: 0.75,
 } as const;
 
 // ── Bullet visual definitions ───────────────────────────────────────

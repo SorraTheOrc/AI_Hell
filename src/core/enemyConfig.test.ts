@@ -56,12 +56,12 @@ describe('EnemyConfig schema', () => {
   });
 
   it('exposes the agreed per-enemy bullet lifetimes (AC3/AC4)', () => {
-    expect(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime).toBe(3.0);
-    expect(DEFAULT_ENEMY_CONFIGS.diver.bulletLifetime).toBe(3.0);
-    expect(DEFAULT_ENEMY_CONFIGS.tank.bulletLifetime).toBe(4.0);
-    expect(DEFAULT_ENEMY_CONFIGS.phaser.bulletLifetime).toBe(3.5);
-    expect(DEFAULT_ENEMY_CONFIGS.swarm.bulletLifetime).toBe(3.0);
-    expect(DEFAULT_ENEMY_CONFIGS.boss.bulletLifetime).toBe(4.0);
+    expect(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime).toBe(1.5);
+    expect(DEFAULT_ENEMY_CONFIGS.diver.bulletLifetime).toBe(1.5);
+    expect(DEFAULT_ENEMY_CONFIGS.tank.bulletLifetime).toBe(2.0);
+    expect(DEFAULT_ENEMY_CONFIGS.phaser.bulletLifetime).toBe(1.75);
+    expect(DEFAULT_ENEMY_CONFIGS.swarm.bulletLifetime).toBe(1.5);
+    expect(DEFAULT_ENEMY_CONFIGS.boss.bulletLifetime).toBe(2.0);
   });
 
   it('enemy bullet lifetimes are individually tunable (not a single shared value)', () => {

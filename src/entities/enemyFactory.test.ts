@@ -97,7 +97,7 @@ describe('Config-aware entity seam', () => {
     expect(bullet!.elapsed).toBe(0);
   });
 
-  it('defaults the enemy bullet lifetime to 3s when the config omits it', async () => {
+  it('defaults the enemy bullet lifetime to 1.5s when the config omits it', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
     const scout = new Scout(scene, {
@@ -106,7 +106,7 @@ describe('Config-aware entity seam', () => {
     scout.shootEnabled = true;
     scout.tryFireAimedBullet(1_000_000);
     const bullet = scout.tryFireAimedBullet(1_000_000 + 600);
-    expect(bullet!.lifetime).toBe(3.0);
+    expect(bullet!.lifetime).toBe(1.5);
   });
 
   it('Phaser and Tank bullet count matches burstCount config', async () => {

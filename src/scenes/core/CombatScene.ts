@@ -408,7 +408,7 @@ export abstract class CombatScene<
     vx: number,
     vy: number,
     color = 0x00ffff,
-    lifetime = 3.0,
+    lifetime = 1.5,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,

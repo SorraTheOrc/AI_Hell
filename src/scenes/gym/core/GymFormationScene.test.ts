@@ -649,7 +649,7 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
       expect(b.x).toBeLessThan(GAME_WIDTH);
     }
 
-    // Cannon lifetime (3s) elapses over the 4.5s of ticks below → all gone
+    // Cannon lifetime (1.5s) elapses over the 4.5s of ticks below → all gone
     // (removed by lifetime, never by off-screen position).
     scene.tick(4.0);
     expect(scene.getPlayerBullets()).toHaveLength(0);

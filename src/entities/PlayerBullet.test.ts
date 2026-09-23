@@ -132,6 +132,22 @@ describe('PlayerBullet — lifetime-based range (AC3, AC4)', () => {
     expect(bullet.isExpired()).toBe(true);
   });
 
+  it('destroys the bullet Graphics (removes it from the scene) when its lifetime elapses', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 100, 100, 0, 0, 1.0);
+
+    // Alive and rendered before the lifetime elapses.
+    expect(advanceAndCull(bullet, 0.5)).toBe(true);
+    expect(bullet.active).toBe(true);
+    expect(scene.children.list).toContain(bullet);
+
+    // Lifetime exhausted → culled AND destroyed (no lingering stationary
+    // projectile left on the display list — AH-0MU960UTE001PTV0 review).
+    expect(advanceAndCull(bullet, 0.6)).toBe(false);
+    expect(bullet.active).toBe(false);
+    expect(scene.children.list).not.toContain(bullet);
+  });
+
   it('destroys a bullet only once its lifetime exceeds its type value', async () => {
     const scene = await makeScene();
     const bullet = makeBullet(scene, 100, 100, 0, 0, 2.0);

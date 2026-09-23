@@ -65,9 +65,9 @@ export const BOSS_BULLET_SPEED = 160;
 /**
  * Boss bullet lifetime in seconds. Bullets wrap across all four screen
  * edges while alive and expire once this elapses (AH-0MU960UTE001PTV0).
- * Matches the "Boss Swarm" enemy-config default (4.0 s, ≈640 px at 160 px/s).
+ * Matches the "Boss Swarm" enemy-config default (2.0 s, ≈320 px at 160 px/s).
  */
-export const BOSS_BULLET_LIFETIME = 4.0;
+export const BOSS_BULLET_LIFETIME = 2.0;
 /** Desperation speed multiplier (1.6×). */
 const BOSS_DESPERATION_SPEED_MULT = 1.6;
 

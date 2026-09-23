@@ -84,17 +84,17 @@ describe('bulletLifetime (AC3/AC4 — per-weapon range)', () => {
   });
 
   test('lifetimes match the agreed per-weapon defaults', () => {
-    expect(WEAPON_CATALOGUE.cannon.bulletLifetime).toBe(3.0);
-    expect(WEAPON_CATALOGUE.spread.bulletLifetime).toBe(2.8);
-    expect(WEAPON_CATALOGUE.dual.bulletLifetime).toBe(2.8);
-    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(1.5);
+    expect(WEAPON_CATALOGUE.cannon.bulletLifetime).toBe(1.5);
+    expect(WEAPON_CATALOGUE.spread.bulletLifetime).toBe(1.4);
+    expect(WEAPON_CATALOGUE.dual.bulletLifetime).toBe(1.4);
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(0.75);
   });
 
   test('the shared WEAPON_BULLET_LIFETIME constant matches the catalogue', () => {
-    expect(WEAPON_BULLET_LIFETIME.cannon).toBe(3.0);
-    expect(WEAPON_BULLET_LIFETIME.spread).toBe(2.8);
-    expect(WEAPON_BULLET_LIFETIME.dual).toBe(2.8);
-    expect(WEAPON_BULLET_LIFETIME.rapid).toBe(1.5);
+    expect(WEAPON_BULLET_LIFETIME.cannon).toBe(1.5);
+    expect(WEAPON_BULLET_LIFETIME.spread).toBe(1.4);
+    expect(WEAPON_BULLET_LIFETIME.dual).toBe(1.4);
+    expect(WEAPON_BULLET_LIFETIME.rapid).toBe(0.75);
     expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.rapid);
   });
 

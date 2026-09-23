@@ -68,7 +68,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     vy: number,
     radius: number,
     color: number,
-    lifetime: number = 3.0,
+    lifetime: number = 1.5,
   ) {
     super(scene, { x, y });
     this.vx = vx;
@@ -126,7 +126,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
  * @param radius - Bullet radius in px.
  * @param vx - Horizontal velocity (px/s).
  * @param vy - Vertical velocity (px/s).
- * @param lifetime - Bullet lifetime in seconds (default 3.0 s).
+ * @param lifetime - Bullet lifetime in seconds (default 1.5 s).
  * @returns The new bullet Graphics object.
  */
 export function createPlayerBullet(
@@ -137,7 +137,7 @@ export function createPlayerBullet(
   radius: number,
   vx: number,
   vy: number,
-  lifetime: number = 3.0,
+  lifetime: number = 1.5,
 ): PlayerBullet {
   const bullet = new PlayerBullet(scene, x, y, vx, vy, radius, color, lifetime);
   scene.add.existing(bullet);
@@ -150,6 +150,11 @@ export function createPlayerBullet(
  * exhausted). Bullets are never culled by off-screen position — they
  * wrap across the seam and persist until their lifetime elapses.
  *
+ * When the lifetime is exhausted the bullet's Graphics object is
+ * destroyed so it is removed from the scene's display list; a bullet
+ * that merely stopped advancing (but stayed rendered) was the defect
+ * reported in AH-0MU960UTE001PTV0.
+ *
  * @param bullet - The bullet to advance.
  * @param dt - Time step in seconds.
  * @returns `true` if the bullet is still alive.
@@ -159,5 +164,9 @@ export function advanceAndCull(
   dt: number,
 ): boolean {
   bullet.advance(dt);
-  return !bullet.isExpired();
+  if (bullet.isExpired()) {
+    bullet.destroy();
+    return false;
+  }
+  return true;
 }

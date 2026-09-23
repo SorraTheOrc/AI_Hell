@@ -155,7 +155,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     expect(rapidBullets).toBeGreaterThan(cannonBullets);
   });
 
-  it('bullets are removed when off-screen (AC7)', async () => {
+  it('bullets are removed once their lifetime elapses (wrap model, AH-0MU960UTE001PTV0)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -166,8 +166,9 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     scene.tick(0.5);
     expect(scene.getBullets().length).toBeGreaterThan(0);
 
-    // Advance bullets alone: 350 px/s × 3 s = 1,050 px → past the right
-    // edge (960 + margin) — all culled.
+    // Advance bullets alone for 3 s — well past the cannon's 1.5 s
+    // lifetime. Bullets wrap rather than culling off-screen, so they are
+    // removed here purely by lifetime expiry.
     scene.advanceBullets(3);
     expect(scene.getBullets()).toHaveLength(0);
   });

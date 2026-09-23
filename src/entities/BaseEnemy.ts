@@ -48,7 +48,7 @@ export interface BaseEnemyConfig {
   bulletSpeed?: number;
   /**
    * Bullet lifetime in seconds (bullets wrap and expire; AH-0MU960UTE001PTV0).
-   * Defaults to 3.0 s when omitted.
+   * Defaults to 1.5 s when omitted.
    */
   bulletLifetime?: number;
   /** Minimum milliseconds between fire attempts. */
@@ -153,7 +153,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._bulletColor = config.bulletColor ?? 0xffffff;
     this._bulletSize = config.bulletSize ?? 3;
     this._bulletSpeed = config.bulletSpeed ?? 200;
-    this._bulletLifetime = config.bulletLifetime ?? 3.0;
+    this._bulletLifetime = config.bulletLifetime ?? 1.5;
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._rng = config.rng ?? Math.random;
