@@ -24,6 +24,7 @@ import {
   listEnemyConfigKeys,
 } from '../../core/enemyConfig';
 import type { EnemyConfig } from '../../core/enemyConfig';
+import { enemyDifficulty } from '../../core/enemyDifficulty';
 import type { FormationOffset } from '../../utils/formations';
 import { getFormationBuilder } from '../../utils/formations';
 import { PLAYER_SPAWN, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
@@ -53,6 +54,8 @@ export const ENEMY_SAVE_STATUS_ID = 'enemy-gym-save-status';
 export const ENEMY_SAVE_AS_INPUT_ID = 'enemy-gym-save-as-input';
 export const ENEMY_RESPAWN_ID = 'enemy-gym-respawn';
 export const ENEMY_TOGGLE_PLAYER_ID = 'enemy-gym-toggle-player';
+/** Live 0–100 archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5). */
+export const ENEMY_DIFFICULTY_ID = 'enemy-gym-difficulty';
 
 // Numeric slider ranges (mirrors GymPlayer SLIDER_RANGES pattern).
 const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -210,6 +213,19 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     document.getElementById(ENEMY_PANEL_ID)?.remove();
     const panel = document.createElement('div');
     panel.id = ENEMY_PANEL_ID;
+
+    // Live archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5) — gives
+    // designers immediate feedback while tuning, without a running game.
+    const difficultyRow = document.createElement('div');
+    difficultyRow.className = 'gym-panel-row';
+    const difficultyLabel = document.createElement('span');
+    difficultyLabel.textContent = 'difficulty';
+    difficultyLabel.className = 'gym-panel-label';
+    const difficultyValue = document.createElement('output');
+    difficultyValue.id = ENEMY_DIFFICULTY_ID;
+    difficultyValue.setAttribute('aria-label', 'Enemy difficulty (0-100)');
+    difficultyRow.append(difficultyLabel, difficultyValue);
+    panel.appendChild(difficultyRow);
 
     // Numeric sliders.
     for (const [field, range] of Object.entries(ENEMY_SLIDER_RANGES)) {
@@ -371,6 +387,20 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       const sel = this.panel.querySelector<HTMLSelectElement>(`select[data-config="${field}"]`);
       if (sel) sel.value = String((config as unknown as Record<string, unknown>)[field] ?? '');
     }
+    this._updateDifficulty(config);
+  }
+
+  /**
+   * Recomputes and renders the live archetype difficulty (0–100) for the
+   * supplied in-memory config. Updates whenever a slider/select/colour
+   * control changes, so designers see the effect of a change immediately
+   * (AH-0MTZWZ7MC002B01K, AC5).
+   */
+  private _updateDifficulty(config: EnemyConfig): void {
+    const el = this.panel?.querySelector<HTMLElement>(`#${ENEMY_DIFFICULTY_ID}`);
+    if (!el) return;
+    const { score } = enemyDifficulty(config);
+    el.textContent = `${score.toFixed(1)} / 100`;
   }
 
   private _updateValueLabels(config: EnemyConfig): void {
@@ -385,6 +415,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     const next = this._readPanelValues();
     this.activeConfig = next;
     this._updateValueLabels(next);
+    this._updateDifficulty(next);
     this._applyLive(next);
   }
 

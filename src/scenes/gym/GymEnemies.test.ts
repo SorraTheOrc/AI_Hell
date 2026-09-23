@@ -15,7 +15,8 @@ import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/enemyConfig';
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
-import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from './GymEnemies';
+import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID } from './GymEnemies';
+import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -282,6 +283,45 @@ describe('GymEnemies — single reusable enemy gym', () => {
     input.value = String(before + 20);
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expect(scene.currentConfig.driftSpeed).toBe(before + 20);
+  });
+
+  // ── Live difficulty readout (AH-0MTZWZ7MC002B01K, AC5) ─────────
+
+  it('renders a live difficulty readout matching the library score for the active config', async () => {
+    const scene = await bootWithKey('scout');
+    const el = document.getElementById(ENEMY_DIFFICULTY_ID);
+    expect(el, 'difficulty readout missing').not.toBeNull();
+    const expected = enemyDifficulty(scene.currentConfig).score.toFixed(1);
+    expect(el!.textContent).toBe(`${expected} / 100`);
+  });
+
+  it('updates the difficulty readout when a slider changes the archetype', async () => {
+    const scene = await bootWithKey('scout');
+    const el = document.getElementById(ENEMY_DIFFICULTY_ID)!;
+    const before = el.textContent ?? '';
+
+    // Raising driftSpeed (a difficulty factor) must update the readout and
+    // must not decrease the computed score.
+    const input = document.querySelector<HTMLInputElement>('input[data-config="driftSpeed"]')!;
+    input.value = '200';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const after = el.textContent ?? '';
+    expect(after).not.toBe(before);
+    expect(after).toBe(`${enemyDifficulty(scene.currentConfig).score.toFixed(1)} / 100`);
+  });
+
+  it('updates the difficulty readout when the shot pattern select changes', async () => {
+    const scene = await bootWithKey('scout');
+    const el = document.getElementById(ENEMY_DIFFICULTY_ID)!;
+    const before = el.textContent ?? '';
+
+    const select = document.querySelector<HTMLSelectElement>('select[data-config="shotPattern"]')!;
+    select.value = 'radial';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(el.textContent).not.toBe(before);
+    expect(el.textContent).toBe(`${enemyDifficulty(scene.currentConfig).score.toFixed(1)} / 100`);
   });
 
   // ── shotProbability slider (AH-0MU0F1T2H003B4K0, AC6) ──────────
