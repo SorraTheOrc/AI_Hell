@@ -6,7 +6,7 @@ export default defineConfig({
     // stubbed in src/test/setup.ts (no real canvas backend in CI).
     environment: 'happy-dom',
     setupFiles: ['src/test/setup.ts'],
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'vite/**/*.test.ts'],
     server: {
       deps: {
         // Phaser ships a webpack ESM bundle that Node's native ESM loader
