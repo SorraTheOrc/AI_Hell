@@ -384,3 +384,18 @@ describe('Atomic write (AC6)', () => {
     expect(existsSync(badTarget)).toBe(true);
   });
 });
+
+// ── AC8: Registration in vite.config.ts ─────────────────────────────
+
+describe('Registration in vite.config.ts (AC8)', () => {
+  it('registers the CSV plugin in the resolved Vite config', async () => {
+    const { default: viteConfig } = await import('../../vite.config');
+    const rawPlugins = viteConfig.plugins ?? [];
+    const flat = (
+      Array.isArray(rawPlugins) ? rawPlugins : [rawPlugins]
+    ).flat() as Array<{ name?: string } | null | undefined>;
+
+    const names = flat.filter(Boolean).map((p) => p!.name);
+    expect(names).toContain('ai-hell:config-csv');
+  });
+});
