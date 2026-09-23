@@ -230,6 +230,21 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     expect(idx.listedEnemyScenes.some((s) => s.label === 'Zzz Custom')).toBe(true);
   });
 
+  it('AC2 — a stale persisted boss displayName does not shadow the "Boss Swarm" label', async () => {
+    // The gym panel's Save persists the whole config (including displayName).
+    // A config saved by an older build labelled the `boss` seed "Boss"; that
+    // stale label must not shadow the registry rename, or the index would show
+    // two identical "Boss" rows (AH-0MTV8OV9V002D8B7).
+    const { saveEnemyConfig, DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
+    saveEnemyConfig({ ...DEFAULT_ENEMY_CONFIGS.boss, displayName: 'Boss' });
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+    const bossConfig = idx.listedBossScenes.find((s) => s.enemyKey === 'boss');
+    expect(bossConfig?.label).toBe('Boss Swarm');
+    // The dedicated scene row stays "Boss" — the two labels must remain distinct.
+    expect(idx.listedBossScenes.find((s) => s.sceneKey === 'GymBoss')?.label).toBe('Boss');
+  });
+
   it('corrupt storage does not crash the index (falls back via loadAllEnemyConfigs)', async () => {
     localStorage.setItem('ai-hell-enemy-config:scout', 'not-json');
     booted = await bootScene([GymIndex]);

@@ -183,6 +183,17 @@ describe('EnemyConfig persistence (localStorage)', () => {
     expect(loaded.bulletSpeed).toBe(DEFAULT_ENEMY_CONFIGS.diver.bulletSpeed);
   });
 
+  it('a stale persisted displayName for a seed key does not shadow the registry name', () => {
+    // Simulates a config saved by an older build where the `boss` seed was
+    // labelled "Boss": the registry rename to "Boss Swarm" must win so the
+    // gym index cannot show a stale label (AH-0MTV8OV9V002D8B7).
+    window.localStorage.setItem(
+      `${ENEMY_CONFIG_STORAGE_PREFIX}boss`,
+      JSON.stringify({ ...DEFAULT_ENEMY_CONFIGS.boss, displayName: 'Boss' }),
+    );
+    expect(loadEnemyConfig('boss').displayName).toBe('Boss Swarm');
+  });
+
   it('the generic fallback config for a key with no seed defaults shotProbability to 1.0', () => {
     const cfg = loadEnemyConfig('no-such-enemy');
     expect(cfg.shotProbability).toBe(1.0);

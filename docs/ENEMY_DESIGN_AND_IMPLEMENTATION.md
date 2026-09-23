@@ -86,7 +86,10 @@ classes.
 namespace `ai-hell-enemy-config:<key>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
 Corrupt or missing storage falls back to seed defaults without throwing;
 partial saves are merged over defaults so unknown forward-compatible fields
-are preserved. The set of available keys is the union of the seed registry
+are preserved. For seed keys the registry `displayName` is **authoritative**,
+so a stale persisted label (for example an older "Boss") cannot shadow a
+rename; only `Save As…` (a new key) can introduce a new label. The set of
+available keys is the union of the seed registry
 and any stored suffixes (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()`),
 so a new `Save As…` entry becomes discoverable without code changes.
 

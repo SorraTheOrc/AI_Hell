@@ -367,9 +367,21 @@ export function loadEnemyConfig(key: string): EnemyConfig {
     const parsed = JSON.parse(raw) as Partial<EnemyConfig>;
     // Accept any object; merge over defaults so missing fields keep their
     // defaults and unknown forward-compatible fields are preserved. Coerce
-    // back to a complete EnemyConfig by spreading defaults then parsed,
-    // with key/displayName normalised to the requested key if absent.
-    const merged: EnemyConfig = { ...defaults, ...parsed, key: (parsed.key as string) || defaults.key };
+    // back to a complete EnemyConfig by spreading defaults then parsed.
+    //
+    // The registry's `displayName` is authoritative for seed keys: a stale
+    // persisted label (e.g. an older "Boss" for the renamed `boss` seed)
+    // must not shadow a rename, otherwise the gym index silently shows the
+    // wrong label. Non-seed (Save As) keys keep their persisted/supplied
+    // displayName, falling back to the key (AH-0MTV8OV9V002D8B7).
+    const merged: EnemyConfig = {
+      ...defaults,
+      ...parsed,
+      key: (parsed.key as string) || defaults.key,
+      displayName: seed
+        ? defaults.displayName
+        : ((parsed.displayName as string) || defaults.displayName),
+    };
     return merged;
   } catch {
     return { ...defaults };
