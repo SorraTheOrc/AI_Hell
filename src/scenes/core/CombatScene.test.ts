@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
-import { PLAYER_BULLET_SPEED } from '../../core/constants';
+import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -213,6 +213,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   runApplyPlayerHit(player: Player) {
     this.applyPlayerHit(player);
   }
+  runUpdateInvulnerability(dt: number) {
+    this._updateInvulnerability(dt);
+  }
   getPlayerBullets() {
     return this.playerBullets;
   }
@@ -419,6 +422,20 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
     expect(scene.getInvulnerable()).toBeGreaterThan(0);
+  });
+
+  it('AC2 — the shared invulnerability window is PLAYER_RESPAWN_INVULNERABLE and expires cleanly', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 300, y: 300 });
+
+    scene.runApplyPlayerHit(player);
+    expect(scene.getInvulnerable()).toBe(PLAYER_RESPAWN_INVULNERABLE);
+
+    // Count down the full window: invulnerability reaches 0 and the ship's
+    // alpha is restored to fully opaque.
+    scene.runUpdateInvulnerability(PLAYER_RESPAWN_INVULNERABLE + 0.01);
+    expect(scene.getInvulnerable()).toBe(0);
+    expect(player.alpha).toBe(1);
   });
 
   // ── Teleport ──────────────────────────────────────────────────────
