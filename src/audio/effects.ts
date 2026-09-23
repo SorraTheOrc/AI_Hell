@@ -434,6 +434,18 @@ export function playDestructionSound(): void {
 }
 
 /**
+ * A short, high, low-volume tick — player bullet shoots down an enemy
+ * bullet (AH-0MU43IIQV001S5JR / parent AH-0MUD8E015004C4JO AC5).
+ *
+ * Deliberately distinct from {@link playDestructionSound} (heavier, lower)
+ * so an interception reads as a light "tick" and does not mask the
+ * destruction cue. Safe no-op without an AudioContext.
+ */
+export function playBulletDestructionSound(): void {
+  blip(1400, 900, 0.07, 'square', 0.12);
+}
+
+/**
  * A heavier, lower destruction cue — for Tank enemies.
  *
  * Intentionally UNWIRED (dead code): Tank destruction reuses the shared

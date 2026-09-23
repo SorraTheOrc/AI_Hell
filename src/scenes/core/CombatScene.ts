@@ -61,6 +61,7 @@ import {
   resolvePatterns,
   spawnExplosionParticles,
 } from '../../vfx/explosionParticles';
+import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
@@ -136,6 +137,8 @@ export abstract class CombatScene<
   protected playerBullets: PlayerBullet[] = [];
   /** Live player-explosion VFX graphics (tracked for observation). */
   protected playerExplosions: Phaser.GameObjects.Graphics[] = [];
+  /** Live bullet-impact flash graphics (AC5, tracked for observation). */
+  protected bulletImpactEffects: Phaser.GameObjects.Graphics[] = [];
   /** In-flight absorb animations for collected drops. */
   protected collectAnimations: CollectAnimationHandle[] = [];
 
@@ -268,12 +271,22 @@ export abstract class CombatScene<
   /**
    * Dedicated player-bullet vs enemy-bullet impact feedback (parent AC5).
    * The shared collision path is the single place that resolves the
-   * interception for both scenes; SFX/VFX hook in here.
+   * interception for both scenes; the default implementation plays the
+   * dedicated cue and spawns the small impact flash at the enemy bullet's
+   * position. Scenes may override, but should delegate to
+   * {@link resolveBulletVsBulletImpact} to stay on the shared path.
    */
   protected onBulletVsBulletImpact(
-    _enemyBullet: TBullet,
+    enemyBullet: TBullet,
     _playerBullet: PlayerBullet,
-  ): void {}
+  ): void {
+    resolveBulletVsBulletImpact(
+      this,
+      enemyBullet.graphics.x,
+      enemyBullet.graphics.y,
+      { registry: this.bulletImpactEffects },
+    );
+  }
 
   /** Enemy-bullet hit radius for bullet and player collisions (px). */
   protected getEnemyBulletRadius(): number {
@@ -664,11 +677,13 @@ export abstract class CombatScene<
             bulletRadius,
           )
         ) {
+          // Impact feedback fires from the shared path before the bullets
+          // are destroyed (so the impact point is still readable).
+          this.onBulletVsBulletImpact(eb, pb);
           pb.destroy();
           this.playerBullets.splice(i, 1);
           eb.graphics.destroy();
           consumed = true;
-          this.onBulletVsBulletImpact(eb, pb);
           break;
         }
       }

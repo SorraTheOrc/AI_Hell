@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effectsModule from '../../audio/effects';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
 import { Player } from '../../entities/Player';
@@ -151,9 +152,16 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
     this.hooks.push('onPlayerRamsBoss');
     return this.ramBoss;
   }
-  protected override onBulletVsBulletImpact(): void {
+  protected override onBulletVsBulletImpact(
+    enemyBullet: StubBullet,
+    playerBullet: PlayerBullet,
+  ): void {
     this.hooks.push('onBulletVsBulletImpact');
+    if (this.useDefaultImpact) {
+      super.onBulletVsBulletImpact(enemyBullet, playerBullet);
+    }
   }
+  useDefaultImpact = false;
   protected override onAfterBulletVsBullet(): void {
     this.hooks.push('onAfterBulletVsBullet');
   }
@@ -221,6 +229,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   }
   getPlayerExplosions() {
     return this.playerExplosions;
+  }
+  getBulletImpactEffects() {
+    return this.bulletImpactEffects;
   }
   getInvulnerable() {
     return this.invulnerable;
@@ -496,6 +507,19 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.bullets).toHaveLength(0);
     expect(scene.hooks).toContain('onBulletVsBulletImpact');
     expect(scene.hooks).toContain('onAfterBulletVsBullet');
+  });
+
+  it('AC5 — the default impact hook plays the dedicated cue and spawns the flash', async () => {
+    const scene = await boot();
+    scene.useDefaultImpact = true;
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    scene.spawnPlayerBullet(50, 50, 0, 0);
+    scene.bullets.push(new StubBullet(scene, 50, 50));
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
   // ── Collision bookkeeping ─────────────────────────────────────────

@@ -187,6 +187,25 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.isPlayerInvulnerable()).toBe(true);
   });
 
+  it('AC5 — player bullet vs enemy bullet plays the dedicated impact cue from the shared path', async () => {
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    // Park the ship far from the impact so it is not hit.
+    player.setPosition(50, 50);
+    vi.clearAllMocks();
+
+    const eb = scene.spawnEnemyBullet(500, 300, 0, 0);
+    scene.spawnPlayerBullet(500, 300, 0, 0);
+    scene.tick(0.016);
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    // The heavier destruction cue is NOT used for bullet interception.
+    expect(destruction).not.toHaveBeenCalled();
+    expect(scene.getEnemyBullets()).not.toContain(eb);
+  });
+
   it('AC4 — a power-up drop overlapping the player is collected', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

@@ -781,6 +781,21 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
   });
 
+  it('AC5 — interception plays the dedicated bullet-impact cue from the shared path', async () => {
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const { scene, parkAt, armed, parked } = await bootParked();
+    parkAt.x = 120;
+    parkAt.y = 100;
+
+    const pb = scene.spawnPlayerBullet(parkAt.x, parkAt.y, 0, 0);
+    armed();
+    scene.tick(0.05);
+
+    expect(parked()).not.toBeNull();
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerBullets()).not.toContain(pb);
+  });
+
   it('AC5 — hit test uses the summed radii boundary (rA + rB, inclusive <=)', async () => {
     const { scene } = await bootParked({ entityHitRadius: 10 });
     const target = scene.formationEntities[0];

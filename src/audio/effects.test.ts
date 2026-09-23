@@ -27,6 +27,7 @@ import {
   playMagnetCollectSound,
   playPowerUpCollectSound,
   playPowerUpCollectPopSound,
+  playBulletDestructionSound,
   playDiverFireSound,
   playDiverDestructionSound,
   playDiverDiveStartSound,
@@ -294,6 +295,7 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playMagnetCollectSound,
       playPowerUpCollectSound,
       playPowerUpCollectPopSound,
+      playBulletDestructionSound,
     ];
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
@@ -306,6 +308,35 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
     expect(() => stopDiveSound()).not.toThrow();
     expect(_getDiverDiveSoundStateForTests()).toBeNull();
     expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+});
+
+describe('bullet-destruction cue — synthesis (AH-0MU43IIQV001S5JR / AC5)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  it('plays a short, high, low-volume tick distinct from the destruction fall', () => {
+    const snap = snapshot();
+    playBulletDestructionSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    expect(oscs).toHaveLength(1);
+    const tick = oscs[0];
+    expect(tick.type).toBe('square');
+    // Higher than the 440→60 destruction fall, and descends.
+    expect(tick.freqEvents[0].value).toBe(1400);
+    expect(tick.freqEvents[tick.freqEvents.length - 1].value).toBe(900);
+    const duration = tick.stopTime! - tick.startTime!;
+    expect(duration).toBeLessThanOrEqual(0.1);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.15);
   });
 });
 
