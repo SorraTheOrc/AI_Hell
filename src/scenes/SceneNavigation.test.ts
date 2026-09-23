@@ -11,9 +11,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
-import { GameOverScene, readLeaderboard } from './GameOverScene';
+import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -278,7 +279,11 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
 
     expect(game.scene.isActive('MenuScene')).toBe(true);
     expect(game.scene.isActive('GameOverScene')).toBe(false);
-    expect(readLeaderboard()).toContainEqual({ initials: 'ABC', score: scoreAtDeath });
+    expect(getEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ initials: 'ABC', score: scoreAtDeath }),
+      ]),
+    );
   });
 
   it('AC2 — Enter auto-submits the initials without reaching the button', async () => {
@@ -298,7 +303,11 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
     await sleep(300);
 
     expect(game.scene.isActive('MenuScene')).toBe(true);
-    expect(readLeaderboard()).toContainEqual({ initials: 'XYZ', score: 0 });
+    expect(getEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ initials: 'XYZ', score: 0 }),
+      ]),
+    );
   });
 
   it('AC4 — repeated keyboard-driven sessions leave no stale state', async () => {

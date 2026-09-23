@@ -1,21 +1,43 @@
 /**
- * Unit tests for the GameOverScene (AH-0MU731426003FE71 — child 6).
+ * Unit tests for the GameOverScene (AH-0MU731426003FE71 — child 6; extended by
+ * AH-0MUD9ZNN30065ZLP — game-over leaderboard UX).
  *
  * Covers score display, initials input validation (A–Z only, 3 chars,
- * backspace, submit), the leaderboard stub persistence, and the return
- * to the main menu.
+ * backspace, submit), qualifying vs non-qualifying leaderboard behaviour,
+ * the full ranked leaderboard display (module-backed, no stub), and the
+ * return to the main menu.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
-import { GameOverScene, INITIALS_LENGTH, isInitialsLetter, readLeaderboard, saveScoreEntry } from './GameOverScene';
+import { addEntry, getEntries } from '../core/Leaderboard';
+import { GameOverScene, INITIALS_LENGTH, isInitialsLetter } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 
 async function bootGameOver(): Promise<BootedGame> {
   return bootScene([GameOverScene, MenuScene]);
 }
+
+/** All rendered leaderboard row texts (rows start with the `#rank` marker). */
+function leaderboardRows(scene: GameOverScene): Phaser.GameObjects.Text[] {
+  return (scene.children.list as Phaser.GameObjects.Text[]).filter(
+    (c) => c instanceof Phaser.GameObjects.Text && /^ *#\d+/.test(c.text),
+  );
+}
+
+/** Finds an on-screen text whose content includes `needle`. */
+function findTextContaining(
+  scene: GameOverScene,
+  needle: string,
+): Phaser.GameObjects.Text | undefined {
+  return (scene.children.list as Phaser.GameObjects.Text[]).find(
+    (c) => c instanceof Phaser.GameObjects.Text && c.text.includes(needle),
+  );
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 describe('GameOverScene — score display & navigation (AH-0MU731426003FE71)', () => {
   let booted: BootedGame | null = null;
@@ -59,7 +81,7 @@ describe('GameOverScene — score display & navigation (AH-0MU731426003FE71)', (
   });
 });
 
-describe('GameOverScene — initials input (AC2)', () => {
+describe('GameOverScene — initials input (AC3)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -116,84 +138,150 @@ describe('GameOverScene — initials input (AC2)', () => {
   });
 });
 
-describe('GameOverScene — leaderboard stub (AC3)', () => {
+describe('GameOverScene — qualifying & skip UX (AC5)', () => {
+  let booted: BootedGame | null = null;
+
   afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
     localStorage.clear();
   });
 
-  it('shows a placeholder message when no data is available', async () => {
-    const booted = await bootScene([GameOverScene, MenuScene]);
-    const scene = booted.scene as GameOverScene;
+  it('a qualifying score prompts for initials and persists one ranked entry', async () => {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', { score: 12345, won: false });
+    await new Promise((r) => setTimeout(r, 350));
+    const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
-    // With an empty store the placeholder is guaranteed.
-    expect(readLeaderboard()).toEqual([]);
-
-    const placeholder = (scene.children.list as Phaser.GameObjects.Text[]).find(
-      (c) => c instanceof Phaser.GameObjects.Text && c.text === 'Leaderboard coming soon',
-    );
-    expect(placeholder).toBeDefined();
-    booted.game.destroy(true);
-  });
-
-  it('persists initials + score and sorts descending', () => {
-    const entries = saveScoreEntry({ initials: 'AAA', score: 500 });
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toEqual({ initials: 'AAA', score: 500 });
-
-    const sorted = saveScoreEntry({ initials: 'BBB', score: 900 });
-    expect(sorted.map((e) => e.score)).toEqual([900, 500]);
-    expect(sorted.map((e) => e.initials)).toEqual(['BBB', 'AAA']);
-  });
-
-  it('survives a reload (persisted to localStorage)', () => {
-    saveScoreEntry({ initials: 'A1A', score: 100 });
-    expect(readLeaderboard()).toEqual([{ initials: 'A1A', score: 100 }]);
-  });
-
-  it('tolerates corrupt storage', () => {
-    localStorage.setItem('ai_hell_leaderboard', 'not-json');
-    expect(readLeaderboard()).toEqual([]);
-
-    localStorage.setItem('ai_hell_leaderboard', JSON.stringify({ nope: 1 }));
-    expect(readLeaderboard()).toEqual([]);
-  });
-
-  it('renders populated leaderboard rows (top 3) when data exists', async () => {
-    saveScoreEntry({ initials: 'ZZZ', score: 9000 });
-    saveScoreEntry({ initials: 'YYY', score: 5000 });
-
-    const booted = await bootScene([GameOverScene, MenuScene]);
-    const scene = booted.scene as GameOverScene;
-    const texts = scene.children.list.filter(
-      (c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text,
-    );
-    // No placeholder when entries exist…
-    expect(texts.some((t) => t.text === 'Leaderboard coming soon')).toBe(false);
-    // …and the top rows are rendered (rank, initials, score).
-    const rows = texts.find((t) => t.text.includes('ZZZ'));
-    expect(rows).toBeDefined();
-    expect(rows!.text).toContain('9000');
-    expect(rows!.text).toContain('YYY');
-    booted.game.destroy(true);
-  });
-
-  it('submitting with Enter saves the score and returns to the menu', async () => {
-    const booted = await bootScene([GameOverScene, MenuScene]);
-    const scene = booted.scene as GameOverScene;
-    scene.init({ score: 12345 });
+    expect(scene.getQualifies()).toBe(true);
+    // The initials field is focused by default.
+    expect(scene.getControlCount()).toBe(2);
+    expect(scene.getFocusedIndex()).toBe(0);
 
     scene.handleInitialsKey('A');
     scene.handleInitialsKey('B');
     scene.handleInitialsKey('C');
-
     expect(scene.handleInitialsKey('Enter')).toBe(true);
-    expect(readLeaderboard()).toEqual([{ initials: 'ABC', score: 12345 }]);
+
+    const entries = getEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ rank: 1, initials: 'ABC', score: 12345 });
+    expect(entries[0].date).toMatch(ISO_DATE);
 
     await new Promise((r) => setTimeout(r, 350));
     expect(booted.game.scene.isActive('MenuScene')).toBe(true);
-    booted.game.destroy(true);
+  });
+
+  it('fewer than three initials cannot be submitted', async () => {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', { score: 500, won: false });
+    await new Promise((r) => setTimeout(r, 350));
+    const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+
+    scene.handleInitialsKey('A');
+    scene.handleInitialsKey('B');
+    expect(scene.handleInitialsKey('Enter')).toBe(false);
+
+    await new Promise((r) => setTimeout(r, 200));
+    expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
+    expect(getEntries()).toEqual([]);
+  });
+
+  it('a non-qualifying score is explained and can be skipped with no write', async () => {
+    // Fill the board so a low score cannot make the top 10.
+    for (let i = 1; i <= 10; i++) addEntry('AAA', i * 1000);
+    const before = getEntries();
+
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', { score: 50, won: false });
+    await new Promise((r) => setTimeout(r, 350));
+    const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+
+    expect(scene.getQualifies()).toBe(false);
+    // No initials field — only the skip control is focusable.
+    expect(scene.getControlCount()).toBe(1);
+    expect(findTextContaining(scene, 'does not qualify')).toBeDefined();
+    expect(findTextContaining(scene, 'Enter Initials')).toBeUndefined();
+
+    const skip = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === '←  Skip',
+    );
+    expect(skip).toBeDefined();
+    skip!.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted.game.scene.isActive('MenuScene')).toBe(true);
+    expect(getEntries()).toEqual(before);
+  });
+
+  it('reads the leaderboard through the shared module (no stub storage)', async () => {
+    addEntry('MOD', 4242);
+
+    booted = await bootGameOver();
+    const scene = booted.scene as GameOverScene;
+
+    // The module-persisted entry is what the scene renders…
+    expect(getEntries()[0]).toMatchObject({ initials: 'MOD', score: 4242 });
+    expect(leaderboardRows(scene).some((t) => t.text.includes('MOD'))).toBe(true);
+    // …and submitting through the scene writes the same module schema.
+    scene.init({ score: 999 });
+    scene.handleInitialsKey('X');
+    scene.handleInitialsKey('Y');
+    scene.handleInitialsKey('Z');
+    scene.submitInitials();
+    expect(getEntries().map((e) => e.initials)).toEqual(['MOD', 'XYZ']);
   });
 });
+
+describe('GameOverScene — full leaderboard display (AC6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  it('renders all entries (rank, initials, score, date), highest first', async () => {
+    const seed = [
+      ['AAA', 100],
+      ['BBB', 500],
+      ['CCC', 300],
+      ['DDD', 900],
+      ['EEE', 700],
+    ] as const;
+    for (const [initials, score] of seed) addEntry(initials, score);
+
+    booted = await bootGameOver();
+    const scene = booted.scene as GameOverScene;
+
+    const rows = leaderboardRows(scene);
+    // All five entries render — the old stub only showed the top 3.
+    expect(rows).toHaveLength(5);
+
+    // Ranked highest first.
+    expect(rows[0].text).toContain('DDD');
+    expect(rows[0].text).toContain('900');
+    expect(rows[1].text).toContain('EEE');
+    expect(rows[2].text).toContain('BBB');
+    expect(rows[3].text).toContain('CCC');
+    expect(rows[4].text).toContain('AAA');
+
+    // Each row carries rank, initials, score and ISO date.
+    for (const row of rows) {
+      expect(row.text).toMatch(/^ *#\d+ {2}[A-Z]{3} +\d+ +\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  it('shows a placeholder when the leaderboard is empty', async () => {
+    booted = await bootGameOver();
+    const scene = booted.scene as GameOverScene;
+
+    expect(getEntries()).toEqual([]);
+    expect(findTextContaining(scene, 'No scores yet')).toBeDefined();
+  });
+});
+
 describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () => {
   let booted: BootedGame | null = null;
 
@@ -273,7 +361,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     pressKey(scene, { key: 'C' });
 
     pressKey(scene, { key: 'Enter' });
-    expect(readLeaderboard()).toEqual([{ initials: 'ABC', score: 777 }]);
+    expect(getEntries()).toMatchObject([{ initials: 'ABC', score: 777, rank: 1 }]);
 
     await new Promise((r) => setTimeout(r, 350));
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -286,7 +374,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
 
     await new Promise((r) => setTimeout(r, 200));
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
-    expect(readLeaderboard()).toEqual([]);
+    expect(getEntries()).toEqual([]);
   });
 
   it('AC3 — Enter on the focused button submits complete initials and returns', async () => {
@@ -299,7 +387,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     expect(scene.getFocusedIndex()).toBe(1);
 
     pressKey(scene, { key: 'Enter' });
-    expect(readLeaderboard()).toEqual([{ initials: 'ABC', score: 321 }]);
+    expect(getEntries()).toMatchObject([{ initials: 'ABC', score: 321, rank: 1 }]);
 
     await new Promise((r) => setTimeout(r, 350));
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -312,7 +400,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
 
     await new Promise((r) => setTimeout(r, 350));
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
-    expect(readLeaderboard()).toEqual([]);
+    expect(getEntries()).toEqual([]);
   });
 
   it('AC6 — pointerdown on the button still returns to the menu', async () => {
