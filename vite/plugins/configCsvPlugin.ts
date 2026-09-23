@@ -35,8 +35,8 @@ import {
   validateEnemyConfig,
   validateShipConfig,
 } from '../../src/core/csv';
-import { DEFAULT_ENEMY_CONFIGS, type EnemyConfig } from '../../src/core/enemyConfig';
-import { DEFAULT_CONFIG } from '../../src/core/config';
+import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from '../../src/core/configDefaults';
+import type { EnemyConfig } from '../../src/core/configTypes';
 
 /** Prefix under which the plugin serves its endpoints. */
 export const CSV_API_PREFIX = '/api/csv/';

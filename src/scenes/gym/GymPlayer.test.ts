@@ -3,17 +3,27 @@
  * inputs + Save button). The panel is a plain-DOM overlay beside the
  * canvas, so tests assert via document.querySelector in happy-dom.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
-import {
-  CONFIG_STORAGE_KEY,
-  DEFAULT_CONFIG,
-  loadShipConfig,
-  type ShipConfig,
-} from '../../core/config';
+import { DEFAULT_CONFIG, loadShipConfig, type ShipConfig } from '../../core/config';
+import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+
+// Simulate the dev-server CSV plugin: ship writes update the registry.
+vi.mock('../../core/configStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/configStore')>();
+  return {
+    ...actual,
+    saveShipConfig: vi.fn(
+      async (config: Parameters<typeof actual.saveShipConfig>[0]) => {
+        actual.seedConfigStore(actual.loadAllEnemyConfigs(), config);
+        return { ok: true };
+      },
+    ),
+  };
+});
 import { Player } from '../../entities/Player';
 import { GymPlayer, SCHEME_TOGGLE_ID } from './GymPlayer';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -24,6 +34,9 @@ describe('GymPlayer ship config panel', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
     window.localStorage.clear();
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore([], DEFAULT_CONFIG);
   });
 
   afterEach(() => {
@@ -137,7 +150,7 @@ describe('GymPlayer ship config panel', () => {
       shipSize: 35,
       shipColor: 0xff0000,
     };
-    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(saved));
+    seedConfigStore([], saved);
 
     await bootPlayer();
 
@@ -180,9 +193,9 @@ describe('GymPlayer ship config panel', () => {
     ) as HTMLButtonElement;
     saveButton.click();
 
-    // Read back from the persisted storage.
+    // Read back from the store after the async write settles.
+    await vi.waitFor(() => expect(loadShipConfig().maxSpeed).toBe(90));
     const persisted = loadShipConfig();
-    expect(persisted.maxSpeed).toBe(90);
     expect(persisted.shipSize).toBe(28);
     expect(persisted.frictionDeceleration).toBe(250);
 
@@ -246,8 +259,8 @@ describe('GymPlayer ship config panel', () => {
     ) as HTMLButtonElement;
     saveButton.click();
 
+    await vi.waitFor(() => expect(loadShipConfig().controlScheme).toBe('asteroids'));
     const persisted = loadShipConfig();
-    expect(persisted.controlScheme).toBe('asteroids');
     expect(persisted.asteroidsRotationSpeed).toBe(5);
   });
 
@@ -257,7 +270,7 @@ describe('GymPlayer ship config panel', () => {
       controlScheme: 'asteroids',
       asteroidsRotationSpeed: 7,
     };
-    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(saved));
+    seedConfigStore([], saved);
 
     await bootPlayer();
     await tick();

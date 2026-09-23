@@ -319,16 +319,23 @@ export class GymPlayer extends Phaser.Scene {
     }
   }
 
-  /** Persists the current control values and shows a status message. */
+  /** Persists the current control values via the CSV store and shows a status. */
   private _onSave(): void {
     const status = this.panel?.querySelector<HTMLElement>(`#${STATUS_ID}`);
-    try {
-      const config = this._readPanelValues();
-      saveShipConfig(config);
-      if (status) status.textContent = 'Saved';
-    } catch (err) {
-      if (status) status.textContent = `Save failed: ${String(err)}`;
-    }
+    void (async () => {
+      try {
+        const config = this._readPanelValues();
+        if (status) status.textContent = 'Saving…';
+        const result = await saveShipConfig(config);
+        if (status) {
+          status.textContent = result.ok
+            ? 'Saved'
+            : `Save failed — ${result.reason ?? 'writes unavailable'}`;
+        }
+      } catch (err) {
+        if (status) status.textContent = `Save failed: ${String(err)}`;
+      }
+    })();
   }
 
   /**

@@ -222,8 +222,12 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
   });
 
   it('Save As enemy appears on next index load without code changes', async () => {
-    const { saveEnemyConfig, DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
-    saveEnemyConfig({ ...DEFAULT_ENEMY_CONFIGS.scout, key: 'zzz-custom', displayName: 'Zzz Custom' });
+    const { DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
+    const { seedConfigStore } = await import('../core/configStore');
+    seedConfigStore([
+      ...Object.values(DEFAULT_ENEMY_CONFIGS),
+      { ...DEFAULT_ENEMY_CONFIGS.scout, key: 'zzz-custom', displayName: 'Zzz Custom' },
+    ]);
     booted = await bootScene([GymIndex]);
     const idx = booted.scene as GymIndex;
     expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'zzz-custom')).toBe(true);
@@ -235,8 +239,12 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     // A config saved by an older build labelled the `boss` seed "Boss"; that
     // stale label must not shadow the registry rename, or the index would show
     // two identical "Boss" rows (AH-0MTV8OV9V002D8B7).
-    const { saveEnemyConfig, DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
-    saveEnemyConfig({ ...DEFAULT_ENEMY_CONFIGS.boss, displayName: 'Boss' });
+    const { DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
+    const { seedConfigStore } = await import('../core/configStore');
+    seedConfigStore([
+      ...Object.values(DEFAULT_ENEMY_CONFIGS).filter((c) => c.key !== 'boss'),
+      { ...DEFAULT_ENEMY_CONFIGS.boss, displayName: 'Boss' },
+    ]);
     booted = await bootScene([GymIndex]);
     const idx = booted.scene as GymIndex;
     const bossConfig = idx.listedBossScenes.find((s) => s.enemyKey === 'boss');
@@ -245,8 +253,9 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     expect(idx.listedBossScenes.find((s) => s.sceneKey === 'GymBoss')?.label).toBe('Boss');
   });
 
-  it('corrupt storage does not crash the index (falls back via loadAllEnemyConfigs)', async () => {
-    localStorage.setItem('ai-hell-enemy-config:scout', 'not-json');
+  it('an empty registry does not crash the index (falls back to seed keys)', async () => {
+    const { resetConfigStore } = await import('../core/configStore');
+    resetConfigStore();
     booted = await bootScene([GymIndex]);
     const idx = booted.scene as GymIndex;
     expect(idx.listedEnemyScenes.length).toBeGreaterThan(0);

@@ -12,12 +12,13 @@
  */
 
 import {
-  DEFAULT_ENEMY_CONFIGS,
   type EnemyConfig,
   type EnemyFormationKind,
   type EnemyShotPattern,
-} from './enemyConfig';
-import { type ShipConfig, type ControlScheme } from './config';
+  type ShipConfig,
+  type ControlScheme,
+} from './configTypes';
+import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
 
 // ── Valid enum values ───────────────────────────────────────────────
 

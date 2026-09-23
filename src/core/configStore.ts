@@ -17,11 +17,8 @@
  */
 
 import { GAME_WIDTH, GAME_HEIGHT } from './constants';
-import {
-  DEFAULT_ENEMY_CONFIGS,
-  type EnemyConfig,
-} from './enemyConfig';
-import { DEFAULT_CONFIG, type ShipConfig } from './config';
+import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from './configDefaults';
+import type { EnemyConfig, ShipConfig } from './configTypes';
 import {
   parseCsvRows,
   coerceEnemyConfig,
@@ -31,8 +28,8 @@ import {
 } from './csv';
 
 // Bundled CSV content — used by production/static builds (read-only).
-import bundledEnemyCsv from '../data/enemy-configs.csv?raw';
-import bundledShipCsv from '../data/ship-config.csv?raw';
+// Imported dynamically so the Vite config loader (which transitively imports
+// this module via the CSV plugin) does not have to resolve `?raw` imports.
 
 // ── Public constants ────────────────────────────────────────────────
 
@@ -69,7 +66,15 @@ function createEmptyRegistry(): Registry {
   };
 }
 
-let registry: Registry = createEmptyRegistry();
+// Lazily initialised so importing modules can form a dependency cycle with
+// this store without reading `DEFAULT_CONFIG` during a partial evaluation
+// (the config modules re-export these accessors).
+let registry: Registry | null = null;
+
+function getRegistry(): Registry {
+  if (registry === null) registry = createEmptyRegistry();
+  return registry;
+}
 
 // ── Environment detection ───────────────────────────────────────────
 
@@ -183,7 +188,8 @@ export async function loadConfigs(): Promise<void> {
 
   // Production / static build: read the CSV bundled at build time.
   try {
-    populateFromCsv(bundledEnemyCsv, bundledShipCsv);
+    const bundled = await import('./bundledConfig');
+    populateFromCsv(bundled.bundledEnemyCsv, bundled.bundledShipCsv);
   } catch {
     populateFromDefaults();
   }
@@ -193,22 +199,30 @@ export async function loadConfigs(): Promise<void> {
 
 /** Synchronous enemy-config lookup from the in-memory registry. */
 export function loadEnemyConfig(key: string): EnemyConfig {
-  const stored = registry.enemies.get(key);
-  if (stored) return { ...stored };
+  const stored = getRegistry().enemies.get(key);
   const seed = DEFAULT_ENEMY_CONFIGS[key];
+  if (stored) {
+    // The seed displayName is authoritative for seed keys: a stale persisted
+    // label (e.g. an older "Boss" for the renamed `boss` seed) must not
+    // shadow a rename, or the gym index would show two identical labels
+    // (AH-0MTV8OV9V002D8B7). Non-seed (Save As) keys keep their own label.
+    return seed
+      ? { ...stored, displayName: seed.displayName }
+      : { ...stored };
+  }
   if (seed) return { ...seed };
   return genericEnemyDefault(key);
 }
 
 /** Synchronous ship-config lookup from the in-memory registry. */
 export function loadShipConfig(): ShipConfig {
-  return { ...registry.ship };
+  return { ...getRegistry().ship };
 }
 
 /** Sorted list of every available enemy key (seeds ∪ registry). */
 export function listEnemyConfigKeys(): string[] {
   const keys = new Set<string>(Object.keys(DEFAULT_ENEMY_CONFIGS));
-  for (const key of registry.enemies.keys()) keys.add(key);
+  for (const key of getRegistry().enemies.keys()) keys.add(key);
   return [...keys].sort();
 }
 
@@ -262,7 +276,8 @@ export async function saveEnemyConfig(config: EnemyConfig): Promise<SaveResult> 
   if (!isDev()) return { ok: false, reason: WRITE_UNAVAILABLE };
 
   // Build the full CSV (all configs) so the plugin can upsert the row.
-  const enemies = new Map(registry.enemies);
+  const current = getRegistry();
+  const enemies = new Map(current.enemies);
   enemies.set(config.key, { ...config });
   const body = serializeEnemyConfigs([...enemies.values()]);
 
@@ -270,7 +285,7 @@ export async function saveEnemyConfig(config: EnemyConfig): Promise<SaveResult> 
   if (!result.ok) return result;
 
   // Only commit the registry change after a successful write.
-  registry = { ...registry, enemies, loaded: true, source: 'csv' };
+  registry = { ...current, enemies, loaded: true, source: 'csv' };
   await reReadRegistry();
   return { ok: true };
 }
@@ -286,14 +301,28 @@ export async function saveShipConfig(config: ShipConfig): Promise<SaveResult> {
   const result = await putCsv(SHIP_CSV_PATH, body);
   if (!result.ok) return result;
 
-  registry = { ...registry, ship: { ...config }, loaded: true, source: 'csv' };
+  registry = { ...getRegistry(), ship: { ...config }, loaded: true, source: 'csv' };
   await reReadRegistry();
   return { ok: true };
 }
 
-// ── Test / lifecycle helper ─────────────────────────────────────────
+// ── Test / lifecycle helpers ────────────────────────────────────────
 
 /** Reset the registry to its unloaded state. Intended for tests. */
 export function resetConfigStore(): void {
   registry = createEmptyRegistry();
+}
+
+/**
+ * Seed the in-memory registry directly (test seam / non-HTTP hydration).
+ * The runtime boot path uses {@link loadConfigs}; callers that need a
+ * specific registry state (e.g. scene tests) use this instead.
+ */
+export function seedConfigStore(
+  enemies: EnemyConfig[],
+  ship: ShipConfig = DEFAULT_CONFIG,
+): void {
+  const map = new Map<string, EnemyConfig>();
+  for (const cfg of enemies) map.set(cfg.key, { ...cfg });
+  registry = { enemies: map, ship: { ...ship }, loaded: true, source: 'csv' };
 }

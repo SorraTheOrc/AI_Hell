@@ -1,16 +1,17 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  CONFIG_STORAGE_KEY,
   DEFAULT_CONFIG,
   loadShipConfig,
   saveShipConfig,
   type ShipConfig,
 } from './config';
+import { resetConfigStore, seedConfigStore } from './configStore';
 
 describe('ship configuration module', () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    resetConfigStore();
+    vi.unstubAllEnvs();
   });
 
   it('exposes default values matching the current hard-coded constants', () => {
@@ -26,67 +27,42 @@ describe('ship configuration module', () => {
     expect(DEFAULT_CONFIG.asteroidsRotationSpeed).toBe(3);
   });
 
-  it('falls back to defaults when nothing has been saved', () => {
+  it('falls back to defaults before the boot loader has run', () => {
     expect(loadShipConfig()).toEqual(DEFAULT_CONFIG);
   });
 
-  it('loads a previously saved config', () => {
-    const custom: ShipConfig = {
-      ...DEFAULT_CONFIG,
-      maxSpeed: 175,
-      thrustAcceleration: 300,
-    };
-    saveShipConfig(custom);
+  it('loads the ship config from the CSV-backed registry', () => {
+    const tuned: ShipConfig = { ...DEFAULT_CONFIG, maxSpeed: 260, shipSize: 30 };
+    seedConfigStore([], tuned);
 
-    expect(loadShipConfig()).toEqual(custom);
+    expect(loadShipConfig()).toEqual(tuned);
+    // Prove the value came from the registry, not the defaults.
+    expect(loadShipConfig().maxSpeed).toBe(260);
   });
 
-  it('falls back to defaults when the stored JSON is corrupt', () => {
-    window.localStorage.setItem(CONFIG_STORAGE_KEY, '{not valid json');
-
-    expect(loadShipConfig()).toEqual(DEFAULT_CONFIG);
+  it('returns copies so callers cannot mutate the registry', () => {
+    seedConfigStore([], { ...DEFAULT_CONFIG, maxSpeed: 260 });
+    const first = loadShipConfig();
+    first.maxSpeed = 1;
+    expect(loadShipConfig().maxSpeed).toBe(260);
   });
 
-  it('round-trips a saved config exactly', () => {
-    const custom: ShipConfig = {
-      thrustAcceleration: 450,
-      maxSpeed: 999,
-      shipSize: 30,
-      thrustFlameLength: 1.2,
-      shipColor: 0x112233,
-      thrustFlameColor: 0x445566,
-      thrustFlameInnerColor: 0x778899,
-      frictionDeceleration: 50,
-      controlScheme: 'asteroids',
-      asteroidsRotationSpeed: 4.5,
-    };
-    saveShipConfig(custom);
-
-    const loaded = loadShipConfig();
-
-    expect(loaded).toEqual(custom);
-    // Prove the value came from storage, not from the defaults.
-    expect(loaded.shipColor).toBe(0x112233);
+  it('saveShipConfig delegates to the store and reports unavailability in production', async () => {
+    vi.stubEnv('DEV', false);
+    const result = await saveShipConfig({ ...DEFAULT_CONFIG, maxSpeed: 999 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBeTruthy();
   });
 
-  it('merges scheme defaults over a pre-scheme (legacy) saved config', () => {
-    // A config saved before the control-scheme feature has no scheme fields;
-    // loading must fall back to the 4-directional defaults (AC4 compat).
-    const legacy = {
-      thrustAcceleration: 350,
-      maxSpeed: 200,
-      shipSize: 25,
-      thrustFlameLength: 0.8,
-      shipColor: 0x00ffff,
-      thrustFlameColor: 0xff8c00,
-      thrustFlameInnerColor: 0xffff00,
-      frictionDeceleration: 80,
-    };
-    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(legacy));
+  it('saveShipConfig resolves to a status object in dev mode', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('DEV', true);
 
-    const loaded = loadShipConfig();
-    expect(loaded.thrustAcceleration).toBe(350);
-    expect(loaded.controlScheme).toBe('fourDirectional');
-    expect(loaded.asteroidsRotationSpeed).toBe(3);
+    const result = await saveShipConfig({ ...DEFAULT_CONFIG, maxSpeed: 250 });
+    expect(result).toHaveProperty('ok');
+    vi.unstubAllGlobals();
   });
 });

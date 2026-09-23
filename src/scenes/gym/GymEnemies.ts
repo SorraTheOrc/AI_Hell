@@ -554,13 +554,29 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     if (el) el.textContent = text;
   }
 
+  /** Persist via the CSV store, then report success/failure in the panel. */
+  private async _persist(config: EnemyConfig, successMessage: string): Promise<void> {
+    this._setStatus('Saving…');
+    try {
+      const result = await saveEnemyConfig(config);
+      if (result.ok) {
+        // Re-read so the in-memory active config reflects the persisted row.
+        this.activeConfig = loadEnemyConfig(config.key);
+        this._setStatus(successMessage);
+      } else {
+        this._setStatus(`Save failed — ${result.reason ?? 'writes unavailable'}`);
+      }
+    } catch (err) {
+      this._setStatus(`Save failed: ${String(err)}`);
+    }
+  }
+
   private _onSave(): void {
     try {
       const config = this._readPanelValues();
       config.key = this.pendingKey;
       this.activeConfig = config;
-      saveEnemyConfig(config);
-      this._setStatus('Saved');
+      void this._persist(config, 'Saved');
     } catch (err) {
       this._setStatus(`Save failed: ${String(err)}`);
     }
@@ -586,11 +602,10 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       const config = this._readPanelValues();
       config.key = key;
       config.displayName = raw;
-      saveEnemyConfig(config);
       this.pendingKey = key;
       this.activeConfig = config;
-      this._setStatus(`Saved as ${key}`);
       if (input) input.value = '';
+      void this._persist(config, `Saved as ${key}`);
     } catch (err) {
       this._setStatus(`Save failed: ${String(err)}`);
     }

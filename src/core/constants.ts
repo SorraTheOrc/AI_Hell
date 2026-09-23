@@ -7,7 +7,6 @@
  * at runtime while existing imports keep working unchanged.
  */
 
-import { DEFAULT_CONFIG } from './config';
 import { DEFAULT_RULES } from './rules';
 
 // ── Canvas ──────────────────────────────────────────────────────────
@@ -16,32 +15,35 @@ export const GAME_WIDTH = 960;
 export const GAME_HEIGHT = 540;
 export const GAME_BACKGROUND_COLOR = '#000000';
 
-// ── Movement Physics (GDD §2.2) — re-exported defaults ─────────────
-// Tunable from the config module; gym sliders write back to it.
+// ── Movement Physics (GDD §2.2) — default values ───────────────────
+// `config.ts` derives `DEFAULT_CONFIG` from these literals (kept here as a
+// leaf module so the CSV-backed config store can import the config modules
+// without a `constants → config → store → enemyConfig → constants` cycle).
+// Runtime-tuned values are read via `loadShipConfig()`.
 
 /** Acceleration applied each second when a thrust direction is held (px/s²). */
-export const THRUST_ACCELERATION = DEFAULT_CONFIG.thrustAcceleration;
+export const THRUST_ACCELERATION = 300;
 
 /** Absolute speed cap to prevent unbounded acceleration (px/s). */
-export const MAX_SPEED = DEFAULT_CONFIG.maxSpeed;
+export const MAX_SPEED = 175;
 
 /** Ship size used for visual rendering and physics bounds (px). */
-export const SHIP_SIZE = DEFAULT_CONFIG.shipSize;
+export const SHIP_SIZE = 20;
 
 /** Thrust flame length multiplier relative to ship size. */
-export const THRUST_FLAME_LENGTH = DEFAULT_CONFIG.thrustFlameLength;
+export const THRUST_FLAME_LENGTH = 0.75;
 
 /** Ship colour — neon cyan per the GDD art direction. */
-export const SHIP_COLOR = DEFAULT_CONFIG.shipColor;
+export const SHIP_COLOR = 0x00ffff;
 
 /** Thrust flame colour — hot orange/yellow. */
-export const THRUST_FLAME_COLOR = DEFAULT_CONFIG.thrustFlameColor;
+export const THRUST_FLAME_COLOR = 0xff8c00;
 
 /** Inner flame colour — bright yellow. */
-export const THRUST_FLAME_INNER_COLOR = DEFAULT_CONFIG.thrustFlameInnerColor;
+export const THRUST_FLAME_INNER_COLOR = 0xffff00;
 
 /** Linear deceleration rate when no thrust is applied (px/s²). */
-export const FRICTION_DECELERATION = DEFAULT_CONFIG.frictionDeceleration;
+export const FRICTION_DECELERATION = 100;
 
 // ── Power-up lifecycle (GDD §4.4, GymPowerUpsUtility gym) ─────────────────
 

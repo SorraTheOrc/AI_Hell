@@ -12,7 +12,31 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
-import { DEFAULT_ENEMY_CONFIGS, ENEMY_CONFIG_STORAGE_PREFIX } from '../../core/enemyConfig';
+import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
+import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+
+// Simulate the dev-server CSV plugin: writes update the in-memory registry.
+vi.mock('../../core/configStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/configStore')>();
+  return {
+    ...actual,
+    saveEnemyConfig: vi.fn(
+      async (config: Parameters<typeof actual.saveEnemyConfig>[0]) => {
+        const rest = actual
+          .loadAllEnemyConfigs()
+          .filter((c) => c.key !== config.key);
+        actual.seedConfigStore([...rest, config]);
+        return { ok: true };
+      },
+    ),
+    saveShipConfig: vi.fn(
+      async (config: Parameters<typeof actual.saveShipConfig>[0]) => {
+        actual.seedConfigStore(actual.loadAllEnemyConfigs(), config);
+        return { ok: true };
+      },
+    ),
+  };
+});
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID } from './GymEnemies';
@@ -75,6 +99,8 @@ describe('GymEnemies — single reusable enemy gym', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
   });
 
   afterEach(() => {
@@ -172,9 +198,9 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
 
-  it('boots without throwing when storage entry is corrupt (fallback to seed)', async () => {
-    localStorage.setItem(`${ENEMY_CONFIG_STORAGE_PREFIX}scout`, 'not-json{{{');
-    // Wrapper for scout will load the corrupt entry and fall back
+  it('boots without throwing when the registry has no entry for the key (seed fallback)', async () => {
+    // Empty registry → loadEnemyConfig falls back to the seed defaults.
+    resetConfigStore();
     const scene = await bootWithKey('scout');
     expect(scene.formationEntities.length).toBe(DEFAULT_ENEMY_CONFIGS.scout.count);
     expect(scene.aliveCount).toBe(DEFAULT_ENEMY_CONFIGS.scout.count);
@@ -195,7 +221,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
       spacingX: 40,
       spacingY: 40,
     };
-    localStorage.setItem(`${ENEMY_CONFIG_STORAGE_PREFIX}my-boss`, JSON.stringify(custom));
+    seedConfigStore([...Object.values(DEFAULT_ENEMY_CONFIGS), custom]);
     const scene = await bootWithKey('my-boss');
     expect(scene.formationEntities.length).toBe(3);
     // Unknown key → Scout fallback, so entities are alive and shootEnabled toggles
@@ -367,7 +393,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
     }
   });
 
-  it('Save round-trips shotProbability through localStorage', async () => {
+  it('Save round-trips shotProbability through the CSV store', async () => {
     const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
     const scene = await bootWithKey('swarm');
     const slider = document.querySelector<HTMLInputElement>('input[data-config="shotProbability"]')!;
@@ -375,7 +401,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
     expect(scene.currentConfig.shotProbability).toBe(0.3);
-    expect(lec('swarm').shotProbability).toBeCloseTo(0.3, 5);
+    await vi.waitFor(() => expect(lec('swarm').shotProbability).toBeCloseTo(0.3, 5));
   });
 
   it('Save As round-trips shotProbability into the new custom enemy', async () => {
@@ -386,7 +412,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'Prob Enemy';
     (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
-    expect(lec('prob-enemy').shotProbability).toBeCloseTo(0.45, 5);
+    await vi.waitFor(() => expect(lec('prob-enemy').shotProbability).toBeCloseTo(0.45, 5));
   });
 
   it('Save overwrites the active config and round-trips via loadEnemyConfig', async () => {
@@ -396,7 +422,9 @@ describe('GymEnemies — single reusable enemy gym', () => {
     input.value = '55';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
-    expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('Saved');
+    await vi.waitFor(() =>
+      expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('Saved'),
+    );
     expect(lec('scout').spacingX).toBe(55);
   });
 
@@ -405,7 +433,9 @@ describe('GymEnemies — single reusable enemy gym', () => {
     const scene = await bootWithKey('scout');
     (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'My New Enemy';
     (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
-    expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('my-new-enemy');
+    await vi.waitFor(() =>
+      expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('my-new-enemy'),
+    );
     expect(lkeys()).toContain('my-new-enemy');
     expect(lec2('my-new-enemy').displayName).toBe('My New Enemy');
     expect(scene.activeEnemyKey).toBe('my-new-enemy');
