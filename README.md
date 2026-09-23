@@ -408,8 +408,10 @@ and the recomputed campaign table: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9
 All destruction paths share one particle-burst module: `src/vfx/explosionParticles.ts`.
 
 - `spawnExplosionParticles(scene, x, y, baseColor, size, opts)` spawns a burst of small filled circles tinted (small HSL jitter) around the exploding entity's neon colour, fading and shrinking over `EXPLOSION_LIFESPAN_MS`. Counts scale with `size` (clamped 8–80).
+- **Randomisation:** every particle's radius is jittered by ±30 % (`EXPLOSION_SIZE_JITTER`) and its start position by ±15 % of the entity size (`EXPLOSION_POSITION_JITTER`) on each axis, across all patterns (including `ring`) and entity types, so repeated kills vary. The jitter comes from the existing seeded PRNG, so a fixed `opts.seed` still reproduces the burst exactly; counts, colours, speeds and lifespans are unchanged.
 - Three patterns are available (`radial`, `ring`, `implosion`) and each entity type is assigned one, two, or three via the single `EXPLOSION_PATTERNS_BY_TYPE` map — death paths call `resolvePatterns('scout' | 'tank' | …)` instead of hard-coding patterns. The player death path uses `SHIP_COLOR` / `SHIP_SIZE` with the `player` entry.
-- Counts, lifespan, colour jitter, and per-pattern speeds/radii are tunable constants at the top of the module. See GDD §7.2 for the per-entity feel table.
+- Counts, lifespan, colour/size/position jitter, and per-pattern speeds/radii are tunable constants at the top of the module. See GDD §7.2 for the per-entity feel table.
+- Destruction SFX likewise vary between kills: the shared and Diver destruction sweeps apply one per-invocation pitch factor of ±15 % (`EXPLOSION_PITCH_JITTER` in `src/audio/effects.ts`) to all sweep endpoints. See GDD §7.3.
 
 Coverage: `src/vfx/explosionParticles.test.ts` (pure geometry/colour/count + Phaser integration), plus per-entity assertions in the entity/scene suites (patterns, size-scaled count, colour centred on the entity palette, and SHUTDOWN teardown).
 

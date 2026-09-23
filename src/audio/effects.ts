@@ -426,11 +426,37 @@ export function playSpawnSound(): void {
   blip(220, 880, 0.18, 'square', 0.12);
 }
 
-/** A quick descending saw-wave burst — enemy destruction cue. */
+/**
+ * Per-invocation pitch jitter for explosion destruction sweeps (±15 %).
+ * A single factor is drawn per invocation and applied to **both** sweep
+ * endpoints so the descending sweep character is preserved while repeated
+ * kills sound slightly different. Volume, waveform and duration are
+ * unchanged. The intentionally-unwired Tank variant is not jittered.
+ */
+export const EXPLOSION_PITCH_JITTER = 0.15;
+
+/**
+ * Returns a pitch multiplier uniformly in
+ * `[1 - EXPLOSION_PITCH_JITTER, 1 + EXPLOSION_PITCH_JITTER]` (±15 %).
+ * Uses `Math.random()` — the audio path has no seeded PRNG and is outside
+ * the deterministic VFX particle-seed contract (see AC3/AC4).
+ */
+export function explosionPitchFactor(): number {
+  return 1 + (Math.random() - 0.5) * 2 * EXPLOSION_PITCH_JITTER;
+}
+
+/**
+ * A quick descending saw-wave burst — enemy destruction cue.
+ *
+ * The sweep endpoints are multiplied by a single per-invocation pitch
+ * factor (±{@link EXPLOSION_PITCH_JITTER}), so the same cue varies a
+ * little between kills without changing its character.
+ */
 export function playDestructionSound(): void {
+  const pitch = explosionPitchFactor();
   // Volume 0.3 (doubled from initial 0.15) so explosion feedback is
   // clearly audible over the action (feedback from Swarm audio playtest).
-  blip(440, 60, 0.28, 'sawtooth', 0.3);
+  blip(440 * pitch, 60 * pitch, 0.28, 'sawtooth', 0.3);
 }
 
 /**
@@ -1028,7 +1054,11 @@ export function playDiverFireSound(): void {
  *
  * A slower, lower sawtooth fall (280 → 40 Hz over 0.35 s) with a
  * sine undertone, giving the diver's explosion a heavier, more
- * resonant quality than the generic enemy destruction. Played exactly
+ * resonant quality than the generic enemy destruction. Both oscillators'
+ * endpoints are multiplied by a single per-invocation pitch factor
+ * (±{@link EXPLOSION_PITCH_JITTER}) — preserving the tonal relationship
+ * and the "heavier, more resonant" character while varying between kills.
+ * Played exactly
  * once per diver destruction via the optional `playDestructionAudio?()`
  * seam; the Diver entity must NOT call `playDestructionSound()` in
  * `playExplosion()` to avoid double-play (design doc §7). Safe no-op
@@ -1038,12 +1068,16 @@ export function playDiverDestructionSound(): void {
   const ctx = getAudioContext();
   if (!ctx) return;
 
+  // One pitch factor per invocation, applied to every endpoint in both
+  // oscillators so the sweep and its undertone stay locked together.
+  const pitch = explosionPitchFactor();
+
   // Main descent: deeper than the shared burst (440→60).
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(280, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.35);
+  osc.frequency.setValueAtTime(280 * pitch, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(40 * pitch, ctx.currentTime + 0.35);
   gain.gain.setValueAtTime(0.25, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
   osc.connect(gain).connect(ensureMasterGain(ctx));
@@ -1054,8 +1088,8 @@ export function playDiverDestructionSound(): void {
   const body = ctx.createOscillator();
   const bodyGain = ctx.createGain();
   body.type = 'sine';
-  body.frequency.setValueAtTime(80, ctx.currentTime);
-  body.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 0.35);
+  body.frequency.setValueAtTime(80 * pitch, ctx.currentTime);
+  body.frequency.exponentialRampToValueAtTime(25 * pitch, ctx.currentTime + 0.35);
   bodyGain.gain.setValueAtTime(0.15, ctx.currentTime);
   bodyGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
   body.connect(bodyGain).connect(ensureMasterGain(ctx));

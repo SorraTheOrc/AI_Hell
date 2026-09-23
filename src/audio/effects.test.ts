@@ -28,6 +28,9 @@ import {
   playPowerUpCollectSound,
   playPowerUpCollectPopSound,
   playBulletDestructionSound,
+  playDestructionSound,
+  playTankDestructionSound,
+  EXPLOSION_PITCH_JITTER,
   playDiverFireSound,
   playDiverDestructionSound,
   playDiverDiveStartSound,
@@ -438,6 +441,111 @@ describe('diver dive sounds — synthesis + lifecycle (AH-0MTVYC6E8005YN6F)', ()
   it('stopDiveSound is a safe no-op when no dive sound is active', () => {
     expect(_getDiverDiveSoundStateForTests()).toBeNull();
     expect(() => stopDiveSound()).not.toThrow();
+  });
+});
+
+// ── Explosion destruction pitch randomisation (AH-0MU0AVBWH002ZWRH AC3) ──
+
+describe('explosion destruction pitch jitter (AC3)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    // Prime effects.ts's lazily-created module-scoped AudioContext so the
+    // snapshot helper has a live instance to read.
+    playDestructionSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+  });
+
+  it('exposes EXPLOSION_PITCH_JITTER as ±15 %', () => {
+    expect(EXPLOSION_PITCH_JITTER).toBeCloseTo(0.15, 5);
+  });
+
+  it('shared destruction sweep endpoints stay within ±15 % of 440→60', () => {
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDestructionSound();
+      const oscs = newOscillators(snap);
+      expect(oscs).toHaveLength(1);
+      const start = startFreq(oscs);
+      const end = endFreq(oscs);
+      expect(start).toBeGreaterThanOrEqual(440 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(start).toBeLessThanOrEqual(440 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(end).toBeGreaterThanOrEqual(60 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(end).toBeLessThanOrEqual(60 * (1 + EXPLOSION_PITCH_JITTER));
+    }
+  });
+
+  it('shared destruction sweeps vary across invocations', () => {
+    const starts = new Set<number>();
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDestructionSound();
+      starts.add(startFreq(newOscillators(snap)));
+    }
+    expect(starts.size).toBeGreaterThan(1);
+  });
+
+  it('shared destruction applies one factor to both endpoints (sweep character preserved)', () => {
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDestructionSound();
+      const osc = newOscillators(snap)[0];
+      const start = startFreq([osc]);
+      const end = endFreq([osc]);
+      // Both endpoints scaled by the same factor → ratio constant at 440/60.
+      expect(start / end).toBeCloseTo(440 / 60, 6);
+    }
+  });
+
+  it('Diver destruction applies one factor to every endpoint in both oscillators', () => {
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDiverDestructionSound();
+      const oscs = newOscillators(snap);
+      expect(oscs).toHaveLength(2);
+      const [main, body] = oscs;
+      const mainStart = startFreq([main]);
+      const mainEnd = endFreq([main]);
+      const bodyStart = startFreq([body]);
+      const bodyEnd = endFreq([body]);
+      // All four endpoints stay within ±15 % of their base frequencies.
+      expect(mainStart).toBeGreaterThanOrEqual(280 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(mainStart).toBeLessThanOrEqual(280 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(mainEnd).toBeGreaterThanOrEqual(40 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(mainEnd).toBeLessThanOrEqual(40 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(bodyStart).toBeGreaterThanOrEqual(80 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(bodyStart).toBeLessThanOrEqual(80 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(bodyEnd).toBeGreaterThanOrEqual(25 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(bodyEnd).toBeLessThanOrEqual(25 * (1 + EXPLOSION_PITCH_JITTER));
+      // Single factor across all four endpoints (tonal relationship intact).
+      const factor = mainStart / 280;
+      expect(mainEnd / 40).toBeCloseTo(factor, 6);
+      expect(bodyStart / 80).toBeCloseTo(factor, 6);
+      expect(bodyEnd / 25).toBeCloseTo(factor, 6);
+    }
+  });
+
+  it('Diver destruction sweeps vary across invocations', () => {
+    const starts = new Set<number>();
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDiverDestructionSound();
+      starts.add(startFreq(newOscillators(snap)));
+    }
+    expect(starts.size).toBeGreaterThan(1);
+  });
+
+  it('Tank destruction variant (intentionally unwired) is NOT jittered', () => {
+    const snap = snapshot();
+    playTankDestructionSound();
+    const oscs = newOscillators(snap);
+    expect(oscs).toHaveLength(1);
+    expect(startFreq(oscs)).toBe(220);
+    expect(endFreq(oscs)).toBe(30);
   });
 });
 

@@ -638,7 +638,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 - **Animations**: Smooth, fluid motion for formations; sharp, precise motion for bullets.
 - **Power-up collection absorb**: Collected drops are "sucked into the ship" over ≤ 0.3 s by a shared absorb animation (`src/powerups/collectAnimation.ts`) — position converges on the ship's world position, scale shrinks to zero, and the shape shears/rotates toward the hull before the `Graphics` is destroyed. One generic treatment covers all drop types (power-ups and weapon drops); it is cosmetic only and never delays the applied effect. See §7.3.
 - **Bullet-vs-bullet impact flash**: When a player bullet shoots down an enemy bullet, a brief small flash/glow appears at the impact point (`src/vfx/bulletImpact.ts`, `resolveBulletVsBulletImpact()`) — a warm-white filled circle that fades and scales up slightly over ~120 ms before destroying itself. Deliberately NOT the full particle burst (bullets are only ~3 px radius). It is invoked from the single shared `CombatScene.onBulletVsBulletImpact` path used by both `PlayScene` and `GymFormationScene`.
-- **Particle effects**: Minimal — use for explosions (enemy destruction, player death). Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
+- **Particle effects**: Minimal — use for explosions (enemy destruction, player death). Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Every particle's own radius is additionally jittered by ±30 % (`EXPLOSION_SIZE_JITTER`) and its emitted start position offset by up to ±15 % of the entity size on each axis (`EXPLOSION_POSITION_JITTER`), so repeated kills look different while each pattern keeps its identity; the jitter is drawn from the existing seeded PRNG, so a fixed seed still reproduces the burst exactly. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
 - **Explosion patterns**: Three burst patterns are available — **radial** (uniform random directions with a speed spread), **ring/shell** (particles on a shared circle forming an expanding ring), and **implosion-then-burst** (particles drift inward for ~100 ms, then burst outward). Each entity type is assigned one, two, or three patterns (even split of the size-scaled count across them) via the single `EXPLOSION_PATTERNS_BY_TYPE` map; death paths call `resolvePatterns(type)` rather than hard-coding patterns:
 
   | Entity | Patterns | Feel |
@@ -651,7 +651,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
   | Boss | radial + ring + implosion | layered red detonation |
   | Player | radial + ring | cyan shell + spray on death |
 
-  Counts, lifespan, jitter ranges, and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline.
+  Counts, lifespan, jitter ranges (including the per-particle `EXPLOSION_SIZE_JITTER` / `EXPLOSION_POSITION_JITTER`), and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline. Size and position jitter apply uniformly to all three patterns and every entity type — the `ring` pattern's particles are position-jittered too, so it reads as a slightly ragged ring rather than a perfect circle.
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
@@ -671,6 +671,10 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
 | **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
+
+#### Explosion Pitch Randomisation
+
+Explosion destruction sweeps are intentionally non-identical between kills: each invocation draws a single pitch factor uniformly in **[0.85, 1.15]** (±15 %, tunable via `EXPLOSION_PITCH_JITTER` in `src/audio/effects.ts`) and multiplies **all** sweep endpoints by it, so the cue varies while its descending character and tonal relationships are preserved. This applies to the shared enemy-destruction burst (`playDestructionSound()`, 440 → 60 Hz sawtooth) and the Diver's heavier destruction cue (`playDiverDestructionSound()`, 280 → 40 Hz sawtooth plus the 80 → 25 Hz sine undertone). The intentionally-unwired Tank destruction variant (`playTankDestructionSound()`) is unchanged, and volume, waveform and duration are unaffected. Unlike the VFX path (which reuses the seeded particle PRNG for deterministic replays), audio pitch jitter uses `Math.random()` — audio is outside the deterministic VFX seed contract.
 
 #### Per-Enemy Audio Character
 
