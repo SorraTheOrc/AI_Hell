@@ -10,9 +10,10 @@
  * helper.
  *
  * The index renders three columns left-to-right: plain scenes, ENEMIES
- * (one row per enemy config, booting `GymEnemies` with `{ enemyKey }`),
- * and Bosses (dedicated multi-phase `GymBoss` scene). The `boss` config
- * archetype is likewise labelled `Boss` (AH-0MTV8OV9V002D8B7).
+ * (one row per non-boss enemy config, booting `GymEnemies` with
+ * `{ enemyKey }`), and Bosses (the `boss` enemy config plus the dedicated
+ * multi-phase `GymBoss` scene). The two boss rows are labelled
+ * "Boss Swarm" and "Boss" respectively (AH-0MTV8OV9V002D8B7).
  */
 
 import Phaser from 'phaser';
@@ -36,6 +37,8 @@ export const GYM_INDEX_HINT = 'select a gym scene to load it — ← INDEX retur
 export const BOSS_SCENE_KEY = 'GymBoss';
 /** Label of the dedicated boss row in the Bosses column. */
 export const BOSS_SCENE_LABEL = 'Boss';
+/** Enemy-config key of the plain (non-Central-AI) boss archetype. */
+export const BOSS_CONFIG_KEY = 'boss';
 
 /**
  * Column X positions as fractions of `GAME_WIDTH`, ordered left-to-right:
@@ -110,31 +113,35 @@ export class GymIndex extends Phaser.Scene {
       if (bossClass) this.scene.add(BOSS_SCENE_KEY, bossClass as typeof Phaser.Scene);
     }
 
-    // Middle ENEMIES column — one row per saved/seed enemy config, routed
-    // to GymEnemies with `{ enemyKey }`. The plain `boss` config archetype
-    // shares the "Boss" label (renamed from "Boss Swarm"); it appears here
-    // and is distinguished from the dedicated boss by its column
-    // (AH-0MTV8OV9V002D8B7). Rows are kept in alphabetical label order.
+    // Enemy-config rows, each routed to GymEnemies with `{ enemyKey }`.
     const configEntries: EnemyColumnEntry[] = discoverEnemyGymEntries().map((e) => ({
       key: e.key,
       label: e.label,
       enemyKey: e.enemyKey,
     }));
-    this.enemyEntries = [...configEntries].sort(
-      (a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key),
-    );
 
-    // Right-hand Bosses column — the dedicated multi-phase GymBoss scene
-    // booted directly (no enemyKey), kept separate from the config rows.
+    // Middle ENEMIES column — non-boss config rows, alphabetical by label.
+    // The `boss` config row is deliberately omitted here; it is grouped with
+    // the dedicated boss scene in the Bosses column below (AH-0MTV8OV9V002D8B7).
+    this.enemyEntries = configEntries
+      .filter((e) => e.enemyKey !== BOSS_CONFIG_KEY)
+      .sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
+
+    // Right-hand Bosses column — both boss rows grouped together: the plain
+    // `boss` config row (boots GymEnemies via `enemyKey`) and the dedicated
+    // multi-phase GymBoss scene (booted directly via `sceneKey`). Sorted by
+    // label, so "Boss" (the real boss) precedes "Boss Swarm" (the config).
+    const bossConfigRow = configEntries.find((e) => e.enemyKey === BOSS_CONFIG_KEY);
     this.bossEntries = [
+      ...(bossConfigRow ? [bossConfigRow] : []),
       {
         key: BOSS_SCENE_KEY,
         label: BOSS_SCENE_LABEL,
         sceneKey: BOSS_SCENE_KEY,
       },
-    ];
+    ].sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
 
-    if (this.enemyEntries.length > 0 && !this.scene.manager.getScene('GymEnemies')) {
+    if (configEntries.length > 0 && !this.scene.manager.getScene('GymEnemies')) {
       // Reuse the class discovered via glob if available; otherwise lazy import.
       const enemiesModule = all.find((e) => e.key === 'GymEnemies')?.module;
       const cls = enemiesModule ? sceneClassFromModule(enemiesModule, 'GymEnemies') : null;
@@ -259,16 +266,18 @@ export class GymIndex extends Phaser.Scene {
   }
 
   /**
-   * Middle ENEMIES column rows: one per available `EnemyConfig`, each
-   * routed to `GymEnemies` via `enemyKey`.
+   * Middle ENEMIES column rows: one per available non-boss `EnemyConfig`,
+   * each routed to `GymEnemies` via `enemyKey`.
    */
   get listedEnemyScenes(): EnemyColumnEntry[] {
     return this.enemyEntries.map((e) => ({ ...e }));
   }
 
   /**
-   * Right-hand Bosses column rows: dedicated boss scenes booted directly
-   * via `sceneKey` (currently just the multi-phase `GymBoss`).
+   * Right-hand Bosses column rows: both boss entries — the `boss` enemy
+   * config (routed to `GymEnemies` via `enemyKey`, labelled "Boss Swarm")
+   * and the dedicated `GymBoss` scene (booted directly via `sceneKey`,
+   * labelled "Boss").
    */
   get listedBossScenes(): EnemyColumnEntry[] {
     return this.bossEntries.map((e) => ({ ...e }));

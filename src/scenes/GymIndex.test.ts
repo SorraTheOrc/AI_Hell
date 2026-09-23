@@ -96,24 +96,28 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymPowerUpsUtility',
       'GymWeapons',
     ]);
-    // Middle column: one config row per seed archetype, no scene rows.
-    // AC2 — every seed enemy config is present and unchanged (the `boss`
-    // key keeps its key and its label is now simply "Boss").
+    // Middle column: one config row per non-boss seed archetype, no scene
+    // rows. The `boss` config row is grouped in the Bosses column instead
+    // (AH-0MTV8OV9V002D8B7).
     const enemyKeys = scene.listedEnemyScenes
       .filter((s) => s.enemyKey)
       .map((s) => s.enemyKey)
       .sort();
-    expect(enemyKeys).toEqual(['asteroid', 'boss', 'diver', 'phaser', 'scout', 'swarm', 'tank']);
+    expect(enemyKeys).toEqual(['asteroid', 'diver', 'phaser', 'scout', 'swarm', 'tank']);
     expect(
       scene.listedEnemyScenes
         .filter((s) => s.enemyKey)
         .every((s) => s.key === `GymEnemies:${s.enemyKey}`),
     ).toBe(true);
-    // AC3 — the dedicated boss scene is NOT in the ENEMIES column.
+    // AC3 — neither the boss config nor the dedicated boss scene is in ENEMIES.
+    expect(scene.listedEnemyScenes.some((s) => s.enemyKey === 'boss')).toBe(false);
     expect(scene.listedEnemyScenes.some((s) => s.sceneKey === 'GymBoss')).toBe(false);
-    // AC2 — the dedicated boss scene lives in its own Bosses column.
+    // Both boss rows live together in the Bosses column, with distinct
+    // labels: "Boss" (the GymBoss scene / real Central AI) and "Boss Swarm"
+    // (the plain `boss` config).
     expect(scene.listedBossScenes).toEqual([
       { key: 'GymBoss', label: 'Boss', sceneKey: 'GymBoss' },
+      { key: 'GymEnemies:boss', label: 'Boss Swarm', enemyKey: 'boss' },
     ]);
 
     // No .test.ts module leaks into the list, and the index itself is not
@@ -144,13 +148,15 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     expect(booted!.game.scene.isActive('GymEnemies')).toBe(false);
   });
 
-  it('AC1+AC2 — the boss config archetype is labelled "Boss" and boots GymEnemies with enemyKey boss', async () => {
+  it('AC1+AC2 — the boss config archetype is labelled "Boss Swarm" and boots GymEnemies with enemyKey boss', async () => {
     const scene = await bootIndex();
 
-    const bossConfig = scene.listedEnemyScenes.find((s) => s.enemyKey === 'boss');
-    expect(bossConfig?.label).toBe('Boss');
+    // Both boss rows are in the Bosses column; the config row is the one
+    // carrying `enemyKey`.
+    const bossConfig = scene.listedBossScenes.find((s) => s.enemyKey === 'boss');
+    expect(bossConfig?.label).toBe('Boss Swarm');
 
-    findTextAt(scene, 'Boss', GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies).emit('pointerdown');
+    findTextAt(scene, 'Boss Swarm', GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses).emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
 
     expect(booted!.game.scene.isActive('GymEnemies')).toBe(true);
@@ -245,12 +251,16 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     expect(bossSceneRow.getData('sceneKey')).toBe('GymBoss');
     expect(bossSceneRow.getData('enemyKey')).toBeUndefined();
 
-    // AC1 — the renamed `boss` config row is in the middle ENEMIES column
-    // and still routes through GymEnemies via enemyKey.
-    const bossConfigRow = findTextAt(idx, 'Boss', enemiesCol);
+    // AC1 — the `boss` config row is grouped in the Bosses column too and
+    // still routes through GymEnemies via enemyKey.
+    const bossConfigRow = findTextAt(idx, 'Boss Swarm', bossesCol);
     expect(bossConfigRow.getData('enemyKey')).toBe('boss');
 
-    // A regular enemy config (Scout) is likewise in the ENEMIES column.
+    // AC3 — the boss config is absent from the ENEMIES column (no row with
+    // that enemyKey sits at the middle column X).
+    expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'boss')).toBe(false);
+
+    // A regular enemy config (Scout) is in the ENEMIES column.
     expect(findTextAt(idx, 'Scout', enemiesCol)).toBeDefined();
 
     // Headers sit above their columns.
