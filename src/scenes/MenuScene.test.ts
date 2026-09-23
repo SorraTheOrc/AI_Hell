@@ -14,11 +14,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
+import { addEntry } from '../core/Leaderboard';
 import { MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
 import { SettingsScene } from './SettingsScene';
 import { GameOverScene } from './GameOverScene';
+import { LeaderboardScene } from './LeaderboardScene';
 import { GymIndex } from './GymIndex';
 
 /** Finds an on-screen text by label. */
@@ -262,12 +264,15 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(play.style.stroke).toBeTruthy();
   });
 
-  it('AC2 — Tab cycles focus: Play → Settings → Gym Index → Play (wrap)', async () => {
+  it('AC2 — Tab cycles focus: Play → Settings → Leaderboard → Gym Index → Play (wrap)', async () => {
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
@@ -284,6 +289,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
 
     pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
+
+    pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: 'ArrowDown' });
@@ -294,6 +302,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     const scene = await bootMenu();
     pressKey(scene, { key: 'Tab', shiftKey: true });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+
+    pressKey(scene, { key: 'Tab', shiftKey: true });
+    expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'Tab', shiftKey: true });
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
@@ -340,6 +351,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     const scene = await bootMenu();
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: ' ' });
@@ -354,5 +366,103 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     findText(scene, '▶  Play Game').emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+  });
+});
+
+describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([
+      MenuScene,
+      PlayScene,
+      PauseScene,
+      SettingsScene,
+      GameOverScene,
+      LeaderboardScene,
+      GymIndex,
+    ]);
+    return booted!.scene as MenuScene;
+  }
+
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** Rendered leaderboard rows from the active LeaderboardScene. */
+  function leaderboardRows(): Phaser.GameObjects.Text[] {
+    const scene = booted!.game.scene.getScene('LeaderboardScene');
+    return (scene.children.list as Phaser.GameObjects.Text[]).filter(
+      (c) => c instanceof Phaser.GameObjects.Text && /^ *#\d+/.test(c.text),
+    );
+  }
+
+  it('AC1 — exposes an interactive Leaderboard control', async () => {
+    const scene = await bootMenu();
+    const leaderboard = findText(scene, '🏆  Leaderboard');
+    expect(leaderboard.input?.enabled).toBe(true);
+  });
+
+  it('AC2 — clicking Leaderboard opens the full ranked table', async () => {
+    for (const [initials, score] of [
+      ['AAA', 100],
+      ['BBB', 900],
+      ['CCC', 500],
+    ] as const) {
+      addEntry(initials, score);
+    }
+
+    const scene = await bootMenu();
+    findText(scene, '🏆  Leaderboard').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('LeaderboardScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+
+    const rows = leaderboardRows();
+    expect(rows).toHaveLength(3);
+    expect(rows[0].text).toContain('BBB');
+    expect(rows[1].text).toContain('CCC');
+    expect(rows[2].text).toContain('AAA');
+    for (const row of rows) {
+      expect(row.text).toMatch(/^ *#\d+ {2}[A-Z]{3} +\d+ +\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  it('AC2 — keyboard: Tab to Leaderboard then Enter opens it', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Settings
+    pressKey(scene, { key: 'Tab' }); // Leaderboard
+    expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
+
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('LeaderboardScene')).toBe(true);
+  });
+
+  it('AC3 — returning from the leaderboard restores the menu with Play focused', async () => {
+    const scene = await bootMenu();
+    findText(scene, '🏆  Leaderboard').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    const leaderboard = booted!.game.scene.getScene('LeaderboardScene') as LeaderboardScene;
+    leaderboard.returnToMenu();
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect((booted!.game.scene.getScene('MenuScene') as MenuScene).getFocusedLabel()).toBe(
+      '▶  Play Game',
+    );
   });
 });

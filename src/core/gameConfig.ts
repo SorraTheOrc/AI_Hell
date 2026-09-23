@@ -6,6 +6,7 @@ import { PauseScene } from '../scenes/PauseScene';
 import { MineralChoiceScene } from '../scenes/MineralChoiceScene';
 import { SettingsScene } from '../scenes/SettingsScene';
 import { GameOverScene } from '../scenes/GameOverScene';
+import { LeaderboardScene } from '../scenes/LeaderboardScene';
 import { GymIndex } from '../scenes/GymIndex';
 import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
 
@@ -18,6 +19,7 @@ import { GAME_BACKGROUND_COLOR, GAME_HEIGHT, GAME_WIDTH } from './constants';
  *
  * The **main menu** (`MenuScene`) is the boot scene. It offers:
  * - **Play Game** → starts Level 1 of the playable game (`PlayScene`).
+ * - **Leaderboard** → opens the shared full-score view (`LeaderboardScene`).
  * - **Gym Scene Index** → navigates to the dev-only `GymIndex` scene.
  *
  * All game scenes are registered here so Phaser knows their keys for
@@ -30,7 +32,7 @@ export function buildGameConfig(): Phaser.Types.Core.GameConfig {
     height: GAME_HEIGHT,
     backgroundColor: GAME_BACKGROUND_COLOR,
     parent: 'game-container',
-    scene: [MenuScene, PlayScene, PauseScene, MineralChoiceScene, SettingsScene, GameOverScene, GymIndex],
+    scene: [MenuScene, PlayScene, PauseScene, MineralChoiceScene, SettingsScene, GameOverScene, LeaderboardScene, GymIndex],
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,

@@ -23,6 +23,7 @@ import {
   type LeaderboardEntry,
 } from '../core/Leaderboard';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { renderLeaderboard } from '../ui/leaderboardView';
 import { FocusManager } from '../utils/focusManager';
 
 export { INITIALS_LENGTH };
@@ -55,17 +56,6 @@ const BUTTON_Y = 495;
 /** True when a key is an A–Z letter (case-insensitive). */
 export function isInitialsLetter(key: string): boolean {
   return key.length === 1 && /^[A-Z]$/i.test(key);
-}
-
-/**
- * Formats one leaderboard row as aligned monospace columns.
- * Exported for tests and reuse by the menu leaderboard view.
- */
-export function formatLeaderboardRow(entry: LeaderboardEntry): string {
-  const rank = `#${entry.rank}`.padStart(3, ' ');
-  return `${rank}  ${entry.initials.padEnd(INITIALS_LENGTH, ' ')}  ${entry.score
-    .toString()
-    .padStart(7, ' ')}  ${entry.date}`;
 }
 
 /**
@@ -354,26 +344,12 @@ export class GameOverScene extends Phaser.Scene {
 
   /** Renders the full leaderboard, highest score first (up to 10 rows). */
   private _renderLeaderboard(): void {
-    const entries = getEntries();
-    if (entries.length === 0) {
-      this.add.text(GAME_WIDTH / 2, LEADERBOARD_ROW_START_Y, 'No scores yet', {
-        fontFamily: 'monospace',
-        fontSize: LEADERBOARD_ROW_FONT,
-        color: DIM_COLOR,
-      }).setOrigin(0.5, 0);
-      return;
-    }
-    entries.forEach((entry, index) => {
-      this.add.text(
-        GAME_WIDTH / 2,
-        LEADERBOARD_ROW_START_Y + index * LEADERBOARD_ROW_HEIGHT,
-        formatLeaderboardRow(entry),
-        {
-          fontFamily: 'monospace',
-          fontSize: LEADERBOARD_ROW_FONT,
-          color: GAME_OVER_COLOR,
-        },
-      ).setOrigin(0.5, 0);
+    renderLeaderboard(this, getEntries(), {
+      topY: LEADERBOARD_ROW_START_Y,
+      rowHeight: LEADERBOARD_ROW_HEIGHT,
+      fontSize: LEADERBOARD_ROW_FONT,
+      color: GAME_OVER_COLOR,
+      emptyMessage: 'No scores yet',
     });
   }
 }

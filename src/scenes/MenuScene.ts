@@ -80,7 +80,7 @@ export class MenuScene extends Phaser.Scene {
     // ── Play Game button ─────────────────────────────────────────
     const playButton = this.add.text(
       GAME_WIDTH / 2,
-      260,
+      220,
       '▶  Play Game',
       {
         fontFamily: 'monospace',
@@ -113,7 +113,7 @@ export class MenuScene extends Phaser.Scene {
     // context on the gesture keeps GDD §6.7 autoplay compliance intact.
     const settingsButton = this.add.text(
       GAME_WIDTH / 2,
-      320,
+      280,
       '⚙  Settings',
       {
         fontFamily: 'monospace',
@@ -139,10 +139,39 @@ export class MenuScene extends Phaser.Scene {
 
     this.controls.push({ label: '⚙  Settings', text: settingsButton });
 
+    // ── Leaderboard button ───────────────────────────────────────
+    // Opens the shared, full leaderboard view (AH-0MU9LJ52C00613RX).
+    const leaderboardButton = this.add.text(
+      GAME_WIDTH / 2,
+      340,
+      '🏆  Leaderboard',
+      {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 14, y: 7 },
+      },
+    ).setOrigin(0.5);
+    leaderboardButton.setInteractive({ useHandCursor: true });
+
+    leaderboardButton.on('pointerover', () => {
+      leaderboardButton.setStyle({ color: '#88ffff' });
+    });
+    leaderboardButton.on('pointerout', () => {
+      leaderboardButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    leaderboardButton.on('pointerdown', () => {
+      this.scene.start('LeaderboardScene');
+    });
+
+    this.controls.push({ label: '🏆  Leaderboard', text: leaderboardButton });
+
     // ── Gym Scene Index button (dev tool) ────────────────────────
     const devButton = this.add.text(
-      GAME_WIDTH / 2,
-      390,
+      GAME_WIDTH - 16,
+      GAME_HEIGHT - 12,
       '⚙  Gym Scene Index (dev)',
       {
         fontFamily: 'monospace',
@@ -151,7 +180,7 @@ export class MenuScene extends Phaser.Scene {
         backgroundColor: '#1a1a1a',
         padding: { x: 12, y: 6 },
       },
-    ).setOrigin(0.5);
+    ).setOrigin(1, 1);
     devButton.setInteractive({ useHandCursor: true });
 
     devButton.on('pointerover', () => {
@@ -187,6 +216,9 @@ export class MenuScene extends Phaser.Scene {
     this.focusManager.register(settingsButton, () => {
       resumeAudioContext(this.sound);
       this.scene.start('SettingsScene', { origin: 'MenuScene' });
+    });
+    this.focusManager.register(leaderboardButton, () => {
+      this.scene.start('LeaderboardScene');
     });
     this.focusManager.register(devButton, () => {
       this.scene.start('GymIndex');
