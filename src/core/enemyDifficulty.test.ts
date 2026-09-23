@@ -35,6 +35,7 @@ function makeConfig(overrides: Partial<EnemyConfig>): EnemyConfig {
     shotPattern: 'aimed',
     fireInterval: 1200,
     bulletSpeed: 200,
+    bulletLifetime: 3.0,
     burstCount: 1,
     shotProbability: 1.0,
     ...overrides,
@@ -204,6 +205,7 @@ describe('enemyDifficulty — Asteroid split chain', () => {
       shotPattern: 'none',
       fireInterval: 1000,
       bulletSpeed: 100,
+      bulletLifetime: 3.0,
       burstCount: 1,
       shotProbability: 1,
     };
@@ -237,6 +239,7 @@ describe('enemyDifficulty — Asteroid split chain', () => {
       shotPattern: 'none',
       fireInterval: 1000,
       bulletSpeed: 100,
+      bulletLifetime: 3.0,
       burstCount: 1,
       shotProbability: 1,
     };
