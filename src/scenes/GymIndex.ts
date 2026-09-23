@@ -9,9 +9,10 @@
  * and `core/` remain excluded; corrupt configs fall back via the storage
  * helper.
  *
- * The right-hand ENEMIES column also surfaces the dedicated multi-phase
- * boss scene (`GymBoss`) as a `Boss` row, while the plain `boss` config
- * archetype is shown as `Boss Swarm` (AH-0MUAYB28C004KK7X).
+ * The index renders three columns left-to-right: plain scenes, ENEMIES
+ * (one row per enemy config, booting `GymEnemies` with `{ enemyKey }`),
+ * and Bosses (dedicated multi-phase `GymBoss` scene). The `boss` config
+ * archetype is likewise labelled `Boss` (AH-0MTV8OV9V002D8B7).
  */
 
 import Phaser from 'phaser';
@@ -33,16 +34,32 @@ export const GYM_INDEX_HINT = 'select a gym scene to load it — ← INDEX retur
 
 /** Scene key of the dedicated multi-phase boss (the real Central AI). */
 export const BOSS_SCENE_KEY = 'GymBoss';
-/** Label of the dedicated boss row in the ENEMIES column. */
+/** Label of the dedicated boss row in the Bosses column. */
 export const BOSS_SCENE_LABEL = 'Boss';
 
 /**
- * A row rendered in the right-hand "ENEMIES" column.
+ * Column X positions as fractions of `GAME_WIDTH`, ordered left-to-right:
+ * scenes | ENEMIES | Bosses (AH-0MTV8OV9V002D8B7).
+ */
+export const GYM_INDEX_COLUMN_X = {
+  scenes: 0.25,
+  enemies: 0.5,
+  bosses: 0.75,
+} as const;
+
+/** Header label for the middle ENEMIES column (kept uppercase). */
+export const GYM_INDEX_ENEMIES_HEADER = 'ENEMIES';
+/** Header label for the right-most Bosses column. */
+export const GYM_INDEX_BOSSES_HEADER = 'Bosses';
+
+/**
+ * A clickable row rendered in the ENEMIES or Bosses column.
  *
  * Two flavours are merged here:
  * - **config rows** carry `enemyKey` and boot `GymEnemies` with `{ enemyKey }`;
  * - **scene rows** carry `sceneKey` and boot that scene directly (the
- *   dedicated multi-phase `GymBoss` is surfaced this way).
+ *   dedicated multi-phase `GymBoss` is surfaced this way in the Bosses
+ *   column).
  */
 export interface EnemyColumnEntry {
   /** Unique row key: `GymEnemies:<configKey>` for config rows, scene key for scene rows. */
@@ -58,6 +75,7 @@ export interface EnemyColumnEntry {
 export class GymIndex extends Phaser.Scene {
   private entries: GymSceneEntry[] = [];
   private enemyEntries: EnemyColumnEntry[] = [];
+  private bossEntries: EnemyColumnEntry[] = [];
 
   constructor() {
     super({ key: 'GymIndex' });
@@ -70,7 +88,7 @@ export class GymIndex extends Phaser.Scene {
     // Genuine scene entries (GymPlayer, etc.). Filter out GymEnemies — it
     // is no longer listed as a bare scene; individual enemies appear via
     // the per-config list below instead. Filter out GymBoss — the real
-    // boss is surfaced as a dedicated row in the ENEMIES column instead of
+    // boss is surfaced as a dedicated row in the Bosses column instead of
     // the plain scene list (AH-0MUAYB28C004KK7X).
     const all = discoverGymScenes(loadGymSceneModules());
     this.entries = all.filter(
@@ -83,7 +101,7 @@ export class GymIndex extends Phaser.Scene {
       }
     }
 
-    // Register the dedicated boss scene so the "Boss" ENEMIES row can boot
+    // Register the dedicated boss scene so the "Boss" Bosses row can boot
     // it directly. GymBoss is still excluded from the plain scene list
     // (left column); it is surfaced as the real boss row below.
     const bossModule = all.find((e) => e.key === BOSS_SCENE_KEY)?.module;
@@ -92,25 +110,30 @@ export class GymIndex extends Phaser.Scene {
       if (bossClass) this.scene.add(BOSS_SCENE_KEY, bossClass as typeof Phaser.Scene);
     }
 
-    // Right-hand ENEMIES column — one row per saved/seed enemy config
-    // (routed to GymEnemies with `{ enemyKey }`) PLUS a dedicated "Boss"
-    // row that boots the multi-phase GymBoss scene. The plain `boss`
-    // config archetype is labelled "Boss Swarm" so it is not mistaken for
-    // the real boss (AH-0MUAYB28C004KK7X). Rows are merged and kept in
-    // alphabetical label order.
+    // Middle ENEMIES column — one row per saved/seed enemy config, routed
+    // to GymEnemies with `{ enemyKey }`. The plain `boss` config archetype
+    // shares the "Boss" label (renamed from "Boss Swarm"); it appears here
+    // and is distinguished from the dedicated boss by its column
+    // (AH-0MTV8OV9V002D8B7). Rows are kept in alphabetical label order.
     const configEntries: EnemyColumnEntry[] = discoverEnemyGymEntries().map((e) => ({
       key: e.key,
       label: e.label,
       enemyKey: e.enemyKey,
     }));
-    const bossRow: EnemyColumnEntry = {
-      key: BOSS_SCENE_KEY,
-      label: BOSS_SCENE_LABEL,
-      sceneKey: BOSS_SCENE_KEY,
-    };
-    this.enemyEntries = [...configEntries, bossRow].sort(
+    this.enemyEntries = [...configEntries].sort(
       (a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key),
     );
+
+    // Right-hand Bosses column — the dedicated multi-phase GymBoss scene
+    // booted directly (no enemyKey), kept separate from the config rows.
+    this.bossEntries = [
+      {
+        key: BOSS_SCENE_KEY,
+        label: BOSS_SCENE_LABEL,
+        sceneKey: BOSS_SCENE_KEY,
+      },
+    ];
+
     if (this.enemyEntries.length > 0 && !this.scene.manager.getScene('GymEnemies')) {
       // Reuse the class discovered via glob if available; otherwise lazy import.
       const enemiesModule = all.find((e) => e.key === 'GymEnemies')?.module;
@@ -135,7 +158,7 @@ export class GymIndex extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // ── Two-column layout ──────────────────────────────────────────
+    // ── Three-column layout ────────────────────────────────────────
     const entryStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: 'monospace',
       fontSize: '18px',
@@ -143,47 +166,46 @@ export class GymIndex extends Phaser.Scene {
       backgroundColor: '#1a1a1a',
       padding: { x: 10, y: 6 },
     };
+    const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: '#888888',
+    };
     const rowGap = 42;
     const startY = 150;
-    // Left column = non-enemy scenes; right column = enemy entries.
-    // Centre-left / centre-right of the screen, vertically aligned.
-    const leftColX = GAME_WIDTH * 0.33;
-    const rightColX = GAME_WIDTH * 0.67;
+    const headerY = startY - 18;
+    // Left column = plain scenes; middle = enemy configs; right = boss
+    // scenes. Columns are evenly distributed across the screen width.
+    const scenesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.scenes;
+    const enemiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
+    const bossesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses;
 
     // Left column — scene entries (alphabetical).
     this.entries.forEach((entry, index) => {
       const row = this.add
-        .text(leftColX, startY + index * rowGap, entry.label, entryStyle)
+        .text(scenesColX, startY + index * rowGap, entry.label, entryStyle)
         .setOrigin(0.5);
       row.setInteractive({ useHandCursor: true });
       row.on('pointerdown', () => this.scene.start(entry.key));
     });
 
-    // Right column — ENEMIES header + enemy entries (if any).
-    const enemyRows = this.enemyEntries.length;
-    if (enemyRows > 0) {
-      const headerY = startY - 18;
-      const header = this.add
-        .text(rightColX, headerY, 'ENEMIES', {
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          color: '#888888',
-        })
-        .setOrigin(0.5);
-      void header;
-      this.enemyEntries.forEach((entry, index) => {
-        const row = this.add
-          .text(rightColX, startY + index * rowGap, entry.label, entryStyle)
-          .setOrigin(0.5);
-        if (entry.enemyKey) row.setData('enemyKey', entry.enemyKey);
-        if (entry.sceneKey) row.setData('sceneKey', entry.sceneKey);
-        row.setInteractive({ useHandCursor: true });
-        row.on('pointerdown', () => {
-          if (entry.sceneKey) this.scene.start(entry.sceneKey);
-          else this.scene.start('GymEnemies', { enemyKey: entry.enemyKey });
-        });
-      });
-    }
+    // Middle column — ENEMIES header + enemy entries.
+    this.renderColumn(this.enemyEntries, enemiesColX, GYM_INDEX_ENEMIES_HEADER, {
+      startY,
+      headerY,
+      rowGap,
+      entryStyle,
+      headerStyle,
+    });
+
+    // Right column — Bosses header + boss scene entries.
+    this.renderColumn(this.bossEntries, bossesColX, GYM_INDEX_BOSSES_HEADER, {
+      startY,
+      headerY,
+      rowGap,
+      entryStyle,
+      headerStyle,
+    });
 
     // ── Hint ─────────────────────────────────────────────────────────
     this.add
@@ -195,6 +217,40 @@ export class GymIndex extends Phaser.Scene {
       .setOrigin(0.5);
   }
 
+  // ── Rendering helpers ─────────────────────────────────────────────
+
+  /**
+   * Renders one header + clickable rows for an enemy/boss column. No-op
+   * when the column has no entries, so the header never floats alone.
+   */
+  private renderColumn(
+    entries: EnemyColumnEntry[],
+    x: number,
+    headerText: string,
+    layout: {
+      startY: number;
+      headerY: number;
+      rowGap: number;
+      entryStyle: Phaser.Types.GameObjects.Text.TextStyle;
+      headerStyle: Phaser.Types.GameObjects.Text.TextStyle;
+    },
+  ): void {
+    if (entries.length === 0) return;
+    this.add.text(x, layout.headerY, headerText, layout.headerStyle).setOrigin(0.5);
+    entries.forEach((entry, index) => {
+      const row = this.add
+        .text(x, layout.startY + index * layout.rowGap, entry.label, layout.entryStyle)
+        .setOrigin(0.5);
+      if (entry.enemyKey) row.setData('enemyKey', entry.enemyKey);
+      if (entry.sceneKey) row.setData('sceneKey', entry.sceneKey);
+      row.setInteractive({ useHandCursor: true });
+      row.on('pointerdown', () => {
+        if (entry.sceneKey) this.scene.start(entry.sceneKey);
+        else this.scene.start('GymEnemies', { enemyKey: entry.enemyKey });
+      });
+    });
+  }
+
   // ── Public test accessors ─────────────────────────────────────────
 
   /** Discovered gym scenes (left column; excludes bare GymEnemies and GymBoss). */
@@ -203,11 +259,18 @@ export class GymIndex extends Phaser.Scene {
   }
 
   /**
-   * Right-hand ENEMIES column rows: one per available `EnemyConfig`
-   * (routed to `GymEnemies` via `enemyKey`) plus the dedicated `GymBoss`
-   * scene row (surfaced via `sceneKey`, labelled `Boss`).
+   * Middle ENEMIES column rows: one per available `EnemyConfig`, each
+   * routed to `GymEnemies` via `enemyKey`.
    */
   get listedEnemyScenes(): EnemyColumnEntry[] {
     return this.enemyEntries.map((e) => ({ ...e }));
+  }
+
+  /**
+   * Right-hand Bosses column rows: dedicated boss scenes booted directly
+   * via `sceneKey` (currently just the multi-phase `GymBoss`).
+   */
+  get listedBossScenes(): EnemyColumnEntry[] {
+    return this.bossEntries.map((e) => ({ ...e }));
   }
 }
