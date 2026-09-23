@@ -112,7 +112,9 @@ function genericEnemyDefault(key: string): EnemyConfig {
 // ── Boot loader ─────────────────────────────────────────────────────
 
 async function fetchCsv(path: string): Promise<string> {
-  const res = await fetch(`/${path}`);
+  // Read through the dev-server plugin endpoint (`/api/csv/...`); in dev the
+  // raw `/src/data/...` path is not served by the plugin.
+  const res = await fetch(`${CSV_API_PREFIX}${path}`);
   if (!res.ok) {
     throw new Error(`Failed to fetch ${path}: HTTP ${res.status}`);
   }

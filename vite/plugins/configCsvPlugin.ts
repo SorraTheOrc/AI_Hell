@@ -172,61 +172,67 @@ function handlePut(
     sendJson(res, 400, { ok: false, errors: ['Request body contained no CSV rows'] });
     return;
   }
-  const incoming = incomingRows[0];
-
-  // Validate against the target schema before touching the file.
-  const validation =
-    relPath.endsWith('ship-config.csv')
+  // Validate every incoming row against the target schema before touching
+  // the file. The store PUTs the full CSV, so all rows are checked.
+  const isShip = relPath.endsWith('ship-config.csv');
+  for (const incoming of incomingRows) {
+    const validation = isShip
       ? validateShipConfig(incoming, DEFAULT_CONFIG)
       : validateEnemyConfig(incoming, DEFAULT_ENEMY_CONFIGS);
-
-  if (!validation.ok) {
-    sendJson(res, 400, { ok: false, errors: validation.errors });
-    return;
+    if (!validation.ok) {
+      sendJson(res, 400, { ok: false, errors: validation.errors });
+      return;
+    }
   }
 
   // Read + parse the existing file.
   const existingText = readFileSync(filePath, 'utf8');
   const existingRows = parseCsvRows(existingText);
 
-  if (relPath.endsWith('ship-config.csv')) {
-    const ship = coerceShipConfig(incoming, DEFAULT_CONFIG);
+  if (isShip) {
+    const ship = coerceShipConfig(incomingRows[0], DEFAULT_CONFIG);
     atomicWrite(filePath, serializeShipConfigs([ship]));
     sendJson(res, 200, { ok: true, mode: 'upsert', row: ship });
     return;
   }
 
-  // Enemy config: find the row by key.
-  const incomingKey = incoming.key;
-  const index = existingRows.findIndex((row) => row.key === incomingKey);
-
-  if (mode === 'append' && index !== -1) {
-    sendJson(res, 409, {
-      ok: false,
-      error: `Duplicate key: "${incomingKey}" already exists`,
-    });
-    return;
+  // In append mode (Save As), reject any incoming key that already exists.
+  if (mode === 'append') {
+    for (const incoming of incomingRows) {
+      const exists = existingRows.some((row) => row.key === incoming.key);
+      if (exists) {
+        sendJson(res, 409, {
+          ok: false,
+          error: `Duplicate key: "${incoming.key}" already exists`,
+        });
+        return;
+      }
+    }
   }
 
+  // Enemy config: upsert each incoming row by key, preserving other rows.
   const enemies: EnemyConfig[] = existingRows.map((row) =>
     coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS),
   );
-  const coerced = coerceEnemyConfig(incoming, DEFAULT_ENEMY_CONFIGS);
+  let status = 200;
+  let resultMode: 'upsert' | 'append' = 'upsert';
+  let lastRow: EnemyConfig | null = null;
 
-  let status: number;
-  let resultMode: 'upsert' | 'append';
-  if (index === -1) {
-    enemies.push(coerced);
-    status = 201;
-    resultMode = 'append';
-  } else {
-    enemies[index] = coerced;
-    status = 200;
-    resultMode = 'upsert';
+  for (const incoming of incomingRows) {
+    const coerced = coerceEnemyConfig(incoming, DEFAULT_ENEMY_CONFIGS);
+    const index = enemies.findIndex((e) => e.key === coerced.key);
+    if (index === -1) {
+      enemies.push(coerced);
+      status = 201;
+      resultMode = 'append';
+    } else {
+      enemies[index] = coerced;
+    }
+    lastRow = coerced;
   }
 
   atomicWrite(filePath, serializeEnemyConfigs(enemies));
-  sendJson(res, status, { ok: true, mode: resultMode, row: coerced });
+  sendJson(res, status, { ok: true, mode: resultMode, row: lastRow });
 }
 
 // ── Plugin factory ──────────────────────────────────────────────────
