@@ -26,8 +26,8 @@ import type { PlayScene } from './PlayScene';
 const CHOICE_HEADING_COLOR = '#ffdd44';
 /** Neon-cyan option colour. */
 const CHOICE_OPTION_COLOR = '#00ffff';
-/** Translucent backdrop so the paused field remains visible behind. */
-const CHOICE_BACKDROP_ALPHA = 0.75;
+/** Fully opaque backdrop, blanking the screen behind the choice dialog. */
+const CHOICE_BACKDROP_ALPHA = 1.0;
 
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
