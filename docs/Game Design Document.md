@@ -320,10 +320,26 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 
 ### 5.1 Design
 
-- **Storage**: Browser `localStorage` (key: `ai_hell_leaderboard`).
-- **Entry**: On game over, prompt for a 3-character **neon-style initials** entry (max 10 entries).
-- **Display**: Shown on the game-over screen; accessible from the main menu.
+- **Storage**: Browser `localStorage` (key: `ai_hell_leaderboard`), max 10
+  entries.
+- **Module**: `src/core/Leaderboard.ts` owns the table — `getEntries()`,
+  `addEntry(initials, score)`, `getTopN(n)` and `isQualifying(score)` — and
+  persists through the injectable `LeaderboardStore` interface so a future
+  online backend can replace `localStorage` without touching the scenes
+  (§5.3 migration note; also §6.6).
+- **Entry**: On game over, prompt for a 3-character **neon-style initials**
+  entry. A score qualifies while fewer than 10 entries exist, or when it
+  strictly beats the current lowest entry; a non-qualifying score shows an
+  explanatory message and can be skipped without writing.
+- **Display**: The full ranked table (rank, initials, score, date) is shown
+  on the game-over screen (`GameOverScene`) and from the main menu
+  (`MenuScene` → `LeaderboardScene`), both through the shared rendering path
+  in `src/ui/leaderboardView.ts`.
 - **Content**: Rank, initials, score, date.
+
+> The earlier `GameOverScene` leaderboard stub (`readLeaderboard` /
+> `saveScoreEntry` and its local schema) has been retired in favour of the
+> shared module.
 
 #### Keyboard entry (game-over screen)
 
@@ -337,13 +353,22 @@ Pointer entry (clicking **Return to Menu**) continues to work unchanged.
 
 ### 5.2 Data Model
 
+The table is stored under `ai_hell_leaderboard` as a JSON array, sorted by
+score descending and capped at 10 entries:
+
 ```json
-{
-  "entries": [
-    { "rank": 1, "initials": "AI_", "score": 50000, "date": "2026-08-24" }
-  ]
-}
+[
+  { "rank": 1, "initials": "AI_", "score": 50000, "date": "2026-08-24" }
+]
 ```
+
+- `rank` — 1-based position, recomputed on read (never trusted from storage).
+- `initials` — exactly three uppercase A–Z letters.
+- `score` — non-negative points.
+- `date` — ISO `YYYY-MM-DD`.
+
+Absent, non-JSON or wrong-shape storage yields an empty list; malformed rows
+inside a valid array are dropped, so bad data never crashes the game.
 
 ---
 
@@ -425,9 +450,14 @@ src/
 │   │                      SFX mute toggle, and key-binding remapping with conflict
 │   │                      warnings + Reset to defaults; persisted to `ai_hell_settings`;
 │   │                      Back returns to the origin scene (PauseScene or MenuScene)
-│   ├── GameOverScene.ts — Game-over (implemented): final score, 3-letter initials,
-│   │                      leaderboard stub (localStorage), Return to Menu; FocusManager
-│   │                      keyboard navigation (initials field focused by default)
+│   ├── GameOverScene.ts — Game-over (implemented): final score, qualifying 3-letter
+│   │                      initials entry, full ranked leaderboard (src/core/Leaderboard.ts),
+│   │                      Return to Menu / Skip; FocusManager keyboard navigation
+│   │                      (initials field focused by default). The earlier localStorage
+│   │                      stub (readLeaderboard/saveScoreEntry) has been retired.
+│   ├── LeaderboardScene.ts — Shared leaderboard view (implemented): full ranked table
+│   │                      (rank, initials, score, date) via src/ui/leaderboardView.ts,
+│   │                      opened from the main menu; Back returns to MenuScene
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
 │   │                      scenes from scenes/gym/ via import.meta.glob)
@@ -496,9 +526,8 @@ src/
 │   ├── HUD.ts           — Standalone power-up HUD (implemented): Phaser Container attachable to any
 │   │                      scene, renders above gameplay; per-active-effect rows (icon, name,
 │   │                      remaining-seconds timer or stack count) + lives counter
-│   ├── Menu.ts          — Main menu, game-over screen
-│   │                      (distinct from the dev-only gym index; shipped-game UI)
-│   └── Leaderboard.ts   — Leaderboard display and input
+│   └── leaderboardView.ts — Shared leaderboard rendering (implemented): formatLeaderboardRow +
+│                            renderLeaderboard, used by GameOverScene and LeaderboardScene
 ├── audio/
 │   └── AudioManager.ts  — Sound effects (procedural Web Audio API synthesis)
 ├── data/
