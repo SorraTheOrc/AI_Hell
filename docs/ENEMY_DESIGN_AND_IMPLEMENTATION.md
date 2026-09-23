@@ -27,7 +27,14 @@ All enemies are **1 HP** (single bullet destroys them, except the Boss which is
 multi-hit) and **never collide with each other** (GDD §2.6) — no collision
 system is installed in the gym scenes.
 
-### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN)
+### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
+
+Enemy tuning is data, not code. Each archetype is a row in the committed
+`src/data/enemy-configs.csv`; at boot the config store parses/validates it into
+typed `EnemyConfig` objects and the scenes/factory consume the synchronous
+loaders. Retuning an enemy — or adding a new one — is a CSV edit (or a gym
+**Save** / **Save As…**), with no TypeScript change required. See §8 for the
+full schema, codec, config-store and Vite-plugin reference.
 
 ### 1.2 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
 
@@ -75,23 +82,27 @@ children) — so EXPLODE, player bullets and body-rams all cascade splits and
 the wipe→respawn cycle runs only once the whole chain is cleared.
 
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
-(`src/core/enemyConfig.ts`) — a JSON-serializable record of formation,
-visual and shot tuning. Six **seed configs** (scout/diver/tank/phaser/swarm/boss)
-mirror the former hard-coded constants and are the built-in defaults. Every
-other behaviour — formation geometry, bullet dispatch, gym index listing —
-derives from the config + small registries instead of per-enemy scene
-classes.
+(`src/core/configTypes.ts`) — a record of formation, visual and shot tuning.
+Seven **seed configs** (scout/diver/tank/phaser/swarm/boss/asteroid) live in
+`src/core/configDefaults.ts` as the built-in fallbacks. Every other behaviour
+— formation geometry, bullet dispatch, gym index listing — derives from the
+config + small registries instead of per-enemy scene classes.
 
-**Persistence.** Each enemy has its own localStorage entry under the
-namespace `ai-hell-enemy-config:<key>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
-Corrupt or missing storage falls back to seed defaults without throwing;
-partial saves are merged over defaults so unknown forward-compatible fields
-are preserved. For seed keys the registry `displayName` is **authoritative**,
-so a stale persisted label (for example an older "Boss") cannot shadow a
-rename; only `Save As…` (a new key) can introduce a new label. The set of
-available keys is the union of the seed registry
-and any stored suffixes (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()`),
-so a new `Save As…` entry becomes discoverable without code changes.
+**Persistence.** Each archetype is one row in the committed CSV
+`src/data/enemy-configs.csv` (the single source of truth). At boot the config
+store (`src/core/configStore.ts`) reads, parses and validates it; a missing or
+malformed file falls back to the seed defaults without throwing. A row that is
+partly invalid coerces to defaults (malformed numbers → `0`, invalid hex →
+`0x000000`, invalid enums → the default enum). For seed keys the registry
+`displayName` is **authoritative**, so a stale CSV label (for example an older
+"Boss") cannot shadow a rename; only `Save As…` (a new key) introduces a new
+label. The available keys come from the CSV-backed registry
+(`listEnemyConfigKeys()` / `loadAllEnemyConfigs()`), so a new `Save As…` row
+becomes discoverable without code changes.
+
+> **Breaking change:** `localStorage` is no longer the source of truth for
+> config values. The old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config`
+> entries are ignored (leaderboard and settings still use `localStorage`).
 
 **Gym surface.** `GymEnemies` (`src/scenes/gym/GymEnemies.ts`,
 key `GymEnemies`) is the **single reusable gym scene**. It is parameterized
@@ -475,11 +486,11 @@ combat testbeds.
   their own `_readInput` methods.
 
   > **Data-driven successor:** the per-scene wiring described in this §7
-  > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN):
-  > enemy tuning also lives in JSON (`EnemyConfig` under
-  > `ai-hell-enemy-config:<key>`) and is exercised through the single
-  > `GymEnemies` scene (see §1.1 / §8). The per-scene `player` seam itself
-  > is unchanged — `GymEnemies` reuses it.
+  > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
+  > CSV AH-0MTZWZ9TE009CVUA): enemy tuning also lives in
+  > `src/data/enemy-configs.csv` (`EnemyConfig`) and is exercised through
+  > the single `GymEnemies` scene (see §1.1 / §8). The per-scene `player`
+  > seam itself is unchanged — `GymEnemies` reuses it.
 - **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
   `PlayerBullet`s toward its current heading.
 
@@ -559,7 +570,7 @@ convention and will follow it when built: spawn the player via the same
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars). localStorage suffix. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
+| `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars) and CSV row identity. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
 | `displayName` | `string` | Human label shown in the index and `GymEnemies` hint. |
 | `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single'` — selects the builder in `src/utils/formations.ts`. |
 | `count` | `number` | Formation size. |
@@ -574,19 +585,52 @@ convention and will follow it when built: spawn the player via the same
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | px/s. |
 | `burstCount` | `number` | Burst / radial spoke count. |
-| `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. |
+| `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. **Not representable in a flat CSV row and dropped for CSV-sourced configs** (documented limitation). |
 
-Seed defaults live in `DEFAULT_ENEMY_CONFIGS` (scout/diver/tank/phaser/swarm/boss);
-`DEFAULT_ENEMY_KEYS` is the seed key set. `createEnemyFromConfig()` in
+Types live in `src/core/configTypes.ts`; seed fallbacks in
+`src/core/configDefaults.ts` (`DEFAULT_ENEMY_CONFIGS` scout/diver/tank/phaser/
+swarm/boss/asteroid, `DEFAULT_ENEMY_KEYS`). `createEnemyFromConfig()` in
 `src/entities/enemyFactory.ts` maps a config to its entity class (unknown keys
 fall back to Scout; Swarm's `clusterIndex` is `row / SWARM_CLUSTER_ROW_STRIDE`).
 
-### 8.2 Storage keys
+### 8.2 CSV files, codec & config store
 
-- Per-enemy localStorage key: `ai-hell-enemy-config:<slug>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
-- Namespaced separately from `ai-hell-ship-config` (ship tuning).
-- Helpers: `loadEnemyConfig(key)` (fallback without throw), `saveEnemyConfig(cfg)`,
-  `deleteEnemyConfig(key)`, `listEnemyConfigKeys()`, `loadAllEnemyConfigs()`.
+The CSV files are the **single source of truth** for enemy and ship tuning:
+
+- `src/data/enemy-configs.csv` — one row per enemy archetype.
+- `src/data/ship-config.csv` — the single player-ship row.
+- Both start with a `#` comment header listing every column, the enum values
+  and how to add an entry. Colours are `0xRRGGBB`; `formationKind` and
+  `shotPattern` are the plain enum strings; numeric columns are plain numbers.
+
+Supporting modules:
+
+- `src/core/csv.ts` — hand-rolled RFC 4180 parser/serialiser plus typed
+  coercion and validation. `parseCsvRows(csv)` → `Record<string, string>[]`
+  (skips `#` comments/blank rows, strips a leading BOM);
+  `coerceEnemyConfig` / `coerceShipConfig` convert strings to typed fields
+  (missing → default, malformed → `0` / `0x000000`); `validateEnemyConfig` /
+  `validateShipConfig` return `{ ok, errors }`; `serializeEnemyConfigs` /
+  `serializeShipConfigs` round-trip back. `ENEMY_COLUMN_ORDER` /
+  `SHIP_COLUMN_ORDER` are the stable exported column orders.
+- `src/core/configStore.ts` — in-memory registry. `loadConfigs()` (async, once
+  before scene boot) fetches both CSVs through the dev plugin (or reads the
+  bundled CSV in production), parses/validates them and populates the registry;
+  a failed fetch falls back to `DEFAULT_ENEMY_CONFIGS` / `DEFAULT_CONFIG`
+  without throwing. `loadEnemyConfig` / `loadShipConfig` / `listEnemyConfigKeys`
+  / `loadAllEnemyConfigs` are synchronous reads of the registry.
+- `vite/plugins/configCsvPlugin.ts` — dev-only Vite middleware. `GET
+  /api/csv/src/data/<file>.csv` returns the file; `PUT` upserts the supplied
+  row(s) after validation and writes atomically (temp file + rename).
+  `?mode=append` rejects a duplicate key with **409**. Registered in
+  `vite.config.ts`; `apply: 'serve'` keeps it out of production builds.
+- `src/core/bundledConfig.ts` — the build-time `?raw` CSV imports used by the
+  production read-only path.
+
+Public loader helpers (unchanged signatures): `loadEnemyConfig(key)`
+(fallback without throw), `saveEnemyConfig(cfg)` (async, returns
+`{ ok, reason? }`), `listEnemyConfigKeys()`, `loadAllEnemyConfigs()`. There is
+**no `deleteEnemyConfig`** any more — remove a row by editing the CSV.
 
 ### 8.3 FormationKind & shot-pattern registries
 
@@ -626,8 +670,13 @@ The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
 `count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
-plus **Save** (overwrite active key) and **Save As…** (sanitize → validate →
-duplicate check via `listEnemyConfigKeys()`, displayName = raw input).
+plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
+plugin) and **Save As…** (sanitize → validate → duplicate check via
+`listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).
+Both flows are async: the panel shows `Saving…`, then `Saved`/`Saved as <key>`
+or a red **`Save failed — …`** status (`enemy-gym-save-status`). In production
+builds writes are unavailable and the status reports it. After a successful
+write the scene re-reads the config from the store.
 Live `input`/`change` events patch `config.buildOffsets/spacing/drift/start/count`
 and best-effort mutate entity `_*` fields. Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
@@ -658,22 +707,23 @@ enemies appear on next index load without code changes.
    live-apply without reload.
 2. **Save As…** Enter a new name (e.g. `My New Enemy`) and click **Save
    As…**. The name is slugified (`my-new-enemy`), validated
-   (`isValidEnemyKey`, ≤40 chars, hyphen slug, unique), and stored as
-   `ai-hell-enemy-config:my-new-enemy` with that displayName.
+   (`isValidEnemyKey`, ≤40 chars, hyphen slug, unique), and a new row with
+   that displayName is appended to `src/data/enemy-configs.csv`.
 3. **Appears in the index.** Reload / return to the gym index — the new
    entry appears under the **ENEMIES** section without editing
-   `GymIndex.ts`.
+   `GymIndex.ts` (the CSV is re-read after the write).
 4. **Code archetype (when a truly new entity is needed).** If the enemy
    needs new movement/shot code beyond the existing registries: add a new
    entity in `src/entities/<Name>.ts` with the same seam (`size? color? …`),
    a builder in `src/utils/formations.ts` or a shot pattern in
    `src/utils/enemyShotPatterns.ts` with tests, wire it in
-   `src/entities/enemyFactory.ts`, and add a seed entry to
-   `DEFAULT_ENEMY_CONFIGS` in `src/core/enemyConfig.ts`.
-5. **Storage hygiene.** `npm test` clears `localStorage` between suites;
-   the gym panel removes itself on `SHUTDOWN`. Corrupt storage for a key
-   falls back to that key's seed/defaults — the index skips only when
-   `loadAllEnemyConfigs()` itself cannot run.
+   `src/entities/enemyFactory.ts`, and add a seed fallback to
+   `DEFAULT_ENEMY_CONFIGS` in `src/core/configDefaults.ts`.
+5. **CSV hygiene.** The committed CSV is the source of truth; a missing or
+   malformed file (or a failed dev fetch) falls back to the seed defaults
+   without throwing, and `npm test` resets the registry between suites. The
+   dev plugin validates every write before touching the file and writes
+   atomically, so an interrupted write cannot corrupt the committed CSV.
 
 ## 9. Enemy difficulty scoring (AH-0MTZWZ7MC002B01K)
 
