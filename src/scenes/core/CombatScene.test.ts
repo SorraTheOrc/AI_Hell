@@ -345,6 +345,19 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(drop.absorbing).toBe(true);
   });
 
+  it('AC2 — _collectDrop weapon reset clears the equipped weapon via the registry', async () => {
+    const scene = await boot();
+    scene.effects.applyWeapon('spread');
+    expect(scene.effects.hasWeapon('spread')).toBe(true);
+    const drop = scene.addDrop('P5', 'reset');
+
+    scene.runCollectDrop(drop);
+
+    expect(scene.hooks).toContain('onWeaponCollected:reset');
+    expect(scene.effects.hasWeapon('spread')).toBe(false);
+    expect(drop.absorbing).toBe(true);
+  });
+
   it('AC3 — _collectDrop clears enemy bullets for a P4 bomb', async () => {
     const scene = await boot();
     scene.bullets.push(new StubBullet(scene, 1, 1), new StubBullet(scene, 2, 2));
