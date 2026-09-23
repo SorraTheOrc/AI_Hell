@@ -78,6 +78,8 @@ export interface PhaserConfig {
   bulletColor?: number;
   bulletSize?: number;
   bulletSpeed?: number;
+  /** Bullet lifetime in seconds (wrap + expiry; AH-0MU960UTE001PTV0). */
+  bulletLifetime?: number;
   fireInterval?: number;
   burstCount?: number;
   /**
@@ -93,13 +95,18 @@ export interface PhaserConfig {
 
 /**
  * A bullet fired by a Phaser. Drawn as a small filled circle; travels
- * in a straight line until it leaves the screen bounds.
+ * in a straight line, wrapping across the screen edges until its
+ * per-type lifetime elapses.
  */
 export interface PhaserBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   readonly color: number;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 export class PhaserEntity extends BaseEnemy {
@@ -134,6 +141,7 @@ export class PhaserEntity extends BaseEnemy {
       bulletColor: config.bulletColor ?? PHASER_BULLET_COLOR,
       bulletSize: config.bulletSize ?? PHASER_BULLET_SIZE,
       bulletSpeed: config.bulletSpeed ?? PHASER_BULLET_SPEED,
+      bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? PHASER_FIRE_INTERVAL,
       shotProbability: config.shotProbability,
       rng: config.rng,
@@ -330,6 +338,8 @@ export class PhaserEntity extends BaseEnemy {
           color,
           vx: (dir.dx / mag) * this._bulletSpeed,
           vy: (dir.dy / mag) * this._bulletSpeed,
+          lifetime: this._bulletLifetime,
+          elapsed: 0,
         });
       }
       return bullets;

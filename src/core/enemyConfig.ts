@@ -75,6 +75,12 @@ export interface EnemyConfig {
   fireInterval: number;
   /** Bullet speed (px/s). */
   bulletSpeed: number;
+  /**
+   * Bullet lifetime in seconds. Bullets wrap across all four screen edges
+   * while alive and are destroyed once this elapses; effective range is
+   * `bulletSpeed × bulletLifetime` (AH-0MU960UTE001PTV0).
+   */
+  bulletLifetime: number;
   /** Burst / radial-spoke count (e.g. Tank radial 10, Diver burst 4, Phaser radial 8). */
   burstCount: number;
   /**
@@ -132,6 +138,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'aimed',
     fireInterval: 1200,
     bulletSpeed: 200,
+    bulletLifetime: 3.0,
     burstCount: 1,
     shotProbability: 1.0,
   },
@@ -152,6 +159,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'spread',
     fireInterval: 1000,
     bulletSpeed: 220,
+    bulletLifetime: 3.0,
     burstCount: 4,
     shotProbability: 1.0,
   },
@@ -172,6 +180,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'radial',
     fireInterval: 2400,
     bulletSpeed: 150,
+    bulletLifetime: 4.0,
     burstCount: 10,
     shotProbability: 1.0,
   },
@@ -192,6 +201,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'radial',
     fireInterval: 2000,
     bulletSpeed: 180,
+    bulletLifetime: 3.5,
     burstCount: 8,
     shotProbability: 1.0,
   },
@@ -212,6 +222,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'coordinated',
     fireInterval: 900,
     bulletSpeed: 180,
+    bulletLifetime: 3.0,
     burstCount: 1,
     // Only a quarter of the 15-member cluster fires per cycle, so the
     // coordinated volley stays a threat without becoming a bullet wall.
@@ -238,6 +249,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'radial',
     fireInterval: 1200,
     bulletSpeed: 160,
+    bulletLifetime: 4.0,
     burstCount: 8,
     shotProbability: 1.0,
   },
@@ -265,6 +277,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     shotPattern: 'none',
     fireInterval: 1000,
     bulletSpeed: 100,
+    bulletLifetime: 3.0,
     burstCount: 1,
     shotProbability: 1.0,
   },
@@ -338,6 +351,7 @@ export function loadEnemyConfig(key: string): EnemyConfig {
     shotPattern: 'aimed',
     fireInterval: 1200,
     bulletSpeed: 200,
+    bulletLifetime: 3.0,
     burstCount: 1,
     shotProbability: 1.0,
   };

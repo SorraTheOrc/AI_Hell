@@ -69,6 +69,8 @@ class EquivBullet implements FormationSceneBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   vx = 0;
   vy = 0;
+  lifetime = 3.0;
+  elapsed = 0;
 
   constructor(scene: Phaser.Scene) {
     this.graphics = scene.add.graphics();

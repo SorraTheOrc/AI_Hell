@@ -195,6 +195,10 @@ interface PlayEnemyBullet {
   graphics: Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 /** A live power-up drop on the field. */
@@ -841,6 +845,8 @@ export class PlayScene extends CombatScene<
    * Spawns an enemy bullet at (x, y) travelling at (vx, vy) px/s.
    * Used by tests (and the boss integration) to place bullets
    * deterministically without relying on entity fire timers.
+   *
+   * @param lifetime - Bullet lifetime in seconds (default 3.0 s).
    */
   spawnEnemyBullet(
     x: number,
@@ -848,12 +854,13 @@ export class PlayScene extends CombatScene<
     vx: number,
     vy: number,
     color = 0xff4444,
+    lifetime = 3.0,
   ): PlayEnemyBullet {
     const graphics = this.add.graphics();
     graphics.fillStyle(color, 1);
     graphics.fillCircle(0, 0, 4);
     graphics.setPosition(x, y);
-    const bullet: PlayEnemyBullet = { graphics, vx, vy };
+    const bullet: PlayEnemyBullet = { graphics, vx, vy, lifetime, elapsed: 0 };
     this.enemyBullets.push(bullet);
     return bullet;
   }
@@ -912,20 +919,22 @@ export class PlayScene extends CombatScene<
   private _advanceBullets(dt: number): void {
     for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
       const b = this.enemyBullets[i];
+      b.elapsed += dt;
       b.graphics.x += b.vx * dt;
       b.graphics.y += b.vy * dt;
-      if (this._offScreen(b.graphics)) {
+      // Four-edge wrap — leave left → reappear right, etc., matching the
+      // player ship / asteroid model (AH-0MU960UTE001PTV0). Bullets are
+      // never culled for leaving the screen, only when their lifetime ends.
+      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
+      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
+      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
+      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
+      if (b.elapsed >= b.lifetime) {
         b.graphics.destroy();
         this.enemyBullets.splice(i, 1);
       }
     }
-    this.playerBullets = this.playerBullets.filter((b) =>
-      advanceAndCull(b, dt, this.scale.width, this.scale.height),
-    );
-  }
-
-  private _offScreen(g: Phaser.GameObjects.Graphics): boolean {
-    return g.x < -20 || g.x > GAME_WIDTH + 20 || g.y < -20 || g.y > GAME_HEIGHT + 20;
+    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
   }
 
   // ── Collisions ──────────────────────────────────────────────────

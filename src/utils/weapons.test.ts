@@ -29,6 +29,7 @@ import {
   WEAPON_DUAL_FIRE_RATE,
   WEAPON_RAPID_FIRE_RATE,
   BULLET_SPEED,
+  WEAPON_BULLET_LIFETIME,
   isTimedWeapon,
 } from './weapons';
 
@@ -72,6 +73,36 @@ describe('WEAPON_CATALOGUE', () => {
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_CANNON_FIRE_RATE);
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_SPREAD_FIRE_RATE);
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_DUAL_FIRE_RATE);
+  });
+});
+
+describe('bulletLifetime (AC3/AC4 — per-weapon range)', () => {
+  test('every weapon exposes a positive bullet lifetime', () => {
+    for (const weapon of Object.values(WEAPON_CATALOGUE)) {
+      expect(weapon.bulletLifetime).toBeGreaterThan(0);
+    }
+  });
+
+  test('lifetimes match the agreed per-weapon defaults', () => {
+    expect(WEAPON_CATALOGUE.cannon.bulletLifetime).toBe(3.0);
+    expect(WEAPON_CATALOGUE.spread.bulletLifetime).toBe(2.8);
+    expect(WEAPON_CATALOGUE.dual.bulletLifetime).toBe(2.8);
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(1.5);
+  });
+
+  test('the shared WEAPON_BULLET_LIFETIME constant matches the catalogue', () => {
+    expect(WEAPON_BULLET_LIFETIME.cannon).toBe(3.0);
+    expect(WEAPON_BULLET_LIFETIME.spread).toBe(2.8);
+    expect(WEAPON_BULLET_LIFETIME.dual).toBe(2.8);
+    expect(WEAPON_BULLET_LIFETIME.rapid).toBe(1.5);
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.rapid);
+  });
+
+  test('weapon lifetimes are individually tunable (rapid shorter than cannon)', () => {
+    // Rapid trades range for a much higher fire rate (AC4 intent).
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBeLessThan(
+      WEAPON_CATALOGUE.cannon.bulletLifetime,
+    );
   });
 });
 

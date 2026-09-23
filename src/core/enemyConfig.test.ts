@@ -50,8 +50,25 @@ describe('EnemyConfig schema', () => {
       expect(config.size).toBeGreaterThan(0);
       expect(config.fireInterval).toBeGreaterThan(0);
       expect(config.bulletSpeed).toBeGreaterThan(0);
+      expect(config.bulletLifetime).toBeGreaterThan(0);
       expect(config.burstCount).toBeGreaterThan(0);
     }
+  });
+
+  it('exposes the agreed per-enemy bullet lifetimes (AC3/AC4)', () => {
+    expect(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime).toBe(3.0);
+    expect(DEFAULT_ENEMY_CONFIGS.diver.bulletLifetime).toBe(3.0);
+    expect(DEFAULT_ENEMY_CONFIGS.tank.bulletLifetime).toBe(4.0);
+    expect(DEFAULT_ENEMY_CONFIGS.phaser.bulletLifetime).toBe(3.5);
+    expect(DEFAULT_ENEMY_CONFIGS.swarm.bulletLifetime).toBe(3.0);
+    expect(DEFAULT_ENEMY_CONFIGS.boss.bulletLifetime).toBe(4.0);
+  });
+
+  it('enemy bullet lifetimes are individually tunable (not a single shared value)', () => {
+    const lifetimes = Object.values(DEFAULT_ENEMY_CONFIGS).map(
+      (config) => config.bulletLifetime,
+    );
+    expect(new Set(lifetimes).size).toBeGreaterThan(1);
   });
 
   it('seed colours/bullet tunings mirror the hard-coded entity constants (smoke check)', () => {
@@ -222,6 +239,7 @@ describe('EnemyConfig persistence (localStorage)', () => {
       shotPattern: 'spread' as const,
       fireInterval: 1300,
       bulletSpeed: 170,
+      bulletLifetime: 2.5,
       burstCount: 5,
       shotProbability: 0.6,
     };

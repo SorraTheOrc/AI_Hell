@@ -392,13 +392,14 @@ export abstract class CombatScene<
         player.y,
       )) {
         const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
+        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color, def.bulletLifetime);
       }
     }
   }
 
   /**
-   * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s.
+   * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s,
+   * with the given colour and lifetime (seconds).
    * Public so tests can place bullets deterministically.
    */
   spawnPlayerBullet(
@@ -407,6 +408,7 @@ export abstract class CombatScene<
     vx: number,
     vy: number,
     color = 0x00ffff,
+    lifetime = 3.0,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -416,6 +418,7 @@ export abstract class CombatScene<
       PLAYER_BULLET_RADIUS,
       vx,
       vy,
+      lifetime,
     );
     this.playerBullets.push(bullet);
     return bullet;

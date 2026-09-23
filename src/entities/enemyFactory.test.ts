@@ -82,6 +82,33 @@ describe('Config-aware entity seam', () => {
     expect(swarm2.effectiveColor).toBe(0x444444);
   });
 
+  it('fires bullets that carry the config bulletLifetime (AH-0MU960UTE001PTV0)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const scout = new Scout(scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 },
+      fireInterval: 1, bulletLifetime: 2.5,
+    });
+    scout.shootEnabled = true;
+    scout.tryFireAimedBullet(1_000_000); // start the advance-cue tell
+    const bullet = scout.tryFireAimedBullet(1_000_000 + 600);
+    expect(bullet).not.toBeNull();
+    expect(bullet!.lifetime).toBe(2.5);
+    expect(bullet!.elapsed).toBe(0);
+  });
+
+  it('defaults the enemy bullet lifetime to 3s when the config omits it', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const scout = new Scout(scene, {
+      x: 100, y: 100, formationOffset: { row: 0, col: 0 }, fireInterval: 1,
+    });
+    scout.shootEnabled = true;
+    scout.tryFireAimedBullet(1_000_000);
+    const bullet = scout.tryFireAimedBullet(1_000_000 + 600);
+    expect(bullet!.lifetime).toBe(3.0);
+  });
+
   it('Phaser and Tank bullet count matches burstCount config', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;

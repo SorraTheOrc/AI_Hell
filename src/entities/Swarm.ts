@@ -64,6 +64,8 @@ export interface SwarmConfig {
   bulletColor?: number;
   bulletSize?: number;
   bulletSpeed?: number;
+  /** Bullet lifetime in seconds (wrap + expiry; AH-0MU960UTE001PTV0). */
+  bulletLifetime?: number;
   fireInterval?: number;
   /**
    * Chance (fraction `0.0`–`1.0`) that this member fires when the burst
@@ -83,6 +85,10 @@ export interface SwarmBullet {
   readonly color: number;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 /**
@@ -119,6 +125,7 @@ export class Swarm extends BaseEnemy {
       bulletColor: config.bulletColor ?? SWARM_BULLET_COLOR,
       bulletSize: config.bulletSize ?? SWARM_BULLET_SIZE,
       bulletSpeed: config.bulletSpeed ?? SWARM_BULLET_SPEED,
+      bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? SWARM_BURST_INTERVAL,
       shotProbability: config.shotProbability,
       rng: config.rng,
@@ -257,6 +264,8 @@ export class Swarm extends BaseEnemy {
       color,
       vx: Math.cos(angle) * this._bulletSpeed,
       vy: Math.sin(angle) * this._bulletSpeed,
+      lifetime: this._bulletLifetime,
+      elapsed: 0,
     };
   }
 

@@ -139,7 +139,7 @@ the first three enemy gym scenes duplicated:
   line, the bottom hint line, and the shared `← INDEX` back button.
 - **Update loop** — formation drift + respawn off the left edge,
   per-entity `applyFormationPosition()`, fire-bullet collection, bullet
-  advance, and off-screen bullet removal.
+  advance with four-edge wrap, and lifetime-based bullet expiry.
 - **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
   enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
   `destroySelf()` — mid-explosion counts), the base scene starts a
@@ -423,7 +423,8 @@ When a new enemy needs the base scene to behave differently:
   needed; assert offset counts and symmetry.
 - **Base class** (`src/scenes/gym/core/GymFormationScene.test.ts`) — a stub
   `Container` entity + stub bullets exercise spawn, HUD, drift/respawn,
-  explode, shoot toggle, bullet advance, and off-screen removal.
+  explode, shoot toggle, bullet advance with four-edge wrap, and
+  lifetime-based expiry.
 - **Per-scene** (`src/scenes/gym/GymScout.test.ts`, `GymDiver.test.ts`,
   `GymTank.test.ts`, `GymPhaser.test.ts`, `GymSwarm.test.ts`) —
   behaviour-preserving tests that must pass unchanged after a refactor;

@@ -24,7 +24,8 @@
  * its own independent fire rate; bullets of all active weapons are
  * emitted on the same fire cycle when their individual cooldowns have
  * elapsed.  Player bullets are demonstration-only: they fly in their
- * pattern and are removed off-screen; no collision damage.
+ * pattern, wrap across all four screen edges, and expire after their
+ * per-weapon lifetime; no collision damage (AH-0MU960UTE001PTV0).
  *
  * Collection (AC4): a drop is collectible once its current scale is at
  * least 3% of full size; collection requires ship overlap (drop radius
@@ -189,7 +190,7 @@ export class GymWeapons extends Phaser.Scene {
     // ── Auto-fire: emit bullets per weapon fire rate (AC1) ──────
     this._autoFire(dt);
 
-    // ── Bullet lifecycle: advance + cull off-screen ────────────
+    // ── Bullet lifecycle: advance + wrap + lifetime expiry ─────
     this._advanceBullets(dt);
 
     // ── Drop lifecycles (grow/hold/shrink) ─────────────────────
@@ -254,6 +255,7 @@ export class GymWeapons extends Phaser.Scene {
             PLAYER_BULLET_RADIUS,
             vel.vx,
             vel.vy,
+            weaponDef.bulletLifetime,
           ),
         );
       }
@@ -283,11 +285,9 @@ export class GymWeapons extends Phaser.Scene {
     }
   }
 
-  /** Advances all bullets by `dt` and removes off-screen ones. */
+  /** Advances all bullets by `dt` and removes those whose lifetime elapsed. */
   private _advanceBullets(dt: number): void {
-    this.bullets = this.bullets.filter((b) =>
-      advanceAndCull(b, dt, this.scale.width, this.scale.height),
-    );
+    this.bullets = this.bullets.filter((b) => advanceAndCull(b, dt));
   }
 
   // ── Spawning / lifecycle (AC3, AC5) ──────────────────────────────
@@ -508,8 +508,6 @@ export class GymWeapons extends Phaser.Scene {
    * Advances bullets by the given delta time. Public for testing.
    */
   advanceBullets(dt: number): void {
-    this.bullets = this.bullets.filter((b) =>
-      advanceAndCull(b, dt, this.scale.width, this.scale.height),
-    );
+    this.bullets = this.bullets.filter((b) => advanceAndCull(b, dt));
   }
 }

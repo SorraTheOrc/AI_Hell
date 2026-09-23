@@ -92,6 +92,8 @@ export interface DiverConfig {
   bulletColor?: number;
   bulletSize?: number;
   bulletSpeed?: number;
+  /** Bullet lifetime in seconds (wrap + expiry; AH-0MU960UTE001PTV0). */
+  bulletLifetime?: number;
   fireInterval?: number;
   burstCount?: number;
   /** Custom pause duration in ms at the bottom of the dive arc. Defaults to 500 ms. */
@@ -115,6 +117,10 @@ export interface DiverBullet {
   readonly color: number;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 /**
@@ -166,6 +172,7 @@ export class Diver extends BaseEnemy {
       bulletColor: config.bulletColor ?? DIVER_BULLET_COLOR,
       bulletSize: config.bulletSize ?? DIVER_BULLET_SIZE,
       bulletSpeed: config.bulletSpeed ?? DIVER_BULLET_SPEED,
+      bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? DIVER_FIRE_INTERVAL,
       shotProbability: config.shotProbability,
       rng: config.rng,
@@ -345,7 +352,7 @@ export class Diver extends BaseEnemy {
         y: this.y,
       });
 
-      bullets.push({ graphics, color, vx, vy });
+      bullets.push({ graphics, color, vx, vy, lifetime: this._bulletLifetime, elapsed: 0 });
     }
     return bullets;
   }

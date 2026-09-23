@@ -82,16 +82,19 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
   }
 }
 
-/** A bullet the base class advances and removes off-screen. */
+/** A bullet the base class advances and expires by lifetime. */
 class StubBullet implements FormationSceneBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
+  lifetime: number;
+  elapsed = 0;
 
-  constructor(scene: Phaser.Scene, vx = 0, vy = 0) {
+  constructor(scene: Phaser.Scene, vx = 0, vy = 0, lifetime = 3.0) {
     this.graphics = scene.add.graphics();
     this.vx = vx;
     this.vy = vy;
+    this.lifetime = lifetime;
   }
 }
 
@@ -313,19 +316,19 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
     expect(moved!.graphics.y).toBeGreaterThan(yBefore);
   });
 
-  it('AC3 — removes bullets that leave the screen bounds', async () => {
+  it('AC2/AC3 — wraps bullets across the screen edges and expires them by lifetime', async () => {
     // Gate firing like the real enemies (interval-based): one fast bullet
-    // per 500ms — far fewer than the base class can clean up per frame.
+    // per 500ms with a very short lifetime (0.1s).
     let lastFire = 0;
     const scene = await bootGym((enemy, now) => {
       if (now - lastFire < 500) return [];
       lastFire = now;
-      return [new StubBullet(enemy.scene, 0, 2000)]; // fast downward
+      return [new StubBullet(enemy.scene, 0, 2000, 0.1)]; // fast, short-lived
     });
 
     await new Promise((r) => setTimeout(r, 300));
-    // The fast bullet exits the screen well inside the wait window; the
-    // base class must have removed it (not left it in flight forever).
+    // The bullet wraps across the screen edges while alive and is removed
+    // only once its lifetime (0.1s) elapses — never by off-screen position.
     expect(scene.activeBullets.length).toBe(0);
   });
 });
@@ -630,16 +633,24 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
     scene.getCursors()!.right.isDown = false;
   });
 
-  it('culls player bullets that leave the screen', async () => {
+  it('wraps player bullets across the seam and expires them by lifetime', async () => {
     const scene = await bootWithPlayer();
     const player = scene.getPlayer()!;
-    player.setPosition(480, 270);
+    player.setPosition(940, 270);
 
     scene.getCursors()!.right.isDown = true;
     scene.tick(0.5);
-    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+    const bullets = scene.getPlayerBullets();
+    expect(bullets.length).toBeGreaterThan(0);
+    // The bullet has crossed the right edge and wrapped back on-screen at
+    // x < GAME_WIDTH (it is not culled for leaving the screen).
+    for (const b of bullets) {
+      expect(b.x).toBeGreaterThanOrEqual(0);
+      expect(b.x).toBeLessThan(GAME_WIDTH);
+    }
 
-    // 350 px/s × 4 s = 1,400 px → well past the right edge (960).
+    // Cannon lifetime (3s) elapses over the 4.5s of ticks below → all gone
+    // (removed by lifetime, never by off-screen position).
     scene.tick(4.0);
     expect(scene.getPlayerBullets()).toHaveLength(0);
     scene.getCursors()!.right.isDown = false;
@@ -907,6 +918,10 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
   it('AC4 — invulnerability prevents a second hit, then expires; the player is never destroyed and the score never changes', async () => {
     const { scene, parkAt, armed } = await bootParked();
     const player = scene.getPlayer()!;
+    // Player auto-fire is unrelated to this invulnerability test; disable it
+    // so wrapped player bullets cannot incidentally destroy formation enemies
+    // (AH-0MU960UTE001PTV0 — bullets now wrap rather than culling off-screen).
+    vi.spyOn(player, 'tryFire').mockReturnValue([]);
 
     const statusLabels = (): string[] =>
       scene.children.list
@@ -951,7 +966,11 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     expect(player.y).toBe(preHitY);
     expect(player.alpha).toBe(1);
     expect(statusLabels()).toEqual(labelsBefore);
-    expect(scene.aliveCount).toBe(enemiesBefore);
+    // Respawn/invulnerability never spawns or removes enemies. Wrapped
+    // auto-fire bullets (fired during scene boot, before the spy above) may
+    // legitimately destroy formation enemies now that bullets wrap across
+    // the seam instead of culling off-screen (AH-0MU960UTE001PTV0).
+    expect(scene.aliveCount).toBeLessThanOrEqual(enemiesBefore);
   });
 });
 
@@ -1180,7 +1199,9 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
     killAll(scene);
     scene.tick(0.016); // start countdown
     // Park a player bullet far from the formation so it never collides.
-    const pb = scene.spawnPlayerBullet(900, 500, 0, 0);
+    // A long lifetime (10s) keeps it alive across the 3s respawn countdown
+    // while still exercising the lifetime-based (not off-screen) cull.
+    const pb = scene.spawnPlayerBullet(900, 500, 0, 0, 0x00ffff, 10);
     expect(scene.getPlayerBullets()).toContain(pb);
 
     // Fast-forward past the 3s countdown.

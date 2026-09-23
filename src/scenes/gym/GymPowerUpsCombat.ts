@@ -508,9 +508,16 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private _advanceEnemyBullets(dt: number): void {
     for (let i = this.scoutBullets.length - 1; i >= 0; i--) {
       const b = this.scoutBullets[i];
+      b.elapsed += dt;
       b.graphics.x += b.vx * dt;
       b.graphics.y += b.vy * dt;
-      if (b.graphics.x < -20 || b.graphics.x > GAME_WIDTH + 20 || b.graphics.y < -20 || b.graphics.y > GAME_HEIGHT + 20) {
+      // Four-edge wrap + lifetime expiry, matching the shipped game
+      // (AH-0MU960UTE001PTV0). Bullets are never culled off-screen.
+      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
+      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
+      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
+      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
+      if (b.elapsed >= b.lifetime) {
         try { b.graphics.destroy(); } catch { /* ignore */ }
         this.scoutBullets.splice(i, 1);
       }
@@ -709,7 +716,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     graphics.fillStyle(0xff4444, 1);
     graphics.fillCircle(0, 0, 3);
     graphics.setPosition(x, y);
-    const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy };
+    const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy, lifetime: 3.0, elapsed: 0 };
     this.scoutBullets.push(b);
     return b;
   }

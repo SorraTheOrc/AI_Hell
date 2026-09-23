@@ -174,6 +174,48 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getGameState().score).toBeGreaterThan(0);
   });
 
+  it('AC5 — a wrapped player bullet still destroys an enemy at its new position', async () => {
+    const scene = await bootPlay();
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+
+    // Spawn the bullet off-screen to the left; a single tick wraps it onto
+    // the enemy (x += GAME_WIDTH), proving a wrapped bullet stays collidable.
+    const pb = scene.spawnPlayerBullet(enemy.x - GAME_WIDTH, enemy.y, 0, 0);
+    expect(pb.x).toBeLessThan(0);
+    scene.tick(0.016);
+
+    expect(pb.x).toBeGreaterThanOrEqual(0);
+    expect(enemy.alive).toBe(false);
+  });
+
+  it('AC2 — enemy bullets wrap across the screen edges', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50); // keep the player clear
+
+    const eb = scene.spawnEnemyBullet(GAME_WIDTH - 5, 300, 350, 0, 0xff4444, 10);
+    scene.tick(0.05); // 350 × 0.05 = 17.5 px → crosses the right seam
+
+    expect(scene.getEnemyBullets()).toContain(eb);
+    // Wrapped to the left edge instead of being culled off-screen.
+    expect(eb.graphics.x).toBeCloseTo(GAME_WIDTH - 5 + 350 * 0.05 - GAME_WIDTH, 5);
+    expect(eb.graphics.x).toBeGreaterThanOrEqual(0);
+    expect(eb.graphics.x).toBeLessThan(GAME_WIDTH);
+  });
+
+  it('AC3 — enemy bullets expire by lifetime, never by off-screen position', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50);
+
+    const eb = scene.spawnEnemyBullet(100, 100, 0, 0, 0xff4444, 0.1);
+    expect(scene.getEnemyBullets()).toContain(eb);
+
+    scene.tick(0.05); // 0.05 < 0.1 — still alive
+    expect(scene.getEnemyBullets()).toContain(eb);
+
+    scene.tick(0.06); // 0.11 ≥ 0.1 — expired by lifetime
+    expect(scene.getEnemyBullets()).not.toContain(eb);
+  });
+
   it('AC4 — an enemy bullet overlapping the player costs one life', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
@@ -816,13 +858,16 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
       vx: 100,
       vy: 100,
       color: 0xffffff,
+      lifetime: 4.0,
+      elapsed: 0,
     };
     boss.update = (() => [fakeBullet]) as unknown as typeof boss.update;
 
-    const before = scene.getEnemyBullets().length;
     scene.tick(0.016);
+    // The fake boss bullet is collected into the scene's enemy-bullet list.
+    // (The total count is not asserted: wrapping bullets may expire by
+    // lifetime in the same tick — AH-0MU960UTE001PTV0.)
     const bullets = scene.getEnemyBullets();
-    expect(bullets.length).toBeGreaterThan(before);
     expect(bullets.some((b) => b.graphics === fakeBullet.graphics)).toBe(true);
   });
 

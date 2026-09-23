@@ -6,7 +6,7 @@
  * spawn loop, EXPLODE/SHOOT HUD buttons, status line, hint line,
  * back-to-index button, formation drift + respawn, per-entity
  * `applyFormationPosition` updates, and bullet collection/advance/
- * off-screen removal. This base class encapsulates all of that; each
+ * wrap + lifetime expiry. This base class encapsulates all of that; each
  * concrete scene supplies only its entity-specific configuration via
  * {@link EnemyFormationConfig}.
  *
@@ -162,6 +162,10 @@ export interface FormationSceneBullet {
   vx: number;
   /** Vertical speed (px/s). */
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 /**
@@ -1166,12 +1170,18 @@ export class GymFormationScene<
       this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 
-    // Advance bullets; remove any that leave the screen.
+    // Advance bullets; wrap across all four edges and expire by lifetime
+    // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen position.
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const bullet = this.bullets[i];
+      bullet.elapsed += dt;
       bullet.graphics.x += bullet.vx * dt;
       bullet.graphics.y += bullet.vy * dt;
-      if (this._bulletOffScreen(bullet.graphics)) {
+      if (bullet.graphics.x < 0) bullet.graphics.x += GAME_WIDTH;
+      if (bullet.graphics.x >= GAME_WIDTH) bullet.graphics.x -= GAME_WIDTH;
+      if (bullet.graphics.y < 0) bullet.graphics.y += GAME_HEIGHT;
+      if (bullet.graphics.y >= GAME_HEIGHT) bullet.graphics.y -= GAME_HEIGHT;
+      if (bullet.elapsed >= bullet.lifetime) {
         bullet.graphics.destroy();
         this.bullets.splice(i, 1);
       }
@@ -1233,13 +1243,16 @@ export class GymFormationScene<
     this.config.onEntityDestroyed?.(entity);
   }
 
-  /** Advances player bullets and removes any that leave the screen. */
+  /** Advances player bullets and removes those whose lifetime has elapsed. */
   private _advancePlayerBullets(dt: number): void {
-    this.playerBullets = this.playerBullets.filter((b) =>
-      advanceAndCull(b, dt, this.scale.width, this.scale.height),
-    );
+    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
   }
 
+  /**
+   * Off-screen test — retained for compatibility. Enemy bullets no longer
+   * cull on off-screen position; they wrap and expire by lifetime
+   * (AH-0MU960UTE001PTV0).
+   */
   protected _bulletOffScreen(g: Phaser.GameObjects.Graphics): boolean {
     return (
       g.x < -20 ||
