@@ -389,12 +389,19 @@ The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playg
 
 Enemy archetypes are JSON, not new scene files (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.1 / §8 for the full reference).
 
-1. **Tune in the gym:** `npm run dev` → **Gym Index → any Enemies entry** (e.g. Scout). Use the **Enemies panel** (`enemy-gym-panel`) sliders / colour pickers / selects — changes live-apply without reload.
+1. **Tune in the gym:** `npm run dev` → **Gym Index → any Enemies entry** (e.g. Scout). Use the **Enemies panel** (`enemy-gym-panel`) sliders / colour pickers / selects — changes live-apply without reload. The panel's **live difficulty readout** (`enemy-gym-difficulty`) shows the edited archetype's absolute 0–100 score (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9).
 2. **Save As…:** enter a new name (e.g. `My New Enemy`) and click **Save As…** — the name is slugified (`my-new-enemy`, `sanitizeEnemyKey` / `isValidEnemyKey`, ≤ 40 chars, must be unique) and stored as `ai-hell-enemy-config:my-new-enemy` (namespaced separately from `ai-hell-ship-config`).
 3. **Appears in the index:** return to the **Gym Index** — the new enemy appears under **ENEMIES** without editing `GymIndex.ts` (discovery via `src/utils/enemyGymDiscovery.ts`; corrupt storage falls back gracefully).
 4. **Truly new behaviour:** if the enemy needs new code (movement/shot), add an entity in `src/entities/<Name>.ts` with the `size?/color?/bullet*?/fireInterval?/burstCount?/shotProbability?` seam (defaults via `?? CONST`; `shotProbability` is the fraction chance to fire per shot cycle, default `1.0` — set it below `1.0` to thin out volleys, e.g. the Swarm seed's `0.25`), a builder in `src/utils/formations.ts` or a pattern in `src/utils/enemyShotPatterns.ts`, wire it in `src/entities/enemyFactory.ts`, and seed it in `src/core/enemyConfig.ts` (`DEFAULT_ENEMY_CONFIGS`).
 
 Full shape/storage/registry docs: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.
+
+**Difficulty scoring:** `src/core/enemyDifficulty.ts` computes an absolute,
+deterministic 0–100 difficulty index for an enemy archetype (`enemyDifficulty`),
+a wave (`waveDifficulty`) and a level (`levelDifficulty`), with a per-factor
+breakdown. The five built-in levels' non-decreasing difficulty ordering is
+pinned by `src/waves/enemyDifficulty.campaign.test.ts`. Model, weights, ranges
+and the recomputed campaign table: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9.
 
 #### Explosion VFX (particle bursts)
 

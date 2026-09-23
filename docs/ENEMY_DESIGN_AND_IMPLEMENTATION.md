@@ -628,7 +628,9 @@ and best-effort mutate entity `_*` fields. Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
 Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
-`data-config` / `data-config-value` on controls.
+`data-config` / `data-config-value` on controls. The panel also shows a
+**live difficulty readout** (id `enemy-gym-difficulty`) that recomputes the
+0–100 archetype score on every control change — see §9.
 
 The gym index discovers enemies via `src/utils/enemyGymDiscovery.ts`
 (`discoverEnemyGymEntries()` → `{ key: 'GymEnemies:<slug>', label,
@@ -665,6 +667,120 @@ enemies appear on next index load without code changes.
    the gym panel removes itself on `SHUTDOWN`. Corrupt storage for a key
    falls back to that key's seed/defaults — the index skips only when
    `loadAllEnemyConfigs()` itself cannot run.
+
+## 9. Enemy difficulty scoring (AH-0MTZWZ7MC002B01K)
+
+A pure, deterministic, **absolute** 0–100 difficulty index for enemies,
+waves and levels. It exists so level authoring is *measured* rather than
+guessed: a designer can compare two archetypes, a reviewer can audit the
+campaign ordering, and a regression test pins the intended progression.
+
+- **Module:** `src/core/enemyDifficulty.ts` (no Phaser, no browser globals;
+  runs under Vitest/happy-dom).
+- **Unit tests:** `src/core/enemyDifficulty.test.ts` (monotonicity per axis,
+  `shotPattern === 'none'` independence, Asteroid split chain, wave mix).
+- **Calibration test:** `src/waves/enemyDifficulty.campaign.test.ts` (pins the
+  non-decreasing ordering of the five built-in `LEVELS`).
+
+### 9.1 The three functions
+
+| Function | Scores | Returns |
+|----------|--------|---------|
+| `enemyDifficulty(config)` | one `EnemyConfig` archetype | `{ score, breakdown, factors }` |
+| `waveDifficulty(wave)` | one `WaveDefinition` (count-sensitive total threat) | `{ score, breakdown, factors }` |
+| `levelDifficulty(waves)` | a level (ordered waves) | `{ score, breakdown, factors }` |
+
+The score is **absolute** (Producer decision Q3): it depends only on enemy
+properties — never on player HP, lives, weapons or power-ups. Same input ⇒
+same output; no game instance is required. Scores are fractional (0–100);
+rounding is a presentation concern only.
+
+### 9.2 Factors, weights and ranges
+
+Each factor is clamped to its range and linearly normalised to 0–100, then the
+weighted mean is taken (`WEIGHT_SUM` normalisation keeps the total 0–100). All
+constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
+
+| Factor | Weight | Range | Notes |
+|--------|-------:|-------|-------|
+| `count` | 25 | 1–200 | Enemies in the formation (ceiling = gym slider max). |
+| `driftSpeed` | 8 | 0–200 px/s | Formation movement speed. |
+| `shotPattern` | 15 | ordinal 0–5 | Dodging difficulty: none 0, aimed 1, coordinated 2, spread 3, radial 4, orbital 5. |
+| `fireInterval` | 12 | 100–5000 ms | **Inverted** (fire rate) — a shorter interval scores higher. |
+| `shotProbability` | 5 | 0–1 | Chance an enemy fires per cycle. |
+| `bulletSpeed` | 5 | 40–600 px/s | Bullet velocity. |
+| `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
+| `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
+| `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
+
+**Firing factors contribute zero** when `shotPattern === 'none'` (e.g. the
+Asteroid) or when `waveDifficulty` scores a wave with `shootEnabled: false`
+(GDD §2.4 — Levels 1–3).
+
+### 9.3 Composition
+
+- **Wave** (count-sensitive total threat):
+
+  `totalThreat = Σ enemyScore × count`, then
+  `score = 100 × totalThreat / (totalThreat + 900)`.
+
+  The saturating (diminishing-returns) curve is strictly increasing in total
+  threat, so the score rises with group count, enemy count and mix, while a
+  wave of many weak enemies does not swamp a wave of few strong ones. The
+  Asteroid split chain is represented by the `asteroidSplit` factor, so counts
+  are used verbatim (no double counting).
+
+- **Level** (content quality): the **enemy-count-weighted mean** of the
+  per-enemy difficulty across every group in every wave. Weighting by count
+  means the level score reflects the *average threat of the content*, which
+  is what makes the campaign progression meaningful: Level 5
+  (**Predictable Death**) is uniformly high-threat even though it has
+  *fewer* enemies than earlier levels. Total wave threat remains available
+  from `waveDifficulty`.
+
+- **Breakdowns:** every function returns `breakdown` (weighted per-factor
+  contributions for enemies; per-group or per-wave scores for waves/levels)
+  and `factors` (raw normalised values and derived counts) so any score can
+  be explained.
+
+### 9.4 Recomputed campaign table (GDD §3.2)
+
+Scores computed from the real `LEVELS` in `src/waves/Formations.ts`. The
+ordering is **non-decreasing** and enforced by
+`src/waves/enemyDifficulty.campaign.test.ts` (AC4):
+
+| Level | Theme | Difficulty (0–100) |
+|-------|-------|-------------------:|
+| 1 | Entry | 7.17 |
+| 2 | Descent | 12.70 |
+| 3 | The Core | 14.28 |
+| 4 | Firestorm | 23.14 |
+| 5 | Predictable Death | 31.92 |
+
+Per-archetype scores for the seed enemies (with firing where the archetype
+fires): Scout 14.03, Diver 23.18, Tank 29.09, Phaser 31.85, Swarm 20.17,
+Boss Swarm 22.50, Asteroid 10.00 (split chain only — it never fires).
+
+> **Tuning guidance.** The weights are subjective by nature; the index is a
+> relative, monotonic ordering, not an absolute truth. Tests pin *ordering*
+> and *monotonicity*, not the magic numbers. Any weight change must be
+> re-checked against both the per-axis monotonicity tests and the campaign
+> calibration test.
+
+### 9.5 Where it surfaces
+
+- **Enemy Gym editor panel:** the live `enemy-gym-difficulty` readout shows the
+  edited archetype's score and updates on every slider/select/colour change
+  (`GymEnemies._updateDifficulty`).
+- **Library:** `enemyDifficulty` / `waveDifficulty` / `levelDifficulty` are
+  importable for scripts, docs tables and future tooling.
+
+### 9.6 Out of scope
+
+A runtime **auto-sequencer** that picks enemies to hit a target difficulty
+curve is explicitly deferred (Producer Q4) and tracked separately as
+`AH-0MUDIWETP003XC3X` (`discovered-from` AH-0MTZWZ7MC002B01K). This module is
+the design-time primitive such work would build on.
 
 ## Audio Best Practices
 
