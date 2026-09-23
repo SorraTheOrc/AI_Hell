@@ -588,6 +588,29 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.hooks).toContain('onPlayerHit');
   });
 
+  it('AC4/AC5 — an enemy bullet hitting the player plays only the player-hit feedback, never the bullet-destruction SFX/VFX', async () => {
+    const scene = await boot();
+    // Keep the real default impact path active so any stray bullet-vs-bullet
+    // feedback would be observable instead of masked by the stub hook.
+    scene.useDefaultImpact = true;
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    // Spies on the shared audio module persist across tests in this suite;
+    // clear the count so this test observes only its own collisions.
+    cue.mockClear();
+    scene.addPlayer({ x: 70, y: 70 });
+    scene.bullets.push(new StubBullet(scene, 70, 70));
+
+    scene.runCollisions();
+
+    // The existing player-hit feedback fires exactly once...
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.hooks).toContain('onPlayerHit');
+    // ...and the bullet-destruction cue/flash is NOT also played at the point.
+    expect(scene.hooks).not.toContain('onBulletVsBulletImpact');
+    expect(cue).not.toHaveBeenCalled();
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+  });
+
   it('AC4 — player body ram destroys the enemy and hits the player', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 80, y: 80 });
