@@ -1,0 +1,34 @@
+# Enemy Configurations CSV
+# One row per enemy archetype. Edit to retune; refresh npm run dev to see changes.
+#
+# Columns:
+#   key             — Unique slug identifier (lowercase, numbers, hyphens). Also the storage suffix.
+#   displayName     — Human-readable name shown in the gym index and editor.
+#   formationKind   — Formation builder: v | diver | rect | swarm | orbital | single
+#   count           — Number of enemies in the formation.
+#   spacingX        — Horizontal spacing between formation slots (px).
+#   spacingY        — Vertical spacing between formation slots (px).
+#   driftSpeed      — Rightward drift speed of the formation (px/s).
+#   startX          — Initial base X position (px).
+#   startY          — Initial base Y position (px).
+#   size            — Body radius/half-size in px.
+#   color           — Body colour as 0xRRGGBB.
+#   bulletColor     — Bullet colour as 0xRRGGBB.
+#   bulletSize      — Bullet body size.
+#   shotPattern     — Shot pattern: none | aimed | spread | radial | orbital | coordinated
+#   fireInterval    — Milliseconds between volleys.
+#   bulletSpeed     — Bullet speed (px/s).
+#   bulletLifetime  — Bullet lifetime in seconds.
+#   burstCount      — Burst / radial-spoke count.
+#   shotProbability — Chance (0.0–1.0) an individual enemy fires per shot cycle.
+#
+# To add a new enemy: add a new row with a unique key. The gym index will
+# discover it automatically. Ensure all required columns have values.
+key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability
+scout,Scout,v,6,26,22,40,240,270,16,0x00ff00,0xff4444,3,aimed,1200,200,1.5,1,1
+diver,Diver,diver,6,30,25,30,240,243,18,0xffff00,0xffee88,3,spread,1000,220,1.5,4,1
+tank,Tank,rect,6,50,45,18,240,270,28,0xff6600,0xffaa00,4,radial,2400,150,2,10,1
+phaser,Phaser,orbital,4,80,80,30,336,270,14,0xff00ff,0xff4444,3,radial,2000,180,1.75,8,1
+swarm,Swarm,swarm,15,28,24,60,144,162,15,0x0066ff,0x00ccff,3,coordinated,900,180,1.5,1,0.25
+boss,"Boss Swarm",single,1,0,0,0,480,170,50,0xff0000,0xffffff,4,radial,1200,160,2,8,1
+asteroid,Asteroid,single,1,0,0,0,480,162,42,0x888888,0x888888,3,none,1000,100,1.5,1,1
