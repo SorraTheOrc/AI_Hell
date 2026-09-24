@@ -1,6 +1,6 @@
 {
   "name": "ai-hell",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
