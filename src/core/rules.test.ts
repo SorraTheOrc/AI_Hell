@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
   DEFAULT_EXTRA_LIFE_WEIGHT,
+  DEFAULT_MINERAL_COLLECT_AMOUNT,
+  DEFAULT_MINERAL_HOLD_CAPACITY,
+  DEFAULT_MINERAL_REDROP_FRACTION_MAX,
+  DEFAULT_MINERAL_REDROP_FRACTION_MIN,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
   DEFAULT_RULES,
   DEFAULT_STANDARD_POWER_UP_WEIGHT,
@@ -72,6 +76,10 @@ describe('game rules configuration module', () => {
           rapid: 2,
           reset: 1,
         },
+        mineralCollectAmount: 2,
+        mineralHoldCapacity: 30,
+        mineralRedropFractionMin: 0.3,
+        mineralRedropFractionMax: 0.6,
       };
       saveRules(custom);
 
@@ -81,6 +89,8 @@ describe('game rules configuration module', () => {
       expect(loaded.powerUpSpawnInterval).toBe(5);
       expect(loaded.powerUpWeights.P3).toBe(10);
       expect(loaded.weaponWeights.spread).toBe(3);
+      expect(loaded.mineralCollectAmount).toBe(2);
+      expect(loaded.mineralHoldCapacity).toBe(30);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -178,6 +188,69 @@ describe('game rules configuration module', () => {
       weights.P8 = 99;
 
       expect(defaultPowerUpWeights().P8).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
+    });
+  });
+
+  // ── Mineral rules (AH-0MUBVGI62004ED9Q) ──────────────────────────
+
+  describe('mineral rules', () => {
+    it('exposes the default mineral tunables (AC: sensible defaults)', () => {
+      expect(DEFAULT_MINERAL_COLLECT_AMOUNT).toBe(1);
+      expect(DEFAULT_MINERAL_HOLD_CAPACITY).toBe(20);
+      expect(DEFAULT_MINERAL_REDROP_FRACTION_MIN).toBe(0.25);
+      expect(DEFAULT_MINERAL_REDROP_FRACTION_MAX).toBe(0.5);
+      expect(DEFAULT_RULES.mineralCollectAmount).toBe(1);
+      expect(DEFAULT_RULES.mineralHoldCapacity).toBe(20);
+      expect(DEFAULT_RULES.mineralRedropFractionMin).toBe(0.25);
+      expect(DEFAULT_RULES.mineralRedropFractionMax).toBe(0.5);
+    });
+
+    it('loads mineral tunables from storage when present', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          mineralCollectAmount: 3,
+          mineralHoldCapacity: 50,
+          mineralRedropFractionMin: 0.1,
+          mineralRedropFractionMax: 0.9,
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.mineralCollectAmount).toBe(3);
+      expect(loaded.mineralHoldCapacity).toBe(50);
+      expect(loaded.mineralRedropFractionMin).toBe(0.1);
+      expect(loaded.mineralRedropFractionMax).toBe(0.9);
+    });
+
+    it('falls back to mineral defaults when the stored values are invalid', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          mineralCollectAmount: -4,
+          mineralHoldCapacity: 'many',
+          mineralRedropFractionMin: 2,
+          mineralRedropFractionMax: 'half',
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.mineralCollectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
+      expect(loaded.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+      expect(loaded.mineralRedropFractionMin).toBe(
+        DEFAULT_MINERAL_REDROP_FRACTION_MIN,
+      );
+      expect(loaded.mineralRedropFractionMax).toBe(
+        DEFAULT_MINERAL_REDROP_FRACTION_MAX,
+      );
+    });
+
+    it('falls back to mineral defaults when the stored JSON is corrupt', () => {
+      window.localStorage.setItem(RULES_STORAGE_KEY, '{not valid json');
+
+      const loaded = loadRules();
+      expect(loaded.mineralCollectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
+      expect(loaded.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
     });
   });
 });

@@ -65,6 +65,67 @@ function clampLevel(level: number): number {
 
 let thrusterHum: ThrusterHumState | null = null;
 
+/**
+ * Master SFX gain node — the single post-mix volume / mute control (parent
+ * AH-0MU9LPZ0G0015292).  Created once when the AudioContext is first
+ * instantiated; all SFX paths route through it before reaching
+ * `ctx.destination`.  `sfxVolume` tracks the persisted volume level
+ * (0–1) so `setSfxMuted(false)` can restore the last volume.
+ */
+let masterSfxGain: GainNode | null = null;
+let sfxVolume: number = 1;
+let sfxMuted: boolean = false;
+
+/**
+ * Lazily creates the master SFX gain node on the given AudioContext.
+ * The master gain sits between every SFX path and `ctx.destination`.
+ */
+function ensureMasterGain(ctx: AudioContext): GainNode {
+  if (masterSfxGain) return masterSfxGain;
+  masterSfxGain = ctx.createGain();
+  masterSfxGain.gain.setValueAtTime(sfxVolume, ctx.currentTime);
+  masterSfxGain.connect(ctx.destination);
+  return masterSfxGain;
+}
+
+/**
+ * Set the master SFX volume (0–1).  Clamps to [0, 1].
+ * Live-update: immediately changes the master gain value so
+ * currently playing sounds are affected.
+ */
+export function setSfxVolume(value: number): void {
+  const clamped = Math.max(0, Math.min(1, value));
+  sfxVolume = clamped;
+  if (!masterSfxGain) return;
+  try {
+    masterSfxGain.gain.cancelScheduledValues(
+      masterSfxGain.context.currentTime,
+    );
+    masterSfxGain.gain.setValueAtTime(
+      sfxMuted ? 0 : sfxVolume,
+      masterSfxGain.context.currentTime,
+    );
+  } catch { /* dead context — no-op */ }
+}
+
+/**
+ * Toggle SFX mute.  `true` silences all SFX; `false` restores the last
+ * volume level.  Live-update: immediately changes the master gain value.
+ */
+export function setSfxMuted(on: boolean): void {
+  sfxMuted = on;
+  if (!masterSfxGain) return;
+  try {
+    masterSfxGain.gain.cancelScheduledValues(
+      masterSfxGain.context.currentTime,
+    );
+    masterSfxGain.gain.setValueAtTime(
+      on ? 0 : sfxVolume,
+      masterSfxGain.context.currentTime,
+    );
+  } catch { /* dead context — no-op */ }
+}
+
 interface ThrusterHumState {
   ctx: AudioContext;
   osc: OscillatorNode;
@@ -127,7 +188,7 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
   }
   const gain = ctx.createGain();
   gain.gain.setValueAtTime(0, ctx.currentTime);
-  gain.connect(ctx.destination);
+  gain.connect(ensureMasterGain(ctx));
 
   const osc = ctx.createOscillator();
   osc.type = 'triangle';
@@ -296,6 +357,9 @@ export function _resetAudioContextForTests(): void {
   diverDiveSound = null;
   diverDiveSoundRefCount = 0;
   audioCtx = null;
+  masterSfxGain = null;
+  sfxVolume = 1;
+  sfxMuted = false;
 }
 
 let audioCtx: AudioContext | null = null;
@@ -315,6 +379,8 @@ export function getAudioContext(): AudioContext | null {
         .webkitAudioContext;
     if (!Ctor) return null;
     audioCtx = new Ctor();
+    // Create the master SFX gain so all subsequent cues route through it.
+    ensureMasterGain(audioCtx);
   } catch {
     audioCtx = null;
   }
@@ -350,7 +416,7 @@ export function blip(
   gain.gain.setValueAtTime(volume, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
 
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(ctx.currentTime);
   osc.stop(ctx.currentTime + duration + 0.02);
 }
@@ -360,11 +426,49 @@ export function playSpawnSound(): void {
   blip(220, 880, 0.18, 'square', 0.12);
 }
 
-/** A quick descending saw-wave burst — enemy destruction cue. */
+/**
+ * Per-invocation pitch jitter for explosion destruction sweeps (±15 %).
+ * A single factor is drawn per invocation and applied to **both** sweep
+ * endpoints so the descending sweep character is preserved while repeated
+ * kills sound slightly different. Volume, waveform and duration are
+ * unchanged. The intentionally-unwired Tank variant is not jittered.
+ */
+export const EXPLOSION_PITCH_JITTER = 0.15;
+
+/**
+ * Returns a pitch multiplier uniformly in
+ * `[1 - EXPLOSION_PITCH_JITTER, 1 + EXPLOSION_PITCH_JITTER]` (±15 %).
+ * Uses `Math.random()` — the audio path has no seeded PRNG and is outside
+ * the deterministic VFX particle-seed contract (see AC3/AC4).
+ */
+export function explosionPitchFactor(): number {
+  return 1 + (Math.random() - 0.5) * 2 * EXPLOSION_PITCH_JITTER;
+}
+
+/**
+ * A quick descending saw-wave burst — enemy destruction cue.
+ *
+ * The sweep endpoints are multiplied by a single per-invocation pitch
+ * factor (±{@link EXPLOSION_PITCH_JITTER}), so the same cue varies a
+ * little between kills without changing its character.
+ */
 export function playDestructionSound(): void {
+  const pitch = explosionPitchFactor();
   // Volume 0.3 (doubled from initial 0.15) so explosion feedback is
   // clearly audible over the action (feedback from Swarm audio playtest).
-  blip(440, 60, 0.28, 'sawtooth', 0.3);
+  blip(440 * pitch, 60 * pitch, 0.28, 'sawtooth', 0.3);
+}
+
+/**
+ * A short, high, low-volume tick — player bullet shoots down an enemy
+ * bullet (AH-0MU43IIQV001S5JR / parent AH-0MUD8E015004C4JO AC5).
+ *
+ * Deliberately distinct from {@link playDestructionSound} (heavier, lower)
+ * so an interception reads as a light "tick" and does not mask the
+ * destruction cue. Safe no-op without an AudioContext.
+ */
+export function playBulletDestructionSound(): void {
+  blip(1400, 900, 0.07, 'square', 0.12);
 }
 
 /**
@@ -414,7 +518,7 @@ export function playTankAdvanceCue(): void {
   whine.frequency.exponentialRampToValueAtTime(320, t + dur);
   whineGain.gain.setValueAtTime(0.12, t);
   whineGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  whine.connect(whineGain).connect(ctx.destination);
+  whine.connect(whineGain).connect(ensureMasterGain(ctx));
   whine.start(t);
   whine.stop(t + dur + 0.02);
 
@@ -426,7 +530,7 @@ export function playTankAdvanceCue(): void {
   sub.frequency.exponentialRampToValueAtTime(160, t + dur);
   subGain.gain.setValueAtTime(0.06, t);
   subGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  sub.connect(subGain).connect(ctx.destination);
+  sub.connect(subGain).connect(ensureMasterGain(ctx));
   sub.start(t);
   sub.stop(t + dur + 0.02);
 }
@@ -457,7 +561,7 @@ export function playTankFireSound(): void {
   thump.frequency.exponentialRampToValueAtTime(28, t + 0.35);
   thumpGain.gain.setValueAtTime(0.35, t);
   thumpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-  thump.connect(thumpGain).connect(ctx.destination);
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
   thump.start(t);
   thump.stop(t + 0.37);
 
@@ -469,7 +573,7 @@ export function playTankFireSound(): void {
   body.frequency.exponentialRampToValueAtTime(24, t + 0.35);
   bodyGain.gain.setValueAtTime(0.25, t);
   bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-  body.connect(bodyGain).connect(ctx.destination);
+  body.connect(bodyGain).connect(ensureMasterGain(ctx));
   body.start(t);
   body.stop(t + 0.37);
 }
@@ -514,9 +618,62 @@ export function playPowerUpCollectSound(): void {
     0.0001,
     ctx.currentTime + 0.2,
   );
-  osc2.connect(gain2).connect(ctx.destination);
+  osc2.connect(gain2).connect(ensureMasterGain(ctx));
   osc2.start(ctx.currentTime + 0.08);
   osc2.stop(ctx.currentTime + 0.22);
+}
+
+/**
+ * Short percussive pop — power-up collection cue (parent AH-0MUAYB3OU0087H9W).
+ *
+ * A very short (≤ 80 ms) sawtooth burst (600 → 100 Hz) layered with
+ * filtered white noise for a tactile "pop" character — distinct from
+ * the existing two-tone ascending chime (`playPowerUpCollectSound()`).
+ * Designed to give players an immediate, satisfying tactile response
+ * on collection. Safe no-op without an AudioContext.
+ */
+export function playPowerUpCollectPopSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const dur = 0.08; // ≤ 100 ms, 80 ms burst
+
+  // Main pop: quick sawtooth fall — punchy transient.
+  const osc = ctx.createOscillator();
+  const oscGain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(600, t);
+  osc.frequency.exponentialRampToValueAtTime(100, t + dur);
+  oscGain.gain.setValueAtTime(0.15, t);
+  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(oscGain).connect(ensureMasterGain(ctx));
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+
+  // Noise texture: adds the sharp transient "thwack" of a pop.
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'highpass';
+  noiseFilter.frequency.setValueAtTime(2000, t);
+  noiseFilter.Q.setValueAtTime(1.0, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.1, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.8);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + dur + 0.02);
 }
 
 /**
@@ -542,7 +699,7 @@ export function playWeaponChangeSound(): void {
       0.0001,
       ctx.currentTime + t + 0.08,
     );
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(ensureMasterGain(ctx));
     osc.start(ctx.currentTime + t);
     osc.stop(ctx.currentTime + t + 0.1);
   }
@@ -567,7 +724,7 @@ export function playSwarmBurstSound(): void {
   buzz.frequency.linearRampToValueAtTime(80, ctx.currentTime + 0.15);
   buzzGain.gain.setValueAtTime(0.1, ctx.currentTime);
   buzzGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
-  buzz.connect(buzzGain).connect(ctx.destination);
+  buzz.connect(buzzGain).connect(ensureMasterGain(ctx));
   buzz.start(ctx.currentTime);
   buzz.stop(ctx.currentTime + 0.22);
 
@@ -582,7 +739,7 @@ export function playSwarmBurstSound(): void {
   );
   whooshGain.gain.setValueAtTime(0.06, ctx.currentTime);
   whooshGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
-  whoosh.connect(whooshGain).connect(ctx.destination);
+  whoosh.connect(whooshGain).connect(ensureMasterGain(ctx));
   whoosh.start(ctx.currentTime);
   whoosh.stop(ctx.currentTime + 0.2);
 }
@@ -641,7 +798,7 @@ export function playPhaserFireSound(): void {
   gain.gain.setValueAtTime(0.12, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
 
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + 0.1);
 }
@@ -707,7 +864,7 @@ export function playDiverDiveStartSound(): void {
   osc.frequency.exponentialRampToValueAtTime(600, t + dur);
   oscGain.gain.setValueAtTime(0.12, t);
   oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(oscGain).connect(ctx.destination);
+  osc.connect(oscGain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + dur + 0.02);
 
@@ -733,7 +890,7 @@ export function playDiverDiveStartSound(): void {
 
   noise.connect(noiseFilter);
   noiseFilter.connect(noiseGain);
-  noiseGain.connect(ctx.destination);
+  noiseGain.connect(ensureMasterGain(ctx));
   noise.start(t);
   noise.stop(t + dur + 0.02);
 }
@@ -840,7 +997,7 @@ export function playDiveSound(): void {
 
   noise.connect(filter);
   filter.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(ensureMasterGain(ctx));
   noise.start(ctx.currentTime);
   noise.stop(ctx.currentTime + DIVER_DIVE_SOUND_DURATION + 0.02);
 
@@ -886,7 +1043,7 @@ export function playDiverFireSound(): void {
   osc.frequency.linearRampToValueAtTime(120, ctx.currentTime + 0.08);
   gain.gain.setValueAtTime(0.15, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(ctx.currentTime);
   osc.stop(ctx.currentTime + 0.1);
 }
@@ -897,7 +1054,11 @@ export function playDiverFireSound(): void {
  *
  * A slower, lower sawtooth fall (280 → 40 Hz over 0.35 s) with a
  * sine undertone, giving the diver's explosion a heavier, more
- * resonant quality than the generic enemy destruction. Played exactly
+ * resonant quality than the generic enemy destruction. Both oscillators'
+ * endpoints are multiplied by a single per-invocation pitch factor
+ * (±{@link EXPLOSION_PITCH_JITTER}) — preserving the tonal relationship
+ * and the "heavier, more resonant" character while varying between kills.
+ * Played exactly
  * once per diver destruction via the optional `playDestructionAudio?()`
  * seam; the Diver entity must NOT call `playDestructionSound()` in
  * `playExplosion()` to avoid double-play (design doc §7). Safe no-op
@@ -907,15 +1068,19 @@ export function playDiverDestructionSound(): void {
   const ctx = getAudioContext();
   if (!ctx) return;
 
+  // One pitch factor per invocation, applied to every endpoint in both
+  // oscillators so the sweep and its undertone stay locked together.
+  const pitch = explosionPitchFactor();
+
   // Main descent: deeper than the shared burst (440→60).
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(280, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.35);
+  osc.frequency.setValueAtTime(280 * pitch, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(40 * pitch, ctx.currentTime + 0.35);
   gain.gain.setValueAtTime(0.25, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(ctx.currentTime);
   osc.stop(ctx.currentTime + 0.37);
 
@@ -923,11 +1088,11 @@ export function playDiverDestructionSound(): void {
   const body = ctx.createOscillator();
   const bodyGain = ctx.createGain();
   body.type = 'sine';
-  body.frequency.setValueAtTime(80, ctx.currentTime);
-  body.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 0.35);
+  body.frequency.setValueAtTime(80 * pitch, ctx.currentTime);
+  body.frequency.exponentialRampToValueAtTime(25 * pitch, ctx.currentTime + 0.35);
   bodyGain.gain.setValueAtTime(0.15, ctx.currentTime);
   bodyGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-  body.connect(bodyGain).connect(ctx.destination);
+  body.connect(bodyGain).connect(ensureMasterGain(ctx));
   body.start(ctx.currentTime);
   body.stop(ctx.currentTime + 0.37);
 }
@@ -960,7 +1125,7 @@ export function playScoutFireSound(): void {
   gain.gain.setValueAtTime(0.12, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
 
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + 0.14);
 }
@@ -989,7 +1154,7 @@ export function playBossFireSound(): void {
   boom.frequency.exponentialRampToValueAtTime(50, t + 0.2);
   boomGain.gain.setValueAtTime(0.3, t);
   boomGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-  boom.connect(boomGain).connect(ctx.destination);
+  boom.connect(boomGain).connect(ensureMasterGain(ctx));
   boom.start(t);
   boom.stop(t + 0.22);
 
@@ -1001,7 +1166,7 @@ export function playBossFireSound(): void {
   body.frequency.exponentialRampToValueAtTime(30, t + 0.2);
   bodyGain.gain.setValueAtTime(0.2, t);
   bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-  body.connect(bodyGain).connect(ctx.destination);
+  body.connect(bodyGain).connect(ensureMasterGain(ctx));
   body.start(t);
   body.stop(t + 0.22);
 }
@@ -1042,7 +1207,7 @@ export function playSpreadFireSound(): void {
   osc.frequency.exponentialRampToValueAtTime(800, t + 0.12);
   gain.gain.setValueAtTime(0.15, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + 0.14);
 }
@@ -1069,7 +1234,7 @@ export function playDualFireSound(): void {
   osc.frequency.exponentialRampToValueAtTime(300, t + 0.06);
   gain.gain.setValueAtTime(0.15, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + 0.08);
 
@@ -1082,7 +1247,7 @@ export function playDualFireSound(): void {
   tickGain.gain.setValueAtTime(0, t + 0.02);
   tickGain.gain.linearRampToValueAtTime(0.1, t + 0.025);
   tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-  tick.connect(tickGain).connect(ctx.destination);
+  tick.connect(tickGain).connect(ensureMasterGain(ctx));
   tick.start(t + 0.02);
   tick.stop(t + 0.08);
 }
@@ -1123,7 +1288,7 @@ export function playSpreadPickupSound(): void {
   osc.frequency.exponentialRampToValueAtTime(800, t + 0.15);
   gain.gain.setValueAtTime(0.15, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + 0.17);
 }
@@ -1154,7 +1319,7 @@ export function playDualPickupSound(): void {
     gain.gain.setValueAtTime(0, t + note.delay);
     gain.gain.linearRampToValueAtTime(0.14, t + note.delay + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + note.delay + 0.08);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(ensureMasterGain(ctx));
     osc.start(t + note.delay);
     osc.stop(t + note.delay + 0.1);
   }
@@ -1224,7 +1389,7 @@ export function playExtraLifeCollectSound(): void {
     gain.gain.setValueAtTime(0, t + note.delay);
     gain.gain.linearRampToValueAtTime(0.13, t + note.delay + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + note.delay + 0.18);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(ensureMasterGain(ctx));
     osc.start(t + note.delay);
     osc.stop(t + note.delay + 0.2);
   }
@@ -1252,7 +1417,7 @@ export function playMagnetCollectSound(): void {
   osc.frequency.exponentialRampToValueAtTime(180, t + 0.24);
   gain.gain.setValueAtTime(0.12, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(ensureMasterGain(ctx));
   osc.start(t);
   osc.stop(t + 0.26);
 
@@ -1264,7 +1429,7 @@ export function playMagnetCollectSound(): void {
   body.frequency.exponentialRampToValueAtTime(50, t + 0.24);
   bodyGain.gain.setValueAtTime(0.08, t);
   bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
-  body.connect(bodyGain).connect(ctx.destination);
+  body.connect(bodyGain).connect(ensureMasterGain(ctx));
   body.start(t);
   body.stop(t + 0.26);
 }

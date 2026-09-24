@@ -333,6 +333,14 @@ export class Asteroid extends BaseEnemy {
     return false;
   }
 
+  /**
+   * Asteroids never collect minerals (GDD §4.5): they are excluded from the
+   * mineral mechanic, so an overlap is a no-op and the tracked count stays 0.
+   */
+  override collectMineral(): void {
+    // No-op — asteroids do not absorb minerals.
+  }
+
   // ── Split behaviour ──────────────────────────────────────────────
 
   /**

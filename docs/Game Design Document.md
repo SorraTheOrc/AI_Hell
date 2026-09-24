@@ -42,6 +42,36 @@
 > Note: turn right is bound to **D** (not S); S remains the 4-directional
 > backward thrust binding only.
 
+#### Menu & UI navigation (keyboard)
+
+Gameplay is fully keyboard-driven, and every menu-style scene is too — no
+mouse is ever required. Because the game renders to a single Phaser canvas
+(no native DOM controls, so browser Tab-focus does not apply), menu
+navigation uses a reusable **in-canvas focus model** implemented by
+`FocusManager` (`src/utils/focusManager.ts`), shared by the main menu and
+the game-over screen (the in-game pause menu follows the same model).
+
+| Input | Action |
+|-------|--------|
+| **Tab** / **Arrow Down** / **Arrow Right** | Move focus forward (wraps) |
+| **Shift+Tab** / **Arrow Up** / **Arrow Left** | Move focus backward (wraps) |
+| **Enter** / **Space** | Activate the focused control |
+
+- The **primary control is focused by default** and shown with a visible
+  focus style (brighter colour + highlight border); exactly one control is
+  focused at a time.
+- **Menu (`MenuScene`):** *Play Game* is focused by default, so pressing
+  **Enter** starts a run; **Tab**/arrows cycle through *Play Game* →
+  *Settings* → *Gym Scene Index (dev)*.
+- **Game over (`GameOverScene`):** the initials field is focused by default
+  and **A–Z** / **Backspace** edit it; **Tab**/arrows move focus to
+  *Return to Menu*. **Enter** auto-submits when the initials are complete;
+  **Enter**/**Space** on the button also submits and returns to the menu.
+- Focus keys call `preventDefault()` so the page does not scroll or the
+  browser move focus while the game has keyboard focus.
+- Pointer interaction is unchanged: hovering still highlights a control and
+  clicking still activates it (keyboard support is additive).
+
 ### 2.2 Movement
 
 - **Thrust-based Newtonian movement** — space physics with thrust input and tunable linear deceleration (friction). The player ship moves on a 2D plane (not lane-based); velocity changes via thrust input and, when no direction key is held, decays toward zero.
@@ -62,6 +92,7 @@
 ### 2.3 Combat Mechanics
 
 - **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). The fire rate and shot pattern depend on the **active weapons** (§4.4): the permanent **Cannon** fires a single bullet straight ahead every ~400 ms; weapon power-ups (Spread/Dual/Rapid) are **cumulative and timed** — each collected power-up is **added** to the active set for **10 seconds** (independent countdown per weapon) and **all** active weapons fire simultaneously, each at its own rate, before the timed ones silently expire (Reset clears them instantly, leaving only the Cannon).
+- **Bullet range and wrap-around**: Every bullet — player and enemy — **wraps across all four screen edges** using the same classic Asteroids model as the player ship and asteroids (leave left → reappear right, etc.). A bullet is **never** removed merely for leaving the screen. Instead, each bullet type has its own **lifetime in seconds** (effective range = `bulletSpeed × lifetime`, §4.4); a bullet is destroyed only once its lifetime elapses. Wrapping is **positional only** — like the ship and asteroids, bullets do not collide across the seam.
 - **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **P8 – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
@@ -220,7 +251,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
 | P1 | **Spread Shot** | Fires a 3-bullet fan (-30°/0°/+30° relative to heading) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Triple-line neon arc |
-| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Firing-rate waveform |
+| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Stacked dots (stream of bullets) |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
@@ -237,11 +268,26 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **P1 / P2 (Weapon Power-Ups) — Cumulative and timed (10 s):** Weapon power-ups (P1 Spread Shot, P2 Rapid Fire, plus Dual) are **cumulative and timed** — collecting one **adds** it to the ship's active set for **10 seconds**, with its own independent countdown from the moment of collection (re-collecting resets only that weapon's timer). All active weapons fire simultaneously, each at its own fire rate; the **Cannon** is permanent and never times out. A fourth power-up drop, **Reset**, clears **all** timed weapons, leaving only the Cannon.
 
-> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), per-weapon fire cooldowns (`tryFire` returns every active weapon that fired this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset.
+> **Bullet range — per-type lifetime + four-edge wrap:** All bullets (player and enemy) **wrap around all four screen edges** (the same classic Asteroids model as the player ship and asteroids) and are **never culled for leaving the screen**. Each bullet type is instead destroyed once its own **lifetime in seconds** elapses, so its **effective range is `bulletSpeed × lifetime`**. Player-weapon lifetimes live on `WeaponDefinition` (`src/utils/weapons.ts`): Cannon **1.5 s** (~525 px at 350 px/s), Spread **1.4 s** (~490 px), Dual **1.4 s** (~490 px), Rapid **0.75 s** (~262 px). Enemy bullet lifetimes live on `EnemyConfig` (`src/core/enemyConfig.ts`) and are overridable through the existing enemy-config / localStorage plumbing: Scout **1.5 s** (200 px/s ≈ 300 px), Diver **1.5 s** (220 px/s ≈ 330 px), Tank **2.0 s** (150 px/s ≈ 300 px), Phaser **1.75 s** (180 px/s ≈ 315 px), Swarm **1.5 s** (180 px/s ≈ 270 px), Boss Swarm **2.0 s** (160 px/s ≈ 320 px). The Central AI boss uses the same 2.0 s default. Because wrapping keeps more bullets alive, the lifetime caps on-screen density; the values above are the shipped tuning baseline (halved from the original proposal after review, AH-0MU960UTE001PTV0) and are safe to adjust without any architectural change. A bullet whose lifetime elapses is **destroyed and removed from the display list** — it never lingers on screen as a stationary projectile.
+
+> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), per-weapon fire cooldowns (`tryFire` returns every active weapon that fired this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, stacked dots for Rapid, return/undo arrow for Reset.
 
 > **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
 
 > **Implemented in the combat formation gyms (§6.4, `src/scenes/gym/GymEnemies.ts` / `src/scenes/gym/GymBoss.ts`, AH-0MU3VOQKH005YOBH):** From here the enemy-bearing formation gyms run a **shared opt-in power-up layer** in `GymFormationScene`: a `WeightedRandomSpawner` over **the full drop pool — P3–P9 power-ups plus the weapon drops (Spread → Dual, Rapid, Reset)** seeded from the game-rules config (`src/core/rules.ts`), a `RandomAvoidingPlacement` strategy (`src/powerups/placement.ts`) that avoids live enemy bodies and the player, **one drop on screen at a time** on the configured interval (default **12.5 s**), fly-over collection (≥ 3 % scale + hull overlap) applied through the shared `EffectsRegistry`, and the standalone HUD with the lives counter visible (one row per active effect, plus one row per equipped weapon). The §4.4 rarity guidance is encoded as **relative weights** — standard power-up IDs (P3–P7, P9) default to **4** and **P8 Extra Life** to **1**, while each weapon drop (spread/dual/rapid/reset) defaults to **2** so weapons appear alongside standard effects without dominating them; the existing `WeightedRandomSpawner` normalises them internally. Collecting a weapon drop equips it through the registry for 10 s (independent countdown per weapon); the **Reset** drop clears every active weapon. A **live spawn-interval slider** (`src/utils/gymPowerUpControl.ts`) tunes the cadence of the running scene and persists the value through the rules config, so the interval is no longer a compile-time constant.
+
+> **Collection feedback — pop SFX + absorb VFX (AH-0MUAYB3OU0087H9W):** Every collected drop — power-up or weapon — plays the generic percussive pop (`playPowerUpCollectPopSound()` in `src/audio/effects.ts`) alongside its existing per-type pickup cue, and is visibly "sucked into the ship" by a shared absorb animation (`src/powerups/collectAnimation.ts`): over ≤ 0.3 s the drop's position converges on the ship's world position, its scale shrinks to zero, and its shape shears/rotates toward the hull before its `Graphics` is destroyed. One generic treatment is used for all drop types; the VFX is cosmetic only and never delays the gameplay effect (registry/lives/weapon updates, P4 bullet clear), which fires immediately on overlap. Wired into `PlayScene`, the shared `GymFormationScene` (covering `GymEnemies`/`GymBoss`), and the legacy `GymPowerUpsUtility`/`GymPowerUpsCombat`/`GymWeapons` scenes so the game and gyms never diverge.
+
+#### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
+
+Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
+
+- **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected.
+- **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as `Minerals: n/20`, resets on `GameState.startGame()`, and is never written to the leaderboard.
+- **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries.
+- **Permanent pick**: the chosen option is applied to the player **permanently for the current run** — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
+- **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
+- **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
 
 ### 4.5 Scoring System
 
@@ -274,20 +320,55 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 ### 5.1 Design
 
-- **Storage**: Browser `localStorage` (key: `ai_hell_leaderboard`).
-- **Entry**: On game over, prompt for a 3-character **neon-style initials** entry (max 10 entries).
-- **Display**: Shown on the game-over screen; accessible from the main menu.
+- **Storage**: Browser `localStorage` (key: `ai_hell_leaderboard`), max 10
+  entries.
+- **Module**: `src/core/Leaderboard.ts` owns the table — `getEntries()`,
+  `addEntry(initials, score)`, `getTopN(n)` and `isQualifying(score)` — and
+  persists through the injectable `LeaderboardStore` interface so a future
+  online backend can replace `localStorage` without touching the scenes
+  (§5.3 migration note; also §6.6).
+- **Entry**: On game over, prompt for a 3-character **neon-style initials**
+  entry. A score qualifies while fewer than 10 entries exist, or when it
+  strictly beats the current lowest entry; a non-qualifying score shows an
+  explanatory message and can be skipped without writing.
+- **Display**: The full ranked table (rank, initials, score, date) is shown
+  on the game-over screen (`GameOverScene`) and from the main menu
+  (`MenuScene` → `LeaderboardScene`), both through the shared rendering path
+  in `src/ui/leaderboardView.ts`.
 - **Content**: Rank, initials, score, date.
+
+> The earlier `GameOverScene` leaderboard stub (`readLeaderboard` /
+> `saveScoreEntry` and its local schema) has been retired in favour of the
+> shared module.
+
+#### Keyboard entry (game-over screen)
+
+The game-over screen follows the shared in-canvas focus model (§2.1, *Menu &
+UI navigation*): the **initials field is focused by default** and accepts
+**A–Z** (uppercase, up to 3 characters) and **Backspace**. **Tab** / arrow
+keys move focus to **Return to Menu**, and **Enter** / **Space** activate the
+focused control. **Enter** on the initials field auto-submits once three
+letters are entered, persisting the score before returning to the main menu.
+Pointer entry (clicking **Return to Menu**) continues to work unchanged.
 
 ### 5.2 Data Model
 
+The table is stored under `ai_hell_leaderboard` as a JSON array, sorted by
+score descending and capped at 10 entries:
+
 ```json
-{
-  "entries": [
-    { "rank": 1, "initials": "AI_", "score": 50000, "date": "2026-08-24" }
-  ]
-}
+[
+  { "rank": 1, "initials": "AI_", "score": 50000, "date": "2026-08-24" }
+]
 ```
+
+- `rank` — 1-based position, recomputed on read (never trusted from storage).
+- `initials` — exactly three uppercase A–Z letters.
+- `score` — non-negative points.
+- `date` — ISO `YYYY-MM-DD`.
+
+Absent, non-JSON or wrong-shape storage yields an empty list; malformed rows
+inside a valid array are dropped, so bad data never crashes the game.
 
 ---
 
@@ -335,21 +416,66 @@ src/
 │                          for the combat gyms; `POWER_UP_SPAWN_INTERVAL` re-sources
 │                          from it in `../core/constants.ts`
 ├── scenes/
+│   ├── core/
+│   │   └── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
+│   │                      defines the eight combat/lifecycle template methods exactly
+│   │                      once (`_handleCollisions`, `_hitPlayer`, `_autoFire`,
+│   │                      `_collectDrop`, `_spawnPlayerExplosion`, `_clearEnemyBullets`,
+│   │                      `_handleTeleport`, `_readPlayerInput`) plus the overridable
+│   │                      hook contract (participant accessors + `onWeaponFired`,
+│   │                      `onEnemyDestroyed`, `onPlayerHit`, `tryAbsorbPlayerHit`,
+│   │                      `onPowerUpCollected`, `canTeleport`, `onBulletVsBulletImpact`, …);
+│   │                      extended by both `PlayScene` and `GymFormationScene` so the
+│   │                      shipped game and the gyms share one combat code path and cannot
+│   │                      drift apart. Hosts the shared bullet-vs-bullet impact feedback
+│   │                      (`src/vfx/bulletImpact.ts` + `playBulletDestructionSound`).
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
-│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click
-│   ├── PlayScene.ts     — Playable run (implemented): WaveManager-driven levels 1–5 +
+│   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
+│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
+│   │                      FocusManager keyboard navigation (default focus on Play Game)
+│   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
+│   │                      base (implementing its hooks for boss multi-hit, asteroid split,
+│   │                      mineral absorption, wave accounting, lives/game-over and the P4
+│   │                      bomb notice); WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
-│   │                      to GameOverScene on win or loss
-│   ├── GameOverScene.ts — Game-over (implemented): final score, 3-letter initials,
-│   │                      leaderboard stub (localStorage), Return to Menu
+│   │                      to GameOverScene on win or loss; **ESC pauses** the run and
+│   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable);
+│   │                      mineral drops/hold and the hold-full power-up choice overlay
+│   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (3 distinct options, paused
+│   │                      SceneManager overlay; applies the pick permanently, resumes, resets hold)
+│   ├── PauseScene.ts    — In-game pause menu (implemented): full-screen replacement scene
+│   │                      with Resume / Settings / Quit (pointer + keyboard), launched by
+│   │                      PlayScene's ESC toggle; resume continues the run exactly
+│   ├── SettingsScene.ts — Settings screen (implemented): SFX volume slider (0.0–1.0),
+│   │                      SFX mute toggle, and key-binding remapping with conflict
+│   │                      warnings + Reset to defaults; persisted to `ai_hell_settings`;
+│   │                      Back returns to the origin scene (PauseScene or MenuScene)
+│   ├── GameOverScene.ts — Game-over (implemented): final score, qualifying 3-letter
+│   │                      initials entry, full ranked leaderboard (src/core/Leaderboard.ts),
+│   │                      Return to Menu / Skip; FocusManager keyboard navigation
+│   │                      (initials field focused by default). The earlier localStorage
+│   │                      stub (readLeaderboard/saveScoreEntry) has been retired.
+│   ├── LeaderboardScene.ts — Shared leaderboard view (implemented): full ranked table
+│   │                      (rank, initials, score, date) via src/ui/leaderboardView.ts,
+│   │                      opened from the main menu; Back returns to MenuScene
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
 │   │                      scenes from scenes/gym/ via import.meta.glob)
 │   └── gym/
+│       ├── core/
+│       │   └── GymFormationScene.ts — Shared gym formation base (implemented): extends the
+│       │                      shared `scenes/core/CombatScene`, generic over the entity/bullet
+│       │                      types and driven by an `EnemyFormationConfig`; owns formation
+│       │                      spawn/drift/respawn, the opt-in power-up layer and the
+│       │                      enemy-only mode. Concrete E1–E5 gyms and GymEnemies/GymBoss
+│       │                      supply only their entity-specific config.
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
+│       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
+│       │                   small-asteroid mineral drops, hold fill + HUD counter,
+│       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals)
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
-│       ├── GymPowerUps.ts — non-combat power-up gym (key GymPowerUps, label "PowerUps"):
+│       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
 │       ├── GymPowerUpsCombat.ts — combat-coupled power-up gym (key GymPowerUpsCombat, label "PowerUpsCombat"):
 │       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (S/↓)
@@ -361,7 +487,9 @@ src/
 │                           drops (7 s lifetime, persistent weapon switching)
 ├── entities/
 │   ├── Player.ts        — Player ship (auto-fire, weapon slot)
-│   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, off-screen cull)
+│   ├── Mineral.ts       — Mineral collectable (small gold dot; collected by the player,
+│   │                      absorbed by non-asteroid enemies; inert to bullets/asteroids)
+│   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, per-type lifetime; four-edge wrap)
 │   ├── Enemy.ts         — Base enemy class
 │   ├── Scout.ts         — E1 Scout
 │   ├── Diver.ts         — E2 Diver
@@ -387,6 +515,8 @@ src/
 │   │                      findTeleportDestination reused by GymPowerUpsCombat and
 │   │                      the combat base (ray + grid candidates, clamped to screen)
 │   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
+│   ├── choice.ts        — Pluggable hold-full choice strategy (default: 3 distinct random
+│   │                      picks from P3–P9 + Spread/Dual/Rapid; graceful degradation)
 │   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
 │   └── icons.ts         — Code-drawn neon power-up icons (shield/bomb/phase/teleport/speed/life/magnet)
 ├── waves/
@@ -396,9 +526,8 @@ src/
 │   ├── HUD.ts           — Standalone power-up HUD (implemented): Phaser Container attachable to any
 │   │                      scene, renders above gameplay; per-active-effect rows (icon, name,
 │   │                      remaining-seconds timer or stack count) + lives counter
-│   ├── Menu.ts          — Main menu, game-over screen
-│   │                      (distinct from the dev-only gym index; shipped-game UI)
-│   └── Leaderboard.ts   — Leaderboard display and input
+│   └── leaderboardView.ts — Shared leaderboard rendering (implemented): formatLeaderboardRow +
+│                            renderLeaderboard, used by GameOverScene and LeaderboardScene
 ├── audio/
 │   └── AudioManager.ts  — Sound effects (procedural Web Audio API synthesis)
 ├── data/
@@ -408,6 +537,9 @@ src/
 └── utils/
     ├── collision.ts     — Collision detection
     ├── math.ts          — Helper math functions
+    ├── focusManager.ts  — Reusable in-canvas focus model (implemented): register/unregister
+    │                      focusable controls, Tab/Shift+Tab/arrow cycling with wrap-around,
+    │                      Enter/Space activation, visible focus style, shutdown cleanup
     ├── gymDiscovery.ts  — Gym-scene discovery (import.meta.glob, .test.ts filter, labels, sort)
     ├── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
     └── gymPowerUpControl.ts — Live spawn-interval slider (implemented): plain-DOM range input
@@ -489,7 +621,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Key | Content |
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
-| `ai_hell_settings` | Sound volume (0.0–1.0), SFX mute toggle, control bindings |
+| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, layer-drop, pause toggle). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.
@@ -525,13 +657,17 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Power-ups | `#ffffff` (white) with colored aura | All power-ups |
 | UI text | `#00ffff` (cyan) | HUD, menus |
 
+> **Pause menu & settings** — the in-game pause menu (`PauseScene`) and the settings screen (`SettingsScene`) render as full-screen replacement scenes in the same neon palette: cyan text on a near-black background, with the focused keyboard control highlighted in white (GDD §7.1).
+
 ### 7.2 Visual Style
 
 - **Glow effects**: All neon elements have a subtle bloom/glow (outer glow, not inner shadow).
 - **Shapes**: Geometric, angular shapes — triangles, chevrons, hexagons, rings. No organic forms.
 - **Player hull**: Direction-neutral regular hexagon (flat top/bottom, circumradius = `shipSize / 2`), neon outline only (no fill), with four small engine ports at the top, bottom, left, and right cardinal points. The hexagon's 60° rotational symmetry means the hull never implies a heading — in a thrust-based 360°-movement game the player has no fixed forward direction, so thrust intent is read from the engine flames, not the silhouette. Enemy ships keep directional silhouettes (chevrons/darts in §4.1) since they do fly with a heading.
 - **Animations**: Smooth, fluid motion for formations; sharp, precise motion for bullets.
-- **Particle effects**: Minimal — use for explosions (enemy destruction, player death) and power-up collection. Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
+- **Power-up collection absorb**: Collected drops are "sucked into the ship" over ≤ 0.3 s by a shared absorb animation (`src/powerups/collectAnimation.ts`) — position converges on the ship's world position, scale shrinks to zero, and the shape shears/rotates toward the hull before the `Graphics` is destroyed. One generic treatment covers all drop types (power-ups and weapon drops); it is cosmetic only and never delays the applied effect. See §7.3.
+- **Bullet-vs-bullet impact flash**: When a player bullet shoots down an enemy bullet, a brief small flash/glow appears at the impact point (`src/vfx/bulletImpact.ts`, `resolveBulletVsBulletImpact()`) — a warm-white filled circle that fades and scales up slightly over ~120 ms before destroying itself. Deliberately NOT the full particle burst (bullets are only ~3 px radius). It is invoked from the single shared `CombatScene.onBulletVsBulletImpact` path used by both `PlayScene` and `GymFormationScene`.
+- **Particle effects**: Minimal — use for explosions (enemy destruction, player death). Every destruction plays a single **particle explosion burst** (`src/vfx/explosionParticles.ts`, `spawnExplosionParticles()`) as the primary VFX: small filled circles tinted with a small HSL jitter around the exploding entity's neon colour, fading from alpha 1 → 0 while shrinking to nothing over ~400 ms. Particle counts scale with entity size (clamped to 8–80), so a Boss bursts far larger than a Scout. Every particle's own radius is additionally jittered by ±30 % (`EXPLOSION_SIZE_JITTER`) and its emitted start position offset by up to ±15 % of the entity size on each axis (`EXPLOSION_POSITION_JITTER`), so repeated kills look different while each pattern keeps its identity; the jitter is drawn from the existing seeded PRNG, so a fixed seed still reproduces the burst exactly. Hues stay recognisably "that ship": Scout green, Diver yellow, Tank orange, Phaser magenta, Swarm blue, Boss red, player cyan (`SHIP_COLOR`).
 - **Explosion patterns**: Three burst patterns are available — **radial** (uniform random directions with a speed spread), **ring/shell** (particles on a shared circle forming an expanding ring), and **implosion-then-burst** (particles drift inward for ~100 ms, then burst outward). Each entity type is assigned one, two, or three patterns (even split of the size-scaled count across them) via the single `EXPLOSION_PATTERNS_BY_TYPE` map; death paths call `resolvePatterns(type)` rather than hard-coding patterns:
 
   | Entity | Patterns | Feel |
@@ -544,7 +680,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
   | Boss | radial + ring + implosion | layered red detonation |
   | Player | radial + ring | cyan shell + spray on death |
 
-  Counts, lifespan, jitter ranges, and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline.
+  Counts, lifespan, jitter ranges (including the per-particle `EXPLOSION_SIZE_JITTER` / `EXPLOSION_POSITION_JITTER`), and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline. Size and position jitter apply uniformly to all three patterns and every entity type — the `ring` pattern's particles are position-jittered too, so it reads as a slightly ragged ring rather than a perfect circle.
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
@@ -554,15 +690,20 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 
 | Category | Event | Sound Character | Volume | Lead Time |
 |----------|-------|-----------------|--------|-----------|
-| **Interactions** | Power-up pickup | Bright, ascending blip | Medium-high | Immediate |
+| **Interactions** | Power-up pickup | Short percussive pop + "sucked into ship" absorb VFX | Medium | Immediate |
 | **Interactions** | Teleport activate (S/↓) | Short whoosh + portal effect | Medium | Immediate |
 | **Impacts** | Player hit (life lost) | Low, jarring zap | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
+| **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
 | **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
 | **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
+
+#### Explosion Pitch Randomisation
+
+Explosion destruction sweeps are intentionally non-identical between kills: each invocation draws a single pitch factor uniformly in **[0.85, 1.15]** (±15 %, tunable via `EXPLOSION_PITCH_JITTER` in `src/audio/effects.ts`) and multiplies **all** sweep endpoints by it, so the cue varies while its descending character and tonal relationships are preserved. This applies to the shared enemy-destruction burst (`playDestructionSound()`, 440 → 60 Hz sawtooth) and the Diver's heavier destruction cue (`playDiverDestructionSound()`, 280 → 40 Hz sawtooth plus the 80 → 25 Hz sine undertone). The intentionally-unwired Tank destruction variant (`playTankDestructionSound()`) is unchanged, and volume, waveform and duration are unaffected. Unlike the VFX path (which reuses the seeded particle PRNG for deterministic replays), audio pitch jitter uses `Math.random()` — audio is outside the deterministic VFX seed contract.
 
 #### Per-Enemy Audio Character
 
@@ -595,6 +736,7 @@ enemies get:
 | Dual pickup | Two-note crack | Sawtooth 1000 → 500 then 1200 → 700 Hz | 0.14 |
 | Rapid pickup | Accelerating rise | Triangle 400 → 1600 Hz | 0.14 |
 | Reset pickup (→ cannon) | Gentle unwind to baseline | Sine 900 → 300 Hz, ~200 ms | 0.12 |
+| Power-up pickup (generic pop) | Short percussive pop | Sawtooth 600 → 100 Hz + high-pass filtered noise transient, ~80 ms | 0.15 |
 | P5 Speed Boost pickup | Bright ascending zip | Square 600 → 1800 Hz | 0.13 |
 | P8 Extra Life pickup | Warm two-note chime | Sine 440 → 880 then 660 → 990 Hz | 0.13 |
 | P9 Magnet pickup | Low pulsing field hum | Square 180 → 90 → 180 Hz + sine undertone | ≤ 0.12 |
@@ -605,7 +747,17 @@ enemies get:
   firing weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
 - **Pickup activation cues** are unique per pickup type and distinct from the
 generic collection chime and weapon-change arpeggio, so the player knows at a
-glance which bonus was collected.
+glance which bonus was collected. In addition, every collection plays the
+generic percussive pop (`playPowerUpCollectPopSound()`) for immediate tactile
+feedback.
+- **Collection absorb VFX** — every collected drop (power-up or weapon) is
+visibly "sucked into the ship" by a shared absorb animation
+(`src/powerups/collectAnimation.ts`): over ≤ 0.3 s its position converges on the
+ship's world position, its scale shrinks to zero, and its shape shears/rotates
+toward the hull before its `Graphics` is destroyed. One generic treatment is
+used for all drop types. The VFX is cosmetic only — the gameplay effect (and
+P4 bullet clear) plus the SFX fire immediately on overlap, so responsiveness is
+unchanged.
 - All player cues keep volume ≤ 0.2 so they read over enemy audio without
 drowning it out, and every cue degrades to a safe no-op without an
 AudioContext (headless tests, autoplay-blocked browsers).

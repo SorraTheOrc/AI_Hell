@@ -74,6 +74,8 @@ export interface ScoutConfig {
   bulletColor?: number;
   bulletSize?: number;
   bulletSpeed?: number;
+  /** Bullet lifetime in seconds (wrap + expiry; AH-0MU960UTE001PTV0). */
+  bulletLifetime?: number;
   fireInterval?: number;
   /**
    * Chance (fraction `0.0`–`1.0`) that this scout fires when the interval
@@ -87,14 +89,18 @@ export interface ScoutConfig {
 
 /**
  * A bullet fired by a scout. Drawn as a small filled circle; travelled
- * purely from physics (no collision with anything) until it leaves the
- * screen bounds.
+ * purely from physics (no collision with anything), wrapping across the
+ * screen edges until its per-type lifetime elapses.
  */
 export interface ScoutBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   readonly color: number;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 export class Scout extends BaseEnemy {
@@ -118,6 +124,7 @@ export class Scout extends BaseEnemy {
       bulletColor: config.bulletColor ?? SCOUT_BULLET_COLOR,
       bulletSize: config.bulletSize ?? SCOUT_BULLET_SIZE,
       bulletSpeed: config.bulletSpeed ?? SCOUT_BULLET_SPEED,
+      bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? SCOUT_FIRE_INTERVAL,
       shotProbability: config.shotProbability,
       rng: config.rng,
@@ -278,6 +285,8 @@ export class Scout extends BaseEnemy {
       color,
       vx: (dx / dist) * this._bulletSpeed,
       vy: (dy / dist) * this._bulletSpeed,
+      lifetime: this._bulletLifetime,
+      elapsed: 0,
     };
   }
 

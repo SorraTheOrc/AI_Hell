@@ -80,6 +80,8 @@ export interface WeaponEffect {
   duration: number;
   /** Remaining seconds until expiry. */
   remaining: number;
+  /** True when the effect was granted permanently for the run (never expires). */
+  permanent?: boolean;
 }
 
 export interface ActiveEffect {
@@ -129,6 +131,8 @@ interface TimedEffectState {
   type: PowerUpType;
   duration: number;
   remaining: number;
+  /** True when granted permanently for the run (never expires). */
+  permanent?: boolean;
 }
 
 /**
@@ -154,15 +158,19 @@ export class EffectsRegistry {
    *   FIFO; if a cap is needed callers enforce it). No timer.
    * - P8: +1 life immediately, capped at P8_LIVES_MAX (excess ignored).
    * - P9: +1 permanent stack, capped at P9_MAX_STACKS (no-op beyond).
+   *
+   * @param id — the collected power-up.
+   * @param permanent — when true, timed effects never expire for the run
+   *   (used by the hold-full choice).
    */
-  applyCollect(id: PowerUpId): void {
-    this._applyPowerUpEffect(id);
+  applyCollect(id: PowerUpId, permanent = false): void {
+    this._applyPowerUpEffect(id, permanent);
   }
 
   /**
    * Internal: applies the effect of a collected power-up ID.
    */
-  private _applyPowerUpEffect(id: PowerUpId): void {
+  private _applyPowerUpEffect(id: PowerUpId, permanent = false): void {
     const entry = getPowerUpById(id);
 
     switch (entry.type) {
@@ -174,12 +182,14 @@ export class EffectsRegistry {
         if (existing) {
           // Refresh to full duration — never additive.
           existing.remaining = existing.duration;
+          if (permanent) existing.permanent = true;
         } else {
           this._timed.set(id, {
             id,
             type: entry.type,
             duration,
             remaining: duration,
+            ...(permanent ? { permanent: true } : {}),
           });
         }
         break;
@@ -216,17 +226,20 @@ export class EffectsRegistry {
 
   /**
    * Advances timers by `dt` seconds, removing expired effects and weapons.
+   * Permanent effects (granted by the hold-full choice) never expire.
    */
   tick(dt: number): void {
-    // Expire timed power-up effects.
+    // Expire timed power-up effects (permanent effects are skipped).
     for (const [id, effect] of this._timed) {
+      if (effect.permanent) continue;
       effect.remaining -= dt;
       if (effect.remaining <= 0) {
         this._timed.delete(id);
       }
     }
-    // Expire timed weapons.
+    // Expire timed weapons (permanent weapons are skipped).
     for (const [weaponId, weapon] of this._weapons) {
+      if (weapon.permanent) continue;
       weapon.remaining -= dt;
       if (weapon.remaining <= 0) {
         this._weapons.delete(weaponId);
@@ -355,17 +368,23 @@ export class EffectsRegistry {
    * equips it for the full duration, refreshing the timer if it is
    * already active. Returns true when freshly equipped, false when
    * already active (refreshed).
+   *
+   * @param weaponId — the collected weapon.
+   * @param permanent — when true, the weapon never expires for the run
+   *   (used by the hold-full choice).
    */
-  applyWeapon(weaponId: WeaponId): boolean {
+  applyWeapon(weaponId: WeaponId, permanent = false): boolean {
     const existing = this._weapons.get(weaponId);
     if (existing) {
       existing.remaining = WEAPON_EFFECT_DURATION;
+      if (permanent) existing.permanent = true;
       return false; // already active, refreshed
     }
     this._weapons.set(weaponId, {
       weaponId,
       duration: WEAPON_EFFECT_DURATION,
       remaining: WEAPON_EFFECT_DURATION,
+      ...(permanent ? { permanent: true } : {}),
     });
     return true;
   }

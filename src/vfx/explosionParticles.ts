@@ -2,13 +2,18 @@
  * Shared particle explosion module (AH-0MTV6ADT4001FB2V).
  *
  * Pure-logic helpers for particle-based explosion VFX — count scaling,
- * colour jitter, geometry emitters, and pattern combination — plus the
- * thin Phaser rendering layer (`spawnExplosionParticles`).
+ * colour jitter, per-particle size/position jitter, geometry emitters, and
+ * pattern combination — plus the thin Phaser rendering layer
+ * (`spawnExplosionParticles`).
  *
  * Pattern types:
  *   - `radial` — uniform random directions + speed spread.
  *   - `ring` — particles emitted on a circle at shared radius/speed.
  *   - `implosion` — drift inward for ~100 ms then burst outward.
+ *
+ * Randomisation (`EXPLOSION_SIZE_JITTER`, `EXPLOSION_POSITION_JITTER`) is
+ * layered on top of the pattern geometry so repeated kills look different
+ * without changing each pattern's identity (a ring still reads as a ring).
  *
  * Which entity uses which patterns lives in `EXPLOSION_PATTERNS_BY_TYPE`;
  * death paths resolve it via `resolvePatterns(type)`. All tuning values
@@ -48,6 +53,42 @@ export const EXPLOSION_SAT_VARIANCE = 0.08;
 
 /** Lightness variance bound (0-1 scale, < 0.2). */
 export const EXPLOSION_LIGHT_VARIANCE = 0.06;
+
+/**
+ * Per-particle size jitter as a fraction of the pattern's base radius.
+ * Each particle's base radius is multiplied by a uniform factor in
+ * `[1 - EXPLOSION_SIZE_JITTER, 1 + EXPLOSION_SIZE_JITTER]` (±30 % default)
+ * so repeated explosions no longer look identical. Applies to every pattern
+ * and entity type; counts, colours, speeds and lifespans are unchanged.
+ */
+export const EXPLOSION_SIZE_JITTER = 0.3;
+
+/**
+ * Per-particle position jitter as a fraction of the effective particle size
+ * (in px). Each particle's emitted start position is offset on both axes by
+ * up to ±(EXPLOSION_POSITION_JITTER × size) — ±15 % of the entity size by
+ * default — including the otherwise evenly-spaced `ring` particles. Applied
+ * before velocity is computed so the drift/implosion directions stay coherent.
+ */
+export const EXPLOSION_POSITION_JITTER = 0.15;
+
+/**
+ * Returns `baseRadius` multiplied by a uniform factor in
+ * `[1 - EXPLOSION_SIZE_JITTER, 1 + EXPLOSION_SIZE_JITTER]`. Draws exactly one
+ * value from `rng` so the seeded sequence stays stable and deterministic.
+ */
+function jitterSize(baseRadius: number, rng: () => number): number {
+  return baseRadius * (1 + (rng() - 0.5) * 2 * EXPLOSION_SIZE_JITTER);
+}
+
+/**
+ * Offsets an emitted axis value by a uniform amount in
+ * `[-(EXPLOSION_POSITION_JITTER × size), +(EXPLOSION_POSITION_JITTER × size)]`.
+ * Draws exactly one value from `rng` so the seeded sequence stays stable.
+ */
+function jitterPosition(base: number, size: number, rng: () => number): number {
+  return base + (rng() - 0.5) * 2 * EXPLOSION_POSITION_JITTER * size;
+}
 
 // ── Pattern speed/radius tuning (AC5) ─────────────────────────────
 
@@ -239,7 +280,9 @@ export function jitterColor(baseColor: number, rng: () => number): number {
  * Generates a radial burst: particles in uniformly random directions
  * with speed spread proportional to entity size.
  *
- * Each particle gets a colour jittered from `baseColor`.
+ * Each particle gets a colour jittered from `baseColor`, its radius
+ * jittered by ±{@link EXPLOSION_SIZE_JITTER}, and its start position
+ * offset by ±({@link EXPLOSION_POSITION_JITTER} × size) on each axis.
  */
 export function generateRadialBurst(
   count: number,
@@ -258,18 +301,22 @@ export function generateRadialBurst(
     const angle = rng() * Math.PI * 2;
     const speed = speedBase + (rng() - 0.5) * 2 * speedSpread;
     const color = jitterColor(baseColor, rng);
+    const jitteredRadius = jitterSize(startRadius, rng);
+    const x = jitterPosition(baseX, size, rng);
+    const y = jitterPosition(baseY, size, rng);
 
     particles.push({
-      x: baseX,
-      y: baseY,
+      x,
+      y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       color,
       alpha: 1,
-      radius: startRadius,
+      radius: jitteredRadius,
       dead: false,
       fadeStep: 1 / EXPLOSION_LIFESPAN_MS,
-      shrinkStep: startRadius / EXPLOSION_LIFESPAN_MS,
+      // Derived from the jittered radius so the particle still shrinks to 0.
+      shrinkStep: jitteredRadius / EXPLOSION_LIFESPAN_MS,
     });
   }
 
@@ -279,6 +326,9 @@ export function generateRadialBurst(
 /**
  * Generates a ring/shell burst: all particles emitted on a circle
  * at a shared radius with similar outward speed, forming an expanding ring.
+ *
+ * Particle radii are size-jittered and start positions position-jittered
+ * (AC1/AC2), so the ring keeps its identity but stops being perfectly even.
  */
 export function generateRingBurst(
   count: number,
@@ -297,18 +347,23 @@ export function generateRingBurst(
     const angle = (i / count) * Math.PI * 2; // evenly spaced on the ring
     const speed = speedBase + (rng() - 0.5) * 2 * speedTolerance;
     const color = jitterColor(baseColor, rng);
+    const jitteredRadius = jitterSize(size * EXPLOSION_RING_PARTICLE_RADIUS, rng);
+    // Position jitter (AC2) also applies to the evenly-spaced ring particles.
+    const x = jitterPosition(baseX + Math.cos(angle) * ringRadius, size, rng);
+    const y = jitterPosition(baseY + Math.sin(angle) * ringRadius, size, rng);
 
     particles.push({
-      x: baseX + Math.cos(angle) * ringRadius,
-      y: baseY + Math.sin(angle) * ringRadius,
+      x,
+      y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       color,
       alpha: 1,
-      radius: size * EXPLOSION_RING_PARTICLE_RADIUS,
+      radius: jitteredRadius,
       dead: false,
       fadeStep: 1 / EXPLOSION_LIFESPAN_MS,
-      shrinkStep: (size * EXPLOSION_RING_PARTICLE_RADIUS) / EXPLOSION_LIFESPAN_MS,
+      // Derived from the jittered radius so the particle still shrinks to 0.
+      shrinkStep: jitteredRadius / EXPLOSION_LIFESPAN_MS,
     });
   }
 
@@ -319,6 +374,9 @@ export function generateRingBurst(
  * Generates an implosion-then-burst: particles start scattered around
  * the explosion centre, drift inward for ~100 ms, then burst outward
  * from the centre.
+ *
+ * Start positions are jittered before the inward velocity is derived, and
+ * particle radii are size-jittered (AC1/AC2).
  */
 export function generateImplosionBurst(
   count: number,
@@ -336,8 +394,10 @@ export function generateImplosionBurst(
 
   for (let i = 0; i < count; i++) {
     const angle = rng() * Math.PI * 2;
-    const startX = baseX + Math.cos(angle) * scatterRadius;
-    const startY = baseY + Math.sin(angle) * scatterRadius;
+    // Position jitter is applied before velocity so the inward/outward
+    // directions stay coherent with the jittered start point.
+    const startX = jitterPosition(baseX + Math.cos(angle) * scatterRadius, size, rng);
+    const startY = jitterPosition(baseY + Math.sin(angle) * scatterRadius, size, rng);
 
     // Inward velocity (toward centre).
     const dxIn = baseX - startX;
@@ -351,7 +411,7 @@ export function generateImplosionBurst(
     const burstSpeed = burstSpeedBase + (rng() - 0.5) * 2 * burstSpeedSpread;
 
     const color = jitterColor(baseColor, rng);
-    const startRadius = size * EXPLOSION_IMPLOSION_PARTICLE_RADIUS;
+    const startRadius = jitterSize(size * EXPLOSION_IMPLOSION_PARTICLE_RADIUS, rng);
 
     particles.push({
       x: startX,
@@ -363,6 +423,7 @@ export function generateImplosionBurst(
       radius: startRadius,
       dead: false,
       fadeStep: 1 / EXPLOSION_LIFESPAN_MS,
+      // Derived from the jittered radius so the particle still shrinks to 0.
       shrinkStep: startRadius / EXPLOSION_LIFESPAN_MS,
       burstVx: Math.cos(burstAngle) * burstSpeed,
       burstVy: Math.sin(burstAngle) * burstSpeed,

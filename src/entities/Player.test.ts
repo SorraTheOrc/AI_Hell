@@ -14,16 +14,24 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
+import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
+
+/** fourDirectional variant of the built-in default (the app default is now Asteroids),
+ *  used by tests that exercise the directional movement model. */
+const FOUR_DIR_CONFIG: ShipConfig = { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' };
 
 describe('Player ship entity', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
+    // These tests exercise the fourDirectional movement model; the ship
+    // default is now Asteroids, so seed the scheme explicitly.
+    seedConfigStore([], { ...FOUR_DIR_CONFIG, controlScheme: 'fourDirectional' });
   });
 
   afterEach(() => {
@@ -72,7 +80,7 @@ describe('Player ship entity', () => {
       });
 
     // A redraw of the body: setConfig always re-draws immediately.
-    player!.setConfig(DEFAULT_CONFIG);
+    player!.setConfig(FOUR_DIR_CONFIG);
 
     // Hexagon → exactly 6 edge segments (the old chevron had 4);
     // no flame is drawn while idle, so 6 is the whole hull.
@@ -81,7 +89,7 @@ describe('Player ship entity', () => {
     // AC2 — circumradius equals shipSize / 2 (default 20 → 10): every
     // vertex lies on a circle of radius 10 around the hull centre.
     // The explicit closing edge returns to the start vertex, so dedupe.
-    const half = DEFAULT_CONFIG.shipSize / 2;
+    const half = FOUR_DIR_CONFIG.shipSize / 2;
     const all: Array<{ x: number; y: number }> = [];
     for (const v of [{ x: moveTo.x, y: moveTo.y }, ...vertices]) {
       if (!all.some((p) => p.x === v.x && p.y === v.y)) all.push(v);
@@ -113,7 +121,7 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     const lineStyleSpy = vi.spyOn(player!, 'lineStyle');
-    const recoloured = { ...DEFAULT_CONFIG, shipColor: 0xff00ff };
+    const recoloured = { ...FOUR_DIR_CONFIG, shipColor: 0xff00ff };
     player!.setConfig(recoloured);
 
     // The ship body is stroked with the new shipColor (lineStyle called
@@ -136,14 +144,14 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     const arcSpy = vi.spyOn(player!, 'arc');
-    player!.setConfig(DEFAULT_CONFIG); // full redraw of body + ports
+    player!.setConfig(FOUR_DIR_CONFIG); // full redraw of body + ports
 
     // AC1 — exactly four port indicators, one per cardinal point.
     expect(arcSpy).toHaveBeenCalledTimes(4);
 
     // Port positions use the hull radius (= shipSize / 2):
     // top (0, -r), bottom (0, +r), left (-r, 0), right (+r, 0).
-    const r = DEFAULT_CONFIG.shipSize / 2;
+    const r = FOUR_DIR_CONFIG.shipSize / 2;
     const centers = arcSpy.mock.calls.map((c) => ({ x: c[0], y: c[1] }));
     expect(centers).toContainEqual({ x: 0, y: -r });
     expect(centers).toContainEqual({ x: 0, y: r });
@@ -173,7 +181,7 @@ describe('Player ship entity', () => {
     player!.setInput({ up: false, down: false, left: false, right: true });
     player!.preUpdate(0, 500); // grow the flame → redraw draws it
 
-    const r = DEFAULT_CONFIG.shipSize / 2;
+    const r = FOUR_DIR_CONFIG.shipSize / 2;
     // Outer flame wing vertices sit at the port x-offset (-r), never at
     // the hull centre (x = 0). Exact vertex: (-r, -r*0.6)=(-10,-6).
     expect(calls).toContainEqual({ x: -r, y: -r * 0.6 });
@@ -267,7 +275,7 @@ describe('Player ship entity', () => {
     // Full component scale (1.0) → max = 20 × 1 × 1 = 20px for the left
     // engine (fractional component scales are unit-tested in
     // engineSelection.test.ts; here the wiring multiplies them in).
-    player!.setConfig({ ...DEFAULT_CONFIG, shipSize: 20, thrustFlameLength: 1 });
+    player!.setConfig({ ...FOUR_DIR_CONFIG, shipSize: 20, thrustFlameLength: 1 });
     player!.setInput({ up: false, down: false, left: false, right: true });
     player!.preUpdate(0, 500);
 
@@ -302,7 +310,7 @@ describe('Player ship entity', () => {
     player!.setInput({ up: true, down: false, left: false, right: true });
     player!.preUpdate(0, 500);
 
-    const r = DEFAULT_CONFIG.shipSize / 2;
+    const r = FOUR_DIR_CONFIG.shipSize / 2;
     expect(calls).toContainEqual({ x: -r * 0.6, y: r });
     expect(calls).toContainEqual({ x: -r, y: -r * 0.6 });
   });
@@ -339,7 +347,7 @@ describe('Player ship entity', () => {
     const lineStyleSpy = vi.spyOn(player!, 'lineStyle');
 
     const retuned = {
-      ...DEFAULT_CONFIG,
+      ...FOUR_DIR_CONFIG,
       shipColor: 0x00ff00,
       thrustFlameColor: 0xff0000,
       shipSize: 30,
@@ -387,7 +395,7 @@ describe('Player ship entity', () => {
     player!.setPosition(480, 270);
 
     // Set a very low maxSpeed.
-    const lowConfig: ShipConfig = { ...DEFAULT_CONFIG, maxSpeed: 50 };
+    const lowConfig: ShipConfig = { ...FOUR_DIR_CONFIG, maxSpeed: 50 };
     player!.setConfig(lowConfig);
 
     // Thrust up 1 second. With maxSpeed=50: vy=-50, y=270-50=220.
@@ -397,7 +405,7 @@ describe('Player ship entity', () => {
     expect(yLowSpeed).toBeCloseTo(220, 0);
 
     // setConfig back to default maxSpeed=175.
-    player!.setConfig(DEFAULT_CONFIG);
+    player!.setConfig(FOUR_DIR_CONFIG);
 
     // Thrust up 1 second again. With maxSpeed=175: vy=-175,
     // y=220-175=45 (no wrap).
@@ -476,14 +484,14 @@ describe('Player ship entity', () => {
     expect(player!.getFlameLength()).toBeLessThan(15);
 
     // Ship grows to 40px with flame multiplier 1 → new max 40px.
-    player!.setConfig({ ...DEFAULT_CONFIG, shipSize: 40, thrustFlameLength: 1 });
+    player!.setConfig({ ...FOUR_DIR_CONFIG, shipSize: 40, thrustFlameLength: 1 });
     player!.preUpdate(0, 20); // continues growing past the old 15px ceiling
     const lenAfterRetarget = player!.getFlameLength();
     expect(lenAfterRetarget).toBeGreaterThan(15);
     expect(lenAfterRetarget).toBeLessThanOrEqual(40);
 
     // A smaller max set mid-growth clamps the flame immediately.
-    player!.setConfig({ ...DEFAULT_CONFIG, thrustFlameLength: 0.1 }); // max = 2
+    player!.setConfig({ ...FOUR_DIR_CONFIG, thrustFlameLength: 0.1 }); // max = 2
     player!.preUpdate(0, 5);
     expect(player!.getFlameLength()).toBeLessThanOrEqual(2);
   });
@@ -578,7 +586,7 @@ describe('Player ship entity', () => {
 
     // Force a fresh burst (key change), then measure regrowth over dtMs.
     const regrow = (thrustAcceleration: number, dtMs: number) => {
-      player!.setConfig({ ...DEFAULT_CONFIG, thrustAcceleration });
+      player!.setConfig({ ...FOUR_DIR_CONFIG, thrustAcceleration });
 
       // Alternate keys so each call is a real key change → fresh burst.
       player!.setInput({ up: false, down: false, left: true, right: false });
@@ -1114,6 +1122,9 @@ describe('Player — Thruster hum wiring', () => {
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
+    // Default to fourDirectional for the directional-hum tests; the
+    // Asteroids hum test switches scheme explicitly.
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
   });
 
   afterEach(() => {
@@ -1164,14 +1175,14 @@ describe('Player — Thruster hum wiring', () => {
     const spy = vi.spyOn(effects, 'updateThrusterSound');
 
     // Half thrust → level 0.5 (slider audible).
-    player.setConfig({ ...DEFAULT_CONFIG, thrustAcceleration: 150 });
+    player.setConfig({ ...FOUR_DIR_CONFIG, thrustAcceleration: 150 });
     player.setInput({ up: true, down: false, left: false, right: false });
     player.preUpdate(0, 16);
     expect(spy).toHaveBeenLastCalledWith(expect.closeTo(0.5, 5));
 
     // Default thrust → level 1 (backward-compat no-arg case).
     spy.mockClear();
-    player.setConfig({ ...DEFAULT_CONFIG, thrustAcceleration: 300 });
+    player.setConfig({ ...FOUR_DIR_CONFIG, thrustAcceleration: 300 });
     player.preUpdate(0, 16);
     expect(spy).toHaveBeenLastCalledWith(1);
   });

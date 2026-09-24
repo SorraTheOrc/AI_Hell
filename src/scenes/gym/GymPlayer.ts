@@ -40,7 +40,7 @@ import {
   ShipConfig,
   ControlScheme,
 } from '../../core/config';
-import { addBackToIndexButton } from '../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 
 /** Slider ranges for the numeric ship config values. */
 const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -101,6 +101,8 @@ export class GymPlayer extends Phaser.Scene {
 
     // Shared "← INDEX" button so the tester can return to the gym index.
     addBackToIndexButton(this);
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
     // A Graphics built via `new` is not on the scene display list until
     // added — without this the ship is never rendered.
     this.add.existing(this.player);
@@ -317,16 +319,23 @@ export class GymPlayer extends Phaser.Scene {
     }
   }
 
-  /** Persists the current control values and shows a status message. */
+  /** Persists the current control values via the CSV store and shows a status. */
   private _onSave(): void {
     const status = this.panel?.querySelector<HTMLElement>(`#${STATUS_ID}`);
-    try {
-      const config = this._readPanelValues();
-      saveShipConfig(config);
-      if (status) status.textContent = 'Saved';
-    } catch (err) {
-      if (status) status.textContent = `Save failed: ${String(err)}`;
-    }
+    void (async () => {
+      try {
+        const config = this._readPanelValues();
+        if (status) status.textContent = 'Saving…';
+        const result = await saveShipConfig(config);
+        if (status) {
+          status.textContent = result.ok
+            ? 'Saved'
+            : `Save failed — ${result.reason ?? 'writes unavailable'}`;
+        }
+      } catch (err) {
+        if (status) status.textContent = `Save failed: ${String(err)}`;
+      }
+    })();
   }
 
   /**

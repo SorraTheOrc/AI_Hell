@@ -49,6 +49,14 @@ export interface GameRules {
    * (one Reset drop per full weapon cycle).
    */
   weaponWeights: WeaponWeights;
+  /** Minerals granted per mineral absorbed by the player ship (default 1). */
+  mineralCollectAmount: number;
+  /** Ship's hold capacity before the hold-full power-up choice (default 20). */
+  mineralHoldCapacity: number;
+  /** Minimum fraction of a destroyed enemy's minerals re-dropped (default 0.25). */
+  mineralRedropFractionMin: number;
+  /** Maximum fraction of a destroyed enemy's minerals re-dropped (default 0.5). */
+  mineralRedropFractionMax: number;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -88,6 +96,18 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'reset',
 ];
 
+/** Default minerals granted per collected mineral (GDD §4.5). */
+export const DEFAULT_MINERAL_COLLECT_AMOUNT = 1;
+
+/** Default ship's-hold capacity before the power-up choice (GDD §4.5). */
+export const DEFAULT_MINERAL_HOLD_CAPACITY = 20;
+
+/** Default minimum re-drop fraction of a destroyed enemy's minerals (25 %). */
+export const DEFAULT_MINERAL_REDROP_FRACTION_MIN = 0.25;
+
+/** Default maximum re-drop fraction of a destroyed enemy's minerals (50 %). */
+export const DEFAULT_MINERAL_REDROP_FRACTION_MAX = 0.5;
+
 /**
  * Builds a fresh default weight table: every standard ID carries
  * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, P8 Extra Life the rarer
@@ -119,6 +139,10 @@ export const DEFAULT_RULES: GameRules = {
   powerUpSpawnInterval: DEFAULT_POWER_UP_SPAWN_INTERVAL,
   powerUpWeights: defaultPowerUpWeights(),
   weaponWeights: defaultWeaponWeights(),
+  mineralCollectAmount: DEFAULT_MINERAL_COLLECT_AMOUNT,
+  mineralHoldCapacity: DEFAULT_MINERAL_HOLD_CAPACITY,
+  mineralRedropFractionMin: DEFAULT_MINERAL_REDROP_FRACTION_MIN,
+  mineralRedropFractionMax: DEFAULT_MINERAL_REDROP_FRACTION_MAX,
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -146,7 +170,34 @@ function cloneDefaultRules(): GameRules {
     powerUpSpawnInterval: DEFAULT_RULES.powerUpSpawnInterval,
     powerUpWeights: { ...DEFAULT_RULES.powerUpWeights },
     weaponWeights: { ...DEFAULT_RULES.weaponWeights },
+    mineralCollectAmount: DEFAULT_RULES.mineralCollectAmount,
+    mineralHoldCapacity: DEFAULT_RULES.mineralHoldCapacity,
+    mineralRedropFractionMin: DEFAULT_RULES.mineralRedropFractionMin,
+    mineralRedropFractionMax: DEFAULT_RULES.mineralRedropFractionMax,
   };
+}
+
+/**
+ * Coerces a stored value to a usable positive finite number, falling back
+ * to `fallback` otherwise.
+ */
+function coercePositiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
+}
+
+/**
+ * Coerces a stored fraction to a value in [0, 1], falling back to
+ * `fallback` otherwise.
+ */
+function coerceFraction(value: unknown, fallback: number): number {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+    ? value
+    : fallback;
 }
 
 /**
@@ -223,6 +274,22 @@ export function loadRules(): GameRules {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       powerUpWeights: mergeWeights(parsed.powerUpWeights),
       weaponWeights: mergeWeaponWeights(parsed.weaponWeights),
+      mineralCollectAmount: coercePositiveNumber(
+        parsed.mineralCollectAmount,
+        DEFAULT_MINERAL_COLLECT_AMOUNT,
+      ),
+      mineralHoldCapacity: coercePositiveNumber(
+        parsed.mineralHoldCapacity,
+        DEFAULT_MINERAL_HOLD_CAPACITY,
+      ),
+      mineralRedropFractionMin: coerceFraction(
+        parsed.mineralRedropFractionMin,
+        DEFAULT_MINERAL_REDROP_FRACTION_MIN,
+      ),
+      mineralRedropFractionMax: coerceFraction(
+        parsed.mineralRedropFractionMax,
+        DEFAULT_MINERAL_REDROP_FRACTION_MAX,
+      ),
     };
   } catch {
     return cloneDefaultRules();

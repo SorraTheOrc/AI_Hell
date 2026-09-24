@@ -6,9 +6,17 @@
  * spawn loop, EXPLODE/SHOOT HUD buttons, status line, hint line,
  * back-to-index button, formation drift + respawn, per-entity
  * `applyFormationPosition` updates, and bullet collection/advance/
- * off-screen removal. This base class encapsulates all of that; each
+ * wrap + lifetime expiry. This base class encapsulates all of that; each
  * concrete scene supplies only its entity-specific configuration via
  * {@link EnemyFormationConfig}.
+ *
+ * **Shared combat core:** this class extends
+ * {@link CombatScene} (`src/scenes/core/CombatScene.ts`), so collision
+ * resolution, player hits, auto-fire, drop collection, teleports and
+ * player explosions are the *same code* the shipped `PlayScene` runs.
+ * This class supplies the gym participant accessors (`entities`,
+ * `bullets`) and config-driven hooks (teleport gate, bullet hit radius,
+ * `config.onEntityDestroyed`).
  *
  * **Discovery note:** this file lives in the `core/` subfolder, so the
  * gym index glob (`src/scenes/gym/*.ts`) never lists it as a scene.
@@ -16,47 +24,28 @@
 
 import Phaser from 'phaser';
 
+import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  PLAYER_BULLET_RADIUS,
-  PLAYER_BULLET_SPEED,
-  PLAYER_HIT_SCALE_PEAK,
-  PLAYER_HIT_SCALE_PULSE_DURATION,
-  PLAYER_RESPAWN_INVULNERABLE,
+  MINERAL_SIZE,
   POWER_UP_DROP_SIZE,
-  SHIP_COLOR,
   SHIP_SIZE,
 } from '../../../core/constants';
 import {
   playDestructionSound,
-  playPowerUpCollectSound,
   playSpawnSound,
 } from '../../../audio/effects';
-import { addBackToIndexButton } from '../../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
 import {
   PlayerBullet,
   advanceAndCull,
-  createPlayerBullet,
 } from '../../../entities/PlayerBullet';
-import {
-  angleToVelocity,
-  createBulletsFromHeading,
-} from '../../../utils/weapons';
 import {
   WasdKeysLike,
 } from '../../../utils/input';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-} from '../../../vfx/explosionParticles';
-import {
-  AsteroidsInputHandler,
-  ControlInput,
-  FourDirectionalInputHandler,
-} from '../../../utils/movementModel';
 import {
   loadRules,
   POWER_UP_WEIGHT_IDS,
@@ -67,7 +56,9 @@ import {
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
-import { findTeleportDestination } from '../../../powerups/teleport';
+import {
+  type CollectAnimationHandle,
+} from '../../../powerups/collectAnimation';
 import {
   RandomAvoidingPlacement,
   type PlacementContext,
@@ -86,6 +77,13 @@ import {
 } from '../../../powerups/types';
 import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
+import { Mineral } from '../../../entities/Mineral';
+import { Asteroid } from '../../../entities/Asteroid';
+import {
+  randomChoiceStrategy,
+  type ChoiceOption,
+  type ChoiceStrategy,
+} from '../../../powerups/choice';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -164,6 +162,10 @@ export interface FormationSceneBullet {
   vx: number;
   /** Vertical speed (px/s). */
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 /**
@@ -218,6 +220,11 @@ export interface FormationSceneDrop {
   y: number;
   /** The drawn bubble + icon. */
   graphics: Phaser.GameObjects.Graphics;
+  /**
+   * True once the drop has been collected and is playing its absorb VFX —
+   * the overlap gate must not re-collect it (AC5, AH-0MUBYXRFT005Y30S).
+   */
+  absorbing?: boolean;
 }
 
 /** Per-scene configuration for a formation gym scene. */
@@ -305,7 +312,6 @@ const DEFAULT_BULLET_HIT_RADIUS = 6;
 const DEFAULT_POWER_UP_PLACEMENT_MARGIN = 24;
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
-const PLAYER_BLINK_INTERVAL = 0.1;
 
 /** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
 const RESPAWN_COUNTDOWN_SECONDS = 3;
@@ -326,7 +332,7 @@ const COUNTDOWN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
 export class GymFormationScene<
   TEntity extends FormationSceneEntity,
   TBullet extends FormationSceneBullet,
-> extends Phaser.Scene {
+> extends CombatScene<TEntity, TBullet, FormationSceneDrop> {
   protected config: EnemyFormationConfig<TEntity, TBullet>;
 
   protected entities: TEntity[] = [];
@@ -334,16 +340,6 @@ export class GymFormationScene<
 
   /** Keyboard-controlled player ship (null unless `config.player` set). */
   protected player: Player | null = null;
-  /** Player bullets in flight (auto-fired toward the direction of travel). */
-  protected playerBullets: PlayerBullet[] = [];
-
-  // Player hit/respawn state (only meaningful when `config.player` set).
-  private playerHitCount = 0;
-  /** Seconds of invulnerability remaining after a hit (blinks while > 0). */
-  private playerInvulnerable = 0;
-  private playerBlinkPhase = 0;
-  /** Active player-explosion VFX graphics (for observation in tests). */
-  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
 
   protected formationBaseX: number;
   protected formationBaseY: number;
@@ -353,13 +349,6 @@ export class GymFormationScene<
   private respawnCountdown = 0;
   private respawnCountdownActive = false;
   private countdownText: Phaser.GameObjects.Text | null = null;
-
-  // Arrow-key (cursor) and WASD bindings for the player ship.
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
 
   // UI toggles
   protected shootButton!: Phaser.GameObjects.Text;
@@ -379,9 +368,21 @@ export class GymFormationScene<
   private effectsRegistry = new EffectsRegistry();
   /** Standalone HUD rendering the active effects (null when disabled). */
   private hud: HUD | null = null;
-  /** S / ↓ keys consumed by the P7 teleport (only when a player exists). */
-  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
-  private downKey: Phaser.Input.Keyboard.Key | undefined;
+
+  // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
+
+  /** Live mineral collectables seeded across the play area. */
+  private minerals: Mineral[] = [];
+  /** Cumulative minerals seeded since the gym started. */
+  private mineralsSeeded = 0;
+  /** Run-scoped mineral hold for the gym demo. */
+  private mineralHold = 0;
+  /** Hold capacity (from the game-rules config). */
+  private mineralCapacity = 20;
+  /** Whether the hold-full choice overlay is currently open. */
+  private mineralChoiceOpen = false;
+  /** Pluggable choice strategy for the hold-full overlay. */
+  private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -451,8 +452,14 @@ export class GymFormationScene<
     // ── Back to gym index ───────────────────────────────────────────
     addBackToIndexButton(this);
 
+    // ── ESC key — return to main menu (AH-0MU9LRTK3004KR04) ────────
+    addBackToMenuOnEsc(this);
+
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
+
+    // ── Mineral layer: seed 100 random minerals + HUD counter ───────
+    this._initMineralLayer();
 
     // Ensure any stale countdown state from a prior create() (e.g. after
     // a manual _onRespawn that rebuilt the formation) is cleared so a
@@ -500,11 +507,17 @@ export class GymFormationScene<
       // Tear down any power-up drops owned by the scene.
       for (const drop of this.powerUpDrops) drop.graphics.destroy();
       this.powerUpDrops = [];
+      for (const anim of this.collectAnimations) anim.destroy();
+      this.collectAnimations = [];
       this.powerUpSpawnCount = 0;
+      for (const mineral of this.minerals) mineral.destroy();
+      this.minerals = [];
+      this.mineralHold = 0;
+      this.mineralChoiceOpen = false;
       this.hud?.destroy();
       this.hud = null;
-      this.teleportKey = undefined;
-      this.downKey = undefined;
+      this.teleportKey = null;
+      this.downKey = null;
     });
   }
 
@@ -582,12 +595,10 @@ export class GymFormationScene<
 
     // P7 teleport keys (only meaningful when a player is present).
     if (this.player) {
-      this.teleportKey = this.input.keyboard?.addKey(
-        Phaser.Input.Keyboard.KeyCodes.S,
-      );
-      this.downKey = this.input.keyboard?.addKey(
-        Phaser.Input.Keyboard.KeyCodes.DOWN,
-      );
+      this.teleportKey =
+        this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+      this.downKey =
+        this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
     }
 
     // One drop on screen immediately so the layer is observable at boot.
@@ -704,6 +715,8 @@ export class GymFormationScene<
 
     const kept: FormationSceneDrop[] = [];
     for (const drop of this.powerUpDrops) {
+      // An absorbing drop is owned by its animation — never re-process it.
+      if (drop.absorbing) continue;
       drop.powerUp.advance(dt);
       drop.graphics.setScale(drop.powerUp.currentScale);
       if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
@@ -715,6 +728,8 @@ export class GymFormationScene<
     this.powerUpDrops = kept;
 
     this._collectOverlappingDrops();
+    // Advance the absorb VFX for collected drops (cosmetic only).
+    this._updateCollectAnimations(dt);
 
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
@@ -735,7 +750,11 @@ export class GymFormationScene<
 
     const kept: FormationSceneDrop[] = [];
     for (const drop of this.powerUpDrops) {
-      if (drop.powerUp.canCollect() && this._dropOverlapsShip(drop, hull)) {
+      if (
+        !drop.absorbing &&
+        drop.powerUp.canCollect() &&
+        this._dropOverlapsShip(drop, hull)
+      ) {
         this._collectDrop(drop);
       } else {
         kept.push(drop);
@@ -755,124 +774,34 @@ export class GymFormationScene<
   }
 
   /**
-   * Applies a collected drop through the shared `EffectsRegistry`. P4
-   * also clears on-screen enemy bullets (without damaging enemies).
-   * Weapon drops equip the weapon through the registry (or reset the
-   * ship to the cannon).
+   * Weapon drops advance their placeholder power-up lifecycle as the
+   * collect-gate (the registry/player equipping is handled by the shared
+   * `_collectDrop`).
    */
-  private _collectDrop(drop: FormationSceneDrop): void {
-    // Weapon drops use the drop's own lifecycle as a collect-gate; the
-    // underlying PowerUp is a placeholder so tryCollect always succeeds
-    // once growing is complete. The registry tracks the weapon for the
-    // HUD, and the player ship's active set is updated so the weapon
-    // actually fires through auto-fire.
-    if (drop.weaponDropId) {
-      if (drop.weaponDropId === 'reset') {
-        this.effectsRegistry.tryResetWeapons();
-        this.player?.resetWeapon();
-      } else {
-        this.effectsRegistry.applyWeapon(drop.weaponDropId as WeaponId);
-        this.player?.equipWeapon(drop.weaponDropId as WeaponId);
-      }
-      drop.powerUp.tryCollect();
-      drop.graphics.destroy();
-      try {
-        playPowerUpCollectSound();
-      } catch {
-        // Audio is best-effort (headless tests have no AudioContext).
-      }
-      return;
-    }
-
-    const effect = drop.powerUp.tryCollect();
-    if (!effect) return;
-
-    if (drop.id === 'P4') {
-      this._clearEnemyBullets();
-    }
-    this.effectsRegistry.applyCollect(drop.id);
-    drop.graphics.destroy();
-    try {
-      playPowerUpCollectSound();
-    } catch {
-      // Audio is best-effort (headless tests have no AudioContext).
-    }
-  }
-
-  /** Clears all on-screen enemy bullets (P4 bomb — no enemy damage). */
-  private _clearEnemyBullets(): void {
-    for (const bullet of this.bullets) bullet.graphics.destroy();
-    this.bullets.length = 0;
+  protected override onWeaponCollected(drop: FormationSceneDrop): void {
+    drop.powerUp.tryCollect();
   }
 
   // ── Teleport (P7, S/↓) ───────────────────────────────────────────
 
-  /** Handles the S / ↓ key press for a P7 teleport. */
-  private _handleTeleport(): void {
-    if (!this.player || !this.teleportKey) return;
-    const JustDown = (
-      Phaser.Input.Keyboard as unknown as {
-        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
-      }
-    ).JustDown;
-    const sDown = JustDown
-      ? JustDown(this.teleportKey)
-      : this.teleportKey.isDown;
-    const downDown = this.downKey
-      ? JustDown
-        ? JustDown(this.downKey)
-        : this.downKey.isDown
-      : false;
-    if (sDown || downDown) this.triggerTeleport();
+  /** Teleports are gated on the gym's opt-in power-up layer. */
+  protected override canTeleport(): boolean {
+    return this.powerUpsEnabled;
   }
 
-  /**
-   * Consumes one P7 teleport stack and warps the player to the nearest
-   * safe spot along the heading (granting P6 on arrival via the
-   * registry). Public so tests can trigger it deterministically without
-   * faking keyboard state. Returns true when a teleport was performed.
-   */
-  triggerTeleport(): boolean {
-    if (!this.player || !this.powerUpsEnabled) return false;
-    if (!this.effectsRegistry.hasTeleport()) return false;
+  /** Enemy hit radius used for teleport destination avoidance (px). */
+  protected override getTeleportEnemyHitRadius(): number {
+    return this.getEntityHitRadius();
+  }
 
-    const heading = this.player.getHeading();
-    const enemies = this.entities
-      .filter((entity) => entity.alive)
-      .map((entity) => ({
-        x: entity.x,
-        y: entity.y,
-        radius: entity.getHitRadius(),
-      }));
-    const bullets = this.bullets.map((bullet) => ({
-      x: bullet.graphics.x,
-      y: bullet.graphics.y,
-    }));
+  /** Enemy-bullet hit radius used for teleport avoidance (px). */
+  protected override getTeleportBulletHitRadius(): number {
+    return this.getBulletHitRadius();
+  }
 
-    const dest = findTeleportDestination(
-      this.player.x,
-      this.player.y,
-      heading,
-      enemies,
-      bullets,
-      this.scale.width,
-      this.scale.height,
-      {
-        enemyHitRadius: this.getEntityHitRadius(),
-        bulletHitRadius: this.getBulletHitRadius(),
-      },
-    );
-
-    // Consume one stack FIFO and grant P6 phase shift at the landing spot.
-    this.effectsRegistry.consumeTeleport();
-    this.player.setPosition(dest.x, dest.y);
-    const state = this.player.getMovementState();
-    (
-      this.player as unknown as {
-        _movementState: { x: number; y: number };
-      }
-    )._movementState = { ...state, x: dest.x, y: dest.y };
-    return true;
+  /** Enemy-bullet collision radius (config-driven; default 6 px). */
+  protected override getEnemyBulletRadius(): number {
+    return this.getBulletHitRadius();
   }
 
   // ── Public test accessors ────────────────────────────────────────
@@ -942,9 +871,169 @@ export class GymFormationScene<
     return this.hud;
   }
 
+  // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
+
+  /**
+   * Seeds `count` random mineral collectables across the play area
+   * (default 100 for the gyms). Returns the spawned minerals.
+   */
+  seedMinerals(count: number): Mineral[] {
+    const seeded: Mineral[] = [];
+    for (let i = 0; i < count; i++) {
+      const x = 20 + Math.random() * (GAME_WIDTH - 40);
+      const y = 20 + Math.random() * (GAME_HEIGHT - 120);
+      const mineral = new Mineral(this, { x, y });
+      this.minerals.push(mineral);
+      seeded.push(mineral);
+    }
+    this.mineralsSeeded += count;
+    return seeded;
+  }
+
+  /** Cumulative number of minerals seeded since the gym started. */
+  getSeededMineralCount(): number {
+    return this.mineralsSeeded;
+  }
+
+  /** Live mineral collectables currently on the field (copy). */
+  getMinerals(): Mineral[] {
+    return [...this.minerals];
+  }
+
+  /** Current gym mineral hold value. */
+  getMineralHold(): number {
+    return this.mineralHold;
+  }
+
+  /** Current gym mineral hold capacity. */
+  getMineralCapacity(): number {
+    return this.mineralCapacity;
+  }
+
+  /** Whether the hold-full choice overlay is open. */
+  isMineralChoiceOpen(): boolean {
+    return this.mineralChoiceOpen;
+  }
+
+  /** Overrides the pluggable choice strategy. */
+  setMineralChoiceStrategy(strategy: ChoiceStrategy): void {
+    this.mineralChoiceStrategy = strategy;
+  }
+
+  /** Creates the mineral HUD and seeds the field; called from `create()`. */
+  private _initMineralLayer(): void {
+    this.mineralCapacity = loadRules().mineralHoldCapacity;
+    this.mineralHold = 0;
+    this.mineralChoiceOpen = false;
+    this.mineralsSeeded = 0;
+    if (!this.hud) {
+      this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    }
+    this.hud.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this.seedMinerals(100);
+  }
+
+  /**
+   * Player collects overlapping minerals into the hold; non-asteroid
+   * enemies absorb them. Asteroids are inert to minerals.
+   */
+  private _updateMinerals(): void {
+    if (this.minerals.length === 0) return;
+    const hull = SHIP_SIZE / 2;
+    const kept: Mineral[] = [];
+    for (const mineral of this.minerals) {
+      if (!mineral.alive) continue;
+
+      if (
+        this.player &&
+        this._collide(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)
+      ) {
+        mineral.handleOverlap('player');
+        this.mineralHold = Math.min(
+          this.mineralCapacity,
+          this.mineralHold + loadRules().mineralCollectAmount,
+        );
+        this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
+        if (this.mineralHold >= this.mineralCapacity && !this.mineralChoiceOpen) {
+          this.openMineralChoice();
+        }
+        continue;
+      }
+
+      let absorbed = false;
+      for (const entity of this.entities) {
+        if (!entity.alive || entity instanceof Asteroid) continue;
+        const collector = entity as unknown as { collectMineral?: () => void };
+        if (!collector.collectMineral) continue;
+        if (
+          this._collide(
+            mineral.x,
+            mineral.y,
+            MINERAL_SIZE,
+            entity.x,
+            entity.y,
+            entity.getHitRadius(),
+          )
+        ) {
+          collector.collectMineral();
+          mineral.handleOverlap('enemy');
+          absorbed = true;
+          break;
+        }
+      }
+      if (!absorbed) kept.push(mineral);
+    }
+    for (const mineral of this.minerals) {
+      if (!kept.includes(mineral)) mineral.destroy();
+    }
+    this.minerals = kept;
+  }
+
+  /**
+   * Opens the hold-full choice overlay, pausing the gym scene and launching
+   * `MineralChoiceScene`. The pick is applied permanently and the hold reset.
+   */
+  openMineralChoice(): ChoiceOption[] {
+    if (this.mineralChoiceOpen) return [];
+    const options = this.mineralChoiceStrategy.choose(3);
+    this.mineralChoiceOpen = true;
+    this.scene.launch('MineralChoiceScene', {
+      options,
+      onSelect: (index: number) => this.selectMineralChoice(index, options),
+    });
+    this.scene.pause();
+    return options;
+  }
+
+  /**
+   * Applies the chosen option permanently for the gym run, resumes the gym
+   * scene, and resets the hold.
+   */
+  selectMineralChoice(index: number, options: ChoiceOption[]): ChoiceOption | null {
+    const option = options[index];
+    if (!option) return null;
+    if (option.kind === 'weapon') {
+      const weaponId = option.id as WeaponId;
+      this.effectsRegistry.applyWeapon(weaponId, true);
+      this.player?.equipWeapon(weaponId, true);
+    } else {
+      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
+    }
+    this.mineralChoiceOpen = false;
+    this.mineralHold = 0;
+    this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this.scene.resume();
+    return option;
+  }
+
   /** The live power-up drops currently on screen. */
   getPowerUpDrops(): FormationSceneDrop[] {
     return [...this.powerUpDrops];
+  }
+
+  /** In-flight absorb animations for collected drops (test seam). */
+  getCollectAnimations(): CollectAnimationHandle[] {
+    return [...this.collectAnimations];
   }
 
   /** Cumulative number of drops spawned since the scene started. */
@@ -1009,12 +1098,12 @@ export class GymFormationScene<
 
   /** True while the player is invulnerable (blinking) after a respawn. */
   isPlayerInvulnerable(): boolean {
-    return this.playerInvulnerable > 0;
+    return this.invulnerable > 0;
   }
 
   /** Seconds of invulnerability remaining (0 once the blink ends). */
   getPlayerInvulnerableRemaining(): number {
-    return Math.max(0, this.playerInvulnerable);
+    return Math.max(0, this.invulnerable);
   }
 
   /** Active player-explosion VFX graphics (empty once the tweens end). */
@@ -1030,30 +1119,6 @@ export class GymFormationScene<
   /** Hit radius (px) used for enemy-bullet collision checks. */
   getBulletHitRadius(): number {
     return this.config.bulletHitRadius ?? DEFAULT_BULLET_HIT_RADIUS;
-  }
-
-  /**
-   * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s.
-   * Used by `_autoFire` and by tests to place bullets deterministically.
-   */
-  spawnPlayerBullet(
-    x: number,
-    y: number,
-    vx: number,
-    vy: number,
-    color = 0x00ffff,
-  ): PlayerBullet {
-    const bullet = createPlayerBullet(
-      this,
-      x,
-      y,
-      color,
-      PLAYER_BULLET_RADIUS,
-      vx,
-      vy,
-    );
-    this.playerBullets.push(bullet);
-    return bullet;
   }
 
   // ── Scene update loop ────────────────────────────────────────────
@@ -1105,12 +1170,18 @@ export class GymFormationScene<
       this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 
-    // Advance bullets; remove any that leave the screen.
+    // Advance bullets; wrap across all four edges and expire by lifetime
+    // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen position.
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const bullet = this.bullets[i];
+      bullet.elapsed += dt;
       bullet.graphics.x += bullet.vx * dt;
       bullet.graphics.y += bullet.vy * dt;
-      if (this._bulletOffScreen(bullet.graphics)) {
+      if (bullet.graphics.x < 0) bullet.graphics.x += GAME_WIDTH;
+      if (bullet.graphics.x >= GAME_WIDTH) bullet.graphics.x -= GAME_WIDTH;
+      if (bullet.graphics.y < 0) bullet.graphics.y += GAME_HEIGHT;
+      if (bullet.graphics.y >= GAME_HEIGHT) bullet.graphics.y -= GAME_HEIGHT;
+      if (bullet.elapsed >= bullet.lifetime) {
         bullet.graphics.destroy();
         this.bullets.splice(i, 1);
       }
@@ -1130,8 +1201,11 @@ export class GymFormationScene<
 
       // Collisions + post-hit invulnerability blink (player component only).
       this._handleCollisions();
-      this._updatePlayerInvulnerability(dt);
+      this._updateInvulnerability(dt);
     }
+
+    // ── Mineral layer: collection + hold-full choice ────────────────
+    this._updateMinerals();
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
@@ -1147,49 +1221,38 @@ export class GymFormationScene<
    * player receives `{ forward, turnLeft, turnRight }`; a
    * 4-directional-scheme player receives `{ up, down, left, right }`.
    */
-  private _readPlayerInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
+  // ── Shared combat-core participant accessors ─────────────────────
+
+  /** Live enemy entities for the shared collision pass. */
+  protected override getEnemyEntities(): readonly TEntity[] {
+    return this.entities;
+  }
+
+  /** Live enemy bullets for the shared collision pass. */
+  protected override getEnemyBullets(): readonly TBullet[] {
+    return this.bullets;
+  }
+
+  /** Replaces the enemy-bullet collection after a shared collision pass. */
+  protected override setEnemyBullets(bullets: TBullet[]): void {
+    this.bullets = bullets;
+  }
+
+  /** Enemy destroyed through the generic path: forward to the config seam. */
+  protected override onEnemyDestroyed(entity: TEntity): void {
+    this.config.onEntityDestroyed?.(entity);
+  }
+
+  /** Advances player bullets and removes those whose lifetime has elapsed. */
+  private _advancePlayerBullets(dt: number): void {
+    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
   }
 
   /**
-   * Auto-fires every active weapon toward the direction of travel when
-   * its cooldown has elapsed (mirrors GymWeapons' auto-fire). Combat
-   * scenes only ever have the permanent cannon active, so behaviour is
-   * unchanged: one cannon volley per 400 ms cycle.
+   * Off-screen test — retained for compatibility. Enemy bullets no longer
+   * cull on off-screen position; they wrap and expire by lifetime
+   * (AH-0MU960UTE001PTV0).
    */
-  private _autoFire(dt: number): void {
-    if (!this.player) return;
-    const firedWeapons = this.player.tryFire(dt);
-    if (firedWeapons.length === 0) return;
-
-    const headingDeg = (this.player.getHeading() * 180) / Math.PI;
-    for (const weaponId of firedWeapons) {
-      const weaponDef = this.player.getWeaponDef(weaponId);
-      const bulletDescs = createBulletsFromHeading(
-        weaponDef,
-        headingDeg,
-        this.player.x,
-        this.player.y,
-      );
-
-      for (const bd of bulletDescs) {
-        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color);
-      }
-    }
-  }
-
-  /** Advances player bullets and removes any that leave the screen. */
-  private _advancePlayerBullets(dt: number): void {
-    this.playerBullets = this.playerBullets.filter((b) =>
-      advanceAndCull(b, dt, this.scale.width, this.scale.height),
-    );
-  }
-
   protected _bulletOffScreen(g: Phaser.GameObjects.Graphics): boolean {
     return (
       g.x < -20 ||
@@ -1212,206 +1275,6 @@ export class GymFormationScene<
     bRadius: number,
   ): boolean {
     return Math.hypot(ax - bx, ay - by) <= aRadius + bRadius;
-  }
-
-  /**
-   * Resolves player-component collisions (only runs when `config.player`
-   * is set, so enemy-only scenes behave exactly as before):
-   * player bullets vs enemies, player bullets vs enemy bullets, and
-   * enemy bullets vs the player ship (hit → respawn + invulnerability).
-   */
-  private _handleCollisions(): void {
-    if (!this.player) return;
-
-    const bulletHitRadius = this.getBulletHitRadius();
-    const playerHull = SHIP_SIZE / 2;
-
-    // 1. Player bullets vs enemy entities: damage the enemy, consume
-    //    the bullet. Multi-hit entities (Boss, GDD §4.3) expose
-    //    `takeDamage()` — each hit decrements one phase and only
-    //    destroys on the final phase. Single-HP enemies fall through
-    //    to `destroySelf()`. Rebuild the list so consumed bullets are dropped.
-    const keptPlayerBullets: PlayerBullet[] = [];
-    for (const pb of this.playerBullets) {
-      let spent = false;
-      for (const entity of this.entities) {
-        if (!entity.alive) continue;
-        if (
-          this._collide(
-            pb.x,
-            pb.y,
-            PLAYER_BULLET_RADIUS,
-            entity.x,
-            entity.y,
-            entity.getHitRadius(),
-          )
-        ) {
-          if (entity.takeDamage) {
-            // Multi-hit path (Boss): entity owns health, phase
-            // transition, and SFX — base scene only consumes the bullet.
-            entity.takeDamage();
-          } else {
-            entity.destroySelf();
-            if (entity.playDestructionAudio) {
-              entity.playDestructionAudio();
-            } else {
-              playDestructionSound();
-            }
-            // Dynamic-replacement seam (Asteroid split children).
-            this.config.onEntityDestroyed?.(entity);
-          }
-          pb.destroy();
-          spent = true;
-          break;
-        }
-      }
-      if (!spent) keptPlayerBullets.push(pb);
-    }
-    this.playerBullets = keptPlayerBullets;
-
-    // 2. Player bullets vs enemy bullets: both are destroyed.
-    const destroyedEnemyBullets: TBullet[] = [];
-    const keptPlayerBullets2: PlayerBullet[] = [];
-    for (const pb of this.playerBullets) {
-      let spent = false;
-      for (const eb of this.bullets) {
-        if (
-          this._collide(
-            pb.x,
-            pb.y,
-            PLAYER_BULLET_RADIUS,
-            eb.graphics.x,
-            eb.graphics.y,
-            bulletHitRadius,
-          )
-        ) {
-          eb.graphics.destroy();
-          destroyedEnemyBullets.push(eb);
-          pb.destroy();
-          spent = true;
-          break;
-        }
-      }
-      if (!spent) keptPlayerBullets2.push(pb);
-    }
-    this.playerBullets = keptPlayerBullets2;
-    this.bullets = this.bullets.filter(
-      (b) => !destroyedEnemyBullets.includes(b),
-    );
-
-    // 3. Enemy bullets vs player: hit → explosion VFX/SFX + respawn at
-    //    spawn point + invulnerability blink. The player is never
-    //    destroyed (infinite lives, no score/game-over changes).
-    const keptEnemyBullets: TBullet[] = [];
-    for (const eb of this.bullets) {
-      if (
-        this.playerInvulnerable <= 0 &&
-        this._collide(
-          eb.graphics.x,
-          eb.graphics.y,
-          bulletHitRadius,
-          this.player.x,
-          this.player.y,
-          playerHull,
-        )
-      ) {
-        this._hitPlayer();
-        eb.graphics.destroy();
-      } else {
-        keptEnemyBullets.push(eb);
-      }
-    }
-    this.bullets = keptEnemyBullets;
-
-    // 4. Player body vs enemy body: when the player ship overlaps an
-    //    enemy entity, the enemy is destroyed and the player is hit
-    //    (explosion VFX/SFX + respawn + invulnerability). Skipped if
-    //    the player is currently invulnerable.
-    if (this.playerInvulnerable <= 0) {
-      for (const entity of this.entities) {
-        if (!entity.alive) continue;
-        if (
-          this._collide(
-            this.player.x,
-            this.player.y,
-            playerHull,
-            entity.x,
-            entity.y,
-            entity.getHitRadius(),
-          )
-        ) {
-          entity.destroySelf();
-          // Only play the entity-specific destruction audio (if any).
-          // The generic destruction sound is already played by
-          // _hitPlayer(), so we avoid double-play.
-          if (entity.playDestructionAudio) {
-            entity.playDestructionAudio();
-          }
-          // Dynamic-replacement seam (Asteroid split children).
-          this.config.onEntityDestroyed?.(entity);
-          this._hitPlayer();
-          break;
-        }
-      }
-    }
-  }
-
-  /**
-   * Player hit: records the hit, plays the destruction sound, spawns the
-   * explosion VFX at the ship position, plays a scale-pulse VFX on the
-   * ship (expand to 150% → contract back to 100%), respawns the player
-   * in-place (same position and facing, velocity zeroed) with a short
-   * invulnerability window, and resets the blink phase.
-   */
-  private _hitPlayer(): void {
-    if (!this.player) return;
-    this.playerHitCount += 1;
-    playDestructionSound();
-    this._spawnPlayerExplosion(this.player.x, this.player.y);
-
-    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
-    this.tweens.add({
-      targets: this.player,
-      scale: PLAYER_HIT_SCALE_PEAK,
-      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
-      yoyo: true,
-      ease: 'Power2',
-    });
-
-    // In-place respawn: preserve position and facing, zero velocity.
-    this.player.respawnInPlace();
-    this.playerInvulnerable = PLAYER_RESPAWN_INVULNERABLE;
-    this.playerBlinkPhase = 0;
-    this.player.setAlpha(1);
-  }
-
-  /**
-   * Counts down invulnerability and blinks the ship's alpha every
-   * half blink-interval; restores full alpha once the window ends.
-   */
-  private _updatePlayerInvulnerability(dt: number): void {
-    if (!this.player || this.playerInvulnerable <= 0) return;
-    this.playerInvulnerable = Math.max(0, this.playerInvulnerable - dt);
-    this.playerBlinkPhase += dt;
-    const visible =
-      Math.floor(this.playerBlinkPhase / PLAYER_BLINK_INTERVAL) % 2 === 0;
-    this.player.setAlpha(visible ? 1 : 0.3);
-    if (this.playerInvulnerable <= 0) this.player.setAlpha(1);
-  }
-
-  /**
-   * Spawns the player-death particle burst at (x, y) — the player
-   * equivalent of an entity `playExplosion()`. Colours are tinted around
-   * `SHIP_COLOR` and the burst scales with `SHIP_SIZE`; the Graphics are
-   * tracked in `playerExplosions` so the SHUTDOWN handler (and tests) see
-   * them without pixel assertions, and the helper unregisters them on
-   * completion.
-   */
-  private _spawnPlayerExplosion(x: number, y: number): void {
-    spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
-      patterns: resolvePatterns('player'),
-      registry: this.playerExplosions,
-    });
   }
 
   // ── Wipe → 3s countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5) ─

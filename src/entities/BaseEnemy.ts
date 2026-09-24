@@ -17,7 +17,8 @@
 
 import Phaser from 'phaser';
 
-import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
+import { HIT_RADIUS_BUFFER_PX, MINERAL_REDROP_SCATTER_RADIUS } from '../core/constants';
+import { loadRules } from '../core/rules';
 import {
   FormationOffset,
   FormationPosition,
@@ -25,6 +26,7 @@ import {
 } from '../utils/formations';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import type { ExplosionHandle } from '../vfx/explosionParticles';
+import { Mineral } from './Mineral';
 
 /**
  * Minimal shared config fields accepted by every regular enemy subclass.
@@ -44,6 +46,11 @@ export interface BaseEnemyConfig {
   bulletSize?: number;
   /** Bullet speed in px/s. */
   bulletSpeed?: number;
+  /**
+   * Bullet lifetime in seconds (bullets wrap and expire; AH-0MU960UTE001PTV0).
+   * Defaults to 1.5 s when omitted.
+   */
+  bulletLifetime?: number;
   /** Minimum milliseconds between fire attempts. */
   fireInterval?: number;
   /** Probability that a fire cycle produces a shot (0–1). */
@@ -101,6 +108,9 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Bullet speed in px/s. */
   protected readonly _bulletSpeed: number;
 
+  /** Bullet lifetime in seconds (wrap + expiry; AH-0MU960UTE001PTV0). */
+  protected readonly _bulletLifetime: number;
+
   /** Minimum milliseconds between fire attempts. */
   protected readonly _fireInterval: number;
 
@@ -143,6 +153,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._bulletColor = config.bulletColor ?? 0xffffff;
     this._bulletSize = config.bulletSize ?? 3;
     this._bulletSpeed = config.bulletSpeed ?? 200;
+    this._bulletLifetime = config.bulletLifetime ?? 1.5;
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._rng = config.rng ?? Math.random;
@@ -237,6 +248,81 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Whether the enemy is alive. */
   get alive(): boolean {
     return this._alive;
+  }
+
+  // ── Mineral accounting (AH-0MUBVGI62004ED9Q) ─────────────────────
+
+  /** Number of minerals this enemy has absorbed. */
+  private _mineralCount = 0;
+
+  /** Number of minerals this enemy has absorbed (for tests/scene wiring). */
+  get mineralCount(): number {
+    return this._mineralCount;
+  }
+
+  /**
+   * Absorb one mineral, incrementing the tracked count. Asteroids override
+   * this as a no-op — they are excluded from mineral collection.
+   */
+  collectMineral(): void {
+    this._mineralCount += 1;
+  }
+
+  /**
+   * Number of minerals to re-drop when this enemy is destroyed — a value in
+   * the configured 25–50 % fraction range of the collected count, never
+   * exceeding it. An enemy that collected nothing re-drops nothing.
+   *
+   * @param rng — random-number generator (defaults to `Math.random`);
+   *   injected by tests for deterministic bounds checking.
+   */
+  mineralRedropCount(rng: () => number = Math.random): number {
+    if (this._mineralCount <= 0) return 0;
+
+    const rules = loadRules();
+    const low = Math.floor(this._mineralCount * rules.mineralRedropFractionMin);
+    const high = Math.floor(this._mineralCount * rules.mineralRedropFractionMax);
+
+    // Clamp the inclusive integer range to the collected count.
+    const cappedHigh = Math.min(high, this._mineralCount);
+    const cappedLow = Math.min(Math.max(low, 0), cappedHigh);
+    if (cappedHigh <= cappedLow) return cappedLow;
+
+    const draw = cappedLow + Math.floor(rng() * (cappedHigh - cappedLow + 1));
+    return Math.min(Math.max(draw, cappedLow), cappedHigh);
+  }
+
+  /**
+   * Spawn the re-dropped minerals scattered at the explosion site. Each drop
+   * lands within {@link MINERAL_REDROP_SCATTER_RADIUS} px of `(x, y)`. Returns
+   * the spawned minerals, or an empty array when nothing is to be re-dropped
+   * (or the enemy is no longer attached to a scene).
+   *
+   * @param x — explosion-site x position
+   * @param y — explosion-site y position
+   * @param rng — random-number generator (defaults to `Math.random`)
+   */
+  spawnMineralDrops(
+    x: number,
+    y: number,
+    rng: () => number = Math.random,
+  ): Mineral[] {
+    const count = this.mineralRedropCount(rng);
+    const scene = this.scene as Phaser.Scene | undefined;
+    if (!scene || count <= 0) return [];
+
+    const drops: Mineral[] = [];
+    for (let i = 0; i < count; i++) {
+      const angle = rng() * Math.PI * 2;
+      const radius = rng() * MINERAL_REDROP_SCATTER_RADIUS;
+      drops.push(
+        new Mineral(scene, {
+          x: x + Math.cos(angle) * radius,
+          y: y + Math.sin(angle) * radius,
+        }),
+      );
+    }
+    return drops;
   }
 
   /** Whether the enemy is allowed to fire. */

@@ -45,6 +45,7 @@ export function createEnemyFromConfig(
     bulletColor: config.bulletColor,
     bulletSize: config.bulletSize,
     bulletSpeed: config.bulletSpeed,
+    bulletLifetime: config.bulletLifetime,
     fireInterval: config.fireInterval,
     burstCount: config.burstCount,
     shotProbability: config.shotProbability,

@@ -32,15 +32,43 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   cannon: 0x00ffff, // neon cyan
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
-  rapid: 0xffff00, // neon yellow — waveform
+  rapid: 0xffff00, // neon yellow — stacked dots
 };
 
 /** Icon stroke colour for the Reset drop (returns ship to cannon). */
 const RESET_ICON_COLOR = 0xffffff; // white — return/undo arrow
 
 /**
- * Draws the icon for a power-up type into `graphics` (cleared first),
+ * Draws a weapon power-up icon into `graphics` (cleared first),
  * centred at (x, y) with the given size (radius extent in px).
+ *
+ * Each weapon's icon is a distinctive shape that hints at its shot
+ * pattern: fan arc for Spread, parallel bars for Dual, stacked dots
+ * for Rapid (high fire rate), and a return/undo arrow for Reset.
+ *
+ * @param graphics — Caller-owned Phaser Graphics.
+ * @param weaponId — The weapon identifier.
+ * @param x — Centre x position.
+ * @param y — Centre y position.
+ * @param size — Icon radius extent in px.
+ */
+
+/** The weapon-drop icon types, including the Reset drop. */
+export type WeaponDropIconId = WeaponId | 'reset';
+
+/**
+ * Draws a weapon power-up icon into `graphics` (cleared first),
+ * centred at (x, y) with the given size (radius extent in px).
+ *
+ * Each weapon's icon is a distinctive shape that hints at its shot
+ * pattern: fan arc for Spread, parallel bars for Dual, stacked dots
+ * for Rapid (high fire rate), and a return/undo arrow for Reset.
+ *
+ * @param graphics — Caller-owned Phaser Graphics.
+ * @param weaponId — The weapon or reset identifier.
+ * @param x — Centre x position.
+ * @param y — Centre y position.
+ * @param size — Icon radius extent in px.
  */
 export function drawPowerUpIcon(
   graphics: Phaser.GameObjects.Graphics,
@@ -281,25 +309,8 @@ function drawMagnet(
  * centred at (x, y) with the given size (radius extent in px).
  *
  * Each weapon's icon is a distinctive shape that hints at its shot
- * pattern: fan arc for Spread, parallel bars for Dual, waveform for
- * Rapid, and an undo/return arrow for Reset.
- *
- * @param graphics — Caller-owned Phaser Graphics.
- * @param weaponId — The weapon identifier.
- * @param x — Centre x position.
- * @param y — Centre y position.
- * @param size — Icon radius extent in px.
- */
-/** The weapon-drop icon types, including the Reset drop. */
-export type WeaponDropIconId = WeaponId | 'reset';
-
-/**
- * Draws a weapon power-up icon into `graphics` (cleared first),
- * centred at (x, y) with the given size (radius extent in px).
- *
- * Each weapon's icon is a distinctive shape that hints at its shot
- * pattern: fan arc for Spread, parallel bars for Dual, waveform for
- * Rapid, and a return/undo arrow for Reset.
+ * pattern: fan arc for Spread, parallel bars for Dual, stacked dots
+ * for Rapid (high fire rate), and a return/undo arrow for Reset.
  *
  * @param graphics — Caller-owned Phaser Graphics.
  * @param weaponId — The weapon or reset identifier.
@@ -321,7 +332,9 @@ export function drawWeaponIcon(
 /**
  * Inner weapon icon drawing WITHOUT clearing first — shared by
  * `drawWeaponIcon` (caller-owned buffers) and `drawWeaponDrop` (field
- * drops with the glowing bubble layered underneath).
+ * drops with the glowing bubble layered underneath). Each weapon's
+ * icon metaphor: fan arc (Spread), parallel bars (Dual), stacked
+ * dots (Rapid — high rate), return arrow (Reset).
  */
 function _drawWeaponIcon(
   graphics: Phaser.GameObjects.Graphics,
@@ -450,8 +463,10 @@ function drawDualIcon(
 }
 
 /**
- * Rapid icon — a sine-wave / waveform shape, hinting at the rapid
- * burst-fire pattern (single bullets at high rate).
+ * Rapid icon — tightly stacked dots, hinting at the rapid fire-rate
+ * (125 ms interval) — a stream of bullets firing faster than the
+ * eye can track. The dot stack is noticeably denser than the cannon's
+ * single bullet, making the rate difference immediately apparent.
  */
 function drawRapidIcon(
   g: Phaser.GameObjects.Graphics,
@@ -459,20 +474,16 @@ function drawRapidIcon(
   y: number,
   s: number,
 ): void {
-  // Sine wave from left to right
-  const steps = 16;
-  g.beginPath();
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const px = x - s * 0.6 + t * s * 1.2;
-    const py = y + Math.sin(t * Math.PI * 4) * s * 0.3;
-    if (i === 0) {
-      g.moveTo(px, py);
-    } else {
-      g.lineTo(px, py);
-    }
+  // 5 dots stacked vertically (along the y-axis) with tight spacing.
+  // At small sizes this reads as a rapid stream of bullets.
+  const dotRadius = s * 0.1;
+  const spacing = s * 0.25;
+  const startY = y - s * 0.5;
+  for (let i = 0; i < 5; i++) {
+    g.beginPath();
+    g.arc(x, startY + i * spacing, dotRadius, 0, Math.PI * 2);
+    g.strokePath();
   }
-  g.strokePath();
 }
 
 // ── Field drop rendering: glowing bubble + icon ────────────────────

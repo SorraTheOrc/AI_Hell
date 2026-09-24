@@ -66,6 +66,8 @@ export interface TankConfig {
   bulletColor?: number;
   bulletSize?: number;
   bulletSpeed?: number;
+  /** Bullet lifetime in seconds (wrap + expiry; AH-0MU960UTE001PTV0). */
+  bulletLifetime?: number;
   fireInterval?: number;
   burstCount?: number;
   /**
@@ -86,6 +88,10 @@ export interface TankBullet {
   readonly color: number;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
 }
 
 export class Tank extends BaseEnemy {
@@ -107,6 +113,7 @@ export class Tank extends BaseEnemy {
       bulletColor: config.bulletColor ?? TANK_BULLET_COLOR,
       bulletSize: config.bulletSize ?? TANK_BULLET_SIZE,
       bulletSpeed: config.bulletSpeed ?? TANK_BULLET_SPEED,
+      bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? TANK_FIRE_INTERVAL,
       shotProbability: config.shotProbability,
       rng: config.rng,
@@ -217,7 +224,7 @@ export class Tank extends BaseEnemy {
         y: this.y,
       });
 
-      bullets.push({ graphics, color, vx, vy });
+      bullets.push({ graphics, color, vx, vy, lifetime: this._bulletLifetime, elapsed: 0 });
     }
     return bullets;
   }

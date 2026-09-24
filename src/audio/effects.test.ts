@@ -25,6 +25,12 @@ import {
   playSpeedBoostCollectSound,
   playExtraLifeCollectSound,
   playMagnetCollectSound,
+  playPowerUpCollectSound,
+  playPowerUpCollectPopSound,
+  playBulletDestructionSound,
+  playDestructionSound,
+  playTankDestructionSound,
+  EXPLOSION_PITCH_JITTER,
   playDiverFireSound,
   playDiverDestructionSound,
   playDiverDiveStartSound,
@@ -290,6 +296,9 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playSpeedBoostCollectSound,
       playExtraLifeCollectSound,
       playMagnetCollectSound,
+      playPowerUpCollectSound,
+      playPowerUpCollectPopSound,
+      playBulletDestructionSound,
     ];
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
@@ -302,6 +311,35 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
     expect(() => stopDiveSound()).not.toThrow();
     expect(_getDiverDiveSoundStateForTests()).toBeNull();
     expect(_getDiverDiveSoundRefCountForTests()).toBe(0);
+  });
+});
+
+describe('bullet-destruction cue — synthesis (AH-0MU43IIQV001S5JR / AC5)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  it('plays a short, high, low-volume tick distinct from the destruction fall', () => {
+    const snap = snapshot();
+    playBulletDestructionSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    expect(oscs).toHaveLength(1);
+    const tick = oscs[0];
+    expect(tick.type).toBe('square');
+    // Higher than the 440→60 destruction fall, and descends.
+    expect(tick.freqEvents[0].value).toBe(1400);
+    expect(tick.freqEvents[tick.freqEvents.length - 1].value).toBe(900);
+    const duration = tick.stopTime! - tick.startTime!;
+    expect(duration).toBeLessThanOrEqual(0.1);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.15);
   });
 });
 
@@ -403,6 +441,111 @@ describe('diver dive sounds — synthesis + lifecycle (AH-0MTVYC6E8005YN6F)', ()
   it('stopDiveSound is a safe no-op when no dive sound is active', () => {
     expect(_getDiverDiveSoundStateForTests()).toBeNull();
     expect(() => stopDiveSound()).not.toThrow();
+  });
+});
+
+// ── Explosion destruction pitch randomisation (AH-0MU0AVBWH002ZWRH AC3) ──
+
+describe('explosion destruction pitch jitter (AC3)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    // Prime effects.ts's lazily-created module-scoped AudioContext so the
+    // snapshot helper has a live instance to read.
+    playDestructionSound();
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+  });
+
+  it('exposes EXPLOSION_PITCH_JITTER as ±15 %', () => {
+    expect(EXPLOSION_PITCH_JITTER).toBeCloseTo(0.15, 5);
+  });
+
+  it('shared destruction sweep endpoints stay within ±15 % of 440→60', () => {
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDestructionSound();
+      const oscs = newOscillators(snap);
+      expect(oscs).toHaveLength(1);
+      const start = startFreq(oscs);
+      const end = endFreq(oscs);
+      expect(start).toBeGreaterThanOrEqual(440 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(start).toBeLessThanOrEqual(440 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(end).toBeGreaterThanOrEqual(60 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(end).toBeLessThanOrEqual(60 * (1 + EXPLOSION_PITCH_JITTER));
+    }
+  });
+
+  it('shared destruction sweeps vary across invocations', () => {
+    const starts = new Set<number>();
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDestructionSound();
+      starts.add(startFreq(newOscillators(snap)));
+    }
+    expect(starts.size).toBeGreaterThan(1);
+  });
+
+  it('shared destruction applies one factor to both endpoints (sweep character preserved)', () => {
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDestructionSound();
+      const osc = newOscillators(snap)[0];
+      const start = startFreq([osc]);
+      const end = endFreq([osc]);
+      // Both endpoints scaled by the same factor → ratio constant at 440/60.
+      expect(start / end).toBeCloseTo(440 / 60, 6);
+    }
+  });
+
+  it('Diver destruction applies one factor to every endpoint in both oscillators', () => {
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDiverDestructionSound();
+      const oscs = newOscillators(snap);
+      expect(oscs).toHaveLength(2);
+      const [main, body] = oscs;
+      const mainStart = startFreq([main]);
+      const mainEnd = endFreq([main]);
+      const bodyStart = startFreq([body]);
+      const bodyEnd = endFreq([body]);
+      // All four endpoints stay within ±15 % of their base frequencies.
+      expect(mainStart).toBeGreaterThanOrEqual(280 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(mainStart).toBeLessThanOrEqual(280 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(mainEnd).toBeGreaterThanOrEqual(40 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(mainEnd).toBeLessThanOrEqual(40 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(bodyStart).toBeGreaterThanOrEqual(80 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(bodyStart).toBeLessThanOrEqual(80 * (1 + EXPLOSION_PITCH_JITTER));
+      expect(bodyEnd).toBeGreaterThanOrEqual(25 * (1 - EXPLOSION_PITCH_JITTER));
+      expect(bodyEnd).toBeLessThanOrEqual(25 * (1 + EXPLOSION_PITCH_JITTER));
+      // Single factor across all four endpoints (tonal relationship intact).
+      const factor = mainStart / 280;
+      expect(mainEnd / 40).toBeCloseTo(factor, 6);
+      expect(bodyStart / 80).toBeCloseTo(factor, 6);
+      expect(bodyEnd / 25).toBeCloseTo(factor, 6);
+    }
+  });
+
+  it('Diver destruction sweeps vary across invocations', () => {
+    const starts = new Set<number>();
+    for (let i = 0; i < 50; i++) {
+      const snap = snapshot();
+      playDiverDestructionSound();
+      starts.add(startFreq(newOscillators(snap)));
+    }
+    expect(starts.size).toBeGreaterThan(1);
+  });
+
+  it('Tank destruction variant (intentionally unwired) is NOT jittered', () => {
+    const snap = snapshot();
+    playTankDestructionSound();
+    const oscs = newOscillators(snap);
+    expect(oscs).toHaveLength(1);
+    expect(startFreq(oscs)).toBe(220);
+    expect(endFreq(oscs)).toBe(30);
   });
 });
 
@@ -628,6 +771,63 @@ describe('player pickup activation cues — oscillator parameters (AC3, AC4, AC6
     expect(oscs[1].type).toBe('sine');
     expect(startFreq([oscs[1]])).toBe(80);
     expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+});
+
+// ── Power-up collection pop SFX (AH-0MUAYB3OU0087H9W) ───────────
+//
+// Parent brief AC1/AC3/AC4: a short (≤ 100 ms), percussive pop that is
+// audibly distinct from the two-tone ascending collection chime.
+
+describe('power-up collection pop SFX — synthesis (AH-0MUBYSNGU0051XVO)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+  });
+
+  it('pop: short percussive sawtooth fall + noise transient, ≤ 100 ms, ≤ 0.2 volume', () => {
+    const snap = snapshot();
+    playPowerUpCollectPopSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Sawtooth transient + noise texture layer.
+    expect(oscs).toHaveLength(2);
+    const pop = oscs.find((o) => o.type === 'sawtooth')!;
+    expect(pop).toBeDefined();
+    expect(pop.freqEvents[0].value).toBe(600);
+    const lastPop = pop.freqEvents[pop.freqEvents.length - 1];
+    expect(lastPop.value).toBe(100);
+    // Stop window includes a 20 ms tail; the core burst is ≤ 100 ms.
+    expect(pop.stopTime! - pop.startTime!).toBeLessThanOrEqual(0.1);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('pop is distinct from the collection chime (no sine two-tone ascent)', () => {
+    const snap = snapshot();
+    playPowerUpCollectSound();
+    const chimeOscs = newOscillators(snap);
+    const chimeOscCount = chimeOscs.length;
+
+    const popSnap = { oscStart: snapshot().oscStart };
+    playPowerUpCollectPopSound();
+    const popOscs = mockCtx().oscillators.slice(popSnap.oscStart);
+
+    // The chime is a sine two-tone ascent; the pop is a sawtooth fall.
+    expect(chimeOscs.every((o) => o.type === 'sine')).toBe(true);
+    const popSaw = popOscs.find((o) => o.type === 'sawtooth')!;
+    expect(popSaw).toBeDefined();
+    expect(popSaw.freqEvents[0].value).toBeGreaterThan(
+      popSaw.freqEvents[popSaw.freqEvents.length - 1].value,
+    );
+    // Sanity: the chime genuinely created oscillators (not a false pass).
+    expect(chimeOscCount).toBeGreaterThan(0);
   });
 });
 

@@ -10,8 +10,11 @@
  * - lives: 3 (up to 5 with P8 Extra Life power-up)
  * - score: 0 (increments on enemy/boss destruction)
  * - level: 1–5 (boss triggered after level 5)
+ * - minerals: 0 (run-scoped ship's hold; capacity 20)
  * - gameState: 'menu' | 'playing' | 'gameover'
  */
+
+import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
 
 // ── Game state enum ───────────────────────────────────────────────────
 
@@ -64,6 +67,18 @@ export class GameState {
   /** Current game state (menu / playing / gameover). */
   gameState: GameSessionState;
 
+  // ── Ship's hold (minerals, GDD §4.5) ────────────────────────────
+
+  /** Current minerals in the ship's hold (run-scoped, 0..capacity). */
+  minerals: number;
+  /** Hold capacity before the hold-full power-up choice is offered. */
+  mineralCapacity: number;
+  /**
+   * Overflow recorded when the hold last filled (collected − capacity).
+   * Carried back into the hold once the power-up choice is resolved.
+   */
+  private _mineralOverflow = 0;
+
   /**
    * Creates a new GameState with default values.
    * Optionally override individual fields.
@@ -74,6 +89,9 @@ export class GameState {
     this.level = overrides?.level ?? MIN_LEVEL;
     this.bossDefeated = overrides?.bossDefeated ?? false;
     this.gameState = overrides?.gameState ?? 'menu';
+    this.minerals = overrides?.minerals ?? 0;
+    this.mineralCapacity =
+      overrides?.mineralCapacity ?? DEFAULT_MINERAL_HOLD_CAPACITY;
   }
 
   // ── Actions ─────────────────────────────────────────────────────
@@ -88,6 +106,44 @@ export class GameState {
     this.level = MIN_LEVEL;
     this.bossDefeated = false;
     this.gameState = 'playing';
+    this.minerals = 0;
+    this._mineralOverflow = 0;
+  }
+
+  // ── Ship's hold (minerals) ──────────────────────────────────────
+
+  /**
+   * Adds minerals to the ship's hold, capping the store at
+   * {@link mineralCapacity}. Returns the overflow beyond capacity (0 when
+   * the hold was not over-filled). The overflow is remembered so
+   * {@link resolveHold} can carry it into the next hold.
+   *
+   * @param amount — minerals to add (non-positive values are ignored).
+   */
+  addMinerals(amount: number): number {
+    if (amount <= 0) return 0;
+    const total = this.minerals + amount;
+    if (total >= this.mineralCapacity) {
+      this.minerals = this.mineralCapacity;
+      this._mineralOverflow = total - this.mineralCapacity;
+      return this._mineralOverflow;
+    }
+    this.minerals = total;
+    return 0;
+  }
+
+  /** Whether the hold has reached capacity (a power-up choice is due). */
+  isHoldFull(): boolean {
+    return this.minerals >= this.mineralCapacity;
+  }
+
+  /**
+   * Resolves the hold-full choice: resets the hold to 0 carrying any
+   * overflow (store = collected − capacity) recorded when it filled.
+   */
+  resolveHold(): void {
+    this.minerals = this._mineralOverflow;
+    this._mineralOverflow = 0;
   }
 
   /**

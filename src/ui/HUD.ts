@@ -1,7 +1,7 @@
 /**
  * Standalone power-up HUD (GDD §6.4 — `src/ui/HUD.ts`).
  *
- * A Phaser Container subclass attachable to ANY scene (the GymPowerUps
+ * A Phaser Container subclass attachable to ANY scene (the GymPowerUpsUtility
  * gym, the combat gym, the main game). It renders above gameplay
  * (`HUD_DEPTH`) and displays, from the shared EffectsRegistry:
  *
@@ -76,10 +76,13 @@ export interface HUDOptions {
 export class HUD extends Phaser.GameObjects.Container {
   private _registry: EffectsRegistry | null = null;
   private _livesLabel: Phaser.GameObjects.Text;
+  private _mineralLabel: Phaser.GameObjects.Text;
   private _rows: HUDEntry[] = [];
   private _rowObjects: Phaser.GameObjects.GameObject[] = [];
   private _iconGraphics: Phaser.GameObjects.Graphics;
   private _showLives: boolean;
+  private _minerals = 0;
+  private _mineralCapacity = 0;
 
   constructor(scene: Phaser.Scene, registry: EffectsRegistry | null = null, options?: HUDOptions) {
     super(scene, 8, 8);
@@ -97,12 +100,35 @@ export class HUD extends Phaser.GameObjects.Container {
       TEXT_STYLE,
     );
     this._livesLabel.setVisible(this._showLives);
-    this.add([this._iconGraphics, this._livesLabel]);
+    this._mineralLabel = new Phaser.GameObjects.Text(scene, ICON_X, 0, '', TEXT_STYLE);
+    this._mineralLabel.setVisible(false);
+    this.add([this._iconGraphics, this._livesLabel, this._mineralLabel]);
 
     this._registry = registry;
     if (registry) {
       this.refresh();
     }
+  }
+
+  /**
+   * Sets the mineral hold values shown by the mineral counter row and
+   * refreshes the HUD. A capacity of 0 hides the row (e.g. gyms without the
+   * mineral mechanic).
+   */
+  setMineralStore(minerals: number, capacity: number): void {
+    this._minerals = Math.max(0, minerals);
+    this._mineralCapacity = Math.max(0, capacity);
+    this.refresh();
+  }
+
+  /** Current mineral hold values shown by the counter row. */
+  getMineralStoreValue(): { minerals: number; capacity: number } {
+    return { minerals: this._minerals, capacity: this._mineralCapacity };
+  }
+
+  /** Rendered mineral counter label (e.g. "Minerals: 3/20"; '' when hidden). */
+  getMineralLabel(): string {
+    return this._mineralLabel.text;
   }
 
   /** Attaches a registry (or detaches with null). */
@@ -153,6 +179,19 @@ export class HUD extends Phaser.GameObjects.Container {
       this._livesLabel.setText('');
       if (!this._showLives) this._livesLabel.setVisible(false);
     }
+
+    // Mineral counter row (hidden unless a capacity is configured).
+    if (this._mineralCapacity > 0) {
+      this._mineralLabel.setVisible(true);
+      this._mineralLabel.setText(
+        `Minerals: ${this._minerals}/${this._mineralCapacity}`,
+      );
+      const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
+      this._mineralLabel.setY(livesOffset + ROW_HEIGHT * 0.5);
+    } else {
+      this._mineralLabel.setVisible(false);
+      this._mineralLabel.setText('');
+    }
   }
 
   /** Phaser per-frame hook: keep the HUD in sync with the registry. */
@@ -168,7 +207,9 @@ export class HUD extends Phaser.GameObjects.Container {
    * keeping the gym HUD layout unchanged (AC3).
    */
   private _rowY(row: number): number {
-    return (this._showLives ? ROW_HEIGHT + LIVES_GAP : 0) + row * ROW_HEIGHT;
+    const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
+    const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
+    return livesOffset + mineralOffset + row * ROW_HEIGHT;
   }
 
   // ── Rendering helpers ─────────────────────────────────────────────

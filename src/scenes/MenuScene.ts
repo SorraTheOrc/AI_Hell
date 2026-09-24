@@ -1,11 +1,19 @@
 /**
  * Main menu scene (GDD §5.1 — Main menu).
  *
- * The boot scene that greets the player with two buttons:
+ * The boot scene that greets the player with buttons:
  * - **Play Game** — starts a new game session at Level 1 and initializes
  *   the Phaser Audio context (Web Audio autoplay policy compliance, GDD §6.7).
+ * - **Settings** — opens the shared settings screen (audio + controls)
+ *   before starting a session (parent AH-0MU9LPZ0G0015292).
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
  *   for testing individual gym components.
+ *
+ * Keyboard navigation (AH-0MU9LKQEP008LCX9-C2) is provided by a shared
+ * {@link FocusManager}: Play Game is focused by default, Tab and the arrow
+ * keys cycle focus among the three controls (wrapping), and Enter/Space
+ * activate the focused control. Pointer handlers are unchanged (keyboard
+ * support is additive).
  *
  * Styling follows the neon-cyan / dark background palette from the GDD
  * colour scheme (§7.1).
@@ -14,6 +22,7 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { FocusManager } from '../utils/focusManager';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
@@ -44,11 +53,20 @@ export function resumeAudioContext(
  * Main menu scene — the entry point for the playable game.
  */
 export class MenuScene extends Phaser.Scene {
+  /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
+  private focusManager = new FocusManager();
+
+  /** The focusable controls in focus order (label + text object). */
+  private controls: { label: string; text: Phaser.GameObjects.Text }[] = [];
+
   constructor() {
     super('MenuScene');
   }
 
   create(): void {
+    this.focusManager = new FocusManager();
+    this.controls = [];
+
     // ── Background ───────────────────────────────────────────────
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
 
@@ -62,7 +80,7 @@ export class MenuScene extends Phaser.Scene {
     // ── Play Game button ─────────────────────────────────────────
     const playButton = this.add.text(
       GAME_WIDTH / 2,
-      260,
+      220,
       '▶  Play Game',
       {
         fontFamily: 'monospace',
@@ -81,18 +99,79 @@ export class MenuScene extends Phaser.Scene {
       playButton.setStyle({ color: MENU_TEXT_COLOR });
     });
 
-    // Play Game click handler: initialise audio + start game scene
-    // Play Game click handler: initialise audio + start game scene
     playButton.on('pointerdown', () => {
       // Initialise the Web Audio context on user gesture (autoplay policy).
       resumeAudioContext(this.sound);
       this.scene.start('PlayScene');
     });
 
-    // ── Gym Scene Index button (dev tool) ────────────────────────
-    const devButton = this.add.text(
+    this.controls.push({ label: '▶  Play Game', text: playButton });
+
+    // ── Settings button ───────────────────────────────────────
+    // Opens the same settings screen as the pause menu, before starting a
+    // game (parent AH-0MU9LPZ0G0015292 AC6). Initialising the audio
+    // context on the gesture keeps GDD §6.7 autoplay compliance intact.
+    const settingsButton = this.add.text(
+      GAME_WIDTH / 2,
+      280,
+      '⚙  Settings',
+      {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 14, y: 7 },
+      },
+    ).setOrigin(0.5);
+    settingsButton.setInteractive({ useHandCursor: true });
+
+    settingsButton.on('pointerover', () => {
+      settingsButton.setStyle({ color: '#88ffff' });
+    });
+    settingsButton.on('pointerout', () => {
+      settingsButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    settingsButton.on('pointerdown', () => {
+      resumeAudioContext(this.sound);
+      this.scene.start('SettingsScene', { origin: 'MenuScene' });
+    });
+
+    this.controls.push({ label: '⚙  Settings', text: settingsButton });
+
+    // ── Leaderboard button ───────────────────────────────────────
+    // Opens the shared, full leaderboard view (AH-0MU9LJ52C00613RX).
+    const leaderboardButton = this.add.text(
       GAME_WIDTH / 2,
       340,
+      '🏆  Leaderboard',
+      {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 14, y: 7 },
+      },
+    ).setOrigin(0.5);
+    leaderboardButton.setInteractive({ useHandCursor: true });
+
+    leaderboardButton.on('pointerover', () => {
+      leaderboardButton.setStyle({ color: '#88ffff' });
+    });
+    leaderboardButton.on('pointerout', () => {
+      leaderboardButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    leaderboardButton.on('pointerdown', () => {
+      this.scene.start('LeaderboardScene');
+    });
+
+    this.controls.push({ label: '🏆  Leaderboard', text: leaderboardButton });
+
+    // ── Gym Scene Index button (dev tool) ────────────────────────
+    const devButton = this.add.text(
+      GAME_WIDTH - 16,
+      GAME_HEIGHT - 12,
       '⚙  Gym Scene Index (dev)',
       {
         fontFamily: 'monospace',
@@ -101,7 +180,7 @@ export class MenuScene extends Phaser.Scene {
         backgroundColor: '#1a1a1a',
         padding: { x: 12, y: 6 },
       },
-    ).setOrigin(0.5);
+    ).setOrigin(1, 1);
     devButton.setInteractive({ useHandCursor: true });
 
     devButton.on('pointerover', () => {
@@ -115,11 +194,47 @@ export class MenuScene extends Phaser.Scene {
       this.scene.start('GymIndex');
     });
 
+    this.controls.push({ label: '⚙  Gym Scene Index (dev)', text: devButton });
+
     // ── Subtitle ─────────────────────────────────────────────────
-    this.add.text(GAME_WIDTH / 2, 420, 'Defeat 5 levels then the Central AI', {
+    this.add.text(GAME_WIDTH / 2, 450, 'Defeat 5 levels then the Central AI', {
       fontFamily: 'monospace',
       fontSize: '14px',
       color: '#444444',
     }).setOrigin(0.5);
+
+    // ── Keyboard focus (AH-0MU9LKQEP008LCX9-C2) ──────────────────
+    // Register controls in visual order; the first (Play Game) is focused
+    // by default. The action callbacks mirror the pointerdown handlers so
+    // activation behaves identically for keyboard and pointer input. The
+    // shared FocusManager owns Tab / arrow cycling and Enter / Space
+    // activation — the scene contains no ad-hoc key routing.
+    this.focusManager.register(playButton, () => {
+      resumeAudioContext(this.sound);
+      this.scene.start('PlayScene');
+    });
+    this.focusManager.register(settingsButton, () => {
+      resumeAudioContext(this.sound);
+      this.scene.start('SettingsScene', { origin: 'MenuScene' });
+    });
+    this.focusManager.register(leaderboardButton, () => {
+      this.scene.start('LeaderboardScene');
+    });
+    this.focusManager.register(devButton, () => {
+      this.scene.start('GymIndex');
+    });
+    this.focusManager.attachKeyboard(this);
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.focusManager.shutdown();
+    });
+  }
+
+  // ── Public query helpers (unit-testable) ───────────────────────
+
+  /** Display label of the currently focused control ('' when none). */
+  getFocusedLabel(): string {
+    const index = this.focusManager.getFocusedIndex();
+    return this.controls[index]?.label ?? '';
   }
 }
