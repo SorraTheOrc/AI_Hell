@@ -62,6 +62,23 @@ export const BULLET_SPEED = 350;
 /** Per-bullet perpendicular offset (px) for the Dual weapon's side-by-side pattern. */
 export const DUAL_SIDE_OFFSET = 8;
 
+/**
+ * Per-weapon bullet lifetime (seconds). Bullets wrap across all four screen
+ * edges while alive and are destroyed once this many seconds elapse; the
+ * effective range is therefore `BULLET_SPEED × bulletLifetime`. Each weapon
+ * is tuned independently (AH-0MU960UTE001PTV0).
+ */
+export const WEAPON_BULLET_LIFETIME = {
+  /** Cannon — long reach for the default weapon (~525 px). */
+  cannon: 1.5,
+  /** Spread — slightly shorter than cannon (~490 px). */
+  spread: 1.4,
+  /** Dual — matches spread (~490 px). */
+  dual: 1.4,
+  /** Rapid — short reach balanced by its high fire rate (~262 px). */
+  rapid: 0.75,
+} as const;
+
 // ── Bullet visual definitions ───────────────────────────────────────
 
 /** Bullet colour constants — neon palette matching the project aesthetic. */
@@ -112,6 +129,12 @@ export interface WeaponDefinition {
   bulletShape: BulletShape;
   /** Bullet radius multiplier relative to the default. */
   bulletSize: number;
+  /**
+   * Bullet lifetime in seconds. The bullet wraps across all four screen
+   * edges while alive and expires once this elapses; effective range is
+   * `BULLET_SPEED × bulletLifetime` (AH-0MU960UTE001PTV0).
+   */
+  bulletLifetime: number;
 }
 
 // ── Weapon catalogue ────────────────────────────────────────────────
@@ -132,6 +155,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletColor: BULLET_COLORS.cannon,
     bulletShape: 'circle',
     bulletSize: 1,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.cannon,
   },
   spread: {
     id: 'spread',
@@ -141,6 +165,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletColor: BULLET_COLORS.spread,
     bulletShape: 'circle',
     bulletSize: 0.8,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.spread,
   },
   dual: {
     id: 'dual',
@@ -154,6 +179,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletColor: BULLET_COLORS.dual,
     bulletShape: 'line',
     bulletSize: 0.9,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.dual,
   },
   rapid: {
     id: 'rapid',
@@ -163,6 +189,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletColor: BULLET_COLORS.rapid,
     bulletShape: 'circle',
     bulletSize: 0.7,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
   },
 };
 

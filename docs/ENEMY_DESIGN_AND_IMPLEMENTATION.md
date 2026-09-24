@@ -27,7 +27,14 @@ All enemies are **1 HP** (single bullet destroys them, except the Boss which is
 multi-hit) and **never collide with each other** (GDD §2.6) — no collision
 system is installed in the gym scenes.
 
-### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN)
+### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
+
+Enemy tuning is data, not code. Each archetype is a row in the committed
+`src/data/enemy-configs.csv`; at boot the config store parses/validates it into
+typed `EnemyConfig` objects and the scenes/factory consume the synchronous
+loaders. Retuning an enemy — or adding a new one — is a CSV edit (or a gym
+**Save** / **Save As…**), with no TypeScript change required. See §8 for the
+full schema, codec, config-store and Vite-plugin reference.
 
 ### 1.2 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
 
@@ -75,20 +82,29 @@ children) — so EXPLODE, player bullets and body-rams all cascade splits and
 the wipe→respawn cycle runs only once the whole chain is cleared.
 
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
-(`src/core/enemyConfig.ts`) — a JSON-serializable record of formation,
-visual and shot tuning. Six **seed configs** (scout/diver/tank/phaser/swarm/boss)
-mirror the former hard-coded constants and are the built-in defaults. Every
-other behaviour — formation geometry, bullet dispatch, gym index listing —
-derives from the config + small registries instead of per-enemy scene
-classes.
+(`src/core/configTypes.ts`) — a record of formation, visual and shot tuning.
+Seven **seed configs** (scout/diver/tank/phaser/swarm/boss/asteroid) live in
+`src/core/configDefaults.ts` as the built-in fallbacks. Every other behaviour
+— formation geometry, bullet dispatch, gym index listing — derives from the
+config + small registries instead of per-enemy scene classes.
 
-**Persistence.** Each enemy has its own localStorage entry under the
-namespace `ai-hell-enemy-config:<key>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
-Corrupt or missing storage falls back to seed defaults without throwing;
-partial saves are merged over defaults so unknown forward-compatible fields
-are preserved. The set of available keys is the union of the seed registry
-and any stored suffixes (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()`),
-so a new `Save As…` entry becomes discoverable without code changes.
+**Persistence.** Each archetype is one row in the committed CSV
+`src/data/enemy-configs.csv` (the single source of truth). At boot the entry
+point (`src/core/boot.ts`) awaits `loadConfigs()` before the Phaser game is
+constructed, and the config store (`src/core/configStore.ts`) reads, parses and
+validates it; a missing or malformed file falls back to the seed defaults
+without throwing. A row that is
+partly invalid coerces to defaults (malformed numbers → `0`, invalid hex →
+`0x000000`, invalid enums → the default enum). For seed keys the registry
+`displayName` is **authoritative**, so a stale CSV label (for example an older
+"Boss") cannot shadow a rename; only `Save As…` (a new key) introduces a new
+label. The available keys come from the CSV-backed registry
+(`listEnemyConfigKeys()` / `loadAllEnemyConfigs()`), so a new `Save As…` row
+becomes discoverable without code changes.
+
+> **Breaking change:** `localStorage` is no longer the source of truth for
+> config values. The old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config`
+> entries are ignored (leaderboard and settings still use `localStorage`).
 
 **Gym surface.** `GymEnemies` (`src/scenes/gym/GymEnemies.ts`,
 key `GymEnemies`) is the **single reusable gym scene**. It is parameterized
@@ -96,7 +112,15 @@ by `{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
 formation/bullet behaviour from the loaded config. The gym index (`GymIndex`)
 enumerates enemy configs — one clickable row per config (label
 `displayName`) that boots `GymEnemies` with that `enemyKey` — rather than
-hard-coded per-enemy scenes. Legacy `GymScout`/`GymDiver`/… scenes have been
+hard-coded per-enemy scenes. The index renders three columns — plain scenes,
+**ENEMIES** (non-boss configs) and **Bosses** — and both boss rows live in
+the right-hand **Bosses** column: the `boss` config row labelled
+**"Boss Swarm"** (it is a plain single-enemy archetype, not the multi-phase
+Central AI) routed to `GymEnemies`, and the dedicated `GymBoss` scene
+labelled **"Boss"** that boots `GymBoss` directly. `GymBoss` is excluded
+from the plain scene list (left column) so the real boss is not duplicated
+as a bare scene (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Legacy
+`GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymEnemies.test.ts`
 keyed by `enemyKey`.
 
@@ -106,9 +130,25 @@ keyed by `enemyKey`.
 
 ### 2.1 What the core library is
 
-`src/scenes/gym/core/GymFormationScene.ts` is a generic
-`Phaser.Scene` base class (type parameters `<TEntity, TBullet>`) that
-encapsulates everything the first three enemy gym scenes duplicated:
+`src/scenes/gym/core/GymFormationScene.ts` is a generic base class that
+**extends the shared `src/scenes/core/CombatScene.ts` abstract combat
+core** (type parameters `<TEntity, TBullet>`) and encapsulates everything
+the first three enemy gym scenes duplicated:
+
+- **Shared combat/lifecycle core** — inherited from `CombatScene`
+  (AH-0MUD8E015004C4JO), the same base `PlayScene` extends. It defines the
+  eight combat/lifecycle template methods exactly once
+  (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`,
+  `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`,
+  `_readPlayerInput`) and dispatches to overridable hooks. The gym supplies
+  its participant accessors (`getEnemyEntities()` → `entities`,
+  `getEnemyBullets()`/`setEnemyBullets()` → `bullets`) and its hooks
+  (`canTeleport()` → `powerUpsEnabled`, `getEnemyBulletRadius()` →
+  `config.bulletHitRadius`, `onEnemyDestroyed()` →
+  `config.onEntityDestroyed`, teleport-radius hooks); the game supplies its
+  own. Bullet-vs-bullet impact feedback is likewise hosted once in the
+  shared path. The shipped game and the gyms therefore cannot diverge on
+  collision, auto-fire, drops, teleport or player-hit behaviour.
 
 - **Formation spawn** — builds offsets, creates each entity at
   `(baseX + col * spacingX, baseY + row * spacingY)`, and calls
@@ -117,7 +157,7 @@ encapsulates everything the first three enemy gym scenes duplicated:
   line, the bottom hint line, and the shared `← INDEX` back button.
 - **Update loop** — formation drift + respawn off the left edge,
   per-entity `applyFormationPosition()`, fire-bullet collection, bullet
-  advance, and off-screen bullet removal.
+  advance with four-edge wrap, and lifetime-based bullet expiry.
 - **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
   enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
   `destroySelf()` — mid-explosion counts), the base scene starts a
@@ -401,7 +441,8 @@ When a new enemy needs the base scene to behave differently:
   needed; assert offset counts and symmetry.
 - **Base class** (`src/scenes/gym/core/GymFormationScene.test.ts`) — a stub
   `Container` entity + stub bullets exercise spawn, HUD, drift/respawn,
-  explode, shoot toggle, bullet advance, and off-screen removal.
+  explode, shoot toggle, bullet advance with four-edge wrap, and
+  lifetime-based expiry.
 - **Per-scene** (`src/scenes/gym/GymScout.test.ts`, `GymDiver.test.ts`,
   `GymTank.test.ts`, `GymPhaser.test.ts`, `GymSwarm.test.ts`) —
   behaviour-preserving tests that must pass unchanged after a refactor;
@@ -434,7 +475,8 @@ combat testbeds.
 - **Input:** the base scene binds the cursor keys (arrows) AND `W/A/S/D`,
   clamped to the game bounds; `maxSpeed` 175 px/s. The bound keys are
   routed through the player's **saved control scheme** — keyed off
-  `player.getScheme()` inside `GymFormationScene._readPlayerInput`, which
+  `player.getScheme()` inside the shared
+  `CombatScene._readPlayerInput` (inherited by `GymFormationScene`), which
   dispatches to `FourDirectionalInputHandler` (default) or
   `AsteroidsInputHandler` (both in `src/utils/movementModel.ts`):
   - **4-directional scheme (default):** arrows and `W/A/S/D` move the ship
@@ -442,27 +484,30 @@ combat testbeds.
   - **Asteroids scheme:** `W`/Arrow Up thrust the ship **forward** (in its
     current facing direction), `A`/Arrow Left turn it **left**, and
     `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
-  `GymPowerUps` and `GymWeapons` implement the same scheme-aware routing in
+  `GymPowerUpsUtility` and `GymWeapons` implement the same scheme-aware routing in
   their own `_readInput` methods.
 
   > **Data-driven successor:** the per-scene wiring described in this §7
-  > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN):
-  > enemy tuning also lives in JSON (`EnemyConfig` under
-  > `ai-hell-enemy-config:<key>`) and is exercised through the single
-  > `GymEnemies` scene (see §1.1 / §8). The per-scene `player` seam itself
-  > is unchanged — `GymEnemies` reuses it.
+  > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
+  > CSV AH-0MTZWZ9TE009CVUA): enemy tuning also lives in
+  > `src/data/enemy-configs.csv` (`EnemyConfig`) and is exercised through
+  > the single `GymEnemies` scene (see §1.1 / §8). The per-scene `player`
+  > seam itself is unchanged — `GymEnemies` reuses it.
 - **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
   `PlayerBullet`s toward its current heading.
 
 ### 7.2 Collisions & respawn
 
-Resolved in the base class `GymFormationScene._handleCollisions` each tick:
+Resolved in the shared `CombatScene._handleCollisions` (inherited by
+`GymFormationScene`; the same path `PlayScene` uses) each tick:
 
 1. Player bullets → enemies (hit radius 20): enemy destroyed (`alive=false`,
    1 HP) + explosion SFX; the bullet is consumed.
 2. Player bullets → enemy bullets (radii 3 + 6): both consumed (mutual
    destruction — bullets pass through *aliens* per GDD §2.6, but not each
-   other).
+   other). The shared `onBulletVsBulletImpact` hook then plays the dedicated
+   `playBulletDestructionSound()` cue and spawns the small impact flash
+   (`src/vfx/bulletImpact.ts`).
 3. Enemy bullets → player hull (`SHIP_SIZE/2` = 10 + bullet 6): ship
    explosion + SFX, `getPlayerHitCount()` increments, the ship respawns
    **in-place** at its current position and orientation (velocity zeroed) with
@@ -527,7 +572,7 @@ convention and will follow it when built: spawn the player via the same
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars). localStorage suffix. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
+| `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars) and CSV row identity. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
 | `displayName` | `string` | Human label shown in the index and `GymEnemies` hint. |
 | `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single'` — selects the builder in `src/utils/formations.ts`. |
 | `count` | `number` | Formation size. |
@@ -542,19 +587,55 @@ convention and will follow it when built: spawn the player via the same
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | px/s. |
 | `burstCount` | `number` | Burst / radial spoke count. |
-| `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. |
+| `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. **Not representable in a flat CSV row and dropped for CSV-sourced configs** (documented limitation). |
 
-Seed defaults live in `DEFAULT_ENEMY_CONFIGS` (scout/diver/tank/phaser/swarm/boss);
-`DEFAULT_ENEMY_KEYS` is the seed key set. `createEnemyFromConfig()` in
+Types live in `src/core/configTypes.ts`; seed fallbacks in
+`src/core/configDefaults.ts` (`DEFAULT_ENEMY_CONFIGS` scout/diver/tank/phaser/
+swarm/boss/asteroid, `DEFAULT_ENEMY_KEYS`). `createEnemyFromConfig()` in
 `src/entities/enemyFactory.ts` maps a config to its entity class (unknown keys
 fall back to Scout; Swarm's `clusterIndex` is `row / SWARM_CLUSTER_ROW_STRIDE`).
 
-### 8.2 Storage keys
+### 8.2 CSV files, codec & config store
 
-- Per-enemy localStorage key: `ai-hell-enemy-config:<slug>` (`ENEMY_CONFIG_STORAGE_PREFIX`).
-- Namespaced separately from `ai-hell-ship-config` (ship tuning).
-- Helpers: `loadEnemyConfig(key)` (fallback without throw), `saveEnemyConfig(cfg)`,
-  `deleteEnemyConfig(key)`, `listEnemyConfigKeys()`, `loadAllEnemyConfigs()`.
+The CSV files are the **single source of truth** for enemy and ship tuning:
+
+- `src/data/enemy-configs.csv` — one row per enemy archetype.
+- `src/data/ship-config.csv` — the single player-ship row.
+- `enemy-configs.csv` starts with a `#` comment header listing every column,
+  the enum values and how to add an entry. The header is optional and is **not**
+  rewritten by the dev save path, so `ship-config.csv` is currently headerless.
+  Colours are `0xRRGGBB`; `formationKind` and
+  `shotPattern` are the plain enum strings; numeric columns are plain numbers.
+
+Supporting modules:
+
+- `src/core/csv.ts` — hand-rolled RFC 4180 parser/serialiser plus typed
+  coercion and validation. `parseCsvRows(csv)` → `Record<string, string>[]`
+  (skips `#` comments/blank rows, strips a leading BOM);
+  `coerceEnemyConfig` / `coerceShipConfig` convert strings to typed fields
+  (missing → default, malformed → `0` / `0x000000`); `validateEnemyConfig` /
+  `validateShipConfig` return `{ ok, errors }`; `serializeEnemyConfigs` /
+  `serializeShipConfigs` round-trip back. `ENEMY_COLUMN_ORDER` /
+  `SHIP_COLUMN_ORDER` are the stable exported column orders.
+- `src/core/configStore.ts` — in-memory registry. `loadConfigs()` (async,
+  awaited by `src/core/boot.ts` before the game/scenes are constructed) fetches
+  both CSVs through the dev plugin (or reads the bundled CSV in production),
+  parses/validates them and populates the registry;
+  a failed fetch falls back to `DEFAULT_ENEMY_CONFIGS` / `DEFAULT_CONFIG`
+  without throwing. `loadEnemyConfig` / `loadShipConfig` / `listEnemyConfigKeys`
+  / `loadAllEnemyConfigs` are synchronous reads of the registry.
+- `vite/plugins/configCsvPlugin.ts` — dev-only Vite middleware. `GET
+  /api/csv/src/data/<file>.csv` returns the file; `PUT` upserts the supplied
+  row(s) after validation and writes atomically (temp file + rename).
+  `?mode=append` rejects a duplicate key with **409**. Registered in
+  `vite.config.ts`; `apply: 'serve'` keeps it out of production builds.
+- `src/core/bundledConfig.ts` — the build-time `?raw` CSV imports used by the
+  production read-only path.
+
+Public loader helpers (unchanged signatures): `loadEnemyConfig(key)`
+(fallback without throw), `saveEnemyConfig(cfg)` (async, returns
+`{ ok, reason? }`), `listEnemyConfigKeys()`, `loadAllEnemyConfigs()`. There is
+**no `deleteEnemyConfig`** any more — remove a row by editing the CSV.
 
 ### 8.3 FormationKind & shot-pattern registries
 
@@ -594,21 +675,34 @@ The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
 `count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
-plus **Save** (overwrite active key) and **Save As…** (sanitize → validate →
-duplicate check via `listEnemyConfigKeys()`, displayName = raw input).
+plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
+plugin) and **Save As…** (sanitize → validate → duplicate check via
+`listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).
+Both flows are async: the panel shows `Saving…`, then `Saved`/`Saved as <key>`
+or a red **`Save failed — …`** status (`enemy-gym-save-status`). In production
+builds writes are unavailable and the status reports it. After a successful
+write the scene re-reads the config from the store.
 Live `input`/`change` events patch `config.buildOffsets/spacing/drift/start/count`
 and best-effort mutate entity `_*` fields. Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
 Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
-`data-config` / `data-config-value` on controls.
+`data-config` / `data-config-value` on controls. The panel also shows a
+**live difficulty readout** (id `enemy-gym-difficulty`) that recomputes the
+0–100 archetype score on every control change — see §9.
 
 The gym index discovers enemies via `src/utils/enemyGymDiscovery.ts`
 (`discoverEnemyGymEntries()` → `{ key: 'GymEnemies:<slug>', label,
- enemyKey }[]`, sorted by label) and routes each row to
-`scene.start('GymEnemies', { enemyKey })`. Bare `GymEnemies` is excluded
-from the plain scene list; Save As enemies appear on next index load
-without code changes.
+ enemyKey }[]`, sorted by label) and routes each non-boss config row to
+`scene.start('GymEnemies', { enemyKey })`. The gym index lays out three
+columns: plain scenes (left), **ENEMIES** (non-boss configs) and **Bosses**
+(right). Both boss rows sit in the **Bosses** column — the plain `boss`
+config archetype labelled **"Boss Swarm"** (routed to `GymEnemies`) and the
+dedicated **"Boss"** row (scene key `GymBoss`) that boots the multi-phase
+`GymBoss` scene directly. Bare `GymEnemies` is excluded from the plain scene
+list, and `GymBoss` is likewise excluded there so the real boss is not
+duplicated (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Save As
+enemies appear on next index load without code changes.
 
 ### 8.6 Adding a new enemy (convention)
 
@@ -618,22 +712,137 @@ without code changes.
    live-apply without reload.
 2. **Save As…** Enter a new name (e.g. `My New Enemy`) and click **Save
    As…**. The name is slugified (`my-new-enemy`), validated
-   (`isValidEnemyKey`, ≤40 chars, hyphen slug, unique), and stored as
-   `ai-hell-enemy-config:my-new-enemy` with that displayName.
+   (`isValidEnemyKey`, ≤40 chars, hyphen slug, unique), and a new row with
+   that displayName is appended to `src/data/enemy-configs.csv`.
 3. **Appears in the index.** Reload / return to the gym index — the new
    entry appears under the **ENEMIES** section without editing
-   `GymIndex.ts`.
+   `GymIndex.ts` (the CSV is re-read after the write).
 4. **Code archetype (when a truly new entity is needed).** If the enemy
    needs new movement/shot code beyond the existing registries: add a new
    entity in `src/entities/<Name>.ts` with the same seam (`size? color? …`),
    a builder in `src/utils/formations.ts` or a shot pattern in
    `src/utils/enemyShotPatterns.ts` with tests, wire it in
-   `src/entities/enemyFactory.ts`, and add a seed entry to
-   `DEFAULT_ENEMY_CONFIGS` in `src/core/enemyConfig.ts`.
-5. **Storage hygiene.** `npm test` clears `localStorage` between suites;
-   the gym panel removes itself on `SHUTDOWN`. Corrupt storage for a key
-   falls back to that key's seed/defaults — the index skips only when
-   `loadAllEnemyConfigs()` itself cannot run.
+   `src/entities/enemyFactory.ts`, and add a seed fallback to
+   `DEFAULT_ENEMY_CONFIGS` in `src/core/configDefaults.ts`.
+5. **CSV hygiene.** The committed CSV is the source of truth; a missing or
+   malformed file (or a failed dev fetch) falls back to the seed defaults
+   without throwing, and `npm test` resets the registry between suites. The
+   dev plugin validates every write before touching the file and writes
+   atomically, so an interrupted write cannot corrupt the committed CSV.
+
+## 9. Enemy difficulty scoring (AH-0MTZWZ7MC002B01K)
+
+A pure, deterministic, **absolute** 0–100 difficulty index for enemies,
+waves and levels. It exists so level authoring is *measured* rather than
+guessed: a designer can compare two archetypes, a reviewer can audit the
+campaign ordering, and a regression test pins the intended progression.
+
+- **Module:** `src/core/enemyDifficulty.ts` (no Phaser, no browser globals;
+  runs under Vitest/happy-dom).
+- **Unit tests:** `src/core/enemyDifficulty.test.ts` (monotonicity per axis,
+  `shotPattern === 'none'` independence, Asteroid split chain, wave mix).
+- **Calibration test:** `src/waves/enemyDifficulty.campaign.test.ts` (pins the
+  non-decreasing ordering of the five built-in `LEVELS`).
+
+### 9.1 The three functions
+
+| Function | Scores | Returns |
+|----------|--------|---------|
+| `enemyDifficulty(config)` | one `EnemyConfig` archetype | `{ score, breakdown, factors }` |
+| `waveDifficulty(wave)` | one `WaveDefinition` (count-sensitive total threat) | `{ score, breakdown, factors }` |
+| `levelDifficulty(waves)` | a level (ordered waves) | `{ score, breakdown, factors }` |
+
+The score is **absolute** (Producer decision Q3): it depends only on enemy
+properties — never on player HP, lives, weapons or power-ups. Same input ⇒
+same output; no game instance is required. Scores are fractional (0–100);
+rounding is a presentation concern only.
+
+### 9.2 Factors, weights and ranges
+
+Each factor is clamped to its range and linearly normalised to 0–100, then the
+weighted mean is taken (`WEIGHT_SUM` normalisation keeps the total 0–100). All
+constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
+
+| Factor | Weight | Range | Notes |
+|--------|-------:|-------|-------|
+| `count` | 25 | 1–200 | Enemies in the formation (ceiling = gym slider max). |
+| `driftSpeed` | 8 | 0–200 px/s | Formation movement speed. |
+| `shotPattern` | 15 | ordinal 0–5 | Dodging difficulty: none 0, aimed 1, coordinated 2, spread 3, radial 4, orbital 5. |
+| `fireInterval` | 12 | 100–5000 ms | **Inverted** (fire rate) — a shorter interval scores higher. |
+| `shotProbability` | 5 | 0–1 | Chance an enemy fires per cycle. |
+| `bulletSpeed` | 5 | 40–600 px/s | Bullet velocity. |
+| `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
+| `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
+| `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
+
+**Firing factors contribute zero** when `shotPattern === 'none'` (e.g. the
+Asteroid) or when `waveDifficulty` scores a wave with `shootEnabled: false`
+(GDD §2.4 — Levels 1–3).
+
+### 9.3 Composition
+
+- **Wave** (count-sensitive total threat):
+
+  `totalThreat = Σ enemyScore × count`, then
+  `score = 100 × totalThreat / (totalThreat + 900)`.
+
+  The saturating (diminishing-returns) curve is strictly increasing in total
+  threat, so the score rises with group count, enemy count and mix, while a
+  wave of many weak enemies does not swamp a wave of few strong ones. The
+  Asteroid split chain is represented by the `asteroidSplit` factor, so counts
+  are used verbatim (no double counting).
+
+- **Level** (content quality): the **enemy-count-weighted mean** of the
+  per-enemy difficulty across every group in every wave. Weighting by count
+  means the level score reflects the *average threat of the content*, which
+  is what makes the campaign progression meaningful: Level 5
+  (**Predictable Death**) is uniformly high-threat even though it has
+  *fewer* enemies than earlier levels. Total wave threat remains available
+  from `waveDifficulty`.
+
+- **Breakdowns:** every function returns `breakdown` (weighted per-factor
+  contributions for enemies; per-group or per-wave scores for waves/levels)
+  and `factors` (raw normalised values and derived counts) so any score can
+  be explained.
+
+### 9.4 Recomputed campaign table (GDD §3.2)
+
+Scores computed from the real `LEVELS` in `src/waves/Formations.ts`. The
+ordering is **non-decreasing** and enforced by
+`src/waves/enemyDifficulty.campaign.test.ts` (AC4):
+
+| Level | Theme | Difficulty (0–100) |
+|-------|-------|-------------------:|
+| 1 | Entry | 7.17 |
+| 2 | Descent | 12.70 |
+| 3 | The Core | 14.28 |
+| 4 | Firestorm | 23.14 |
+| 5 | Predictable Death | 31.92 |
+
+Per-archetype scores for the seed enemies (with firing where the archetype
+fires): Scout 14.03, Diver 23.18, Tank 29.09, Phaser 31.85, Swarm 20.17,
+Boss Swarm 22.50, Asteroid 10.00 (split chain only — it never fires).
+
+> **Tuning guidance.** The weights are subjective by nature; the index is a
+> relative, monotonic ordering, not an absolute truth. Tests pin *ordering*
+> and *monotonicity*, not the magic numbers. Any weight change must be
+> re-checked against both the per-axis monotonicity tests and the campaign
+> calibration test.
+
+### 9.5 Where it surfaces
+
+- **Enemy Gym editor panel:** the live `enemy-gym-difficulty` readout shows the
+  edited archetype's score and updates on every slider/select/colour change
+  (`GymEnemies._updateDifficulty`).
+- **Library:** `enemyDifficulty` / `waveDifficulty` / `levelDifficulty` are
+  importable for scripts, docs tables and future tooling.
+
+### 9.6 Out of scope
+
+A runtime **auto-sequencer** that picks enemies to hit a target difficulty
+curve is explicitly deferred (Producer Q4) and tracked separately as
+`AH-0MUDIWETP003XC3X` (`discovered-from` AH-0MTZWZ7MC002B01K). This module is
+the design-time primitive such work would build on.
 
 ## Audio Best Practices
 

@@ -62,6 +62,12 @@ export const BOSS_BULLET_SIZE = 4;
 
 /** Boss bullet base speed in px/s. */
 export const BOSS_BULLET_SPEED = 160;
+/**
+ * Boss bullet lifetime in seconds. Bullets wrap across all four screen
+ * edges while alive and expire once this elapses (AH-0MU960UTE001PTV0).
+ * Matches the "Boss Swarm" enemy-config default (2.0 s, ≈320 px at 160 px/s).
+ */
+export const BOSS_BULLET_LIFETIME = 2.0;
 /** Desperation speed multiplier (1.6×). */
 const BOSS_DESPERATION_SPEED_MULT = 1.6;
 
@@ -162,6 +168,10 @@ export interface BossBullet {
   readonly color: number;
   vx: number;
   vy: number;
+  /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
+  lifetime: number;
+  /** Elapsed time since creation (seconds). */
+  elapsed: number;
   /** Whether this is a pulse wave (traveling ring). */
   isPulseWave?: boolean;
   /** Current radius of a pulse wave (used for ring animation). */
@@ -498,6 +508,8 @@ export class Boss extends Phaser.GameObjects.Container {
       color: BOSS_CORE_COLOR,
       vx: 0,
       vy: 0,
+      lifetime: BOSS_BULLET_LIFETIME,
+      elapsed: 0,
       isPulseWave: true,
       pulseRadius: BOSS_CORE_GLOW_RADIUS,
     });
@@ -570,6 +582,8 @@ export class Boss extends Phaser.GameObjects.Container {
       color: BOSS_CORE_COLOR,
       vx: 0,
       vy: 0,
+      lifetime: BOSS_BULLET_LIFETIME,
+      elapsed: 0,
       isPulseWave: true,
       pulseRadius: BOSS_CORE_GLOW_RADIUS,
     });
@@ -645,6 +659,8 @@ export class Boss extends Phaser.GameObjects.Container {
       color,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
+      lifetime: BOSS_BULLET_LIFETIME,
+      elapsed: 0,
     };
   }
 

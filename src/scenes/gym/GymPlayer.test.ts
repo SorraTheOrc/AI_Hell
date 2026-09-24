@@ -3,17 +3,27 @@
  * inputs + Save button). The panel is a plain-DOM overlay beside the
  * canvas, so tests assert via document.querySelector in happy-dom.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
-import {
-  CONFIG_STORAGE_KEY,
-  DEFAULT_CONFIG,
-  loadShipConfig,
-  type ShipConfig,
-} from '../../core/config';
+import { DEFAULT_CONFIG, loadShipConfig, type ShipConfig } from '../../core/config';
+import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+
+// Simulate the dev-server CSV plugin: ship writes update the registry.
+vi.mock('../../core/configStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/configStore')>();
+  return {
+    ...actual,
+    saveShipConfig: vi.fn(
+      async (config: Parameters<typeof actual.saveShipConfig>[0]) => {
+        actual.seedConfigStore(actual.loadAllEnemyConfigs(), config);
+        return { ok: true };
+      },
+    ),
+  };
+});
 import { Player } from '../../entities/Player';
 import { GymPlayer, SCHEME_TOGGLE_ID } from './GymPlayer';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -24,6 +34,9 @@ describe('GymPlayer ship config panel', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
     window.localStorage.clear();
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore([], DEFAULT_CONFIG);
   });
 
   afterEach(() => {
@@ -95,7 +108,7 @@ describe('GymPlayer ship config panel', () => {
     // Scheme toggle button (AC3).
     const toggle = p!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement;
     expect(toggle).not.toBeNull();
-    expect(toggle.dataset['scheme']).toBe('fourDirectional');
+    expect(toggle.dataset['scheme']).toBe('asteroids');
 
     const colours = p!.querySelectorAll('input[type="color"][data-config]');
     expect(colours.length).toBe(3);
@@ -137,7 +150,7 @@ describe('GymPlayer ship config panel', () => {
       shipSize: 35,
       shipColor: 0xff0000,
     };
-    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(saved));
+    seedConfigStore([], saved);
 
     await bootPlayer();
 
@@ -154,6 +167,10 @@ describe('GymPlayer ship config panel', () => {
 
     const player = playerOf(scene);
     expect(player).toBeDefined();
+
+    // Default scheme is Asteroids; switch to fourDirectional so the
+    // up-arrow thrust below moves the ship.
+    (panel()!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement).click();
 
     // Drag the maxSpeed slider to 50.
     setControl('maxSpeed', '50');
@@ -180,9 +197,9 @@ describe('GymPlayer ship config panel', () => {
     ) as HTMLButtonElement;
     saveButton.click();
 
-    // Read back from the persisted storage.
+    // Read back from the store after the async write settles.
+    await vi.waitFor(() => expect(loadShipConfig().maxSpeed).toBe(90));
     const persisted = loadShipConfig();
-    expect(persisted.maxSpeed).toBe(90);
     expect(persisted.shipSize).toBe(28);
     expect(persisted.frictionDeceleration).toBe(250);
 
@@ -196,20 +213,20 @@ describe('GymPlayer ship config panel', () => {
   it('toggles the control scheme via the button and applies it to the player (AC3)', async () => {
     const scene = await bootPlayer();
     const player = playerOf(scene);
-    expect(player!.getScheme()).toBe('fourDirectional');
+    expect(player!.getScheme()).toBe('asteroids');
 
     const toggle = panel()!.querySelector(
       `#${SCHEME_TOGGLE_ID}`,
     ) as HTMLButtonElement;
     toggle.click();
 
-    expect(toggle.dataset['scheme']).toBe('asteroids');
-    expect(toggle.textContent).toMatch(/asteroids/i);
-    expect(player!.getScheme()).toBe('asteroids');
+    expect(toggle.dataset['scheme']).toBe('fourDirectional');
+    expect(toggle.textContent).toMatch(/4-Directional/i);
+    expect(player!.getScheme()).toBe('fourDirectional');
 
     toggle.click();
-    expect(toggle.dataset['scheme']).toBe('fourDirectional');
-    expect(player!.getScheme()).toBe('fourDirectional');
+    expect(toggle.dataset['scheme']).toBe('asteroids');
+    expect(player!.getScheme()).toBe('asteroids');
   });
 
   it('applies the rotation-speed slider live in Asteroids mode (AC3)', async () => {
@@ -218,11 +235,7 @@ describe('GymPlayer ship config panel', () => {
     const player = playerOf(scene);
     expect(player).toBeDefined();
 
-    // Switch to Asteroids, then raise rotation speed to 6 rad/s.
-    const toggle = panel()!.querySelector(
-      `#${SCHEME_TOGGLE_ID}`,
-    ) as HTMLButtonElement;
-    toggle.click();
+    // Already in the default Asteroids scheme; raise rotation speed to 6 rad/s.
     setControl('asteroidsRotationSpeed', '6');
 
     // Turn right for 1s at 6 rad/s → facing ≈ 6 rad (34.4° short of 2π).
@@ -233,6 +246,7 @@ describe('GymPlayer ship config panel', () => {
   });
 
   it('persists the selected scheme and rotation speed on Save (AC4)', async () => {
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
     await bootPlayer();
 
     const toggle = panel()!.querySelector(
@@ -246,8 +260,8 @@ describe('GymPlayer ship config panel', () => {
     ) as HTMLButtonElement;
     saveButton.click();
 
+    await vi.waitFor(() => expect(loadShipConfig().controlScheme).toBe('asteroids'));
     const persisted = loadShipConfig();
-    expect(persisted.controlScheme).toBe('asteroids');
     expect(persisted.asteroidsRotationSpeed).toBe(5);
   });
 
@@ -257,7 +271,7 @@ describe('GymPlayer ship config panel', () => {
       controlScheme: 'asteroids',
       asteroidsRotationSpeed: 7,
     };
-    window.localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(saved));
+    seedConfigStore([], saved);
 
     await bootPlayer();
     await tick();
@@ -279,6 +293,10 @@ describe('GymPlayer ship config panel', () => {
 
     const player = playerOf(scene);
     expect(player).toBeDefined();
+
+    // Default scheme is Asteroids; switch to fourDirectional so the
+    // right-arrow thrust below accelerates the ship.
+    (panel()!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement).click();
 
     // Build up velocity with thrust (right) to the max-speed cap, then
     // release all inputs so the ship drifts freely.

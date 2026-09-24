@@ -1,10 +1,10 @@
 /**
- * Scene-level tests for the GymPowerUps gym (parent AC1/AC2/AC3 + child
+ * Scene-level tests for the GymPowerUpsUtility gym (parent AC1/AC2/AC3 + child
  * AC1–AC4): discovery by the gym index, scene boot + player ship with
  * thrust movement and screen-wrap, overlap collection applying effects,
  * and the shared ← INDEX back button.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -14,13 +14,22 @@ import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
-import { GymPowerUps } from './GymPowerUps';
+import * as collectAnimationModule from '../../powerups/collectAnimation';
+import { GymPowerUpsUtility } from './GymPowerUpsUtility';
 import {
   POWER_UP_DROP_SIZE,
   WEAPON_DROP_SIZE,
 } from '../../core/constants';
+import { DEFAULT_CONFIG } from '../../core/config';
+import { seedConfigStore } from '../../core/configStore';
 
-describe('GymPowerUps AC1: gym index discovery', () => {
+// These scene tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
+
+describe('GymPowerUpsUtility AC1: gym index discovery', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -30,25 +39,25 @@ describe('GymPowerUps AC1: gym index discovery', () => {
 
   it('is auto-discovered from the gym folder with label PowerUps', () => {
     const entries = discoverGymScenes(loadGymSceneModules());
-    const entry = entries.find((e) => e.key === 'GymPowerUps');
+    const entry = entries.find((e) => e.key === 'GymPowerUpsUtility');
     expect(entry).toBeDefined();
-    expect(entry!.label).toBe('PowerUps');
+    expect(entry!.label).toBe('PowerUpsUtility');
   });
 
   it('is listed by the real gym index', async () => {
     booted = await bootScene([GymIndex]);
     const index = booted!.scene as GymIndex;
-    expect(index.listedScenes.map((s) => s.key)).toContain('GymPowerUps');
-    expect(index.listedScenes.map((s) => s.label)).toContain('PowerUps');
+    expect(index.listedScenes.map((s) => s.key)).toContain('GymPowerUpsUtility');
+    expect(index.listedScenes.map((s) => s.label)).toContain('PowerUpsUtility');
   });
 
   it('registers the scene so the index can start it', async () => {
     booted = await bootScene([GymIndex]);
-    expect(booted!.game.scene.getScene('GymPowerUps')).not.toBeNull();
+    expect(booted!.game.scene.getScene('GymPowerUpsUtility')).not.toBeNull();
   });
 });
 
-describe('GymPowerUps AC2: scene boot + player ship movement', () => {
+describe('GymPowerUpsUtility AC2: scene boot + player ship movement', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -56,9 +65,9 @@ describe('GymPowerUps AC2: scene boot + player ship movement', () => {
     booted = null;
   });
 
-  async function bootPowerUps(): Promise<GymPowerUps> {
-    booted = await bootScene([GymPowerUps]);
-    return booted!.scene as GymPowerUps;
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
   }
 
   it('boots as an active scene and renders the player ship at the canvas centre', async () => {
@@ -103,7 +112,7 @@ describe('GymPowerUps AC2: scene boot + player ship movement', () => {
   });
 });
 
-describe('GymPowerUps AC3: overlap collection applies the effect', () => {
+describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -111,9 +120,9 @@ describe('GymPowerUps AC3: overlap collection applies the effect', () => {
     booted = null;
   });
 
-  async function bootPowerUps(): Promise<GymPowerUps> {
-    booted = await bootScene([GymPowerUps]);
-    return booted!.scene as GymPowerUps;
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
   }
 
   it('collecting an overlapping drop applies its effect and consumes the drop', async () => {
@@ -217,7 +226,7 @@ describe('GymPowerUps AC3: overlap collection applies the effect', () => {
   });
 });
 
-describe('GymPowerUps AC4: shared back button + HUD presence', () => {
+describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -226,8 +235,8 @@ describe('GymPowerUps AC4: shared back button + HUD presence', () => {
   });
 
   it('shows the shared ← INDEX back button', async () => {
-    booted = await bootScene([GymPowerUps]);
-    const scene = booted!.scene as GymPowerUps;
+    booted = await bootScene([GymPowerUpsUtility]);
+    const scene = booted!.scene as GymPowerUpsUtility;
     const found = scene.children.list.find(
       (child): child is Phaser.GameObjects.Text =>
         child instanceof Phaser.GameObjects.Text &&
@@ -238,8 +247,8 @@ describe('GymPowerUps AC4: shared back button + HUD presence', () => {
 
   it('the ← INDEX back button navigates back to the gym index', async () => {
     // Boot the gym scene with the index registered alongside it.
-    booted = await bootScene([GymPowerUps, GymIndex]);
-    const scene = booted!.scene as GymPowerUps;
+    booted = await bootScene([GymPowerUpsUtility, GymIndex]);
+    const scene = booted!.scene as GymPowerUpsUtility;
     expect(scene.sys.isActive()).toBe(true);
 
     const button = scene.children.list.find(
@@ -256,8 +265,8 @@ describe('GymPowerUps AC4: shared back button + HUD presence', () => {
   });
 
   it('attaches the standalone HUD rendering above gameplay', async () => {
-    booted = await bootScene([GymPowerUps]);
-    const scene = booted!.scene as GymPowerUps;
+    booted = await bootScene([GymPowerUpsUtility]);
+    const scene = booted!.scene as GymPowerUpsUtility;
     const hud = scene.getHud();
     expect(hud).toBeInstanceOf(HUD);
     expect(hud!.depth).toBeGreaterThan(0);
@@ -265,7 +274,7 @@ describe('GymPowerUps AC4: shared back button + HUD presence', () => {
   });
 });
 
-describe('GymPowerUps spawn cadence (parent AC2 via the scene)', () => {
+describe('GymPowerUpsUtility spawn cadence (parent AC2 via the scene)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -274,8 +283,8 @@ describe('GymPowerUps spawn cadence (parent AC2 via the scene)', () => {
   });
 
   it('spawns the first drop immediately and cycles P5 → P8 → P9 over time', async () => {
-    booted = await bootScene([GymPowerUps]);
-    const scene = booted!.scene as GymPowerUps;
+    booted = await bootScene([GymPowerUpsUtility]);
+    const scene = booted!.scene as GymPowerUpsUtility;
 
     // First frame: a drop spawns immediately (spawnTimer starts at 0).
     scene.tick(0.016);
@@ -295,7 +304,7 @@ describe('GymPowerUps spawn cadence (parent AC2 via the scene)', () => {
   });
 });
 
-describe('GymPowerUps — scheme-aware input routing (parent AC1/AC2/AC3)', () => {
+describe('GymPowerUpsUtility — scheme-aware input routing (parent AC1/AC2/AC3)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -303,9 +312,9 @@ describe('GymPowerUps — scheme-aware input routing (parent AC1/AC2/AC3)', () =
     booted = null;
   });
 
-  async function bootPowerUps(): Promise<GymPowerUps> {
-    booted = await bootScene([GymPowerUps]);
-    return booted!.scene as GymPowerUps;
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
   }
 
   /** Re-installs a fresh AsteroidsModel with facing reset to 0. */
@@ -396,7 +405,7 @@ describe('GymPowerUps — scheme-aware input routing (parent AC1/AC2/AC3)', () =
   });
 });
 
-describe('GymPowerUps — non-combat pickup activation audio per type (AC6c)', () => {
+describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC6c)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -405,13 +414,13 @@ describe('GymPowerUps — non-combat pickup activation audio per type (AC6c)', (
     vi.restoreAllMocks();
   });
 
-  async function bootPowerUps(): Promise<GymPowerUps> {
-    booted = await bootScene([GymPowerUps]);
-    return booted!.scene as GymPowerUps;
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
   }
 
   /** Collects a fully-grown drop of the given type under the ship. */
-  function collectDrop(scene: GymPowerUps, id: 'P5' | 'P8' | 'P9'): void {
+  function collectDrop(scene: GymPowerUpsUtility, id: 'P5' | 'P8' | 'P9'): void {
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     scene.spawnDrop(id, 480, 270);
@@ -459,7 +468,7 @@ describe('GymPowerUps — non-combat pickup activation audio per type (AC6c)', (
   });
 });
 
-describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)', () => {
+describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -467,9 +476,9 @@ describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)
     booted = null;
   });
 
-  async function bootPowerUps(): Promise<GymPowerUps> {
-    booted = await bootScene([GymPowerUps]);
-    return booted!.scene as GymPowerUps;
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
   }
 
   it('AC1 — drop size constants reflect the 8 px power-up / weapon size', () => {
@@ -528,5 +537,68 @@ describe('GymPowerUps — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)
 
     expect(registry.isActive('P5')).toBe(false);
     expect(scene.getDrops().length).toBeGreaterThan(0); // drop still on field
+  });
+});
+
+describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
+  }
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    scene.tick(0.5);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false);
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootPowerUps();
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    scene.tick(0.5);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 });

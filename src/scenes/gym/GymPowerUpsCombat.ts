@@ -58,18 +58,23 @@ import {
 } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
 import { findTeleportDestination } from '../../powerups/teleport';
+import {
+  spawnCollectAnimation,
+  type CollectAnimationHandle,
+} from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
 import {
   resolvePatterns,
   spawnExplosionParticles,
 } from '../../vfx/explosionParticles';
 import {
+  playPowerUpCollectPopSound,
   playPowerUpCollectSound,
   playDestructionSound,
   playSpawnSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
-import { addBackToIndexButton } from '../../utils/gymNavigation';
+import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -121,12 +126,16 @@ export interface CombatActiveDrop {
   x: number;
   y: number;
   graphics: Phaser.GameObjects.Graphics;
+  /** True once collected and playing its absorb VFX (AC4). */
+  absorbing?: boolean;
 }
 
 export class GymPowerUpsCombat extends Phaser.Scene {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: CombatActiveDrop[] = [];
+  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
+  private collectAnimations: CollectAnimationHandle[] = [];
   private roundRobinSpawner = new RoundRobinSpawner<PowerUpId>(COMBAT_ORDER);
   private spawnIndex = 0;
   private spawnTimer = 0;
@@ -175,12 +184,17 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.add.existing(this.player);
 
     addBackToIndexButton(this);
+    // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
+    addBackToMenuOnEsc(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
 
     // Clean up on shutdown to prevent stale references on restart.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       for (const exp of this.playerExplosions) exp.destroy();
       this.playerExplosions.length = 0;
+      // Release any in-flight absorb animations on shutdown/restart.
+      for (const anim of this.collectAnimations) anim.destroy();
+      this.collectAnimations = [];
     });
 
     this.shieldBubble = this.add.graphics();
@@ -279,6 +293,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
     // ── Overlap collection ──────────────────────────────────────
     this._collectOverlapping();
+    // Advance the absorb VFX for collected drops (cosmetic only).
+    this._updateCollectAnimations(dt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleHits();
@@ -359,6 +375,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   advanceDrops(dt: number): void {
     const kept: CombatActiveDrop[] = [];
     for (const drop of this.drops) {
+      // An absorbing drop is owned by its animation — never re-process it.
+      if (drop.absorbing) continue;
       drop.powerUp.advance(dt);
       drop.graphics.setScale(drop.powerUp.currentScale);
       if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
@@ -377,7 +395,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     const hull = SHIP_SIZE / 2;
     const kept: CombatActiveDrop[] = [];
     for (const drop of this.drops) {
-      if (drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
+      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
         this._collectDrop(drop);
       } else {
         kept.push(drop);
@@ -405,9 +423,39 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     }
 
     this.effectsRegistry.applyCollect(id);
-    drop.graphics.destroy();
 
-    try { playPowerUpCollectSound(); } catch { /* ignore */ }
+    // Mark the drop so the overlap gate cannot re-collect it while the
+    // absorb animation plays (AC4); keep the Graphics alive until the
+    // animation completes (AC3).
+    drop.absorbing = true;
+    this._startCollectAnimation(drop);
+
+    // Generic pop plus the shared collection chime on collection (AC2).
+    try {
+      playPowerUpCollectPopSound();
+      playPowerUpCollectSound();
+    } catch { /* ignore */ }
+  }
+
+  /** Starts the absorb animation for a collected drop (AC3). */
+  private _startCollectAnimation(drop: CombatActiveDrop): void {
+    const shipX = this.player?.x ?? drop.x;
+    const shipY = this.player?.y ?? drop.y;
+    this.collectAnimations.push(
+      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
+    );
+  }
+
+  /** Advances in-flight absorb animations and prunes completed handles. */
+  private _updateCollectAnimations(dt: number): void {
+    if (this.collectAnimations.length === 0) return;
+    const kept: CollectAnimationHandle[] = [];
+    for (const handle of this.collectAnimations) {
+      if (this.player) handle.setAttractor(this.player.x, this.player.y);
+      handle.update(dt);
+      if (!handle.isComplete()) kept.push(handle);
+    }
+    this.collectAnimations = kept;
   }
 
   /** Clears all on-screen enemy bullets (P4, GDD §4.4 — no enemy damage). */
@@ -460,9 +508,16 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private _advanceEnemyBullets(dt: number): void {
     for (let i = this.scoutBullets.length - 1; i >= 0; i--) {
       const b = this.scoutBullets[i];
+      b.elapsed += dt;
       b.graphics.x += b.vx * dt;
       b.graphics.y += b.vy * dt;
-      if (b.graphics.x < -20 || b.graphics.x > GAME_WIDTH + 20 || b.graphics.y < -20 || b.graphics.y > GAME_HEIGHT + 20) {
+      // Four-edge wrap + lifetime expiry, matching the shipped game
+      // (AH-0MU960UTE001PTV0). Bullets are never culled off-screen.
+      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
+      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
+      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
+      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
+      if (b.elapsed >= b.lifetime) {
         try { b.graphics.destroy(); } catch { /* ignore */ }
         this.scoutBullets.splice(i, 1);
       }
@@ -661,7 +716,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     graphics.fillStyle(0xff4444, 1);
     graphics.fillCircle(0, 0, 3);
     graphics.setPosition(x, y);
-    const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy };
+    const b: ScoutBullet = { graphics, color: 0xff4444, vx, vy, lifetime: 1.5, elapsed: 0 };
     this.scoutBullets.push(b);
     return b;
   }
@@ -681,6 +736,9 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   getPlayer(): Player | null { return this.player; }
   getEffectsRegistry(): EffectsRegistry { return this.effectsRegistry; }
   getDrops(): CombatActiveDrop[] { return [...this.drops]; }
+
+  /** In-flight absorb animations for collected drops (test seam). */
+  getCollectAnimations(): CollectAnimationHandle[] { return [...this.collectAnimations]; }
   getHud(): HUD | null { return this.hud; }
   getScouts(): Scout[] { return [...this.scouts]; }
   getEnemyBullets(): ScoutBullet[] { return [...this.scoutBullets]; }

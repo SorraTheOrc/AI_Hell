@@ -351,49 +351,89 @@ wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. Thi
 
 #### The Playable Game (primary entry point)
 
-The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): five progressively harder levels (Levels 1–3 are formation-only, Level 4 introduces enemy fire, Level 5 is fewer enemies with predictable patterns) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via P8 Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. On game over the **GameOverScene** shows the final score, accepts 3-letter initials, and writes to the localStorage leaderboard stub; **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
+The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): five progressively harder levels (Levels 1–3 are formation-only, Level 4 introduces enemy fire, Level 5 is fewer enemies with predictable patterns) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via P8 Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. On game over the **GameOverScene** shows the final score, accepts 3-letter initials when the score qualifies, renders the full ranked leaderboard, and persists to `localStorage` under `ai_hell_leaderboard` (see [Leaderboard](#leaderboard)); **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
 
 Flow / scene keys:
 
-- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Gym Scene Index (dev)** → `GymIndex`.
-- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score.
-- `GameOverScene` — final score, initials entry, leaderboard stub, return to menu.
+- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Settings** → `SettingsScene` (origin `MenuScene`), **Leaderboard** → `LeaderboardScene` (full ranked table), **Gym Scene Index (dev)** → `GymIndex` (relocated to the bottom-right). **Play Game** is focused by default; **Tab**/arrow keys cycle focus, **Enter**/**Space** activate.
+- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score. Gameplay is fully keyboard-driven (WASD/arrows move, **S**/**↓** drops a layer, auto-fire is continuous) — no mouse is required.
 
-Run it with `npm run dev` and click **Play Game**.
+> **Shared combat core (`src/scenes/core/CombatScene.ts`)** — both the shipped game (`PlayScene`) and the gym formation base (`GymFormationScene`) extend the abstract `CombatScene`, which defines the combat/player-lifecycle logic **once**: collision resolution, player hits, auto-fire, drop collection, teleports, player explosions and bullet clearing (the eight template methods `_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`, `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`, `_readPlayerInput`). Scene-specific behaviour is supplied through overridable hooks (participant accessors plus `onWeaponFired`, `onEnemyDestroyed`, `onPlayerHit`, `onPowerUpCollected`, `canTeleport`, `onBulletVsBulletImpact`, …), so the game and the gyms exercise the same combat code and cannot drift apart. Bullet-vs-bullet interceptions get a dedicated `playBulletDestructionSound()` cue and a small impact flash (`src/vfx/bulletImpact.ts`) from the single shared path (AH-0MUD8E015004C4JO).
+- `PauseScene` — in-game pause menu: pressing **ESC** during play freezes the run and shows **Resume / Settings / Quit** (pointer- and keyboard-operable, default focus on Resume). Resume or **ESC** again continues the run exactly where it paused; **Quit** returns to the main menu.
+- `SettingsScene` — settings screen shared by the pause menu and the main menu: an **SFX volume slider** (0.0–1.0), an **SFX mute toggle**, and **key-binding remapping** (press-a-key to rebind, conflict warnings, **Reset to defaults**). All persisted to `ai_hell_settings` (see below); **Back** returns to wherever it was opened from.
+- `GameOverScene` — final score, qualifying 3-letter initials entry, full ranked leaderboard, return to menu / skip. The initials field is focused by default (**A–Z** / **Backspace** edit it); **Tab**/arrow keys move focus to **Return to Menu**. A non-qualifying score shows an explanatory message and writes nothing.
+
+> **Pause, settings & rebinding** — ESC toggles the pause menu (the pause key, movement keys and layer-drop key are rebindable in SettingsScene; arrow keys remain built-in movement defaults). Settings changes apply live and persist to `localStorage` under `ai_hell_settings` (`sfxVolume`, `sfxMuted`, `bindings`) across reloads.
+
+> **Keyboard-only navigation** — the whole game is playable without a mouse. Menu-style scenes use a shared in-canvas focus model (`src/utils/focusManager.ts`, `FocusManager`): the primary control is focused by default and highlighted, **Tab** / **Shift+Tab** and the arrow keys cycle focus with wrap-around, and **Enter** / **Space** activate the focused control. On the menu, **Play Game** is focused by default, so pressing **Enter** starts a game; on game over, type your initials and press **Enter** (auto-submit) or **Tab** to **Return to Menu** and press **Enter**. Pointer interaction still works unchanged.
+
+Run it with `npm run dev` and either click **Play Game** or press **Enter**.
+
+#### Leaderboard
+
+The local high-score table is owned by `src/core/Leaderboard.ts` and rendered through the shared `src/ui/leaderboardView.ts` helper.
+
+- **Storage:** browser `localStorage`, key `ai_hell_leaderboard` — a JSON array of `{ rank, initials, score, date }` entries, capped at **10** (GDD §5). `date` is ISO `YYYY-MM-DD`; `rank` is recomputed `1..N` on read and never trusted from storage. Absent, non-JSON or wrong-shape storage yields an empty list and malformed rows are dropped, so bad data never crashes the game.
+- **Public API:** `getEntries()`, `addEntry(initials, score)`, `getTopN(n)` and `isQualifying(score)`. All access goes through the injectable `LeaderboardStore` interface, so a future online backend can replace `localStorage` without changing the scenes (GDD §5.3 migration note).
+- **Entry points:** the game-over screen (`GameOverScene`) prompts for 3-letter initials when the score qualifies (always true while fewer than 10 entries exist, otherwise only when it strictly beats the lowest), persists on submit, and otherwise shows a “does not qualify” message with a no-write **Skip**. The main menu's **🏆 Leaderboard** control opens `LeaderboardScene`, which shows the same full ranked table (rank, initials, score, date, highest first). Both views share `renderLeaderboard`.
+- **Keyboard entry:** the game-over initials field is focused by default; **A–Z** / **Backspace** edit it, **Enter** auto-submits once three letters are entered, and **Tab**/arrow keys move focus (GDD §5.1). No on-screen keyboard is used.
+- **Stub retirement:** the earlier `GameOverScene` stub (`readLeaderboard` / `saveScoreEntry` / its local `LeaderboardEntry` and `LEADERBOARD_STORAGE_KEY`) has been removed in favour of the module.
 
 #### Gym Index Entry Scene (dev tooling)
 
 The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playground**: it is reachable from the main menu via the **Gym Scene Index (dev)** button (clearly marked as a developer tool) rather than being the boot scene. It lists every gym scene for isolated testing:
 
 - **Discovery is directory-dynamic (AC3):** the index enumerates `src/scenes/gym/` via Vite's `import.meta.glob` (see `src/utils/gymDiscovery.ts`) — there is no hard-coded scene list. Drop a new `Gym<Name>.ts` file into the folder and it appears on the index automatically (picked up on dev-server restart/HMR or rebuild, since `import.meta.glob` resolves at build time). `.test.ts` files are excluded, and the index itself lives outside the folder (`src/scenes/`) so it is never listed.
-- **Enemy sub-list (data-driven):** in addition to the gym scenes, the index enumerates every available `EnemyConfig` via `src/utils/enemyGymDiscovery.ts` (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()` under the `ai-hell-enemy-config:<key>` namespace) — one row per enemy (label `displayName`) under the **ENEMIES** header. Each row boots the single reusable scene `GymEnemies` with that enemy's key (`scene.start('GymEnemies', { enemyKey })`). Adding a new enemy via **Save As…** in the `GymEnemies` panel makes it appear here without editing `GymIndex.ts`. Bare `GymEnemies` is not listed as a plain scene.
-- **Labels & ordering (AC4):** each gym entry's label strips the leading `Gym` from the file/class name (`GymScout` → `Scout`, `GymPlayer` → `Player`) and entries are sorted alphabetically; enemy entries sort by `displayName`. Selecting an entry starts that scene immediately (gym scenes by class-name key, enemy rows as `GymEnemies` with `enemyKey`).
+- **Enemy sub-list (data-driven):** in addition to the gym scenes, the index enumerates every available `EnemyConfig` via `src/utils/enemyGymDiscovery.ts` (`listEnemyConfigKeys()` / `loadAllEnemyConfigs()` from the CSV-backed registry in `src/data/enemy-configs.csv`) — one row per enemy (label `displayName`) under the **ENEMIES** header. Each config row boots the single reusable scene `GymEnemies` with that enemy's key (`scene.start('GymEnemies', { enemyKey })`). Adding a new enemy via **Save As…** in the `GymEnemies` panel makes it appear here without editing `GymIndex.ts`. The ENEMIES column also carries a dedicated **Boss** row (scene key `GymBoss`) that boots the multi-phase Central AI scene directly, while the plain `boss` config archetype is labelled **Boss Swarm**. Bare `GymEnemies` and `GymBoss` are not listed as plain scenes (left column) — the real boss appears only as the **Boss** ENEMIES row (AH-0MUAYB28C004KK7X).
+- **Labels & ordering (AC4):** each gym entry's label strips the leading `Gym` from the file/class name (`GymScout` → `Scout`, `GymPlayer` → `Player`) and entries are sorted alphabetically; enemy entries sort by `displayName`. Selecting an entry starts that scene immediately (gym scenes by class-name key, config enemy rows as `GymEnemies` with `enemyKey`, the Boss row as `GymBoss`).
 - **Back to the list (AC5):** every gym scene shows a shared "← INDEX" button (`src/utils/gymNavigation.ts`) that switches back to `GymIndex` — no reload needed.
+- **Back to the menu (ESC):** press **ESC** in the gym index or any gym scene to return to the **main menu** (`MenuScene`) immediately — shared `addBackToMenuOnEsc()` in `src/utils/gymNavigation.ts`. Unlike the "← INDEX" button (which returns to the gym index), ESC always exits back to the main menu.
 
 #### Adding a New Gym Scene (convention)
 
 1. Create `src/scenes/gym/Gym<Name>.ts` with `export class Gym<Name> extends Phaser.Scene` (key `Gym<Name>`). No registry edit needed — the index discovers it automatically.
-2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index.
+2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index, and `addBackToMenuOnEsc(this)` so **ESC** returns to the main menu.
 3. Add a `Gym<Name>.test.ts` next to it (excluded from the index automatically).
+
+#### Configuration (CSV)
+
+Enemy and ship tuning is held in committed CSV files — the **single, human-editable source of truth**. No code edit is needed to retune or add an archetype.
+
+- **Files:** `src/data/enemy-configs.csv` (one row per enemy) and `src/data/ship-config.csv` (one row for the player ship). `enemy-configs.csv` carries a `#` comment header listing every column, the enum values and how to add entries; the `#` header is optional and is **not** preserved when the gym **Save** rewrites a file, so `ship-config.csv` is currently headerless.
+- **Schema:** flat typed columns; colours use `0xRRGGBB`; `formationKind` is one of `v | diver | rect | swarm | orbital | single`; `shotPattern` is one of `none | aimed | spread | radial | orbital | coordinated`. The open `EnemyConfig` `[extra]` passthrough is **not** representable in flat CSV and is dropped for CSV rows (documented limitation).
+- **Boot:** the entry point (`src/main.ts` → `src/core/boot.ts`) awaits the config store's `loadConfigs()` (`src/core/configStore.ts`) **before** constructing the Phaser game, so the first scene already reads the persisted values (a saved ship `controlScheme` survives a `npm run dev` restart). `loadConfigs()` reads both CSVs, parses/validates them with the CSV codec (`src/core/csv.ts`) and populates an in-memory registry, so `loadEnemyConfig` / `loadShipConfig` stay synchronous. A missing/malformed file — or a failed fetch — falls back to the built-in defaults without throwing.
+- **Editing by hand:** edit a cell in `src/data/enemy-configs.csv` or `src/data/ship-config.csv`, save the file, and restart/refresh `npm run dev` — boot hydration re-runs and the new values are live.
+- **Editing in the gym:** open **Gym Index → any Enemies entry** (or **Player**), change the sliders/colour pickers/selects, then **Save** (overwrite the active row) or **Save As…** (append a new enemy row; the name is slugified and duplicate keys are rejected). The dev-server CSV plugin (`vite/plugins/configCsvPlugin.ts`) validates and writes the file atomically, then the client re-reads it so the running scene reflects the change.
+- **Dev-only write path:** the write endpoint exists **only** under `npm run dev`. Production/static builds read the CSV bundled at build time read-only; **Save / Save As** are disabled there and the panel shows a clear status message.
+- **Breaking change:** `localStorage` is **no longer** the source of truth for config values (the old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config` entries are ignored). Only leaderboard/settings still use `localStorage`.
 
 #### Adding a New Enemy (convention)
 
-Enemy archetypes are JSON, not new scene files (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.1 / §8 for the full reference).
+Enemy archetypes are CSV rows, not new scene files (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.1 / §8 for the full reference).
 
-1. **Tune in the gym:** `npm run dev` → **Gym Index → any Enemies entry** (e.g. Scout). Use the **Enemies panel** (`enemy-gym-panel`) sliders / colour pickers / selects — changes live-apply without reload.
-2. **Save As…:** enter a new name (e.g. `My New Enemy`) and click **Save As…** — the name is slugified (`my-new-enemy`, `sanitizeEnemyKey` / `isValidEnemyKey`, ≤ 40 chars, must be unique) and stored as `ai-hell-enemy-config:my-new-enemy` (namespaced separately from `ai-hell-ship-config`).
-3. **Appears in the index:** return to the **Gym Index** — the new enemy appears under **ENEMIES** without editing `GymIndex.ts` (discovery via `src/utils/enemyGymDiscovery.ts`; corrupt storage falls back gracefully).
-4. **Truly new behaviour:** if the enemy needs new code (movement/shot), add an entity in `src/entities/<Name>.ts` with the `size?/color?/bullet*?/fireInterval?/burstCount?/shotProbability?` seam (defaults via `?? CONST`; `shotProbability` is the fraction chance to fire per shot cycle, default `1.0` — set it below `1.0` to thin out volleys, e.g. the Swarm seed's `0.25`), a builder in `src/utils/formations.ts` or a pattern in `src/utils/enemyShotPatterns.ts`, wire it in `src/entities/enemyFactory.ts`, and seed it in `src/core/enemyConfig.ts` (`DEFAULT_ENEMY_CONFIGS`).
+1. **Tune in the gym:** `npm run dev` → **Gym Index → any Enemies entry** (e.g. Scout). Use the **Enemies panel** (`enemy-gym-panel`) sliders / colour pickers / selects — changes live-apply without reload. The panel's **live difficulty readout** (`enemy-gym-difficulty`) shows the edited archetype's absolute 0–100 score (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9).
+2. **Save As…:** enter a new name (e.g. `My New Enemy`) and click **Save As…** — the name is slugified (`my-new-enemy`, `sanitizeEnemyKey` / `isValidEnemyKey`, ≤ 40 chars, must be unique) and a new row is appended to `src/data/enemy-configs.csv`.
+3. **Appears in the index:** return to the **Gym Index** — the new enemy appears under **ENEMIES** without editing `GymIndex.ts` (discovery via `src/utils/enemyGymDiscovery.ts`; a missing/malformed CSV falls back gracefully to the seed defaults).
+4. **Truly new behaviour:** if the enemy needs new code (movement/shot), add an entity in `src/entities/<Name>.ts` with the `size?/color?/bullet*?/fireInterval?/burstCount?/shotProbability?` seam (defaults via `?? CONST`; `shotProbability` is the fraction chance to fire per shot cycle, default `1.0` — set it below `1.0` to thin out volleys, e.g. the Swarm seed's `0.25`), a builder in `src/utils/formations.ts` or a pattern in `src/utils/enemyShotPatterns.ts`, wire it in `src/entities/enemyFactory.ts`, and add the seed fallback in `src/core/configDefaults.ts` (`DEFAULT_ENEMY_CONFIGS`).
 
-Full shape/storage/registry docs: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.
+Full schema/architecture docs: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.
+
+**Difficulty scoring:** `src/core/enemyDifficulty.ts` computes an absolute,
+deterministic 0–100 difficulty index for an enemy archetype (`enemyDifficulty`),
+a wave (`waveDifficulty`) and a level (`levelDifficulty`), with a per-factor
+breakdown. The five built-in levels' non-decreasing difficulty ordering is
+pinned by `src/waves/enemyDifficulty.campaign.test.ts`. Model, weights, ranges
+and the recomputed campaign table: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9.
 
 #### Explosion VFX (particle bursts)
 
 All destruction paths share one particle-burst module: `src/vfx/explosionParticles.ts`.
 
 - `spawnExplosionParticles(scene, x, y, baseColor, size, opts)` spawns a burst of small filled circles tinted (small HSL jitter) around the exploding entity's neon colour, fading and shrinking over `EXPLOSION_LIFESPAN_MS`. Counts scale with `size` (clamped 8–80).
+- **Randomisation:** every particle's radius is jittered by ±30 % (`EXPLOSION_SIZE_JITTER`) and its start position by ±15 % of the entity size (`EXPLOSION_POSITION_JITTER`) on each axis, across all patterns (including `ring`) and entity types, so repeated kills vary. The jitter comes from the existing seeded PRNG, so a fixed `opts.seed` still reproduces the burst exactly; counts, colours, speeds and lifespans are unchanged.
 - Three patterns are available (`radial`, `ring`, `implosion`) and each entity type is assigned one, two, or three via the single `EXPLOSION_PATTERNS_BY_TYPE` map — death paths call `resolvePatterns('scout' | 'tank' | …)` instead of hard-coding patterns. The player death path uses `SHIP_COLOR` / `SHIP_SIZE` with the `player` entry.
-- Counts, lifespan, colour jitter, and per-pattern speeds/radii are tunable constants at the top of the module. See GDD §7.2 for the per-entity feel table.
+- Counts, lifespan, colour/size/position jitter, and per-pattern speeds/radii are tunable constants at the top of the module. See GDD §7.2 for the per-entity feel table.
+- Destruction SFX likewise vary between kills: the shared and Diver destruction sweeps apply one per-invocation pitch factor of ±15 % (`EXPLOSION_PITCH_JITTER` in `src/audio/effects.ts`) to all sweep endpoints. See GDD §7.3.
 
 Coverage: `src/vfx/explosionParticles.test.ts` (pure geometry/colour/count + Phaser integration), plus per-entity assertions in the entity/scene suites (patterns, size-scaled count, colour centred on the entity palette, and SHUTDOWN teardown).
 
@@ -419,9 +459,9 @@ The E5 Swarm (GDD §4.1) — the fast-moving, unpredictable cluster attacker —
 
 The scene is reachable from the gym index ("Swarm" entry) and returns to it via the "← INDEX" button. Coverage: `src/entities/Swarm.test.ts` + `src/scenes/gym/GymSwarm.test.ts` verify cluster geometry, drift bounds, pass-through (no collision), explode, shoot toggle and coordinated burst speed.
 
-#### GymPowerUps Gym Scene
+#### GymPowerUpsUtility Gym Scene
 
-The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups P5 Speed Boost, P8 Extra Life and P9 Magnet (GDD §4.4):
+The GymPowerUpsUtility gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups P5 Speed Boost, P8 Extra Life and P9 Magnet (GDD §4.4):
 
 - `src/powerups/PowerUp.ts` — base drop class: delta-time grow → hold → shrink → despawn lifecycle, collection gated at **>3%** of full-size scale.
 - `src/powerups/spawner.ts` — pluggable spawner strategy layer: `PowerUpSpawner` interface, `RoundRobinSpawner` (deterministic gym behaviour: P5 → P8 → P9) and `WeightedRandomSpawner` (semi-random in-game drops; per-ID weights tunable mid-run).
@@ -429,9 +469,9 @@ The GymPowerUps gym scene (Create gym scene for power-ups with spawning, collect
 - `src/powerups/effects.ts` — engine-agnostic active-effects registry: P5 timed +50% speed (refresh on re-collect, never additive), P8 lives (start 3, cap 5), P9 permanent magnet stacks (cap 5; radius `2× ship size + 50% per stack`; attraction at `MAGNET_ATTRACTION_SPEED`, slower than ship max speed).
 - `src/powerups/icons.ts` — code-drawn neon icons shared by field drops and the HUD, plus the glowing drop bubble (`drawDropBubble`) and combined drop drawers (`drawPowerUpDrop`/`drawWeaponDrop`): every on-field drop renders a neon bubble (soft glow halo + crisp ring in the per-type aura colour) around its icon, `POWER_UP_DROP_SIZE` set to **16 px** (half the initial 32 px doubling; `POWER_UP_BUBBLE_*` constants tunable in `src/core/constants.ts`; visual only — collection radius stays `DROP_SIZE × scale + hull`).
 - `src/ui/HUD.ts` — **standalone HUD** (Phaser Container, depth above gameplay) attachable to any scene: per-effect rows (icon, name, remaining-seconds timer or `xN` stack count) plus a lives counter.
-- `src/scenes/gym/GymPowerUps.ts` — the scene: round-robin spawning via `RoundRobinSpawner` (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), per-drop Graphics (glowing bubble + icon) scaled with the grow/hold/shrink lifecycle and destroyed on collect/despawn, overlap collection gated at >3% scale (pickup radius = `POWER_UP_DROP_SIZE × scale + hull`, doubled at full scale), magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
+- `src/scenes/gym/GymPowerUpsUtility.ts` — the scene: round-robin spawning via `RoundRobinSpawner` (one drop per 5 s, 5 s lifetime → the next spawn coincides with the previous despawn), per-drop Graphics (glowing bubble + icon) scaled with the grow/hold/shrink lifecycle and destroyed on collect/despawn, overlap collection gated at >3% scale (pickup radius = `POWER_UP_DROP_SIZE × scale + hull`, doubled at full scale), magnet attraction, live P5 speed multiplier on the ship, HUD attachment, and the shared "← INDEX" back button.
 
-The scene is reachable from the gym index ("PowerUps" entry). It is reused as the shared power-up lifecycle/HUD foundation by the combat power-up gym. Coverage: `src/powerups/*.test.ts` + `src/scenes/gym/GymPowerUps.test.ts` (+ `HUD.test.ts`) verify lifecycle timing, round-robin order, threshold, effect semantics, HUD model and scene behaviour.
+The scene is reachable from the gym index ("PowerUpsUtility" entry). It is reused as the shared power-up lifecycle/HUD foundation by the combat power-up gym. Coverage: `src/powerups/*.test.ts` + `src/scenes/gym/GymPowerUpsUtility.test.ts` (+ `HUD.test.ts`) verify lifecycle timing, round-robin order, threshold, effect semantics, HUD model and scene behaviour.
 
 #### Power-up spawning in the combat gyms (`GymEnemies` / `GymBoss`)
 
@@ -454,11 +494,27 @@ The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire a
 
 - `src/utils/weapons.ts` — pure, unit-testable weapon catalogue: `cannon` (single bullet, permanent), `spread` (3-bullet fan at -30°/0°/+30°), `dual` (2 bullets perpendicular to heading), `rapid` (single bullets at a markedly higher rate) — each with its own fire rate, bullet colour/shape — plus `isTimedWeapon()` (cannon = permanent, all power-ups = timed) and heading math (`headingFromVelocity`, `absoluteAngle`, `computeHeading` — most-recent-heading fallback when stationary) and scene-facing helpers (`createBulletsFromHeading`, `angleToVelocity`).
 - `src/entities/Player.ts` — **cumulative + timed** weapon collection on the ship: `equipWeapon(id)` (adds to the active set, 10 s timer), `resetWeapon()` (clears all timed weapons), `tickWeaponTimers(dtMs)` (expires weapons silently), `getActiveWeapons()`, `getHeading()`, and per-weapon fire cooldowns (`tryFire` returns every active weapon that fired this frame — each at its own rate).
-- `src/entities/PlayerBullet.ts` — Graphics-drawn player bullet (`vx`/`vy`, filled circle), created via `createPlayerBullet` and culled off-screen via `advanceAndCull` (no physics bodies, matching the ScoutBullet precedent).
+- `src/entities/PlayerBullet.ts` — Graphics-drawn player bullet (`vx`/`vy`, filled circle, per-weapon lifetime), created via `createPlayerBullet` and advanced via `advanceAndCull`, which **wraps it across all four screen edges** and expires it once its lifetime elapses (never culled off-screen; no physics bodies, matching the ScoutBullet precedent).
 - `src/powerups/icons.ts` — distinctive code-drawn weapon icons (fan arc for Spread, parallel bars for Dual, waveform for Rapid, return/undo arrow for Reset) with the same **glowing drop bubble** as non-combat drops (`drawWeaponDrop` lays the per-type neon bubble under the icon; enlarged to `WEAPON_DROP_SIZE` = 16 px); `src/audio/effects.ts` — spawn/despawn/collection/weapon-change cues (Web Audio synthesis, safe no-op fallback).
 - `src/scenes/gym/GymWeapons.ts` — the scene: ship + auto-fire + round-robin weapon-drop spawner (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime — parameterised via `WEAPON_DROP_LIFETIME`, sharing the `PowerUp` grow/hold/shrink lifecycle with the 5 s non-combat gym), per-drop Graphics (glowing bubble + icon) scaled with the lifecycle, collection gated at ≥3% scale, **cumulative collection** (adds each weapon to the active set; `WEAPON_TIMEOUT_MS` = 10 s per weapon), Reset clearing all timed weapons, and the shared "← INDEX" back button.
 
 The scene is reachable from the gym index ("Weapons" entry). Coverage: `src/utils/weapons.test.ts` (pattern math, fire rates, `isTimedWeapon`, round-robin order, heading fallback) + `src/scenes/gym/GymWeapons.test.ts` (auto-discovery, ship presence, auto-fire, cumulative collection/timed expiry/reset, round-robin, grow/shrink, collection gating) + `src/entities/Player.test.ts` (heading, cumulative collection, per-weapon timers/expiry, per-rate auto-fire).
+
+#### Minerals, the Ship's Hold & the Power-Up Choice (`GymMinerals`)
+
+Asteroids drop **minerals** — small, stationary gold dots — which fill a run-scoped **ship's hold**; when the hold fills, the game pauses for a **power-up choice** (GDD §4.4.1).
+
+- `src/entities/Mineral.ts` — the collectable: a small gold dot that persists until collected, is collected by the player on overlap, is absorbed by **non-asteroid enemies**, is inert to bullets and asteroids, and deals no damage.
+- `src/core/GameState.ts` — the ship's hold: `minerals`/`mineralCapacity` (default 20), `addMinerals(n)` (caps at capacity, returns overflow), `isHoldFull()`, `resolveHold()` (reset to 0 carrying the overflow). Run-scoped (reset by `startGame()`, never written to the leaderboard).
+- `src/core/rules.ts` — mineral tunables with the usual defaults + corrupt-JSON fallback: `mineralCollectAmount` (1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
+- `src/entities/BaseEnemy.ts` — per-enemy mineral accounting (`collectMineral()` / `mineralCount`) and the 25–50 % re-drop on death (`mineralRedropCount()` / `spawnMineralDrops()`); `Asteroid` overrides `collectMineral()` as a no-op.
+- `src/powerups/choice.ts` — the **pluggable** choice strategy: the default draws **three distinct** options uniformly at random from the full drop pool (P3–P9 + Spread/Dual/Rapid) and degrades gracefully below three entries.
+- `src/powerups/effects.ts` / `src/entities/Player.ts` — permanent-effect support: `applyCollect(id, true)` / `applyWeapon(id, true)` and `equipWeapon(id, true)` mark a chosen effect permanent so it never expires for the run (cleared on reset).
+- `src/scenes/MineralChoiceScene.ts` — the modal hold-full overlay: three distinct options, pointer + number-key selection, paused at the SceneManager level (mirroring `PauseScene`); the pick is applied permanently, play resumes, and the hold resets with overflow.
+- `src/scenes/PlayScene.ts` — wires the full loop: small asteroid kills drop minerals, player/enemy overlap collection, enemy re-drop on death, the HUD counter (`Minerals: n/20`), and the hold-full choice.
+- `src/scenes/gym/GymMinerals.ts` — the **asteroids-only** gym demonstrating the whole mechanic (auto-discovered as the "Minerals" index entry); every formation gym also seeds **100 random minerals** on create (`GymFormationScene`).
+
+Coverage: `src/entities/__tests__/Mineral.test.ts`, `src/entities/__tests__/BaseEnemy.minerals.test.ts`, `src/core/__tests__/GameState.minerals.test.ts`, `src/ui/__tests__/HUD.minerals.test.ts`, `src/powerups/__tests__/choice.test.ts`, `src/powerups/__tests__/effects.permanent.test.ts`, `src/scenes/__tests__/MineralChoiceScene.test.ts`, `src/scenes/__tests__/PlayScene.minerals.test.ts` and `src/scenes/gym/GymMinerals.test.ts`.
 
 #### Boss (Central AI) Gym Scene
 
@@ -469,7 +525,7 @@ The Boss gym scene (Create Boss (Central AI) gym scene) is a standalone Phaser s
 
 Because the Boss is a multi-phase boss, it deviates from the 1-HP rule that applies to the other enemies (documented in `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). To exercise the Boss's own `update` state machine (telegraph → attack), `GymFormationScene` members used by `GymBoss` (`formationBaseX/Y`, `shootButton`, `statusText`, `_addButton`, `_bulletOffScreen`) were widened from `private` to `protected`.
 
-The scene is reachable from the gym index ("Boss" entry). Coverage: `src/scenes/gym/GymBoss.test.ts` verifies scene/entity presence, visual style, health-bar segments, phase transitions via the DAMAGE button, all four phase attack patterns (including desperation combining patterns), telegraph timing ≥ 500 ms, and destruction/explosion.
+On the gym index the real boss is the ENEMIES column's **Boss** row, which boots the dedicated `GymBoss` scene directly; `GymBoss` is excluded from the plain scene list (left column) so it is not listed twice. The separate `boss` enemy-config archetype is labelled **Boss Swarm** so the two are not confused (AH-0MUAYB28C004KK7X). `GymBoss` also remains available programmatically and via its own tests. Coverage: `src/scenes/gym/GymBoss.test.ts` verifies scene/entity presence, visual style, health-bar segments, phase transitions via the DAMAGE button, all four phase attack patterns (including desperation combining patterns), telegraph timing ≥ 500 ms, and destruction/explosion.
 
 ### Prioritizing work
 

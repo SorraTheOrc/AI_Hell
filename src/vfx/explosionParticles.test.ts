@@ -19,6 +19,11 @@ import {
   EXPLOSION_HUE_JITTER_DEG,
   EXPLOSION_SAT_VARIANCE,
   EXPLOSION_LIGHT_VARIANCE,
+  EXPLOSION_SIZE_JITTER,
+  EXPLOSION_POSITION_JITTER,
+  EXPLOSION_RADIAL_START_RADIUS,
+  EXPLOSION_RING_PARTICLE_RADIUS,
+  EXPLOSION_IMPLOSION_PARTICLE_RADIUS,
   scaledCount,
   jitterColor,
   colorToHSL,
@@ -26,6 +31,7 @@ import {
   generateRadialBurst,
   generateRingBurst,
   generateImplosionBurst,
+  type Particle,
   type Pattern,
   combinePatterns,
   spawnExplosionParticles,
@@ -311,14 +317,19 @@ describe('generateRingBurst (AC3)', () => {
     expect(particles.length).toBe(40);
   });
 
-  it('all particles lie on a shared radius (forming a circle)', () => {
+  it('ring particles stay within the position-jitter bound of the shared radius', () => {
     const rng = makeRng(600);
-    const particles = generateRingBurst(60, 50, 50, 20, 0x00ff00, rng);
+    const size = 20;
+    const ringRadius = size * 1.2;
+    const particles = generateRingBurst(60, 50, 50, size, 0x00ff00, rng);
     const radii = particles.map((p) => Math.sqrt((p.x - 50) ** 2 + (p.y - 50) ** 2));
-    // All radii should be within ±5% of the mean (ring uniformity).
-    const meanRadius = radii.reduce((a, b) => a + b, 0) / radii.length;
+    // Position jitter (AC2) offsets each ring particle by up to
+    // ±(EXPLOSION_POSITION_JITTER × size) on each axis, so the radial
+    // deviation from the ideal ring radius is at most the diagonal worst
+    // case (√2 × that per-axis bound). The ring stays recognisably a ring.
+    const maxDeviation = Math.SQRT2 * EXPLOSION_POSITION_JITTER * size;
     for (const r of radii) {
-      expect(Math.abs(r - meanRadius) / meanRadius).toBeLessThan(0.05);
+      expect(Math.abs(r - ringRadius)).toBeLessThanOrEqual(maxDeviation + 0.001);
     }
   });
 
@@ -395,6 +406,163 @@ describe('generateImplosionBurst (AC3)', () => {
   });
 });
 
+// ── AC1/AC2/AC4: Size + position randomisation ────────────────────
+
+const ALL_PATTERNS: Pattern[] = ['radial', 'ring', 'implosion'];
+
+/** Generates 80 particles of `pattern` for a size-20 entity with `seed`. */
+function generateForPattern(pattern: Pattern, seed: number, size = 20): Particle[] {
+  if (pattern === 'radial') return generateRadialBurst(80, 0, 0, size, 0x00ff00, makeRng(seed));
+  if (pattern === 'ring') return generateRingBurst(80, 0, 0, size, 0x00ff00, makeRng(seed));
+  return generateImplosionBurst(80, 0, 0, size, 0x00ff00, makeRng(seed));
+}
+
+/** The pattern's un-jittered particle radius for a size-20 entity. */
+function baseRadiusForPattern(pattern: Pattern, size = 20): number {
+  if (pattern === 'radial') return size * EXPLOSION_RADIAL_START_RADIUS;
+  if (pattern === 'ring') return size * EXPLOSION_RING_PARTICLE_RADIUS;
+  return size * EXPLOSION_IMPLOSION_PARTICLE_RADIUS;
+}
+
+describe('explosion randomisation — size jitter (AC1)', () => {
+  it('exposes EXPLOSION_SIZE_JITTER as ±30 %', () => {
+    expect(EXPLOSION_SIZE_JITTER).toBeCloseTo(0.3, 5);
+  });
+
+  it('every particle radius lies within ±30 % of its pattern base for all patterns', () => {
+    ALL_PATTERNS.forEach((pattern, i) => {
+      const particles = generateForPattern(pattern, 5000 + i);
+      const base = baseRadiusForPattern(pattern);
+      for (const p of particles) {
+        expect(p.radius, `${pattern} radius`).toBeGreaterThanOrEqual(
+          base * (1 - EXPLOSION_SIZE_JITTER) - 0.001,
+        );
+        expect(p.radius, `${pattern} radius`).toBeLessThanOrEqual(
+          base * (1 + EXPLOSION_SIZE_JITTER) + 0.001,
+        );
+      }
+    });
+  });
+
+  it('particle radii vary across particles (not all identical) for all patterns', () => {
+    ALL_PATTERNS.forEach((pattern, i) => {
+      const radii = generateForPattern(pattern, 6000 + i).map((p) => p.radius);
+      expect(new Set(radii).size, `${pattern} variation`).toBeGreaterThan(1);
+    });
+  });
+
+  it('shrinkStep is derived from the jittered radius so particles still shrink to 0', () => {
+    ALL_PATTERNS.forEach((pattern, i) => {
+      for (const p of generateForPattern(pattern, 6100 + i)) {
+        expect(p.shrinkStep).toBeCloseTo(p.radius / EXPLOSION_LIFESPAN_MS, 6);
+        const finalRadius = Math.max(
+          0,
+          p.radius - p.shrinkStep * EXPLOSION_LIFESPAN_MS,
+        );
+        // Floating-point residual is acceptable — the particle vanishes.
+        expect(finalRadius).toBeLessThan(1e-9);
+      }
+    });
+  });
+
+  it('size jitter is independent of the entity size scaling (same factor recipe)', () => {
+    // The jitter factor is drawn from the seed; using the same seed on two
+    // pattern sizes must yield the same *relative* radius (radius / size).
+    const small = generateRadialBurst(5, 0, 0, 10, 0x00ff00, makeRng(6200));
+    const large = generateRadialBurst(5, 0, 0, 40, 0x00ff00, makeRng(6200));
+    for (let i = 0; i < small.length; i++) {
+      expect(small[i].radius / 10).toBeCloseTo(large[i].radius / 40, 6);
+    }
+  });
+});
+
+describe('explosion randomisation — position jitter (AC2)', () => {
+  it('exposes EXPLOSION_POSITION_JITTER as 0.15', () => {
+    expect(EXPLOSION_POSITION_JITTER).toBeCloseTo(0.15, 5);
+  });
+
+  it('radial particle start positions stay within ±(0.15 × size) of the centre', () => {
+    const size = 20;
+    const bound = EXPLOSION_POSITION_JITTER * size;
+    const particles = generateRadialBurst(200, 100, 50, size, 0x00ff00, makeRng(7000));
+    for (const p of particles) {
+      expect(Math.abs(p.x - 100)).toBeLessThanOrEqual(bound + 0.001);
+      expect(Math.abs(p.y - 50)).toBeLessThanOrEqual(bound + 0.001);
+    }
+  });
+
+  it('ring particle radii stay within the position-jitter bound of the ideal ring', () => {
+    const size = 20;
+    const ringRadius = size * 1.2;
+    // Worst-case radial deviation when both axes jitter: √2 × per-axis bound.
+    const maxDeviation = Math.SQRT2 * EXPLOSION_POSITION_JITTER * size;
+    const particles = generateRingBurst(120, 0, 0, size, 0x00ff00, makeRng(7010));
+    for (const p of particles) {
+      const r = Math.sqrt(p.x ** 2 + p.y ** 2);
+      expect(Math.abs(r - ringRadius)).toBeLessThanOrEqual(maxDeviation + 0.001);
+    }
+  });
+
+  it('implosion particle start positions stay within the scatter + jitter bound', () => {
+    const size = 20;
+    const scatterRadius = size * 2;
+    const maxDeviation = Math.SQRT2 * EXPLOSION_POSITION_JITTER * size;
+    const particles = generateImplosionBurst(120, 0, 0, size, 0x00ff00, makeRng(7020));
+    for (const p of particles) {
+      const r = Math.sqrt(p.x ** 2 + p.y ** 2);
+      expect(Math.abs(r - scatterRadius)).toBeLessThanOrEqual(maxDeviation + 0.001);
+    }
+  });
+
+  it('position offsets vary across particles for all patterns', () => {
+    ALL_PATTERNS.forEach((pattern, i) => {
+      const particles = generateForPattern(pattern, 7100 + i);
+      // Individual axes must not all be identical (jitter is per-particle).
+      expect(new Set(particles.map((p) => p.x)).size).toBeGreaterThan(1);
+      expect(new Set(particles.map((p) => p.y)).size).toBeGreaterThan(1);
+    });
+  });
+
+  it('ring particles are no longer perfectly evenly spaced (offsets applied)', () => {
+    const particles = generateRingBurst(8, 0, 0, 20, 0x00ff00, makeRng(7200));
+    const angles = particles.map((p) => Math.atan2(p.y, p.x));
+    const evenlySpaced = particles.map((_, i) => (i / particles.length) * Math.PI * 2);
+    // At least one particle's angle deviates from the exact even spacing.
+    let deviated = false;
+    for (let i = 0; i < angles.length; i++) {
+      if (Math.abs(angles[i] - evenlySpaced[i]) > 1e-4) deviated = true;
+    }
+    expect(deviated).toBe(true);
+  });
+});
+
+describe('explosion randomisation — seeded determinism (AC4)', () => {
+  it('same seed produces byte-identical particle state for all patterns', () => {
+    for (const pattern of ALL_PATTERNS) {
+      const a = generateForPattern(pattern, 12345);
+      const b = generateForPattern(pattern, 12345);
+      expect(a, `${pattern} determinism`).toEqual(b);
+    }
+  });
+
+  it('different seeds produce different jittered output', () => {
+    for (const pattern of ALL_PATTERNS) {
+      const a = generateForPattern(pattern, 1).map((p) => `${p.radius}:${p.x}:${p.y}`);
+      const b = generateForPattern(pattern, 2).map((p) => `${p.radius}:${p.x}:${p.y}`);
+      expect(a, `${pattern} seed sensitivity`).not.toEqual(b);
+    }
+  });
+
+  it('spawnExplosionParticles with the same opts.seed yields identical particles', () => {
+    const make = () => spawnExplosionParticles(
+      makeStubScene() as unknown as Parameters<typeof spawnExplosionParticles>[0],
+      0, 0, 0xff0000, 20,
+      { seed: 42, count: 30, patterns: ['radial', 'ring', 'implosion'] },
+    );
+    expect(make()!.particles).toEqual(make()!.particles);
+  });
+});
+
 // ── AC4: Combinator splits verified ──────────────────────────────
 
 describe('combinePatterns (AC4)', () => {
@@ -463,14 +631,20 @@ describe('Particle lifecycle (AC5)', () => {
   it('fadeStep and shrinkStep produce correct delta per ms', () => {
     const rng = makeRng(2100);
     const particles = generateRadialBurst(5, 0, 0, 20, 0x00ff00, rng);
+    const baseStartRadius = 20 * 0.5;
     for (const p of particles) {
       // Alpha: 1 → 0 over lifespan ms.
       const expectedAlphaDelta = 1 / EXPLOSION_LIFESPAN_MS;
       expect(p.fadeStep).toBeCloseTo(expectedAlphaDelta, 4);
 
-      // Radius: starts at size*0.5, shrinks to 0.
-      const startRadius = 20 * 0.5;
-      const expectedRadiusDelta = startRadius / EXPLOSION_LIFESPAN_MS;
+      // Radius: jittered start radius (±EXPLOSION_SIZE_JITTER) shrinks to 0.
+      expect(p.radius).toBeGreaterThanOrEqual(
+        baseStartRadius * (1 - EXPLOSION_SIZE_JITTER) - 0.001,
+      );
+      expect(p.radius).toBeLessThanOrEqual(
+        baseStartRadius * (1 + EXPLOSION_SIZE_JITTER) + 0.001,
+      );
+      const expectedRadiusDelta = p.radius / EXPLOSION_LIFESPAN_MS;
       expect(p.shrinkStep).toBeCloseTo(expectedRadiusDelta, 4);
     }
   });
@@ -480,10 +654,12 @@ describe('Particle lifecycle (AC5)', () => {
     const particles = generateRadialBurst(5, 0, 0, 20, 0x00ff00, rng);
     for (const p of particles) {
       expect(p.dead).toBe(false);
+      // Recover the (jittered) start radius from the shrink rate.
+      const startRadius = p.shrinkStep * EXPLOSION_LIFESPAN_MS;
       // Simulate time past the lifespan.
       const elapsed = EXPLOSION_LIFESPAN_MS + 1;
       p.alpha = Math.max(0, 1 - p.fadeStep * elapsed);
-      p.radius = Math.max(0, (20 * 0.5) - p.shrinkStep * elapsed);
+      p.radius = Math.max(0, startRadius - p.shrinkStep * elapsed);
       p.dead = p.alpha <= 0 && p.radius <= 0;
       expect(p.dead).toBe(true);
     }
@@ -493,9 +669,10 @@ describe('Particle lifecycle (AC5)', () => {
     const rng = makeRng(2300);
     const particles = generateRadialBurst(5, 0, 0, 20, 0x00ff00, rng);
     for (const p of particles) {
+      const startRadius = p.shrinkStep * EXPLOSION_LIFESPAN_MS;
       const elapsed = EXPLOSION_LIFESPAN_MS - 1;
       p.alpha = Math.max(0, 1 - p.fadeStep * elapsed);
-      p.radius = Math.max(0, (20 * 0.5) - p.shrinkStep * elapsed);
+      p.radius = Math.max(0, startRadius - p.shrinkStep * elapsed);
       expect(p.dead).toBe(false);
     }
   });
@@ -506,8 +683,9 @@ describe('Particle lifecycle (AC5)', () => {
     // Simulate partial lifetime.
     const elapsed = EXPLOSION_LIFESPAN_MS * 0.5;
     for (const p of particles) {
+      const startRadius = p.shrinkStep * EXPLOSION_LIFESPAN_MS;
       p.alpha = Math.max(0, 1 - p.fadeStep * elapsed);
-      p.radius = Math.max(0, (20 * 0.5) - p.shrinkStep * elapsed);
+      p.radius = Math.max(0, startRadius - p.shrinkStep * elapsed);
     }
     // Verify not all dead yet.
     const aliveBefore = particles.filter((p) => !p.dead).length;

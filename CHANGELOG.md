@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.5 (2026-09-24)
+### Features
+- Your ship now defaults to Asteroids-style controls. (AH-0MUFE1N36007X48T)
+- Destroy asteroids to collect minerals and unlock powerful permanent upgrades. (AH-0MUBVGI62004ED9Q)
+- Explosions now vary in size, position, and pitch, making combat feel livelier. (AH-0MU0AVBWH002ZWRH)
+- Bosses now have their own dedicated column in the gym index, making them easier to find. (AH-0MTV8OV9V002D8B7)
+- The game and practice gyms now share the same combat code, so what you learn in training always matches the real game. (AH-0MUD8E015004C4JO)
+- Press ESC in any gym scene to quickly return to the main menu. (AH-0MU9LRTK3004KR04)
+- Pause with ESC, tweak sound and controls, and quit to the menu anytime. (AH-0MU9LPZ0G0015292)
+- The power-up practice scene is now clearly labelled PowerUpsUtility in the gym menu. (AH-0MUAYB4EJ005CIYQ)
+- Power-ups now pop with sound and get sucked into your ship when collected. (AH-0MUAYB3OU0087H9W)
+- Enemies and waves now have a clear difficulty rating, so levels stay properly balanced. (AH-0MTZWZ7MC002B01K)
+- Shooting down enemy bullets now shows a flash and sound, so you know your shot connected. (AH-0MU43IIQV001S5JR)
+- Bullets now wrap around screen edges and fade after a set range. (AH-0MU960UTE001PTV0)
+- Save your high scores and see how you rank against your best runs. (AH-0MU6VSKZT006HBTR)
+- Weapon icons now clearly show what each weapon does, so you can tell them apart at a glance. (AH-0MUAYB5UK0052P1D)
+- You can now play the whole game using only your keyboard, no mouse needed. (AH-0MU9LKQEP008LCX9)
+- Play the latest release online at sorratheorc.github.io/AI_Hell/ (AH-0MU9P20Q2003D2V0)
+### Bug Fixes
+- Asteroids now survive wave timeouts and carry over, staying shootable and dangerous. (AH-0MU8TWF1H007OG2L)
+- Your saved ship control settings now stick after restarting the game. (AH-0MUESFKCD004SI1V)
+- Removed the stray INDEX button from the playable game scene for a cleaner experience. (AH-0MU9LNE5C007LO4F)
+- Starting a new game now clears all powerups and resets your lives for a fair fresh run. (AH-0MU9KSFMQ005SAT1)
+- The real boss now appears correctly as "Boss," with the swarm enemy renamed "Boss Swarm. (AH-0MUAYB28C004KK7X)
+
 ## v0.1.4 (2026-09-20)
 ### Features
 - Weapon pickups now stack and last 10 seconds, so you can unleash multiple firing patterns at once. (AH-0MTV7RITM009LJF6)

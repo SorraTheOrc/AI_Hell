@@ -9,7 +9,7 @@
  * `WeightedRandomSpawner` for the main game's semi-random drops.
  *
  * This module is engine-agnostic enough to be reused by:
- * - The GymPowerUps gym scene (AH-0MTC0QPS60005MNT)
+ * - The GymPowerUpsUtility gym scene (AH-0MTC0QPS60005MNT)
  * - The combat gym scene (AH-0MTC2P6G3007PJ40)
  * - The weapon gym scene (AH-0MTC1TEXR006I5XR)
  *

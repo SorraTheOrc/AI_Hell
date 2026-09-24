@@ -8,15 +8,18 @@
  * level transitions, and the game-over flow.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
+import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
+import { PauseScene } from './PauseScene';
 import {
   BOSS_PHASE_SCORES,
   LEVEL_TRANSITION_SECONDS,
@@ -24,6 +27,14 @@ import {
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
+import { DEFAULT_CONFIG } from '../core/config';
+import { seedConfigStore } from '../core/configStore';
+
+// These gameplay tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 /**
  * Records the `scale` option of every `spawnExplosionParticles` call so
@@ -67,6 +78,31 @@ function reachBoss(scene: PlayScene): void {
     killAllEnemies(scene);
     finishTransition(scene);
   }
+}
+
+/**
+ * Walks the run to the boss encounter by repeatedly letting the wave timer
+ * expire, so the Level-1 asteroid is carried over every wave/level boundary
+ * (AH-0MU8TWF1H007OG2L). Non-asteroid enemies detonate on each timeout.
+ */
+function timeOutToBoss(scene: PlayScene): void {
+  const gs = scene.getGameState();
+  gs.lives = 99; // absorb the per-timeout life penalty.
+  for (let guard = 0; guard < 200 && !scene.getBoss(); guard++) {
+    if (scene.isTransitioning()) {
+      finishTransition(scene);
+      continue;
+    }
+    scene.setWaveTimerRemaining(0.001);
+    scene.tick(0.01);
+  }
+}
+
+/** Alive asteroid entities currently in the scene. */
+function findAsteroids(scene: PlayScene): Asteroid[] {
+  return scene
+    .getEnemies()
+    .filter((e): e is Asteroid => e instanceof Asteroid && e.alive);
 }
 
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
@@ -146,6 +182,105 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getGameState().score).toBeGreaterThan(0);
   });
 
+  it('AC5 — a wrapped player bullet still destroys an enemy at its new position', async () => {
+    const scene = await bootPlay();
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+
+    // Spawn the bullet off-screen to the left; a single tick wraps it onto
+    // the enemy (x += GAME_WIDTH), proving a wrapped bullet stays collidable.
+    const pb = scene.spawnPlayerBullet(enemy.x - GAME_WIDTH, enemy.y, 0, 0);
+    expect(pb.x).toBeLessThan(0);
+    scene.tick(0.016);
+
+    expect(pb.x).toBeGreaterThanOrEqual(0);
+    expect(enemy.alive).toBe(false);
+  });
+
+  it('AC2 — enemy bullets wrap across all four screen edges', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50); // keep the player clear
+    const step = 350 * 0.05; // distance travelled in one 0.05 s tick
+
+    // Each case crosses one edge within a single tick and must reappear on
+    // the opposite edge (never culled off-screen).
+    const cases: Array<{
+      name: string;
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      expectX: number;
+      expectY: number;
+    }> = [
+      { name: 'right → left', x: GAME_WIDTH - 1, y: 300, vx: 350, vy: 0,
+        expectX: GAME_WIDTH - 1 + step - GAME_WIDTH, expectY: 300 },
+      { name: 'left → right', x: 1, y: 300, vx: -350, vy: 0,
+        expectX: 1 - step + GAME_WIDTH, expectY: 300 },
+      { name: 'bottom → top', x: 470, y: GAME_HEIGHT - 1, vx: 0, vy: 350,
+        expectX: 470, expectY: GAME_HEIGHT - 1 + step - GAME_HEIGHT },
+      { name: 'top → bottom', x: 470, y: 1, vx: 0, vy: -350,
+        expectX: 470, expectY: 1 - step + GAME_HEIGHT },
+    ];
+
+    for (const c of cases) {
+      const eb = scene.spawnEnemyBullet(c.x, c.y, c.vx, c.vy, 0xff4444, 10);
+      scene.tick(0.05);
+      expect(scene.getEnemyBullets(), c.name).toContain(eb);
+      expect(eb.graphics.x, c.name).toBeCloseTo(c.expectX, 5);
+      expect(eb.graphics.y, c.name).toBeCloseTo(c.expectY, 5);
+      // Wrapped on-screen, not culled off-screen.
+      expect(eb.graphics.x, c.name).toBeGreaterThanOrEqual(0);
+      expect(eb.graphics.x, c.name).toBeLessThan(GAME_WIDTH);
+      expect(eb.graphics.y, c.name).toBeGreaterThanOrEqual(0);
+      expect(eb.graphics.y, c.name).toBeLessThan(GAME_HEIGHT);
+    }
+  });
+
+  it('AC2 — enemy bullets wrap both axes at once (corner case)', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50);
+    const step = 350 * 0.05;
+
+    const eb = scene.spawnEnemyBullet(GAME_WIDTH - 1, GAME_HEIGHT - 1, 350, 350, 0xff4444, 10);
+    scene.tick(0.05);
+
+    expect(scene.getEnemyBullets()).toContain(eb);
+    expect(eb.graphics.x).toBeCloseTo(GAME_WIDTH - 1 + step - GAME_WIDTH, 5);
+    expect(eb.graphics.y).toBeCloseTo(GAME_HEIGHT - 1 + step - GAME_HEIGHT, 5);
+  });
+
+  it('AC3 — enemy bullets expire by lifetime, never by off-screen position', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50);
+
+    const eb = scene.spawnEnemyBullet(100, 100, 0, 0, 0xff4444, 0.1);
+    expect(scene.getEnemyBullets()).toContain(eb);
+
+    scene.tick(0.05); // 0.05 < 0.1 — still alive
+    expect(scene.getEnemyBullets()).toContain(eb);
+
+    scene.tick(0.06); // 0.11 ≥ 0.1 — expired by lifetime
+    expect(scene.getEnemyBullets()).not.toContain(eb);
+  });
+
+  it('AC3/AC5 — a player bullet that expires is destroyed (no stationary bullet left on screen)', async () => {
+    const scene = await bootPlay();
+    scene.getPlayer()!.setPosition(50, 50);
+
+    const pb = scene.spawnPlayerBullet(100, 100, 0, 0, 0x00ffff, 0.1);
+    expect(scene.getPlayerBullets()).toContain(pb);
+
+    scene.tick(0.05); // 0.05 < 0.1 — still alive and rendered
+    expect(scene.getPlayerBullets()).toContain(pb);
+    expect(pb.active).toBe(true);
+    expect(scene.children.list).toContain(pb);
+
+    scene.tick(0.06); // 0.11 ≥ 0.1 — expired: removed AND destroyed
+    expect(scene.getPlayerBullets()).not.toContain(pb);
+    expect(pb.active).toBe(false);
+    expect(scene.children.list).not.toContain(pb);
+  });
+
   it('AC4 — an enemy bullet overlapping the player costs one life', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
@@ -157,6 +292,25 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getGameState().lives).toBe(livesBefore - 1);
     expect(scene.getHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+
+  it('AC5 — player bullet vs enemy bullet plays the dedicated impact cue from the shared path', async () => {
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    // Park the ship far from the impact so it is not hit.
+    player.setPosition(50, 50);
+    vi.clearAllMocks();
+
+    const eb = scene.spawnEnemyBullet(500, 300, 0, 0);
+    scene.spawnPlayerBullet(500, 300, 0, 0);
+    scene.tick(0.016);
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    // The heavier destruction cue is NOT used for bullet interception.
+    expect(destruction).not.toHaveBeenCalled();
+    expect(scene.getEnemyBullets()).not.toContain(eb);
   });
 
   it('AC4 — a power-up drop overlapping the player is collected', async () => {
@@ -383,17 +537,16 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getWaveTimerRemaining()).toBe(0);
   });
 
-  it('AH-0MU7JTG9R002ZWA6 AC2/AC4 — expiry detonates survivors at 10x, costs one life, and advances the wave', async () => {
+  it('AH-0MU7JTG9R002ZWA6 AC2/AC4 — expiry detonates non-asteroid survivors at 10x, costs one life, and advances the wave', async () => {
     const scene = await bootPlay();
     waveVfx.scales.length = 0;
     const livesBefore = scene.getGameState().lives;
-    expect(scene.getAliveCount()).toBeGreaterThan(0);
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    // All survivors detonated at 10x scale.
-    expect(scene.getAliveCount()).toBe(0);
+    // All non-asteroid survivors detonated at 10x scale; asteroid survives.
+    expect(scene.getAliveCount()).toBe(1); // the asteroid
     expect(waveVfx.scales.some((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE)).toBe(true);
 
     // Exactly one life lost and the wave advanced.
@@ -432,6 +585,199 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.isWaveTimerActive()).toBe(true);
     // The fresh countdown starts at the full limit.
     expect(scene.getWaveTimerRemaining()).toBeGreaterThan(WAVE_TIME_LIMIT_SECONDS - 2);
+  });
+
+  // ── Asteroid survival on wave-timeout (AH-0MU8TWF1H007OG2L) ────
+
+  it('AH-0MU8TWF1H007OG2L AC1 — asteroids remain alive after timeout', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroid = asteroids[0];
+    const asteroidX = asteroid.x;
+    const asteroidY = asteroid.y;
+
+    // Time out the wave while asteroids are present.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    // The asteroid survived the timeout — it was not detonated.
+    expect(asteroid.alive).toBe(true);
+    // Position should be approximately preserved (may have drifted slightly
+    // during the timeout tick before the transition pause begins).
+    expect(Math.abs(asteroid.x - asteroidX)).toBeLessThan(2);
+    expect(Math.abs(asteroid.y - asteroidY)).toBeLessThan(2);
+  });
+
+  it('AH-0MU8TWF1H007OG2L AC2 — non-asteroid enemies detonate on timeout while asteroids survive', async () => {
+    const scene = await bootPlay();
+    waveVfx.scales.length = 0;
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+
+    // Time out the wave.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    // All non-asteroid enemies were detonated.
+    expect(scene.getAliveCount()).toBe(asteroids.length);
+    // Asteroid explosion scale should not be 10x; only non-asteroid detonation was 10x.
+    expect(waveVfx.scales.some((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE)).toBe(true);
+  });
+
+  it('AH-0MU8TWF1H007OG2L AC3 — surviving asteroids are shootable during the transition period', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroid = asteroids[0];
+    const wasLarge = asteroid.getSizeTier() === 'large';
+
+    // Time out the wave.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    // We are now in the transition period; the asteroid should still be alive.
+    expect(scene.isTransitioning()).toBe(true);
+    expect(asteroid.alive).toBe(true);
+
+    // Shooting the asteroid during the transition should destroy it.
+    scene.spawnPlayerBullet(asteroid.x, asteroid.y, 0, 0);
+    scene.tick(0.016);
+
+    // The asteroid is destroyed by the bullet.
+    expect(asteroid.alive).toBe(false);
+    // A large asteroid splits into 2 medium children; medium splits into 2 small.
+    const asteroidCountAfter = findAsteroids(scene).length;
+    if (wasLarge) {
+      expect(asteroidCountAfter).toBe(2);
+    } else {
+      expect(asteroidCountAfter).toBe(0);
+    }
+  });
+
+  it('AH-0MU8TWF1H007OG2L AC4 — timeout costs a life and advances the wave when asteroids survive', async () => {
+    const scene = await bootPlay();
+    const livesBefore = scene.getGameState().lives;
+    const waveBefore = scene.getWaveManager().waveNumber;
+
+    // Time out the wave.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    // Exactly one life lost.
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    // The wave advanced.
+    expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
+  });
+
+  it('AH-0MU8TWF1H007OG2L AC5 — carried-over asteroids are re-registered with WaveManager for the next wave', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+
+    // Time out the wave to trigger transition.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    // Finish the transition so the next wave is spawned.
+    finishTransition(scene);
+
+    // The WaveManager should account for the carried-over asteroids.
+    // After timeout: enemiesAlive was decremented by _advanceAfterTimeout replay;
+    // re-registered asteroids add them back.
+    const aliveCount = scene.getAliveCount();
+    expect(wm.enemiesAlive).toBe(aliveCount);
+  });
+
+  // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
+
+  it('AH-0MUCG5SWH008104P AC1 — carried-over asteroids continue moving during transition', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroid = asteroids[0];
+
+    // Time out the wave to enter the transition period.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // Tick through the transition; the asteroid should move.
+    const xMid = asteroid.x;
+    const yMid = asteroid.y;
+    scene.tick(LEVEL_TRANSITION_SECONDS * 0.5);
+
+    // Position changed — asteroid is moving during transition.
+    expect(Math.abs(asteroid.x - xMid)).toBeGreaterThan(0);
+    expect(Math.abs(asteroid.y - yMid)).toBeGreaterThan(0);
+  });
+
+  it('AH-0MUCG5SWH008104P AC3 — ramming a carried-over asteroid during transition costs a life', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroid = asteroids[0];
+    const livesAtBoot = scene.getGameState().lives;
+
+    // Time out the wave to enter the transition period.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+    // The timeout penalty costs one life and grants brief invulnerability.
+    expect(scene.getGameState().lives).toBe(livesAtBoot - 1);
+
+    // Clear the post-hit invulnerability so the ram can register during
+    // the transition (test seam; invulnerability itself is covered elsewhere).
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    // Park the ship on the asteroid (mirrors the scout/asteroid ram tests);
+    // the internal movement state must be updated too or physics moves it back.
+    const player = scene.getPlayer()!;
+    player.setPosition(asteroid.x, asteroid.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: { x: number; y: number } })._movementState =
+      { ...state, x: asteroid.x, y: asteroid.y };
+    scene.tick(0.001);
+
+    // Ramming during the transition costs another life and destroys the asteroid.
+    expect(scene.getGameState().lives).toBe(livesAtBoot - 2);
+    expect(asteroid.alive).toBe(false);
+  });
+
+  it('AH-0MUCG5SWH008104P AC4 — no new enemy bullets spawn and no further life is lost during transition', async () => {
+    const scene = await bootPlay();
+
+    // Time out the wave to enter the transition period.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+    const livesAfterTimeout = scene.getGameState().lives;
+    const enemyBulletsAtTransitionStart = scene.getEnemyBullets().length;
+
+    // Tick through the transition (player not overlapping any asteroid).
+    scene.tick(LEVEL_TRANSITION_SECONDS * 0.5);
+
+    // Enemy fire is suspended — no new enemy bullets spawn during transition.
+    expect(scene.getEnemyBullets().length).toBeLessThanOrEqual(enemyBulletsAtTransitionStart);
+    // No further life is lost during the transition.
+    expect(scene.getGameState().lives).toBe(livesAfterTimeout);
+  });
+
+  it('AH-0MUCG5SWH008104P AC5 — un-destroyed carried-over asteroids persist after transition', async () => {
+    const scene = await bootPlay();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+
+    // Time out the wave.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // Let the transition complete.
+    finishTransition(scene);
+
+    // The carried-over asteroid(s) are still alive after the transition.
+    expect(findAsteroids(scene).length).toBe(asteroids.length);
   });
 
   // ── Power-up drop separation (AH-0MU7JTFM5000R4ME) ─────────────
@@ -577,14 +923,58 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
       vx: 100,
       vy: 100,
       color: 0xffffff,
+      lifetime: 4.0,
+      elapsed: 0,
     };
     boss.update = (() => [fakeBullet]) as unknown as typeof boss.update;
 
-    const before = scene.getEnemyBullets().length;
     scene.tick(0.016);
+    // The fake boss bullet is collected into the scene's enemy-bullet list.
+    // (The total count is not asserted: wrapping bullets may expire by
+    // lifetime in the same tick — AH-0MU960UTE001PTV0.)
     const bullets = scene.getEnemyBullets();
-    expect(bullets.length).toBeGreaterThan(before);
     expect(bullets.some((b) => b.graphics === fakeBullet.graphics)).toBe(true);
+  });
+
+  // ── Boss-entry asteroid cleanup (AH-0MUCG5TIU000VPVO) ──────────
+
+  it('AH-0MUCG5TIU000VPVO AC1/AC2/AC5 — carried-over asteroids are destroyed on boss entry with no split children', async () => {
+    const scene = await bootPlay();
+    timeOutToBoss(scene);
+
+    // The boss spawned and no carried-over asteroid survived.
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getWaveManager().bossActive).toBe(true);
+    expect(findAsteroids(scene).length).toBe(0);
+    expect(scene.getAliveCount()).toBeGreaterThan(0); // boss + minions remain
+  });
+
+  it('AH-0MUCG5TIU000VPVO AC3 — the boss spawn path is otherwise unchanged (Phase-1 minions arrive)', async () => {
+    const scene = await bootPlay();
+    timeOutToBoss(scene);
+
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getBossPhase()).toBe(1);
+    const scouts = scene
+      .getEnemies()
+      .filter((e) => e.alive && e.constructor.name === 'Scout');
+    expect(scouts.length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MUCG5TIU000VPVO AC4 — normal (non-boss) transitions still carry asteroids over', async () => {
+    const scene = await bootPlay();
+    const asteroidsBefore = findAsteroids(scene);
+    expect(asteroidsBefore.length).toBeGreaterThan(0);
+
+    // Time out Level 1 Wave 1 and complete the transition to Wave 2.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+
+    // The asteroid carried over into the next wave.
+    expect(findAsteroids(scene).length).toBe(asteroidsBefore.length);
+    expect(scene.getWaveManager().bossActive).toBe(false);
   });
 });
 
@@ -1227,6 +1617,60 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(resetSound).toHaveBeenCalledTimes(1);
   });
 
+  // ── Collection absorb VFX + pop SFX (AH-0MUBYXR280018HST) ────────
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+
+    // The VFX is started with the drop's position and kept alive — not
+    // destroyed on the collection frame.
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).toHaveLength(0); // removed from active drops
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    for (let i = 0; i < 10; i++) scene.tick(0.05);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false); // destroyed on completion
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootPlay();
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    // Keep ticking while the drop is absorbed — it must not re-collect.
+    for (let i = 0; i < 4; i++) scene.tick(0.05);
+    expect(popSound).toHaveBeenCalledTimes(1);
+  });
+
   // ── Per-enemy destruction audio (AH-0MU8QW2XS001HE2A) ───────────
 
   /** Walks forward until the current wave contains an entity with the seam. */
@@ -1302,5 +1746,195 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.001);
 
     expect(diverSound).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Powerup reset on game restart (AH-0MU9KSFMQ005SAT1) ─────────────
+
+  it('AC1 — restarting PlayScene clears all active powerup effects', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    /** Collects a fully-grown drop under the player (one tick). */
+    const collect = (id: string): void => {
+      const drop = scene.spawnPowerUpDrop(id as never, player.x, player.y)!;
+      for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+      player.setPosition(drop.x, drop.y);
+      scene.tick(0.016);
+    };
+
+    // Collect one of each effect category: timed (P5 speed, P8 life,
+    // P3 shield, P6 phase), permanent stacks (P9 magnet, P7 teleport) and a
+    // weapon pickup ('spread').
+    collect('P5');
+    collect('P8');
+    collect('P3');
+    collect('P6');
+    collect('P9');
+    collect('P7');
+    collect('spread');
+
+    // Verify each category was active before the restart (AC1).
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.isPhased).toBe(true);
+    expect(registry.lives()).toBe(4);
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
+    expect(registry.activeWeapons().length).toBeGreaterThan(0);
+
+    // Simulate game restart: same as MenuScene → PlayScene. The restart is
+    // queued by the SceneManager, so pump the loop before asserting.
+    scene.scene.start('PlayScene');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Phaser reuses the same scene instance — verify it is still active.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+
+    // Re-fetch the instance in case Phaser recreated the scene.
+    const restarted = booted!.game.scene.getScene(
+      'PlayScene',
+    ) as PlayScene;
+    const restartedRegistry = restarted.getEffectsRegistry();
+
+    // AC1/AC3 — every effect category is back to its default.
+    expect(restartedRegistry.activeEffects()).toHaveLength(0);
+    expect(restartedRegistry.isShielded).toBe(false);
+    expect(restartedRegistry.isPhased).toBe(false);
+    expect(restartedRegistry.speedMultiplier()).toBe(1);
+    expect(restartedRegistry.magnetStacks()).toBe(0);
+    expect(restartedRegistry.hasTeleport()).toBe(false);
+    expect(restartedRegistry.activeWeapons()).toHaveLength(0);
+    expect(restartedRegistry.lives()).toBe(3);
+  });
+});
+
+describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, PauseScene, GameOverScene, MenuScene]);
+    return booted.scene as PlayScene;
+  }
+
+  /** A faked Phaser key exposing only `isDown`. */
+  interface KeyLike {
+    isDown: boolean;
+  }
+
+  /** Exposes the scene's keyboard input objects for deterministic driving. */
+  function inputState(scene: PlayScene): {
+    cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
+    wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
+    teleportKey: Phaser.Input.Keyboard.Key | null;
+  } {
+    return scene as unknown as {
+      cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
+      wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
+      teleportKey: Phaser.Input.Keyboard.Key | null;
+    };
+  }
+
+  it('AC1 — WASD moves the ship without any pointer input', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const { wasd } = inputState(scene);
+
+    const xBefore = player.x;
+    wasd.D.isDown = true;
+    scene.tick(0.1);
+    wasd.D.isDown = false;
+    expect(player.x).toBeGreaterThan(xBefore);
+
+    const yBefore = player.y;
+    wasd.W.isDown = true;
+    scene.tick(0.1);
+    wasd.W.isDown = false;
+    expect(player.y).toBeLessThan(yBefore);
+  });
+
+  it('AC1 — arrow keys move the ship without any pointer input', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const { cursors } = inputState(scene);
+
+    const xBefore = player.x;
+    cursors.left.isDown = true;
+    scene.tick(0.1);
+    cursors.left.isDown = false;
+    expect(player.x).toBeLessThan(xBefore);
+
+    const yBefore = player.y;
+    cursors.down.isDown = true;
+    scene.tick(0.1);
+    cursors.down.isDown = false;
+    expect(player.y).toBeGreaterThan(yBefore);
+  });
+
+  it('AC1 — auto-fire needs no pointer input', async () => {
+    const scene = await bootPlay();
+    // The run may already have fired during boot; record the baseline.
+    const before = scene.getPlayerBullets().length;
+
+    // Advance past the cannon's fire interval without any pointer event.
+    scene.tick(0.5);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(before);
+  });
+
+  it('AC1 — the S/↓ layer-drop key triggers a P7 teleport', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Gain a teleport stack.
+    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.teleportStacks()).toBe(1);
+
+    // Move off-centre, then simulate the layer-drop key being just-pressed.
+    player.setPosition(300, 400);
+    const beforeX = player.x;
+    const beforeY = player.y;
+    const { teleportKey } = inputState(scene);
+    expect(teleportKey).not.toBeNull();
+    (teleportKey as unknown as { _justDown: boolean })._justDown = true;
+    scene.tick(0.016);
+
+    // The warp consumed the stack and moved the ship.
+    expect(registry.teleportStacks()).toBe(0);
+    expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
+  });
+
+  it('AC2 — Tab/Enter do not interfere with gameplay (no focus manager active)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const xBefore = player.x;
+    const yBefore = player.y;
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    scene.tick(0.1);
+
+    // No menu opened, no navigation, and the ship is unaffected.
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+    expect(player.x).toBeCloseTo(xBefore);
+    expect(player.y).toBeCloseTo(yBefore);
+  });
+
+  it('AC2 — no FocusManager instance is attached to PlayScene', async () => {
+    const scene = await bootPlay();
+    expect(
+      (scene as unknown as { focusManager?: unknown }).focusManager,
+    ).toBeUndefined();
   });
 });

@@ -11,7 +11,7 @@
  * AH-0MTC2P6G3007PJ40 — "Create combat gym scene for combat-coupled
  * power-ups with low-level enemy threats"
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -21,6 +21,16 @@ import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
+import * as effectsModule from '../../audio/effects';
+import * as collectAnimationModule from '../../powerups/collectAnimation';
+import { DEFAULT_CONFIG } from '../../core/config';
+import { seedConfigStore } from '../../core/configStore';
+
+// These scene tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -156,13 +166,17 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     player.setPosition(480, 270);
 
     // SHOOT starts ON — the tell phase lasts 0.6 s then fires on the next
-    // tick past the 1.2 s interval. Drive ~3 s of simulation.
-    for (let i = 0; i < 200; i++) {
+    // tick past the 1.2 s interval. Drive until a bullet appears, polling
+    // each tick so the assertion does not sit on the bullet-lifetime expiry
+    // boundary (AH-0MU960UTE001PTV0) and stays robust to the harness's
+    // background game loop.
+    let bullets = scene.getEnemyBullets();
+    for (let i = 0; i < 400 && bullets.length === 0; i++) {
       scene.tick(1 / 60);
+      bullets = scene.getEnemyBullets();
     }
 
     // At least one bullet should be on screen.
-    const bullets = scene.getEnemyBullets();
     expect(bullets.length).toBeGreaterThan(0);
 
     // Bullets are Graphics objects.
@@ -289,10 +303,12 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // SHOOT starts ON — generate bullets without toggling.
-    for (let i = 0; i < 200; i++) {
-      scene.tick(1 / 60);
-    }
+    // Place enemy bullets deterministically so the assertion tests the P4
+    // clear itself, not scout fire cadence vs bullet lifetime
+    // (AH-0MU960UTE001PTV0 — shorter lifetimes made the previous
+    // tick-until-bullets-exist approach timing-fragile).
+    scene.spawnEnemyBullet(200, 100, 0, 0);
+    scene.spawnEnemyBullet(300, 150, 0, 0);
     const bulletsBefore = scene.getEnemyBullets();
     expect(bulletsBefore.length).toBeGreaterThan(0);
 
@@ -477,5 +493,68 @@ describe('GymPowerUpsCombat AC1: shared back button', () => {
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
     booted!.game.destroy(true);
+  });
+});
+
+describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function boot(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted!.scene as GymPowerUpsCombat;
+  }
+
+  it('collection starts the absorb animation and keeps the Graphics alive', async () => {
+    const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P3', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+    expect(drop.graphics.active).toBe(true);
+  });
+
+  it('the absorb animation completes and destroys the drop Graphics', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const drop = scene.spawnDrop('P3', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(scene.getCollectAnimations()).toHaveLength(1);
+
+    // Advance well past the ≤ 0.3 s absorb duration.
+    scene.tick(0.5);
+
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(drop.graphics.active).toBe(false);
+  });
+
+  it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
+    const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await boot();
+    vi.clearAllMocks();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.spawnDrop('P3', 480, 270);
+    scene.advanceDrops(0.5);
+
+    scene.tick(1 / 60);
+    expect(popSound).toHaveBeenCalledTimes(1);
+
+    scene.tick(0.5);
+    expect(popSound).toHaveBeenCalledTimes(1);
   });
 });
