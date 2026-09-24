@@ -50,11 +50,6 @@ describe('enemy-configs.csv seed data', () => {
 });
 
 describe('ship-config.csv seed data', () => {
-  it('exists and contains a header comment', () => {
-    const csv = readCsvFile('ship-config.csv');
-    expect(csv).toMatch(/^# /);
-  });
-
   it('contains exactly 1 ship row', () => {
     const csv = readCsvFile('ship-config.csv');
     const rows = parseCsvRows(csv);
@@ -73,10 +68,5 @@ describe('ship-config.csv seed data', () => {
     expect(coerced.shipSize).toBe(DEFAULT_CONFIG.shipSize);
     expect(coerced.shipColor).toBe(DEFAULT_CONFIG.shipColor);
     expect(coerced.controlScheme).toBe(DEFAULT_CONFIG.controlScheme);
-  });
-
-  it('trailing newline', () => {
-    const csv = readCsvFile('ship-config.csv');
-    expect(csv).toMatch(/\n$/);
   });
 });

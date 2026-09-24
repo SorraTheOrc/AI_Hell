@@ -11,7 +11,7 @@
  * AH-0MTC2P6G3007PJ40 — "Create combat gym scene for combat-coupled
  * power-ups with low-level enemy threats"
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -23,6 +23,14 @@ import { GymPowerUpsCombat } from './GymPowerUpsCombat';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
+import { DEFAULT_CONFIG } from '../../core/config';
+import { seedConfigStore } from '../../core/configStore';
+
+// These scene tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

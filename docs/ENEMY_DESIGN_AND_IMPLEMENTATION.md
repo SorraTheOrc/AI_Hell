@@ -601,8 +601,10 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
 
 - `src/data/enemy-configs.csv` — one row per enemy archetype.
 - `src/data/ship-config.csv` — the single player-ship row.
-- Both start with a `#` comment header listing every column, the enum values
-  and how to add an entry. Colours are `0xRRGGBB`; `formationKind` and
+- `enemy-configs.csv` starts with a `#` comment header listing every column,
+  the enum values and how to add an entry. The header is optional and is **not**
+  rewritten by the dev save path, so `ship-config.csv` is currently headerless.
+  Colours are `0xRRGGBB`; `formationKind` and
   `shotPattern` are the plain enum strings; numeric columns are plain numbers.
 
 Supporting modules:

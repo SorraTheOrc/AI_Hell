@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as effectsModule from '../../../audio/effects';
 import * as explosionModule from '../../../vfx/explosionParticles';
 import * as collectAnimationModule from '../../../powerups/collectAnimation';
@@ -42,6 +42,14 @@ import {
   isClearOfBodies,
   stubBody,
 } from '../../../test/powerUpTestFixtures';
+import { DEFAULT_CONFIG } from '../../../core/config';
+import { seedConfigStore } from '../../../core/configStore';
+
+// These scene tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 /** Minimal entity the base class drives (mirrors the real enemy contract). */
 class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEntity {

@@ -8,7 +8,7 @@
  * level transitions, and the game-over flow.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
@@ -27,6 +27,14 @@ import {
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
+import { DEFAULT_CONFIG } from '../core/config';
+import { seedConfigStore } from '../core/configStore';
+
+// These gameplay tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 /**
  * Records the `scale` option of every `spawnExplosionParticles` call so

@@ -4,7 +4,7 @@
  * thrust movement and screen-wrap, overlap collection applying effects,
  * and the shared ← INDEX back button.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
@@ -20,6 +20,14 @@ import {
   POWER_UP_DROP_SIZE,
   WEAPON_DROP_SIZE,
 } from '../../core/constants';
+import { DEFAULT_CONFIG } from '../../core/config';
+import { seedConfigStore } from '../../core/configStore';
+
+// These scene tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 describe('GymPowerUpsUtility AC1: gym index discovery', () => {
   let booted: BootedGame | null = null;

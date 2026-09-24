@@ -10,7 +10,7 @@
  * and the invalid-binding fallback.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
@@ -24,6 +24,14 @@ import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
 import { PlayScene } from './PlayScene';
 import { SettingsScene } from './SettingsScene';
+import { DEFAULT_CONFIG } from '../core/config';
+import { seedConfigStore } from '../core/configStore';
+
+// These gameplay tests drive the fourDirectional control scheme; the app
+// default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 const KC = Phaser.Input.Keyboard.KeyCodes;
 

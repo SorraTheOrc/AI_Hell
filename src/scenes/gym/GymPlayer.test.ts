@@ -108,7 +108,7 @@ describe('GymPlayer ship config panel', () => {
     // Scheme toggle button (AC3).
     const toggle = p!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement;
     expect(toggle).not.toBeNull();
-    expect(toggle.dataset['scheme']).toBe('fourDirectional');
+    expect(toggle.dataset['scheme']).toBe('asteroids');
 
     const colours = p!.querySelectorAll('input[type="color"][data-config]');
     expect(colours.length).toBe(3);
@@ -168,6 +168,10 @@ describe('GymPlayer ship config panel', () => {
     const player = playerOf(scene);
     expect(player).toBeDefined();
 
+    // Default scheme is Asteroids; switch to fourDirectional so the
+    // up-arrow thrust below moves the ship.
+    (panel()!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement).click();
+
     // Drag the maxSpeed slider to 50.
     setControl('maxSpeed', '50');
 
@@ -209,20 +213,20 @@ describe('GymPlayer ship config panel', () => {
   it('toggles the control scheme via the button and applies it to the player (AC3)', async () => {
     const scene = await bootPlayer();
     const player = playerOf(scene);
-    expect(player!.getScheme()).toBe('fourDirectional');
+    expect(player!.getScheme()).toBe('asteroids');
 
     const toggle = panel()!.querySelector(
       `#${SCHEME_TOGGLE_ID}`,
     ) as HTMLButtonElement;
     toggle.click();
 
-    expect(toggle.dataset['scheme']).toBe('asteroids');
-    expect(toggle.textContent).toMatch(/asteroids/i);
-    expect(player!.getScheme()).toBe('asteroids');
+    expect(toggle.dataset['scheme']).toBe('fourDirectional');
+    expect(toggle.textContent).toMatch(/4-Directional/i);
+    expect(player!.getScheme()).toBe('fourDirectional');
 
     toggle.click();
-    expect(toggle.dataset['scheme']).toBe('fourDirectional');
-    expect(player!.getScheme()).toBe('fourDirectional');
+    expect(toggle.dataset['scheme']).toBe('asteroids');
+    expect(player!.getScheme()).toBe('asteroids');
   });
 
   it('applies the rotation-speed slider live in Asteroids mode (AC3)', async () => {
@@ -231,11 +235,7 @@ describe('GymPlayer ship config panel', () => {
     const player = playerOf(scene);
     expect(player).toBeDefined();
 
-    // Switch to Asteroids, then raise rotation speed to 6 rad/s.
-    const toggle = panel()!.querySelector(
-      `#${SCHEME_TOGGLE_ID}`,
-    ) as HTMLButtonElement;
-    toggle.click();
+    // Already in the default Asteroids scheme; raise rotation speed to 6 rad/s.
     setControl('asteroidsRotationSpeed', '6');
 
     // Turn right for 1s at 6 rad/s → facing ≈ 6 rad (34.4° short of 2π).
@@ -246,6 +246,7 @@ describe('GymPlayer ship config panel', () => {
   });
 
   it('persists the selected scheme and rotation speed on Save (AC4)', async () => {
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
     await bootPlayer();
 
     const toggle = panel()!.querySelector(
@@ -292,6 +293,10 @@ describe('GymPlayer ship config panel', () => {
 
     const player = playerOf(scene);
     expect(player).toBeDefined();
+
+    // Default scheme is Asteroids; switch to fourDirectional so the
+    // right-arrow thrust below accelerates the ship.
+    (panel()!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement).click();
 
     // Build up velocity with thrust (right) to the max-speed cap, then
     // release all inputs so the ship drifts freely.

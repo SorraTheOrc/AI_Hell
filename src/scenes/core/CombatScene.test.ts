@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
@@ -14,6 +14,14 @@ import {
   CombatEnemyEntity,
   CombatScene,
 } from './CombatScene';
+import { DEFAULT_CONFIG } from '../../core/config';
+import { seedConfigStore } from '../../core/configStore';
+
+// These hook-contract tests exercise the fourDirectional input mapping; the
+// app default is now Asteroids, so seed the scheme explicitly for the suite.
+beforeEach(() => {
+  seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });
+});
 
 /** Minimal enemy the shared core drives (mirrors the real entity contract). */
 class StubEnemy extends Phaser.GameObjects.Container implements CombatEnemyEntity {

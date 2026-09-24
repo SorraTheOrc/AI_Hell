@@ -186,6 +186,6 @@ export const DEFAULT_CONFIG: ShipConfig = {
   thrustFlameColor: THRUST_FLAME_COLOR,
   thrustFlameInnerColor: THRUST_FLAME_INNER_COLOR,
   frictionDeceleration: FRICTION_DECELERATION,
-  controlScheme: 'fourDirectional',
+  controlScheme: 'asteroids',
   asteroidsRotationSpeed: 3,
 };

@@ -447,7 +447,7 @@ describe('Validation (AC3)', () => {
     };
     const result = m.coerceShipConfig(row, DEFAULT_CONFIG);
     expect(result.thrustAcceleration).toBe(0); // malformed → 0
-    expect(result.controlScheme).toBe('fourDirectional'); // invalid enum → default
+    expect(result.controlScheme).toBe('asteroids'); // invalid enum → default
   });
 });
 

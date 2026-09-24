@@ -23,7 +23,7 @@ describe('ship configuration module', () => {
     expect(DEFAULT_CONFIG.thrustFlameColor).toBe(0xff8c00);
     expect(DEFAULT_CONFIG.thrustFlameInnerColor).toBe(0xffff00);
     expect(DEFAULT_CONFIG.frictionDeceleration).toBe(100);
-    expect(DEFAULT_CONFIG.controlScheme).toBe('fourDirectional');
+    expect(DEFAULT_CONFIG.controlScheme).toBe('asteroids');
     expect(DEFAULT_CONFIG.asteroidsRotationSpeed).toBe(3);
   });
 
