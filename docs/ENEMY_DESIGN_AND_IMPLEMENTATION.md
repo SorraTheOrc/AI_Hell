@@ -89,9 +89,11 @@ Seven **seed configs** (scout/diver/tank/phaser/swarm/boss/asteroid) live in
 config + small registries instead of per-enemy scene classes.
 
 **Persistence.** Each archetype is one row in the committed CSV
-`src/data/enemy-configs.csv` (the single source of truth). At boot the config
-store (`src/core/configStore.ts`) reads, parses and validates it; a missing or
-malformed file falls back to the seed defaults without throwing. A row that is
+`src/data/enemy-configs.csv` (the single source of truth). At boot the entry
+point (`src/core/boot.ts`) awaits `loadConfigs()` before the Phaser game is
+constructed, and the config store (`src/core/configStore.ts`) reads, parses and
+validates it; a missing or malformed file falls back to the seed defaults
+without throwing. A row that is
 partly invalid coerces to defaults (malformed numbers → `0`, invalid hex →
 `0x000000`, invalid enums → the default enum). For seed keys the registry
 `displayName` is **authoritative**, so a stale CSV label (for example an older
@@ -613,9 +615,10 @@ Supporting modules:
   `validateShipConfig` return `{ ok, errors }`; `serializeEnemyConfigs` /
   `serializeShipConfigs` round-trip back. `ENEMY_COLUMN_ORDER` /
   `SHIP_COLUMN_ORDER` are the stable exported column orders.
-- `src/core/configStore.ts` — in-memory registry. `loadConfigs()` (async, once
-  before scene boot) fetches both CSVs through the dev plugin (or reads the
-  bundled CSV in production), parses/validates them and populates the registry;
+- `src/core/configStore.ts` — in-memory registry. `loadConfigs()` (async,
+  awaited by `src/core/boot.ts` before the game/scenes are constructed) fetches
+  both CSVs through the dev plugin (or reads the bundled CSV in production),
+  parses/validates them and populates the registry;
   a failed fetch falls back to `DEFAULT_ENEMY_CONFIGS` / `DEFAULT_CONFIG`
   without throwing. `loadEnemyConfig` / `loadShipConfig` / `listEnemyConfigKeys`
   / `loadAllEnemyConfigs` are synchronous reads of the registry.
