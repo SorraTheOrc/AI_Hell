@@ -201,6 +201,12 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   }
   bulletRadius = 5;
 
+  /** Overridable invulnerability window (AC4 hook coverage). */
+  invulnDuration = PLAYER_RESPAWN_INVULNERABLE;
+  protected override getInvulnerabilityDuration(): number {
+    return this.invulnDuration;
+  }
+
   // ── Public wrappers for the protected template methods ───────────
   runReadInput() {
     return this._readPlayerInput();
@@ -455,6 +461,17 @@ describe('CombatScene — shared combat core hook contract', () => {
     scene.runUpdateInvulnerability(PLAYER_RESPAWN_INVULNERABLE + 0.01);
     expect(scene.getInvulnerable()).toBe(0);
     expect(player.alpha).toBe(1);
+  });
+
+  it('AC4 — _startInvulnerability uses the overridable getInvulnerabilityDuration hook', async () => {
+    const scene = await boot();
+    scene.invulnDuration = 0.8;
+    const player = scene.addPlayer({ x: 300, y: 300 });
+
+    scene.runApplyPlayerHit(player);
+
+    // The hook is what supplies the window (inherited default is 1.5 s).
+    expect(scene.getInvulnerable()).toBe(0.8);
   });
 
   // ── Teleport ──────────────────────────────────────────────────────

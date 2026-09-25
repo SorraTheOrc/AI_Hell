@@ -30,9 +30,15 @@ const SHARED_METHODS = [
   '_readPlayerInput',
 ] as const;
 
-/** Production files the epic re-based onto the shared core. */
-const TARGET_FILES = [
+/** The two shared-core files that may host a shared-method definition. */
+const SHARED_CORE_FILES = [
+  'src/scenes/core/CombatCoreScene.ts',
   'src/scenes/core/CombatScene.ts',
+];
+
+/** Production files scanned for duplicate shared-method definitions. */
+const TARGET_FILES = [
+  ...SHARED_CORE_FILES,
   'src/scenes/PlayScene.ts',
   'src/scenes/gym/core/GymFormationScene.ts',
 ];
@@ -146,13 +152,15 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
     }
   });
 
-  it('each shared method is defined in exactly one of the target production files', () => {
-    // Scope: the three files this epic re-based. Older standalone gym scenes
+  it('each shared method is defined in exactly one of the shared-core files', () => {
+    // Scope: the shared core (CombatCoreScene + CombatScene) plus the two
+    // scenes this epic re-based. Older standalone gym scenes
     // (GymWeapons/GymPowerUpsCombat/GymPowerUpsUtility) predate the shared
     // core and are out of scope for this epic (full engine extraction is
     // explicitly excluded); a repo-wide scan would flag them. The two
     // re-based scenes must define each method zero times and the shared
-    // core exactly once.
+    // core exactly once (in either of its two files) — the method may now
+    // live in the narrower CombatCoreScene base rather than CombatScene.
     const files = TARGET_FILES.map((file) => path.resolve(process.cwd(), file));
     for (const method of SHARED_METHODS) {
       const definers = files.filter((file) =>
@@ -161,10 +169,11 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       const relative = definers
         .map((file) => path.relative(process.cwd(), file))
         .sort();
-      // Exactly one definer, and it must be the shared core.
-      expect(relative).toEqual(['src/scenes/core/CombatScene.ts']);
+      // Exactly one definer, and it must be one of the shared-core files.
+      expect(relative).toHaveLength(1);
+      expect(SHARED_CORE_FILES).toContain(relative[0]);
       // The re-based scenes must not re-introduce a copy.
-      for (const target of TARGET_FILES.slice(1)) {
+      for (const target of TARGET_FILES.slice(SHARED_CORE_FILES.length)) {
         expect(relative).not.toContain(target);
       }
     }

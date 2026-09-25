@@ -4,14 +4,13 @@
  * `PlayScene` (the shipped game) and `GymFormationScene` (the gym core)
  * historically each kept their own copy of the scene-level combat and
  * player-lifecycle logic. The copies drifted, so a behaviour fix in one
- * scene did not reach the other. This abstract base class defines the
- * shared combat/lifecycle **template methods** exactly once:
+ * scene did not reach the other. This abstract class extends
+ * {@link CombatCoreScene} — the narrower shared base that owns the input
+ * path, auto-fire and drop collection — and adds the **combat-only**
+ * template methods exactly once:
  *
- * - {@link CombatScene._readPlayerInput}
- * - {@link CombatScene._autoFire}
- * - {@link CombatScene._collectDrop}
- * - {@link CombatScene._spawnPlayerExplosion}
- * - {@link CombatScene._clearEnemyBullets}
+ * - {@link CombatScene._spawnPlayerExplosion} (inherited from the base)
+ * - {@link CombatScene._clearEnemyBullets} (inherited from the base)
  * - {@link CombatScene._handleTeleport} / {@link CombatScene.triggerTeleport}
  * - {@link CombatScene._hitPlayer}
  * - {@link CombatScene._handleCollisions}
@@ -29,11 +28,8 @@ import Phaser from 'phaser';
 
 import {
   PLAYER_BULLET_RADIUS,
-  PLAYER_BULLET_SPEED,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
-  PLAYER_RESPAWN_INVULNERABLE,
-  SHIP_COLOR,
   SHIP_SIZE,
 } from '../../core/constants';
 import {
@@ -42,87 +38,26 @@ import {
   playPowerUpCollectSound,
 } from '../../audio/effects';
 import { Player } from '../../entities/Player';
-import {
-  PlayerBullet,
-  createPlayerBullet,
-} from '../../entities/PlayerBullet';
-import {
-  angleToVelocity,
-  createBulletsFromHeading,
-  type WeaponId,
-} from '../../utils/weapons';
-import {
-  AsteroidsInputHandler,
-  FourDirectionalInputHandler,
-  type ControlInput,
-} from '../../utils/movementModel';
-import type { WasdKeysLike } from '../../utils/input';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-} from '../../vfx/explosionParticles';
+import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
 import { EffectsRegistry } from '../../powerups/effects';
-import { PowerUp } from '../../powerups/PowerUp';
-import {
-  spawnCollectAnimation,
-  type CollectAnimationHandle,
-} from '../../powerups/collectAnimation';
 import {
   findTeleportDestination,
   type TeleportBody,
 } from '../../powerups/teleport';
-import type { DropId, PowerUpId } from '../../powerups/types';
+import {
+  CombatCoreScene,
+  type CombatDrop,
+  type CombatEnemyBullet,
+  type CombatEnemyEntity,
+} from './CombatCoreScene';
+
+// Re-export the shared contracts so existing `from './CombatScene'`
+// imports keep working after they moved to the narrower base.
+export type { CombatDrop, CombatEnemyBullet, CombatEnemyEntity };
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 export const COMBAT_BLINK_INTERVAL = 0.1;
-
-/**
- * Structural contract an enemy entity must satisfy for the shared combat
- * core to collide with and destroy it. `FormationSceneEntity` (gym) and
- * `EnemyEntity` (game) both satisfy it structurally.
- */
-export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
-  x: number;
-  y: number;
-  readonly alive: boolean;
-  /** Hit radius (px) used for circle-vs-circle collision checks. */
-  getHitRadius(): number;
-  /** Destroys the entity, optionally at an explosion scale. */
-  destroySelf(scale?: number): void;
-  /** Optional entity-specific destruction audio seam. */
-  playDestructionAudio?(): void;
-  /**
-   * Optional multi-hit seam (e.g. Boss). When present, a player bullet
-   * delegates to this instead of `destroySelf()`.
-   */
-  takeDamage?(): number | void;
-}
-
-/** Structural contract an enemy bullet must satisfy. */
-export interface CombatEnemyBullet {
-  readonly graphics: Phaser.GameObjects.Graphics;
-  vx: number;
-  vy: number;
-}
-
-/**
- * Structural contract a power-up/weapon drop must satisfy for the shared
- * collect path. `PlayDrop` (game) and `FormationSceneDrop` (gym) both
- * satisfy it structurally.
- */
-export interface CombatDrop {
-  x: number;
-  y: number;
-  readonly graphics: Phaser.GameObjects.Graphics;
-  readonly powerUp: PowerUp;
-  /** Unified drop id (power-up or weapon). */
-  readonly dropId: DropId;
-  /** The weapon drop id when this is a weapon drop. */
-  weaponDropId?: string;
-  /** True once collected and playing its absorb animation. */
-  absorbing?: boolean;
-}
 
 /**
  * Abstract shared combat scene. Parameterised by the enemy, bullet and
@@ -132,15 +67,9 @@ export abstract class CombatScene<
   TEnemy extends CombatEnemyEntity = CombatEnemyEntity,
   TBullet extends CombatEnemyBullet = CombatEnemyBullet,
   TDrop extends CombatDrop = CombatDrop,
-> extends Phaser.Scene {
-  /** Player bullets in flight (auto-fired + test-injected). */
-  protected playerBullets: PlayerBullet[] = [];
-  /** Live player-explosion VFX graphics (tracked for observation). */
-  protected playerExplosions: Phaser.GameObjects.Graphics[] = [];
+> extends CombatCoreScene<TEnemy, TBullet, TDrop> {
   /** Live bullet-impact flash graphics (AC5, tracked for observation). */
   protected bulletImpactEffects: Phaser.GameObjects.Graphics[] = [];
-  /** In-flight absorb animations for collected drops. */
-  protected collectAnimations: CollectAnimationHandle[] = [];
 
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
@@ -148,15 +77,9 @@ export abstract class CombatScene<
   /** Cumulative player-hit counter (exposed by both scenes). */
   protected playerHitCount = 0;
 
-  // Arrow-key (cursor) and WASD bindings for the player ship.
-  protected cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  protected wasd: WasdKeysLike | undefined;
   /** P7 teleport activation keys: S / ↓ (JustDown semantics). */
   protected teleportKey: Phaser.Input.Keyboard.Key | null = null;
   protected downKey: Phaser.Input.Keyboard.Key | null = null;
-  /** Pluggable input handlers (one per control scheme). */
-  protected fourDirHandler = new FourDirectionalInputHandler();
-  protected asteroidsHandler = new AsteroidsInputHandler();
 
   // ── Participant contract (subclass accessors) ────────────────────
 
@@ -195,12 +118,6 @@ export abstract class CombatScene<
   protected getAdditionalTeleportBodies(): TeleportBody[] {
     return [];
   }
-
-  /**
-   * Plays the firing cue for one weapon (one per firing weapon per
-   * volley). Default no-op; the game plays its per-weapon shoot cue.
-   */
-  protected onWeaponFired(_weaponId: WeaponId): void {}
 
   /**
    * Player bullet hits an enemy. Default (generic gym) behaviour:
@@ -294,15 +211,6 @@ export abstract class CombatScene<
   }
 
   /**
-   * Whether the player is phase-shifted (P6) and therefore immune, and
-   * whether scene-specific collision stages should be skipped. Default
-   * false; the game returns `effectsRegistry.isPhased`.
-   */
-  protected isPlayerPhased(): boolean {
-    return false;
-  }
-
-  /**
    * Scene-specific collision stage run between the bullet-vs-bullet and
    * enemy-bullet-vs-player stages (game: mineral collection/absorption).
    * Default no-op.
@@ -321,33 +229,11 @@ export abstract class CombatScene<
   }
 
   /**
-   * Scene hook for shield-style absorption. Default: no absorption (the
-   * hit always lands). The game overrides this to try its P3 shield.
-   *
-   * @returns whether the hit was fully absorbed.
-   */
-  protected tryAbsorbPlayerHit(_player: Player): boolean {
-    return false;
-  }
-
-  /**
-   * Scene hook run after a power-up (non-weapon) drop is collected.
-   * Default no-op; the game adds the P4 bomb notice and P8 extra life.
-   */
-  protected onPowerUpCollected(_drop: TDrop): void {}
-
-  /**
-   * Scene hook run after a weapon drop is collected. Default no-op; the
-   * gym advances the placeholder power-up lifecycle.
-   */
-  protected onWeaponCollected(_drop: TDrop): void {}
-
-  /**
    * Plays the per-type pickup activation cue. Default (generic gym):
    * generic pop + generic collect chime. The game overrides this with
    * its per-type cues.
    */
-  protected _playPickupCue(_drop: TDrop): void {
+  protected override _playPickupCue(_drop: TDrop): void {
     try {
       playPowerUpCollectPopSound();
       playPowerUpCollectSound();
@@ -356,148 +242,7 @@ export abstract class CombatScene<
     }
   }
 
-  // ── Shared combat template methods ───────────────────────────────
-
-  /**
-   * Reads the held arrow/WASD keys into the scheme-appropriate
-   * `ControlInput` contract, keyed off the player's saved control scheme.
-   */
-  protected _readPlayerInput(): ControlInput | null {
-    const player = this.getPlayer();
-    if (!player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
-  }
-
-  /**
-   * Auto-fires every active weapon toward the direction of travel when
-   * its cooldown has elapsed, delegating the firing cue to
-   * {@link CombatScene.onWeaponFired}.
-   */
-  protected _autoFire(dt: number): void {
-    const player = this.getPlayer();
-    if (!player) return;
-    const fired = player.tryFire(dt);
-    if (fired.length === 0) return;
-    const headingDeg = (player.getHeading() * 180) / Math.PI;
-    for (const weaponId of fired) {
-      this.onWeaponFired(weaponId);
-      const def = player.getWeaponDef(weaponId);
-      for (const bd of createBulletsFromHeading(
-        def,
-        headingDeg,
-        player.x,
-        player.y,
-      )) {
-        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.spawnPlayerBullet(bd.x, bd.y, vel.vx, vel.vy, bd.color, def.bulletLifetime);
-      }
-    }
-  }
-
-  /**
-   * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s,
-   * with the given colour and lifetime (seconds).
-   * Public so tests can place bullets deterministically.
-   */
-  spawnPlayerBullet(
-    x: number,
-    y: number,
-    vx: number,
-    vy: number,
-    color = 0x00ffff,
-    lifetime = 1.5,
-  ): PlayerBullet {
-    const bullet = createPlayerBullet(
-      this,
-      x,
-      y,
-      color,
-      PLAYER_BULLET_RADIUS,
-      vx,
-      vy,
-      lifetime,
-    );
-    this.playerBullets.push(bullet);
-    return bullet;
-  }
-
-  /** Spawns the player-death particle burst at (x, y). */
-  protected _spawnPlayerExplosion(x: number, y: number): void {
-    spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
-      patterns: resolvePatterns('player'),
-      registry: this.playerExplosions,
-    });
-  }
-
-  /**
-   * Collects a drop on overlap: applies the weapon/power-up through the
-   * shared registry, clears bullets for P4, then starts the absorb VFX
-   * and pickup cue. Scene-specific extras run through the collect hooks.
-   */
-  protected _collectDrop(drop: TDrop): void {
-    const registry = this.getEffectsRegistry();
-    const player = this.getPlayer();
-    if (drop.weaponDropId) {
-      if (drop.weaponDropId === 'reset') {
-        registry.tryResetWeapons();
-        player?.resetWeapon();
-      } else {
-        registry.applyWeapon(drop.weaponDropId as WeaponId);
-        player?.equipWeapon(drop.weaponDropId as WeaponId);
-      }
-      this.onWeaponCollected(drop);
-    } else {
-      const effect = drop.powerUp.tryCollect();
-      if (!effect) return;
-      if (drop.dropId === 'P4') {
-        this._clearEnemyBullets();
-      }
-      registry.applyCollect(drop.dropId as PowerUpId);
-      this.onPowerUpCollected(drop);
-    }
-    // Collection confirmed — mark the drop so the overlap gate can never
-    // re-collect it while the absorb animation plays.
-    drop.absorbing = true;
-    this._startCollectAnimation(drop);
-    this._playPickupCue(drop);
-  }
-
-  /**
-   * Starts the absorb animation for a collected drop, using the ship's
-   * current world position as the attractor.
-   */
-  protected _startCollectAnimation(drop: TDrop): void {
-    const player = this.getPlayer();
-    const shipX = player?.x ?? drop.x;
-    const shipY = player?.y ?? drop.y;
-    this.collectAnimations.push(
-      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
-    );
-  }
-
-  /** Advances every in-flight absorb animation and prunes completed ones. */
-  protected _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const player = this.getPlayer();
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (player) handle.setAttractor(player.x, player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
-    }
-    this.collectAnimations = kept;
-  }
-
-  /** Clears all on-screen enemy bullets (P4 bomb — no enemy damage). */
-  protected _clearEnemyBullets(): void {
-    for (const bullet of this.getEnemyBullets()) {
-      bullet.graphics.destroy();
-    }
-    this.setEnemyBullets([]);
-  }
+  // ── Teleport ─────────────────────────────────────────────────────
 
   /**
    * Handles the S / ↓ key press for a P7 teleport (JustDown semantics).
@@ -576,10 +321,13 @@ export abstract class CombatScene<
     return true;
   }
 
+  // ── Hit lifecycle ────────────────────────────────────────────────
+
   /**
    * Player hit: dispatches to the scene hooks. Shield-style absorption
-   * is optional via {@link tryAbsorbPlayerHit}; the hit counter is owned
-   * by the scene's hit lifecycle (so an absorbed hit need not count).
+   * is optional via {@link CombatCoreScene.tryAbsorbPlayerHit}; the hit
+   * counter is owned by the scene's hit lifecycle (so an absorbed hit
+   * need not count).
    */
   protected _hitPlayer(): void {
     const player = this.getPlayer();
@@ -610,7 +358,7 @@ export abstract class CombatScene<
   protected _startInvulnerability(): void {
     const player = this.getPlayer();
     if (!player) return;
-    this.invulnerable = PLAYER_RESPAWN_INVULNERABLE;
+    this.invulnerable = this.getInvulnerabilityDuration();
     this.blinkPhase = 0;
     player.setAlpha(1);
   }
@@ -621,10 +369,13 @@ export abstract class CombatScene<
     if (!player || this.invulnerable <= 0) return;
     this.invulnerable = Math.max(0, this.invulnerable - dt);
     this.blinkPhase += dt;
-    const visible = Math.floor(this.blinkPhase / COMBAT_BLINK_INTERVAL) % 2 === 0;
+    const visible =
+      Math.floor(this.blinkPhase / COMBAT_BLINK_INTERVAL) % 2 === 0;
     player.setAlpha(visible ? 1 : 0.3);
     if (this.invulnerable <= 0) player.setAlpha(1);
   }
+
+  // ── Collisions ───────────────────────────────────────────────────
 
   /**
    * Resolves the shared collision passes:
