@@ -26,6 +26,7 @@ import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
+import { CombatCoreScene } from '../core/CombatCoreScene';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 
@@ -858,5 +859,53 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
     expect(scene.sys.isActive()).toBe(true);
+  });
+});
+
+// ── Parent AH-0MUDCT7EU0061OSZ: re-based on the narrower shared core ───
+
+describe('GymWeapons — re-based on the shared CombatCoreScene core', () => {
+  it('extends the narrower shared base (prototype identity)', () => {
+    expect(Object.getPrototypeOf(GymWeapons.prototype)).toBe(
+      CombatCoreScene.prototype,
+    );
+  });
+
+  it('inherits auto-fire/collection/input instead of defining local copies', () => {
+    for (const method of [
+      '_autoFire',
+      '_collectDrop',
+      '_readPlayerInput',
+      'spawnPlayerBullet',
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          GymWeapons.prototype,
+          method,
+        ),
+      ).toBe(false);
+      expect(
+        (GymWeapons.prototype as unknown as Record<string, unknown>)[method],
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      );
+    }
+  });
+
+  it('manages its bullets through the shared playerBullets list (AC4)', async () => {
+    const booted = await bootScene([GymWeapons]);
+    const scene = booted.scene as GymWeapons;
+
+    // The shared `spawnPlayerBullet` writes into the same list that the
+    // gym exposes through `getBullets()` — no gym-local bullet list.
+    const bullet = scene.spawnPlayerBullet(1, 2, 3, 4);
+    expect(scene.getBullets()).toContain(bullet);
+    const shared = (scene as unknown as { playerBullets: unknown[] })
+      .playerBullets;
+    expect(shared).toContain(bullet);
+
+    booted.game.destroy(true);
   });
 });
