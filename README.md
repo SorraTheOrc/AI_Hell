@@ -500,6 +500,16 @@ The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire a
 
 The scene is reachable from the gym index ("Weapons" entry). Coverage: `src/utils/weapons.test.ts` (pattern math, fire rates, `isTimedWeapon`, round-robin order, heading fallback) + `src/scenes/gym/GymWeapons.test.ts` (auto-discovery, ship presence, auto-fire, cumulative collection/timed expiry/reset, round-robin, grow/shrink, collection gating) + `src/entities/Player.test.ts` (heading, cumulative collection, per-weapon timers/expiry, per-rate auto-fire).
 
+#### Gym help overlay (`Help (?)`)
+
+The three tuning gyms — **PowerUpsUtility**, **PowerUpsCombat** and **Weapons** — each show a **`Help (?)`** button immediately left of the shared `← INDEX` button; the **`?`** key opens the same overlay. Opening it pauses the gym's simulation (movement, spawning and firing all stop) and launches a full-screen, opaque `HelpScene` that lists exactly the drops that gym can spawn — one row per drop with the same code-drawn icon as the field drop, the display name and a one-line description.
+
+- `src/powerups/types.ts` / `src/utils/weapons.ts` — the help copy is read from the shared catalogues (`POWER_UP_CATALOGUE.description` for P3–P9; `WEAPON_CATALOGUE.description` plus a `RESET_DROP` entry for Cannon/Spread/Dual/Rapid/Reset), so the help cannot drift from implemented behaviour.
+- `src/utils/gymHelp.ts` — `addHelpButton(scene, { gymKey, drops })` renders the button beside `← INDEX`, wires pointer/`?` to pause + launch the overlay, and exposes the id → `{ name, description, drawIcon }` lookup shared by the button and the overlay.
+- `src/scenes/HelpScene.ts` — the overlay: opaque full-screen background, icon/name/wrapped-description rows, and a default-focused `Close` control (Tab/arrows cycle focus, Enter/Space activate). `?`, `Close` or **ESC** close it and **resume the gym exactly where it paused**; while the overlay is open ESC closes the help and does **not** exit to the main menu (a paused gym receives no keyboard input, so close handling lives in `HelpScene`). It is registered in `src/core/gameConfig.ts` and deliberately lives outside `src/scenes/gym/` so the index discovery never lists it as a gym.
+
+Coverage: `src/utils/gymHelp.test.ts`, `src/scenes/HelpScene.test.ts`, plus help-overlay integration assertions in `GymPowerUpsUtility.test.ts`, `GymPowerUpsCombat.test.ts` and `GymWeapons.test.ts`.
+
 #### Minerals, the Ship's Hold & the Power-Up Choice (`GymMinerals`)
 
 Asteroids drop **minerals** — small, stationary gold dots — which fill a run-scoped **ship's hold**; when the hold fills, the game pauses for a **power-up choice** (GDD §4.4.1).

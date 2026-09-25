@@ -55,6 +55,11 @@ export interface PowerUpEntry {
   id: PowerUpId;
   /** Human-readable display name. */
   name: string;
+  /**
+   * One-line player-facing effect description (GDD §4.4). Rendered by the
+   * gym help overlay so help copy cannot drift from the catalogue.
+   */
+  description: string;
   /** Effect type determining behaviour. */
   type: PowerUpType;
   /** Duration in seconds for timed effects (undefined for permanent). */
@@ -80,34 +85,40 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P3: {
     id: 'P3',
     name: 'Shield',
+    description: 'Absorbs one hit; a bubble protects the ship for 15 s.',
     type: PowerUpType.SHIELD,
     duration: 15,
   },
   P4: {
     id: 'P4',
     name: 'Bomb',
+    description: 'Instantly clears every on-screen enemy bullet (no enemy damage).',
     type: PowerUpType.BOMB,
   },
   P5: {
     id: 'P5',
     name: 'Speed Boost',
+    description: '+50% movement speed for 10 s.',
     type: PowerUpType.SPEED_BOOST,
     duration: 10,
   },
   P6: {
     id: 'P6',
     name: 'Phase Shift',
+    description: '3 s of intangibility — pass through enemies and bullets.',
     type: PowerUpType.PHASE_SHIFT,
     duration: 3,
   },
   P7: {
     id: 'P7',
     name: 'Teleport',
+    description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain 3 s Phase Shift on arrival.',
     type: PowerUpType.TELEPORT,
   },
   P8: {
     id: 'P8',
     name: 'Extra Life',
+    description: '+1 life immediately (starts at 3, capped at 5).',
     type: PowerUpType.EXTRA_LIFE,
     livesStart: 3,
     livesMax: 5,
@@ -115,6 +126,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P9: {
     id: 'P9',
     name: 'Magnet',
+    description: 'Permanently pulls nearby drops toward the ship (stacks up to 5).',
     type: PowerUpType.MAGNET,
     maxStacks: 5,
   },

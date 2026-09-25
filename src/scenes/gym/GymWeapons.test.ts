@@ -26,6 +26,8 @@ import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
+import { HelpScene } from '../HelpScene';
+import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 
 describe('GymWeapons AC1/AC3: gym index discovery', () => {
   let booted: BootedGame | null = null;
@@ -793,5 +795,54 @@ describe('GymWeapons — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)',
 
     scene.tick(0.5);
     expect(popSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
+  let booted: BootedGame | null = null;
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHelp(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons, HelpScene]);
+    return booted.scene as GymWeapons;
+  }
+
+  it('AC1 — renders a Help (?) button next to ← INDEX', async () => {
+    const scene = await bootHelp();
+    expect(scene.getHelpHandle()).not.toBeNull();
+    expect(scene.getHelpHandle()!.button.text).toBe(HELP_BUTTON_LABEL);
+  });
+
+  it('AC1/AC2 — opening help pauses the gym and lists cannon + drop pool', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    expect(booted!.game.scene.isPaused('GymWeapons')).toBe(true);
+    const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
+    expect(help.getEntries().map((e) => e.id)).toEqual([
+      'cannon',
+      'spread',
+      'dual',
+      'rapid',
+      'reset',
+    ]);
+  });
+
+  it('AC4 — ? closes help and resumes the gym where it paused', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    await settle();
+
+    expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
+    expect(scene.sys.isActive()).toBe(true);
   });
 });

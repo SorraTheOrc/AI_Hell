@@ -16,6 +16,8 @@ import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymPowerUpsUtility } from './GymPowerUpsUtility';
+import { HelpScene } from '../HelpScene';
+import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import {
   POWER_UP_DROP_SIZE,
   WEAPON_DROP_SIZE,
@@ -600,5 +602,49 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
 
     scene.tick(0.5);
     expect(popSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
+  let booted: BootedGame | null = null;
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHelp(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility, HelpScene]);
+    return booted.scene as GymPowerUpsUtility;
+  }
+
+  it('AC1 — renders a Help (?) button next to ← INDEX', async () => {
+    const scene = await bootHelp();
+    expect(scene.getHelpHandle()).not.toBeNull();
+    expect(scene.getHelpHandle()!.button.text).toBe(HELP_BUTTON_LABEL);
+  });
+
+  it('AC1/AC2 — opening help pauses the gym and lists its drop pool', async () => {
+    await bootHelp();
+    const scene = booted!.scene as GymPowerUpsUtility;
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    expect(booted!.game.scene.isPaused('GymPowerUpsUtility')).toBe(true);
+    const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
+    expect(help.getEntries().map((e) => e.id)).toEqual(['P5', 'P8', 'P9']);
+  });
+
+  it('AC4 — ? closes help and resumes the gym where it paused', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    await settle();
+
+    expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
+    expect(scene.sys.isActive()).toBe(true);
   });
 });

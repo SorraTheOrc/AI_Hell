@@ -45,6 +45,7 @@ import {
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
+import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -100,6 +101,8 @@ export class GymPowerUpsUtility extends Phaser.Scene {
   /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
   private fourDirHandler = new FourDirectionalInputHandler();
   private asteroidsHandler = new AsteroidsInputHandler();
+  /** Shared help affordance (AH-0MUAYB67I002REOZ). */
+  private helpHandle: GymHelpHandle | null = null;
 
   constructor() {
     super({ key: 'GymPowerUpsUtility' });
@@ -114,6 +117,12 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
     // Shared "← INDEX" button (AC5 of the parent), reused by every gym.
     addBackToIndexButton(this);
+    // Shared "Help (?)" button + overlay: lists every drop this gym can
+    // spawn, sourced from the shared catalogues (AH-0MUAYB67I002REOZ).
+    this.helpHandle = addHelpButton(this, {
+      gymKey: 'GymPowerUpsUtility',
+      drops: NON_COMBAT_ORDER,
+    });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
@@ -371,5 +380,10 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
   getHud(): HUD | null {
     return this.hud;
+  }
+
+  /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */
+  getHelpHandle(): GymHelpHandle | null {
+    return this.helpHandle;
   }
 }

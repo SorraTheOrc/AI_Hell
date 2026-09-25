@@ -278,6 +278,8 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **Collection feedback — pop SFX + absorb VFX (AH-0MUAYB3OU0087H9W):** Every collected drop — power-up or weapon — plays the generic percussive pop (`playPowerUpCollectPopSound()` in `src/audio/effects.ts`) alongside its existing per-type pickup cue, and is visibly "sucked into the ship" by a shared absorb animation (`src/powerups/collectAnimation.ts`): over ≤ 0.3 s the drop's position converges on the ship's world position, its scale shrinks to zero, and its shape shears/rotates toward the hull before its `Graphics` is destroyed. One generic treatment is used for all drop types; the VFX is cosmetic only and never delays the gameplay effect (registry/lives/weapon updates, P4 bullet clear), which fires immediately on overlap. Wired into `PlayScene`, the shared `GymFormationScene` (covering `GymEnemies`/`GymBoss`), and the legacy `GymPowerUpsUtility`/`GymPowerUpsCombat`/`GymWeapons` scenes so the game and gyms never diverge.
 
+> **Catalogue descriptions + gym help overlay (AH-0MUAYB67I002REOZ):** Every catalogue entry now carries a one-line player-facing `description`: `POWER_UP_CATALOGUE.description` (`src/powerups/types.ts`) for P3–P9, and `WEAPON_CATALOGUE.description` plus a `RESET_DROP` entry (`src/utils/weapons.ts`) for Cannon/Spread/Dual/Rapid/Reset. The three tuning gyms (`GymPowerUpsUtility`, `GymPowerUpsCombat`, `GymWeapons`) each render a `Help (?)` button next to `← INDEX` and also respond to the `?` key. Opening the help **pauses** the gym's simulation and launches the full-screen `HelpScene` (`src/scenes/HelpScene.ts`), which lists **exactly the drops that gym can spawn**, one row each showing the same code-drawn icon as the field drop, the display name and the catalogue description — read from the shared catalogues so the help text cannot drift from implemented behaviour. Closing via `?`, the `Close` control (focused by default, keyboard-operable) or **ESC** resumes the gym exactly where it paused; while the overlay is open ESC closes the help and does **not** return to the menu. The shared helper is `addHelpButton` (`src/utils/gymHelp.ts`), wired into the three gyms only (the full-pool formation gyms and the shipped `PlayScene` are out of scope).
+
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 
 Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
@@ -446,6 +448,11 @@ src/
 │   ├── PauseScene.ts    — In-game pause menu (implemented): full-screen replacement scene
 │   │                      with Resume / Settings / Quit (pointer + keyboard), launched by
 │   │                      PlayScene's ESC toggle; resume continues the run exactly
+│   ├── HelpScene.ts     — Gym help overlay (implemented, AH-0MUAYB67I002REOZ): opaque
+│   │                      full-screen replacement launched by the shared gym helper;
+│   │                      icon + name + catalogue description per spawnable drop, with a
+│   │                      default-focused Close control; `?`/Close/ESC resume the paused gym
+│   │                      (ESC never exits to the menu while the overlay is open)
 │   ├── SettingsScene.ts — Settings screen (implemented): SFX volume slider (0.0–1.0),
 │   │                      SFX mute toggle, and key-binding remapping with conflict
 │   │                      warnings + Reset to defaults; persisted to `ai_hell_settings`;
@@ -515,6 +522,7 @@ src/
 │   │                      findTeleportDestination reused by GymPowerUpsCombat and
 │   │                      the combat base (ray + grid candidates, clamped to screen)
 │   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
+│   │                      with a one-line `description` per entry (gym help source of truth)
 │   ├── choice.ts        — Pluggable hold-full choice strategy (default: 3 distinct random
 │   │                      picks from P3–P9 + Spread/Dual/Rapid; graceful degradation)
 │   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
@@ -542,6 +550,10 @@ src/
     │                      Enter/Space activation, visible focus style, shutdown cleanup
     ├── gymDiscovery.ts  — Gym-scene discovery (import.meta.glob, .test.ts filter, labels, sort)
     ├── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
+    ├── gymHelp.ts      — Shared gym help helper (implemented, AH-0MUAYB67I002REOZ):
+    │                      `addHelpButton(scene, { gymKey, drops })` renders the `Help (?)`
+    │                      button beside `← INDEX`, pauses + launches HelpScene on click/`?`,
+    │                      and exposes the id → { name, description, drawIcon } catalogue lookup
     └── gymPowerUpControl.ts — Live spawn-interval slider (implemented): plain-DOM range input
                            mounted in GymEnemies/GymBoss that applies the new cadence to the
                            running scene and persists it via the rules config (stable DOM id)

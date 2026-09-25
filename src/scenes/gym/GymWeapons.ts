@@ -65,6 +65,7 @@ import {
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
+import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -129,6 +130,8 @@ export class GymWeapons extends Phaser.Scene {
   private asteroidsHandler = new AsteroidsInputHandler();
   /** Active player bullets (demonstration only). */
   private bullets: PlayerBullet[] = [];
+  /** Shared help affordance (AH-0MUAYB67I002REOZ). */
+  private helpHandle: GymHelpHandle | null = null;
 
   constructor() {
     super({ key: 'GymWeapons' });
@@ -143,6 +146,13 @@ export class GymWeapons extends Phaser.Scene {
 
     // Shared "← INDEX" button (reused by every gym).
     addBackToIndexButton(this);
+    // Shared "Help (?)" button + overlay: lists every drop this gym can
+    // spawn (cannon + Spread/Dual/Rapid/Reset), sourced from the shared
+    // catalogues (AH-0MUAYB67I002REOZ).
+    this.helpHandle = addHelpButton(this, {
+      gymKey: 'GymWeapons',
+      drops: ['cannon', ...ROUND_ROBIN_ORDER],
+    });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
@@ -509,5 +519,10 @@ export class GymWeapons extends Phaser.Scene {
    */
   advanceBullets(dt: number): void {
     this.bullets = this.bullets.filter((b) => advanceAndCull(b, dt));
+  }
+
+  /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */
+  getHelpHandle(): GymHelpHandle | null {
+    return this.helpHandle;
   }
 }

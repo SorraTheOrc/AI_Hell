@@ -75,6 +75,7 @@ import {
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
+import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
 import {
   AsteroidsInputHandler,
   ControlInput,
@@ -171,6 +172,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
+  /** Shared help affordance (AH-0MUAYB67I002REOZ). */
+  private helpHandle: GymHelpHandle | null = null;
 
   constructor() {
     super({ key: 'GymPowerUpsCombat' });
@@ -184,6 +187,12 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.add.existing(this.player);
 
     addBackToIndexButton(this);
+    // Shared "Help (?)" button + overlay: lists every drop this gym can
+    // spawn, sourced from the shared catalogues (AH-0MUAYB67I002REOZ).
+    this.helpHandle = addHelpButton(this, {
+      gymKey: 'GymPowerUpsCombat',
+      drops: COMBAT_ORDER,
+    });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
@@ -750,4 +759,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   get formationY(): number { return this.formationBaseY; }
   getCursors(): Phaser.Types.Input.Keyboard.CursorKeys | undefined { return this.cursors; }
   getWasd(): WasdKeysLike | undefined { return this.wasd; }
+
+  /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */
+  getHelpHandle(): GymHelpHandle | null { return this.helpHandle; }
 }
