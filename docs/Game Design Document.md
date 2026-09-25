@@ -439,24 +439,36 @@ src/
 │                          from it in `../core/constants.ts`
 ├── scenes/
 │   ├── core/
+│   │   ├── CombatCoreScene.ts — Narrower shared combat/lifecycle base (implemented,
+│   │   │                      AH-0MUDCT7EU0061OSZ): owns the input path
+│   │   │                      (`_readPlayerInput`), auto-fire (`_autoFire` +
+│   │   │                      `spawnPlayerBullet`, with the `onWeaponFired` cue hook) and
+│   │   │                      drop collection (`_collectDrop` + absorb VFX + the
+│   │   │                      `onWeaponCollected`/`onPowerUpCollected`/`_playPickupCue`
+│   │   │                      hooks), the player-explosion/collect registries,
+│   │   │                      `_clearEnemyBullets`/`_spawnPlayerExplosion`, and the shared
+│   │   │                      invulnerability/phase/absorption hooks
+│   │   │                      (`getInvulnerabilityDuration`, `isPlayerPhased`,
+│   │   │                      `tryAbsorbPlayerHit`). Extended directly by the threat-free
+│   │   │                      gyms `GymWeapons` and `GymPowerUpsUtility`.
 │   │   └── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
-│   │                      defines the eight combat/lifecycle template methods exactly
-│   │                      once (`_handleCollisions`, `_hitPlayer`, `_autoFire`,
-│   │                      `_collectDrop`, `_spawnPlayerExplosion`, `_clearEnemyBullets`,
-│   │                      `_handleTeleport`, `_readPlayerInput`) plus the overridable
-│   │                      hook contract (participant accessors + `onWeaponFired`,
+│   │                      extends `CombatCoreScene` and adds the combat-only template
+│   │                      methods (`_handleCollisions`, `_hitPlayer`, `_handleTeleport`/
+│   │                      `triggerTeleport`) plus the bullet-vs-bullet impact feedback
+│   │                      (`src/vfx/bulletImpact.ts` + `playBulletDestructionSound`), with
+│   │                      the participant accessors and combat hooks (`onWeaponFired`,
 │   │                      `onEnemyDestroyed`, `onPlayerHit`, `tryAbsorbPlayerHit`,
-│   │                      `onPowerUpCollected`, `canTeleport`, `onBulletVsBulletImpact`, …);
-│   │                      extended by both `PlayScene` and `GymFormationScene` so the
-│   │                      shipped game and the gyms share one combat code path and cannot
-│   │                      drift apart. Hosts the shared bullet-vs-bullet impact feedback
-│   │                      (`src/vfx/bulletImpact.ts` + `playBulletDestructionSound`).
+│   │                      `onBulletVsBulletImpact`, …). Together the two files define the
+│   │                      eight shared methods exactly once, enforced repo-wide by
+│   │                      `CombatScene.equivalence.test.ts`; extended by `PlayScene`,
+│   │                      `GymFormationScene` and `GymPowerUpsCombat`.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
 │   │                      FocusManager keyboard navigation (default focus on Play Game)
 │   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
-│   │                      base (implementing its hooks for boss multi-hit, asteroid split,
+│   │                      base (which extends `CombatCoreScene`; implementing its hooks for
+│   │                      boss multi-hit, asteroid split,
 │   │                      mineral absorption, wave accounting, lives/game-over and the P4
 │   │                      bomb notice); WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
@@ -491,7 +503,8 @@ src/
 │   └── gym/
 │       ├── core/
 │       │   └── GymFormationScene.ts — Shared gym formation base (implemented): extends the
-│       │                      shared `scenes/core/CombatScene`, generic over the entity/bullet
+│       │                      shared `scenes/core/CombatScene` (itself extending
+│       │                      `CombatCoreScene`), generic over the entity/bullet
 │       │                      types and driven by an `EnemyFormationConfig`; owns formation
 │       │                      spawn/drift/respawn, the opt-in power-up layer and the
 │       │                      enemy-only mode. Concrete E1–E5 gyms and GymEnemies/GymBoss
@@ -503,13 +516,16 @@ src/
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals)
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
+│       │                  extends the narrower shared `scenes/core/CombatCoreScene`;
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
 │       ├── GymPowerUpsCombat.ts — combat-coupled power-up gym (key GymPowerUpsCombat, label "PowerUpsCombat"):
+│       │                  extends the shared `scenes/core/CombatScene` (hook-based shield/phase/bomb/invuln);
 │       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (S/↓)
 │       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
 │       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
 │       └── GymWeapons.ts — weapon power-up gym (key GymWeapons, label "Weapons"):
+│                           extends the narrower shared `scenes/core/CombatCoreScene`;
 │                           auto-fire ship + round-robin Spread/Dual/Rapid/Reset
 │                           drops (7 s lifetime, persistent weapon switching)
 ├── entities/

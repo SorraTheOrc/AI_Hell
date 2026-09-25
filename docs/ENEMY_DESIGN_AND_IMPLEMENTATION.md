@@ -154,15 +154,19 @@ keyed by `enemyKey`.
 
 `src/scenes/gym/core/GymFormationScene.ts` is a generic base class that
 **extends the shared `src/scenes/core/CombatScene.ts` abstract combat
-core** (type parameters `<TEntity, TBullet>`) and encapsulates everything
+core** (which itself extends the narrower `src/scenes/core/CombatCoreScene.ts`;
+type parameters `<TEntity, TBullet>`) and encapsulates everything
 the first three enemy gym scenes duplicated:
 
-- **Shared combat/lifecycle core** — inherited from `CombatScene`
-  (AH-0MUD8E015004C4JO), the same base `PlayScene` extends. It defines the
-  eight combat/lifecycle template methods exactly once
+- **Shared combat/lifecycle core** — inherited from `CombatScene` /
+  `CombatCoreScene` (AH-0MUD8E015004C4JO; standalone-gym consolidation
+  AH-0MUDCT7EU0061OSZ). The eight combat/lifecycle template methods
   (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`,
   `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`,
-  `_readPlayerInput`) and dispatches to overridable hooks. The gym supplies
+  `_readPlayerInput`) are defined exactly once across all production scenes —
+  the input/auto-fire/drop-collection group in `CombatCoreScene`, the
+  combat-only collision/hit/teleport group in `CombatScene` — and dispatch to
+  overridable hooks. The gym supplies
   its participant accessors (`getEnemyEntities()` → `entities`,
   `getEnemyBullets()`/`setEnemyBullets()` → `bullets`) and its hooks
   (`canTeleport()` → `powerUpsEnabled`, `getEnemyBulletRadius()` →
@@ -509,8 +513,10 @@ combat testbeds.
   - **Asteroids scheme:** `W`/Arrow Up thrust the ship **forward** (in its
     current facing direction), `A`/Arrow Left turn it **left**, and
     `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
-  `GymPowerUpsUtility` and `GymWeapons` implement the same scheme-aware routing in
-  their own `_readInput` methods.
+  `GymPowerUpsUtility` and `GymWeapons` inherit the same scheme-aware routing
+  from `CombatCoreScene._readPlayerInput` (their former private `_readInput`
+  copies were removed in AH-0MUDCT7EU0061OSZ); the standalone `GymPlayer`
+  tuning scene routes its keys the same way.
 
   > **Data-driven successor:** the per-scene wiring described in this §7
   > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
