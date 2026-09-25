@@ -28,6 +28,10 @@ import {
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
+import {
+  LEVELS as CAMPAIGN_LEVELS,
+  type LevelDefinition,
+} from '../waves/Formations';
 import { seedConfigStore } from '../core/configStore';
 
 // These gameplay tests drive the fourDirectional control scheme; the app
@@ -105,6 +109,56 @@ function findAsteroids(scene: PlayScene): Asteroid[] {
     .filter((e): e is Asteroid => e instanceof Asteroid && e.alive);
 }
 
+/** Boots the PlayScene with a custom campaign and restarts it so `create()`
+ * re-runs against the injected levels. Asteroid-dependent integration tests
+ * use this to keep their own campaign fixtures independent of the built-in
+ * `Formations.LEVELS` (the campaign no longer includes a fixed asteroid).
+ */
+async function bootSceneWithLevels(
+  levels: LevelDefinition[],
+): Promise<{ booted: BootedGame; scene: PlayScene }> {
+  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
+  const scene = game.scene as PlayScene;
+  scene.getWaveManager().setLevels(levels);
+  scene.scene.restart();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return { booted: game, scene };
+}
+
+/**
+ * Reconstructs the pre-spawner campaign fixture: the shipped five-level
+ * campaign with the original fixed Asteroid group re-added to Level 1
+ * Wave 1. The asteroid integration tests (`AH-0MU8BZ2ZM004J47F`,
+ * `AH-0MU8TWF1H007OG2L`, `AH-0MUCG5SWH008104P`, `AH-0MUCG5TIU000VPVO`,
+ * `AH-0MU7JTG9R002ZWA6`) were written against that fixed group; the shipped
+ * campaign now relies on the dynamic spawner instead.
+ */
+function campaignWithFixedAsteroid(): LevelDefinition[] {
+  return CAMPAIGN_LEVELS.map((lvl) => ({
+    ...lvl,
+    waves: lvl.waves.map((w) => ({
+      ...w,
+      groups: w.groups.map((g) => ({ ...g })),
+    })),
+  })).map((lvl) => {
+    if (lvl.level === 1) {
+      lvl.waves[0].groups = [
+        ...lvl.waves[0].groups,
+        {
+          enemyKey: 'asteroid',
+          formation: 'single' as const,
+          count: 1,
+          spacingX: 28,
+          spacingY: 22,
+          startX: GAME_WIDTH * 0.6,
+          startY: GAME_HEIGHT * 0.25,
+        },
+      ];
+    }
+    return lvl;
+  });
+}
+
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
 
@@ -117,6 +171,16 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   async function bootPlay(): Promise<PlayScene> {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
+  }
+
+  /** Boots with the fixed-asteroid campaign fixture (see
+   * `campaignWithFixedAsteroid`). */
+  async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      campaignWithFixedAsteroid(),
+    );
+    booted = game;
+    return scene;
   }
 
   // ── AC1: five-level scene + wave spawning ──────────────────────
@@ -538,7 +602,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MU7JTG9R002ZWA6 AC2/AC4 — expiry detonates non-asteroid survivors at 10x, costs one life, and advances the wave', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     waveVfx.scales.length = 0;
     const livesBefore = scene.getGameState().lives;
 
@@ -590,7 +654,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   // ── Asteroid survival on wave-timeout (AH-0MU8TWF1H007OG2L) ────
 
   it('AH-0MU8TWF1H007OG2L AC1 — asteroids remain alive after timeout', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
     const asteroid = asteroids[0];
@@ -610,7 +674,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MU8TWF1H007OG2L AC2 — non-asteroid enemies detonate on timeout while asteroids survive', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     waveVfx.scales.length = 0;
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
@@ -626,7 +690,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MU8TWF1H007OG2L AC3 — surviving asteroids are shootable during the transition period', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
     const asteroid = asteroids[0];
@@ -671,7 +735,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MU8TWF1H007OG2L AC5 — carried-over asteroids are re-registered with WaveManager for the next wave', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
@@ -692,7 +756,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
 
   it('AH-0MUCG5SWH008104P AC1 — carried-over asteroids continue moving during transition', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
     const asteroid = asteroids[0];
@@ -713,7 +777,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MUCG5SWH008104P AC3 — ramming a carried-over asteroid during transition costs a life', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
     const asteroid = asteroids[0];
@@ -764,7 +828,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MUCG5SWH008104P AC5 — un-destroyed carried-over asteroids persist after transition', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
 
@@ -831,6 +895,16 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   async function bootPlay(): Promise<PlayScene> {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
+  }
+
+  /** Boots with the fixed-asteroid campaign fixture (see
+   * `campaignWithFixedAsteroid`). */
+  async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      campaignWithFixedAsteroid(),
+    );
+    booted = game;
+    return scene;
   }
 
   it('AC1 — the Central AI spawns after Level 5 is cleared, with Phase-1 minions', async () => {
@@ -962,7 +1036,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AH-0MUCG5TIU000VPVO AC4 — normal (non-boss) transitions still carry asteroids over', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroidsBefore = findAsteroids(scene);
     expect(asteroidsBefore.length).toBeGreaterThan(0);
 
@@ -992,6 +1066,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     return booted.scene as PlayScene;
   }
 
+  /** Boots with the fixed-asteroid campaign fixture (see
+   * `campaignWithFixedAsteroid`). */
+  async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      campaignWithFixedAsteroid(),
+    );
+    booted = game;
+    return scene;
+  }
+
   /** Alive asteroid entities currently in the scene. */
   function findAsteroids(scene: PlayScene): Asteroid[] {
     return scene
@@ -1000,7 +1084,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   }
 
   it('AC1 — Level 1 Wave 1 spawns a large asteroid alongside the Scouts', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
 
     const asteroids = findAsteroids(scene);
@@ -1016,7 +1100,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('AC3 — shooting the large asteroid spawns exactly 2 medium children in divergent directions', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
     const aliveBefore = wm.enemiesAlive; // 7
 
@@ -1047,7 +1131,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('AC3/AC4 — medium splits into 2 smalls (no score); small awards 50 points with no children', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
 
     // Split the large asteroid first.
     const large = findAsteroids(scene)[0];
@@ -1072,7 +1156,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('AC4 — shooting a small asteroid awards exactly 50 points and spawns no children', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
 
     // Split the full chain down to smalls: large -> 2 medium -> shoot both -> 4 smalls.
     const large = findAsteroids(scene)[0];
@@ -1129,7 +1213,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('AC5 — asteroids move independently of formation drift (constant velocity + wrap + rotation)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const asteroid = findAsteroids(scene)[0];
     const startX = asteroid.x;
     const startY = asteroid.y;
@@ -1150,7 +1234,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('asteroid colliding with the player costs one life, destroys the asteroid, and still splits', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const player = scene.getPlayer()!;
 
     // Let auto-fire fire its opening volley, then park the ship on the

@@ -77,7 +77,7 @@ export interface EnemySpawn {
  * → `beginBoss()` → `onBossDefeated()`.
  */
 export class WaveManager {
-  private readonly levels: LevelDefinition[];
+  private levels: LevelDefinition[];
 
   private _levelIndex = 0;
   private _waveIndex = 0;
@@ -93,6 +93,16 @@ export class WaveManager {
    */
   constructor(levels: LevelDefinition[] = LEVELS) {
     this.levels = levels;
+  }
+
+  /**
+   * Replaces the level definitions at runtime. Resets internal state so
+   * the next `beginGame()` starts from the new levels. Injectable for
+   * tests that need custom wave configurations.
+   */
+  setLevels(levels: LevelDefinition[]): void {
+    this.levels = levels;
+    this.reset();
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
