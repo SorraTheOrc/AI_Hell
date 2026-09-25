@@ -59,6 +59,10 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Bring this scene above PlayScene in the z-order so the opaque backdrop
+    // covers the entire screen (GDD §4.5, AH-0MUDYSIRY0036EDC).
+    this.scene.bringToTop();
+
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, CHOICE_BACKDROP_ALPHA)
       .setOrigin(0);
