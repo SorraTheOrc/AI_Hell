@@ -8,8 +8,10 @@
  * movement, and a control panel for tuning the ship configuration values
  * live.
  *
- * The control panel is a plain-DOM overlay (beside the canvas) so it can
- * be asserted with document.querySelector in happy-dom tests:
+ * The control panel is a plain-DOM overlay anchored bottom-left (via the
+ * shared `.gym-panel` class, AH-0MUAYB7O4009LWBF) so it stays clear of the
+ * top-left HUD and can be asserted with document.querySelector in
+ * happy-dom tests:
  * - one slider per numeric config value (thrust, max speed, size, flame,
  *   deceleration),
  * - colour inputs for the ship/flame colours,
@@ -138,11 +140,13 @@ export class GymPlayer extends Phaser.Scene {
 
   // ── Control panel ────────────────────────────────────────────────
 
-  /** Builds the plain-DOM tuning panel beside the canvas. */
+  /** Builds the plain-DOM tuning panel (bottom-left overlay). */
   private _buildPanel(): void {
     const host = document.querySelector('#game-container') ?? document.body;
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
+    // Shared bottom-left anchoring + viewport height cap (AH-0MUAYB7O4009LWBF).
+    panel.className = 'gym-panel';
 
     // Control-scheme toggle (AC3 — button to switch schemes).
     const schemeRow = document.createElement('div');

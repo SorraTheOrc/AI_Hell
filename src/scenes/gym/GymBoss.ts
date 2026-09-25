@@ -143,11 +143,13 @@ export class GymBoss extends GymFormationScene<
       this.panel = null;
     });
 
-    // ── Damage button (right side, under SHOOT) ───────────────────
-    const shootButton = this.shootButton;
+    // ── Damage button (bottom-right, alongside SHOOT/EXPLODE) ──────
+    // AH-0MUAYB7O4009LWBF — positioned relative to EXPLODE (which is
+    // at GAME_WIDTH - 120) so DAMAGE sits at GAME_WIDTH - 240.
+    const explodeButton = this.explodeButton;
     this.damageButton = this._addButton(
-      shootButton.x + 120,
-      shootButton.y,
+      explodeButton.x - 120,
+      explodeButton.y,
       'DAMAGE',
       LABEL_STYLE,
     );

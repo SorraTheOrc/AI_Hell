@@ -11,11 +11,13 @@ body {
   height: 100%;
 }
 
-/* ── Gym scene ship-config panel ────────────────────────────────── */
-/* Top-left overlay beside the canvas (gym testbed UI). */
-#gym-config-panel {
+/* ── Shared gym-panel anchoring (bottom-left) ─────────────────────
+ * AH-0MUAYB7O4009LWBF — all gym editor panels share a common
+ * bottom-left anchor with a viewport-relative height cap so they
+ * never obscure the top-left HUD (lives, power-ups, minerals).  */
+.gym-panel {
   position: fixed;
-  top: 8px;
+  bottom: 8px;
   left: 8px;
   z-index: 10;
   display: flex;
@@ -28,6 +30,14 @@ body {
   font: 12px/1.4 system-ui, sans-serif;
   color: #ccc;
   min-width: 220px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+/* ── Gym scene ship-config panel ────────────────────────────────── */
+/* Anchored via shared .gym-panel to bottom-left (AH-0MUAYB7O4009LWBF). */
+#gym-config-panel {
+  z-index: 10;
 }
 
 #gym-config-panel .gym-panel-row {
@@ -74,23 +84,9 @@ body {
 }
 
 /* ── Gym scene enemy editor panel ─────────────────────────────── */
-/* Same layout as gym-config-panel but offset to the right side so
-   both panels can coexist without overlapping. */
+/* Anchored via shared .gym-panel to bottom-left (AH-0MUAYB7O4009LWBF). */
 #enemy-gym-panel {
-  position: fixed;
-  top: 8px;
-  left: 260px;
   z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  background: rgba(10, 10, 10, 0.85);
-  border: 1px solid #333;
-  border-radius: 6px;
-  font: 12px/1.4 system-ui, sans-serif;
-  color: #ccc;
-  min-width: 220px;
 }
 
 #enemy-gym-panel .gym-panel-row {

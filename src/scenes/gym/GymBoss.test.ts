@@ -227,6 +227,28 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     expect(findButton(scene, BACK_TO_INDEX_LABEL)).toBeDefined();
   });
 
+  it('AC — the DAMAGE button sits bottom-right alongside EXPLODE/SHOOT (AH-0MUAYB7O4009LWBF)', async () => {
+    const scene = await bootGym();
+    const explode = findButton(scene, 'EXPLODE');
+    const shoot = findButton(scene, 'SHOOT: OFF');
+    const damage = findButton(scene, 'DAMAGE');
+
+    for (const control of [explode, shoot, damage]) {
+      expect(control.y).toBeGreaterThan(GAME_HEIGHT / 2);
+      expect(control.x).toBeGreaterThan(GAME_WIDTH / 2);
+    }
+    // The three controls share a row (same y) so they remain a coherent cluster.
+    expect(damage.y).toBe(explode.y);
+    expect(shoot.y).toBe(explode.y);
+  });
+
+  it('AC — the boss panel carries the shared .gym-panel class (AH-0MUAYB7O4009LWBF)', async () => {
+    await bootGym();
+    const panel = document.getElementById('boss-gym-panel');
+    expect(panel, 'boss-gym-panel missing').not.toBeNull();
+    expect(panel!.className).toContain('gym-panel');
+  });
+
   it('AC8 — SHOOT button toggles Boss firing', async () => {
     const scene = await bootGym();
     const shootBtn = findButton(scene, 'SHOOT: OFF');

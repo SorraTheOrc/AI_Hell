@@ -424,15 +424,27 @@ export class GymFormationScene<
       ) as WasdKeysLike | undefined;
     }
 
-    // ── Controls (bottom-left HUD, minimal) ─────────────────────────
-    this.explodeButton = this._addButton(10, GAME_HEIGHT - 60, 'EXPLODE', LABEL_STYLE);
-    this.shootButton = this._addButton(120, GAME_HEIGHT - 60, 'SHOOT: OFF', LABEL_STYLE);
+    // ── Controls (bottom-right HUD, minimal) ───────────────────────
+    // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
+    // overlap with the bottom-left anchored gym editor panels.
+    this.explodeButton = this._addButton(
+      GAME_WIDTH - 120,
+      GAME_HEIGHT - 60,
+      'EXPLODE',
+      LABEL_STYLE,
+    );
+    this.shootButton = this._addButton(
+      GAME_WIDTH - 240,
+      GAME_HEIGHT - 60,
+      'SHOOT: OFF',
+      LABEL_STYLE,
+    );
 
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
     this.statusText = this.add.text(
-      10,
+      GAME_WIDTH - 10,
       GAME_HEIGHT - 36,
       `SCORE: n/a — ${config.statusLabel}: ${this.entities.length}`,
       {
@@ -440,9 +452,9 @@ export class GymFormationScene<
         fontSize: '12px',
         color: '#888888',
       },
-    );
+    ).setOrigin(1, 0);
 
-    // ── Hint line ───────────────────────────────────────────────────
+    // ── Hint line (centred, above the controls) ─────────────────────
     this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, config.hintText, {
       fontFamily: 'monospace',
       fontSize: '12px',

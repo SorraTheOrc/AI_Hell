@@ -234,6 +234,40 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
     expect(labels).toContain(BACK_TO_INDEX_LABEL);
   });
 
+  it('AC — places EXPLODE/SHOOT and the status line in the bottom-right, clear of the bottom-left panels (AH-0MUAYB7O4009LWBF)', async () => {
+    const scene = await bootGym();
+
+    const textOf = (label: string) =>
+      scene.children.list.find(
+        (c): c is Phaser.GameObjects.Text =>
+          c instanceof Phaser.GameObjects.Text && c.text === label,
+      )!;
+
+    const explode = textOf('EXPLODE');
+    const shoot = textOf('SHOOT: OFF');
+    const status = scene.children.list.find(
+      (c): c is Phaser.GameObjects.Text =>
+        c instanceof Phaser.GameObjects.Text && c.text.startsWith('SCORE: n/a'),
+    )!;
+    const hint = textOf('stub gym — formation demo');
+
+    // In-canvas controls live in the bottom quarter, on the right half of
+    // the canvas so they remain interactive alongside the bottom-left
+    // anchored editor panels.
+    for (const control of [explode, shoot, status]) {
+      expect(control.y).toBeGreaterThan(GAME_HEIGHT / 2);
+      expect(control.x).toBeGreaterThan(GAME_WIDTH / 2);
+    }
+
+    // The status line is right-aligned so it cannot overflow the canvas edge.
+    expect(status.originX).toBe(1);
+
+    // The hint line stays centred — horizontally clear of the left-anchored
+    // panels and the right-anchored controls.
+    expect(hint.originX).toBeCloseTo(0.5, 5);
+    expect(hint.x).toBeCloseTo(GAME_WIDTH / 2, 5);
+  });
+
   it('AC1 — formation advances at the configured drift speed', async () => {
     const scene = await bootGym();
     const baseBefore = scene.formationX;

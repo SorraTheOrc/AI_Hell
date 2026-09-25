@@ -213,6 +213,8 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     document.getElementById(ENEMY_PANEL_ID)?.remove();
     const panel = document.createElement('div');
     panel.id = ENEMY_PANEL_ID;
+    // Shared bottom-left anchoring + viewport height cap (AH-0MUAYB7O4009LWBF).
+    panel.className = 'gym-panel';
 
     // Live archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5) — gives
     // designers immediate feedback while tuning, without a running game.

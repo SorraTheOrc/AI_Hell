@@ -302,6 +302,13 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
   });
 
+  it('AC — the editor panel carries the shared .gym-panel class for bottom-left anchoring (AH-0MUAYB7O4009LWBF)', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel');
+    expect(panel, 'enemy-gym-panel missing').not.toBeNull();
+    expect(panel!.className).toContain('gym-panel');
+  });
+
   it('panel input live-updates in-memory config and is observable via currentConfig', async () => {
     const scene = await bootWithKey('scout');
     const input = document.querySelector<HTMLInputElement>('input[data-config="driftSpeed"]')!;

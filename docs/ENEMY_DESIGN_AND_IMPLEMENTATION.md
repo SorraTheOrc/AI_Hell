@@ -154,7 +154,10 @@ the first three enemy gym scenes duplicated:
   `(baseX + col * spacingX, baseY + row * spacingY)`, and calls
   `add.existing()` so entities actually render (see §4.1).
 - **HUD controls** — the `EXPLODE` / `SHOOT: ON/OFF` buttons, the status
-  line, the bottom hint line, and the shared `← INDEX` back button.
+  line, the bottom hint line, and the shared `← INDEX` back button. The
+  in-canvas controls and right-aligned status line sit in the **bottom-right**
+  (the hint line stays centred) so they never collide with the bottom-left
+  anchored gym editor panels (AH-0MUAYB7O4009LWBF).
 - **Update loop** — formation drift + respawn off the left edge,
   per-entity `applyFormationPosition()`, fire-bullet collection, bullet
   advance with four-edge wrap, and lifetime-based bullet expiry.
@@ -670,6 +673,19 @@ config and calls `getFormationBuilder(cfg.formationKind)` to build
 `EnemyFormationConfig` via `enemyConfigToFormationConfig`. `collectBullets`
 dispatches by `cfg.key` (Scout/Diver/…) so per-enemy quirks stay behind the
 seam.
+
+**Panel anchoring (AH-0MUAYB7O4009LWBF).** Every plain-DOM gym panel
+(`#gym-config-panel` in `GymPlayer`, `#enemy-gym-panel` here and
+`#boss-gym-panel` in `GymBoss`) carries the shared `gym-panel` class and is
+anchored **bottom-left** (`position: fixed; bottom: 8px; left: 8px`) with a
+viewport-relative `max-height: calc(100vh - 120px)` and `overflow-y: auto`.
+This keeps the panel clear of the top-left Phaser HUD (lives, power-ups,
+weapons, minerals) and caps a tall panel (e.g. the ~21-row enemy editor) so it
+scrolls internally instead of extending above the viewport. The in-canvas
+`EXPLODE`/`SHOOT`/`DAMAGE` controls and the right-aligned status line moved to
+the **bottom-right** in the same change so both the panel and the controls stay
+usable. The stylesheet contract is regression-tested in `src/style.test.ts`
+(computed styles for each panel id) plus per-scene class/coordinate assertions.
 
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for

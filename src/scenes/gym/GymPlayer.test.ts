@@ -285,6 +285,15 @@ describe('GymPlayer ship config panel', () => {
     expect(toggle.dataset['scheme']).toBe('asteroids');
   });
 
+  // ── Panel anchoring (AH-0MUAYB7O4009LWBF) ───────────────────────
+
+  it('panel has the shared .gym-panel class for bottom-left anchoring (AH-0MUAYB7O4009LWBF)', async () => {
+    await bootPlayer();
+    const p = panel();
+    expect(p).not.toBeNull();
+    expect(p!.className).toContain('gym-panel');
+  });
+
   // ── Deceleration slider ─────────────────────────────────────────
 
   it('applies deceleration slider changes live to the ship movement', async () => {
