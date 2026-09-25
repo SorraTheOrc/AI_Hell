@@ -715,4 +715,37 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
     booted.game.destroy(true);
   });
+
+  it('AC5 — the shared teleport activates on ↓ (adopted S+↓ fix)', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    scene.getEffectsRegistry().applyCollect('P7');
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
+
+    // Only the down-arrow is held/just-down; S is not. The inherited
+    // `_handleTeleport` must still consume the stack and grant P6 — the
+    // deliberate S+↓ fix that replaces the gym's old S-only
+    // implementation (parent AC5b).
+    const sKey = scene.input.keyboard!.addKey('S');
+    const downKey = scene.input.keyboard!.addKey(
+      Phaser.Input.Keyboard.KeyCodes.DOWN,
+    );
+    (sKey as unknown as { _justDown: boolean })._justDown = false;
+    sKey.isDown = false;
+    (downKey as unknown as { _justDown: boolean })._justDown = true;
+    downKey.isDown = true;
+    (
+      scene as unknown as { teleportKey: Phaser.Input.Keyboard.Key | null }
+    ).teleportKey = sKey;
+    (
+      scene as unknown as { downKey: Phaser.Input.Keyboard.Key | null }
+    ).downKey = downKey;
+
+    scene['_handleTeleport']();
+
+    // The ↓ key (not S) consumed the P7 stack and granted P6 on arrival.
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    booted.game.destroy(true);
+  });
 });
