@@ -146,7 +146,7 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Level | Theme | Enemy Count | Enemy-Fired Bullets | Description |
 |-------|-------|-------------|---------------------|-------------|
-| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus a roaming, self-splitting Asteroid group in Wave 1 — simple movement patterns, no enemy bullets |
+| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus randomly spawning, self-splitting Asteroids that drift in from a random offscreen edge every wave — simple movement patterns, no enemy bullets |
 | 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
 | 3 | The Core | Large | No | Dense formations; maximum positional threat |
 | 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
@@ -211,6 +211,20 @@ The following rules govern how enemy entities interact with each other and with 
   other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
   and every spawned child counts toward the wave's alive target (dynamic
   spawn registration in `WaveManager`).
+- **Wave placement — random offscreen spawner**: Asteroids are **not** a
+  fixed formation group. Every **regular wave** (Levels 1–5) plans a set of
+  asteroid spawns with the pure planner `src/waves/AsteroidSpawner.ts`
+  (`computeSpawns`), and `PlayScene` releases each one at its scheduled time
+  during the wave. Each asteroid appears **fully offscreen** on a random edge
+  (top/bottom/left/right, uniform) — offset outward by its half-size plus a
+  small margin — and drifts **inward** (perpendicular to the edge, with a ±30°
+  spread) into the playfield. The **boss encounter spawns no asteroids**.
+- **Escalation**: each wave starts at **2** asteroids. Weights are medium
+  **80** (fixed) vs large **20** (+20 each wave); when the large weight
+  reaches 2× the medium weight (**160**) the weights reset to 80:20 and the
+  per-wave count **doubles** (2 → 4 → 8 …). Spawn times divide the wave window
+  into equal segments with ±5% jitter; the first asteroid is constrained to
+  the first 10% of the window.
 - **Threat level**: Low–Medium (drifting, escalating hazard; no bullets).
 - **Collision**: passes through other enemies (GDD §2.6 — no enemy–enemy
   collision); colliding with the player is destructive to the player (GDD §2.3
@@ -230,6 +244,12 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 | **Dive Bomb** | Enemies alternate between formation flight and diving toward the player | 3, 4 |
 | **Orbital** | Enemies in fixed orbital paths around a central point (Level 5) | 5 |
 | **Boss Phases** | The boss cycles through 3–4 distinct attack patterns | Boss |
+
+> **Asteroids are not a wave structure.** Since the random offscreen spawner
+> landed, no wave declares a fixed asteroid group: every regular wave
+> additionally spawns random offscreen asteroids (see §4.1 E6), while the boss
+> encounter spawns none. The rows above describe the **formation** enemies
+> only.
 
 ### 4.3 Boss Design
 

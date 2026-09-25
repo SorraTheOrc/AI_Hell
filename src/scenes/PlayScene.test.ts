@@ -1221,7 +1221,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('AC6 — the wave clears only after ALL split children are destroyed (no stall, no early clear)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
 
     // Destroy everything: 6 scouts + full asteroid chain

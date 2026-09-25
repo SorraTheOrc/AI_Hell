@@ -69,10 +69,32 @@ asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
 `PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
 always.
 
-**Wave placement**: an asteroid group (`formationKind: 'single'`, count 1)
-joins Level 1 Wave 1 in `src/waves/Formations.ts` alongside the Scout
-V-formation. The asteroid config defaults to the large tier; smaller tiers
-appear only as split children.
+**Wave placement — random offscreen spawner**: Asteroids are **not** a fixed
+group in Level 1 Wave 1. Every regular wave plans its asteroid spawns with the
+pure planner `src/waves/AsteroidSpawner.ts` (`computeSpawns`), and
+`PlayScene.planAsteroidSpawns()` / `_releaseDueAsteroidSpawns()` release each
+one on schedule during `tick(dt)`:
+
+- **Offscreen origin**: a random edge (top/bottom/left/right, uniform), placed
+  half-size + `ASTEROID_SPAWN_OUTWARD_MARGIN` beyond the viewport, with inward
+  velocity (perpendicular to the edge, ±30° spread) at the tier's canonical
+  speed. Offscreen spawns defer screen-wrap until their centre enters the
+  viewport (`AsteroidConfig.enterFromOffscreen`), so they visibly drift in
+  rather than teleporting to the opposite edge.
+- **Count escalation**: 2 per wave, doubling when the large weight reaches the
+  reset threshold (2 → 4 → 8 …).
+- **Size weighting**: medium **80** (fixed); large **20 + 20 per wave**, reset
+  to 20 when it reaches 2× medium (**160**), at which point the count doubles.
+- **Timing**: the wave window is split into equal segments with ±5% jitter; the
+  first asteroid is constrained to the first 10% of the window.
+- **Registration**: each released asteroid is registered with the `WaveManager`
+  via `registerDynamicSpawn(1)`, so wave-clear accounting includes it (the same
+  path the split children use).
+
+The **boss encounter spawns no asteroids**: `planAsteroidSpawns()` clears the
+plan outside a regular wave and the release loop is guarded on boss state.
+`PlayScene.setAsteroidSpawnerEnabled(false)` is a tuning/test seam that
+suppresses the spawner entirely.
 
 **Gym support**: the asteroid is selectable in the enemy gym (auto-discovery
 via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
