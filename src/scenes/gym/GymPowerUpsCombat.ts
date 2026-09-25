@@ -45,6 +45,7 @@
 
 import Phaser from 'phaser';
 
+import { CombatScene } from '../core/CombatScene';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
 import { HUD } from '../../ui/HUD';
@@ -58,41 +59,20 @@ import {
 } from '../../powerups/types';
 import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
 import { findTeleportDestination } from '../../powerups/teleport';
-import {
-  spawnCollectAnimation,
-  type CollectAnimationHandle,
-} from '../../powerups/collectAnimation';
+import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-} from '../../vfx/explosionParticles';
-import {
-  playPowerUpCollectPopSound,
-  playPowerUpCollectSound,
-  playDestructionSound,
-  playSpawnSound,
-} from '../../audio/effects';
+import { playSpawnSound } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
-import {
-  AsteroidsInputHandler,
-  ControlInput,
-  FourDirectionalInputHandler,
-} from '../../utils/movementModel';
 import { buildVFormationOffsets } from '../../utils/formations';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  PLAYER_HIT_SCALE_PEAK,
-  PLAYER_HIT_SCALE_PULSE_DURATION,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
-  SHIP_COLOR,
   SHIP_SIZE,
   COMBAT_HIT_INVULNERABLE_DURATION,
-  COMBAT_HIT_BLINK_INTERVAL,
 } from '../../core/constants';
 
 // ── Spawn / formation tuning ───────────────────────────────────────
@@ -127,16 +107,25 @@ export interface CombatActiveDrop {
   x: number;
   y: number;
   graphics: Phaser.GameObjects.Graphics;
+  /** Unified drop id, consumed by the shared collect path. */
+  dropId: PowerUpId;
   /** True once collected and playing its absorb VFX (AC4). */
   absorbing?: boolean;
 }
 
-export class GymPowerUpsCombat extends Phaser.Scene {
+/**
+ * Combat-coupled power-ups gym. Extends the shared {@link CombatScene}
+ * core so its collision, teleport and hit lifecycle flow through the one
+ * shared implementation; the gym supplies scene specifics through hooks.
+ */
+export class GymPowerUpsCombat extends CombatScene<
+  Scout,
+  ScoutBullet,
+  CombatActiveDrop
+> {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: CombatActiveDrop[] = [];
-  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
-  private collectAnimations: CollectAnimationHandle[] = [];
   private roundRobinSpawner = new RoundRobinSpawner<PowerUpId>(COMBAT_ORDER);
   private spawnIndex = 0;
   private spawnTimer = 0;
@@ -148,22 +137,6 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private formationBaseX = COMBAT_START_X;
   private formationBaseY = COMBAT_START_Y;
   private shootEnabled = true;
-
-  // Input
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
-  private downKey: Phaser.Input.Keyboard.Key | undefined;
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
-
-  // Hit response
-  private playerHitCount = 0;
-  private playerInvulnerable = 0;
-  private playerBlinkPhase = 0;
-
-  // Player death VFX (tracks explosion Graphics for tests/SHUTDOWN).
-  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
@@ -218,8 +191,10 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    this.teleportKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-    this.downKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
+    this.teleportKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    this.downKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
 
     // Spawn the small scout formation.
     const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
@@ -273,7 +248,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     if (!this.player) return;
 
     // ── Ship: input → thrust + screen-wrap ──────────────────────
-    const input = this._readInput();
+    const input = this._readPlayerInput();
     if (input) this.player.setInput(input);
     this.player.physicsTick(dt, this.scale.width, this.scale.height);
 
@@ -306,7 +281,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this._updateCollectAnimations(dt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
-    this._handleHits();
+    this._handleCollisions();
 
     // ── Invulnerability blink ───────────────────────────────────
     this._updateInvulnerability(dt);
@@ -338,8 +313,8 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     if (this.player) {
       if (this.effectsRegistry.isPhased) {
         // Ghost outline — keep blink alpha if invulnerable, else ghost alpha.
-        if (this.playerInvulnerable <= 0) this.player.setAlpha(0.45);
-      } else if (this.playerInvulnerable <= 0) {
+        if (this.invulnerable <= 0) this.player.setAlpha(0.45);
+      } else if (this.invulnerable <= 0) {
         this.player.setAlpha(1);
       }
     }
@@ -375,7 +350,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     const entry = getPowerUpById(id);
     drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
     graphics.setScale(0);
-    const drop: CombatActiveDrop = { powerUp: new PowerUp(id), x, y, graphics };
+    const drop: CombatActiveDrop = { powerUp: new PowerUp(id), x, y, graphics, dropId: id };
     this.drops.push(drop);
     return drop;
   }
@@ -418,61 +393,6 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
     const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
     return dist <= hull + dropRadius;
-  }
-
-  private _collectDrop(drop: CombatActiveDrop): void {
-    const effect = drop.powerUp.tryCollect();
-    if (!effect) return;
-    const id = effect.id as PowerUpId;
-
-    // P4 Bomb: clear enemy bullets instantly (no enemy damage).
-    if (id === 'P4') {
-      this._clearEnemyBullets();
-      this._flashBombNotice();
-    }
-
-    this.effectsRegistry.applyCollect(id);
-
-    // Mark the drop so the overlap gate cannot re-collect it while the
-    // absorb animation plays (AC4); keep the Graphics alive until the
-    // animation completes (AC3).
-    drop.absorbing = true;
-    this._startCollectAnimation(drop);
-
-    // Generic pop plus the shared collection chime on collection (AC2).
-    try {
-      playPowerUpCollectPopSound();
-      playPowerUpCollectSound();
-    } catch { /* ignore */ }
-  }
-
-  /** Starts the absorb animation for a collected drop (AC3). */
-  private _startCollectAnimation(drop: CombatActiveDrop): void {
-    const shipX = this.player?.x ?? drop.x;
-    const shipY = this.player?.y ?? drop.y;
-    this.collectAnimations.push(
-      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
-    );
-  }
-
-  /** Advances in-flight absorb animations and prunes completed handles. */
-  private _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (this.player) handle.setAttractor(this.player.x, this.player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
-    }
-    this.collectAnimations = kept;
-  }
-
-  /** Clears all on-screen enemy bullets (P4, GDD §4.4 — no enemy damage). */
-  private _clearEnemyBullets(): void {
-    for (const b of this.scoutBullets) {
-      try { b.graphics.destroy(); } catch { /* ignore */ }
-    }
-    this.scoutBullets = [];
   }
 
   // ── Scouts / formation ───────────────────────────────────────────
@@ -535,34 +455,13 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
   // ── Teleport (P7, S/↓) ─────────────────────────────────────────
 
-  private _handleTeleport(): void {
-    if (!this.player || !this.teleportKey) return;
-    // Phaser Key JustDown check; in headless tests we also expose
-    // `triggerTeleport()` so tests don't need to fake keyboard state.
-    // Accept S key or down arrow as activation keys.
-    const justDown = (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
-      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.teleportKey)
-      : this.teleportKey.isDown;
-    const justDownDown = this.downKey ? (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
-      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.downKey)
-      : this.downKey.isDown : false;
-    if (!justDown && !justDownDown) return;
-    // To avoid auto-repeat every frame while Space is held, only act on
-    // the first frame isDown becomes true. The headless JustDown helper
-    // already gates this; for fallback isDown we gate via a flag.
-    // In practice tests call `triggerTeleport()` directly, so this path
-    // is the live keyboard path only.
-    if (!justDown) return;
-    this.triggerTeleport();
-  }
-
   /**
    * Consumes one P7 teleport stack and warps the player to the nearest
    * safe spot along the heading ray. Public so tests can trigger
    * teleport deterministically without faking keyboard state.
    * Returns true if a teleport was performed.
    */
-  triggerTeleport(): boolean {
+  override triggerTeleport(): boolean {
     if (!this.player) return false;
     if (!this.effectsRegistry.hasTeleport()) return false;
 
@@ -594,101 +493,55 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     return true;
   }
 
-  // ── Hit response ─────────────────────────────────────────────────
+  // ── Shared combat-core hooks ─────────────────────────────────────
 
-  private _handleHits(): void {
-    if (!this.player) return;
-
-    // P6 phase: complete pass-through — skip all hit checks.
-    if (this.effectsRegistry.isPhased) return;
-
-    // Brief post-hit invulnerability blink.
-    if (this.playerInvulnerable > 0) return;
-
-    const hull = SHIP_SIZE / 2;
-    const playerX = this.player.x;
-    const playerY = this.player.y;
-
-    // 1. Enemy bullets vs player.
-    for (let i = this.scoutBullets.length - 1; i >= 0; i--) {
-      const b = this.scoutBullets[i];
-      if (Math.hypot(b.graphics.x - playerX, b.graphics.y - playerY) <= hull + BULLET_HIT_RADIUS) {
-        // Shield absorbs one hit.
-        if (this.effectsRegistry.isShielded) {
-          this.effectsRegistry.tryAbsorbShield();
-          try { b.graphics.destroy(); } catch { /* ignore */ }
-          this.scoutBullets.splice(i, 1);
-          this._startInvulnerability();
-          return; // one hit per frame
-        }
-        // Unshielded hit.
-        try { b.graphics.destroy(); } catch { /* ignore */ }
-        this.scoutBullets.splice(i, 1);
-        this._hitPlayer();
-        return;
-      }
-    }
-
-    // 2. Enemy bodies vs player.
-    for (const scout of this.scouts) {
-      if (!scout.alive) continue;
-      if (Math.hypot(scout.x - playerX, scout.y - playerY) <= hull + ENEMY_HIT_RADIUS) {
-        if (this.effectsRegistry.isShielded) {
-          this.effectsRegistry.tryAbsorbShield();
-          this._startInvulnerability();
-          return;
-        }
-        this._hitPlayer();
-        return;
-      }
-    }
+  /** Combat gym invulnerability window (0.8 s, operator decision Q2-B). */
+  protected override getInvulnerabilityDuration(): number {
+    return COMBAT_HIT_INVULNERABLE_DURATION;
   }
 
-  private _hitPlayer(): void {
-    if (!this.player) return;
-    this.playerHitCount += 1;
-    try { playDestructionSound(); } catch { /* ignore */ }
+  /** P6 phase shift: complete pass-through while active. */
+  protected override isPlayerPhased(): boolean {
+    return this.effectsRegistry.isPhased;
+  }
 
-    // Particle burst VFX at the player's hit position.
-    spawnExplosionParticles(
-      this,
-      this.player.x,
-      this.player.y,
-      SHIP_COLOR,
-      SHIP_SIZE,
-      {
-        patterns: resolvePatterns('player'),
-        registry: this.playerExplosions,
-      },
-    );
-
-    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
-    this.tweens.add({
-      targets: this.player,
-      scale: PLAYER_HIT_SCALE_PEAK,
-      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
-      yoyo: true,
-      ease: 'Power2',
-    });
-
-    // In-place respawn: preserve position and facing, zero velocity.
-    this.player.respawnInPlace();
+  /**
+   * P3 shield absorbs one hit: pop the shield and start the shared
+   * post-hit invulnerability blink (per the parent risk mitigation).
+   *
+   * @returns whether the hit was absorbed.
+   */
+  protected override tryAbsorbPlayerHit(_player: Player): boolean {
+    if (!this.effectsRegistry.isShielded) return false;
+    this.effectsRegistry.tryAbsorbShield();
     this._startInvulnerability();
+    return true;
   }
 
-  private _startInvulnerability(): void {
-    this.playerInvulnerable = COMBAT_HIT_INVULNERABLE_DURATION;
-    this.playerBlinkPhase = 0;
-    this.player?.setAlpha(1);
+  /** P4 bomb notice (the shared collect path already cleared bullets). */
+  protected override onPowerUpCollected(drop: CombatActiveDrop): void {
+    if (drop.dropId === 'P4') this._flashBombNotice();
   }
 
-  private _updateInvulnerability(dt: number): void {
-    if (!this.player || this.playerInvulnerable <= 0) return;
-    this.playerInvulnerable = Math.max(0, this.playerInvulnerable - dt);
-    this.playerBlinkPhase += dt;
-    const visible = Math.floor(this.playerBlinkPhase / COMBAT_HIT_BLINK_INTERVAL) % 2 === 0;
-    this.player.setAlpha(visible ? 1 : 0.3);
-    if (this.playerInvulnerable <= 0) this.player.setAlpha(1);
+  /** Scouts are persistent threats — ramming does not destroy them. */
+  protected override onPlayerRamsEnemy(_enemy: Scout): void {}
+
+  /** Enemy-destruction seam (no-op: the gym never destroys its scouts). */
+  protected override onEnemyDestroyed(_enemy: Scout): void {}
+
+  /** Live enemy entities for the shared collision/teleport passes. */
+  protected override getEnemyEntities(): readonly Scout[] {
+    return this.scouts;
+  }
+
+  /** Live enemy bullets for the shared collision/teleport passes. */
+  getEnemyBullets(): ScoutBullet[] {
+    return this.scoutBullets.slice();
+  }
+
+  /** Replaces the enemy-bullet collection after a shared collision pass. */
+  protected override setEnemyBullets(bullets: ScoutBullet[]): void {
+    this.scoutBullets = bullets;
   }
 
   // ── Shooting toggle ──────────────────────────────────────────────
@@ -730,16 +583,6 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     return b;
   }
 
-  // ── Input ─────────────────────────────────────────────────────────
-
-  private _readInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
-  }
-
   // ── Public test accessors ────────────────────────────────────────
 
   getPlayer(): Player | null { return this.player; }
@@ -750,10 +593,9 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   getCollectAnimations(): CollectAnimationHandle[] { return [...this.collectAnimations]; }
   getHud(): HUD | null { return this.hud; }
   getScouts(): Scout[] { return [...this.scouts]; }
-  getEnemyBullets(): ScoutBullet[] { return [...this.scoutBullets]; }
   getPlayerHitCount(): number { return this.playerHitCount; }
-  isPlayerInvulnerable(): boolean { return this.playerInvulnerable > 0; }
-  getPlayerInvulnerableRemaining(): number { return Math.max(0, this.playerInvulnerable); }
+  isPlayerInvulnerable(): boolean { return this.invulnerable > 0; }
+  getPlayerInvulnerableRemaining(): number { return Math.max(0, this.invulnerable); }
   get shootingEnabled(): boolean { return this.shootEnabled; }
   get formationX(): number { return this.formationBaseX; }
   get formationY(): number { return this.formationBaseY; }

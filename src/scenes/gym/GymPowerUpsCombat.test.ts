@@ -20,6 +20,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
+import { CombatScene } from '../core/CombatScene';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
@@ -643,5 +644,75 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
     expect(scene.sys.isActive()).toBe(true);
+  });
+});
+
+// ── Parent AH-0MUDCT7EU0061OSZ: re-based on the shared combat core ─────
+
+describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => {
+  it('AC4 — extends CombatScene (prototype identity)', () => {
+    expect(Object.getPrototypeOf(GymPowerUpsCombat.prototype)).toBe(
+      CombatScene.prototype,
+    );
+  });
+
+  it('AC1/AC6 — inherits the shared template methods instead of defining local copies', () => {
+    for (const method of [
+      '_collectDrop',
+      '_clearEnemyBullets',
+      '_handleTeleport',
+      '_hitPlayer',
+      '_readPlayerInput',
+      '_handleCollisions',
+    ] as const) {
+      // The gym must not own a local copy...
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          GymPowerUpsCombat.prototype,
+          method,
+        ),
+      ).toBe(false);
+      // ...and must resolve the shared implementation through CombatScene.
+      expect(
+        (GymPowerUpsCombat.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+      );
+    }
+    // The gym-owned `_handleHits` is gone entirely.
+    expect(
+      (GymPowerUpsCombat.prototype as unknown as Record<string, unknown>)[
+        '_handleHits'
+      ],
+    ).toBeUndefined();
+  });
+
+  it('AC5 — the inherited hit lifecycle uses the gym’s 0.8 s invulnerability hook', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+
+    // A direct, unshielded hit arms the shared invuln window at 0.8 s.
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
+    booted.game.destroy(true);
+  });
+
+  it('AC5 — a shielded hit is absorbed without a hit, but still blinks', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    scene.getEffectsRegistry().applyCollect('P3');
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
+    booted.game.destroy(true);
   });
 });
