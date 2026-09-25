@@ -571,6 +571,63 @@ To run a release hit `S`, a dialog will appear asking you to confirm the intenti
 
 Once the ship process starts the project is put into a code freeze mode. The scheduler will no longer schedule implementation work, though intakes and planning work items will still be dispatched. This means that while the (sometimes time consuming) QA processes are running we can continue to add work items for the development of the game. 
 
+#### Publishing to GitHub Pages
+
+Every release is published automatically to GitHub Pages at
+<https://sorratheorc.github.io/AI_Hell/>. The deploy is driven by
+[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml), which
+triggers **only** on pushes of tags matching `v*` (the release tags cut by the
+ship skill); branch pushes and pull requests never deploy. The regression test
+[`scripts/deploy-pages-workflow.test.ts`](scripts/deploy-pages-workflow.test.ts)
+pins that tag-only trigger contract.
+
+The workflow's `deploy` job runs in the `github-pages` environment, which has a
+custom deployment branch policy. If that policy allows only the `dev` branch,
+every release tag is rejected by environment protection **before any deploy step
+runs** — the resulting failed check run lands on the release branch and blocks
+the automatic release merge. The environment must therefore allow both:
+
+- `branch:dev` (kept for parity with the previous configuration), and
+- `tag:v*` (so release tags can deploy).
+
+Apply, or recover, the policy with the idempotent setup script:
+
+```bash
+scripts/setup-github-pages-environment.sh [--repo <owner/name>]
+```
+
+- It reads the current policies, adds `tag:v*` only when it is missing, and
+  never removes or rewrites existing policies.
+- It is safe to re-run: a second run reports
+  `✅ github-pages already allows tag:v* — no change made.` and exits `0`.
+- It requires `gh` on `PATH`, authenticated with **repository admin** rights
+  (the environment policies API requires admin). When `gh` is missing or the
+  session is unauthenticated it fails loudly with an actionable message and
+  makes no changes.
+- `--repo <owner/name>` targets a specific repository; it defaults to the
+  repository of the current clone (via `gh repo view`). Use `--help` for the
+  full usage text.
+
+Verify the configured policy:
+
+```bash
+gh api repos/SorraTheOrc/AI_Hell/environments/github-pages/deployment-branch-policies \
+  --jq '.branch_policies[] | "\(.type):\(.name)"'
+```
+
+This must print both `branch:dev` and `tag:v*`.
+
+If the `gh` token lacks repository admin rights, apply the policy manually
+(GitHub UI → **Settings → Environments → `github-pages` → Deployment branches
+and tags**), or with the equivalent API call:
+
+```bash
+gh api --method POST \
+  -H "Accept: application/vnd.github+json" \
+  repos/<owner>/<name>/environments/github-pages/deployment-branch-policies \
+  -f name='v*' -f type='tag'
+```
+
 ## Local versus Remote LLM
 
 Local LLMs (for most of us) are slower but cheaper, remote LLMs are more expensive, but faster. I find that many people believe their AIs need to be super responsive, but I disagree (which is handy because I can't afford big AI bills). However, I do want them to be faster when I'm actively working with them. When I'm asleep I want them working, but I'm not as worried about speed. This means that I can save money with slower local LLMs overnight while leveraging paid models alongside the local LLMS during the day.
