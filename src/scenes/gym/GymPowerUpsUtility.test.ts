@@ -483,7 +483,7 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     return booted!.scene as GymPowerUpsUtility;
   }
 
-  it('AC1 — drop size constants reflect the 8 px power-up / weapon size', () => {
+  it('AC1 — drop size constants reflect the 16 px power-up / weapon size', () => {
     expect(POWER_UP_DROP_SIZE).toBe(16);
     expect(WEAPON_DROP_SIZE).toBe(POWER_UP_DROP_SIZE);
   });
@@ -510,13 +510,14 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     expect(scene.children.list).not.toContain(graphics);
   });
 
-  it('AC3 — at full scale a drop within the pickup radius (ship hull + drop size) is collectible', async () => {
+  it('AC3 — a drop whose hull touches the visible bubble (31 px) is collected', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // 8 px drop + 10 px ship hull = 18 px pickup radius → 15 px away should be caught.
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull is already touching the crisp bubble ring → collected.
     scene.spawnDrop('P5', 495, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.tick(1 / 60); // one frame runs the overlap collection
@@ -528,12 +529,12 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     expect(atShip).toHaveLength(0); // consumed by the collection
   });
 
-  it('AC3 — a drop beyond the pickup radius is still not collected (boundary scales with the new size)', async () => {
+  it('AC3 — a drop just beyond the bubble boundary (34 px) is not collected', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     scene.getPlayer()!.setPosition(480, 270);
 
-    scene.spawnDrop('P5', 480 + 30, 270); // 30 px > 18 px pickup radius
+    scene.spawnDrop('P5', 480 + 34, 270); // 34 px > 32.4 px bubble boundary
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
 

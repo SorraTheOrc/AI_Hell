@@ -24,7 +24,7 @@
  * Spawn cadence mirrors `GymPowerUps`: one drop at a time, round-robin
  * P3 → P4 → P6 → P7, each living `POWER_UP_LIFETIME` (12.5 s, grow →
  * hold → shrink, framerate-independent via `PowerUp`), collection
- * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (8 px)
+ * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (16 px)
  * bubble + icon visuals. NEXT spawn coincides with previous despawn
  * while nothing is collected — one drop on screen.
  *
@@ -56,7 +56,7 @@ import {
   COMBAT_POWER_UP_IDS,
   getPowerUpById,
 } from '../../powerups/types';
-import { drawPowerUpDrop } from '../../powerups/icons';
+import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
 import { findTeleportDestination } from '../../powerups/teleport';
 import {
   spawnCollectAnimation,
@@ -415,7 +415,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
   private _overlapsShip(drop: CombatActiveDrop, hull: number): boolean {
     if (!this.player) return false;
-    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
+    const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
     const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
     return dist <= hull + dropRadius;
   }

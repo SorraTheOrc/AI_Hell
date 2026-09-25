@@ -31,7 +31,7 @@ import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import { getPowerUpById, PowerUpId } from '../../powerups/types';
-import { drawPowerUpDrop } from '../../powerups/icons';
+import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
 import { applyMagnetAttraction } from '../../powerups/magnet';
 import {
   spawnCollectAnimation,
@@ -273,7 +273,7 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
   private _overlapsShip(drop: ActiveDrop, hull: number): boolean {
     if (!this.player) return false;
-    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
+    const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
     const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
     return dist <= hull + dropRadius;
   }

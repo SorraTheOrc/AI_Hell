@@ -78,7 +78,7 @@ import {
 } from '../powerups/choice';
 import { PowerUp, PowerUpState } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
-import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
+import { drawPowerUpDrop, drawWeaponDrop, dropCollectRadius } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import { applyMagnetAttraction } from '../powerups/magnet';
 import {
@@ -1431,7 +1431,7 @@ export class PlayScene extends CombatScene<
     if (drop.absorbing) return false;
     if (!drop.powerUp.canCollect()) return false;
     const hull = SHIP_SIZE / 2;
-    const radius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
+    const radius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
     if (!this._overlaps(drop.x, drop.y, radius, this.player.x, this.player.y, hull)) {
       return false;
     }

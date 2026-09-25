@@ -1831,6 +1831,31 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getPowerUpDrops()).not.toContain(drop);
   });
 
+  it('AH-0MTVYCM2N002NKE4 — a drop whose hull touches the visible bubble (31 px) is collected', async () => {
+    const scene = await boot(layer('P3', CLEAR));
+    scene.getPlayer()!.setPosition(480, 270);
+
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px.
+    const drop = scene.spawnPowerUpDrop('P3', 480 + 31, 270)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+    scene.tick(0.016);
+
+    expect(scene.getPowerUpDrops()).not.toContain(drop);
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+  });
+
+  it('AH-0MTVYCM2N002NKE4 — a drop just beyond the bubble boundary (34 px) is not collected', async () => {
+    const scene = await boot(layer('P3', CLEAR));
+    scene.getPlayer()!.setPosition(480, 270);
+
+    const drop = scene.spawnPowerUpDrop('P3', 480 + 34, 270)!; // 34 px > 32.4 px
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+    scene.tick(0.016);
+
+    expect(scene.getPowerUpDrops()).toContain(drop);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+  });
+
   it('AC2 — collecting applies the effect through the shared EffectsRegistry', async () => {
     const scene = await boot(layer('P9', CLEAR));
     const player = scene.getPlayer()!;

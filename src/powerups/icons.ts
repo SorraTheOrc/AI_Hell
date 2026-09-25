@@ -491,8 +491,36 @@ function drawRapidIcon(
 // surrounded by a neon bubble (glow halo + crisp ring) in its aura
 // colour, drawn with raw Phaser Graphics — no external assets (GDD
 // §7.1). The bubble is scaled with the drop lifecycle by the caller
-// (`setScale` on the shared Graphics); it is purely visual and does not
-// extend the collection radius.
+// (`setScale` on the shared Graphics).
+//
+// Collection matches the bubble (AH-0MTVYCM2N002NKE4): `dropCollectRadius()`
+// derives the pickup boundary from the same `POWER_UP_BUBBLE_RADIUS_FACTOR`
+// used to draw the ring, so the ship collects a drop as soon as its hull
+// touches the visible bubble and the visual and collision boundaries cannot
+// drift apart.
+
+/**
+ * Radius (px) of the crisp bubble ring drawn around a drop whose icon
+ * radius-extent is `size` px. Single source of truth for the visible
+ * bubble (`drawDropBubble`) and the collection boundary
+ * (`dropCollectRadius`).
+ */
+export function dropBubbleRadius(size: number): number {
+  return size * POWER_UP_BUBBLE_RADIUS_FACTOR;
+}
+
+/**
+ * Collection radius (px) for a drop whose icon radius-extent is `size`
+ * px at lifecycle `scale`: the ship hull collects the drop on first
+ * contact with its visible bubble (`dropBubbleRadius(size) × scale`).
+ *
+ * Tune `POWER_UP_BUBBLE_RADIUS_FACTOR` to change both the bubble and the
+ * pickup boundary; scenes must use this helper rather than recomputing the
+ * radius so the game and every gym stay consistent.
+ */
+export function dropCollectRadius(size: number, scale: number): number {
+  return dropBubbleRadius(size) * scale;
+}
 
 /** Bubble aura colour for a non-combat power-up type. */
 function powerUpBubbleColor(type: PowerUpType): number {
@@ -524,7 +552,7 @@ export function drawDropBubble(
   size: number,
   color: number,
 ): void {
-  const radius = size * POWER_UP_BUBBLE_RADIUS_FACTOR;
+  const radius = dropBubbleRadius(size);
 
   // Soft outer halo — two stacked fills read as a glow on black.
   graphics.fillStyle(color, POWER_UP_BUBBLE_GLOW_ALPHA * 0.4);

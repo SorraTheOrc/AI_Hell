@@ -80,10 +80,18 @@ export const POWER_UP_DROP_MIN_SEPARATION = 40;
 
 // ── Power-up drop bubble visuals (GDD §4.4, §7.1) ─────────────────
 // Tunable feel constants for the glowing bubble drawn around every
-// on-field drop (AH-0MTG5MGPZ00986B4). The bubble is purely visual:
-// the collection radius stays `DROP_SIZE * scale + hull`.
+// on-field drop (AH-0MTG5MGPZ00986B4). The bubble is the collection
+// boundary too (AH-0MTVYCM2N002NKE4): the ship collects a drop as soon as
+// its hull touches the crisp ring, so `POWER_UP_BUBBLE_RADIUS_FACTOR`
+// tunes both the visual and the pickup radius. Scenes derive the radius
+// via `dropCollectRadius()` in `src/powerups/icons.ts` rather than
+// recomputing it.
 
-/** Bubble ring radius as a multiple of the drop size (1.4× the drop). */
+/**
+ * Bubble ring radius as a multiple of the drop size (1.4× the drop).
+ * Also the collection-radius multiplier: the pickup boundary is the crisp
+ * neon ring, not the drop icon edge.
+ */
 export const POWER_UP_BUBBLE_RADIUS_FACTOR = 1.4;
 
 /** Stroke width (px) of the bubble ring. */

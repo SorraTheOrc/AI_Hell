@@ -49,7 +49,7 @@ import {
   createBulletsFromHeading,
   angleToVelocity,
 } from '../../utils/weapons';
-import { drawWeaponDrop, WeaponDropIconId } from '../../powerups/icons';
+import { drawWeaponDrop, dropCollectRadius, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
@@ -401,7 +401,7 @@ export class GymWeapons extends Phaser.Scene {
 
   private _overlapsShip(drop: ActiveDrop, hull: number): boolean {
     if (!this.player) return false;
-    const dropRadius = WEAPON_DROP_SIZE * drop.powerUp.currentScale;
+    const dropRadius = dropCollectRadius(WEAPON_DROP_SIZE, drop.powerUp.currentScale);
     const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
     return dist <= hull + dropRadius;
   }

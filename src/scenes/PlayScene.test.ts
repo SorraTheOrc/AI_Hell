@@ -1289,6 +1289,36 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
   });
 
+  // ── Collection boundary matches the visible bubble (AH-0MTVYCM2N002NKE4) ──
+
+  it('collects a fully-grown drop whose hull touches the visible bubble (31 px)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull is already touching the crisp bubble ring → collected.
+    const drop = scene.spawnPowerUpDrop('P5', player.x + 31, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+
+    scene.tick(0.016); // lifecycle advance + collection in one frame
+
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getEffectsRegistry().isActive('P5')).toBe(true);
+  });
+
+  it('does not collect a fully-grown drop just beyond the bubble boundary (34 px)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+
+    const drop = scene.spawnPowerUpDrop('P5', player.x + 34, player.y)!; // 34 px > 32.4 px
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+
+    scene.tick(0.016);
+
+    expect(scene.getDrops()).toContain(drop);
+    expect(scene.getEffectsRegistry().isActive('P5')).toBe(false);
+  });
+
   // ── P5 Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
 
   it('P5 active → speed multiplier applied to player movement config', async () => {

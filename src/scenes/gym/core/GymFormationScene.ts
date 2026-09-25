@@ -53,7 +53,7 @@ import {
   type PowerUpWeights,
   type WeaponWeights,
 } from '../../../core/rules';
-import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
+import { drawPowerUpDrop, drawWeaponDrop, dropCollectRadius } from '../../../powerups/icons';
 import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
 import {
@@ -778,7 +778,7 @@ export class GymFormationScene<
   /** Whether a drop's current radius overlaps the player's hull. */
   private _dropOverlapsShip(drop: FormationSceneDrop, hull: number): boolean {
     if (!this.player) return false;
-    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
+    const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
     return (
       Math.hypot(this.player.x - drop.x, this.player.y - drop.y) <=
       hull + dropRadius

@@ -722,17 +722,31 @@ describe('GymWeapons — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)'
     expect(scene.children.list).not.toContain(graphics);
   });
 
-  it('AC3 — at full scale a weapon drop within the pickup radius is collectible', async () => {
+  it('AC3 — a weapon drop whose hull touches the visible bubble (31 px) is collected', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // 8 px weapon drop + 10 px ship hull = 18 px pickup radius → 15 px away should be caught.
-    scene.spawnDrop('dual', 495, 270);
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull touches the crisp bubble ring → collected.
+    scene.spawnDrop('dual', 511, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.collectOverlapping();
 
     expect(player.getEquippedWeapon()).toBe('dual');
+  });
+
+  it('AC3 — a weapon drop just beyond the bubble boundary (34 px) is not collected', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnDrop('dual', 480 + 34, 270); // 34 px > 32.4 px bubble boundary
+    scene.advanceDrops(0.5); // grow to full size (collectible but out of range)
+    scene.collectOverlapping();
+
+    expect(player.getEquippedWeapon()).toBe('cannon');
+    expect(scene.getDrops().length).toBeGreaterThan(0); // drop still on field
   });
 });
 
