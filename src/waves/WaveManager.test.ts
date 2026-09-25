@@ -336,6 +336,78 @@ describe('WaveManager — progression (AH-0MU72ZK3P006CH9G)', () => {
   });
 });
 
+describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () => {
+  it('globalWaveIndex is 0 before beginGame is called', () => {
+    const wm = new WaveManager();
+    expect(wm.globalWaveIndex).toBe(0);
+  });
+
+  it('globalWaveIndex is 0 after beginGame at Level 1 Wave 1', () => {
+    const wm = new WaveManager();
+    wm.beginGame();
+    expect(wm.globalWaveIndex).toBe(0);
+  });
+
+  it('globalWaveIndex increments through waves within a level', () => {
+    // Level 2 has 3 waves.
+    const wm = new WaveManager();
+    wm.beginGame();
+    expect(wm.globalWaveIndex).toBe(0); // L1 W1
+    clearWave(wm); // L1 W1 → L1 W2
+    expect(wm.globalWaveIndex).toBe(1);
+    clearWave(wm); // L1 W2 → L2 W1
+    expect(wm.globalWaveIndex).toBe(2);
+  });
+
+  it('globalWaveIndex increments correctly across levels', () => {
+    // Level 1 has 2 waves, Level 2 has 3 waves, Level 3 has 3 waves.
+    const wm = new WaveManager();
+    wm.beginGame();
+    // Clear Level 1 (2 waves) → L2 W1, globalWaveIndex = 2
+    expect(clearLevel(wm)).toBe('levelCleared');
+    expect(wm.globalWaveIndex).toBe(2);
+    clearWave(wm); // L2 W1 → L2 W2, globalWaveIndex = 3
+    expect(wm.globalWaveIndex).toBe(3);
+    clearWave(wm); // L2 W2 → L2 W3, globalWaveIndex = 4
+    expect(wm.globalWaveIndex).toBe(4);
+    clearWave(wm); // L2 W3 → L3 W1, globalWaveIndex = 5
+    expect(wm.globalWaveIndex).toBe(5);
+  });
+
+  it('globalWaveIndex for the full campaign — last regular wave is index 12', () => {
+    const wm = new WaveManager();
+    wm.beginGame();
+    // Clear all 5 levels (wave counts: 2+3+3+3+2 = 13 regular waves).
+    for (let level = 1; level <= 5; level++) {
+      const levelStartGWI = wm.globalWaveIndex;
+      const waveCount = wm.waveCount;
+      for (let w = 0; w < waveCount; w++) {
+        if (level < 5) {
+          expect(wm.globalWaveIndex).toBe(levelStartGWI + w);
+        }
+        clearWave(wm);
+      }
+    }
+    // After clearing Level 5 Wave 2, boss should trigger.
+    expect(wm.bossTriggered).toBe(true);
+    expect(wm.globalWaveIndex).toBe(12);
+  });
+
+  it('globalWaveIndex is 0 during a boss encounter', () => {
+    const wm = new WaveManager([level(5, 'Final', [wave('phaser', 'orbital', 1)])]);
+    wm.beginGame();
+    clearLevel(wm);
+    expect(wm.bossTriggered).toBe(true);
+    expect(wm.globalWaveIndex).toBe(0);
+    wm.beginBoss();
+    expect(wm.bossActive).toBe(true);
+    expect(wm.globalWaveIndex).toBe(0);
+    wm.onBossDefeated();
+    expect(wm.bossDefeated).toBe(true);
+    expect(wm.globalWaveIndex).toBe(0);
+  });
+});
+
 describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F)', () => {
   it('registerDynamicSpawn increments the alive count by the supplied amount', () => {
     const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
