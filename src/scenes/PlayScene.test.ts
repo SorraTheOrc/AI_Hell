@@ -178,6 +178,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   async function bootPlay(): Promise<PlayScene> {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    // This suite predates the dynamic spawner and asserts deterministic
+    // wave/banner/transition behaviour; isolate it from random asteroid
+    // spawns (the spawner is covered by its own integration suites).
+    (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
     return booted.scene as PlayScene;
   }
 
@@ -2273,5 +2277,131 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
     // Still transitioning and no new asteroid was released.
     expect(scene.isTransitioning()).toBe(true);
     expect(newAsteroids(before, scene)).toHaveLength(0);
+  });
+});
+
+describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)', () => {
+  // The core integration scenarios (scheduled release, offscreen entry,
+  // boss/pause/transition exclusion, dynamic registration and seeded
+  // determinism) are covered by the `AH-0MUGCNZNE002D7QJ` suite above.
+  // This suite adds the remaining timing/spread ACs: first spawn within
+  // 10 %, second around the midpoint, and the count=4 spread.
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  const SEED = 424242;
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    return booted.scene as PlayScene;
+  }
+
+  async function bootCustom(levels: LevelDefinition[]): Promise<PlayScene> {
+    const result = await bootSceneWithLevels(levels, { asteroidSpawner: false });
+    booted = result.booted;
+    return result.scene;
+  }
+
+  /** Asteroids alive now that were not alive at the snapshot. */
+  function newAsteroids(before: Set<Asteroid>, scene: PlayScene): Asteroid[] {
+    return findAsteroids(scene).filter((a) => !before.has(a));
+  }
+
+  function snapshot(scene: PlayScene): Set<Asteroid> {
+    return new Set(findAsteroids(scene));
+  }
+
+  /** A campaign of `waveCount` one-scout waves for fast wave clears. */
+  function scoutWavesLevel(waveCount: number): LevelDefinition[] {
+    return [
+      {
+        level: 1,
+        name: 'Test',
+        waves: Array.from({ length: waveCount }, () => ({
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v' as const,
+              count: 1,
+              spacingX: 20,
+              spacingY: 20,
+              startX: 200,
+              startY: 200,
+            },
+          ],
+          shootEnabled: false,
+        })),
+      },
+    ];
+  }
+
+  /** Sets the wave clock to `elapsed` seconds into the wave. */
+  function setElapsed(scene: PlayScene, elapsed: number): void {
+    scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - elapsed);
+  }
+
+  it('AC1 — the first asteroid spawns within the first 10 % of the wave window', async () => {
+    const scene = await bootPlay();
+    const before = snapshot(scene);
+    scene.setRng(createSeededRng(SEED));
+    scene.planAsteroidSpawns();
+
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS * 0.1 + 1e-6);
+    scene.tick(0.001);
+
+    expect(newAsteroids(before, scene).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('AC1 — the second asteroid spawns around the midpoint of the wave window', async () => {
+    const scene = await bootPlay();
+    scene.setRng(createSeededRng(SEED));
+    scene.planAsteroidSpawns();
+    const before = snapshot(scene);
+
+    // Only the first is due by 30 % of the window.
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS * 0.3);
+    scene.tick(0.001);
+    expect(newAsteroids(before, scene)).toHaveLength(1);
+
+    // The second becomes due by 55 % (midpoint ± jitter).
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS * 0.55 + 1e-6);
+    scene.tick(0.001);
+    expect(newAsteroids(before, scene).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('AC1 — a count=4 wave spreads its four spawns across the window', async () => {
+    const scene = await bootCustom(scoutWavesLevel(8));
+    const wm = scene.getWaveManager();
+
+    // Clear seven waves to reach globalWaveIndex 7, where count doubles to 4.
+    for (let i = 0; i < 7; i += 1) {
+      killAllEnemies(scene);
+      if (scene.isTransitioning()) {
+        scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+      }
+    }
+    expect(wm.globalWaveIndex).toBe(7);
+
+    scene.setAsteroidSpawnerEnabled(true);
+    scene.setRng(createSeededRng(SEED));
+    scene.planAsteroidSpawns();
+    const before = snapshot(scene);
+
+    // Only the first is out at 10 %.
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS * 0.1 + 1e-6);
+    scene.tick(0.001);
+    const at10 = newAsteroids(before, scene).length;
+    expect(at10).toBeGreaterThanOrEqual(1);
+    expect(at10).toBeLessThan(4);
+
+    // All four are out by 95 %.
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS * 0.95 + 1e-6);
+    scene.tick(0.001);
+    expect(newAsteroids(before, scene)).toHaveLength(4);
   });
 });
