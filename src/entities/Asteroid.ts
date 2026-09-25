@@ -149,6 +149,13 @@ export interface AsteroidConfig {
   vy?: number;
   /** Rotation speed in rad/s (default: tier-derived). */
   rotationSpeed?: number;
+  /**
+   * When true, the asteroid spawns fully offscreen and does not wrap until
+   * its centre has entered the viewport, so it visibly drifts inward
+   * instead of being teleported to the opposite edge. Defaults to false
+   * (wrapping from the first frame), preserving onscreen spawns.
+   */
+  enterFromOffscreen?: boolean;
 }
 
 // ── Asteroid entity class ──────────────────────────────────────────
@@ -170,6 +177,13 @@ export class Asteroid extends BaseEnemy {
   /** Current velocity vector (constant; does not change over time). */
   private readonly _vx: number;
   private readonly _vy: number;
+
+  /**
+   * True once an offscreen spawn has entered the viewport (or immediately
+   * for onscreen spawns). While false, `updatePosition` skips wrapping so
+   * the asteroid can drift in from beyond the edge.
+   */
+  private _enteredViewport: boolean;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -214,6 +228,9 @@ export class Asteroid extends BaseEnemy {
       this._vx = Math.cos(angle) * speed;
       this._vy = Math.sin(angle) * speed;
     }
+
+    // Offscreen spawns defer wrapping until the centre enters the viewport.
+    this._enteredViewport = !config.enterFromOffscreen;
 
     // Draw the unique body shape and add the shared graphics in the
     // canonical render order (body then explosion).
@@ -423,6 +440,20 @@ export class Asteroid extends BaseEnemy {
     // Update position.
     this.x += this._vx * dt;
     this.y += this._vy * dt;
+
+    // An offscreen-spawned asteroid must reach the viewport before it can
+    // wrap, otherwise the first step would teleport it to the far edge.
+    if (!this._enteredViewport) {
+      if (
+        this.x >= 0 &&
+        this.x <= gameWidth &&
+        this.y >= 0 &&
+        this.y <= gameHeight
+      ) {
+        this._enteredViewport = true;
+      }
+      return;
+    }
 
     // Screen-edge wrapping.
     if (this.x < 0) this.x += gameWidth;

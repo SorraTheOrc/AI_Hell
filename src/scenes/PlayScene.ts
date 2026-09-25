@@ -99,6 +99,7 @@ import {
 } from '../core/settingsStore';
 import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
+import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -285,11 +286,28 @@ export class PlayScene extends CombatScene<
   /** Whether the wave time-limit is currently counting down. */
   private waveTimerActive = false;
 
+  /**
+   * Whether random offscreen asteroid spawning is active. Enabled for the
+   * campaign; switchable so gym/legacy fixtures can isolate a single fixed
+   * asteroid without the dynamic spawner adding more.
+   */
+  private asteroidSpawnerEnabled = true;
+
   /** Rendered wave time-limit bar (top of the screen). */
   private waveTimerBar: Phaser.GameObjects.Graphics | null = null;
 
   private dropSpawner: PowerUpSpawner<DropId> | null = null;
   private rng: () => number = Math.random;
+
+  /**
+   * Asteroid spawn events planned for the active wave (empty outside a
+   * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
+   * scene rng stream is only advanced at wave boundaries.
+   */
+  private pendingAsteroidSpawns: SpawnEvent[] = [];
+
+  /** How many of the planned asteroid spawns have been released this wave. */
+  private asteroidsSpawnedThisWave = 0;
 
   constructor() {
     super('PlayScene');
@@ -420,6 +438,8 @@ export class PlayScene extends CombatScene<
     this.bannerTimer = 0;
     this.waveTimer = 0;
     this.waveTimerActive = false;
+    this.pendingAsteroidSpawns = [];
+    this.asteroidsSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this.paused = false;
     this.effectsRegistry.reset();
@@ -543,6 +563,9 @@ export class PlayScene extends CombatScene<
     this._advanceBullets(dt);
     if (!transitioning) {
       this._handleCollisions();
+      // Release any asteroid spawns whose planned time has passed — before
+      // the timer advances so a wave-timeout cannot release the whole plan.
+      this._releaseDueAsteroidSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -559,6 +582,9 @@ export class PlayScene extends CombatScene<
    * tests and the (future) boss integration can drive it deterministically.
    */
   spawnWave(): void {
+    // Plan the random offscreen asteroid spawns for this wave. Empty during
+    // the boss encounter (see `planAsteroidSpawns`).
+    this.planAsteroidSpawns();
     const spawns = this.waveManager.planSpawns();
     if (spawns.length > 0) {
       for (const spawn of spawns) this._spawnEnemy(spawn);
@@ -585,9 +611,91 @@ export class PlayScene extends CombatScene<
     });
   }
 
+  /**
+   * Plans the random offscreen asteroid spawns for the active regular wave
+   * (AH-0MUGCNZNE002D7QJ). Called once per wave from `spawnWave()` so the
+   * scene rng stream advances only at wave boundaries. Outside a regular
+   * wave — before `beginGame()`, during or after the boss encounter — the
+   * plan is cleared and no asteroids spawn.
+   */
+  planAsteroidSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.asteroidSpawnerEnabled ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingAsteroidSpawns = [];
+      this.asteroidsSpawnedThisWave = 0;
+      return;
+    }
+    this.pendingAsteroidSpawns = computeSpawns(
+      wm.globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.asteroidsSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned asteroid spawn whose scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition,
+   * pause or boss encounter) and stops at the first not-yet-due event — the
+   * plan is time-ordered.
+   */
+  private _releaseDueAsteroidSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.asteroidsSpawnedThisWave < this.pendingAsteroidSpawns.length) {
+      const event = this.pendingAsteroidSpawns[this.asteroidsSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledAsteroid(event);
+      this.asteroidsSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned asteroid at its offscreen position with the planned
+   * inward velocity, registering it with the WaveManager as a dynamic spawn
+   * so wave-clear accounting includes it.
+   */
+  private _spawnScheduledAsteroid(event: SpawnEvent): void {
+    const entity = new Asteroid(this, {
+      x: event.x,
+      y: event.y,
+      formationOffset: { row: 0, col: 0 },
+      sizeTier: event.sizeTier,
+      vx: event.vx,
+      vy: event.vy,
+      enterFromOffscreen: true,
+    });
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: 'asteroid',
+      startX: 0,
+      startY: 0,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
   /** Advances formation drift and repositions every live enemy. */
-  private _moveEnemies(dt: number): void {
-    this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
+  private _moveEnemies(dt: number): void {    this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
     if (this.driftX > FORMATION_DRIFT_RANGE) {
       this.driftX = FORMATION_DRIFT_RANGE;
       this.driftDir = -1;
@@ -702,6 +810,10 @@ export class PlayScene extends CombatScene<
    * spawns the Central AI.
    */
   protected onBossTriggered(): void {
+    // No random asteroids in the boss encounter: drop the last wave's plan
+    // so no spawn can leak in after the transition (AH-0MUGCNZNE002D7QJ).
+    this.pendingAsteroidSpawns = [];
+    this.asteroidsSpawnedThisWave = 0;
     this.waveManager.beginBoss();
     this._startTransition();
   }
@@ -1910,6 +2022,20 @@ export class PlayScene extends CombatScene<
       rules.weaponWeights,
       rng,
     );
+  }
+
+  /**
+   * Enables or disables random offscreen asteroid spawning (default enabled).
+   * Disabling immediately drops any pending plan and clears the released
+   * counter; re-enabling takes effect from the next `spawnWave()`. A tuning
+   * and test seam mirroring `setRng` / `setWaveTimerRemaining`.
+   */
+  setAsteroidSpawnerEnabled(enabled: boolean): void {
+    this.asteroidSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingAsteroidSpawns = [];
+      this.asteroidsSpawnedThisWave = 0;
+    }
   }
 }
 

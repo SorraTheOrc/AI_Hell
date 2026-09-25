@@ -169,7 +169,11 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     await sleep(300);
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
-    expect(play.getAliveCount()).toBe(play.getWaveManager().waveEnemyCount());
+    // The wave's formation enemies are all present; the random asteroid
+    // spawner may add more on top, so the static wave count is a lower bound.
+    expect(play.getAliveCount()).toBeGreaterThanOrEqual(
+      play.getWaveManager().waveEnemyCount(),
+    );
     expect(play.getEnemies().length).toBe(play.getAliveCount());
     expect(play.getPlayerBullets().length).toBeGreaterThanOrEqual(0);
     expect(play.getEnemyBullets().length).toBe(0);

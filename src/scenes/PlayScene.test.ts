@@ -32,6 +32,8 @@ import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
 } from '../waves/Formations';
+import { computeSpawns } from '../waves/AsteroidSpawner';
+import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore } from '../core/configStore';
 
 // These gameplay tests drive the fourDirectional control scheme; the app
@@ -116,10 +118,16 @@ function findAsteroids(scene: PlayScene): Asteroid[] {
  */
 async function bootSceneWithLevels(
   levels: LevelDefinition[],
+  options: { asteroidSpawner?: boolean } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
   const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
+  if (options.asteroidSpawner === false) {
+    // Disable before restarting so the restarted `create()` does not plan
+    // (or auto-update-release) any random asteroids.
+    scene.setAsteroidSpawnerEnabled(false);
+  }
   scene.scene.restart();
   await new Promise((resolve) => setTimeout(resolve, 200));
   return { booted: game, scene };
@@ -176,8 +184,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   /** Boots with the fixed-asteroid campaign fixture (see
    * `campaignWithFixedAsteroid`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Isolate the fixed asteroid: disable the dynamic spawner from before
+    // the scene restarts so these legacy asteroid-behaviour tests are not
+    // perturbed by random spawns.
     const { booted: game, scene } = await bootSceneWithLevels(
       campaignWithFixedAsteroid(),
+      { asteroidSpawner: false },
     );
     booted = game;
     return scene;
@@ -192,7 +204,9 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(wm.started).toBe(true);
     expect(wm.level).toBe(1);
     expect(wm.waveNumber).toBe(1);
-    expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
+    // The wave's formation enemies are all spawned; the random asteroid
+    // spawner may add more on top (it never removes any).
+    expect(scene.getAliveCount()).toBeGreaterThanOrEqual(wm.waveEnemyCount());
     expect(scene.getAliveCount()).toBeGreaterThan(0);
   });
 
@@ -620,6 +634,9 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   it('AH-0MU7JTG9R002ZWA6 AC3 — expiry with no enemies remaining costs no life', async () => {
     const scene = await bootPlay();
+    // Isolate this test from the dynamic spawner: otherwise a spawned
+    // asteroid would count as a survivor on timeout.
+    scene.setAsteroidSpawnerEnabled(false);
     const livesBefore = scene.getGameState().lives;
 
     // Remove every enemy without clearing the wave (behavioural seam).
@@ -900,8 +917,12 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   /** Boots with the fixed-asteroid campaign fixture (see
    * `campaignWithFixedAsteroid`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Isolate the fixed asteroid: disable the dynamic spawner from before
+    // the scene restarts so these legacy asteroid-behaviour tests are not
+    // perturbed by random spawns.
     const { booted: game, scene } = await bootSceneWithLevels(
       campaignWithFixedAsteroid(),
+      { asteroidSpawner: false },
     );
     booted = game;
     return scene;
@@ -1069,8 +1090,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   /** Boots with the fixed-asteroid campaign fixture (see
    * `campaignWithFixedAsteroid`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Isolate the fixed asteroid: disable the dynamic spawner from before
+    // the scene restarts so these legacy asteroid-behaviour tests are not
+    // perturbed by random spawns.
     const { booted: game, scene } = await bootSceneWithLevels(
       campaignWithFixedAsteroid(),
+      { asteroidSpawner: false },
     );
     booted = game;
     return scene;
@@ -2020,5 +2045,233 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     expect(
       (scene as unknown as { focusManager?: unknown }).focusManager,
     ).toBeUndefined();
+  });
+});
+
+describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Fixed seed shared with the pure-planner expectations. */
+  const SEED = 20260925;
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    return booted.scene as PlayScene;
+  }
+
+  async function bootCustom(levels: LevelDefinition[]): Promise<PlayScene> {
+    const result = await bootSceneWithLevels(levels);
+    booted = result.booted;
+    return result.scene;
+  }
+
+  /** Alive asteroid entities currently in the scene. */
+  function findAsteroids(scene: PlayScene): Asteroid[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is Asteroid => e instanceof Asteroid && e.alive);
+  }
+
+  /** Asteroids alive now that were not alive at the snapshot. */
+  function newAsteroids(before: Set<Asteroid>, scene: PlayScene): Asteroid[] {
+    return findAsteroids(scene).filter((a) => !before.has(a));
+  }
+
+  /** A campaign of `waveCount` one-scout waves for fast clear transitions. */
+  function scoutWavesLevel(waveCount: number): LevelDefinition[] {
+    return [
+      {
+        level: 1,
+        name: 'Test',
+        waves: Array.from({ length: waveCount }, () => ({
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v' as const,
+              count: 1,
+              spacingX: 20,
+              spacingY: 20,
+              startX: 200,
+              startY: 200,
+            },
+          ],
+          shootEnabled: false,
+        })),
+      },
+    ];
+  }
+
+  /** The deterministic plan for a given global wave index and seed. */
+  function expectedPlan(globalWaveIndex: number): ReturnType<typeof computeSpawns> {
+    return computeSpawns(
+      globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      createSeededRng(SEED),
+    );
+  }
+
+  /** Re-plans deterministically with the shared seed. */
+  function planWithSeed(scene: PlayScene): ReturnType<typeof computeSpawns> {
+    scene.setRng(createSeededRng(SEED));
+    scene.planAsteroidSpawns();
+    return expectedPlan(scene.getWaveManager().globalWaveIndex);
+  }
+
+  /** Sets the wave clock to `elapsed` seconds into the wave. */
+  function setElapsed(scene: PlayScene, elapsed: number): void {
+    scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - elapsed);
+  }
+
+  /** Releases the plan's first spawn by advancing just past its due time. */
+  function releaseFirst(scene: PlayScene, plan: ReturnType<typeof computeSpawns>): void {
+    setElapsed(scene, plan[0].timeSeconds + 1e-6);
+    scene.tick(0.001);
+  }
+
+  it('AC1 — releases a planned asteroid at its scheduled time and registers it', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const before = new Set(findAsteroids(scene));
+    const plan = planWithSeed(scene);
+    expect(plan.length).toBeGreaterThan(0);
+
+    const aliveBefore = wm.enemiesAlive;
+
+    // Nothing new is released before the first scheduled time.
+    if (plan[0].timeSeconds > 0.02) {
+      setElapsed(scene, plan[0].timeSeconds - 0.01);
+      scene.tick(0.001);
+      expect(newAsteroids(before, scene)).toHaveLength(0);
+    }
+
+    const target =
+      plan.length > 1
+        ? (plan[0].timeSeconds + plan[1].timeSeconds) / 2
+        : plan[0].timeSeconds;
+    setElapsed(scene, target + 1e-6);
+    scene.tick(0.001);
+
+    const spawned = newAsteroids(before, scene);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].getSizeTier()).toBe(plan[0].sizeTier);
+    expect(spawned[0].x).toBeCloseTo(plan[0].x, 3);
+    expect(spawned[0].y).toBeCloseTo(plan[0].y, 3);
+    // Registered as a dynamic spawn so wave-clear accounting includes it.
+    expect(wm.enemiesAlive).toBe(aliveBefore + 1);
+  });
+
+  it('AC2 — spawned asteroids appear offscreen and drift inward', async () => {
+    const scene = await bootPlay();
+    const before = new Set(findAsteroids(scene));
+    const plan = planWithSeed(scene);
+    releaseFirst(scene, plan);
+
+    const asteroid = newAsteroids(before, scene)[0];
+    expect(asteroid).toBeDefined();
+
+    // Fully outside the viewport on the chosen edge.
+    const offscreen =
+      asteroid.x < 0 ||
+      asteroid.x > GAME_WIDTH ||
+      asteroid.y < 0 ||
+      asteroid.y > GAME_HEIGHT;
+    expect(offscreen).toBe(true);
+
+    // Inward velocity on the chosen edge (perpendicular + ±30° spread).
+    if (asteroid.x < 0) expect(asteroid.vx).toBeGreaterThan(0);
+    if (asteroid.x > GAME_WIDTH) expect(asteroid.vx).toBeLessThan(0);
+    if (asteroid.y < 0) expect(asteroid.vy).toBeGreaterThan(0);
+    if (asteroid.y > GAME_HEIGHT) expect(asteroid.vy).toBeLessThan(0);
+
+    // The distance to the viewport centre shrinks as it drifts in.
+    const distBefore = Math.hypot(
+      asteroid.x - GAME_WIDTH / 2,
+      asteroid.y - GAME_HEIGHT / 2,
+    );
+    scene.tick(0.5);
+    const distAfter = Math.hypot(
+      asteroid.x - GAME_WIDTH / 2,
+      asteroid.y - GAME_HEIGHT / 2,
+    );
+    expect(distAfter).toBeLessThan(distBefore);
+  });
+
+  it('AC6 — the scene rng seed reproduces the same spawn plan', async () => {
+    const scene = await bootPlay();
+
+    const spawnOne = (): Asteroid => {
+      const plan = planWithSeed(scene);
+      releaseFirst(scene, plan);
+      return findAsteroids(scene).at(-1)!;
+    };
+
+    const first = spawnOne();
+    const firstX = first.x;
+    const firstY = first.y;
+    const second = spawnOne();
+
+    expect(second.x).toBeCloseTo(firstX, 5);
+    expect(second.y).toBeCloseTo(firstY, 5);
+  });
+
+  it('AC3 — no asteroids spawn during the boss encounter', async () => {
+    const scene = await bootCustom(scoutWavesLevel(1));
+    const wm = scene.getWaveManager();
+
+    // Wipe the only wave to trigger the boss, then complete the transition.
+    killAllEnemies(scene);
+    expect(wm.bossTriggered).toBe(true);
+    finishTransition(scene);
+    expect(wm.bossActive).toBe(true);
+    expect(findAsteroids(scene)).toHaveLength(0);
+
+    // planAsteroidSpawns clears outside a regular wave.
+    scene.planAsteroidSpawns();
+
+    // Even with the wave clock forced due, the boss guard suppresses release.
+    scene.setWaveTimerRemaining(0.1);
+    scene.tick(0.01);
+    expect(findAsteroids(scene)).toHaveLength(0);
+  });
+
+  it('AC4 — no asteroids spawn while the scene is paused', async () => {
+    const scene = await bootPlay();
+    const before = new Set(findAsteroids(scene));
+    const plan = planWithSeed(scene);
+    setElapsed(scene, plan[0].timeSeconds + 1e-6);
+
+    scene.setPaused(true);
+    scene.tick(0.5);
+    scene.setPaused(false);
+    expect(newAsteroids(before, scene)).toHaveLength(0);
+
+    scene.tick(0.001);
+    expect(newAsteroids(before, scene)).toHaveLength(1);
+  });
+
+  it('AC4 — no asteroids spawn during a wave transition', async () => {
+    const scene = await bootCustom(scoutWavesLevel(2));
+
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    const before = new Set(findAsteroids(scene));
+
+    // Plan for the newly-loaded next wave and force the first spawn due.
+    const plan = planWithSeed(scene);
+    expect(plan.length).toBeGreaterThan(0);
+    setElapsed(scene, plan[0].timeSeconds + 1e-6);
+    scene.tick(0.01);
+
+    // Still transitioning and no new asteroid was released.
+    expect(scene.isTransitioning()).toBe(true);
+    expect(newAsteroids(before, scene)).toHaveLength(0);
   });
 });
