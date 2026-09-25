@@ -105,6 +105,13 @@ export class HelpScene extends Phaser.Scene {
       { color: DIM_COLOR },
     );
 
+    // Render above the paused gym. Gym scenes are added dynamically by
+    // `GymIndex`, so they sit *after* this config-registered scene in the
+    // SceneManager list and would otherwise render on top of the overlay
+    // (paused scenes still render). Bringing this scene to the top makes
+    // the opaque background cover the whole screen.
+    this.scene.bringToTop();
+
     // Full-screen opaque background — a replacement screen, not an overlay.
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, HELP_BACKGROUND).setOrigin(0);
 

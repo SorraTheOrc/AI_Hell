@@ -82,6 +82,28 @@ describe('HelpScene — overlay content and lifecycle (AH-0MUAYB67I002REOZ)', ()
     expect(title!.text).toContain('Help Host Stub');
   });
 
+  it('AC5 — the overlay is brought to the top so it blacks out the paused gym', async () => {
+    booted = await bootScene([HelpHostStub, HelpScene, MenuScene]);
+    const host = booted.scene as HelpHostStub;
+    const manager = booted.game.scene;
+
+    // Gym scenes are added dynamically by GymIndex, so in production they sit
+    // after the config-registered HelpScene in the SceneManager list and
+    // render on top of it (paused scenes still render). Reproduce that order.
+    manager.bringToTop('HelpHostStub');
+    expect(manager.getIndex('HelpHostStub')).toBeGreaterThan(
+      manager.getIndex('HelpScene'),
+    );
+
+    host.handle!.openHelp();
+    await settle();
+
+    expect(booted.game.scene.isActive('HelpScene')).toBe(true);
+    expect(manager.getIndex('HelpScene')).toBeGreaterThan(
+      manager.getIndex('HelpHostStub'),
+    );
+  });
+
   it('AC2 — lists exactly the drops of the originating gym', async () => {
     const { help } = await bootAndOpen();
 
