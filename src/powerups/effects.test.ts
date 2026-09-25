@@ -52,6 +52,23 @@ describe('P5 Speed Boost (AC1): +50% live speed for 10 s', () => {
     expect(reg.speedMultiplier()).toBe(1);
     expect(reg.isActive('P5')).toBe(false);
   });
+
+  it('exposes the same 1.5× multiplier for fire rate while active (AC1/AC3)', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.fireRateMultiplier()).toBe(1);
+    reg.applyCollect('P5');
+    expect(reg.fireRateMultiplier()).toBe(P5_SPEED_MULTIPLIER);
+    expect(reg.fireRateMultiplier()).toBe(reg.speedMultiplier());
+  });
+
+  it('fire-rate multiplier returns to 1 immediately on expiry (AC2)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    reg.tick(9.999);
+    expect(reg.fireRateMultiplier()).toBe(1.5);
+    reg.tick(0.002);
+    expect(reg.fireRateMultiplier()).toBe(1);
+  });
 });
 
 describe('P5 timer refresh (AC2): refresh, not additive, not ignored', () => {
@@ -87,6 +104,15 @@ describe('P5 timer refresh (AC2): refresh, not additive, not ignored', () => {
     reg.applyCollect('P5'); // re-collect after expiry
     expect(reg.isActive('P5')).toBe(true);
     expect(reg.remaining('P5')).toBeCloseTo(10);
+  });
+
+  it('fire-rate multiplier refreshes with the timer and never stacks (AC2)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    reg.tick(6);
+    reg.applyCollect('P5'); // refresh
+    expect(reg.remaining('P5')).toBeCloseTo(10);
+    expect(reg.fireRateMultiplier()).toBe(1.5);
   });
 });
 

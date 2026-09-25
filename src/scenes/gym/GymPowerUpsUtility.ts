@@ -7,8 +7,9 @@
  * collecting drops; each collected drop applies its FULL GDD §4.4
  * behaviour observable without threats:
  *
- * - **P5 Speed Boost** — +50% thrust/max-speed live for 10 s (refresh on
- *   re-collect), applied to the ship via `Player.setSpeedMultiplier`.
+ * - **P5 Speed Boost** — +50% thrust/max-speed and +50% rate of fire live
+ *   for 10 s (refresh on re-collect), applied to the ship via
+ *   `Player.setSpeedMultiplier` + `Player.setFireRateMultiplier`.
  * - **P8 Extra Life** — +1 life immediately (starts 3, cap 5).
  * - **P9 Magnet** — permanent stack (cap 5); drops within
  *   `2× ship size +50%/stack` are pulled toward the ship at
@@ -161,6 +162,8 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     }
     // P5 live boost: scale thrust/max-speed each frame.
     this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
+    // P5 live boost: scale fire rate each frame (same 1.5× multiplier).
+    this.player.setFireRateMultiplier(this.effectsRegistry.fireRateMultiplier());
     this.player.physicsTick(dt, this.scale.width, this.scale.height);
 
     // ── Spawner: one drop per interval, round-robin ─────────────

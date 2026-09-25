@@ -551,6 +551,8 @@ export class PlayScene extends CombatScene<
       this.player.tickWeaponTimers(dt * 1000);
       // P5 live boost: scale thrust/max-speed each frame (mirror gym).
       this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
+      // P5 live boost: scale fire rate each frame (same 1.5× multiplier).
+      this.player.setFireRateMultiplier(this.effectsRegistry.fireRateMultiplier());
       // P7 Teleport (S/↓ JustDown) — runs before physics so the warp
       // position is consumed by this frame's physics.
       this._handleTeleport();

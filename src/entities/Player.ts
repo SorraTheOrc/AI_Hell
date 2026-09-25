@@ -172,6 +172,8 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   /** Current live speed multiplier (1 = normal, 1.5 = P5 boosted). */
   private _speedMultiplier = 1;
+  /** Current live fire-rate multiplier (1 = normal, 1.5 = P5 boosted). */
+  private _fireRateMultiplier = 1;
 
   // ── Weapon system (AC1–AC4) ─────────────────────────────────────
   // Cumulative model: the permanent cannon plus any collected timed
@@ -495,6 +497,25 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Applies a live fire-rate multiplier (P5 Speed Boost: +50% rate of fire).
+   * The effective fire interval is divided by `multiplier`, so the ship fires
+   * `multiplier`× as often. 1 = normal fire rate. Applied per-frame to
+   * `tryFire`. Mirrors `setSpeedMultiplier` semantics.
+   */
+  setFireRateMultiplier(multiplier: number): void {
+    this._fireRateMultiplier = multiplier;
+  }
+
+  /**
+   * Current live fire-rate multiplier (1 = normal, 1.5 = P5 boosted).
+   * Exposed so scenes and tests can verify the applied multiplier without
+   * inferring it from fire timing.
+   */
+  getFireRateMultiplier(): number {
+    return this._fireRateMultiplier;
+  }
+
+  /**
    * Current effective movement config (multiplier applied). Exposed for
    * tests and the scene's magnet/speed integrations.
    */
@@ -666,6 +687,11 @@ export class Player extends Phaser.GameObjects.Graphics {
    * fired weapon's cooldown is re-armed to its own fire rate; an empty
    * array means nothing fired this frame (the caller emits nothing).
    *
+   * The fire-rate multiplier (set via {@link setFireRateMultiplier},
+   * typically from P5 Speed Boost) scales the effective cooldown:
+   * `effectiveCooldown = cooldown / _fireRateMultiplier`, so a 1.5×
+   * multiplier fires 50% faster (AC1, AC2).
+   *
    * @param dt — Delta time in seconds since the last call.
    * @returns The ids of the weapons that fired this frame.
    */
@@ -673,12 +699,13 @@ export class Player extends Phaser.GameObjects.Graphics {
     const fired: WeaponId[] = [];
     for (const weaponId of this.getActiveWeapons()) {
       const fireRateMs = getWeaponById(weaponId).fireRateMs;
+      const effectiveCooldown = fireRateMs / this._fireRateMultiplier;
       const cooldown = (this._weaponCooldowns.get(weaponId) ?? 0) - dt * 1000;
       if (cooldown > 0) {
         this._weaponCooldowns.set(weaponId, cooldown);
       } else {
         fired.push(weaponId);
-        this._weaponCooldowns.set(weaponId, fireRateMs);
+        this._weaponCooldowns.set(weaponId, effectiveCooldown);
       }
     }
     return fired;

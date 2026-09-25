@@ -1842,6 +1842,34 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getEffectsRegistry().magnetStacks()).toBe(1);
   });
 
+  it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
+    const scene = await boot(layer('P5', CLEAR));
+    const player = scene.getPlayer()!;
+
+    // Baseline: no P5, both multipliers normal.
+    scene.tick(0.1);
+    const baseThrust = player.getMovementConfig().thrust;
+    expect(player.getFireRateMultiplier()).toBe(1);
+
+    // Collect P5 on the ship.
+    scene.spawnPowerUpDrop('P5', player.x, player.y);
+    scene.tick(0.1);
+    expect(scene.getEffectsRegistry().fireRateMultiplier()).toBe(1.5);
+
+    // The player section runs before drop collection each tick, so the
+    // boost lands on the following tick.
+    scene.tick(0.1);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
+    expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust * 1.5);
+
+    // Expires after 10 s → both speeds return to normal.
+    for (let i = 0; i < 110; i++) scene.tick(0.1); // ~11 s
+    expect(scene.getEffectsRegistry().isActive('P5')).toBe(false);
+    scene.tick(0.1);
+    expect(player.getFireRateMultiplier()).toBe(1);
+    expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust);
+  });
+
   it('AC3 — renders the standalone HUD with lives counter and active-effect rows', async () => {
     const scene = await boot(layer('P9', CLEAR));
     const hud = scene.getHUD();

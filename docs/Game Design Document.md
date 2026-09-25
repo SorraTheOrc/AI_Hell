@@ -274,7 +274,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Stacked dots (stream of bullets) |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
-| P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
+| P5 | **Speed Boost** | Increases movement speed and rate of fire by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
 | P7 | **Teleport** *(collectable)* | Press S or ↓ to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |

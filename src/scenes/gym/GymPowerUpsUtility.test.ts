@@ -151,6 +151,31 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     expect(atShip).toHaveLength(0);
   });
 
+  it('applies the P5 fire-rate multiplier to the player (gym parity, AC4)', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer()!;
+
+    // No P5 → normal fire rate.
+    scene.tick(1 / 60);
+    expect(player.getFireRateMultiplier()).toBe(1);
+
+    // Collect P5 under the ship.
+    scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(registry.fireRateMultiplier()).toBe(1.5);
+
+    // Applied at the top of tick(), so the boost lands on the next frame.
+    scene.tick(1 / 60);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
+
+    // Expires after 10 s → back to normal.
+    for (let i = 0; i < 700; i++) scene.tick(1 / 60); // ~11.7 s
+    expect(registry.isActive('P5')).toBe(false);
+    expect(player.getFireRateMultiplier()).toBe(1);
+  });
+
   it('does not collect a drop below the scale threshold (not yet grown)', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();

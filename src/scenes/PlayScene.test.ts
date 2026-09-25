@@ -1374,6 +1374,48 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(remaining2).toBeCloseTo(10, 1);
   });
 
+  it('P5 active → fire-rate multiplier applied to the player (AC1)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Default: no P5 active, fire-rate multiplier = 1.
+    expect(registry.fireRateMultiplier()).toBe(1);
+    expect(player.getFireRateMultiplier()).toBe(1);
+
+    // Collect a P5 (drop under the ship at full size).
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.fireRateMultiplier()).toBe(1.5);
+
+    // Applied at the top of tick(), so the boost lands on the next tick.
+    scene.tick(0.016);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
+  });
+
+  it('P5 expired → fire-rate multiplier back to 1 (AC2)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    scene.tick(0.016);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
+
+    // Advance past the 10 s duration.
+    for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
+    scene.tick(0.5); // past 10 s
+
+    expect(registry.isActive('P5')).toBe(false);
+    expect(player.getFireRateMultiplier()).toBe(1);
+  });
+
   // ── P7 Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
 
   it('P7 teleport with a stack warps the player, consumes the stack and grants P6', async () => {

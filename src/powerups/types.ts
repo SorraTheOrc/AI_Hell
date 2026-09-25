@@ -1,7 +1,7 @@
 /**
  * Power-up type definitions (GDD §4.4).
  *
- * - **P5 Speed Boost** — +50% movement speed for 10 s (timed)
+ * - **P5 Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
  * - **P8 Extra Life** — +1 life immediately (start 3, cap 5)
  * - **P9 Magnet** — permanent stacking effect (cap 5)
  * - **P3 Shield** — 15 s bubble, absorbs one hit (timed)
@@ -98,7 +98,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P5: {
     id: 'P5',
     name: 'Speed Boost',
-    description: '+50% movement speed for 10 s.',
+    description: '+50% movement speed and rate of fire for 10 s.',
     type: PowerUpType.SPEED_BOOST,
     duration: 10,
   },
