@@ -236,6 +236,48 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
   });
 });
 
+// ── Collection boundary: ship hull touches the visible bubble (AH-0MTVYCM2N002NKE4) ──
+
+describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootCombatBoundary(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  it('collects a drop whose hull touches the visible bubble (31 px)', async () => {
+    const scene = await bootCombatBoundary();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull is already touching the crisp bubble ring → collected.
+    const drop = scene.spawnDrop('P3', 511, 270);
+    scene.advanceDrops(0.5); // grow to full size
+    scene.tick(1 / 60); // one frame runs the overlap collection
+
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+    expect(scene.getDrops()).not.toContain(drop); // consumed
+  });
+
+  it('does not collect a drop just beyond the bubble boundary (34 px)', async () => {
+    const scene = await bootCombatBoundary();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    const drop = scene.spawnDrop('P3', 480 + 34, 270); // 34 px > 32.4 px boundary
+    scene.advanceDrops(0.5); // full size, collectible but out of range
+    scene.tick(1 / 60);
+
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.getDrops()).toContain(drop); // drop still on field
+  });
+});
+
 // ── AC4: P3 Shield collection + visual ─────────────────────────────────
 
 describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
