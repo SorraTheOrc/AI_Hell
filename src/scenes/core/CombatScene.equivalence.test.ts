@@ -17,6 +17,10 @@ import {
   type FormationSceneEntity,
 } from '../gym/core/GymFormationScene';
 import { CombatScene } from './CombatScene';
+import {
+  collectProductionSourceFiles,
+  definesMethod,
+} from '../../test/duplicateBodyGuard';
 
 /** The eight shared combat/lifecycle template methods (parent AC1/AC2). */
 const SHARED_METHODS = [
@@ -36,12 +40,8 @@ const SHARED_CORE_FILES = [
   'src/scenes/core/CombatScene.ts',
 ];
 
-/** Production files scanned for duplicate shared-method definitions. */
-const TARGET_FILES = [
-  ...SHARED_CORE_FILES,
-  'src/scenes/PlayScene.ts',
-  'src/scenes/gym/core/GymFormationScene.ts',
-];
+/** Production scene root scanned by the repo-wide duplicate-body guard. */
+const SCENES_ROOT = 'src/scenes';
 
 // ── Minimal gym scene for cross-scene equivalence ───────────────────
 
@@ -114,14 +114,14 @@ class EquivGymScene extends GymFormationScene<EquivEnemy, EquivBullet> {
 }
 
 // ── Source scan helper (duplicate-body guard) ───────────────────────
+// `definesMethod` is shared via `../../test/duplicateBodyGuard` so the
+// eight-method guard and the `_readInput` guard use one matcher (AC3).
 
-function definesMethod(source: string, method: string): boolean {
-  // Definition lines only — `this._method(` call sites do not match.
-  const re = new RegExp(
-    `^[ \\t]*(?:(?:private|protected|public)\\s+)?(?:override\\s+)?${method}\\s*\\(`,
-    'm',
+/** Production scene files under `src/scenes`, excluding tests. */
+function productionSceneFiles(): string[] {
+  return collectProductionSourceFiles(
+    path.resolve(process.cwd(), SCENES_ROOT),
   );
-  return re.test(source);
 }
 
 describe('CombatScene — shared-implementation identity and duplicate-body guard (AC2)', () => {
@@ -152,16 +152,14 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
     }
   });
 
-  it('each shared method is defined in exactly one of the shared-core files', () => {
-    // Scope: the shared core (CombatCoreScene + CombatScene) plus the two
-    // scenes this epic re-based. Older standalone gym scenes
-    // (GymWeapons/GymPowerUpsCombat/GymPowerUpsUtility) predate the shared
-    // core and are out of scope for this epic (full engine extraction is
-    // explicitly excluded); a repo-wide scan would flag them. The two
-    // re-based scenes must define each method zero times and the shared
-    // core exactly once (in either of its two files) — the method may now
-    // live in the narrower CombatCoreScene base rather than CombatScene.
-    const files = TARGET_FILES.map((file) => path.resolve(process.cwd(), file));
+  it('each shared method is defined exactly once repo-wide, in the shared core', () => {
+    // Repo-wide scope: every production scene file under src/scenes
+    // (AH-0MUH5FD180063BU5). The shared core (CombatCoreScene
+    // and/or CombatScene) must hold the single definition of each of the
+    // eight methods; no other production scene may re-introduce a copy.
+    const files = productionSceneFiles();
+    expect(files.length).toBeGreaterThan(0);
+
     for (const method of SHARED_METHODS) {
       const definers = files.filter((file) =>
         definesMethod(fs.readFileSync(file, 'utf8'), method),
@@ -172,11 +170,21 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       // Exactly one definer, and it must be one of the shared-core files.
       expect(relative).toHaveLength(1);
       expect(SHARED_CORE_FILES).toContain(relative[0]);
-      // The re-based scenes must not re-introduce a copy.
-      for (const target of TARGET_FILES.slice(SHARED_CORE_FILES.length)) {
-        expect(relative).not.toContain(target);
-      }
     }
+  });
+
+  it('no production scene defines a legacy private `_readInput` copy', () => {
+    // AC2: the duplicated private `_readInput` was unified onto the
+    // shared `_readPlayerInput`; every production scene (including
+    // GymPlayer) must route input through the shared path.
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), '_readInput'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual([]);
   });
 });
 

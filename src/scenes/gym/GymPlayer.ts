@@ -31,7 +31,6 @@ import { Player } from '../../entities/Player';
 import {
   FourDirectionalInputHandler,
   AsteroidsInputHandler,
-  ControlInput,
   ControlSchemeType,
 } from '../../utils/movementModel';
 import { WasdKeysLike } from '../../utils/input';
@@ -342,19 +341,6 @@ export class GymPlayer extends Phaser.Scene {
     })();
   }
 
-  /**
-   * Reads the current held-key state into a ControlInput for the active
-   * control scheme (AC5 — pluggable input handlers).
-   * Level-triggered per frame: a key that is held down returns true
-   * every frame until released, so thrust accumulates continuously.
-   */
-  private _readInput(): ControlInput | undefined {
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.scheme === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
-  }
-
   update(_time: number, delta: number): void {
     if (!this.player) return;
 
@@ -362,7 +348,14 @@ export class GymPlayer extends Phaser.Scene {
     // happen on setConfig from the panel / saved config).
     this.scheme = this.player.getScheme();
 
-    const input = this._readInput();
+    // Map the held keys through the scheme's handler. The private
+    // `_readInput` copy was removed in favour of the shared input path
+    // (parent AC4 — input path unified; repo-wide guard AH-0MUH5FD180063BU5).
+    const raw = { cursors: this.cursors, wasd: this.wasd };
+    const input =
+      this.scheme === 'asteroids'
+        ? this.asteroidsHandler.mapInput(raw)
+        : this.fourDirHandler.mapInput(raw);
     if (input) this.player.setInput(input);
 
     const dt = delta / 1000;
