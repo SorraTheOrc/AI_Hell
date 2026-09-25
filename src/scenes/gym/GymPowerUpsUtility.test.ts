@@ -16,6 +16,7 @@ import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymPowerUpsUtility } from './GymPowerUpsUtility';
+import { CombatCoreScene } from '../core/CombatCoreScene';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import {
@@ -672,5 +673,39 @@ describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
     expect(scene.sys.isActive()).toBe(true);
+  });
+});
+
+// ── Parent AH-0MUDCT7EU0061OSZ: re-based on the narrower shared core ───
+
+describe('GymPowerUpsUtility — re-based on the shared CombatCoreScene core', () => {
+  it('AC1 — extends the narrower shared base (prototype identity)', () => {
+    expect(Object.getPrototypeOf(GymPowerUpsUtility.prototype)).toBe(
+      CombatCoreScene.prototype,
+    );
+  });
+
+  it('AC1 — inherits collection/input instead of defining local copies', () => {
+    for (const method of [
+      '_collectDrop',
+      '_readPlayerInput',
+      '_autoFire',
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          GymPowerUpsUtility.prototype,
+          method,
+        ),
+      ).toBe(false);
+      expect(
+        (GymPowerUpsUtility.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      );
+    }
   });
 });

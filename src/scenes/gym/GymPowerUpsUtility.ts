@@ -26,6 +26,7 @@
 
 import Phaser from 'phaser';
 
+import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
 import { Player } from '../../entities/Player';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -34,10 +35,7 @@ import { RoundRobinSpawner } from '../../powerups/spawner';
 import { getPowerUpById, PowerUpId } from '../../powerups/types';
 import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
 import { applyMagnetAttraction } from '../../powerups/magnet';
-import {
-  spawnCollectAnimation,
-  type CollectAnimationHandle,
-} from '../../powerups/collectAnimation';
+import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import {
   playPowerUpCollectPopSound,
   playSpeedBoostCollectSound,
@@ -47,11 +45,6 @@ import {
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
-import {
-  AsteroidsInputHandler,
-  ControlInput,
-  FourDirectionalInputHandler,
-} from '../../utils/movementModel';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
@@ -82,14 +75,24 @@ export interface ActiveDrop {
   graphics: Phaser.GameObjects.Graphics;
   /** True once collected and playing its absorb VFX (AC4). */
   absorbing?: boolean;
+  /** Unified drop id for the shared collect path. */
+  dropId: PowerUpId;
 }
 
-export class GymPowerUpsUtility extends Phaser.Scene {
+/**
+ * Non-combat power-ups gym. Extends the narrower shared
+ * {@link CombatCoreScene} so drop collection and the input path flow
+ * through the one shared implementation; the gym supplies its P5/P8/P9
+ * pickup cues through hooks.
+ */
+export class GymPowerUpsUtility extends CombatCoreScene<
+  CombatEnemyEntity,
+  CombatEnemyBullet,
+  ActiveDrop
+> {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
-  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
-  private collectAnimations: CollectAnimationHandle[] = [];
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner(NON_COMBAT_ORDER);
   /** Index into the deterministic spawn positions. */
@@ -97,11 +100,6 @@ export class GymPowerUpsUtility extends Phaser.Scene {
   /** Countdown to the next round-robin spawn (starts at 0 → immediate first drop). */
   private spawnTimer = 0;
   private hud: HUD | null = null;
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
   /** Shared help affordance (AH-0MUAYB67I002REOZ). */
   private helpHandle: GymHelpHandle | null = null;
 
@@ -156,7 +154,7 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     if (!this.player) return;
 
     // ── Ship: input → thrust movement + screen-wrap ─────────────
-    const input = this._readInput();
+    const input = this._readPlayerInput();
     if (input) {
       this.player.setInput(input);
     }
@@ -221,7 +219,7 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     // Start at scale 0 — the lifecycle grows it in.
     graphics.setScale(0);
 
-    const drop: ActiveDrop = { powerUp: new PowerUp(id), x, y, graphics };
+    const drop: ActiveDrop = { powerUp: new PowerUp(id), x, y, graphics, dropId: id };
     this.drops.push(drop);
     return drop;
   }
@@ -281,25 +279,16 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     return dist <= hull + dropRadius;
   }
 
-  /** Applies the drop's effect to the registry; marks it collected. */
-  private _collectDrop(drop: ActiveDrop): void {
-    const effect = drop.powerUp.tryCollect();
-    if (!effect) return;
-    this.effectsRegistry.applyCollect(effect.id as PowerUpId);
+  // ── Shared collect-path hooks (AC2) ──────────────────────────────
 
-    // Mark the drop so the overlap gate cannot re-collect it while the
-    // absorb animation plays (AC4).
-    drop.absorbing = true;
-    // Start the cosmetic absorb VFX; the Graphics stays alive until the
-    // animation completes, then is destroyed (AC3).
-    this._startCollectAnimation(drop);
-
-    // AC — non-combat pickup activation audio: each pickup type plays
-    // a unique activation sound on collection, plus the generic pop.
-    // Safe no-op without an AudioContext.
+  /**
+   * Non-combat pickup activation audio: each pickup type plays its own
+   * unique activation sound on collection (the shared path has already
+   * applied the effect). Safe no-op without an AudioContext.
+   */
+  protected override onPowerUpCollected(drop: ActiveDrop): void {
     try {
-      playPowerUpCollectPopSound();
-      switch (effect.id) {
+      switch (drop.dropId) {
         case 'P5':
           playSpeedBoostCollectSound();
           break;
@@ -315,41 +304,13 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     }
   }
 
-  /** Starts the absorb animation for a collected drop (AC3). */
-  private _startCollectAnimation(drop: ActiveDrop): void {
-    const shipX = this.player?.x ?? drop.x;
-    const shipY = this.player?.y ?? drop.y;
-    this.collectAnimations.push(
-      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
-    );
-  }
-
-  /** Advances in-flight absorb animations and prunes completed handles. */
-  private _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (this.player) handle.setAttractor(this.player.x, this.player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
+  /** Generic collection pop, played alongside the per-type pickup cue. */
+  protected override _playPickupCue(_drop: ActiveDrop): void {
+    try {
+      playPowerUpCollectPopSound();
+    } catch {
+      // Audio is best-effort (headless tests have no AudioContext).
     }
-    this.collectAnimations = kept;
-  }
-
-  // ── Input ─────────────────────────────────────────────────────────
-
-  /**
-   * Reads the current held-key state into the scheme-appropriate
-   * `ControlInput`, keyed off the player's saved control scheme (mirrors
-   * GymPlayer._readInput — parent AC3). Returns null when no keyboard is
-   * available or the player is absent.
-   */
-  private _readInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
   }
 
   // ── Public test accessors ─────────────────────────────────────────
