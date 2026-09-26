@@ -25,6 +25,8 @@ import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import * as effectsModule from '../../audio/effects';
+import * as explosionModule from '../../vfx/explosionParticles';
+import * as playerDeathJuiceModule from '../../vfx/playerDeathJuice';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
@@ -747,5 +749,65 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     booted.game.destroy(true);
+  });
+});
+
+// ── F8 (AH-0MUDY2UC3002Y3YW): composed player-death juice on the
+//    GymPowerUpsCombat hit path (inherited applyPlayerHit from CombatScene)
+
+describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
+  let booted: BootedGame | null = null;
+
+  async function bootCombat(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('an unshielded hit plays the dedicated cue once and registers juice', async () => {
+    const scene = await bootCombat();
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const particleSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(deathSound).toHaveBeenCalledTimes(1);
+    expect(genericSound).not.toHaveBeenCalled();
+    expect(particleSpy).toHaveBeenCalledTimes(1);
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+
+  it('SHUTDOWN clears the juice registry (no leak across stop/restart)', async () => {
+    const scene = await bootCombat();
+
+    scene['_hitPlayer']();
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+  });
+
+  it('P3 shield absorb spawns no player juice', async () => {
+    const scene = await bootCombat();
+    scene.getEffectsRegistry().applyCollect('P3');
+    const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
+
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(juiceSpy).not.toHaveBeenCalled();
   });
 });

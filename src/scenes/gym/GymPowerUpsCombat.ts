@@ -174,6 +174,10 @@ export class GymPowerUpsCombat extends CombatScene<
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       for (const exp of this.playerExplosions) exp.destroy();
       this.playerExplosions.length = 0;
+      // Composed player-death juice registry (flash/debris/shockwave/particles)
+      // must not survive a stop/restart (parent AH-0MUAYB4R3002ZIZY AC6).
+      for (const effect of this.playerDeathEffects) effect.destroy();
+      this.playerDeathEffects.length = 0;
       // Release any in-flight absorb animations on shutdown/restart.
       for (const anim of this.collectAnimations) anim.destroy();
       this.collectAnimations = [];
@@ -570,6 +574,11 @@ export class GymPowerUpsCombat extends CombatScene<
   /** Player explosion VFX graphics (empty once tweens end; for tests). */
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
     return this.playerExplosions.slice();
+  }
+
+  /** Active composed player-death juice effects (empty once torn down). */
+  getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
+    return this.playerDeathEffects.slice();
   }
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */
