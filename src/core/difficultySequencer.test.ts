@@ -216,16 +216,52 @@ describe('sequencer', () => {
     expect(result.errors).toHaveLength(1);
   });
 
-  it('should pick the closest candidate when multiple are available', () => {
-    const curve: DifficultyCurveConfig = [60];
-    const result = sequencer(curve, [scoutCandidate(), diverCandidate()], { tolerance: 50 });
-    expect(result.waves[0].groups[0]).toBeDefined();
+  it('should pick the candidate with the smallest error when multiple are available', () => {
+    const target = 60;
+    const scout = scoutCandidate();
+    const diver = diverCandidate();
+
+    // Run each candidate on its own so the expected winner is derived from the
+    // public API rather than re-implementing the selection loop.
+    const scoutOnly = sequencer([target], [scout], { tolerance: 50 });
+    const diverOnly = sequencer([target], [diver], { tolerance: 50 });
+    const expected =
+      scoutOnly.errors[0] <= diverOnly.errors[0] ? scoutOnly : diverOnly;
+
+    const result = sequencer([target], [scout, diver], { tolerance: 50 });
+
+    expect(result.waves[0].groups[0].enemyKey).toBe(
+      expected.waves[0].groups[0].enemyKey,
+    );
+    expect(result.errors[0]).toBeCloseTo(expected.errors[0]);
+    expect(Math.abs(result.waves[0].groups[0].score - target)).toBeCloseTo(
+      result.errors[0],
+    );
   });
 
   it('should handle an empty curve gracefully', () => {
     const result = sequencer([], [scoutCandidate()]);
     expect(result.waves).toHaveLength(0);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it('should produce an empty group per wave when the candidate pool is empty', () => {
+    const curve: DifficultyCurveConfig = [10, 20, 30];
+    const result = sequencer(curve, []);
+
+    expect(result.waves).toHaveLength(curve.length);
+    result.waves.forEach((wave, i) => {
+      expect(wave.groups).toEqual([]);
+      expect(wave.targetDifficulty).toBe(curve[i]);
+      expect(wave.shootEnabled).toBe(false);
+    });
+    expect(result.errors).toEqual([0, 0, 0]);
+  });
+
+  it('should respect defaultShootEnabled for an empty candidate pool', () => {
+    const result = sequencer([25], [], { defaultShootEnabled: true });
+    expect(result.waves[0].groups).toEqual([]);
+    expect(result.waves[0].shootEnabled).toBe(true);
   });
 
   it('should handle a pool with only non-firing archetypes', () => {
