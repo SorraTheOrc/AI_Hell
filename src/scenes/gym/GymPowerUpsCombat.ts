@@ -46,6 +46,10 @@
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import {
+  applyPhaseGhost,
+  drawShieldBubble,
+} from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
 import { HUD } from '../../ui/HUD';
@@ -303,25 +307,13 @@ export class GymPowerUpsCombat extends CombatScene<
   // ── Visuals ──────────────────────────────────────────────────────
 
   private _updateVisuals(dt: number): void {
-    // Shield bubble: drawn around the ship while P3 is active.
-    if (this.shieldBubble && this.player) {
-      this.shieldBubble.clear();
-      if (this.effectsRegistry.isShielded) {
-        this.shieldBubble.lineStyle(2, 0x3399ff, 0.9);
-        this.shieldBubble.strokeCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
-        this.shieldBubble.fillStyle(0x3399ff, 0.12);
-        this.shieldBubble.fillCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
-      }
+    // Shield bubble: drawn around the ship while P3 is active (shared helper).
+    if (this.shieldBubble) {
+      drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
     }
-    // Phase ghost: semi-transparent ship while P6 is active.
-    if (this.player) {
-      if (this.effectsRegistry.isPhased) {
-        // Ghost outline — keep blink alpha if invulnerable, else ghost alpha.
-        if (this.invulnerable <= 0) this.player.setAlpha(0.45);
-      } else if (this.invulnerable <= 0) {
-        this.player.setAlpha(1);
-      }
-    }
+    // Phase ghost: semi-transparent ship while P6 is active (keeps the
+    // blink alpha when invulnerable) — shared helper.
+    applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
     // Bomb notice: brief centered flash after P4.
     if (this.bombNoticeTimer > 0) {
       this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);

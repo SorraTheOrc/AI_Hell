@@ -44,6 +44,7 @@ import {
 } from '../../../test/powerUpTestFixtures';
 import { DEFAULT_CONFIG } from '../../../core/config';
 import { seedConfigStore } from '../../../core/configStore';
+import { PHASE_GHOST_ALPHA } from '../../core/CombatEffectVisuals';
 
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -2404,5 +2405,54 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     armed();
     scene.tick(0.05);
     expect(scene.getPlayerHitCount()).toBe(1);
+  });
+
+  it('AC4 — P3 shield renders the shared bubble in the gym and clears it when the shield pops', async () => {
+    const { scene, parkAt, armed } = await bootGated('P3');
+    const player = scene.getPlayer()!;
+
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+
+    collectOnShip(scene, 'P3');
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+    expect(scene.isShieldBubbleVisible()).toBe(true);
+
+    // Absorbing the hit pops the shield and clears the bubble.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+  });
+
+  it('AC4 — P6 applies the shared phase-ghost alpha and restores it on expiry', async () => {
+    const { scene } = await bootGated('P6');
+    const player = scene.getPlayer()!;
+
+    collectOnShip(scene, 'P6');
+    expect(scene.isPhaseGhostActive()).toBe(true);
+    expect(player.alpha).toBeCloseTo(PHASE_GHOST_ALPHA);
+
+    // Expiry (3 s phase duration) restores full alpha.
+    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    expect(scene.isPhaseGhostActive()).toBe(false);
+    expect(player.alpha).toBe(1);
+  });
+
+  it('AC4 — the shared visual update is safe when the scene has no player', async () => {
+    const powerUps: PowerUpLayerConfig = {
+      spawner: new RoundRobinSpawner<PowerUpId>(['P3']),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    };
+    booted = await bootScene([
+      makeStubScene(() => [], undefined, undefined, StubEnemy, powerUps),
+    ]);
+    const scene = booted.scene as BootedScene;
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(() => scene.tick(0.1)).not.toThrow();
+    expect(scene.isShieldBubbleVisible()).toBe(false);
   });
 });

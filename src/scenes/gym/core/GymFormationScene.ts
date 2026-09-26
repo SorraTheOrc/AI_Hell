@@ -26,6 +26,10 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
+  applyPhaseGhost,
+  drawShieldBubble,
+} from '../../core/CombatEffectVisuals';
+import {
   GAME_HEIGHT,
   GAME_WIDTH,
   MINERAL_SIZE,
@@ -368,6 +372,10 @@ export class GymFormationScene<
   private effectsRegistry = new EffectsRegistry();
   /** Standalone HUD rendering the active effects (null when disabled). */
   private hud: HUD | null = null;
+  /** Shared P3 shield-bubble graphics (draws the shared helper output). */
+  private shieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the shield bubble was drawn in the last visual update. */
+  private shieldBubbleDrawn = false;
 
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
@@ -423,6 +431,13 @@ export class GymFormationScene<
         'W,A,S,D',
       ) as WasdKeysLike | undefined;
     }
+
+    // ── Shared P3/P6 player visuals (parity with PlayScene/gym combat) ──
+    // Drawn through the shared CombatEffectVisuals helper so the enemy gym
+    // cannot drift from the other scenes (AH-0MUICQC34005QOYF).
+    this.shieldBubble = this.add.graphics();
+    this.shieldBubble.setDepth(50);
+    this.shieldBubbleDrawn = false;
 
     // ── Controls (bottom-right HUD, minimal) ───────────────────────
     // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
@@ -533,6 +548,9 @@ export class GymFormationScene<
       this.mineralChoiceOpen = false;
       this.hud?.destroy();
       this.hud = null;
+      this.shieldBubble?.destroy();
+      this.shieldBubble = null;
+      this.shieldBubbleDrawn = false;
       this.teleportKey = null;
       this.downKey = null;
     });
@@ -881,6 +899,35 @@ export class GymFormationScene<
   /** Shared active-effect registry (effects applied by collected drops). */
   getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
+  }
+
+  /**
+   * Draws the shared P3 shield bubble and applies the shared P6 phase ghost
+   * each frame (parity with `PlayScene`/`GymPowerUpsCombat`). Safe when no
+   * player is present.
+   */
+  private _updateEffectVisuals(): void {
+    this.shieldBubbleDrawn = drawShieldBubble(
+      this.shieldBubble,
+      this.player,
+      this.effectsRegistry,
+    );
+    applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
+  }
+
+  /** Whether the P3 shield bubble was drawn in the last visual update. */
+  isShieldBubbleVisible(): boolean {
+    return this.shieldBubbleDrawn;
+  }
+
+  /** Whether the P6 phase ghost is currently active. */
+  isPhaseGhostActive(): boolean {
+    return this.effectsRegistry.isPhased;
+  }
+
+  /** The shield-bubble Graphics (null before create/teardown; for tests). */
+  getShieldBubbleGraphics(): Phaser.GameObjects.Graphics | null {
+    return this.shieldBubble;
   }
 
   /** The standalone effects HUD (null when the power-up layer is disabled). */
@@ -1234,6 +1281,11 @@ export class GymFormationScene<
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
+
+    // ── Shared P3/P6 player visuals (parity with the other scenes) ──
+    // Runs after the power-up layer so a drop collected this frame is
+    // reflected immediately. Safe when no player is present.
+    this._updateEffectVisuals();
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
