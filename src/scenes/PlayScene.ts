@@ -1955,7 +1955,7 @@ export class PlayScene extends CombatScene<
     if (this.gameState.isHoldFull()) this.openMineralChoice();
   }
 
-  /** Mirrors the GameState hold onto the HUD mineral counter row. */
+  /** Mirrors the GameState hold onto the HUD mineral hold bar. */
   private _syncMineralHud(): void {
     this.hud?.setMineralStore(
       this.gameState.minerals,

@@ -33,11 +33,19 @@ describe('GymMinerals', () => {
     expect(scene.getMineralCapacity()).toBe(20);
   });
 
-  it('shows the mineral counter on the HUD', async () => {
+  it('shows the mineral hold bar on the HUD', async () => {
     booted = await bootScene([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
 
-    expect(scene.getHUD()?.getMineralLabel()).toMatch(/^Minerals: \d+\/20$/);
+    const bar = scene.getHUD()?.getMineralBarState();
+    expect(bar?.visible).toBe(true);
+    expect(bar?.total).toBeGreaterThan(0);
+    expect(bar?.filled).toBeGreaterThanOrEqual(0);
+    expect(bar?.filled).toBeLessThanOrEqual(bar!.total);
+    // The bar reflects the same authoritative hold the gym tracks.
+    expect(scene.getHUD()?.getMineralStoreValue().capacity).toBe(
+      scene.getMineralCapacity(),
+    );
   });
 
   it('the player collects an overlapping mineral into the hold', async () => {

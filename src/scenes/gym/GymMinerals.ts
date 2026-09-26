@@ -2,7 +2,7 @@
  * Asteroids-only mineral gym (AH-0MUBVGI62004ED9Q).
  *
  * Demonstrates the whole mineral mechanic in isolation on an asteroids-only
- * field: small-asteroid mineral drops, player hold fill and the HUD counter,
+ * field: small-asteroid mineral drops, player hold fill and the HUD hold bar,
  * enemy absorption and re-drop on death, and the hold-full choice overlay.
  * The base scene seeds 100 random minerals on create (see
  * `GymFormationScene._initMineralLayer`).

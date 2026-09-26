@@ -6,8 +6,10 @@
  * (`HUD_DEPTH`) and displays, from the shared EffectsRegistry:
  *
  * - one row per active timed power-up: icon, name, remaining-seconds timer;
- * - a pickup/stack count row for stackable types (P9 magnet); and
- * - a lives counter (P8), starting at 3 and incrementing on collection.
+ * - a pickup/stack count row for stackable types (P9 magnet);
+ * - a lives counter (P8), starting at 3 and incrementing on collection; and
+ * - a fixed-length, hollow-outlined hold bar that fills proportionally as
+ *   minerals are collected (replaces the former `Minerals: n/20` text).
  *
  * Contains NO gym-specific imports or logic — it depends only on the
  * engine-agnostic power-up modules (`powerups/effects.ts`, `powerups/types.ts`,
@@ -48,6 +50,30 @@ const ICON_X = 10;
 const NAME_X = 24;
 const VALUE_X = 160;
 
+/**
+ * Mineral hold bar geometry (px). The bar keeps a fixed length at all
+ * times so the row never shifts; only the inner fill grows (AC4).
+ */
+export const MINERAL_BAR_WIDTH = 120;
+export const MINERAL_BAR_HEIGHT = 10;
+export const MINERAL_BAR_STROKE = 1;
+
+/** Name of the bar Graphics object (test/debug access). */
+export const MINERAL_BAR_NAME = 'hud-mineral-bar';
+
+/** Neon cyan outline/fill, matching the HUD palette (GDD Visual Aesthetic). */
+const MINERAL_BAR_OUTLINE_COLOR = 0x00ffff;
+const MINERAL_BAR_FILL_COLOR = 0x00ffff;
+const MINERAL_BAR_FILL_ALPHA = 0.85;
+
+/** Smallest visible fill for any non-zero hold (px) — keeps tiny progress readable. */
+const MINERAL_BAR_MIN_FILL = 2;
+
+/** Inner width of the bar track (outer width inset by the stroke on each side). */
+function mineralBarInnerWidth(): number {
+  return MINERAL_BAR_WIDTH - MINERAL_BAR_STROKE * 2;
+}
+
 /** Label prefix for weapon rows in the HUD. */
 const WEAPON_ROW_PREFIX = 'Weapon: ';
 
@@ -76,7 +102,7 @@ export interface HUDOptions {
 export class HUD extends Phaser.GameObjects.Container {
   private _registry: EffectsRegistry | null = null;
   private _livesLabel: Phaser.GameObjects.Text;
-  private _mineralLabel: Phaser.GameObjects.Text;
+  private _mineralBar: Phaser.GameObjects.Graphics;
   private _rows: HUDEntry[] = [];
   private _rowObjects: Phaser.GameObjects.GameObject[] = [];
   private _iconGraphics: Phaser.GameObjects.Graphics;
@@ -100,9 +126,10 @@ export class HUD extends Phaser.GameObjects.Container {
       TEXT_STYLE,
     );
     this._livesLabel.setVisible(this._showLives);
-    this._mineralLabel = new Phaser.GameObjects.Text(scene, ICON_X, 0, '', TEXT_STYLE);
-    this._mineralLabel.setVisible(false);
-    this.add([this._iconGraphics, this._livesLabel, this._mineralLabel]);
+    this._mineralBar = new Phaser.GameObjects.Graphics(scene);
+    this._mineralBar.name = MINERAL_BAR_NAME;
+    this._mineralBar.setVisible(false);
+    this.add([this._iconGraphics, this._livesLabel, this._mineralBar]);
 
     this._registry = registry;
     if (registry) {
@@ -111,9 +138,9 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Sets the mineral hold values shown by the mineral counter row and
-   * refreshes the HUD. A capacity of 0 hides the row (e.g. gyms without the
-   * mineral mechanic).
+   * Sets the mineral hold values shown by the hold bar and refreshes the
+   * HUD. A capacity of 0 hides the row (e.g. gyms without the mineral
+   * mechanic).
    */
   setMineralStore(minerals: number, capacity: number): void {
     this._minerals = Math.max(0, minerals);
@@ -121,14 +148,22 @@ export class HUD extends Phaser.GameObjects.Container {
     this.refresh();
   }
 
-  /** Current mineral hold values shown by the counter row. */
+  /** Current mineral hold values shown by the hold bar. */
   getMineralStoreValue(): { minerals: number; capacity: number } {
     return { minerals: this._minerals, capacity: this._mineralCapacity };
   }
 
-  /** Rendered mineral counter label (e.g. "Minerals: 3/20"; '' when hidden). */
-  getMineralLabel(): string {
-    return this._mineralLabel.text;
+  /**
+   * Current hold-bar geometry. `filled` and `total` are the pixel widths of
+   * the inner fill and the full inner track; `visible` is false when no
+   * capacity is configured (the row is hidden entirely).
+   */
+  getMineralBarState(): { filled: number; total: number; visible: boolean } {
+    return {
+      filled: this._mineralFillWidth(),
+      total: mineralBarInnerWidth(),
+      visible: this._mineralCapacity > 0,
+    };
   }
 
   /** Attaches a registry (or detaches with null). */
@@ -180,18 +215,8 @@ export class HUD extends Phaser.GameObjects.Container {
       if (!this._showLives) this._livesLabel.setVisible(false);
     }
 
-    // Mineral counter row (hidden unless a capacity is configured).
-    if (this._mineralCapacity > 0) {
-      this._mineralLabel.setVisible(true);
-      this._mineralLabel.setText(
-        `Minerals: ${this._minerals}/${this._mineralCapacity}`,
-      );
-      const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
-      this._mineralLabel.setY(livesOffset + ROW_HEIGHT * 0.5);
-    } else {
-      this._mineralLabel.setVisible(false);
-      this._mineralLabel.setText('');
-    }
+    // Mineral hold bar row (drawn only when a capacity is configured).
+    this._drawMineralBar();
   }
 
   /** Phaser per-frame hook: keep the HUD in sync with the registry. */
@@ -210,6 +235,57 @@ export class HUD extends Phaser.GameObjects.Container {
     const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
     const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
     return livesOffset + mineralOffset + row * ROW_HEIGHT;
+  }
+
+  /**
+   * Draws the mineral hold bar: a fixed-length hollow outline plus a fill
+   * that grows linearly from the left. Hidden when no capacity is
+   * configured. The fill is inset by the stroke so it never bleeds outside
+   * the outline (AC3).
+   */
+  private _drawMineralBar(): void {
+    const bar = this._mineralBar;
+    bar.clear();
+
+    if (this._mineralCapacity <= 0) {
+      bar.setVisible(false);
+      return;
+    }
+
+    bar.setVisible(true);
+    const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
+    const y = livesOffset + (ROW_HEIGHT - MINERAL_BAR_HEIGHT) / 2;
+
+    bar.lineStyle(MINERAL_BAR_STROKE, MINERAL_BAR_OUTLINE_COLOR, 1);
+    bar.strokeRect(ICON_X, y, MINERAL_BAR_WIDTH, MINERAL_BAR_HEIGHT);
+
+    const filled = this._mineralFillWidth();
+    if (filled > 0) {
+      bar.fillStyle(MINERAL_BAR_FILL_COLOR, MINERAL_BAR_FILL_ALPHA);
+      bar.fillRect(
+        ICON_X + MINERAL_BAR_STROKE,
+        y + MINERAL_BAR_STROKE,
+        filled,
+        MINERAL_BAR_HEIGHT - MINERAL_BAR_STROKE * 2,
+      );
+    }
+  }
+
+  /**
+   * Pixel width of the inner fill for the current hold: linear from 0 at
+   * empty to the full inner width at capacity, clamped, with a small
+   * minimum for any non-zero hold.
+   */
+  private _mineralFillWidth(): number {
+    const total = mineralBarInnerWidth();
+    if (this._mineralCapacity <= 0) return 0;
+
+    const ratio = Math.min(1, Math.max(0, this._minerals / this._mineralCapacity));
+    let filled = Math.round(total * ratio);
+    if (this._minerals > 0 && filled < MINERAL_BAR_MIN_FILL) {
+      filled = Math.min(MINERAL_BAR_MIN_FILL, total);
+    }
+    return Math.min(filled, total);
   }
 
   // ── Rendering helpers ─────────────────────────────────────────────

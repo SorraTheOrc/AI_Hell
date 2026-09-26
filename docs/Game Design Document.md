@@ -307,7 +307,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
 
 - **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected.
-- **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as `Minerals: n/20`, resets on `GameState.startGame()`, and is never written to the leaderboard.
+- **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as a fixed-length, hollow-outlined bar that fills proportionally from empty to full (`src/ui/HUD.ts`), resets on `GameState.startGame()`, and is never written to the leaderboard.
 - **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries.
 - **Permanent pick**: the chosen option is applied to the player **permanently for the current run** — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
 - **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
@@ -514,7 +514,7 @@ src/
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
-│       │                   small-asteroid mineral drops, hold fill + HUD counter,
+│       │                   small-asteroid mineral drops, hold fill + HUD hold bar,
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals)
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):

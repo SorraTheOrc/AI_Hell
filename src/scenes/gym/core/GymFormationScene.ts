@@ -485,7 +485,7 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
-    // ── Mineral layer: seed 100 random minerals + HUD counter ───────
+    // ── Mineral layer: seed 100 random minerals + HUD hold bar ─────
     this._initMineralLayer();
 
     // Ensure any stale countdown state from a prior create() (e.g. after
