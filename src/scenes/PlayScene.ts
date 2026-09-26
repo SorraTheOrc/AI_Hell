@@ -12,8 +12,14 @@
  * player hits, auto-fire, drop collection, teleports, player explosions
  * and bullet clearing. This scene supplies the game's hooks (boss
  * multi-hit, asteroid split, mineral absorption, wave accounting,
- * lives/game-over, the P4 bomb notice). The gym formation base runs the
- * same shared path, so the game and gyms cannot diverge.
+ * lives/game-over). The gym formation base runs the same shared path, so
+ * the game and gyms cannot diverge.
+ *
+ * **Shared power-up drop layer:** the drop lifecycle, collection gate, P9
+ * magnet, P4 bomb notice and per-type pickup cues are inherited from the
+ * shared drop layer (`src/scenes/core/dropLayer.ts`, `BombNotice.ts`); this
+ * scene supplies only the kill-chance spawn *source* (AH-0MUII3CXX0023H24,
+ * gap 4).
  *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
  *
@@ -36,30 +42,14 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState } from '../core/GameState';
-import {
-  DEFAULT_RULES,
-  loadRules,
-  POWER_UP_WEIGHT_IDS,
-  WEAPON_WEIGHT_IDS,
-  type PowerUpWeights,
-  type WeaponWeights,
-} from '../core/rules';
+import { DEFAULT_RULES, loadRules } from '../core/rules';
 import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
-  playDualPickupSound,
-  playExtraLifeCollectSound,
-  playMagnetCollectSound,
-  playPowerUpCollectPopSound,
-  playPowerUpCollectSound,
   playRapidFireSound,
-  playRapidPickupSound,
-  playResetPickupSound,
   playSpawnSound,
-  playSpeedBoostCollectSound,
   playSpreadFireSound,
-  playSpreadPickupSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
@@ -75,15 +65,15 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
-import { PowerUp, PowerUpState } from '../powerups/PowerUp';
+import { PowerUp } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
-import { drawPowerUpDrop, drawWeaponDrop, dropCollectRadius } from '../powerups/icons';
+import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
-import { applyMagnetAttraction } from '../powerups/magnet';
 import {
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
-import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
+import { type PowerUpSpawner } from '../powerups/spawner';
+import { BombNotice } from './core/BombNotice';
 import { type TeleportBody } from '../powerups/teleport';
 import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
@@ -269,9 +259,8 @@ export class PlayScene extends CombatScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
-  /** P4 Bomb notice — brief centred 'BOMB!' flash after collection. */
-  private bombNoticeLabel: Phaser.GameObjects.Text | null = null;
-  private bombNoticeTimer = 0;
+  /** P4 Bomb notice — shared component (gap 4), hidden until collected. */
+  private bombNotice: BombNotice | null = null;
 
   private driftX = 0;
   private driftDir = 1;
@@ -346,17 +335,8 @@ export class PlayScene extends CombatScene<
     // P3 Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    // P4 Bomb notice — centred flash, hidden until a bomb is collected.
-    this.bombNoticeLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, '', {
-        fontFamily: 'monospace',
-        fontSize: '16px',
-        color: '#ff4444',
-        backgroundColor: '#1a1a1a',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0.5)
-      .setVisible(false);
+    // P4 Bomb notice — shared component (gap 4), hidden until collected.
+    this.bombNotice = new BombNotice(this);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
@@ -372,7 +352,7 @@ export class PlayScene extends CombatScene<
 
     // Power-up drop pool.
     const rules = loadRules();
-    this.dropSpawner = this._buildDropSpawner(
+    this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
       this.rng,
@@ -493,8 +473,8 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNoticeLabel?.destroy();
-    this.bombNoticeLabel = null;
+    this.bombNotice?.destroy();
+    this.bombNotice = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -579,7 +559,7 @@ export class PlayScene extends CombatScene<
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
-    this._updateVisuals(dt);
+    this._updateVisuals();
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
@@ -1278,7 +1258,7 @@ export class PlayScene extends CombatScene<
    * SHIP_SIZE × 1.6, mirrors GymPowerUpsCombat) and cleared otherwise, and
    * the P6 phase ghost alpha is applied when phased.
    */
-  private _updateVisuals(dt: number): void {
+  private _updateVisuals(): void {
     // Shield bubble: drawn around the ship while P3 is active (shared helper).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
@@ -1290,25 +1270,17 @@ export class PlayScene extends CombatScene<
     // Phase ghost: semi-transparent ship while P6 is active (keeps the
     // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
-    // Bomb notice: brief centred flash after P4 collection.
-    if (this.bombNoticeTimer > 0) {
-      this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
-      if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
-    }
+    // Bomb notice: advanced by the shared drop layer (`_updateDropLayer`).
   }
 
   // ── Power-up drops ──────────────────────────────────────────────
 
-  private _buildDropSpawner(
-    powerUpWeights: PowerUpWeights,
-    weaponWeights: WeaponWeights,
-    rng: () => number,
-  ): PowerUpSpawner<DropId> {
-    const ids: DropId[] = [...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS];
-    const spawner = new WeightedRandomSpawner<DropId>(ids, rng);
-    for (const id of POWER_UP_WEIGHT_IDS) spawner.setWeight(id, powerUpWeights[id]);
-    for (const id of WEAPON_WEIGHT_IDS) spawner.setWeight(id, weaponWeights[id]);
-    return spawner;
+  /**
+   * The scene's P4 bomb notice (shared component, gap 4) — the shared
+   * collect path shows it through this accessor (AC3).
+   */
+  protected override _getBombNotice(): BombNotice | null {
+    return this.bombNotice;
   }
 
   /** Rolls (and possibly spawns) a power-up drop at a kill position. */
@@ -1358,120 +1330,27 @@ export class PlayScene extends CombatScene<
     return drop;
   }
 
-  /** Advances drop lifecycles and resolves fly-over collection. */
+  /**
+   * Advances the drop layer through the single shared sequence (gap 4):
+   * advance the P4 notice, apply the P9 magnet, advance the lifecycle,
+   * collect overlaps and advance the absorb VFX. The per-scene spawn
+   * *source* (kill chance) stays in `_maybeDropPowerUp` (OQ6).
+   */
   private _updateDrops(dt: number): void {
-    // ── Magnet attraction (P9) ──────────────────────────────────
-    this._applyMagnet(dt);
-
-    const kept: PlayDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state === PowerUpState.DESPAWNED) {
-        drop.graphics.destroy();
-        continue;
-      }
-      if (this._collectIfOverlapping(drop)) continue;
-      kept.push(drop);
-    }
-    this.drops = kept;
-
-    // Advance the absorb VFX for collected drops (cosmetic only — the
-    // gameplay effect already fired on overlap, AC1/AC4).
-    this._updateCollectAnimations(dt);
-  }
-
-  /** P9: pulls collectible drops within range toward the player ship. */
-  private _applyMagnet(dt: number): void {
-    if (!this.player) return;
-    const stacks = this.effectsRegistry.magnetStacks();
-    if (stacks <= 0) return;
-    applyMagnetAttraction(this.drops, this.player, stacks, dt);
-  }
-
-  /** Collects the drop when it overlaps the player's hull. */
-  private _collectIfOverlapping(drop: PlayDrop): boolean {
-    if (!this.player) return false;
-    if (drop.absorbing) return false;
-    if (!drop.powerUp.canCollect()) return false;
-    const hull = SHIP_SIZE / 2;
-    const radius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
-    if (!this._overlaps(drop.x, drop.y, radius, this.player.x, this.player.y, hull)) {
-      return false;
-    }
-    this._collectDrop(drop);
-    return true;
+    this.drops = this._updateDropLayer(this.drops, dt);
   }
 
   /**
-   * Game extras after a power-up is collected: the P4 bomb notice, and the
-   * P8 extra life (keeping the HUD lives counter aligned with run state).
+   * Game extras after a power-up is collected: the shared P4 bomb notice
+   * plus the P8 extra life (keeping the HUD lives counter aligned with run
+   * state). The base shows the notice through `_getBombNotice()`.
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
-    if (drop.dropId === 'P4') this._flashBombNotice();
+    super.onPowerUpCollected(drop);
     if (drop.dropId === 'P8') {
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
-  }
-
-  /**
-   * Plays the per-type pickup activation cue for a collected drop
-   * (GDD §7.3 — unique cue per pickup type, distinct from the generic
-   * collection chime). Where no dedicated cue exists in the audio module
-   * for a type, the generic chime plays as fallback. Safe no-op without
-   * an AudioContext (audio is best-effort in headless tests).
-   */
-  protected override _playPickupCue(drop: PlayDrop): void {
-    try {
-      // Generic collection pop — immediate tactile feedback on every pickup
-      // (AH-0MUBYXR280018HST); plays alongside the per-type cue below.
-      playPowerUpCollectPopSound();
-      if (drop.weaponDropId) {
-        switch (drop.weaponDropId) {
-          case 'reset':
-            playResetPickupSound();
-            break;
-          case 'spread':
-            playSpreadPickupSound();
-            break;
-          case 'dual':
-            playDualPickupSound();
-            break;
-          case 'rapid':
-            playRapidPickupSound();
-            break;
-          default:
-            playPowerUpCollectSound();
-        }
-        return;
-      }
-      switch (drop.dropId) {
-        case 'P5':
-          playSpeedBoostCollectSound();
-          break;
-        case 'P8':
-          playExtraLifeCollectSound();
-          break;
-        case 'P9':
-          playMagnetCollectSound();
-          break;
-        default:
-          // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated
-          // cue in the audio module yet — generic chime fallback.
-          playPowerUpCollectSound();
-      }
-    } catch {
-      // Audio is best-effort in headless tests.
-    }
-  }
-
-  /** Shows the brief centred 'BOMB! Bullets cleared' notice (mirrors the gym). */
-  private _flashBombNotice(): void {
-    this.bombNoticeTimer = 1.2;
-    this.bombNoticeLabel?.setText('BOMB! Bullets cleared').setVisible(true);
   }
 
   // ── Teleport (P7, S/↓) ──────────────────────────────────────────
@@ -1711,7 +1590,7 @@ export class PlayScene extends CombatScene<
 
   /** Whether the P4 bomb notice is currently visible (for tests). */
   isBombNoticeVisible(): boolean {
-    return this.bombNoticeLabel?.visible ?? false;
+    return this.bombNotice?.isVisible() ?? false;
   }
 
   /** Whether the P6 phase ghost is currently active (for tests). */
@@ -2011,7 +1890,7 @@ export class PlayScene extends CombatScene<
   setRng(rng: () => number): void {
     this.rng = rng;
     const rules = loadRules();
-    this.dropSpawner = this._buildDropSpawner(
+    this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
       rng,

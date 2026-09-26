@@ -22,7 +22,12 @@
  * - drop collection ({@link CombatCoreScene._collectDrop},
  *   {@link CombatCoreScene._startCollectAnimation},
  *   {@link CombatCoreScene._updateCollectAnimations} and the pickup-cue
- *   hook),
+ *   hook) plus the shared power-up drop layer itself — the default weighted
+ *   spawner, grow/hold/shrink lifecycle, hull-touches-bubble collection gate,
+ *   P9 magnet and the complete per-frame drop sequence, delegated to
+ *   `./dropLayer` through {@link CombatCoreScene._updateDropLayer} et al.
+ *   (AH-0MUII3CXX0023H24, gap 4), so an enabled drop behaves identically in
+ *   every scene and only the spawn *source* stays per-scene,
  * - the player-explosion/collect registries, and the shared
  *   enemy-bullet clear path used by the P4 bomb,
  * - the shared hooks the combat scenes override
@@ -70,11 +75,21 @@ import {
   spawnCollectAnimation,
   type CollectAnimationHandle,
 } from '../../powerups/collectAnimation';
+import type { PowerUpSpawner } from '../../powerups/spawner';
 import {
   resolvePatterns,
   spawnExplosionParticles,
 } from '../../vfx/explosionParticles';
 import type { DropId, PowerUpId } from '../../powerups/types';
+import type { PowerUpWeights, WeaponWeights } from '../../core/rules';
+import {
+  advanceDropLifecycles,
+  applyDropMagnet,
+  buildDefaultDropSpawner,
+  collectOverlappingDrops,
+  playDropPickupCue,
+} from './dropLayer';
+import type { BombNotice } from './BombNotice';
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -223,16 +238,31 @@ export class CombatCoreScene<
   protected onWeaponFired(_weaponId: WeaponId): void {}
 
   /**
-   * Plays the per-type pickup activation cue. Default no-op; scenes
-   * override with their per-type game/gym cues.
+   * The scene's P4 bomb notice, or null when the scene has none. Default
+   * null; every scene that can collect P4 supplies its {@link BombNotice}
+   * so the shared collect path shows the notice (AC3).
    */
-  protected _playPickupCue(_drop: TDrop): void {}
+  protected _getBombNotice(): BombNotice | null {
+    return null;
+  }
 
   /**
-   * Hook run after a power-up (non-weapon) drop is collected. Default
-   * no-op; scenes add their lifecycle extras.
+   * Plays the per-type pickup activation cue through the single shared
+   * `playDropPickupCue` dispatcher, so every scene plays the same cue set
+   * (generic pop + P5/P8/P9 + weapon/Reset, generic chime fallback).
    */
-  protected onPowerUpCollected(_drop: TDrop): void {}
+  protected _playPickupCue(drop: TDrop): void {
+    playDropPickupCue(drop);
+  }
+
+  /**
+   * Hook run after a power-up (non-weapon) drop is collected. Default:
+   * show the P4 bomb notice when the scene supplies one; scenes override
+   * to add their lifecycle extras (and call `super`).
+   */
+  protected onPowerUpCollected(drop: TDrop): void {
+    if (drop.dropId === 'P4') this._getBombNotice()?.show();
+  }
 
   /**
    * Hook run after a weapon drop is collected. Default no-op; scenes
@@ -354,6 +384,78 @@ export class CombatCoreScene<
     drop.absorbing = true;
     this._startCollectAnimation(drop);
     this._playPickupCue(drop);
+  }
+
+  // ── Shared drop layer (gap 4) ─────────────────────────────────────
+
+  /**
+   * Builds the default weighted-random drop spawner over the combined pool
+   * (P3–P9 + weapon drops) from the game-rules weights — the single shared
+   * spawner construction consumed by `PlayScene` and every gym.
+   */
+  protected _buildDefaultDropSpawner(
+    powerUpWeights: PowerUpWeights,
+    weaponWeights: WeaponWeights,
+    rng: () => number,
+  ): PowerUpSpawner<DropId> {
+    return buildDefaultDropSpawner(powerUpWeights, weaponWeights, rng);
+  }
+
+  /**
+   * Advances every drop's grow → hold → shrink → despawn lifecycle by `dt`
+   * (shared implementation), destroying despawned Graphics. `onDespawn`
+   * lets a scene play a despawn cue. Returns the kept drops.
+   */
+  protected _advanceDropLifecycles(
+    drops: TDrop[],
+    dt: number,
+    onDespawn?: (drop: TDrop) => void,
+  ): TDrop[] {
+    return advanceDropLifecycles(drops, dt, onDespawn);
+  }
+
+  /**
+   * Collects every collectible drop whose hull-touches-bubble radius
+   * overlaps the player (shared gate: ≥ 3 % scale + `dropCollectRadius`),
+   * applying each through {@link CombatCoreScene._collectDrop}. Returns the
+   * survivors.
+   */
+  protected _collectOverlappingDrops(drops: TDrop[]): TDrop[] {
+    return collectOverlappingDrops(drops, this.getPlayer(), (drop) =>
+      this._collectDrop(drop),
+    );
+  }
+
+  /**
+   * Applies the P9 magnet pull (shared range/speed) to every collectible
+   * drop within range, using the scene's active magnet stacks.
+   */
+  protected _applyDropMagnet(drops: TDrop[], dt: number): void {
+    applyDropMagnet(
+      drops,
+      this.getPlayer(),
+      this.getEffectsRegistry().magnetStacks(),
+      dt,
+    );
+  }
+
+  /**
+   * The complete shared per-frame drop sequence: advance the P4 notice,
+   * apply the P9 magnet, advance the lifecycle, collect overlaps, then
+   * advance the absorb animations. Scenes that interleave a spawn source
+   * call the individual shared steps instead.
+   */
+  protected _updateDropLayer(
+    drops: TDrop[],
+    dt: number,
+    options?: { onDespawn?: (drop: TDrop) => void },
+  ): TDrop[] {
+    this._getBombNotice()?.update(dt);
+    this._applyDropMagnet(drops, dt);
+    const kept = this._advanceDropLifecycles(drops, dt, options?.onDespawn);
+    const remaining = this._collectOverlappingDrops(kept);
+    this._updateCollectAnimations(dt);
+    return remaining;
   }
 
   /**

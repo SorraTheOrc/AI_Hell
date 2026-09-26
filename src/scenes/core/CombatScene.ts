@@ -32,11 +32,7 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import {
-  playDestructionSound,
-  playPowerUpCollectPopSound,
-  playPowerUpCollectSound,
-} from '../../audio/effects';
+import { playDestructionSound } from '../../audio/effects';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
@@ -260,20 +256,6 @@ export abstract class CombatScene<
   protected onPlayerHit(player: Player): void {
     this.playerHitCount += 1;
     this.applyPlayerHit(player);
-  }
-
-  /**
-   * Plays the per-type pickup activation cue. Default (generic gym):
-   * generic pop + generic collect chime. The game overrides this with
-   * its per-type cues.
-   */
-  protected override _playPickupCue(_drop: TDrop): void {
-    try {
-      playPowerUpCollectPopSound();
-      playPowerUpCollectSound();
-    } catch {
-      // Audio is best-effort in headless tests.
-    }
   }
 
   // ── Teleport ─────────────────────────────────────────────────────

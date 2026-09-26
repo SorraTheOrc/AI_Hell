@@ -11,6 +11,7 @@ import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { GymPowerUpsCombat } from '../gym/GymPowerUpsCombat';
+import { GymPowerUpsUtility } from '../gym/GymPowerUpsUtility';
 import { GymWeapons } from '../gym/GymWeapons';
 import {
   GymFormationScene,
@@ -19,6 +20,7 @@ import {
   type FormationSceneEntity,
 } from '../gym/core/GymFormationScene';
 import { CombatScene } from './CombatScene';
+import { CombatCoreScene } from './CombatCoreScene';
 import {
   collectProductionSourceFiles,
   definesFunction,
@@ -965,5 +967,256 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(combatScene.triggerTeleport()).toBe(true);
     expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
     expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
+  });
+});
+
+// ── Shared power-up drop layer (gap 4, AH-0MUII3CXX0023H24) ─────────
+
+/** The five pure helpers that own the drop layer. */
+const DROP_HELPERS = [
+  'buildDefaultDropSpawner',
+  'advanceDropLifecycles',
+  'collectOverlappingDrops',
+  'applyDropMagnet',
+  'playDropPickupCue',
+] as const;
+
+/** The single file that may define a shared drop-layer helper. */
+const DROP_LAYER_FILE = 'src/scenes/core/dropLayer.ts';
+
+/** Shared drop-layer template methods hosted by `CombatCoreScene`. */
+const SHARED_DROP_METHODS = [
+  '_buildDefaultDropSpawner',
+  '_advanceDropLifecycles',
+  '_collectOverlappingDrops',
+  '_applyDropMagnet',
+  '_updateDropLayer',
+  '_playPickupCue',
+] as const;
+
+/** Every production scene that owns power-up drops. */
+const DROP_SCENE_PROTOTYPES: Array<[string, object]> = [
+  ['PlayScene', PlayScene.prototype],
+  ['GymFormationScene', GymFormationScene.prototype],
+  ['GymWeapons', GymWeapons.prototype],
+  ['GymPowerUpsCombat', GymPowerUpsCombat.prototype],
+  ['GymPowerUpsUtility', GymPowerUpsUtility.prototype],
+];
+
+describe('shared power-up drop layer — defined once and consumed everywhere (AC1)', () => {
+  /** Every production TypeScript file under `src/` (excluding tests). */
+  function productionSourceFiles(): string[] {
+    return collectProductionSourceFiles(path.resolve(process.cwd(), 'src'));
+  }
+
+  it('defines each drop-layer helper exactly once, in the shared module', () => {
+    const files = productionSourceFiles();
+    for (const helper of DROP_HELPERS) {
+      const definers = files
+        .filter((file) => definesFunction(fs.readFileSync(file, 'utf8'), helper))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers, helper).toEqual([DROP_LAYER_FILE]);
+    }
+  });
+
+  it('hosts the shared drop template methods only on the shared core (no scene overrides)', () => {
+    const files = productionSourceFiles();
+    for (const method of SHARED_DROP_METHODS) {
+      const definers = files
+        .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), method))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers, method).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+    }
+  });
+
+  it('every drop scene resolves the shared methods to the same core function objects', () => {
+    const core = CombatCoreScene.prototype as unknown as Record<string, unknown>;
+    for (const [name, prototype] of DROP_SCENE_PROTOTYPES) {
+      for (const method of SHARED_DROP_METHODS) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared hook`,
+        ).toBe(core[method]);
+      }
+    }
+  });
+
+  it('every drop scene consumes at least one shared drop operation', () => {
+    const consumers: Array<[string, string]> = [
+      ['src/scenes/PlayScene.ts', '_updateDropLayer('],
+      ['src/scenes/gym/core/GymFormationScene.ts', '_updateDropLayer('],
+      ['src/scenes/gym/GymPowerUpsCombat.ts', '_updateDropLayer('],
+      ['src/scenes/gym/GymPowerUpsUtility.ts', '_updateDropLayer('],
+      ['src/scenes/gym/GymWeapons.ts', '_advanceDropLifecycles('],
+    ];
+    for (const [file, call] of consumers) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(source, `${file} must consume ${call}`).toContain(call);
+    }
+  });
+});
+
+describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  async function bootDrops(): Promise<{
+    play: PlayScene;
+    formation: EquivGymScene;
+    utility: GymPowerUpsUtility;
+    combat: GymPowerUpsCombat;
+    weapons: GymWeapons;
+  }> {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'drop-equivalence-play-host',
+    );
+    const formation = await bootScene([EquivGymScene], 'drop-equivalence-formation-host');
+    const utility = await bootScene([GymPowerUpsUtility], 'drop-equivalence-utility-host');
+    const combat = await bootScene([GymPowerUpsCombat], 'drop-equivalence-combat-host');
+    const weapons = await bootScene([GymWeapons], 'drop-equivalence-weapons-host');
+    games.push(play, formation, utility, combat, weapons);
+    return {
+      play: play.scene as PlayScene,
+      formation: formation.scene as EquivGymScene,
+      utility: utility.scene as GymPowerUpsUtility,
+      combat: combat.scene as GymPowerUpsCombat,
+      weapons: weapons.scene as GymWeapons,
+    };
+  }
+
+  it('advances lifecycles identically for the same dt', async () => {
+    const { play, formation, utility, combat } = await bootDrops();
+
+    // Park every player far from the drop so no scene collects it.
+    play.getPlayer()!.setPosition(50, 50);
+    formation.getPlayer()!.setPosition(50, 50);
+    utility.getPlayer()!.setPosition(50, 50);
+    combat.getPlayer()!.setPosition(50, 50);
+
+    const p = play.spawnPowerUpDrop('P5', 700, 100)!;
+    const f = formation.spawnPowerUpDrop('P5', 700, 100)!;
+    const u = utility.spawnDrop('P5', 700, 100);
+    const c = combat.spawnDrop('P5', 700, 100);
+
+    play.tick(0.25);
+    formation.tick(0.25);
+    utility.advanceDrops(0.25);
+    combat.advanceDrops(0.25);
+
+    const scales = [p, f, u, c].map((drop) => drop.powerUp.currentScale);
+    expect(scales[0]).toBeCloseTo(0.5, 5);
+    for (const scale of scales) expect(scale).toBeCloseTo(scales[0], 5);
+  });
+
+  it('collects the same drop type through the shared gate and applies the same effect', async () => {
+    const { play, formation, utility, combat } = await bootDrops();
+
+    const playDrop = play.spawnPowerUpDrop('P3', play.getPlayer()!.x, play.getPlayer()!.y)!;
+    const fDrop = formation.spawnPowerUpDrop('P3', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
+    const uDrop = utility.spawnDrop('P3', utility.getPlayer()!.x, utility.getPlayer()!.y);
+    const cDrop = combat.spawnDrop('P3', combat.getPlayer()!.x, combat.getPlayer()!.y);
+    for (const drop of [playDrop, fDrop, uDrop, cDrop]) drop.powerUp.advance(0.5);
+
+    play.tick(0.001);
+    formation.tick(0.001);
+    utility.tick(0.001);
+    combat.tick(0.001);
+
+    expect(play.getEffectsRegistry().isShielded).toBe(true);
+    expect(formation.getEffectsRegistry().isShielded).toBe(true);
+    expect(utility.getEffectsRegistry().isShielded).toBe(true);
+    expect(combat.getEffectsRegistry().isShielded).toBe(true);
+  });
+
+  it('pulls a grown drop toward the ship wherever drops exist (P9 magnet parity)', async () => {
+    const { play, formation, utility, combat, weapons } = await bootDrops();
+
+    const owners = [play, formation, utility, combat, weapons];
+    for (const owner of owners) owner.getEffectsRegistry().applyCollect('P9');
+
+    // Spawn each drop 30 px to the right of the scene's own player (no
+    // scene position assumptions — PlayScene's physics owns its position).
+    const playPlayer = play.getPlayer()!;
+    const playDrop = play.spawnPowerUpDrop('P5', playPlayer.x + 30, playPlayer.y)!;
+    const fPlayer = formation.getPlayer()!;
+    const fDrop = formation.spawnPowerUpDrop('P5', fPlayer.x + 30, fPlayer.y)!;
+    const uPlayer = utility.getPlayer()!;
+    const uDrop = utility.spawnDrop('P5', uPlayer.x + 30, uPlayer.y);
+    const cPlayer = combat.getPlayer()!;
+    const cDrop = combat.spawnDrop('P5', cPlayer.x + 30, cPlayer.y);
+    const wPlayer = weapons.getPlayer()!;
+    const wDrop = weapons.spawnDrop('spread', wPlayer.x + 30, wPlayer.y);
+    const drops = [playDrop, fDrop, uDrop, cDrop, wDrop];
+    const starts = drops.map((drop) => drop.x);
+    for (const drop of drops) drop.powerUp.advance(0.5);
+
+    play.tick(0.5);
+    formation.tick(0.5);
+    utility.tick(0.5);
+    combat.tick(0.5);
+    weapons.tick(0.5);
+
+    drops.forEach((drop, index) => {
+      expect(drop.x, 'drop pulled toward the ship').toBeLessThan(starts[index]!);
+      expect(drop.graphics.x).toBeCloseTo(drop.x, 5);
+    });
+  });
+
+  it('shows the P4 bomb notice in every scene that can collect a P4', async () => {
+    const { play, formation, combat } = await bootDrops();
+
+    const playDrop = play.spawnPowerUpDrop('P4', play.getPlayer()!.x, play.getPlayer()!.y)!;
+    const fDrop = formation.spawnPowerUpDrop('P4', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
+    const cDrop = combat.spawnDrop('P4', combat.getPlayer()!.x, combat.getPlayer()!.y);
+    for (const drop of [playDrop, fDrop, cDrop]) drop.powerUp.advance(0.5);
+
+    play.tick(0.001);
+    formation.tick(0.001);
+    combat.tick(0.001);
+
+    expect(play.isBombNoticeVisible()).toBe(true);
+    expect(formation.isBombNoticeVisible()).toBe(true);
+    expect(combat.isBombNoticeVisible()).toBe(true);
+
+    // The shared component auto-hides after its 1.2 s timer everywhere.
+    play.tick(2);
+    formation.tick(2);
+    combat.tick(2);
+    expect(play.isBombNoticeVisible()).toBe(false);
+    expect(formation.isBombNoticeVisible()).toBe(false);
+    expect(combat.isBombNoticeVisible()).toBe(false);
+  });
+
+  it('plays the same per-type cue for the same drop in every scene', async () => {
+    const { play, formation, utility, weapons } = await bootDrops();
+    const speedCue = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
+    const spreadCue = vi.spyOn(effectsModule, 'playSpreadPickupSound');
+
+    const playDrop = play.spawnPowerUpDrop('P5', play.getPlayer()!.x, play.getPlayer()!.y)!;
+    const fDrop = formation.spawnPowerUpDrop('P5', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
+    const uDrop = utility.spawnDrop('P5', utility.getPlayer()!.x, utility.getPlayer()!.y);
+    for (const drop of [playDrop, fDrop, uDrop]) drop.powerUp.advance(0.5);
+    play.tick(0.001);
+    formation.tick(0.001);
+    utility.tick(0.001);
+    expect(speedCue).toHaveBeenCalledTimes(3);
+
+    const playWeapon = play.spawnPowerUpDrop('spread', play.getPlayer()!.x, play.getPlayer()!.y)!;
+    const wDrop = weapons.spawnDrop('spread', weapons.getPlayer()!.x, weapons.getPlayer()!.y);
+    playWeapon.powerUp.advance(0.5);
+    wDrop.powerUp.advance(0.5);
+    play.tick(0.001);
+    weapons.tick(0.001);
+    expect(spreadCue).toHaveBeenCalledTimes(2);
   });
 });

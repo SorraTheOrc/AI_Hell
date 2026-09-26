@@ -480,6 +480,28 @@ src/
 │   │   │                      `PlayScene` and `GymFormationScene` so the game and the gyms
 │   │   │                      cannot diverge; the repo-wide guard in
 │   │   │                      `CombatScene.equivalence.test.ts` pins the single definition.
+│   │   ├── dropLayer.ts — Shared power-up drop layer (implemented, AH-0MUII3CXX0023H24,
+│   │   │                      gap 4): `buildDefaultDropSpawner` (default weighted pool over
+│   │   │                      P3–P9 + weapon drops), `advanceDropLifecycles` (grow → hold →
+│   │   │                      shrink → despawn), `collectOverlappingDrops` (collect-gate: ≥ 3 %
+│   │   │                      scale + hull-touches-bubble via `dropCollectRadius`),
+│   │   │                      `applyDropMagnet` (P9 range/speed) and `playDropPickupCue`
+│   │   │                      (per-type P5/P8/P9 + weapon/Reset cue dispatcher with the generic
+│   │   │                      chime fallback). `CombatCoreScene` wraps them as template methods
+│   │   │                      (`_updateDropLayer`, `_advanceDropLifecycles`,
+│   │   │                      `_collectOverlappingDrops`, `_applyDropMagnet`,
+│   │   │                      `_buildDefaultDropSpawner`, `_playPickupCue`) consumed by
+│   │   │                      `PlayScene` and every gym, so an enabled drop behaves identically
+│   │   │                      everywhere. Only the spawn *source* (kill chance vs timer vs
+│   │   │                      round-robin) stays per-scene (OQ6). Pinned by the repo-wide guard
+│   │   │                      and the cross-scene equivalence tests in
+│   │   │                      `CombatScene.equivalence.test.ts`.
+│   │   ├── BombNotice.ts — Shared P4 bomb notice (implemented, AH-0MUII3CXX0023H24, gap 4):
+│   │   │                      owns the centred “BOMB! Bullets cleared” flash and its 1.2 s
+│   │   │                      auto-hide timer. `CombatCoreScene.onPowerUpCollected` shows it
+│   │   │                      through the polymorphic `_getBombNotice()` accessor, so every
+│   │   │                      scene that can collect a P4 (`PlayScene`, `GymFormationScene`,
+│   │   │                      `GymPowerUpsCombat`) shows the same notice.
 │   │   └── bulletLifecycle.ts — Shared projectile-lifecycle helpers (implemented,
 │   │                      AH-0MUII3CF00024EDM, gap 3): `advanceWrappingBullets(bullets,
 │   │                      dt, width, height)` advances enemy bullets (velocity

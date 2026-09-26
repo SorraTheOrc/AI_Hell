@@ -34,6 +34,13 @@
  * + ship hull radius); collecting plays the pickup cue and applies the
  * weapon effect without pausing the next spawn's cadence.
  *
+ * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * run through the shared `src/scenes/core/dropLayer.ts` template methods
+ * (`_advanceDropLifecycles`, `_collectOverlappingDrops`, `_applyDropMagnet`,
+ * `_playPickupCue`), so the gym cannot drift from the game; only the
+ * round-robin spawn *source* and its spawn/despawn cues are gym-specific
+ * (AH-0MUII3CXX0023H24, gap 4).
+ *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
  */
@@ -47,19 +54,14 @@ import { PlayerBullet } from '../../entities/PlayerBullet';
 import { WeaponId } from '../../utils/weapons';
 import { EffectsRegistry } from '../../powerups/effects';
 import type { DropId, WeaponDropId } from '../../powerups/types';
-import { drawWeaponDrop, dropCollectRadius, WeaponDropIconId } from '../../powerups/icons';
+import { drawWeaponDrop, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
-  playPowerUpCollectPopSound,
   playCannonFireSound,
   playSpreadFireSound,
   playDualFireSound,
   playRapidFireSound,
-  playSpreadPickupSound,
-  playDualPickupSound,
-  playRapidPickupSound,
-  playResetPickupSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
@@ -69,9 +71,8 @@ import {
   GAME_WIDTH,
   WEAPON_DROP_LIFETIME,
   WEAPON_DROP_SIZE,
-  SHIP_SIZE,
 } from '../../core/constants';
-import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 
@@ -226,6 +227,7 @@ export class GymWeapons extends CombatCoreScene<
     this._advanceBullets(dt);
 
     // ── Drop lifecycles (grow/hold/shrink) ─────────────────────
+    this._applyDropMagnet(this.drops, dt);
     this.advanceDrops(dt);
 
     // ── Spawner: one drop per lifetime, round-robin (AC3) ──────
@@ -335,60 +337,30 @@ export class GymWeapons extends CombatCoreScene<
    * scaling its icon to match, and plays the despawn cue when a drop
    * fades away uncollected (AC6).
    */
+  /**
+   * Advances every drop's lifecycle by `dt` seconds through the shared
+   * helper (grow/hold/shrink) and plays the despawn cue when an uncollected
+   * drop fades away (AC6). Public test seam.
+   */
   advanceDrops(dt: number): void {
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      // Icon scale tracks the lifecycle scale factor (0 → 1 → 0).
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state === PowerUpState.DESPAWNED) {
-        if (!drop.despawnSoundPlayed) {
-          playPowerUpDespawnSound(); // AC6 despawn cue
-          drop.despawnSoundPlayed = true;
-        }
-        // Remove the drop's visuals from the display list.
-        drop.graphics.destroy();
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
+    this.drops = this._advanceDropLifecycles(this.drops, dt, (drop) =>
+      this._playDespawnCue(drop),
+    );
   }
 
-  // ── Collection (AC2, AC4, AC6) ───────────────────────────────────
+  /** Plays the weapon-drop despawn cue once per drop (AC6). */
+  private _playDespawnCue(drop: ActiveDrop): void {
+    if (drop.despawnSoundPlayed) return;
+    playPowerUpDespawnSound();
+    drop.despawnSoundPlayed = true;
+  }
 
   /**
    * Collects drops overlapping the ship hull when they are above the 3%
-   * scale threshold.  A collected drop applies its weapon effect
-   * (equip or reset) exactly once and is removed; an uncollected drop
-   * that fades away applies nothing.
-   */
-  /**
-   * Checks all drops for overlap collection (public so tests can drive
-   * the collection gate deterministically without advancing lifecycles).
+   * scale threshold, through the shared collection gate. Public test seam.
    */
   collectOverlapping(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // Collection gated by the shared ≥ 3% scale lifecycle (AC4).
-      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  private _overlapsShip(drop: ActiveDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = dropCollectRadius(WEAPON_DROP_SIZE, drop.powerUp.currentScale);
-    const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
-    return dist <= hull + dropRadius;
+    this.drops = this._collectOverlappingDrops(this.drops);
   }
 
   // ── Shared collect-path hooks (AC2, AC3, AC6) ───────────────────
@@ -396,33 +368,6 @@ export class GymWeapons extends CombatCoreScene<
   /** Shared registry consumed by the collect path (AC3). */
   override getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
-  }
-
-  /** Per-type weapon/Reset activation cue (the shared path equips first). */
-  protected override onWeaponCollected(drop: ActiveDrop): void {
-    switch (drop.weaponType) {
-      case 'reset':
-        playResetPickupSound();
-        break;
-      case 'spread':
-        playSpreadPickupSound();
-        break;
-      case 'dual':
-        playDualPickupSound();
-        break;
-      case 'rapid':
-        playRapidPickupSound();
-        break;
-    }
-  }
-
-  /** Generic collection pop, played alongside the per-type weapon cue. */
-  protected override _playPickupCue(_drop: ActiveDrop): void {
-    try {
-      playPowerUpCollectPopSound();
-    } catch {
-      /* ignore */
-    }
   }
 
   // ── Public test accessors ─────────────────────────────────────────

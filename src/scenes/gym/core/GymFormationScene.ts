@@ -27,6 +27,12 @@
  * so a small asteroid drops one mineral and a non-asteroid enemy re-drops a
  * fraction of the minerals it absorbed, exactly as in `PlayScene`.
  *
+ * **Shared power-up drop layer:** the opt-in power-up layer runs the same
+ * lifecycle, collection gate, P9 magnet, P4 bomb notice and per-type pickup
+ * cues as the game, via the shared `src/scenes/core/dropLayer.ts` template
+ * methods (`_updateDropLayer` etc.) and `BombNotice`; only the spawn *source*
+ * (a timer, not a kill chance) is gym-specific (AH-0MUII3CXX0023H24, gap 4).
+ *
  * **Discovery note:** this file lives in the `core/` subfolder, so the
  * gym index glob (`src/scenes/gym/*.ts`) never lists it as a scene.
  */
@@ -56,15 +62,9 @@ import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
   WasdKeysLike,
 } from '../../../utils/input';
-import {
-  loadRules,
-  POWER_UP_WEIGHT_IDS,
-  WEAPON_WEIGHT_IDS,
-  type PowerUpWeights,
-  type WeaponWeights,
-} from '../../../core/rules';
-import { drawPowerUpDrop, drawWeaponDrop, dropCollectRadius } from '../../../powerups/icons';
-import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
+import { loadRules } from '../../../core/rules';
+import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
+import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
 import {
   type CollectAnimationHandle,
@@ -74,10 +74,8 @@ import {
   type PlacementContext,
   type PowerUpPlacement,
 } from '../../../powerups/placement';
-import {
-  WeightedRandomSpawner,
-  type PowerUpSpawner,
-} from '../../../powerups/spawner';
+import { type PowerUpSpawner } from '../../../powerups/spawner';
+import { BombNotice } from '../../core/BombNotice';
 import {
   getPowerUpById,
   isWeaponDrop,
@@ -388,6 +386,8 @@ export class GymFormationScene<
   private powerUpSpawnInterval = 0;
   private powerUpSpawnTimer = 0;
   private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
+  /** Shared P4 bomb notice (created with the opt-in drop layer). */
+  private bombNotice: BombNotice | null = null;
   private powerUpSpawnCount = 0;
   /** Shared active-effect registry (effects applied by collected drops). */
   private effectsRegistry = new EffectsRegistry();
@@ -556,6 +556,7 @@ export class GymFormationScene<
     this.powerUpSpawnInterval = 0;
     this.powerUpSpawnTimer = 0;
     this.powerUpSpawnCount = 0;
+    this.bombNotice = null;
     this.hud = null;
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
@@ -596,6 +597,8 @@ export class GymFormationScene<
     for (const drop of this.powerUpDrops) drop.graphics.destroy();
     this.powerUpDrops = [];
     this.powerUpSpawnCount = 0;
+    this.bombNotice?.destroy();
+    this.bombNotice = null;
 
     for (const mineral of this.minerals) mineral.destroy();
     this.minerals = [];
@@ -669,7 +672,7 @@ export class GymFormationScene<
       cfg.placement ?? new RandomAvoidingPlacement({ rng });
     this.powerUpSpawner =
       cfg.spawner ??
-      this._buildDefaultPowerUpSpawner(
+      this._buildDefaultDropSpawner(
         rules.powerUpWeights,
         rules.weaponWeights,
         rng,
@@ -686,8 +689,22 @@ export class GymFormationScene<
     // reset path stops the registry drifting on restart (gap 10).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
 
+    // Shared P4 bomb notice — shown by the shared collect path when the
+    // scene collects a P4 (gap 4, AC3).
+    this.bombNotice = new BombNotice(this, {
+      x: GAME_WIDTH / 2,
+      y: 24,
+      fontSize: '14px',
+      padding: { x: 6, y: 2 },
+    });
+
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
+  }
+
+  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
+  protected override _getBombNotice(): BombNotice | null {
+    return this.bombNotice;
   }
 
   /**
@@ -701,26 +718,6 @@ export class GymFormationScene<
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
     this.downKey =
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
-  }
-
-  /**
-   * Builds the default weighted-random spawner over power-up IDs AND
-   * weapon drops (spread, dual, rapid, reset) using the rules weights.
-   */
-  private _buildDefaultPowerUpSpawner(
-    powerUpWeights: PowerUpWeights,
-    weaponWeights: WeaponWeights,
-    rng: () => number,
-  ): PowerUpSpawner<DropId> {
-    const ids: DropId[] = [...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS];
-    const spawner = new WeightedRandomSpawner<DropId>(ids, rng);
-    for (const id of POWER_UP_WEIGHT_IDS) {
-      spawner.setWeight(id, powerUpWeights[id]);
-    }
-    for (const id of WEAPON_WEIGHT_IDS) {
-      spawner.setWeight(id, weaponWeights[id]);
-    }
-    return spawner;
   }
 
   /** Snapshot of the live bodies a drop must avoid (enemies + player). */
@@ -809,61 +806,16 @@ export class GymFormationScene<
   private _updatePowerUpLayer(dt: number): void {
     if (!this.powerUpsEnabled) return;
 
-    const kept: FormationSceneDrop[] = [];
-    for (const drop of this.powerUpDrops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
-        kept.push(drop);
-      } else {
-        drop.graphics.destroy();
-      }
-    }
-    this.powerUpDrops = kept;
-
-    this._collectOverlappingDrops();
-    // Advance the absorb VFX for collected drops (cosmetic only).
-    this._updateCollectAnimations(dt);
+    // Single shared drop sequence (gap 4): P4 notice, P9 magnet,
+    // lifecycle, overlap collection, absorb VFX. Only the spawn *source*
+    // (the cadence below) differs from the game (OQ6).
+    this.powerUpDrops = this._updateDropLayer(this.powerUpDrops, dt);
 
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
       this._spawnPowerUpDrop();
       this.powerUpSpawnTimer = this.powerUpSpawnInterval;
     }
-  }
-
-  // ── Drop collection (fly-over) ───────────────────────────────────
-
-  /** Collects any collectible drop overlapping the player's hull. */
-  private _collectOverlappingDrops(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-
-    const kept: FormationSceneDrop[] = [];
-    for (const drop of this.powerUpDrops) {
-      if (
-        !drop.absorbing &&
-        drop.powerUp.canCollect() &&
-        this._dropOverlapsShip(drop, hull)
-      ) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.powerUpDrops = kept;
-  }
-
-  /** Whether a drop's current radius overlaps the player's hull. */
-  private _dropOverlapsShip(drop: FormationSceneDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
-    return (
-      Math.hypot(this.player.x - drop.x, this.player.y - drop.y) <=
-      hull + dropRadius
-    );
   }
 
   /**
@@ -1169,6 +1121,11 @@ export class GymFormationScene<
   /** In-flight absorb animations for collected drops (test seam). */
   getCollectAnimations(): CollectAnimationHandle[] {
     return [...this.collectAnimations];
+  }
+
+  /** Whether the P4 bomb notice is currently visible (for tests). */
+  isBombNoticeVisible(): boolean {
+    return this.bombNotice?.isVisible() ?? false;
   }
 
   /** Cumulative number of drops spawned since the scene started. */

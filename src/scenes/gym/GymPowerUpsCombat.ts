@@ -44,6 +44,12 @@
  * consumption and the P6-on-arrival grant are shared (gap 7,
  * AH-0MUII3EPU0039R5O).
  *
+ * The drop lifecycle, collection gate, P9 magnet, P4 bomb notice and
+ * per-type pickup cues run through the shared `src/scenes/core/dropLayer.ts`
+ * template methods and `BombNotice`, so this gym cannot drift from the game;
+ * only the round-robin spawn *source* is gym-specific
+ * (AH-0MUII3CXX0023H24, gap 4).
+ *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically via
  * `gameHarness` without a real render loop.
@@ -62,14 +68,15 @@ import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
-import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import {
   PowerUpId,
   COMBAT_POWER_UP_IDS,
   getPowerUpById,
 } from '../../powerups/types';
-import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
+import { drawPowerUpDrop } from '../../powerups/icons';
+import { BombNotice } from '../core/BombNotice';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
 import { playSpawnSound } from '../../audio/effects';
@@ -82,7 +89,6 @@ import {
   GAME_WIDTH,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
-  SHIP_SIZE,
   COMBAT_HIT_INVULNERABLE_DURATION,
 } from '../../core/constants';
 
@@ -151,8 +157,7 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
-  private bombNoticeTimer = 0;
-  private bombNoticeLabel: Phaser.GameObjects.Text | null = null;
+  private bombNotice: BombNotice | null = null;
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
@@ -190,13 +195,12 @@ export class GymPowerUpsCombat extends CombatScene<
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    this.bombNoticeLabel = this.add.text(GAME_WIDTH / 2, 24, '', {
-      fontFamily: 'monospace',
+    this.bombNotice = new BombNotice(this, {
+      x: GAME_WIDTH / 2,
+      y: 24,
       fontSize: '14px',
-      color: '#ff4444',
-      backgroundColor: '#1a1a1a',
       padding: { x: 6, y: 2 },
-    }).setOrigin(0.5).setVisible(false);
+    });
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
@@ -260,8 +264,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.formationBaseY = COMBAT_START_Y;
     this.shootEnabled = true;
     this.shieldBubble = null;
-    this.bombNoticeTimer = 0;
-    this.bombNoticeLabel = null;
+    this.bombNotice = null;
     this.shootButton = null;
     this.helpHandle = null;
   }
@@ -284,8 +287,8 @@ export class GymPowerUpsCombat extends CombatScene<
     this.hud = null;
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNoticeLabel?.destroy();
-    this.bombNoticeLabel = null;
+    this.bombNotice?.destroy();
+    this.bombNotice = null;
     this.shootButton?.destroy();
     this.shootButton = null;
     this.helpHandle = null;
@@ -330,13 +333,9 @@ export class GymPowerUpsCombat extends CombatScene<
       this.spawnTimer -= dt;
     }
 
-    // ── Drop lifecycles ─────────────────────────────────────────
-    this.advanceDrops(dt);
-
-    // ── Overlap collection ──────────────────────────────────────
-    this._collectOverlapping();
-    // Advance the absorb VFX for collected drops (cosmetic only).
-    this._updateCollectAnimations(dt);
+    // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
+    //    lifecycle, overlap collection, absorb VFX ──
+    this.drops = this._updateDropLayer(this.drops, dt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleCollisions();
@@ -348,7 +347,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.effectsRegistry.tick(dt);
 
     // ── Visuals (shield bubble + phase ghost + bomb notice) ─
-    this._updateVisuals(dt);
+    this._updateVisuals();
 
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();
@@ -356,7 +355,7 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // ── Visuals ──────────────────────────────────────────────────────
 
-  private _updateVisuals(dt: number): void {
+  private _updateVisuals(): void {
     // Shield bubble: drawn around the ship while P3 is active (shared helper).
     if (this.shieldBubble) {
       drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
@@ -364,16 +363,6 @@ export class GymPowerUpsCombat extends CombatScene<
     // Phase ghost: semi-transparent ship while P6 is active (keeps the
     // blink alpha when invulnerable) — shared helper.
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
-    // Bomb notice: brief centered flash after P4.
-    if (this.bombNoticeTimer > 0) {
-      this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
-      if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
-    }
-  }
-
-  private _flashBombNotice(): void {
-    this.bombNoticeTimer = 1.2;
-    this.bombNoticeLabel?.setText('BOMB! Bullets cleared').setVisible(true);
   }
 
   // ── Spawning / lifecycle ─────────────────────────────────────────
@@ -401,44 +390,12 @@ export class GymPowerUpsCombat extends CombatScene<
     return drop;
   }
 
-  /** Advances every drop's lifecycle by `dt` seconds. */
+  /**
+   * Advances every drop's lifecycle by `dt` seconds through the shared
+   * helper. Public test seam.
+   */
   advanceDrops(dt: number): void {
-    const kept: CombatActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
-        kept.push(drop);
-      } else {
-        drop.graphics.destroy();
-      }
-    }
-    this.drops = kept;
-  }
-
-  // ── Collection ───────────────────────────────────────────────────
-
-  private _collectOverlapping(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: CombatActiveDrop[] = [];
-    for (const drop of this.drops) {
-      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  private _overlapsShip(drop: CombatActiveDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
-    const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
-    return dist <= hull + dropRadius;
+    this.drops = this._advanceDropLifecycles(this.drops, dt);
   }
 
   // ── Scouts / formation ───────────────────────────────────────────
@@ -506,9 +463,9 @@ export class GymPowerUpsCombat extends CombatScene<
     return COMBAT_HIT_INVULNERABLE_DURATION;
   }
 
-  /** P4 bomb notice (the shared collect path already cleared bullets). */
-  protected override onPowerUpCollected(drop: CombatActiveDrop): void {
-    if (drop.dropId === 'P4') this._flashBombNotice();
+  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
+  protected override _getBombNotice(): BombNotice | null {
+    return this.bombNotice;
   }
 
   /** Scouts are persistent threats — ramming does not destroy them. */
@@ -553,7 +510,7 @@ export class GymPowerUpsCombat extends CombatScene<
   }
   /** Whether the bomb notice is currently visible (for tests). */
   isBombNoticeVisible(): boolean {
-    return this.bombNoticeTimer > 0;
+    return this.bombNotice?.isVisible() ?? false;
   }
   /** Player explosion VFX graphics (empty once tweens end; for tests). */
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {

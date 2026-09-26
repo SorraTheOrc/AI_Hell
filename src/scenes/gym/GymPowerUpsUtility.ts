@@ -20,6 +20,13 @@
  * so the next spawn coincides with the previous drop's despawn (exactly
  * one drop on screen while nothing is collected).
  *
+ * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * run through the shared `src/scenes/core/dropLayer.ts` template methods
+ * (`_updateDropLayer`, `_advanceDropLifecycles`, `_collectOverlappingDrops`,
+ * `_applyDropMagnet`, `_playPickupCue`), so this gym cannot drift from the
+ * game; only the round-robin spawn *source* is gym-specific
+ * (AH-0MUII3CXX0023H24, gap 4).
+ *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
  */
@@ -30,18 +37,11 @@ import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from 
 import { Player } from '../../entities/Player';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
-import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import { getPowerUpById, PowerUpId } from '../../powerups/types';
-import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
-import { applyMagnetAttraction } from '../../powerups/magnet';
+import { drawPowerUpDrop } from '../../powerups/icons';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
-import {
-  playPowerUpCollectPopSound,
-  playSpeedBoostCollectSound,
-  playExtraLifeCollectSound,
-  playMagnetCollectSound,
-} from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
@@ -50,7 +50,6 @@ import {
   GAME_WIDTH,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
-  SHIP_SIZE,
 } from '../../core/constants';
 
 /** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9). */
@@ -203,16 +202,9 @@ export class GymPowerUpsUtility extends CombatCoreScene<
       this.spawnTimer -= dt;
     }
 
-    // ── Drop lifecycles ─────────────────────────────────────────
-    this.advanceDrops(dt);
-
-    // ── Magnet attraction (P9) ──────────────────────────────────
-    this._applyMagnet(dt);
-
-    // ── Overlap collection (gated by the >3% scale threshold) ──
-    this._collectOverlapping();
-    // Advance the absorb VFX for collected drops (cosmetic only).
-    this._updateCollectAnimations(dt);
+    // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
+    //    lifecycle, overlap collection, absorb VFX ──
+    this.drops = this._updateDropLayer(this.drops, dt);
 
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
@@ -255,93 +247,12 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     return drop;
   }
 
-  /** Advances every drop's lifecycle by `dt` seconds (grow/hold/shrink). */
+  /**
+   * Advances every drop's lifecycle by `dt` seconds through the shared
+   * helper (grow/hold/shrink). Public test seam.
+   */
   advanceDrops(dt: number): void {
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      // Bubble + icon scale tracks the lifecycle scale factor (0 → 1 → 0).
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
-        kept.push(drop);
-      } else {
-        // Fully despawned — remove the drop's visuals from the display list.
-        drop.graphics.destroy();
-      }
-    }
-    this.drops = kept;
-  }
-
-  // ── Magnet / collection ──────────────────────────────────────────
-
-  /** P9: pulls collectible drops within range toward the ship. */
-  private _applyMagnet(dt: number): void {
-    if (!this.player) return;
-    const stacks = this.effectsRegistry.magnetStacks();
-    if (stacks <= 0) return;
-    applyMagnetAttraction(this.drops, this.player, stacks, dt);
-  }
-
-  /**
-   * Collects drops overlapping the ship hull when they are above the 3%
-   * scale threshold. A collected drop applies its effect exactly once and
-   * is removed; an uncollected drop that fades away applies nothing.
-   */
-  private _collectOverlapping(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  private _overlapsShip(drop: ActiveDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = dropCollectRadius(POWER_UP_DROP_SIZE, drop.powerUp.currentScale);
-    const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
-    return dist <= hull + dropRadius;
-  }
-
-  // ── Shared collect-path hooks (AC2) ──────────────────────────────
-
-  /**
-   * Non-combat pickup activation audio: each pickup type plays its own
-   * unique activation sound on collection (the shared path has already
-   * applied the effect). Safe no-op without an AudioContext.
-   */
-  protected override onPowerUpCollected(drop: ActiveDrop): void {
-    try {
-      switch (drop.dropId) {
-        case 'P5':
-          playSpeedBoostCollectSound();
-          break;
-        case 'P8':
-          playExtraLifeCollectSound();
-          break;
-        case 'P9':
-          playMagnetCollectSound();
-          break;
-      }
-    } catch {
-      // Audio is best-effort (headless tests have no AudioContext).
-    }
-  }
-
-  /** Generic collection pop, played alongside the per-type pickup cue. */
-  protected override _playPickupCue(_drop: ActiveDrop): void {
-    try {
-      playPowerUpCollectPopSound();
-    } catch {
-      // Audio is best-effort (headless tests have no AudioContext).
-    }
+    this.drops = this._advanceDropLifecycles(this.drops, dt);
   }
 
   // ── Public test accessors ─────────────────────────────────────────
