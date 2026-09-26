@@ -57,7 +57,11 @@ children at its position; a `medium` spawns two `small`; a `small` destroys
 cleanly with no children (the chain from one large is 1 + 2 + 4 = **7**
 destroyed enemies). `getSplitChildren()` returns the child specs (tier +
 position + velocity + rotation); the two children always move in directions
-**different from the parent and from each other** (≥ π/3 separation).
+**different from the parent and from each other** (≥ π/3 separation). The spawn
+loop lives **once** in the shared helper `src/scenes/core/asteroidSplit.ts`
+(`splitAsteroid({ scene, parent, register })`), consumed by
+`PlayScene._splitAsteroid` and the `GymEnemies`/`GymMinerals` destruction seams,
+so a split-physics change is made in one place.
 
 **Wave-aware splitting**: dynamically spawned children MUST be registered with
 the `WaveManager` — the scene calls `registerDynamicSpawn(n)` when spawning
@@ -101,7 +105,13 @@ via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
 optional `updatePosition(dt)` on `FormationSceneEntity` (roamer motion) and
 optional `onEntityDestroyed(entity)` on `EnemyFormationConfig` (dynamic split
 children) — so EXPLODE, player bullets and body-rams all cascade splits and
-the wipe→respawn cycle runs only once the whole chain is cleared.
+the wipe→respawn cycle runs only once the whole chain is cleared. Split
+children are registered through the base's `registerDynamicEntity(child)` seam
+(no casting into `entities`), and the base also exposes the protected
+`respawnFormation()` and `setPlayerEnabled(enabled)` seams
+(AH-0MUII3F7Q002O7WX, gap 9) so `GymEnemies._onRespawn`/`_onTogglePlayer`
+consume the shared respawn and player lifecycle instead of re-implementing
+them.
 
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
 (`src/core/configTypes.ts`) — a record of formation, visual and shot tuning.
@@ -445,7 +455,10 @@ for reference implementations (the base class drives them).
   `startX/startY`-derived positions, restores `shootEnabled` across the
   respawn, refreshes `statusText`, hides the countdown, and calls
   `playSpawnSound()`. Fully repeatable — the next wipe starts a fresh
-  countdown.
+  countdown. The shared seam is `GymFormationScene.respawnFormation()`
+  (protected); a subclass's manual respawn (e.g. `GymEnemies._onRespawn`)
+  syncs its live config then calls it (and clears player bullets itself when
+  it wants a clean slate) rather than re-implementing the rebuild.
 - **Scope:** core-library owned in `GymFormationScene`; inherited by
   every formation gym (including `GymEnemies` for every `enemyKey`).
   `GymBoss` (multi-phase) is out of scope.

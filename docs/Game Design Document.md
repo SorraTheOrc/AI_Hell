@@ -502,6 +502,15 @@ src/
 │   │   │                      through the polymorphic `_getBombNotice()` accessor, so every
 │   │   │                      scene that can collect a P4 (`PlayScene`, `GymFormationScene`,
 │   │   │                      `GymPowerUpsCombat`) shows the same notice.
+│   │   ├── asteroidSplit.ts — Shared asteroid-split helper (implemented,
+│   │   │                      AH-0MUII3F7Q002O7WX, gap 8): `splitAsteroid({ scene,
+│   │   │                      parent, register })` spawns the two smaller children of
+│   │   │                      a destroyed large/medium rock (position, velocity fan,
+│   │   │                      rotation) and hands each to the caller's registration
+│   │   │                      callback. Consumed by `PlayScene._splitAsteroid` and the
+│   │   │                      `GymEnemies`/`GymMinerals` destruction seams so the split
+│   │   │                      physics cannot drift; pinned by the repo-wide source guard
+│   │   │                      in `src/scenes/core/asteroidSplit.test.ts`.
 │   │   └── bulletLifecycle.ts — Shared projectile-lifecycle helpers (implemented,
 │   │                      AH-0MUII3CF00024EDM, gap 3): `advanceWrappingBullets(bullets,
 │   │                      dt, width, height)` advances enemy bullets (velocity
@@ -519,7 +528,8 @@ src/
 │   │                      FocusManager keyboard navigation (default focus on Play Game)
 │   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
 │   │                      base (which extends `CombatCoreScene`; implementing its hooks for
-│   │                      boss multi-hit, asteroid split,
+│   │                      boss multi-hit, asteroid split (delegated to the shared
+│   │                      `scenes/core/asteroidSplit.ts` helper),
 │   │                      mineral absorption, wave accounting, lives/game-over and the P4
 │   │                      bomb notice); WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
@@ -558,8 +568,12 @@ src/
 │       │                      `CombatCoreScene`), generic over the entity/bullet
 │       │                      types and driven by an `EnemyFormationConfig`; owns formation
 │       │                      spawn/drift/respawn, the opt-in power-up layer and the
-│       │                      enemy-only mode. Concrete E1–E5 gyms and GymEnemies/GymBoss
-│       │                      supply only their entity-specific config.
+│       │                      enemy-only mode. Exposes the protected `respawnFormation()`
+│       │                      and `setPlayerEnabled(enabled)` seams plus
+│       │                      `registerDynamicEntity(child)` (AH-0MUII3F7Q002O7WX, gaps 8/9),
+│       │                      so subclasses share the game's respawn/player lifecycle
+│       │                      instead of casting into base internals. Concrete E1–E5 gyms
+│       │                      and GymEnemies/GymBoss supply only their entity-specific config.
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):

@@ -364,6 +364,14 @@ export class GymFormationScene<
   /** Keyboard-controlled player ship (null unless `config.player` set). */
   protected player: Player | null = null;
 
+  /**
+   * Canonical player spawn (px) — the point {@link setPlayerEnabled}(true)
+   * restores. Derived from `config.player` in `create()`; null when the
+   * scene has no player component (AH-0MUII3F7Q002O7WX, gap 9).
+   */
+  protected playerSpawnX: number | null = null;
+  protected playerSpawnY: number | null = null;
+
   protected formationBaseX: number;
   protected formationBaseY: number;
   private shootEnabled = false;
@@ -449,6 +457,8 @@ export class GymFormationScene<
 
     // ── Player ship (optional per-scene opt-in) ────────────────────
     if (config.player) {
+      this.playerSpawnX = config.player.x;
+      this.playerSpawnY = config.player.y;
       this.player = new Player(this, {
         x: config.player.x,
         y: config.player.y,
@@ -545,6 +555,8 @@ export class GymFormationScene<
     this.entities = [];
     this.bullets = [];
     this.player = null;
+    this.playerSpawnX = null;
+    this.playerSpawnY = null;
     this.shootEnabled = false;
     this.respawnCountdown = 0;
     this.respawnCountdownActive = false;
@@ -858,6 +870,16 @@ export class GymFormationScene<
   /** All enemies in the scene (alive or destroyed). */
   get formationEntities(): TEntity[] {
     return this.entities.slice();
+  }
+
+  /**
+   * Registers a dynamically spawned entity (e.g. an asteroid-split child)
+   * with the live formation list. Public so a scene config's
+   * `onEntityDestroyed` hook can register children without casting into the
+   * base's protected `entities` (AH-0MUII3F7Q002O7WX, gap 8).
+   */
+  registerDynamicEntity(entity: TEntity): void {
+    this.entities.push(entity);
   }
 
   /** Number of enemies still alive. */
@@ -1465,7 +1487,7 @@ export class GymFormationScene<
         );
       }
       if (this.respawnCountdown <= 0) {
-        this._respawnFormation();
+        this.respawnFormation();
       }
       return;
     }
@@ -1477,7 +1499,17 @@ export class GymFormationScene<
     }
   }
 
-  private _respawnFormation(): void {
+  /**
+   * Shared formation-respawn seam (AH-0MUII3F7Q002O7WX, gap 9): clears
+   * enemy bullets, rebuilds the formation at its initial geometry and
+   * preserves the SHOOT toggle. Subclasses that need a manual respawn (e.g.
+   * the enemy-gym Respawn button) call this instead of re-implementing it;
+   * the wipe→countdown path calls it too.
+   *
+   * Player bullets are intentionally kept — a subclass that wants a clean
+   * slate clears them before calling this (see `GymEnemies._onRespawn`).
+   */
+  protected respawnFormation(): void {
     // Clear enemy bullets so a stale shot does not instantly hit the player
     // after the respawn. Player bullets are intentionally kept.
     for (const bullet of this.bullets) bullet.graphics.destroy();
@@ -1510,6 +1542,47 @@ export class GymFormationScene<
       `SCORE: n/a — ${this.config.statusLabel}: ${this.entities.length}`,
     );
     playSpawnSound();
+  }
+
+  /**
+   * Respawns the player ship at the canonical spawn point when it is
+   * currently absent; a no-op returning the existing ship otherwise.
+   * Returns null when the scene has no player component.
+   */
+  protected respawnPlayer(): Player | null {
+    if (this.player) return this.player;
+    const spawn = this.config.player;
+    if (this.playerSpawnX === null || this.playerSpawnY === null) {
+      if (!spawn) return null;
+      this.playerSpawnX = spawn.x;
+      this.playerSpawnY = spawn.y;
+    }
+    const player = new Player(this, {
+      x: this.playerSpawnX,
+      y: this.playerSpawnY,
+    });
+    this.add.existing(player);
+    this.player = player;
+    return player;
+  }
+
+  /**
+   * Protected player-enable seam (AH-0MUII3F7Q002O7WX, gap 9). Disabling
+   * destroys the ship and clears its bullets; enabling respawns the ship at
+   * the canonical spawn point. Returns whether a player is present
+   * afterwards so subclasses can drive their own panel/UI state without
+   * casting into base internals.
+   */
+  protected setPlayerEnabled(enabled: boolean): boolean {
+    if (enabled) {
+      this.respawnPlayer();
+    } else {
+      this.player?.destroy();
+      this.player = null;
+      for (const bullet of this.playerBullets) bullet.destroy();
+      this.playerBullets = [];
+    }
+    return this.player !== null;
   }
 
   /** x-coordinate that puts the whole formation off the left edge. */

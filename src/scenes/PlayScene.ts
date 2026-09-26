@@ -99,6 +99,7 @@ import {
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
 import { resolveMineralKillDrops } from './core/mineralKillDrops';
+import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyPhaseGhost,
   drawShieldBubble,
@@ -1156,31 +1157,25 @@ export class PlayScene extends CombatScene<
    */
   private _splitAsteroid(s: SpawnedEnemy): void {
     const parent = s.entity as Asteroid;
-    const children = parent.getSplitChildren(parent.x, parent.y);
-    if (!children) return; // small tier — clean destruction, no children
-
-    for (const spec of children) {
-      const entity = new Asteroid(this, {
-        x: spec.x,
-        y: spec.y,
-        formationOffset: { row: 0, col: 0 },
-        sizeTier: spec.sizeTier,
-        vx: spec.vx,
-        vy: spec.vy,
-        rotationSpeed: spec.rotationSpeed,
-      });
-      this.add.existing(entity);
-      this.spawned.push({
-        entity,
-        enemyKey: 'asteroid',
-        startX: 0,
-        startY: 0,
-        spacingX: 0,
-        spacingY: 0,
-      });
-      // Register the dynamic child so `enemiesAlive` stays correct.
-      this.waveManager.registerDynamicSpawn(1);
-    }
+    // Shared asteroid-split helper (gap 8): the same spawn code the gyms
+    // consume. Children are registered with the WaveManager so the wave's
+    // alive count tracks them (the wave neither clears early nor stalls).
+    splitAsteroid({
+      scene: this,
+      parent,
+      register: (child) => {
+        this.spawned.push({
+          entity: child,
+          enemyKey: 'asteroid',
+          startX: 0,
+          startY: 0,
+          spacingX: 0,
+          spacingY: 0,
+        });
+        // Register the dynamic child so `enemiesAlive` stays correct.
+        this.waveManager.registerDynamicSpawn(1);
+      },
+    });
   }
 
   /**
