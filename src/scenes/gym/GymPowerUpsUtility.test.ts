@@ -709,3 +709,59 @@ describe('GymPowerUpsUtility — re-based on the shared CombatCoreScene core', (
     }
   });
 });
+
+describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted.scene as GymPowerUpsUtility;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await boot();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P5', true);
+    registry.applyCollect('P8');
+    registry.applyCollect('P7');
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.lives()).toBe(4);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.lives()).toBe(3);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.lives()).toBe(3);
+  });
+
+  it('AC2 — teardown clears the ship, drops, HUD and animations', async () => {
+    const scene = await boot();
+    scene.spawnDrop('P5', 480, 270);
+    expect(scene.getDrops().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+    expect(scene.getHud()).toBeNull();
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+  });
+});

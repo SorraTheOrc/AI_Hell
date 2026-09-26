@@ -1266,3 +1266,44 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
     expect(scene.isPlayerInvulnerable()).toBe(true);
   });
 });
+
+describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  it('AC1 — a real scene.start restart of the same instance clears every applied effect', async () => {
+    booted = await bootScene([GymEnemies]);
+    const manager = booted.game.scene;
+    const scene = booted.scene as GymEnemies;
+    const registry = scene.getEffectsRegistry();
+
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P3', true);
+    registry.applyWeapon('dual', true);
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.activeWeapons()).toHaveLength(1);
+
+    // The exact gym-index restart vector: scene.start on the same key
+    // stops and restarts the SAME registered instance.
+    manager.start('GymEnemies', { enemyKey: 'scout' });
+
+    const restarted = manager.getScene('GymEnemies') as GymEnemies;
+    expect(restarted).toBe(scene);
+    expect(restarted.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.isShielded).toBe(false);
+    expect(() => restarted.tick(0.016)).not.toThrow();
+  });
+});

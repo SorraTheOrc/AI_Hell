@@ -251,6 +251,23 @@ the first three enemy gym scenes duplicated:
   `isRespawnCountdownActive()`, `getRespawnCountdownRemaining()`,
   `getRespawnCountdownText()`. Core-library owned — every formation gym
   (`GymEnemies` for every `enemyKey`) inherits it with no per-scene code.
+- **Shared restart/teardown lifecycle** (AH-0MUII3FYN0072QRT, gap 10) — the
+  per-run reset/teardown lives once in `CombatCoreScene.resetRunState()` /
+  `teardownRunState()`. `create()` calls `resetRunState()`, which clears the
+  active `EffectsRegistry` through the polymorphic `getEffectsRegistry()`
+  accessor — so a gym that owns its own registry (every gym) is cleared by
+  the same code as the shipped game — plus the shared bullet/effect/animation
+  registries; `SHUTDOWN` calls `teardownRunState()`, which destroys those
+  registries and resets the effects registry. `CombatScene` overrides both to
+  add invulnerability, hit-count, teleport-key and bullet-impact state;
+  `GymFormationScene`, `GymWeapons`, `GymPowerUpsCombat` and
+  `GymPowerUpsUtility` override them to add their own object families
+  (enemies, drops, minerals, player, HUD) and call `super` first. `GymPlayer`
+  (a bare `Phaser.Scene`) resets its ship/input in the same create/SHUTDOWN
+  pair. A stop/restart of any instance therefore starts with a clean registry
+  and no leaked display objects, and the behaviour is pinned by the
+  restart/teardown parity tests in `GymFormationScene.test.ts` and each gym's
+  test file.
 
 The generic geometry (formation offsets) lives in
 `src/utils/formations.ts`:

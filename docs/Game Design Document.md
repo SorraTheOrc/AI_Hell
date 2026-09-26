@@ -453,8 +453,13 @@ src/
 │   │   │                      `_clearEnemyBullets`/`_spawnPlayerExplosion`, and the shared
 │   │   │                      invulnerability/phase/absorption hooks
 │   │   │                      (`getInvulnerabilityDuration`, `isPlayerPhased`,
-│   │   │                      `tryAbsorbPlayerHit`). Extended directly by the threat-free
-│   │   │                      gyms `GymWeapons` and `GymPowerUpsUtility`.
+│   │   │                      `tryAbsorbPlayerHit`). It also owns the shared run
+│   │   │                      lifecycle (`resetRunState`/`teardownRunState`) that clears
+│   │   │                      the active effects registry (through the polymorphic
+│   │   │                      `getEffectsRegistry()` accessor) and the shared per-run object
+│   │   │                      families on create/`SHUTDOWN`, so a stop/restart of any scene
+│   │   │                      starts clean (AH-0MUII3FYN0072QRT, gap 10). Extended directly
+│   │   │                      by the threat-free gyms `GymWeapons` and `GymPowerUpsUtility`.
 │   │   ├── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
 │   │                      extends `CombatCoreScene` and adds the combat-only template
 │   │                      methods (`_handleCollisions`, `_hitPlayer`, `_handleTeleport`/

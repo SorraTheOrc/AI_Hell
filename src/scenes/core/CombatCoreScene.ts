@@ -389,4 +389,52 @@ export class CombatCoreScene<
     }
     this.setEnemyBullets([]);
   }
+
+  // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
+
+  /**
+   * Resets the shared per-run state so a stop/restart of the *same*
+   * scene instance starts from a clean slate — the gym/game counterpart
+   * of `PlayScene._resetRunState()` (AH-0MUII3FYN0072QRT, gap 10).
+   *
+   * The active effects registry is reset through the polymorphic
+   * {@link CombatCoreScene.getEffectsRegistry} accessor, so whichever
+   * registry a scene owns (its own field or the shared default) is
+   * cleared by this single implementation — no scene re-implements it.
+   *
+   * Scenes that own additional per-run state override this and call
+   * `super.resetRunState()` first. Called at the top of `create()`.
+   */
+  protected resetRunState(): void {
+    this.getEffectsRegistry().reset();
+    this.playerBullets = [];
+    this.playerExplosions = [];
+    this.playerDeathEffects = [];
+    // In-flight absorb animations are owned by the animation registry
+    // (their drops are no longer in the scene's drop list), so their
+    // only teardown path is here.
+    for (const anim of this.collectAnimations) anim.destroy();
+    this.collectAnimations = [];
+  }
+
+  /**
+   * Destroys and clears the shared per-run display objects on scene
+   * `SHUTDOWN` so a stop/restart leaks nothing (AC2). Scenes that own
+   * additional object families override this and call
+   * `super.teardownRunState()` first (or last, provided the base call is
+   * always reached).
+   */
+  protected teardownRunState(): void {
+    for (const bullet of this.playerBullets) bullet.destroy();
+    this.playerBullets = [];
+    for (const effect of this.playerExplosions) effect.destroy();
+    this.playerExplosions = [];
+    for (const effect of this.playerDeathEffects) effect.destroy();
+    this.playerDeathEffects = [];
+    for (const anim of this.collectAnimations) anim.destroy();
+    this.collectAnimations = [];
+    // Release every collected effect so a restarted scene starts clean
+    // even when teardown (not a fresh `create()`) is the observed path.
+    this.getEffectsRegistry().reset();
+  }
 }

@@ -2704,3 +2704,120 @@ describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () =
     expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
   });
 });
+
+describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWithPlayer(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect (no stale permanent effects)', async () => {
+    const scene = await bootWithPlayer();
+    const registry = scene.getEffectsRegistry();
+
+    // Apply one of every category the registry can hold — all permanent so
+    // a timer expiry could never be mistaken for the reset under test.
+    registry.applyCollect('P9', true); // permanent magnet stack
+    registry.applyCollect('P5', true); // permanent speed boost
+    registry.applyWeapon('spread', true); // permanent weapon
+    registry.applyCollect('P7'); // stored teleport use
+
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.activeWeapons()).toHaveLength(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    // The gym-index restart vector: stop (SHUTDOWN teardown) then create()
+    // on the SAME scene instance.
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    // Apply again before restart so this also proves `create()` resets the
+    // registry, not only `SHUTDOWN`.
+    registry.applyCollect('P9', true);
+    expect(registry.magnetStacks()).toBe(1);
+
+    expect(() => scene.create()).not.toThrow();
+    const restarted = scene.getEffectsRegistry();
+    // The gym keeps one registry instance and clears it — no reallocation.
+    expect(restarted).toBe(registry);
+    expect(restarted.activeEffects()).toHaveLength(0);
+    expect(restarted.activeWeapons()).toHaveLength(0);
+    expect(restarted.magnetStacks()).toBe(0);
+    expect(restarted.hasTeleport()).toBe(false);
+    expect(restarted.isShielded).toBe(false);
+    expect(restarted.isPhased).toBe(false);
+    expect(restarted.lives()).toBe(3);
+  });
+
+  it('AC1 — a power-up-enabled gym restart keeps its HUD bound to the same, freshly-reset registry', async () => {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, {}),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    const registry = scene.getEffectsRegistry();
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+
+    registry.applyCollect('P3', true);
+    expect(registry.isShielded).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(() => scene.create()).not.toThrow();
+
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.isShielded).toBe(false);
+    expect(scene.getHUD()).not.toBeNull();
+  });
+
+  it('AC2 — teardown clears every scene-owned object category (no leaks)', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+
+    // Populate every tracked family: player bullets, minerals, player
+    // explosions and composed player-death juice.
+    scene.spawnPlayerBullet(1, 1, 0, 0);
+    scene.seedMinerals(3);
+    (scene as unknown as { _spawnPlayerExplosion(x: number, y: number): void })
+      ._spawnPlayerExplosion(player.x, player.y);
+    (scene as unknown as { applyPlayerHit(p: Player): void }).applyPlayerHit(
+      player,
+    );
+
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+    expect(scene.getMinerals().length).toBeGreaterThan(0);
+    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.formationEntities).toHaveLength(0);
+    expect(scene.activeBullets).toHaveLength(0);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(scene.getMinerals()).toHaveLength(0);
+    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getHUD()).toBeNull();
+    expect(scene.getShieldBubbleGraphics()).toBeNull();
+
+    // A restart of the same instance must not throw and must be clean.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
+  });
+});

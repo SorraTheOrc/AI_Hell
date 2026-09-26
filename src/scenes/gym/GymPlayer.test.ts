@@ -357,3 +357,41 @@ describe('GymPlayer ship config panel', () => {
     expect(decelDistance).toBeLessThan(100);
   });
 });
+
+describe('GymPlayer — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore([], DEFAULT_CONFIG);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  it('AC2 — SHUTDOWN destroys the ship and clears the input bindings', async () => {
+    booted = await bootScene([GymPlayer]);
+    const scene = booted.scene as GymPlayer;
+    const internal = scene as unknown as {
+      player: Player | null;
+      cursors: unknown;
+      wasd: unknown;
+    };
+    expect(internal.player).not.toBeNull();
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(internal.player).toBeNull();
+    expect(internal.cursors).toBeUndefined();
+    expect(internal.wasd).toBeUndefined();
+
+    // A same-instance restart must rebuild a fresh ship.
+    expect(() => scene.create()).not.toThrow();
+    expect(internal.player).not.toBeNull();
+  });
+});

@@ -547,4 +547,36 @@ export abstract class CombatScene<
   ): boolean {
     return Math.hypot(ax - bx, ay - by) <= ar + br;
   }
+
+  // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
+
+  /**
+   * Resets the shared core state plus the combat-only per-run state
+   * (invulnerability blink, hit counter, teleport keys and bullet-impact
+   * VFX) so a stop/restart starts clean (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.bulletImpactEffects = [];
+    this.invulnerable = 0;
+    this.blinkPhase = 0;
+    this.playerHitCount = 0;
+    this.teleportKey = null;
+    this.downKey = null;
+  }
+
+  /**
+   * Destroys and clears the combat-only per-run objects on `SHUTDOWN`
+   * after the shared core teardown has run (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    for (const effect of this.bulletImpactEffects) effect.destroy();
+    this.bulletImpactEffects = [];
+    this.invulnerable = 0;
+    this.blinkPhase = 0;
+    this.playerHitCount = 0;
+    this.teleportKey = null;
+    this.downKey = null;
+  }
 }

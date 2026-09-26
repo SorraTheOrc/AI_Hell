@@ -426,6 +426,9 @@ export class GymFormationScene<
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     const { config } = this;
 
     // ── Spawn the formation ─────────────────────────────────────────
@@ -525,67 +528,85 @@ export class GymFormationScene<
     // fresh scene never starts mid-countdown.
     this._cancelRespawnCountdown();
 
-    // Clean up the countdown overlay if the scene is torn down
-    // mid-countdown so a restart does not leak or double-fire.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this._cancelRespawnCountdown();
-      // The countdown overlay Text is a display-list child destroyed by the
-      // DisplayList shutdown; drop the reference so a restart's respawn
-      // creates a fresh overlay on the new display list.
-      this.countdownText = null;
-      // ── Full teardown: destroy and clear all scene-owned objects ──
-      // This prevents stale references from being iterated after a
-      // stop/restart of the same scene instance (the only restart
-      // vector in the gym index flow).  Phaser's DisplayList.shutdown
-      // already sets each display-list child's `scene = undefined`,
-      // but the bookkeeping arrays (`entities`, `bullets`,
-      // `playerBullets`) are never cleared — on a fresh create() they
-      // are populated again on top of the stale array, so tick() now
-      // iterates destroyed objects whose `scene` property is
-      // undefined.  Destroying them explicitly and clearing the arrays
-      // avoids that double-population.
-      for (const entity of this.entities) entity.destroy(true);
-      this.entities.length = 0;
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
+  }
 
-      for (const bullet of this.bullets) bullet.graphics.destroy();
-      this.bullets.length = 0;
+  /**
+   * Resets shared per-run state (effects registry + bullet/effect
+   * registries via the core) plus this scene's own per-run state:
+   * formation, bullets, player, power-up layer, mineral layer, HUD and
+   * wipe/countdown. Called at the top of `create()`
+   * (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.entities = [];
+    this.bullets = [];
+    this.player = null;
+    this.shootEnabled = false;
+    this.respawnCountdown = 0;
+    this.respawnCountdownActive = false;
+    this.countdownText = null;
+    this.powerUpsEnabled = false;
+    this.powerUpDrops = [];
+    this.powerUpSpawner = null;
+    this.powerUpPlacement = null;
+    this.powerUpSpawnInterval = 0;
+    this.powerUpSpawnTimer = 0;
+    this.powerUpSpawnCount = 0;
+    this.hud = null;
+    this.shieldBubble = null;
+    this.shieldBubbleDrawn = false;
+    this.minerals = [];
+    this.mineralsSeeded = 0;
+    this.mineralHold = 0;
+    this.mineralChoiceOpen = false;
+    this.formationBaseX = this.config.startX;
+    this.formationBaseY = this.config.startY;
+  }
 
-      for (const pb of this.playerBullets) pb.destroy();
-      this.playerBullets.length = 0;
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    this._cancelRespawnCountdown();
+    // The countdown overlay Text is a display-list child destroyed by the
+    // DisplayList shutdown; drop the reference so a restart's respawn
+    // creates a fresh overlay on the new display list.
+    this.countdownText = null;
 
-      for (const exp of this.playerExplosions) exp.destroy();
-      this.playerExplosions.length = 0;
+    for (const entity of this.entities) entity.destroy(true);
+    this.entities = [];
 
-      // Composed player-death juice registry (flash/debris/shockwave/particles)
-      // must not survive a stop/restart either (parent AH-0MUAYB4R3002ZIZY AC6).
-      for (const effect of this.playerDeathEffects) effect.destroy();
-      this.playerDeathEffects.length = 0;
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets = [];
 
-      // Null-out the player reference so any stale callback does not
-      // reach the destroyed ship.
-      this.player = null;
+    // Null-out the player reference so any stale callback does not
+    // reach the destroyed ship.
+    this.player = null;
 
-      // Reset scene toggle state so a fresh create() starts clean.
-      this.shootEnabled = false;
+    // Reset scene toggle state so a fresh create() starts clean.
+    this.shootEnabled = false;
 
-      // Tear down any power-up drops owned by the scene.
-      for (const drop of this.powerUpDrops) drop.graphics.destroy();
-      this.powerUpDrops = [];
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-      this.powerUpSpawnCount = 0;
-      for (const mineral of this.minerals) mineral.destroy();
-      this.minerals = [];
-      this.mineralHold = 0;
-      this.mineralChoiceOpen = false;
-      this.hud?.destroy();
-      this.hud = null;
-      this.shieldBubble?.destroy();
-      this.shieldBubble = null;
-      this.shieldBubbleDrawn = false;
-      this.teleportKey = null;
-      this.downKey = null;
-    });
+    // Tear down any power-up drops owned by the scene.
+    for (const drop of this.powerUpDrops) drop.graphics.destroy();
+    this.powerUpDrops = [];
+    this.powerUpSpawnCount = 0;
+
+    for (const mineral of this.minerals) mineral.destroy();
+    this.minerals = [];
+    this.mineralHold = 0;
+    this.mineralChoiceOpen = false;
+
+    this.hud?.destroy();
+    this.hud = null;
+    this.shieldBubble?.destroy();
+    this.shieldBubble = null;
+    this.shieldBubbleDrawn = false;
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -659,9 +680,10 @@ export class GymFormationScene<
       cfg.margin ?? DEFAULT_POWER_UP_PLACEMENT_MARGIN;
     this.powerUpSpawnTimer = this.powerUpSpawnInterval;
 
-    // Fresh registry + standalone HUD per scene start (lives visible so
-    // P8 is observable).
-    this.effectsRegistry = new EffectsRegistry();
+    // The registry is reset by `resetRunState()` at the top of `create()`,
+    // so it is already clean here; only the standalone HUD is rebuilt per
+    // scene start (lives visible so P8 is observable). Sharing the one
+    // reset path stops the registry drifting on restart (gap 10).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
 
     // One drop on screen immediately so the layer is observable at boot.

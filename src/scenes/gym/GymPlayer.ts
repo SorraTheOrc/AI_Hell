@@ -96,6 +96,9 @@ export class GymPlayer extends Phaser.Scene {
   }
 
   create(): void {
+    // A stop/restart of the same instance must start clean — no stale ship
+    // or input bindings (AH-0MUII3FYN0072QRT, gap 10).
+    this._resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -130,6 +133,9 @@ export class GymPlayer extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.panel?.remove();
       this.panel = null;
+      // Destroy the ship and drop the input bindings so a stop/restart of
+      // the same instance leaks no stale display object (AC2).
+      this._resetRunState();
     });
 
     if (!this.cursors || !this.wasd) {
@@ -139,6 +145,21 @@ export class GymPlayer extends Phaser.Scene {
   }
 
   // ── Control panel ────────────────────────────────────────────────
+
+  /**
+   * Clears per-run state (the ship, input bindings and scheme) so a
+   * stop/restart of the same instance starts fresh
+   * (AH-0MUII3FYN0072QRT, gap 10). The `Player.destroy()` is a no-op once
+   * the display list has already torn the child down, so this is safe to
+   * call from both `create()` and the SHUTDOWN handler.
+   */
+  private _resetRunState(): void {
+    this.player?.destroy();
+    this.player = null;
+    this.cursors = undefined;
+    this.wasd = undefined;
+    this.scheme = 'fourDirectional';
+  }
 
   /** Builds the plain-DOM tuning panel (bottom-left overlay). */
   private _buildPanel(): void {

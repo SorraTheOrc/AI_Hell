@@ -852,3 +852,63 @@ describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
     expect(juiceSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('GymPowerUpsCombat — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await boot();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P3', true);
+    registry.applyWeapon('dual', true);
+    registry.applyCollect('P7');
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.activeWeapons()).toHaveLength(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.isShielded).toBe(false);
+  });
+
+  it('AC2 — teardown clears the ship, drops, scouts and bullet registries', async () => {
+    const scene = await boot();
+    scene.spawnDrop('P3', 480, 270);
+    scene.spawnEnemyBullet(10, 10, 0, 0);
+    expect(scene.getDrops().length).toBeGreaterThan(0);
+    expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+    expect(scene.getScouts()).toHaveLength(0);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    expect(scene.getHud()).toBeNull();
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.getScouts().length).toBeGreaterThan(0);
+  });
+});

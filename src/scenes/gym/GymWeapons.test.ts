@@ -909,3 +909,58 @@ describe('GymWeapons — re-based on the shared CombatCoreScene core', () => {
     booted.game.destroy(true);
   });
 });
+
+describe('GymWeapons — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted.scene as GymWeapons;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await bootWeapons();
+    const registry = scene.getEffectsRegistry();
+
+    registry.applyWeapon('spread', true);
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P7');
+    expect(registry.activeWeapons().length).toBeGreaterThan(0);
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(scene.getEffectsRegistry().activeWeapons()).toHaveLength(0);
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(0);
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
+  });
+
+  it('AC2 — teardown clears the ship, drops, bullets and animations', async () => {
+    const scene = await bootWeapons();
+    scene.spawnDrop('spread', 480, 270);
+    scene.spawnPlayerBullet(1, 1, 0, 0);
+    expect(scene.getDrops().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+    expect(scene.getBullets()).toHaveLength(0);
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.getBullets()).toHaveLength(0);
+  });
+});

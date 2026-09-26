@@ -329,7 +329,7 @@ export class PlayScene extends CombatScene<
   create(): void {
     // Reset any state carried over from a previous session (restarts reuse
     // the same scene instance — never leak stale enemies/bullets/timers).
-    this._resetRunState();
+    this.resetRunState();
 
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
 
@@ -390,7 +390,7 @@ export class PlayScene extends CombatScene<
     this.spawnWave();
     this._announceLevel();
 
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this._teardown());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
     // A rebind made in SettingsScene must take effect when the player
     // returns to the paused game (parent AH-0MU9LPZ0G0015292).
     this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
@@ -423,23 +423,23 @@ export class PlayScene extends CombatScene<
     this.teleportKey = keyForAction('layerDrop');
   }
 
-  /** Clears all per-run state so a restarted session starts fresh. */
-  private _resetRunState(): void {
+  /**
+   * Clears all per-run state so a restarted session starts fresh.
+   *
+   * The shared core reset ({@link CombatCoreScene.resetRunState}) clears
+   * the effects registry and the shared bullet/effect/animation
+   * registries; this override adds the campaign-only state (waves,
+   * minerals, boss, timers, pause).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
     this.spawned = [];
     this.enemyBullets = [];
-    this.playerBullets = [];
     this.drops = [];
-    // Release any in-flight absorb animations — their drops are no longer
-    // in `this.drops`, so this is their only teardown path.
-    for (const anim of this.collectAnimations) anim.destroy();
-    this.collectAnimations = [];
     this.minerals = [];
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.boss = null;
-    this.playerHitCount = 0;
-    this.invulnerable = 0;
-    this.blinkPhase = 0;
     this.driftX = 0;
     this.driftDir = 1;
     this.transitionTimer = 0;
@@ -450,7 +450,6 @@ export class PlayScene extends CombatScene<
     this.asteroidsSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this.paused = false;
-    this.effectsRegistry.reset();
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -475,26 +474,23 @@ export class PlayScene extends CombatScene<
       .setOrigin(0.5, 0);
   }
 
-  /** Destroys scene-owned objects on shutdown (no leaks across sessions). */
-  private _teardown(): void {
+  /**
+   * Destroys scene-owned objects on shutdown (no leaks across sessions).
+   *
+   * The shared core teardown ({@link CombatCoreScene.teardownRunState})
+   * destroys the shared bullets/effects/animations; this override adds
+   * the campaign-only object families.
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
     for (const s of this.spawned) s.entity.destroy(true);
     this.spawned = [];
     for (const b of this.enemyBullets) b.graphics.destroy();
     this.enemyBullets = [];
-    for (const b of this.playerBullets) b.destroy();
-    this.playerBullets = [];
     for (const d of this.drops) d.graphics.destroy();
     this.drops = [];
-    for (const anim of this.collectAnimations) anim.destroy();
-    this.collectAnimations = [];
     for (const m of this.minerals) m.destroy();
     this.minerals = [];
-    for (const e of this.playerExplosions) e.destroy();
-    this.playerExplosions = [];
-    // Composed player-death juice registry (flash/debris/shockwave/particles)
-    // must not survive SHUTDOWN (parent AH-0MUAYB4R3002ZIZY AC6).
-    for (const effect of this.playerDeathEffects) effect.destroy();
-    this.playerDeathEffects = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
     this.bombNoticeLabel?.destroy();

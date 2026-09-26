@@ -108,6 +108,9 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -128,16 +131,44 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
 
-    // Release any in-flight absorb animations on shutdown/restart.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-    });
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys(
       'W,A,S,D',
     ) as WasdKeysLike | undefined;
+  }
+
+  /**
+   * Resets shared per-run state (effects registry + bullet/animation
+   * registries via the core) plus this gym's player, drops and spawn
+   * timer (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.player = null;
+    this.drops = [];
+    this.spawnIndex = 0;
+    this.spawnTimer = 0;
+    this.hud = null;
+    this.helpHandle = null;
+  }
+
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    for (const drop of this.drops) drop.graphics.destroy();
+    this.drops = [];
+    this.player?.destroy();
+    this.player = null;
+    this.hud?.destroy();
+    this.hud = null;
+    this.helpHandle = null;
   }
 
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */

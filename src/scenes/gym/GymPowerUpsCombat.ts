@@ -159,6 +159,9 @@ export class GymPowerUpsCombat extends CombatScene<
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -176,18 +179,9 @@ export class GymPowerUpsCombat extends CombatScene<
     addBackToMenuOnEsc(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
 
-    // Clean up on shutdown to prevent stale references on restart.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const exp of this.playerExplosions) exp.destroy();
-      this.playerExplosions.length = 0;
-      // Composed player-death juice registry (flash/debris/shockwave/particles)
-      // must not survive a stop/restart (parent AH-0MUAYB4R3002ZIZY AC6).
-      for (const effect of this.playerDeathEffects) effect.destroy();
-      this.playerDeathEffects.length = 0;
-      // Release any in-flight absorb animations on shutdown/restart.
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-    });
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
@@ -241,6 +235,55 @@ export class GymPowerUpsCombat extends CombatScene<
     // First drop immediately.
     this._spawnRoundRobin();
     this.spawnTimer = POWER_UP_SPAWN_INTERVAL;
+  }
+
+  /**
+   * Resets shared per-run state (effects registry + bullet/effect
+   * registries via the core) plus this gym's player, drops, scout
+   * formation, HUD and visual state (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.player = null;
+    this.drops = [];
+    this.spawnIndex = 0;
+    this.spawnTimer = 0;
+    this.hud = null;
+    this.scouts = [];
+    this.scoutBullets = [];
+    this.formationBaseX = COMBAT_START_X;
+    this.formationBaseY = COMBAT_START_Y;
+    this.shootEnabled = true;
+    this.shieldBubble = null;
+    this.bombNoticeTimer = 0;
+    this.bombNoticeLabel = null;
+    this.shootButton = null;
+    this.helpHandle = null;
+  }
+
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    for (const drop of this.drops) drop.graphics.destroy();
+    this.drops = [];
+    for (const scout of this.scouts) scout.destroy();
+    this.scouts = [];
+    for (const bullet of this.scoutBullets) bullet.graphics.destroy();
+    this.scoutBullets = [];
+    this.player?.destroy();
+    this.player = null;
+    this.hud?.destroy();
+    this.hud = null;
+    this.shieldBubble?.destroy();
+    this.shieldBubble = null;
+    this.bombNoticeLabel?.destroy();
+    this.bombNoticeLabel = null;
+    this.shootButton?.destroy();
+    this.shootButton = null;
+    this.helpHandle = null;
   }
 
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */

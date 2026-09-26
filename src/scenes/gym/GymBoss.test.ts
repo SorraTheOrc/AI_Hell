@@ -598,3 +598,40 @@ describe('GymBoss — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
     expect(scene.sys.isActive()).toBe(false);
   });
 });
+
+describe('GymBoss — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('boss-gym-panel')?.remove();
+  });
+
+  async function bootGym(): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    return booted.scene as GymBoss;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await bootGym();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P3', true);
+    registry.applyCollect('P7');
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.isShielded).toBe(false);
+  });
+});

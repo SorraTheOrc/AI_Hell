@@ -294,3 +294,46 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     expect(scene.getPlayerHitCount()).toBe(1);
   });
 });
+
+describe('GymMinerals — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootMinerals(): Promise<GymMinerals> {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    return booted.scene as GymMinerals;
+  }
+
+  it('AC1 — a same-instance stop/restart clears permanent effects granted via the hold-full choice', async () => {
+    const scene = await bootMinerals();
+    const registry = scene.getEffectsRegistry();
+
+    // The minerals gym has no field-drop layer, so this is the exact
+    // stale-registry vector from gap 10: apply a permanent effect as the
+    // hold-full choice does, then stop/restart the same instance.
+    registry.applyCollect('P9', true);
+    registry.applyWeapon('spread', true);
+    registry.applyCollect('P7');
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.activeWeapons()).toHaveLength(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+    // The mineral layer is re-seeded cleanly on the restart.
+    expect(scene.getSeededMineralCount()).toBe(100);
+  });
+});
