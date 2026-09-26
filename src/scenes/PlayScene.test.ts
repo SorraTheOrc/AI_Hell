@@ -38,6 +38,13 @@ import { computeSpawns } from '../waves/AsteroidSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore } from '../core/configStore';
 
+// These integration tests boot full Phaser games and walk the run to the
+// boss; under the full-suite parallel load the Vitest default 5 s timeout
+// is too tight and the heaviest boss-encounter test reports a spurious
+// timeout (AH-0MUIPP1UU000UT88). Give the file headroom so a slow parallel
+// run does not fail on timing alone.
+vi.setConfig({ testTimeout: 20000 });
+
 // These gameplay tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
 beforeEach(() => {
