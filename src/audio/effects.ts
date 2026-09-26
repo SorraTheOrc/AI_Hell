@@ -31,15 +31,15 @@
 // once per frame from Player.preUpdate via the level returned by
 // getEngineSoundLevel(state, input, thrustAcceleration) so audio stays
 // in lockstep with the tuning slider and both control schemes. Gain
-// never exceeds THRUSTER_HUM_MAX_VOLUME (0.15) and the smoothed envelope
+// never exceeds THRUSTER_HUM_MAX_VOLUME (0.075) and the smoothed envelope
 // mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
 // Safe no-op without an AudioContext (headless tests / autoplay-blocked).
 // Architecture: triangle (60 Hz) + sine (35 Hz) for soft low rumble +
 // white noise through a band-pass filter for jet-engine "whoosh"; no
 // harsh sawtooth — the filtered noise is the dominant jet texture.
 
-/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
-export const THRUSTER_HUM_MAX_VOLUME = 0.15;
+/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). Halved from 0.15 to 0.075 (AH-0MUAYB8S50029QB8). */
+export const THRUSTER_HUM_MAX_VOLUME = 0.075;
 /** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum, jet roar). */
 export const THRUSTER_HUM_BASE_FREQ = 60;
 /** Undertone frequency (sine) — adds body to the low jet rumble. */
@@ -248,7 +248,7 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
  * decay is ~4× faster. `level` in [0, 1] comes from
  * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
  * scaled by thrustAcceleration; the gain target is
- * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.15).
+ * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.075).
  *
  * Call once per frame from `Player.preUpdate` — 0 silences the hum,
  * > 0 reuses the same nodes and ramps the gain. Does not leak oscillators.

@@ -988,6 +988,22 @@ describe('thruster hum — gain envelope + lifecycle (AH-0MTFOSOHN001Q620)', () 
     expect(ramp1).toBeCloseTo(ramp05 * 2, 5);
   });
 
+  it('halves the thruster hum ceiling to 0.075 — full-thrust ramp targets the new ceiling (AC1)', () => {
+    // Regression guard for AH-0MUAYB8S50029QB8: the maximum thruster hum gain
+    // is reduced 50% (0.15 → 0.075) so it sits comfortably behind other cues.
+    expect(THRUSTER_HUM_MAX_VOLUME).toBeCloseTo(0.075, 5);
+
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext = RecordingAudioContext;
+    updateThrusterSound(1);
+    const ctx = RecordingAudioContext.instances[0];
+    const gain = ctx.gains[ctx.gains.length - 1];
+    const lastRamp = [...gain.gainEvents].reverse().find((e) => e.method === 'linearRampToValueAtTime')!;
+    // At full thrust the observable gain target is the halved ceiling.
+    expect(lastRamp.value).toBeCloseTo(0.075, 5);
+  });
+
   it('stopThrusterSound frees the nodes (AC5)', () => {
     prime();
     const ctx = RecordingAudioContext.instances[0];
