@@ -20,6 +20,10 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
+import {
+  SCOUT_ADVANCE_CUE_DURATION,
+  SCOUT_FIRE_INTERVAL,
+} from '../../entities/Scout';
 import { CombatScene } from '../core/CombatScene';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
@@ -171,12 +175,13 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     player.setPosition(480, 270);
 
     // SHOOT starts ON — the tell phase lasts 0.6 s then fires on the next
-    // tick past the 1.2 s interval. Drive until a bullet appears, polling
-    // each tick so the assertion does not sit on the bullet-lifetime expiry
-    // boundary (AH-0MU960UTE001PTV0) and stays robust to the harness's
-    // background game loop.
+    // tick past the 1.2 s interval. The real scene clock drives the gates
+    // (AC2), so advance it explicitly between ticks; polling each tick also
+    // keeps the assertion off the bullet-lifetime expiry boundary
+    // (AH-0MU960UTE001PTV0).
     let bullets = scene.getEnemyBullets();
     for (let i = 0; i < 400 && bullets.length === 0; i++) {
+      scene.time.now += SCOUT_FIRE_INTERVAL / 4;
       scene.tick(1 / 60);
       bullets = scene.getEnemyBullets();
     }
@@ -188,6 +193,37 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     for (const b of bullets) {
       expect(b.graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
     }
+  });
+
+  it('fire cadence is driven by the real scene clock, not a frame counter (AC2)', async () => {
+    const scene = await bootCombat();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    // Reset the scouts' fire state (toggling off clears the interval/tell
+    // accumulators) and clear any bullets left from boot, so the test
+    // observes only the clock-driven cadence.
+    scene.getScouts().forEach((scout) => {
+      scout.shootEnabled = false;
+      scout.shootEnabled = true;
+    });
+    (scene as unknown as { scoutBullets: unknown[] }).scoutBullets.length = 0;
+
+    // Hold the real clock still: no number of frames can advance a
+    // time-based gate, so no bullet may appear (the removed frame-count
+    // accumulator fired purely on tick count).
+    scene.time.now = 0;
+    for (let i = 0; i < 400; i++) scene.tick(1 / 60);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+
+    // Advancing the clock past the fire interval starts the two-phase tell...
+    scene.time.now = SCOUT_FIRE_INTERVAL;
+    scene.tick(1 / 60);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+
+    // ...and advancing past the tell duration fires the aimed shot.
+    scene.time.now += SCOUT_ADVANCE_CUE_DURATION;
+    scene.tick(1 / 60);
+    expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
   });
 });
 

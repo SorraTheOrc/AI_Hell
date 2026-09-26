@@ -717,3 +717,57 @@ describe('shared projectile lifecycle — cross-scene equivalence (AC2)', () => 
     }
   });
 });
+
+// ── Shared enemy-fire dispatcher guard (AH-0MUII3BBW000XZ46, AC1) ─────
+
+describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
+  const FIRE_HELPER = 'fireForEnemy';
+  const FIRE_HELPER_FILE = 'src/entities/enemyFire.ts';
+
+  /** Every production TypeScript file under `src/` (excluding tests). */
+  function productionSourceFiles(): string[] {
+    return collectProductionSourceFiles(path.resolve(process.cwd(), 'src'));
+  }
+
+  it('defines the dispatcher exactly once, in the shared helper', () => {
+    const definers = productionSourceFiles()
+      .filter((file) =>
+        definesFunction(fs.readFileSync(file, 'utf8'), FIRE_HELPER),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(definers).toEqual([FIRE_HELPER_FILE]);
+  });
+
+  it('PlayScene and GymEnemies consume the dispatcher and keep no local switch', () => {
+    // The game's private archetype switch (`_fireFor`) is deleted entirely.
+    expect(
+      Object.prototype.hasOwnProperty.call(PlayScene.prototype, '_fireFor'),
+    ).toBe(false);
+
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/GymEnemies.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(source, `${file} must consume the shared dispatcher`).toContain(
+        FIRE_HELPER,
+      );
+      // ... and must not re-map archetype keys to fire method names itself.
+      expect(source, `${file} must not map tryFire* names`).not.toMatch(
+        /['"]tryFire[A-Z]/,
+      );
+    }
+  });
+
+  it('the combat gym uses the dispatcher with the real scene clock, not a fake one', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/gym/GymPowerUpsCombat.ts'),
+      'utf8',
+    );
+    expect(source).toContain(FIRE_HELPER);
+    // The fake fixed-16 ms frame accumulator is gone (AC2).
+    expect(source).not.toContain('_nextFireTime');
+  });
+});

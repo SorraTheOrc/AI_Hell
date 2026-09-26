@@ -36,6 +36,7 @@ import {
 } from '../../utils/gymPowerUpControl';
 import { makeCollapsible } from '../../utils/gymPanel';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
+import { fireForEnemy } from '../../entities/enemyFire';
 import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
@@ -95,38 +96,10 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
   const key = cfg.key || enemyKey || GYM_ENEMIES_DEFAULT_KEY;
   const builder = getFormationBuilder(cfg.formationKind);
 
-  const collectBullets = (entity: EnemyEntity, now: number): GymEnemiesBullet[] => {
-    const e = entity as unknown as Record<string, unknown>;
-    switch (key) {
-      case 'scout': {
-        const m = e['tryFireAimedBullet'] as ((now: number) => unknown) | undefined;
-        const b = m?.call(entity, now) as GymEnemiesBullet | null | undefined;
-        return b ? [b] : [];
-      }
-      case 'diver': {
-        const m = e['tryFireSpreadBurst'] as ((now: number) => GymEnemiesBullet[]) | undefined;
-        return m?.call(entity, now) ?? [];
-      }
-      case 'tank': {
-        const m = e['tryFireRadialBurst'] as ((now: number) => GymEnemiesBullet[]) | undefined;
-        return m?.call(entity, now) ?? [];
-      }
-      case 'phaser': {
-        const m = e['tryFireRadialBullets'] as ((now: number) => GymEnemiesBullet[]) | undefined;
-        return m?.call(entity, now) ?? [];
-      }
-      case 'swarm': {
-        const m = e['tryFireBurstBullet'] as ((now: number) => GymEnemiesBullet | null) | undefined;
-        const b = m?.call(entity, now) as GymEnemiesBullet | null | undefined;
-        return b ? [b] : [];
-      }
-      default: {
-        const m = e['tryFireAimedBullet'] as ((now: number) => unknown) | undefined;
-        const b = m?.call(entity, now) as GymEnemiesBullet | null | undefined;
-        return b ? [b] : [];
-      }
-    }
-  };
+  // Shared archetype→tryFire dispatch (AH-0MUII3BBW000XZ46): a new
+  // archetype is wired once, in `src/entities/enemyFire.ts`.
+  const collectBullets = (entity: EnemyEntity, now: number): GymEnemiesBullet[] =>
+    fireForEnemy<GymEnemiesBullet>(entity, key, now);
 
   return {
     sceneKey: 'GymEnemies',

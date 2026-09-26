@@ -226,6 +226,18 @@ the first three enemy gym scenes duplicated:
   across the seam and expire only by lifetime (AH-0MU960UTE001PTV0). The
   single definition and the cross-scene equivalence are pinned by
   `src/scenes/core/CombatScene.equivalence.test.ts`.
+- **Shared enemy-fire dispatch** (AH-0MUII3BBW000XZ46, gap 2) — the
+  archetype-key → `tryFire*` mapping lives once in
+  `src/entities/enemyFire.ts`: `fireForEnemy(entity, enemyKey, now)` reads a
+  single `ENEMY_FIRE_METHODS` table and normalises a `null`/single/array
+  result to a bullet array. `PlayScene`, `GymEnemies` and
+  `GymPowerUpsCombat` all route through it, so a new archetype is wired by
+  one table entry and every scene fires it with the same cadence. The helper
+  takes the scene clock as an explicit `now` argument — never a frame-count
+  accumulator — so the combat gym's fire timing matches the game's. The
+  single definition is pinned by
+  `src/scenes/core/CombatScene.equivalence.test.ts` and the
+  dispatch/fallback behaviour by `src/entities/enemyFire.test.ts`.
 - **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
   enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
   `destroySelf()` — mid-explosion counts), the base scene starts a
@@ -272,10 +284,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
   hintText: 'E1 Scout gym — V-formation demo',
   createEntity: (scene, x, y, formationOffset) =>
     new Scout(scene, { x, y, formationOffset }),
-  collectBullets: (scout, now) => {
-    const bullet = scout.tryFireAimedBullet(now);
-    return bullet ? [bullet] : [];
-  },
+  collectBullets: (scout, now) => fireForEnemy<ScoutBullet>(scout, 'scout', now),
 };
 ```
 
@@ -287,7 +296,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
 | `statusLabel` | Lowercase plural noun shown in the status line. |
 | `hintText` | Bottom hint line. |
 | `createEntity` | Factory for one enemy at an absolute position + its formation offset. |
-| `collectBullets` | Called per entity per frame; returns any bullets that entity fired (empty array if none). |
+| `collectBullets` | Called per entity per frame; returns any bullets that entity fired (empty array if none). Configs normally delegate to the shared `fireForEnemy(entity, enemyKey, now)` dispatcher (see §2.1) rather than mapping `tryFire*` names themselves. |
 | `player` | *Optional* player spawn position `{x, y}` — when present the scene spawns the keyboard-controlled Player ship there with live combat interaction (see §7). |
 
 ### 2.3 Entity & bullet contracts
@@ -330,7 +339,8 @@ for reference implementations (the base class drives them).
 1. **Entity first.** Create `src/entities/<Name>.ts` with:
    - a `Container`-based class satisfying `FormationSceneEntity`,
    - a `tryFire…(now)` method returning `null`, a single bullet, or an
-     array (whichever fits — the scene config normalises it to an array),
+     array (whichever fits — the shared `fireForEnemy` dispatcher
+     normalises it to an array),
    - `export`ed tuning constants and bullet types,
    - the shared `FormationOffset` type (import from `../utils/formations`).
 2. **Formation geometry.** Reuse an existing builder from
@@ -761,8 +771,9 @@ guard (never while a telegraph is scheduled).
 `GymEnemies` is the only enemy gym scene. `init({ enemyKey })` loads the
 config and calls `getFormationBuilder(cfg.formationKind)` to build
 `EnemyFormationConfig` via `enemyConfigToFormationConfig`. `collectBullets`
-dispatches by `cfg.key` (Scout/Diver/…) so per-enemy quirks stay behind the
-seam.
+delegates to the shared `fireForEnemy(entity, cfg.key, now)` dispatcher
+(`src/entities/enemyFire.ts`, §2.1), so per-enemy quirks stay behind the
+seam and a new archetype is wired once, in the dispatcher table.
 
 **Panel anchoring (AH-0MUAYB7O4009LWBF).** Every plain-DOM gym panel
 (`#gym-config-panel` in `GymPlayer`, `#enemy-gym-panel` here and
@@ -843,7 +854,9 @@ enemies appear on next index load without code changes.
    needs new movement/shot code beyond the existing registries: add a new
    entity in `src/entities/<Name>.ts` with the same seam (`size? color? …`),
    a builder in `src/utils/formations.ts` or a shot pattern in
-   `src/utils/enemyShotPatterns.ts` with tests, wire it in
+   `src/utils/enemyShotPatterns.ts` with tests, add its archetype key →
+   `tryFire*` method to `ENEMY_FIRE_METHODS` in
+   `src/entities/enemyFire.ts` (the single fire-dispatch seam), wire it in
    `src/entities/enemyFactory.ts`, and add a seed fallback to
    `DEFAULT_ENEMY_CONFIGS` in `src/core/configDefaults.ts`.
 5. **CSV hygiene.** The committed CSV is the source of truth; a missing or

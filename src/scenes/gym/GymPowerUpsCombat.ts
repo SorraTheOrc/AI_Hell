@@ -53,6 +53,7 @@ import {
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
+import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
@@ -413,21 +414,16 @@ export class GymPowerUpsCombat extends CombatScene<
     }
   }
 
-  /** Headless clock for scouts: advances with the deterministic dt. */
-  private _nextFireTime = 0;
-
   private _tickScouts(): void {
     if (!this.shootEnabled) return;
-    // Advance the virtual clock by the scene's dt accumulated elsewhere.
-    // Use a fixed step that mirrors the test harness tick() cadence so
-    // scouts fire deterministically without relying on this.time.now
-    // (which is 0 in headless happy-dom).
-    this._nextFireTime += 16; // ms — one 60 Hz tick
-    const now = this._nextFireTime;
+    // Real scene clock — the same time base the game and the other gyms
+    // use (AH-0MUII3BBW000XZ46, AC2). No frame-count accumulator.
+    const now = this.time.now;
     for (const scout of this.scouts) {
       if (!scout.alive) continue;
-      const bullet = scout.tryFireAimedBullet(now);
-      if (bullet) this.scoutBullets.push(bullet);
+      this.scoutBullets.push(
+        ...fireForEnemy<ScoutBullet>(scout, 'scout', now),
+      );
     }
   }
 

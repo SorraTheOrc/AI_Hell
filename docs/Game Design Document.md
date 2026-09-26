@@ -560,6 +560,13 @@ src/
 │   ├── Mineral.ts       — Mineral collectable (small gold dot; collected by the player,
 │   │                      absorbed by non-asteroid enemies; inert to bullets/asteroids)
 │   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, per-type lifetime; four-edge wrap)
+│   ├── enemyFire.ts     — Shared enemy-fire dispatcher (implemented, AH-0MUII3BBW000XZ46,
+│   │                      gap 2): `fireForEnemy(entity, enemyKey, now)` maps an archetype
+│   │                      key → its `tryFire*` method once (unknown/custom keys fall back
+│   │                      to the aimed shot) and takes the caller's scene clock explicitly.
+│   │                      Consumed by `PlayScene`, `GymEnemies` and `GymPowerUpsCombat` so a
+│   │                      new archetype is wired once and every scene fires it identically;
+│   │                      pinned by the repo-wide guard in `CombatScene.equivalence.test.ts`.
 │   ├── Enemy.ts         — Base enemy class
 │   ├── Scout.ts         — E1 Scout
 │   ├── Diver.ts         — E2 Diver

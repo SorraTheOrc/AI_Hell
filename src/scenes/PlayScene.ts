@@ -64,6 +64,7 @@ import {
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
@@ -1002,40 +1003,11 @@ export class PlayScene extends CombatScene<
         };
         target.setAimTarget?.(this.player.x, this.player.y);
       }
-      for (const bullet of this._fireFor(s)) this.enemyBullets.push(bullet);
-    }
-  }
-
-  /** Dispatches to the entity's archetype-specific fire method. */
-  private _fireFor(s: SpawnedEnemy): PlayEnemyBullet[] {
-    const e = s.entity as unknown as Record<string, unknown>;
-    const now = this.time.now;
-    const call = (name: string): unknown => {
-      const fn = e[name] as ((n: number) => unknown) | undefined;
-      return fn ? fn.call(s.entity, now) : undefined;
-    };
-    switch (s.enemyKey) {
-      case 'diver': {
-        const b = call('tryFireSpreadBurst');
-        return Array.isArray(b) ? (b as PlayEnemyBullet[]) : [];
-      }
-      case 'tank': {
-        const b = call('tryFireRadialBurst');
-        return Array.isArray(b) ? (b as PlayEnemyBullet[]) : [];
-      }
-      case 'phaser': {
-        const b = call('tryFireRadialBullets');
-        return Array.isArray(b) ? (b as PlayEnemyBullet[]) : [];
-      }
-      case 'swarm': {
-        const b = call('tryFireBurstBullet');
-        return b ? [b as PlayEnemyBullet] : [];
-      }
-      case 'scout':
-      default: {
-        const b = call('tryFireAimedBullet');
-        return b ? [b as PlayEnemyBullet] : [];
-      }
+      // Shared archetype→tryFire dispatch, driven by the scene clock
+      // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
+      this.enemyBullets.push(
+        ...fireForEnemy<PlayEnemyBullet>(s.entity, s.enemyKey, this.time.now),
+      );
     }
   }
 
