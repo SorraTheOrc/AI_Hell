@@ -485,6 +485,12 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
+    // ── P7 teleport keys (S/↓) — bound whenever a player exists ─────
+    // Independent of the opt-in power-up drop layer: the minerals gym
+    // grants P7 through the hold-full choice, not field drops, so teleport
+    // must be usable there too (AH-0MUHMXWGC0058BO4 · AC2).
+    this._bindTeleportKeys();
+
     // ── Mineral layer: seed 100 random minerals + HUD hold bar ─────
     this._initMineralLayer();
 
@@ -628,16 +634,21 @@ export class GymFormationScene<
     this.effectsRegistry = new EffectsRegistry();
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
 
-    // P7 teleport keys (only meaningful when a player is present).
-    if (this.player) {
-      this.teleportKey =
-        this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
-      this.downKey =
-        this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
-    }
-
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
+  }
+
+  /**
+   * Binds the S / ↓ teleport keys whenever a player exists, independent of
+   * the opt-in power-up drop layer. `addKey` is idempotent for the same
+   * key code, so this is safe to call from `create()` on every restart.
+   */
+  private _bindTeleportKeys(): void {
+    if (!this.player) return;
+    this.teleportKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    this.downKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
   }
 
   /**
@@ -746,8 +757,6 @@ export class GymFormationScene<
   private _updatePowerUpLayer(dt: number): void {
     if (!this.powerUpsEnabled) return;
 
-    this._handleTeleport();
-
     const kept: FormationSceneDrop[] = [];
     for (const drop of this.powerUpDrops) {
       // An absorbing drop is owned by its animation — never re-process it.
@@ -771,9 +780,6 @@ export class GymFormationScene<
       this._spawnPowerUpDrop();
       this.powerUpSpawnTimer = this.powerUpSpawnInterval;
     }
-
-    this.effectsRegistry.tick(dt);
-    this.hud?.refresh();
   }
 
   // ── Drop collection (fly-over) ───────────────────────────────────
@@ -819,9 +825,13 @@ export class GymFormationScene<
 
   // ── Teleport (P7, S/↓) ───────────────────────────────────────────
 
-  /** Teleports are gated on the gym's opt-in power-up layer. */
+  /**
+   * Teleports are allowed when the opt-in drop layer is active, or whenever
+   * a stored P7 use is available (the minerals gym grants P7 through the
+   * hold-full choice, not field drops — AH-0MUHMXWGC0058BO4 · AC2).
+   */
   protected override canTeleport(): boolean {
-    return this.powerUpsEnabled;
+    return this.powerUpsEnabled || this.effectsRegistry.hasTeleport();
   }
 
   /** Enemy hit radius used for teleport destination avoidance (px). */
@@ -1281,6 +1291,18 @@ export class GymFormationScene<
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
+
+    // ── P7 teleport (S/↓) — independent of the opt-in drop layer ─────
+    // The minerals gym grants P7 through the hold-full choice, so the
+    // handler must run even when field drops are disabled
+    // (AH-0MUHMXWGC0058BO4 · AC2).
+    this._handleTeleport();
+
+    // ── Effect timers + HUD — independent of the opt-in drop layer ───
+    // Timed effects (e.g. P6 granted on teleport arrival) and the HUD must
+    // advance in every gym, not only those with field drops.
+    this.effectsRegistry.tick(dt);
+    this.hud?.refresh();
 
     // ── Shared P3/P6 player visuals (parity with the other scenes) ──
     // Runs after the power-up layer so a drop collected this frame is

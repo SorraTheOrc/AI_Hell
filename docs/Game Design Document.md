@@ -313,6 +313,8 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 - **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
 - **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
 
+> **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — `PlayScene.openMineralChoice()` passes its `mineralChoiceOptions` (and active strategy) into `MineralChoiceScene`, and the gyms already pass `options` + an `onSelect` callback. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting P6 on arrival), **P3 Shield** and **P6 Phase Shift** are honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and the effects registry ticks every frame (driving the HUD) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
+
 ### 4.5 Scoring System
 
 | Action | Points |
@@ -515,7 +517,9 @@ src/
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
 │       │                   small-asteroid mineral drops, hold fill + HUD hold bar,
-│       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals)
+│       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
+│       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
+│       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)
 │       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
 │       │                  extends the narrower shared `scenes/core/CombatCoreScene`;

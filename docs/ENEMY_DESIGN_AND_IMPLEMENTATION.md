@@ -169,7 +169,7 @@ the first three enemy gym scenes duplicated:
   overridable hooks. The gym supplies
   its participant accessors (`getEnemyEntities()` → `entities`,
   `getEnemyBullets()`/`setEnemyBullets()` → `bullets`) and its hooks
-  (`canTeleport()` → `powerUpsEnabled`, `getEnemyBulletRadius()` →
+  (`canTeleport()` → `powerUpsEnabled || hasTeleport()`, `getEnemyBulletRadius()` →
   `config.bulletHitRadius`, `onEnemyDestroyed()` →
   `config.onEntityDestroyed`, teleport-radius hooks); the game supplies its
   own. Bullet-vs-bullet impact feedback is likewise hosted once in the
@@ -193,6 +193,17 @@ the first three enemy gym scenes duplicated:
   shield-bubble and P6 phase-ghost player visuals live once in
   `src/scenes/core/CombatEffectVisuals.ts` and are used by all three scenes
   (see §7.2).
+
+  **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
+  `GymMinerals` has no field power-up drops, so its rewards come from the
+  hold-full choice overlay. Because the choice can grant P7 Teleport, the
+  S / ↓ teleport keys are bound whenever a player exists and the shared
+  `_handleTeleport()` runs every tick — independent of `powerUpsEnabled` —
+  so a stored P7 use is consumable; `canTeleport()` accepts a stored use in
+  addition to the opt-in drop layer. The effects registry ticks (and the
+  HUD refreshes) every frame in all formation gyms, so a P6 granted on
+  teleport arrival expires normally. The overlay renders the caller's
+  stored options, so the displayed label is the option applied.
 
 - **Formation spawn** — builds offsets, creates each entity at
   `(baseX + col * spacingX, baseY + row * spacingY)`, and calls

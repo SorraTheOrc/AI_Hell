@@ -1908,7 +1908,16 @@ export class PlayScene extends CombatScene<
     this.setPaused(true);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.pause();
-      this.scene.launch('MineralChoiceScene', { origin: 'PlayScene' });
+      // Pass the exact options (and the active strategy) the overlay must
+      // present, so the displayed option is the option applied. Without
+      // this the overlay draws its own independent sample and
+      // `selectMineralChoice(index)` applies a different option than the
+      // label shown (AH-0MUHMXWGC0058BO4 · AC1).
+      this.scene.launch('MineralChoiceScene', {
+        origin: 'PlayScene',
+        options: [...this.mineralChoiceOptions],
+        strategy: this.mineralChoiceStrategy,
+      });
     }
     return [...this.mineralChoiceOptions];
   }

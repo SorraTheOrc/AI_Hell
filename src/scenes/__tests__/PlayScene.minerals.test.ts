@@ -81,6 +81,33 @@ describe('PlayScene mineral wiring', () => {
     expect(new Set(options.map((o) => o.id)).size).toBe(3);
   });
 
+  it('the overlay presents exactly the options PlayScene will apply (AC1)', async () => {
+    const scene = await bootPlay();
+    const offered: ChoiceOption[] = [
+      { id: 'dual', name: 'Dual Shot', kind: 'weapon' },
+      { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+      { id: 'P9', name: 'Magnet', kind: 'powerup' },
+    ];
+    scene.setMineralChoiceStrategy(fixedStrategy(offered));
+    const drawn = scene.openMineralChoice();
+
+    // The overlay is launched asynchronously; allow its create() to run.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+    expect(overlay).toBeTruthy();
+
+    // The overlay must display the exact options PlayScene stored — not an
+    // independent draw (the display/apply divergence this fixes).
+    expect(overlay.getOptions()).toEqual(drawn);
+    expect(overlay.getOptionLabels()[0]).toContain('Dual Shot');
+
+    // Selecting the displayed "Dual Shot" applies Dual Shot.
+    overlay.select(0);
+    expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
+  });
+
   it('a chosen power-up is applied permanently for the run', async () => {
     const scene = await bootPlay();
     scene.setMineralChoiceStrategy(
