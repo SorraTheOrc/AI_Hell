@@ -138,6 +138,13 @@ export class CombatCoreScene<
   protected playerBullets: PlayerBullet[] = [];
   /** Live player-explosion VFX graphics (tracked for observation). */
   protected playerExplosions: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Registry for every display object owned by the composed player-death
+   * juice effect (flash, debris, shockwave, particles) — see
+   * `spawnPlayerDeathJuice`. Cleared on scene SHUTDOWN so a stop/restart
+   * leaks nothing (parent AH-0MUAYB4R3002ZIZY AC6).
+   */
+  protected playerDeathEffects: Phaser.GameObjects.GameObject[] = [];
   /** In-flight absorb animations for collected drops. */
   protected collectAnimations: CollectAnimationHandle[] = [];
 

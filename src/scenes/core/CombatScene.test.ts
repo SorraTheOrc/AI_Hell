@@ -244,6 +244,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   getPlayerExplosions() {
     return this.playerExplosions;
   }
+  getPlayerDeathEffects() {
+    return this.playerDeathEffects;
+  }
   getBulletImpactEffects() {
     return this.bulletImpactEffects;
   }
@@ -273,6 +276,7 @@ describe('CombatScene — shared combat core hook contract', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     booted?.game.destroy(true);
     booted = null;
   });
@@ -439,13 +443,21 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getPlayerHitCount()).toBe(0);
   });
 
-  it('AC4 — applyPlayerHit registers the explosion and starts invulnerability', async () => {
+  it('AC4 — applyPlayerHit runs the composed player-death juice and starts invulnerability', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 300, y: 300 });
+    const soundSpy = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSpy = vi.spyOn(effectsModule, 'playDestructionSound');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
 
     scene.runApplyPlayerHit(player);
 
-    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    expect(genericSpy).not.toHaveBeenCalled();
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
     expect(scene.getInvulnerable()).toBeGreaterThan(0);
   });
 

@@ -40,6 +40,7 @@ import {
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
+import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
 import {
   findTeleportDestination,
@@ -337,12 +338,17 @@ export abstract class CombatScene<
   }
 
   /**
-   * Shared damage VFX + in-place respawn + invulnerability: destruction
-   * sound, explosion burst, scale-pulse tween, respawn, invuln window.
+   * Shared damage VFX + in-place respawn + invulnerability: the composed
+   * player-death juice (dedicated cue + shake + particles + flash + debris +
+   * shockwave), scale-pulse tween, respawn, invuln window.
+   *
+   * The juice helper owns the particle burst, so this path must NOT also call
+   * `_spawnPlayerExplosion()` (that would double-spawn).
    */
   protected applyPlayerHit(player: Player): void {
-    playDestructionSound();
-    this._spawnPlayerExplosion(player.x, player.y);
+    spawnPlayerDeathJuice(this, player.x, player.y, 'respawn', {
+      registry: this.playerDeathEffects,
+    });
     this.tweens.add({
       targets: player,
       scale: PLAYER_HIT_SCALE_PEAK,

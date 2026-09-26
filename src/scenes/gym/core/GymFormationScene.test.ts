@@ -903,7 +903,7 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
   });
 
   it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + in-place respawn + invulnerability blink', async () => {
-    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const { scene, parkAt, armed } = await bootParked();
     const player = scene.getPlayer()!;
 
@@ -926,14 +926,14 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     const preHitFacing = preHitState.facing ?? 0;
     parkAt.x = preHitX;
     parkAt.y = preHitY;
-    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    const callsBefore = vi.mocked(deathSound).mock.calls.length;
     armed();
     scene.tick(0.05);
 
     // Hit: VFX/SFX fired, hit counter incremented, respawned in-place.
     expect(scene.getPlayerHitCount()).toBe(1);
-    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
-    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+    expect(vi.mocked(deathSound).mock.calls.length).toBeGreaterThan(
       callsBefore,
     );
     // AC1: player is at the SAME position (not relocated to spawn).
@@ -1494,25 +1494,25 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
   });
 
-  it('AC1 — the enemy destruction sound plays on player-vs-enemy collision', async () => {
-    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+  it('AC1 — the dedicated player-death cue plays on player-vs-enemy collision', async () => {
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const scene = await bootWithPlayer();
     const target = scene.formationEntities[0];
 
-    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    const callsBefore = vi.mocked(deathSound).mock.calls.length;
     placePlayerAtEntity(scene, target);
     scene.tick(0.05);
 
-    expect(vi.mocked(destroySound).mock.calls.length).toBe(callsBefore + 1);
+    expect(vi.mocked(deathSound).mock.calls.length).toBe(callsBefore + 1);
   });
 
   it('AC2 — the player is treated as "hit": explosion VFX/SFX + respawn + invulnerability', async () => {
-    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
     const scene = await bootWithPlayer();
     const target = scene.formationEntities[0];
 
-    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    const callsBefore = vi.mocked(deathSound).mock.calls.length;
     placePlayerAtEntity(scene, target);
     const hitX = scene.getPlayer()!.x;
     const hitY = scene.getPlayer()!.y;
@@ -1520,10 +1520,10 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
 
     // Hit counter incremented.
     expect(scene.getPlayerHitCount()).toBe(1);
-    // Explosion VFX spawned.
-    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
-    // Destruction sound played (enemy destruction).
-    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(callsBefore);
+    // Composed player-death juice spawned (dedicated cue + particles + layers).
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+    // Dedicated player cue played exactly once (no generic cue).
+    expect(vi.mocked(deathSound).mock.calls.length).toBe(callsBefore + 1);
     // The player burst is spawned through the shared particle helper with
     // the ship colour/size and the 'player' pattern assignment (AC2).
     expect(spawnSpy).toHaveBeenCalledTimes(1);
@@ -1551,17 +1551,17 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     placePlayerAtEntity(scene, target);
     scene.tick(0.05);
 
-    // A player particle burst is active and registered for teardown.
-    const active = scene.getPlayerExplosions();
+    // A player juice burst is active and registered for teardown.
+    const active = scene.getPlayerDeathEffects();
     expect(active.length).toBeGreaterThan(0);
 
     // Simulate the Phaser stop/restart vector.
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
-    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
 
     // Restarting the same instance must not throw and must start clean.
     expect(() => scene.create()).not.toThrow();
-    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
     expect(() => scene.tick(0.016)).not.toThrow();
   });
 

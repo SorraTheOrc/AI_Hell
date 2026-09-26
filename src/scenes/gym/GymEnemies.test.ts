@@ -623,7 +623,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
       // at full-suite load). Never rely on one volley's luck: poll with bounded
       // quarter-interval clock steps so the swarm re-fires fresh aimed volleys
       // until one lands (mirrors the GymScout AC2 poll idiom, commit e48b046).
-      vi.spyOn(effectsModule, 'playDestructionSound');
+      vi.spyOn(effectsModule, 'playPlayerDestructionSound');
       scene.toggleShooting();
       const hitsBefore = scene.getPlayerHitCount();
       for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) {
@@ -635,7 +635,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
       expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
       expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
       expect(scene.isPlayerInvulnerable()).toBe(true);
-      expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+      expect(effectsModule.playPlayerDestructionSound).toHaveBeenCalled();
     });
   });
 

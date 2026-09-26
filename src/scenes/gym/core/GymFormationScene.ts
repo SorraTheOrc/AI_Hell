@@ -509,6 +509,11 @@ export class GymFormationScene<
       for (const exp of this.playerExplosions) exp.destroy();
       this.playerExplosions.length = 0;
 
+      // Composed player-death juice registry (flash/debris/shockwave/particles)
+      // must not survive a stop/restart either (parent AH-0MUAYB4R3002ZIZY AC6).
+      for (const effect of this.playerDeathEffects) effect.destroy();
+      this.playerDeathEffects.length = 0;
+
       // Null-out the player reference so any stale callback does not
       // reach the destroyed ship.
       this.player = null;
@@ -1121,6 +1126,11 @@ export class GymFormationScene<
   /** Active player-explosion VFX graphics (empty once the tweens end). */
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
     return this.playerExplosions.slice();
+  }
+
+  /** Active composed player-death juice effects (empty once torn down). */
+  getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
+    return this.playerDeathEffects.slice();
   }
 
   /** Hit radius (px) used for player-bullet vs entity collisions. */
