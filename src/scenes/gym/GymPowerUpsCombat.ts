@@ -300,6 +300,16 @@ export class GymPowerUpsCombat extends CombatScene<
   }
 
   /**
+   * This gym's scouts are persistent demonstration threats and must never
+   * be destroyed, and it has no weapon drops, so the player does not
+   * auto-fire; the shared step's auto-fire resolves to a no-op
+   * (AH-0MUII39KX007YUQ0, AC1/AC4).
+   */
+  protected override autoFireEnabled(): boolean {
+    return false;
+  }
+
+  /**
    * One deterministic simulation step (seconds). Drives ship movement,
    * formation drift, scout aim + firing, bullet lifecycle, spawner,
    * drop lifecycles, collection (with P4 bomb), effect timers,
@@ -308,10 +318,10 @@ export class GymPowerUpsCombat extends CombatScene<
   tick(dt: number): void {
     if (!this.player) return;
 
-    // ── Ship: input → thrust + screen-wrap ──────────────────────
-    const input = this._readPlayerInput();
-    if (input) this.player.setInput(input);
-    this.player.physicsTick(dt, this.scale.width, this.scale.height);
+    // ── Shared player-control step: timers → multipliers → input →
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1/AC4). The player is
+    // advanced from the supplied `dt`; auto-fire is a no-op here.
+    this._tickPlayer(dt);
 
     // ── Teleport (S/↓) — before hit checks so arrival phase protects ─
     this._handleTeleport();

@@ -208,20 +208,9 @@ export class GymWeapons extends CombatCoreScene<
   tick(dt: number): void {
     if (!this.player) return;
 
-    // ── Weapon timers: advance each timed weapon's 10 s countdown ──
-    // Expired weapons are silently dropped before auto-fire so they
-    // stop firing this step (AC2, AC5).
-    this.player.tickWeaponTimers(dt * 1000);
-
-    // ── Ship: input → thrust movement + screen-wrap ─────────────
-    const input = this._readPlayerInput();
-    if (input) {
-      this.player.setInput(input);
-    }
-    this.player.physicsTick(dt, this.scale.width, this.scale.height);
-
-    // ── Auto-fire: emit bullets per weapon fire rate (AC1) ──────
-    this._autoFire(dt);
+    // ── Shared player-control step: timers → multipliers → input →
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1).
+    this._tickPlayer(dt);
 
     // ── Bullet lifecycle: advance + wrap + lifetime expiry ─────
     this._advanceBullets(dt);

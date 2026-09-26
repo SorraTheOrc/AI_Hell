@@ -126,6 +126,13 @@ class BareCoreScene extends CombatCoreScene {
   runUpdateCollectAnimations(dt: number): void {
     this._updateCollectAnimations(dt);
   }
+  runTickPlayer(dt: number): void {
+    this._tickPlayer(dt);
+  }
+  /** Drives the four-directional right key for the shared-step tests. */
+  pressRight(down: boolean): void {
+    if (this.cursors) this.cursors.right.isDown = down;
+  }
 }
 
 /**
@@ -269,6 +276,59 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getPlayerBullets()).toContain(bullet);
     expect(bullet.vx).toBe(1);
     expect(bullet.vy).toBe(2);
+  });
+
+  // ── AC1 — shared player-control step ─────────────────────────────
+
+  it('AC1 — _tickPlayer is a no-op without a player', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.runTickPlayer(1);
+    expect(scene.getPlayerBullets()).toEqual([]);
+  });
+
+  it('AC1 — _tickPlayer applies the live P5 multipliers and advances physics from dt', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    const baseMaxSpeed = player.getMovementConfig().maxSpeed;
+    scene.effects.applyCollect('P5');
+    scene.pressRight(true);
+    const beforeX = player.x;
+    scene.runTickPlayer(0.5);
+    scene.pressRight(false);
+
+    // P5 is 1.5× speed and fire rate, applied live by the shared step.
+    expect(player.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
+    expect(player.getMovementConfig().maxSpeed).toBeCloseTo(
+      baseMaxSpeed * 1.5,
+      5,
+    );
+    // Physics advanced from the supplied dt and auto-fire produced a volley.
+    expect(player.x).toBeGreaterThan(beforeX);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+  });
+
+  it('AC1 — _tickPlayer advances timed-weapon timers before auto-fire', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+    expect(player.getActiveWeapons()).toContain('spread');
+
+    // Longer than the 10 s weapon lifetime: the timers run before
+    // auto-fire so the expired weapon cannot fire this frame.
+    scene.runTickPlayer(10.1);
+    expect(player.getActiveWeapons()).toEqual(['cannon']);
+  });
+
+  it('AC1 — _tickPlayer skips auto-fire when autoFireEnabled() is false', async () => {
+    class NoAutoFireScene extends StubCoreScene {
+      protected override autoFireEnabled(): boolean {
+        return false;
+      }
+    }
+    const scene = await boot<NoAutoFireScene>(NoAutoFireScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.runTickPlayer(1);
+    expect(scene.getPlayerBullets()).toEqual([]);
   });
 
   // ── AC4 — drop collection ─────────────────────────────────────────

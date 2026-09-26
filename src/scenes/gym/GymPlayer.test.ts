@@ -251,6 +251,31 @@ describe('GymPlayer ship config panel', () => {
     expect(player!.getScheme()).toBe('asteroids');
   });
 
+  it('AC2 — update() maps held keys through the shared scheme→input helper', async () => {
+    const scene = await bootPlayer();
+    await tick();
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Default scheme is Asteroids; switch to fourDirectional so the
+    // right-arrow key produces four-directional thrust.
+    (panel()!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement).click();
+    expect(player!.getScheme()).toBe('fourDirectional');
+
+    // Hold the right cursor key and run one frame through update().
+    const cursors = (
+      scene as unknown as {
+        cursors: Phaser.Types.Input.Keyboard.CursorKeys;
+      }
+    ).cursors;
+    cursors.right.isDown = true;
+    const beforeX = player!.x;
+    scene.update(0, 1000);
+    cursors.right.isDown = false;
+
+    expect(player!.x).toBeGreaterThan(beforeX);
+  });
+
   it('applies the rotation-speed slider live in Asteroids mode (AC3)', async () => {
     const scene = await bootPlayer();
     await tick();

@@ -14,8 +14,12 @@
  * the combat-only template methods (collisions, hostile hits, teleport).
  * It owns:
  *
+ * - the shared player-control step
+ *   ({@link CombatCoreScene._tickPlayer}: weapon timers → live P5
+ *   multipliers → input → physics → auto-fire),
  * - the input path ({@link CombatCoreScene._readPlayerInput} plus the
- *   cursor/WASD/handler fields),
+ *   cursor/WASD bindings; the scheme→input branch itself lives in
+ *   `mapControlInput` so `GymPlayer` shares it too),
  * - auto-fire ({@link CombatCoreScene._autoFire},
  *   {@link CombatCoreScene.spawnPlayerBullet} and the
  *   {@link CombatCoreScene.onWeaponFired} hook),
@@ -64,8 +68,7 @@ import {
   type WeaponId,
 } from '../../utils/weapons';
 import {
-  AsteroidsInputHandler,
-  FourDirectionalInputHandler,
+  mapControlInput,
   type ControlInput,
 } from '../../utils/movementModel';
 import type { WasdKeysLike } from '../../utils/input';
@@ -166,9 +169,6 @@ export class CombatCoreScene<
   // Arrow-key (cursor) and WASD bindings for the player ship.
   protected cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   protected wasd: WasdKeysLike | undefined;
-  /** Pluggable input handlers (one per control scheme). */
-  protected fourDirHandler = new FourDirectionalInputHandler();
-  protected asteroidsHandler = new AsteroidsInputHandler();
 
   /** Registry used by subclasses that do not supply their own. */
   private readonly defaultEffectsRegistry = new EffectsRegistry();
@@ -275,14 +275,60 @@ export class CombatCoreScene<
   /**
    * Reads the held arrow/WASD keys into the scheme-appropriate
    * `ControlInput` contract, keyed off the player's saved control scheme.
+   * Delegates to the shared {@link mapControlInput} helper so the
+   * scheme→input branch is defined once (AC1/AC2).
    */
   protected _readPlayerInput(): ControlInput | null {
     const player = this.getPlayer();
     if (!player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
+    return mapControlInput(player.getScheme(), {
+      cursors: this.cursors,
+      wasd: this.wasd,
+    });
+  }
+
+  /**
+   * Whether this scene auto-fires the player's active weapons. Default
+   * `true` — the shipped game and the weapon-enabled gyms fire every
+   * active weapon each frame. Threat-free / weapon-free gyms
+   * (`GymPowerUpsUtility`, `GymPowerUpsCombat`) override this to `false`,
+   * so the shared step is a no-op for the feature they do not enable
+   * (AH-0MUII39KX007YUQ0, AC1).
+   */
+  protected autoFireEnabled(): boolean {
+    return true;
+  }
+
+  /**
+   * The shared player-control step (AH-0MUII39KX007YUQ0, AC1). Every
+   * scene advances the player identically, in the same order every frame:
+   *
+   * 1. advance timed-weapon countdowns,
+   * 2. apply the live P5 speed / fire-rate multipliers from the effects
+   *    registry,
+   * 3. read the scheme-appropriate input,
+   * 4. step physics (screen-wrap),
+   * 5. auto-fire the active weapons (unless the scene opts out via
+   *    {@link CombatCoreScene.autoFireEnabled}).
+   *
+   * Scenes call this instead of a local copy, so a control/ordering fix
+   * reaches the game and every gym at once. A scene with no player is a
+   * no-op.
+   */
+  protected _tickPlayer(dt: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    // Advance timed-weapon countdowns before auto-fire so an expired
+    // weapon stops firing this frame.
+    player.tickWeaponTimers(dt * 1000);
+    // P5 live boost: scale thrust/max-speed and fire rate each frame.
+    const registry = this.getEffectsRegistry();
+    player.setSpeedMultiplier(registry.speedMultiplier());
+    player.setFireRateMultiplier(registry.fireRateMultiplier());
+    const input = this._readPlayerInput();
+    if (input) player.setInput(input);
+    player.physicsTick(dt, this.scale.width, this.scale.height);
+    if (this.autoFireEnabled()) this._autoFire(dt);
   }
 
   /**

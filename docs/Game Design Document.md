@@ -450,8 +450,13 @@ src/
 ├── scenes/
 │   ├── core/
 │   │   ├── CombatCoreScene.ts — Narrower shared combat/lifecycle base (implemented,
-│   │   │                      AH-0MUDCT7EU0061OSZ): owns the input path
-│   │   │                      (`_readPlayerInput`), auto-fire (`_autoFire` +
+│   │   │                      AH-0MUDCT7EU0061OSZ): owns the shared player-control
+│   │   │                      step (`_tickPlayer`: weapon timers → live P5
+│   │   │                      multipliers → input → physics → auto-fire, with the
+│   │   │                      `autoFireEnabled` feature toggle) and the input path
+│   │   │                      (`_readPlayerInput`, delegating to the shared
+│   │   │                      `mapControlInput` helper in `src/utils/movementModel.ts`),
+│   │   │                      auto-fire (`_autoFire` +
 │   │   │                      `spawnPlayerBullet`, with the `onWeaponFired` cue hook) and
 │   │   │                      drop collection (`_collectDrop` + absorb VFX + the
 │   │   │                      `onWeaponCollected`/`onPowerUpCollected`/`_playPickupCue`
@@ -474,7 +479,7 @@ src/
 │   │                      the participant accessors and combat hooks (`onWeaponFired`,
 │   │                      `onEnemyDestroyed`, `onPlayerHit`, `tryAbsorbPlayerHit`,
 │   │                      `onBulletVsBulletImpact`, …). Together the two files define the
-│   │                      eight shared methods exactly once, enforced repo-wide by
+│   │                      nine shared methods exactly once, enforced repo-wide by
 │   │                      `CombatScene.equivalence.test.ts`; extended by `PlayScene`,
 │   │                      `GymFormationScene` and `GymPowerUpsCombat`.
 │   │   ├── mineralKillDrops.ts — Shared mineral kill-drop rule (implemented,
@@ -604,7 +609,9 @@ src/
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
 │       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
 │       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)
-│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
+│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player");
+│       │                   consumes the shared `mapControlInput` scheme→input helper
+│       │                   (AH-0MUII39KX007YUQ0, gap 11)
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
 │       │                  extends the narrower shared `scenes/core/CombatCoreScene`;
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD

@@ -176,6 +176,15 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   }
 
   /**
+   * This gym demonstrates non-combat power-ups only: it has no weapon
+   * drops and its player must not fire, so the shared step's auto-fire
+   * resolves to a no-op (AH-0MUII39KX007YUQ0, AC1).
+   */
+  protected override autoFireEnabled(): boolean {
+    return false;
+  }
+
+  /**
    * One deterministic simulation step (seconds). Drives ship movement,
    * the spawner, drop lifecycles, magnet attraction, collection, effect
    * timers, and the HUD — used by the scene loop and by tests.
@@ -183,16 +192,10 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   tick(dt: number): void {
     if (!this.player) return;
 
-    // ── Ship: input → thrust movement + screen-wrap ─────────────
-    const input = this._readPlayerInput();
-    if (input) {
-      this.player.setInput(input);
-    }
-    // P5 live boost: scale thrust/max-speed each frame.
-    this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
-    // P5 live boost: scale fire rate each frame (same 1.5× multiplier).
-    this.player.setFireRateMultiplier(this.effectsRegistry.fireRateMultiplier());
-    this.player.physicsTick(dt, this.scale.width, this.scale.height);
+    // ── Shared player-control step: timers → multipliers → input →
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1). The P5 multipliers
+    // land here so the boost is live on this frame.
+    this._tickPlayer(dt);
 
     // ── Spawner: one drop per interval, round-robin ─────────────
     if (this.spawnTimer <= 0) {

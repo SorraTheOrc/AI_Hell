@@ -1314,19 +1314,11 @@ export class GymFormationScene<
     // cannot drift (AH-0MUII3CF00024EDM, gap 3).
     this._advanceEnemyBullets(dt);
 
-    // ── Player ship: input → thrust, auto-fire, bullet lifecycle ──
+    // ── Player ship: shared control step + bullet lifecycle ────
     if (this.player) {
-      // Advance timed weapon countdowns (collected weapon drops expire
-      // after 10 s, mirroring GymWeapons) before auto-fire so an expired
-      // weapon stops firing this frame.
-      this.player.tickWeaponTimers(dt * 1000);
-      // P5 live boost: scale thrust/max-speed and fire rate each frame.
-      this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
-      this.player.setFireRateMultiplier(this.effectsRegistry.fireRateMultiplier());
-      const input = this._readPlayerInput();
-      if (input) this.player.setInput(input);
-      this.player.physicsTick(dt, this.scale.width, this.scale.height);
-      this._autoFire(dt);
+      // Shared input → timers → multipliers → physics → auto-fire step
+      // (AH-0MUII39KX007YUQ0, AC1).
+      this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
 
       // Collisions + post-hit invulnerability blink (player component only).

@@ -28,7 +28,7 @@ import {
 } from '../../test/duplicateBodyGuard';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 
-/** The eight shared combat/lifecycle template methods (parent AC1/AC2). */
+/** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
 const SHARED_METHODS = [
   '_handleCollisions',
   '_hitPlayer',
@@ -38,6 +38,7 @@ const SHARED_METHODS = [
   '_clearEnemyBullets',
   '_handleTeleport',
   '_readPlayerInput',
+  '_tickPlayer',
 ] as const;
 
 /**
@@ -286,6 +287,50 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
         5,
       );
     }
+  });
+
+  it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {
+    const { play, gym } = await bootBoth();
+    play.getEffectsRegistry().applyCollect('P5');
+    gym.getEffectsRegistry().applyCollect('P5');
+
+    play.tick(0.5);
+    gym.tick(0.5);
+
+    const playPlayer = play.getPlayer()!;
+    const gymPlayer = gym.getPlayer()!;
+    // The shared step reads the live multipliers from each scene's own
+    // effects registry; the P5 outcome must be identical.
+    expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(
+      gymPlayer.getFireRateMultiplier(),
+      10,
+    );
+    expect(playPlayer.getMovementConfig().thrust).toBeCloseTo(
+      gymPlayer.getMovementConfig().thrust,
+      10,
+    );
+    expect(playPlayer.getMovementConfig().maxSpeed).toBeCloseTo(
+      gymPlayer.getMovementConfig().maxSpeed,
+      10,
+    );
+    expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
+  });
+
+  it('expires timed weapons identically in the game and a gym (timers before auto-fire)', async () => {
+    const { play, gym } = await bootBoth();
+    play.getPlayer()!.equipWeapon('spread');
+    gym.getPlayer()!.equipWeapon('spread');
+    expect(play.getPlayer()!.getActiveWeapons()).toContain('spread');
+    expect(gym.getPlayer()!.getActiveWeapons()).toContain('spread');
+
+    // One step longer than the 10 s weapon lifetime: the shared step
+    // advances the timers before auto-fire, so the weapon expires and
+    // does not fire this frame in either scene.
+    play.tick(10.1);
+    gym.tick(10.1);
+
+    expect(play.getPlayer()!.getActiveWeapons()).toEqual(['cannon']);
+    expect(gym.getPlayer()!.getActiveWeapons()).toEqual(['cannon']);
   });
 
   it('teleport consumes a P7 stack and warps the player in both scenes', async () => {
@@ -1218,5 +1263,112 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     play.tick(0.001);
     weapons.tick(0.001);
     expect(spreadCue).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Shared player-control step (AH-0MUII39KX007YUQ0, gaps 1 & 11) ───
+
+/**
+ * Scenes that must consume the shared `_tickPlayer` step rather than a
+ * local copy (AC1). `GymPowerUpsCombat` also consumes it but disables
+ * auto-fire via the `autoFireEnabled` hook (its scouts must survive).
+ */
+const TICK_PLAYER_CONSUMERS: Array<[string, object]> = [
+  ['PlayScene', PlayScene.prototype],
+  ['GymFormationScene', GymFormationScene.prototype],
+  ['GymWeapons', GymWeapons.prototype],
+  ['GymPowerUpsUtility', GymPowerUpsUtility.prototype],
+];
+
+describe('shared player-control step — defined once and consumed everywhere (AC1)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('every consumer inherits `_tickPlayer` from the shared core', () => {
+    for (const [name, prototype] of TICK_PLAYER_CONSUMERS) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, '_tickPlayer'),
+        `${name}.prototype must not define _tickPlayer`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)['_tickPlayer'],
+        `${name}.prototype._tickPlayer must be the shared core method`,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+          '_tickPlayer'
+        ],
+      );
+    }
+  });
+
+  it('defines `_tickPlayer` exactly once repo-wide, in the shared core', () => {
+    const definers = productionSceneFiles()
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), '_tickPlayer'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+  });
+
+  it('weapon-free gyms disable auto-fire so no player bullets are emitted', async () => {
+    const utility = await bootScene([GymPowerUpsUtility], 'autofire-utility-host');
+    const combat = await bootScene([GymPowerUpsCombat], 'autofire-combat-host');
+    const weapons = await bootScene([GymWeapons], 'autofire-weapons-host');
+    games.push(utility, combat, weapons);
+
+    (utility.scene as GymPowerUpsUtility).tick(0.5);
+    (combat.scene as GymPowerUpsCombat).tick(0.5);
+    (weapons.scene as GymWeapons).tick(0.5);
+
+    const playerBullets = (
+      scene: GymPowerUpsUtility | GymPowerUpsCombat,
+    ): unknown[] =>
+      (scene as unknown as { playerBullets: unknown[] }).playerBullets;
+
+    expect(playerBullets(utility.scene as GymPowerUpsUtility)).toHaveLength(0);
+    expect(playerBullets(combat.scene as GymPowerUpsCombat)).toHaveLength(0);
+    // The weapon-enabled gym still auto-fires normally.
+    expect((weapons.scene as GymWeapons).getBullets().length).toBeGreaterThan(0);
+  });
+});
+
+describe('shared scheme→input mapping — defined once and consumed by GymPlayer (AC2)', () => {
+  /** Every production TypeScript file under `src/` (excluding tests). */
+  function allProductionSourceFiles(): string[] {
+    return collectProductionSourceFiles(path.resolve(process.cwd(), 'src'));
+  }
+
+  it('defines mapControlInput exactly once, in the movement-model module', () => {
+    const definers = allProductionSourceFiles()
+      .filter((file) =>
+        definesFunction(fs.readFileSync(file, 'utf8'), 'mapControlInput'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/utils/movementModel.ts']);
+  });
+
+  it('GymPlayer consumes the shared helper and no longer inlines the handlers', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/gym/GymPlayer.ts'),
+      'utf8',
+    );
+    expect(source).toContain('mapControlInput(');
+    expect(source).not.toContain('FourDirectionalInputHandler');
+    expect(source).not.toContain('AsteroidsInputHandler');
+  });
+
+  it('CombatCoreScene._readPlayerInput delegates to the shared helper', () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/core/CombatCoreScene.ts'),
+      'utf8',
+    );
+    expect(source).toContain('mapControlInput(');
+    expect(source).not.toContain('FourDirectionalInputHandler');
+    expect(source).not.toContain('AsteroidsInputHandler');
   });
 });

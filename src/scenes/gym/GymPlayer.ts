@@ -28,11 +28,7 @@
 import Phaser from 'phaser';
 
 import { Player } from '../../entities/Player';
-import {
-  FourDirectionalInputHandler,
-  AsteroidsInputHandler,
-  ControlSchemeType,
-} from '../../utils/movementModel';
+import { mapControlInput, ControlSchemeType } from '../../utils/movementModel';
 import { WasdKeysLike } from '../../utils/input';
 import { makeCollapsible } from '../../utils/gymPanel';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
@@ -85,9 +81,6 @@ export class GymPlayer extends Phaser.Scene {
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
   private panel: HTMLDivElement | null = null;
-  /** Pluggable input handlers (one per control scheme, AC5). */
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
   /** The scheme currently driving player input — kept in sync with the player. */
   private scheme: ControlSchemeType = 'fourDirectional';
 
@@ -373,14 +366,13 @@ export class GymPlayer extends Phaser.Scene {
     // happen on setConfig from the panel / saved config).
     this.scheme = this.player.getScheme();
 
-    // Map the held keys through the scheme's handler. The private
-    // `_readInput` copy was removed in favour of the shared input path
-    // (parent AC4 — input path unified; repo-wide guard AH-0MUH5FD180063BU5).
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    const input =
-      this.scheme === 'asteroids'
-        ? this.asteroidsHandler.mapInput(raw)
-        : this.fourDirHandler.mapInput(raw);
+    // Map the held keys through the shared scheme→input helper. The
+    // scheme branch lives in `mapControlInput` so GymPlayer and the
+    // combat scenes cannot diverge (AH-0MUII39KX007YUQ0, AC2).
+    const input = mapControlInput(this.scheme, {
+      cursors: this.cursors,
+      wasd: this.wasd,
+    });
     if (input) this.player.setInput(input);
 
     const dt = delta / 1000;

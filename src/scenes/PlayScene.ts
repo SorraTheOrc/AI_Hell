@@ -539,20 +539,13 @@ export class PlayScene extends CombatScene<
 
     // Player input, thrust and auto-fire run in every phase, including the
     // wave/level transition pause.
-    if (this.player) {
-      this.player.tickWeaponTimers(dt * 1000);
-      // P5 live boost: scale thrust/max-speed each frame (mirror gym).
-      this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
-      // P5 live boost: scale fire rate each frame (same 1.5× multiplier).
-      this.player.setFireRateMultiplier(this.effectsRegistry.fireRateMultiplier());
-      // P7 Teleport (S/↓ JustDown) — runs before physics so the warp
-      // position is consumed by this frame's physics.
-      this._handleTeleport();
-      const input = this._readPlayerInput();
-      if (input) this.player.setInput(input);
-      this.player.physicsTick(dt, this.scale.width, this.scale.height);
-      this._autoFire(dt);
-    }
+    //
+    // P7 Teleport (S/↓ JustDown) runs first so the warp position is
+    // consumed by this frame's physics.
+    this._handleTeleport();
+    // Shared player-control step (timers → multipliers → input → physics →
+    // auto-fire) — identical in every scene (AH-0MUII39KX007YUQ0, AC1).
+    this._tickPlayer(dt);
 
     this._advanceBullets(dt);
     if (!transitioning) {
