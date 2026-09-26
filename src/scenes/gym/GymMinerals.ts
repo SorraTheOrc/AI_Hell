@@ -4,10 +4,12 @@
  * Demonstrates the whole mineral mechanic in isolation on an asteroids-only
  * field: small-asteroid mineral drops, player hold fill and the HUD hold bar,
  * enemy absorption and re-drop on death, and the hold-full choice overlay.
- * Drops run through the shared `scenes/core/mineralKillDrops.ts` rule — the
- * same code the shipped `PlayScene` uses — so the gym cannot drift from the
- * game. The base scene seeds 100 random minerals on create (see
- * `GymFormationScene._initMineralLayer`).
+ * Drops run through the shared `scenes/core/mineralKillDrops.ts` rule and
+ * collection/hold/choice run through the shared
+ * `scenes/core/mineralLayer.ts` + `core/mineralHold.ts` layer — the *same
+ * code* the shipped `PlayScene` uses, so the gym cannot drift from the game
+ * (including the hold's overflow carry). The base scene seeds 100 random
+ * minerals on create (see `GymFormationScene._initMineralLayer`).
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention.
  *

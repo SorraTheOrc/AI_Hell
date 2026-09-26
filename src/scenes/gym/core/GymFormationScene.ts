@@ -33,6 +33,16 @@
  * methods (`_updateDropLayer` etc.) and `BombNotice`; only the spawn *source*
  * (a timer, not a kill chance) is gym-specific (AH-0MUII3CXX0023H24, gap 4).
  *
+ * **Shared mineral collection + hold + choice:** the collection/absorption
+ * pass is the shared `collectMinerals` routine (`scenes/core/mineralLayer.ts`),
+ * the hold is the shared `MineralHold` model (`core/mineralHold.ts`), and the
+ * permanent reward is the shared `applyMineralChoiceReward` helper — the
+ * *same code* `PlayScene` runs. The gym therefore adopts the game's
+ * overflow-carry semantics (resolving the hold restores
+ * `collected − capacity`, not 0) and offers the exact options it applies
+ * through `MineralChoiceScene`'s single `onSelect` contract
+ * (AH-0MUII3DHM008L7JF, gap 5).
+ *
  * **Discovery note:** this file lives in the `core/` subfolder, so the
  * gym index glob (`src/scenes/gym/*.ts`) never lists it as a scene.
  */
@@ -47,7 +57,6 @@ import {
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  MINERAL_SIZE,
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../../../core/constants';
@@ -83,7 +92,6 @@ import {
   type PowerUpId,
   type WeaponDropId,
 } from '../../../powerups/types';
-import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
 import { Mineral } from '../../../entities/Mineral';
 import { Asteroid } from '../../../entities/Asteroid';
@@ -95,6 +103,13 @@ import {
   resolveMineralKillDrops,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
+import {
+  applyMineralChoiceReward,
+  collectMinerals,
+  isMineralAbsorbingEnemy,
+  MineralHold,
+  type MineralAbsorbingEnemy,
+} from '../../core/mineralLayer';
 import {
   randomChoiceStrategy,
   type ChoiceOption,
@@ -412,12 +427,17 @@ export class GymFormationScene<
   private minerals: Mineral[] = [];
   /** Cumulative minerals seeded since the gym started. */
   private mineralsSeeded = 0;
-  /** Run-scoped mineral hold for the gym demo. */
-  private mineralHold = 0;
-  /** Hold capacity (from the game-rules config). */
-  private mineralCapacity = 20;
+  /**
+   * Run-scoped mineral hold. This is the shared `MineralHold` model
+   * (capacity, pick-up amount, overflow carry) that `GameState` also uses,
+   * so the gym adopts the game's overflow semantics instead of resetting
+   * to 0 (AH-0MUII3DHM008L7JF · AC2).
+   */
+  private mineralHoldModel = new MineralHold();
   /** Whether the hold-full choice overlay is currently open. */
   private mineralChoiceOpen = false;
+  /** The options currently offered by the hold-full choice. */
+  private mineralChoiceOptions: ChoiceOption[] = [];
   /** Pluggable choice strategy for the hold-full overlay. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
   /**
@@ -574,8 +594,9 @@ export class GymFormationScene<
     this.shieldBubbleDrawn = false;
     this.minerals = [];
     this.mineralsSeeded = 0;
-    this.mineralHold = 0;
+    this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
     this.formationBaseX = this.config.startX;
     this.formationBaseY = this.config.startY;
   }
@@ -614,8 +635,9 @@ export class GymFormationScene<
 
     for (const mineral of this.minerals) mineral.destroy();
     this.minerals = [];
-    this.mineralHold = 0;
+    this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
 
     this.hud?.destroy();
     this.hud = null;
@@ -1002,17 +1024,22 @@ export class GymFormationScene<
 
   /** Current gym mineral hold value. */
   getMineralHold(): number {
-    return this.mineralHold;
+    return this.mineralHoldModel.store;
   }
 
   /** Current gym mineral hold capacity. */
   getMineralCapacity(): number {
-    return this.mineralCapacity;
+    return this.mineralHoldModel.capacity;
   }
 
   /** Whether the hold-full choice overlay is open. */
   isMineralChoiceOpen(): boolean {
     return this.mineralChoiceOpen;
+  }
+
+  /** The options currently offered by the hold-full choice (copy). */
+  getMineralChoiceOptions(): ChoiceOption[] {
+    return [...this.mineralChoiceOptions];
   }
 
   /** Overrides the pluggable choice strategy. */
@@ -1031,106 +1058,88 @@ export class GymFormationScene<
 
   /** Creates the mineral HUD and seeds the field; called from `create()`. */
   private _initMineralLayer(): void {
-    this.mineralCapacity = loadRules().mineralHoldCapacity;
-    this.mineralHold = 0;
+    const rules = loadRules();
+    this.mineralHoldModel.capacity = rules.mineralHoldCapacity;
+    this.mineralHoldModel.collectAmount = rules.mineralCollectAmount;
+    this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
     this.mineralsSeeded = 0;
     if (!this.hud) {
       this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
     }
-    this.hud.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this._syncMineralHud();
     this.seedMinerals(100);
   }
 
   /**
    * Player collects overlapping minerals into the hold; non-asteroid
-   * enemies absorb them. Asteroids are inert to minerals.
+   * enemies absorb them. Asteroids are inert to minerals. Runs the shared
+   * `collectMinerals` routine — the same code the game runs
+   * (AH-0MUII3DHM008L7JF · AC1).
    */
   private _updateMinerals(): void {
     if (this.minerals.length === 0) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: Mineral[] = [];
-    for (const mineral of this.minerals) {
-      if (!mineral.alive) continue;
+    // Only mineral-absorbing, non-asteroid entities collect minerals
+    // (asteroids are inert — GDD §4.5).
+    const absorbers = this.entities.filter(
+      (entity): entity is TEntity & MineralAbsorbingEnemy =>
+        !(entity instanceof Asteroid) && isMineralAbsorbingEnemy(entity),
+    );
+    this.minerals = collectMinerals(
+      this.minerals,
+      this.player,
+      absorbers,
+      () => this._collectMineral(),
+    );
+  }
 
-      if (
-        this.player &&
-        this._collide(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)
-      ) {
-        mineral.handleOverlap('player');
-        this.mineralHold = Math.min(
-          this.mineralCapacity,
-          this.mineralHold + loadRules().mineralCollectAmount,
-        );
-        this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
-        if (this.mineralHold >= this.mineralCapacity && !this.mineralChoiceOpen) {
-          this.openMineralChoice();
-        }
-        continue;
-      }
+  /** Collects a mineral into the shared hold; opens the choice when full. */
+  private _collectMineral(): void {
+    this.mineralHoldModel.collect();
+    this._syncMineralHud();
+    if (this.mineralHoldModel.isFull) this.openMineralChoice();
+  }
 
-      let absorbed = false;
-      for (const entity of this.entities) {
-        if (!entity.alive || entity instanceof Asteroid) continue;
-        const collector = entity as unknown as { collectMineral?: () => void };
-        if (!collector.collectMineral) continue;
-        if (
-          this._collide(
-            mineral.x,
-            mineral.y,
-            MINERAL_SIZE,
-            entity.x,
-            entity.y,
-            entity.getHitRadius(),
-          )
-        ) {
-          collector.collectMineral();
-          mineral.handleOverlap('enemy');
-          absorbed = true;
-          break;
-        }
-      }
-      if (!absorbed) kept.push(mineral);
-    }
-    for (const mineral of this.minerals) {
-      if (!kept.includes(mineral)) mineral.destroy();
-    }
-    this.minerals = kept;
+  /** Mirrors the gym hold onto the HUD mineral hold bar. */
+  private _syncMineralHud(): void {
+    this.hud?.setMineralStore(
+      this.mineralHoldModel.store,
+      this.mineralHoldModel.capacity,
+    );
   }
 
   /**
    * Opens the hold-full choice overlay, pausing the gym scene and launching
-   * `MineralChoiceScene`. The pick is applied permanently and the hold reset.
+   * `MineralChoiceScene` with the single `onSelect` contract. The pick is
+   * applied permanently and the hold resolved with any overflow.
    */
   openMineralChoice(): ChoiceOption[] {
-    if (this.mineralChoiceOpen) return [];
-    const options = this.mineralChoiceStrategy.choose(3);
+    if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3);
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {
-      options,
-      onSelect: (index: number) => this.selectMineralChoice(index, options),
+      options: [...this.mineralChoiceOptions],
+      onSelect: (index: number) => this.selectMineralChoice(index),
     });
     this.scene.pause();
-    return options;
+    return [...this.mineralChoiceOptions];
   }
 
   /**
    * Applies the chosen option permanently for the gym run, resumes the gym
-   * scene, and resets the hold.
+   * scene, and resolves the hold with the override carry
+   * (store = collected − capacity). Returns the chosen option, or null for
+   * an out-of-range index.
    */
-  selectMineralChoice(index: number, options: ChoiceOption[]): ChoiceOption | null {
-    const option = options[index];
+  selectMineralChoice(index: number): ChoiceOption | null {
+    const option = this.mineralChoiceOptions[index];
     if (!option) return null;
-    if (option.kind === 'weapon') {
-      const weaponId = option.id as WeaponId;
-      this.effectsRegistry.applyWeapon(weaponId, true);
-      this.player?.equipWeapon(weaponId, true);
-    } else {
-      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
-    }
+    applyMineralChoiceReward(option, this.effectsRegistry, this.player);
     this.mineralChoiceOpen = false;
-    this.mineralHold = 0;
-    this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this.mineralChoiceOptions = [];
+    this.mineralHoldModel.resolve();
+    this._syncMineralHud();
     this.scene.resume();
     return option;
   }
@@ -1424,21 +1433,6 @@ export class GymFormationScene<
       g.y < -20 ||
       g.y > GAME_HEIGHT + 20
     );
-  }
-
-  /**
-   * Circle-vs-circle collision test using manual distance checks
-   * (`Math.hypot <= rA + rB`), consistent with `GymWeapons._overlapsShip`.
-   */
-  private _collide(
-    ax: number,
-    ay: number,
-    aRadius: number,
-    bx: number,
-    by: number,
-    bRadius: number,
-  ): boolean {
-    return Math.hypot(ax - bx, ay - by) <= aRadius + bRadius;
   }
 
   // ── Wipe → 3s countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5) ─

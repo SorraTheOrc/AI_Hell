@@ -33,7 +33,6 @@ import Phaser from 'phaser';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  MINERAL_SIZE,
   PLAYER_BULLET_RADIUS,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
@@ -100,6 +99,10 @@ import {
 } from './core/bulletLifecycle';
 import { resolveMineralKillDrops } from './core/mineralKillDrops';
 import { splitAsteroid } from './core/asteroidSplit';
+import {
+  applyMineralChoiceReward,
+  collectMinerals,
+} from './core/mineralLayer';
 import {
   applyPhaseGhost,
   drawShieldBubble,
@@ -1093,30 +1096,18 @@ export class PlayScene extends CombatScene<
    */
   private _handleMinerals(): void {
     if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const keptMinerals: Mineral[] = [];
-    for (const mineral of this.minerals) {
-      if (!mineral.alive) continue;
-      if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)) {
-        this._collectMineral(mineral);
-        continue;
-      }
-      let absorbed = false;
-      for (const s of this.spawned) {
-        if (!s.entity.alive || s.enemyKey === 'asteroid') continue;
-        if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
-          s.entity.collectMineral();
-          mineral.handleOverlap('enemy');
-          absorbed = true;
-          break;
-        }
-      }
-      if (!absorbed) keptMinerals.push(mineral);
-    }
-    for (const mineral of this.minerals) {
-      if (!keptMinerals.includes(mineral)) mineral.destroy();
-    }
-    this.minerals = keptMinerals;
+    // Non-asteroid enemies absorb minerals; asteroids are inert (GDD §4.5).
+    const absorbers = this.spawned
+      .filter((s) => s.enemyKey !== 'asteroid')
+      .map((s) => s.entity);
+    // Shared collection/absorption routine — the same code the gyms run
+    // (AH-0MUII3DHM008L7JF, gap 5).
+    this.minerals = collectMinerals(
+      this.minerals,
+      this.player,
+      absorbers,
+      () => this._collectMineral(),
+    );
   }
 
   /**
@@ -1766,7 +1757,10 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
-        strategy: this.mineralChoiceStrategy,
+        // Single overlay contract (AH-0MUII3DHM008L7JF · AC3): the launcher
+        // supplies the selection callback; the overlay never reaches back
+        // into `PlayScene` by key.
+        onSelect: (index: number) => this.selectMineralChoice(index),
       });
     }
     return [...this.mineralChoiceOptions];
@@ -1796,19 +1790,13 @@ export class PlayScene extends CombatScene<
 
   /** Applies a chosen option permanently for the current run. */
   private _applyChoicePermanently(option: ChoiceOption): void {
-    if (isWeaponDrop(option.id)) {
-      const weaponId = option.id as WeaponId;
-      this.effectsRegistry.applyWeapon(weaponId, true);
-      this.player?.equipWeapon(weaponId, true);
-    } else {
-      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
-    }
+    // Shared reward application — the same code the gyms run, so a choice
+    // grants the same effect in every scene (AH-0MUII3DHM008L7JF · AC4).
+    applyMineralChoiceReward(option, this.effectsRegistry, this.player);
   }
 
   /** Collects a mineral: adds it to the hold and opens the choice when full. */
-  private _collectMineral(mineral: Mineral): void {
-    if (!mineral.alive) return;
-    mineral.handleOverlap('player');
+  private _collectMineral(): void {
     this.gameState.addMinerals(loadRules().mineralCollectAmount);
     this._syncMineralHud();
     if (this.gameState.isHoldFull()) this.openMineralChoice();

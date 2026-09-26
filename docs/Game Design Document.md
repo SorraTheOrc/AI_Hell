@@ -307,13 +307,14 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
 
 - **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected. The rule is implemented **once** in the shared helper `src/scenes/core/mineralKillDrops.ts` (`resolveMineralKillDrops`, plus the shared scatter maths in `src/entities/Mineral.ts`) and consumed by **both** `PlayScene` and `GymFormationScene`, so the game and every formation gym (`GymMinerals`, the `GymEnemies` asteroid row, …) drop identically and cannot drift apart.
-- **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as a fixed-length, hollow-outlined bar that fills proportionally from empty to full (`src/ui/HUD.ts`), resets on `GameState.startGame()`, and is never written to the leaderboard.
-- **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries.
-- **Permanent pick**: the chosen option is applied to the player **permanently for the current run** — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
+- **Collection**: the pickup/absorption pass (player collects, non-asteroid enemy absorbs, asteroids inert) is implemented **once** in `src/scenes/core/mineralLayer.ts` (`collectMinerals`) and called by `PlayScene` and `GymFormationScene`, so the two scenes can no longer run divergent collection loops.
+- **Ship's hold**: collected minerals fill a run-scoped hold modelled by the shared **`MineralHold`** (`src/core/mineralHold.ts`), capacity default **20** (configurable) and pick-up amount default **1**. `GameState` (game) and `GymFormationScene` (every formation gym) both hold this one model, so the gym adopts the game's **overflow-carry** semantics (resolving the hold restores `collected − capacity`, never 0 — the gym previously reset to 0). The hold is shown on the HUD as a fixed-length, hollow-outlined bar that fills proportionally from empty to full (`src/ui/HUD.ts`), resets on `GameState.startGame()`, and is never written to the leaderboard.
+- **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The overlay knows nothing about its launcher: its only selection contract is an optional `onSelect(index, option)` callback, supplied by `PlayScene` and by every gym. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries, and the launcher always passes the exact options it will apply.
+- **Permanent pick**: the chosen option is applied to the player **permanently for the current run** via the shared `applyMineralChoiceReward` helper (also in `src/scenes/core/mineralLayer.ts`), so a choice grants the same effect in the game and in every gym — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
 - **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
 - **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
 
-> **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — `PlayScene.openMineralChoice()` passes its `mineralChoiceOptions` (and active strategy) into `MineralChoiceScene`, and the gyms already pass `options` + an `onSelect` callback. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting P6 on arrival), **P3 Shield** and **P6 Phase Shift** are honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and the effects registry ticks every frame (driving the HUD) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
+> **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — every launcher (`PlayScene` and each formation gym) passes its stored `options` plus an `onSelect` callback to the single `MineralChoiceScene` contract. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting P6 on arrival), **P3 Shield** and **P6 Phase Shift** are honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and the effects registry ticks every frame (driving the HUD) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
 
 ### 4.5 Scoring System
 
@@ -434,7 +435,12 @@ The selected engine for AI_Hell is **Phaser (TypeScript / HTML5)**. This decisio
 src/
 ├── core/
 │   ├── Game.ts          — Main game class, scene management
-│   ├── GameState.ts     — Game state (lives, score, level)
+│   ├── GameState.ts     — Game state (lives, score, level, ship's mineral hold)
+│   ├── mineralHold.ts   — Shared mineral hold model (implemented, AH-0MUII3DHM008L7JF,
+│   │                      gap 5): `MineralHold` owns the capacity, per-pickup collect amount
+│   │                      and overflow carry used by *both* `GameState` and `GymFormationScene`,
+│   │                      so the gym adopts the game's hold/overflow semantics (resolve carries
+│   │                      `collected − capacity`) instead of resetting to 0
 │   ├── Input.ts         — Input handling (keyboard, auto-fire)
 │   └── rules.ts         — General game-rules config (implemented): localStorage-backed
 │                          `loadRules()` / `saveRules()` holding the power-up spawn
@@ -511,7 +517,7 @@ src/
 │   │   │                      `GymEnemies`/`GymMinerals` destruction seams so the split
 │   │   │                      physics cannot drift; pinned by the repo-wide source guard
 │   │   │                      in `src/scenes/core/asteroidSplit.test.ts`.
-│   │   └── bulletLifecycle.ts — Shared projectile-lifecycle helpers (implemented,
+│   │   ├── bulletLifecycle.ts — Shared projectile-lifecycle helpers (implemented,
 │   │                      AH-0MUII3CF00024EDM, gap 3): `advanceWrappingBullets(bullets,
 │   │                      dt, width, height)` advances enemy bullets (velocity
 │   │                      integration, four-edge wrap, lifetime expiry) and
@@ -522,6 +528,15 @@ src/
 │   │                      repo-wide guard plus cross-scene equivalence tests in
 │   │                      `CombatScene.equivalence.test.ts` pin the definition and the
 │   │                      behaviour.
+│   │   └── mineralLayer.ts — Shared mineral collection + choice-reward layer (implemented,
+│   │                      AH-0MUII3DHM008L7JF, gap 5): `collectMinerals(minerals,
+│   │                      player, enemies, onPlayerCollected)` runs the single player-pickup/
+│   │                      non-asteroid-absorption pass, `applyMineralChoiceReward(option, ...)`
+│   │                      applies a hold-full choice permanently, and `MineralHold` is
+│   │                      re-exported from `core/mineralHold.ts` so the whole collection + hold
+│   │                      seam lives together. Consumed by `PlayScene` and
+│   │                      `GymFormationScene`; the single-definition guard and the cross-scene
+│   │                      overflow test live in `mineralLayer.equivalence.test.ts`.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
@@ -536,8 +551,11 @@ src/
 │   │                      to GameOverScene on win or loss; **ESC pauses** the run and
 │   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable);
 │   │                      mineral drops/hold and the hold-full power-up choice overlay
-│   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (3 distinct options, paused
-│   │                      SceneManager overlay; applies the pick permanently, resumes, resets hold)
+│   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (implemented): 3 distinct
+│   │                      options, paused SceneManager overlay; the only selection contract is
+│   │                      the optional `onSelect(index, option)` callback (no launcher-specific
+│   │                      branches), so the exact option shown is the option the launcher applies;
+│   │                      resumes and resolves the hold with the overflow carry
 │   ├── PauseScene.ts    — In-game pause menu (implemented): full-screen replacement scene
 │   │                      with Resume / Settings / Quit (pointer + keyboard), launched by
 │   │                      PlayScene's ESC toggle; resume continues the run exactly
@@ -568,6 +586,8 @@ src/
 │       │                      `CombatCoreScene`), generic over the entity/bullet
 │       │                      types and driven by an `EnemyFormationConfig`; owns formation
 │       │                      spawn/drift/respawn, the opt-in power-up layer and the
+│       │                      shared mineral layer (`scenes/core/mineralLayer.ts` collection +
+│       │                      `core/mineralHold.ts` hold) and the
 │       │                      enemy-only mode. Exposes the protected `respawnFormation()`
 │       │                      and `setPlayerEnabled(enabled)` seams plus
 │       │                      `registerDynamicEntity(child)` (AH-0MUII3F7Q002O7WX, gaps 8/9),
@@ -578,7 +598,9 @@ src/
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
 │       │                   small-asteroid mineral drops (via the shared
-│       │                   `scenes/core/mineralKillDrops.ts` rule), hold fill + HUD hold bar,
+│       │                   `scenes/core/mineralKillDrops.ts` rule), the shared
+│       │                   `scenes/core/mineralLayer.ts` collection/hold/choice layer,
+│       │                   hold fill + HUD hold bar,
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
 │       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
 │       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)

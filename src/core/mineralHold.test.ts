@@ -1,0 +1,75 @@
+/**
+ * Shared mineral hold model tests (AH-0MUII3DHM008L7JF, gap 5).
+ *
+ * The hold model is the single source of truth for capacity, per-pickup
+ * collect amount and overflow carry used by `GameState` (game) and
+ * `GymFormationScene` (gyms). These tests pin the overflow semantics that
+ * the gym previously lacked (it reset to 0 instead of carrying the surplus).
+ */
+
+import { describe, expect, it } from 'vitest';
+
+import { MineralHold } from './mineralHold';
+import {
+  DEFAULT_MINERAL_COLLECT_AMOUNT,
+  DEFAULT_MINERAL_HOLD_CAPACITY,
+} from './rules';
+
+describe('MineralHold', () => {
+  it('starts empty at the default capacity and collect amount', () => {
+    const hold = new MineralHold();
+    expect(hold.store).toBe(0);
+    expect(hold.capacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    expect(hold.capacity).toBe(20);
+    expect(hold.collectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
+    expect(hold.isFull).toBe(false);
+  });
+
+  it('collect() adds the configured pickup amount by default', () => {
+    const hold = new MineralHold({ collectAmount: 3 });
+    hold.collect();
+    expect(hold.store).toBe(3);
+  });
+
+  it('ignores non-positive collection amounts', () => {
+    const hold = new MineralHold({ capacity: 10 });
+    expect(hold.collect(0)).toBe(0);
+    expect(hold.collect(-2)).toBe(0);
+    expect(hold.store).toBe(0);
+  });
+
+  it('caps the store at capacity and reports the overflow', () => {
+    const hold = new MineralHold({ capacity: 5 });
+    const overflow = hold.collect(8);
+    expect(hold.store).toBe(5);
+    expect(overflow).toBe(3);
+    expect(hold.overflow).toBe(3);
+    expect(hold.isFull).toBe(true);
+  });
+
+  it('resolve() carries the overflow (store = collected − capacity), never 0', () => {
+    const hold = new MineralHold({ capacity: 5 });
+    hold.collect(8);
+    hold.resolve();
+    expect(hold.store).toBe(3);
+    expect(hold.isFull).toBe(false);
+  });
+
+  it('resolve() empties the hold when there was no overflow', () => {
+    const hold = new MineralHold({ capacity: 5 });
+    hold.collect(5);
+    hold.resolve();
+    expect(hold.store).toBe(0);
+  });
+
+  it('reset() empties the store and clears the recorded overflow', () => {
+    const hold = new MineralHold({ capacity: 5 });
+    hold.collect(9);
+    hold.reset();
+    expect(hold.store).toBe(0);
+    expect(hold.overflow).toBe(0);
+    // A resolve after reset must not resurrect the stale overflow.
+    hold.resolve();
+    expect(hold.store).toBe(0);
+  });
+});

@@ -183,8 +183,8 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   /** Grants one effect through the hold-full choice path. */
   function grantViaChoice(scene: GymMinerals, option: ChoiceOption): void {
     scene.setMineralChoiceStrategy({ choose: () => [option] });
-    const options = scene.openMineralChoice();
-    scene.selectMineralChoice(0, options);
+    scene.openMineralChoice();
+    scene.selectMineralChoice(0);
   }
 
   async function bootMinerals(): Promise<GymMinerals> {
