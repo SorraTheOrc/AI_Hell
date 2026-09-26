@@ -176,6 +176,24 @@ the first three enemy gym scenes duplicated:
   shared path. The shipped game and the gyms therefore cannot diverge on
   collision, auto-fire, drops, teleport or player-hit behaviour.
 
+  **Shared P3/P6 hit-gating (**AH-0MUHM66ES0027QQV**).** The shield/phase
+  hit-gating hooks are part of the shared core and are **not** per-scene
+  overrides: `CombatScene` provides the registry-backed defaults
+  `isPlayerPhased()` → `getEffectsRegistry().isPhased` and
+  `tryAbsorbPlayerHit()` → `getEffectsRegistry().tryAbsorbShield()` (consume
+  **one** shield, run the `onShieldAbsorbed()` cue seam, start the shared
+  post-hit invulnerability window, return `true`). `CombatCoreScene` keeps
+  its safe non-combat `false` defaults for threat-free direct subclasses
+  (`GymWeapons`, `GymPowerUpsUtility`). Every `CombatScene` subclass
+  inherits the gating exactly once — `PlayScene`, `GymPowerUpsCombat`, and
+  `GymFormationScene` (`GymEnemies`/`GymBoss`/`GymMinerals`) — so collecting
+  P3 Shield or P6 Phase Shift behaves identically in the shipped game and
+  the enemy gym. **No scene should re-implement these hooks**; a scene may
+  add a per-type cue only through the `onShieldAbsorbed()` seam. The P3
+  shield-bubble and P6 phase-ghost player visuals live once in
+  `src/scenes/core/CombatEffectVisuals.ts` and are used by all three scenes
+  (see §7.2).
+
 - **Formation spawn** — builds offsets, creates each entity at
   `(baseX + col * spacingX, baseY + row * spacingY)`, and calls
   `add.existing()` so entities actually render (see §4.1).
@@ -550,6 +568,29 @@ Resolved in the shared `CombatScene._handleCollisions` (inherited by
 > (`PLAYER_SPAWN = { x: 480, y: 270 }`) at scene start; only the *post-hit
 > respawn* is in-place. Supersedes the respawn clause of AH-0MTVYBCUW008BEQT
 > AC4 ("the respawn position matches the initial spawn position").
+
+**Power-up hit-gating (P3 Shield / P6 Phase Shift).** The P3/P6 gating is
+inherited from the shared `CombatScene`, not re-implemented in the gym:
+
+- **P6 Phase Shift** — `CombatScene.isPlayerPhased()` returns
+  `getEffectsRegistry().isPhased`; while active, `_handleCollisions()` skips
+  both the enemy-bullet-vs-player and player-body-vs-enemy passes, so the
+  ship passes through bullets and bodies for the 3 s effect window (no
+  `getPlayerHitCount()` increment, no respawn).
+- **P3 Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
+  shield (`tryAbsorbShield()`), runs the `onShieldAbsorbed()` cue seam (the
+  play scene plays `playDestructionSound()`; the gym stays silent), starts
+  the shared post-hit invulnerability window and reports the hit absorbed,
+  so an absorbed hit costs no life; the following hit lands normally.
+- **Visuals** — `GymFormationScene` draws the same P3 shield bubble
+  (colour `0x3399ff`, line width 2, radius `SHIP_SIZE * 1.6`, fill alpha
+  `0.12`) and P6 phase ghost (alpha `0.45`, blink-aware) as `PlayScene` and
+  `GymPowerUpsCombat`, through the shared `CombatEffectVisuals` helper. Test
+  seams: `isShieldBubbleVisible()`, `isPhaseGhostActive()`.
+
+`GymFormationScene`-based scenes therefore record **and** apply P3/P6
+identically to the other combat scenes — a regression is guarded by the
+enemy-gym phase/shield tests and the cross-scene equivalence tests.
 
 ### 7.3 Live aim tracking
 
