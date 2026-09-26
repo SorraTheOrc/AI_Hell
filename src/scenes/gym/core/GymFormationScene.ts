@@ -154,6 +154,13 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    */
   playDestructionAudio?(): void;
   /**
+   * Optional: reports that this entity is currently away from its formation
+   * and the scene must hold the cluster's drift in place (GDD §4.1 —
+   * E2 Diver). Only formation-holding archetypes implement it; other
+   * entities omit it and the base scene uses optional chaining.
+   */
+  requiresFormationHold?(): boolean;
+  /**
    * Optional multi-hit damage seam (Boss, GDD §4.3). When present,
    * player-bullet collisions delegate to this instead of `destroySelf()`
    * so the entity can decrement phased health and only self-destruct
@@ -1249,11 +1256,21 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
-    // Advance the formation base; when the whole formation has crossed
-    // the right edge, respawn it off the left edge so it flies again.
-    this.formationBaseX += config.driftSpeed * dt;
-    if (this.formationBaseX > GAME_WIDTH + 60) {
-      this.formationBaseX = this._respawnX();
+    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING entity is away
+    // from the formation (`DIVING`/`PAUSING`/`RETURNING`), the whole cluster
+    // holds its current position and the right-edge wrap/respawn is
+    // suppressed. Destroyed entities are ignored, so a mid-dive kill can
+    // never freeze the cluster forever.
+    const holdFormation = this.entities.some(
+      (entity) => entity.alive && entity.requiresFormationHold?.() === true,
+    );
+    if (!holdFormation) {
+      // Advance the formation base; when the whole formation has crossed
+      // the right edge, respawn it off the left edge so it flies again.
+      this.formationBaseX += config.driftSpeed * dt;
+      if (this.formationBaseX > GAME_WIDTH + 60) {
+        this.formationBaseX = this._respawnX();
+      }
     }
 
     // Position each enemy from the formation base + its own offset.

@@ -29,7 +29,20 @@ interface DestructionAudioSeam {
   playDestructionAudio?(): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid) & DestructionAudioSeam;
+/**
+ * Optional per-entity seam: reports that the entity is currently away from
+ * its formation and the owning scene must hold the cluster's drift in place
+ * (GDD §4.1 — E2 Diver). Only formation-holding archetypes (currently the
+ * Diver) implement it; other entities omit it and the scenes use optional
+ * chaining.
+ */
+interface FormationHoldSeam {
+  requiresFormationHold?(): boolean;
+}
+
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid) &
+  DestructionAudioSeam &
+  FormationHoldSeam;
 
 /** Build one entity of the right type from the config key / formationKind. */
 export function createEnemyFromConfig(

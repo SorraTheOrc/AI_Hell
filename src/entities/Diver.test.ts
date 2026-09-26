@@ -879,3 +879,87 @@ describe('Diver — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
     expect(bullets.length).toBe(4);
   });
 });
+
+describe('Diver — formation hold seam (AH-0MUAYB957002EMYV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  const BASE_X = 400;
+  const BASE_Y = 300;
+  const SPACING_X = 26;
+  const SPACING_Y = 22;
+
+  function makeDiver(offset: FormationOffset = { row: 0, col: 0 }): Diver {
+    return new Diver(booted!.scene, {
+      x: BASE_X,
+      y: BASE_Y,
+      formationOffset: offset,
+    });
+  }
+
+  /** Advances the diver's state machine until it reaches `target`. */
+  function advanceToState(diver: Diver, target: DiverState): void {
+    for (let i = 0; i < 100 && diver.behaviourState !== target; i++) {
+      diver.applyFormationPosition(BASE_X, BASE_Y, 0.5, SPACING_X, SPACING_Y);
+    }
+    expect(diver.behaviourState).toBe(target);
+  }
+
+  it('AC1 — reports a hold in every detached state and releases in FORMATION', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = makeDiver();
+
+    expect(typeof diver.requiresFormationHold).toBe('function');
+    expect(diver.requiresFormationHold()).toBe(false);
+
+    advanceToState(diver, DiverState.DIVING);
+    expect(diver.requiresFormationHold()).toBe(true);
+
+    advanceToState(diver, DiverState.PAUSING);
+    expect(diver.requiresFormationHold()).toBe(true);
+
+    advanceToState(diver, DiverState.RETURNING);
+    expect(diver.requiresFormationHold()).toBe(true);
+
+    advanceToState(diver, DiverState.FORMATION);
+    expect(diver.requiresFormationHold()).toBe(false);
+  });
+
+  it('AC1 — a destroyed Diver stops requiring a hold so a mid-dive kill cannot freeze the cluster', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = makeDiver();
+
+    advanceToState(diver, DiverState.DIVING);
+    expect(diver.requiresFormationHold()).toBe(true);
+
+    diver.destroySelf();
+    expect(diver.alive).toBe(false);
+    expect(diver.requiresFormationHold()).toBe(false);
+  });
+
+  it('AC3 — the return re-evaluates the supplied base each frame (rejoins the live slot, never a stale dive-start point)', async () => {
+    booted = await bootScene([HarnessScene]);
+    // Two identical divers; both dive to the same snapshotted target.
+    const diverRight = makeDiver({ row: 0, col: 1 });
+    const diverLeft = makeDiver({ row: 0, col: 1 });
+
+    advanceToState(diverRight, DiverState.RETURNING);
+    advanceToState(diverLeft, DiverState.RETURNING);
+
+    const rightBefore = diverRight.x;
+    const leftBefore = diverLeft.x;
+
+    // Same tick, different supplied formation base: the return slot is the
+    // base that is passed in THIS frame, not the base at dive start.
+    diverRight.applyFormationPosition(900, BASE_Y, 0.1, SPACING_X, SPACING_Y);
+    diverLeft.applyFormationPosition(-400, BASE_Y, 0.1, SPACING_X, SPACING_Y);
+
+    expect(diverRight.x).toBeGreaterThan(rightBefore);
+    expect(diverLeft.x).toBeLessThan(leftBefore);
+  });
+});

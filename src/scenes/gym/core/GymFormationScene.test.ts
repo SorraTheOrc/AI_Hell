@@ -118,6 +118,19 @@ class AimStubEnemy extends StubEnemy {
   }
 }
 
+/**
+ * Stub that implements the optional formation-hold seam. `requiresHold` is
+ * deliberately independent of `alive` so the scene-level alive filter is
+ * exercised (a dead holder must NOT freeze the formation).
+ */
+class HoldStubEnemy extends StubEnemy {
+  requiresHold = false;
+
+  requiresFormationHold(): boolean {
+    return this.requiresHold;
+  }
+}
+
 const FORMATION_COUNT = 6;
 const SPACING_X = 26;
 const SPACING_Y = 22;
@@ -2576,5 +2589,118 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     scene.explodeRandom();
 
     expect(scene.getMinerals()).toHaveLength(0);
+  });
+});
+
+describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHoldGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
+    booted = await bootScene([
+      makeStubScene(() => [], undefined, undefined, HoldStubEnemy),
+    ]);
+    return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
+  }
+
+  /** The stub entities, typed with the formation-hold seam. */
+  function holders(
+    scene: GymFormationScene<StubEnemy, StubBullet>,
+  ): HoldStubEnemy[] {
+    return scene.formationEntities as HoldStubEnemy[];
+  }
+
+  it('AC1 — a holding entity freezes the formation base', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+    holder.requiresHold = true;
+
+    const before = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBe(before);
+  });
+
+  it('AC1 — the gate ignores destroyed entities (a dead holder cannot freeze the formation)', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+    holder.requiresHold = true;
+    holder.destroySelf();
+    expect(holder.alive).toBe(false);
+
+    const before = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('AC1/AC2 — while any one entity still holds the formation stays frozen; both rejoined resumes from the held position', async () => {
+    const scene = await bootHoldGym();
+    const [a, b] = holders(scene);
+    a.requiresHold = true;
+    b.requiresHold = true;
+
+    scene.tick(0.5);
+    const frozenAt = scene.formationX;
+
+    // One diver rejoins; the other is still away — no drift.
+    a.requiresHold = false;
+    scene.tick(0.5);
+    expect(scene.formationX).toBe(frozenAt);
+
+    // Both rejoined → the formation resumes from exactly the held base.
+    b.requiresHold = false;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(frozenAt + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('AC1 — a hold suppresses the right-edge wrap/respawn', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+
+    // Advance until the NEXT 1 s tick would cross the wrap threshold.
+    for (
+      let i = 0;
+      i < 100 && scene.formationX + DRIFT_SPEED <= GAME_WIDTH + 60;
+      i++
+    ) {
+      scene.tick(1.0);
+    }
+    expect(scene.formationX + DRIFT_SPEED).toBeGreaterThan(GAME_WIDTH + 60);
+
+    holder.requiresHold = true;
+    const heldX = scene.formationX;
+    // Without the hold this 1 s tick crosses the threshold and wraps.
+    scene.tick(1.0);
+    expect(scene.formationX).toBe(heldX);
+
+    // Releasing the hold lets the wrap happen again.
+    holder.requiresHold = false;
+    scene.tick(1.0);
+    expect(scene.formationX).toBeLessThan(0);
+  });
+
+  it('AC2 — the formation resumes from exactly the held position with no jump', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+    holder.requiresHold = true;
+    scene.tick(0.5);
+    const heldX = scene.formationX;
+    // A second held tick confirms the base really is pinned.
+    scene.tick(0.5);
+    expect(scene.formationX).toBe(heldX);
+
+    holder.requiresHold = false;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(heldX + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('AC4 — a formation with no holder still drifts', async () => {
+    const scene = await bootHoldGym();
+    const before = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
   });
 });

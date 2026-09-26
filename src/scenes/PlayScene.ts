@@ -709,13 +709,24 @@ export class PlayScene extends CombatScene<
   }
 
   /** Advances formation drift and repositions every live enemy. */
-  private _moveEnemies(dt: number): void {    this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
-    if (this.driftX > FORMATION_DRIFT_RANGE) {
-      this.driftX = FORMATION_DRIFT_RANGE;
-      this.driftDir = -1;
-    } else if (this.driftX < 0) {
-      this.driftX = 0;
-      this.driftDir = 1;
+  private _moveEnemies(dt: number): void {
+    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING enemy is away
+    // from its formation (`DIVING`/`PAUSING`/`RETURNING`), the cluster's
+    // ping-pong drift freezes in place — `driftX` and `driftDir` are left
+    // untouched — and resumes once every diver has rejoined. Destroyed
+    // enemies are ignored, so a mid-dive kill cannot freeze the cluster.
+    const holdFormation = this.spawned.some(
+      (s) => s.entity.alive && s.entity.requiresFormationHold?.() === true,
+    );
+    if (!holdFormation) {
+      this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
+      if (this.driftX > FORMATION_DRIFT_RANGE) {
+        this.driftX = FORMATION_DRIFT_RANGE;
+        this.driftDir = -1;
+      } else if (this.driftX < 0) {
+        this.driftX = 0;
+        this.driftDir = 1;
+      }
     }
 
     for (const s of this.spawned) {
@@ -1725,6 +1736,20 @@ export class PlayScene extends CombatScene<
   /** Live enemies (one per spawned entity, destroyed ones included). */
   getEnemies(): EnemyEntity[] {
     return this.spawned.map((s) => s.entity);
+  }
+
+  /**
+   * Current formation ping-pong drift offset (px), relative to each enemy
+   * group's `startX`. Frozen in place while a Diver is away from the
+   * formation (see `_moveEnemies`). Exposed for observability/tests.
+   */
+  getFormationDriftX(): number {
+    return this.driftX;
+  }
+
+  /** Current formation drift direction: `+1` right, `-1` left. */
+  getFormationDriftDir(): number {
+    return this.driftDir;
   }
 
   /** Number of live enemies. */

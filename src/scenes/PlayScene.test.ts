@@ -18,6 +18,7 @@ import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
+import { Diver, DiverState } from '../entities/Diver';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -2577,5 +2578,109 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
     setElapsed(scene, WAVE_TIME_LIMIT_SECONDS * 0.95 + 1e-6);
     scene.tick(0.001);
     expect(newAsteroids(before, scene)).toHaveLength(4);
+  });
+});
+
+describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A deterministic level with two Divers in one formation group. */
+  const HOLD_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Formation hold',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'diver',
+              formation: 'diver',
+              count: 4,
+              spacingX: 30,
+              spacingY: 26,
+              startX: 200,
+              startY: 220,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootHoldScene(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(HOLD_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    return scene;
+  }
+
+  /** Advances a Diver's own state machine to `target` (no scene tick). */
+  function driveDiverTo(diver: Diver, target: DiverState): void {
+    for (let i = 0; i < 100 && diver.behaviourState !== target; i++) {
+      diver.applyFormationPosition(200, 220, 0.5, 30, 26);
+    }
+    expect(diver.behaviourState).toBe(target);
+  }
+
+  function divers(scene: PlayScene): Diver[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is Diver => e instanceof Diver);
+  }
+
+  it('AC1/AC2 — freezes while a Diver is away, stays frozen while another is still away, and resumes from the held drift', async () => {
+    const scene = await bootHoldScene();
+    const [diverA, diverB] = divers(scene);
+
+    driveDiverTo(diverA, DiverState.DIVING);
+    const heldX = scene.getFormationDriftX();
+    const heldDir = scene.getFormationDriftDir();
+    scene.tick(0.05);
+    expect(scene.getFormationDriftX()).toBe(heldX);
+    expect(scene.getFormationDriftDir()).toBe(heldDir);
+
+    // A second Diver is now detached too — still frozen.
+    driveDiverTo(diverB, DiverState.DIVING);
+    scene.tick(0.05);
+    expect(scene.getFormationDriftX()).toBe(heldX);
+
+    // One rejoins, the other is still away — still frozen, direction intact.
+    driveDiverTo(diverA, DiverState.FORMATION);
+    scene.tick(0.05);
+    expect(scene.getFormationDriftX()).toBe(heldX);
+    expect(scene.getFormationDriftDir()).toBe(heldDir);
+
+    // Both rejoined → the drift resumes from exactly the held position.
+    driveDiverTo(diverB, DiverState.FORMATION);
+    scene.tick(0.05);
+    expect(scene.getFormationDriftX()).toBeGreaterThan(heldX);
+  });
+
+  it('AC1 — a Diver destroyed mid-dive stops holding the formation', async () => {
+    const scene = await bootHoldScene();
+    const [diverA] = divers(scene);
+
+    driveDiverTo(diverA, DiverState.DIVING);
+    diverA.destroySelf();
+    expect(diverA.alive).toBe(false);
+
+    const before = scene.getFormationDriftX();
+    scene.tick(0.05);
+    expect(scene.getFormationDriftX()).toBeGreaterThan(before);
+  });
+
+  it('AC4 — a formation with no detached Diver still drifts', async () => {
+    const scene = await bootHoldScene();
+    const before = scene.getFormationDriftX();
+    scene.tick(0.5);
+    expect(scene.getFormationDriftX()).toBeGreaterThan(before);
   });
 });

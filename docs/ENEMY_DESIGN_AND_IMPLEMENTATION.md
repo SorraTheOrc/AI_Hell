@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|-----|-----------|------------|---------------------|
 | E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Vertical dive toward player (x locked at formation slot), returns to current formation slot | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | §4.1 | Vertical dive toward player (x locked at formation slot), returns to current formation slot. The whole cluster holds its drift while a living Diver is away (`DIVING`/`PAUSING`/`RETURNING`) and resumes once every Diver has rejoined | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -637,7 +637,9 @@ collecting bullets, so that frame's shots use the current position:
   the volley) are unchanged.
 - **Diver** — **snapshots the target at dive start** (recorded seam
   decision): a mid-dive aim change does not alter the in-flight dive arc.
-  Dives are x-locked at the formation slot.
+  Dives are x-locked at the formation slot. While a Diver is away from the
+  formation (`DIVING`/`PAUSING`/`RETURNING`) the cluster's drift is held —
+  see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
   is untouched (no aim seam).
 
@@ -666,6 +668,31 @@ Deterministic combat loops stop on the first `getPlayerHitCount()` increment
 The Boss gym work item (`AH-0MT99QBDW001O7PE`) is **out of scope** for this
 convention and will follow it when built: spawn the player via the same
 `player` config seam and reuse the live-combat collision/respawn machinery.
+
+### 7.6 Formation hold while a Diver is away (AH-0MUAYB957002EMYV)
+
+A Diver leaves the formation for the whole `DIVING → PAUSING → RETURNING`
+attack window, and the cluster must not keep drifting out from under it.
+The Diver reports this through the optional `requiresFormationHold?()` seam
+(on `FormationSceneEntity` and the shared `EnemyEntity` type alongside
+`DestructionAudioSeam`):
+
+- `Diver.requiresFormationHold()` returns `this.alive && this._state !==
+  DiverState.FORMATION` — true for `DIVING`/`PAUSING`/`RETURNING`, false in
+  `FORMATION`, and false once destroyed.
+- Both independent drift implementations consult the seam each frame and hold
+  the cluster's base while any **living** holder exists:
+  - `GymFormationScene.tick()` freezes `formationBaseX` and suppresses the
+    right-edge wrap/respawn.
+  - `PlayScene._moveEnemies()` freezes `driftX` and leaves `driftDir`
+    untouched, so ping-pong direction is preserved across the hold.
+- Destroyed entities are ignored by both gates, so a Diver killed mid-dive
+  cannot freeze the cluster forever.
+- Every entity's `applyFormationPosition` still runs each frame with the
+  unchanged base, so a returning Diver glides onto the slot evaluated live
+  from the (now stationary) base, and normal drift resumes on the first
+  frame after the last Diver re-enters `FORMATION`.
+- Non-Diver entities omit the seam and are unaffected.
 
 ---
 
