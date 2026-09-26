@@ -1510,6 +1510,9 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
     const scene = await bootWithPlayer();
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
     const target = scene.formationEntities[0];
 
     const callsBefore = vi.mocked(deathSound).mock.calls.length;
@@ -1542,6 +1545,30 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     // Invulnerability window engaged.
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
+    // Screen shake fired exactly once by the composed helper.
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('F9 — applyPlayerHit plays only the dedicated cue and registers juice (no generic cue)', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+
+    // Drive the shared VFX/respawn method directly so no enemy destruction
+    // can add an unrelated generic cue to the assertion.
+    (scene as unknown as { applyPlayerHit(p: Player): void }).applyPlayerHit(player);
+
+    expect(deathSound).toHaveBeenCalledTimes(1);
+    expect(genericSound).not.toHaveBeenCalled();
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
   });
 
   it('AC4 — SHUTDOWN destroys active player particle Graphics; restart leaks none', async () => {

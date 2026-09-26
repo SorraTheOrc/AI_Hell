@@ -797,6 +797,11 @@ describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
 
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
     expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+
+    // A stop/restart of the same instance must start clean and not throw.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
   });
 
   it('P3 shield absorb spawns no player juice', async () => {

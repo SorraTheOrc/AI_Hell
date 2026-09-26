@@ -14,6 +14,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
+import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
@@ -385,6 +386,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
     const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
+    const particleSpy = vi.spyOn(explosionParticlesModule, 'spawnExplosionParticles');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
 
     // Drive the player-hit path directly (no tick) so enemy fire cannot add
     // unrelated generic-destruction calls to the assertion.
@@ -394,6 +399,8 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(juiceSpy.mock.calls[0][3]).toBe('respawn');
     expect(deathSound).toHaveBeenCalledTimes(1);
     expect(genericSound).not.toHaveBeenCalled();
+    expect(particleSpy).toHaveBeenCalledTimes(1);
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
     expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
   });
 
@@ -457,6 +464,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
     expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+
+    // A restart of the same instance must start clean and not throw.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
   });
 
   it('AC5 — player bullet vs enemy bullet plays the dedicated impact cue from the shared path', async () => {
