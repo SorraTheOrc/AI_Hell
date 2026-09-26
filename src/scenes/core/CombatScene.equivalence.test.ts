@@ -10,6 +10,7 @@ import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
+import { GymPowerUpsCombat } from '../gym/GymPowerUpsCombat';
 import {
   GymFormationScene,
   type EnemyFormationConfig,
@@ -33,6 +34,21 @@ const SHARED_METHODS = [
   '_handleTeleport',
   '_readPlayerInput',
 ] as const;
+
+/**
+ * The shared P3/P6 hit-gating hooks (AH-0MUHM66ES0027QQV AC3). They are
+ * declared as safe defaults in `CombatCoreScene` and implemented
+ * registry-backed in `CombatScene`; no other production scene may
+ * re-implement them.
+ */
+const SHARED_GATING_METHODS = ['isPlayerPhased', 'tryAbsorbPlayerHit'] as const;
+
+/** The three scenes that must route gating through the shared hooks. */
+const GATING_SCENE_PROTOTYPES: Array<[string, object]> = [
+  ['PlayScene', PlayScene.prototype],
+  ['GymFormationScene', GymFormationScene.prototype],
+  ['GymPowerUpsCombat', GymPowerUpsCombat.prototype],
+];
 
 /** The two shared-core files that may host a shared-method definition. */
 const SHARED_CORE_FILES = [
@@ -185,6 +201,41 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       .map((file) => path.relative(process.cwd(), file))
       .sort();
     expect(definers).toEqual([]);
+  });
+
+  it('P3/P6 gating resolves to the same shared hooks on all three scenes (no own overrides)', () => {
+    for (const [name, prototype] of GATING_SCENE_PROTOTYPES) {
+      for (const method of SHARED_GATING_METHODS) {
+        // No scene defines its own body ...
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        // ... and all three resolve to the same CombatScene function object.
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared CombatScene hook`,
+        ).toBe(
+          (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+        );
+      }
+    }
+  });
+
+  it('phase/shield gating is defined only in the shared core repo-wide', () => {
+    const files = productionSceneFiles();
+    for (const method of SHARED_GATING_METHODS) {
+      const definers = files
+        .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), method))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      // At least the shared core defines it (CombatCoreScene safe default
+      // + CombatScene registry-backed override), and no other scene does.
+      expect(definers.length).toBeGreaterThanOrEqual(1);
+      for (const definer of definers) {
+        expect(SHARED_CORE_FILES).toContain(definer);
+      }
+    }
   });
 });
 
