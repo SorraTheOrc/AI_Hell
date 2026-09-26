@@ -29,6 +29,17 @@ import {
   playPowerUpCollectPopSound,
   playBulletDestructionSound,
   playDestructionSound,
+  playPlayerDestructionSound,
+  PLAYER_DESTRUCTION_THUMP_START_HZ,
+  PLAYER_DESTRUCTION_THUMP_END_HZ,
+  PLAYER_DESTRUCTION_THUMP_DURATION,
+  PLAYER_DESTRUCTION_THUMP_VOLUME,
+  PLAYER_DESTRUCTION_BODY_START_HZ,
+  PLAYER_DESTRUCTION_BODY_END_HZ,
+  PLAYER_DESTRUCTION_BODY_DURATION,
+  PLAYER_DESTRUCTION_BODY_VOLUME,
+  PLAYER_DESTRUCTION_TAIL_DURATION,
+  PLAYER_DESTRUCTION_TAIL_VOLUME,
   playTankDestructionSound,
   EXPLOSION_PITCH_JITTER,
   playDiverFireSound,
@@ -1253,5 +1264,101 @@ describe('enemy fire SFX — no gap between advance cue and fire sound (AC1, AH-
     // Fire sound scheduled at cue end time.
     const cueEnd = oscs[0].stopTime! - 0.02;
     expect(oscs[1].startTime!).toBeGreaterThan(cueEnd - 0.01);
+  });
+});
+
+// ── Dedicated player-destruction cue (AH-0MUDY2ID7006VY3A) ──────────
+
+describe('player-destruction cue — layered hull breach (AH-0MUDY2ID7006VY3A)', () => {
+  beforeEach(() => {
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('is a safe no-op without an AudioContext (never throws)', () => {
+    expect(() => playPlayerDestructionSound()).not.toThrow();
+  });
+
+  describe('with a recording context', () => {
+    beforeEach(() => {
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      _resetAudioContextForTests();
+      RecordingAudioContext.instances.length = 0;
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      playCannonFireSound(); // prime the module-scoped context
+    });
+
+    it('layers three oscillators (thump + body + noise tail)', () => {
+      const snap = snapshot();
+      playPlayerDestructionSound();
+      const oscs = newOscillators(snap);
+      // Two tonal oscillators plus one noise buffer source.
+      expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+      expect(oscs.filter((o) => o.type === 'noise')).toHaveLength(1);
+      expect(oscs.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('uses the exported constants for every layer frequency/duration/volume', () => {
+      const snap = snapshot();
+      playPlayerDestructionSound();
+      const oscs = newOscillators(snap);
+      const gains = newGains(snap);
+
+      const thump = oscs.find(
+        (o) => o.type === 'sawtooth' && o.freqEvents[0]?.value === PLAYER_DESTRUCTION_THUMP_START_HZ,
+      )!;
+      expect(thump).toBeDefined();
+      expect(thump.freqEvents[thump.freqEvents.length - 1].value).toBe(
+        PLAYER_DESTRUCTION_THUMP_END_HZ,
+      );
+      expect(thump.stopTime! - thump.startTime!).toBeCloseTo(
+        PLAYER_DESTRUCTION_THUMP_DURATION + 0.02,
+        5,
+      );
+
+      const body = oscs.find(
+        (o) => o.type === 'triangle' && o.freqEvents[0]?.value === PLAYER_DESTRUCTION_BODY_START_HZ,
+      )!;
+      expect(body).toBeDefined();
+      expect(body.freqEvents[body.freqEvents.length - 1].value).toBe(
+        PLAYER_DESTRUCTION_BODY_END_HZ,
+      );
+      expect(body.stopTime! - body.startTime!).toBeCloseTo(
+        PLAYER_DESTRUCTION_BODY_DURATION + 0.02,
+        5,
+      );
+
+      // Layered amplitudes come from the exported constants.
+      const values = gains.flatMap((g) => g.gainEvents.map((e) => e.value));
+      expect(values).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+      expect(values).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+      expect(values).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
+      expect(PLAYER_DESTRUCTION_TAIL_DURATION).toBeGreaterThan(0);
+    });
+
+    it('is distinct from the generic enemy destruction cue', () => {
+      const genericSnap = snapshot();
+      playDestructionSound();
+      const genericOscs = newOscillators(genericSnap);
+
+      const playerSnap = snapshot();
+      playPlayerDestructionSound();
+      const playerOscs = newOscillators(playerSnap);
+
+      // Generic cue is a single sawtooth; the player cue is layered.
+      expect(genericOscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+      expect(playerOscs.filter((o) => o.type !== 'noise').length).toBeGreaterThan(1);
+      // And the player cue starts lower/heavier than the generic 440 Hz sweep.
+      const playerStart = playerOscs.find((o) => o.type !== 'noise')!.freqEvents[0].value;
+      expect(playerStart).toBeLessThan(440);
+    });
+
+    it('keeps every layer at or below the 0.2 player-cue volume ceiling', () => {
+      const snap = snapshot();
+      playPlayerDestructionSound();
+      const gains = newGains(snap);
+      expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+    });
   });
 });
