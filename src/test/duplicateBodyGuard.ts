@@ -29,6 +29,21 @@ export function definesMethod(source: string, method: string): boolean {
 }
 
 /**
+ * True when `source` **defines** a top-level function named `name` (e.g.
+ * `export function resolveMineralKillDrops(`).
+ *
+ * The matcher anchors the declaration to the start of a line so call sites
+ * and imports do not count as definitions.
+ */
+export function definesFunction(source: string, name: string): boolean {
+  const re = new RegExp(
+    `^[ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`,
+    'm',
+  );
+  return re.test(source);
+}
+
+/**
  * Recursively lists production (non-test) TypeScript files under `dir`.
  * Test files (`*.test.ts`) are excluded — they legitimately reference
  * the method names in assertions.

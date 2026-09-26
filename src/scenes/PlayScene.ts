@@ -106,6 +106,7 @@ import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
 } from './core/CombatScene';
+import { resolveMineralKillDrops } from './core/mineralKillDrops';
 import {
   applyPhaseGhost,
   drawShieldBubble,
@@ -1190,19 +1191,13 @@ export class PlayScene extends CombatScene<
       this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
     }
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
-    // Mineral drops (GDD §4.5): a destroyed small asteroid leaves a mineral
-    // at the site; large/medium asteroids do not (their small split children
-    // do). A non-asteroid enemy re-drops a fraction of the minerals it
-    // absorbed while alive.
-    if (s.enemyKey === 'asteroid') {
-      if ((s.entity as Asteroid).getSizeTier() === 'small') {
-        this.spawnMineralAt(s.entity.x, s.entity.y);
-      }
-    } else {
-      this.minerals.push(
-        ...s.entity.spawnMineralDrops(s.entity.x, s.entity.y, this.rng),
-      );
-    }
+    // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
+    // asteroid leaves one mineral at the site, large/medium asteroids do not
+    // (their small split children do), and a non-asteroid enemy re-drops a
+    // fraction of the minerals it absorbed while alive.
+    this.minerals.push(
+      ...resolveMineralKillDrops(this, s.entity, this.rng),
+    );
     this._advanceAfterKill();
   }
 

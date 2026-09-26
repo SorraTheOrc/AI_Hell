@@ -18,6 +18,13 @@
  * `bullets`) and config-driven hooks (teleport gate, bullet hit radius,
  * `config.onEntityDestroyed`).
  *
+ * **Shared mineral kill-drop rule:** the gym's mineral layer seeds and
+ * collects minerals, and its destruction paths (`onEnemyDestroyed` and the
+ * EXPLODE button) call the shared `resolveMineralKillDrops` rule from
+ * `src/scenes/core/mineralKillDrops.ts` — the *same code* the game runs —
+ * so a small asteroid drops one mineral and a non-asteroid enemy re-drops a
+ * fraction of the minerals it absorbed, exactly as in `PlayScene`.
+ *
  * **Discovery note:** this file lives in the `core/` subfolder, so the
  * gym index glob (`src/scenes/gym/*.ts`) never lists it as a scene.
  */
@@ -83,6 +90,10 @@ import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
 import { Mineral } from '../../../entities/Mineral';
 import { Asteroid } from '../../../entities/Asteroid';
+import {
+  resolveMineralKillDrops,
+  type MineralKillDropEntity,
+} from '../../core/mineralKillDrops';
 import {
   randomChoiceStrategy,
   type ChoiceOption,
@@ -391,6 +402,11 @@ export class GymFormationScene<
   private mineralChoiceOpen = false;
   /** Pluggable choice strategy for the hold-full overlay. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
+  /**
+   * Scene-level random-number generator for the mineral kill-drop rule.
+   * Defaults to `Math.random`; injectable so gym drop tests are deterministic.
+   */
+  private _sceneRng: () => number = Math.random;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -586,6 +602,10 @@ export class GymFormationScene<
     } else {
       playDestructionSound();
     }
+    // Shared mineral kill-drop rule (GDD §4.5) — the EXPLODE path bypasses
+    // `onEnemyDestroyed`, so it must drop here too (no double-drop: the two
+    // paths are mutually exclusive).
+    this._dropMineralsForKill(victim);
     // Dynamic-replacement seam (Asteroid split children, GDD §4.1).
     this.config.onEntityDestroyed?.(victim);
     this.statusText.setText(
@@ -994,6 +1014,15 @@ export class GymFormationScene<
     this.mineralChoiceStrategy = strategy;
   }
 
+  /**
+   * Injects the scene-level RNG used by the shared mineral kill-drop rule.
+   * Exposed so gym tests can make non-asteroid re-drops deterministic; the
+   * default (`Math.random`) is used in production.
+   */
+  setSceneRng(rng: () => number): void {
+    this._sceneRng = rng;
+  }
+
   /** Creates the mineral HUD and seeds the field; called from `create()`. */
   private _initMineralLayer(): void {
     this.mineralCapacity = loadRules().mineralHoldCapacity;
@@ -1339,7 +1368,24 @@ export class GymFormationScene<
 
   /** Enemy destroyed through the generic path: forward to the config seam. */
   protected override onEnemyDestroyed(entity: TEntity): void {
+    // Shared mineral kill-drop rule (GDD §4.5): a small asteroid leaves one
+    // mineral, large/medium split instead, and a non-asteroid enemy re-drops
+    // a fraction of the minerals it absorbed — exactly as the game does.
+    this._dropMineralsForKill(entity);
     this.config.onEntityDestroyed?.(entity);
+  }
+
+  /**
+   * Applies the shared mineral kill-drop rule to a destroyed entity and adds
+   * the resulting minerals to this gym's live mineral field.
+   */
+  private _dropMineralsForKill(entity: TEntity): void {
+    const drops = resolveMineralKillDrops(
+      this,
+      entity as unknown as MineralKillDropEntity,
+      this._sceneRng,
+    );
+    if (drops.length > 0) this.minerals.push(...drops);
   }
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */

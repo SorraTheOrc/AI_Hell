@@ -15,6 +15,25 @@ import { MineralChoiceScene } from '../MineralChoiceScene';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
+import { Asteroid } from '../../entities/Asteroid';
+
+/** Live asteroid entities of the given tier in a mineral gym. */
+function liveAsteroids(scene: GymMinerals): Asteroid[] {
+  return scene.formationEntities.filter(
+    (e): e is Asteroid => e instanceof Asteroid && e.alive,
+  );
+}
+
+/** Empties the player-bullet list so only the test's bullet can hit a target. */
+function clearPlayerBullets(scene: GymMinerals): void {
+  (scene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+}
+
+/** Removes every live mineral from the field (via the public collect seam). */
+function clearMinerals(scene: GymMinerals): void {
+  for (const mineral of scene.getMinerals()) mineral.handleOverlap('player');
+  scene.tick(0.016);
+}
 
 describe('GymMinerals', () => {
   let booted: BootedGame | null = null;
@@ -77,6 +96,52 @@ describe('GymMinerals', () => {
 
     expect(scene.getSeededMineralCount()).toBe(100);
     expect(scene.getMinerals().length).toBeGreaterThan(80);
+  });
+
+  it('a destroyed small asteroid drops exactly one mineral at its position (AC1)', async () => {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    const scene = booted.scene as GymMinerals;
+    clearMinerals(scene);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    // Large → no direct drop (it splits into two mediums instead).
+    const large = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'large',
+    )!;
+    clearPlayerBullets(scene);
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    // Medium → no direct drop either (it splits into two smalls).
+    const medium = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'medium',
+    )!;
+    clearPlayerBullets(scene);
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    // Small → exactly one mineral at the death position.
+    const small = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'small',
+    )!;
+    // Remove every other live asteroid so the bullet can only hit the target
+    // (siblings spawn on top of each other in the split chain).
+    for (const other of liveAsteroids(scene)) {
+      if (other !== small) other.destroySelf();
+    }
+    const sx = small.x;
+    const sy = small.y;
+    clearPlayerBullets(scene);
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    const minerals = scene.getMinerals();
+    expect(minerals).toHaveLength(1);
+    // The drop is at the death site; the asteroid advances one tick before the
+    // collision resolves, so allow for that single-tick drift.
+    expect(Math.hypot(minerals[0].x - sx, minerals[0].y - sy)).toBeLessThanOrEqual(2);
   });
 });
 

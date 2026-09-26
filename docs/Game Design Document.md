@@ -306,7 +306,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
 
-- **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected.
+- **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected. The rule is implemented **once** in the shared helper `src/scenes/core/mineralKillDrops.ts` (`resolveMineralKillDrops`, plus the shared scatter maths in `src/entities/Mineral.ts`) and consumed by **both** `PlayScene` and `GymFormationScene`, so the game and every formation gym (`GymMinerals`, the `GymEnemies` asteroid row, …) drop identically and cannot drift apart.
 - **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as a fixed-length, hollow-outlined bar that fills proportionally from empty to full (`src/ui/HUD.ts`), resets on `GameState.startGame()`, and is never written to the leaderboard.
 - **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries.
 - **Permanent pick**: the chosen option is applied to the player **permanently for the current run** — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
@@ -455,7 +455,7 @@ src/
 │   │   │                      (`getInvulnerabilityDuration`, `isPlayerPhased`,
 │   │   │                      `tryAbsorbPlayerHit`). Extended directly by the threat-free
 │   │   │                      gyms `GymWeapons` and `GymPowerUpsUtility`.
-│   │   └── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
+│   │   ├── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
 │   │                      extends `CombatCoreScene` and adds the combat-only template
 │   │                      methods (`_handleCollisions`, `_hitPlayer`, `_handleTeleport`/
 │   │                      `triggerTeleport`) plus the bullet-vs-bullet impact feedback
@@ -466,6 +466,15 @@ src/
 │   │                      eight shared methods exactly once, enforced repo-wide by
 │   │                      `CombatScene.equivalence.test.ts`; extended by `PlayScene`,
 │   │                      `GymFormationScene` and `GymPowerUpsCombat`.
+│   │   └── mineralKillDrops.ts — Shared mineral kill-drop rule (implemented,
+│   │                      AH-0MUHMT5JC004WRSB): `resolveMineralKillDrops(scene,
+│   │                      entity, rng)` decides the drops for a destroyed enemy
+│   │                      (small asteroid → one mineral at the death site; large/
+│   │                      medium asteroid → none; non-asteroid enemy → the configured
+│   │                      25–50 % re-drop, scattered near the death site). Consumed by
+│   │                      `PlayScene` and `GymFormationScene` so the game and the gyms
+│   │                      cannot diverge; the repo-wide guard in
+│   │                      `CombatScene.equivalence.test.ts` pins the single definition.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
@@ -516,7 +525,8 @@ src/
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
-│       │                   small-asteroid mineral drops, hold fill + HUD hold bar,
+│       │                   small-asteroid mineral drops (via the shared
+│       │                   `scenes/core/mineralKillDrops.ts` rule), hold fill + HUD hold bar,
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
 │       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
 │       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)

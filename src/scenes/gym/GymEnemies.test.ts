@@ -1114,6 +1114,52 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     ).toBe(1);
   });
 
+  it('a destroyed small asteroid drops one mineral at its position (AC1)', async () => {
+    const scene = await bootAsteroidGym();
+    const clearBullets = (): void => {
+      (
+        scene as unknown as { playerBullets: unknown[] }
+      ).playerBullets.length = 0;
+    };
+
+    // Empty the seeded field so the count delta is unambiguous.
+    for (const mineral of scene.getMinerals()) mineral.handleOverlap('player');
+    scene.tick(0.016);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    // Split large → medium → small.
+    const large = liveAsteroids(scene)[0];
+    clearBullets();
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    const medium = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'medium',
+    )!;
+    clearBullets();
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+    const small = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'small',
+    )!;
+    // Remove every other live asteroid so the bullet can only hit the target
+    // (siblings spawn on top of each other in the split chain).
+    for (const other of liveAsteroids(scene)) {
+      if (other !== small) other.destroySelf();
+    }
+    const sx = small.x;
+    const sy = small.y;
+
+    clearBullets();
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    const minerals = scene.getMinerals();
+    expect(minerals).toHaveLength(1);
+    // The drop is at the death site; the asteroid advances one tick before the
+    // collision resolves, so allow for that single-tick drift.
+    expect(Math.hypot(minerals[0].x - sx, minerals[0].y - sy)).toBeLessThanOrEqual(2);
+  });
+
   it('asteroids never fire in the gym even when SHOOT is toggled on', async () => {
     const scene = await bootAsteroidGym();
     const before = scene.activeBullets.length;

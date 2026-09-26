@@ -8,6 +8,7 @@ import { bootScene, BootedGame } from '../../../test/gameHarness';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  MINERAL_REDROP_SCATTER_RADIUS,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
 } from '../../../core/constants';
@@ -17,6 +18,7 @@ import {
   SHIP_SIZE,
 } from '../../../core/constants';
 import { Player } from '../../../entities/Player';
+import { BaseEnemy } from '../../../entities/BaseEnemy';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import {
@@ -2454,5 +2456,125 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     expect(scene.getPlayer()).toBeNull();
     expect(() => scene.tick(0.1)).not.toThrow();
     expect(scene.isShieldBubbleVisible()).toBe(false);
+  });
+});
+
+// ── Shared mineral kill-drop wiring (AH-0MUHMT5JC004WRSB, AC2) ──────
+
+/**
+ * Non-asteroid gym entity backed by the real mineral-absorbing `BaseEnemy`,
+ * so the gym test exercises the production re-drop rule (never a re-impl).
+ */
+class MineralTestEnemy extends BaseEnemy implements FormationSceneEntity {
+  constructor(scene: Phaser.Scene, offset: FormationOffset) {
+    super(scene, 0, 0, { formationOffset: offset, size: 16, color: 0x00ff00 });
+  }
+
+  protected getExplosionPatternName(): string {
+    return 'scout';
+  }
+
+  protected _drawBody(): void {
+    // No body needed for the kill-drop contract.
+  }
+
+  applyFormationPosition(
+    baseX: number,
+    baseY: number,
+    _dt: number,
+    spacingX: number,
+    spacingY: number,
+  ): void {
+    this.setPosition(
+      baseX + this.offset.col * spacingX,
+      baseY + this.offset.row * spacingY,
+    );
+  }
+}
+
+const MINERAL_GYM_CONFIG: EnemyFormationConfig<MineralTestEnemy, StubBullet> = {
+  sceneKey: 'MineralKillDropGym',
+  count: 1,
+  spacingX: 20,
+  spacingY: 20,
+  driftSpeed: 0,
+  startX: GAME_WIDTH * 0.25,
+  startY: GAME_HEIGHT * 0.5,
+  statusLabel: 'mineral',
+  hintText: 'mineral kill-drop test gym',
+  buildOffsets: () => [{ row: 0, col: 0 }],
+  createEntity: (scene, x, y, offset) => {
+    const enemy = new MineralTestEnemy(scene, offset);
+    enemy.setPosition(x, y);
+    return enemy;
+  },
+  collectBullets: () => [],
+};
+
+class MineralKillDropGym extends GymFormationScene<
+  MineralTestEnemy,
+  StubBullet
+> {
+  constructor() {
+    super(MINERAL_GYM_CONFIG);
+  }
+}
+
+describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootMineralGym(): Promise<MineralKillDropGym> {
+    booted = await bootScene([MineralKillDropGym]);
+    return booted.scene as MineralKillDropGym;
+  }
+
+  /** Empties the seeded field without involving a player. */
+  function clearField(scene: MineralKillDropGym): void {
+    for (const mineral of scene.getMinerals()) mineral.handleOverlap('player');
+    scene.tick(0.016);
+  }
+
+  it('a non-asteroid enemy re-drops the shared rule output on destruction (AC2)', async () => {
+    const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
+    clearField(scene);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    for (let i = 0; i < 10; i += 1) enemy.collectMineral();
+    const collected = enemy.mineralCount;
+    expect(collected).toBeGreaterThanOrEqual(10);
+
+    // Inject a deterministic RNG for the re-drop, then destroy the enemy
+    // through the EXPLODE path (which bypasses `onEnemyDestroyed`).
+    scene.setSceneRng(createSeededRng(5));
+    const expected = enemy.mineralRedropCount(createSeededRng(5));
+    expect(expected).toBeGreaterThan(0);
+    expect(expected).toBeLessThanOrEqual(collected);
+
+    const ex = enemy.x;
+    const ey = enemy.y;
+    scene.explodeRandom();
+
+    const minerals = scene.getMinerals();
+    expect(minerals).toHaveLength(expected);
+    for (const mineral of minerals) {
+      expect(
+        Math.hypot(mineral.x - ex, mineral.y - ey),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
+  });
+
+  it('drops nothing when a non-asteroid enemy absorbed nothing (AC2)', async () => {
+    const scene = await bootMineralGym();
+    clearField(scene);
+
+    scene.explodeRandom();
+
+    expect(scene.getMinerals()).toHaveLength(0);
   });
 });
