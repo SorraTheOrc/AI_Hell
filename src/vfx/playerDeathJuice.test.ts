@@ -7,7 +7,10 @@
  * model (no Phaser import), so it runs headless with no rendering.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import Phaser from 'phaser';
+
+import { bootScene, type BootedGame } from '../test/gameHarness';
 import {
   PLAYER_DEATH_DEBRIS_COUNT,
   PLAYER_DEATH_DEBRIS_LIFESPAN_MS,
@@ -30,9 +33,18 @@ import {
   PLAYER_DEATH_ENABLE_SHAKE,
   PLAYER_DEATH_ENABLE_SHOCKWAVE,
   resolveJuiceParams,
+  applyShake,
+  spawnDeathFlash,
   type PlayerDeathJuiceParams,
 } from './playerDeathJuice';
 import { SHIP_COLOR } from '../core/constants';
+
+/** Minimal bootable scene for the VFX helpers. */
+class VfxStubScene extends Phaser.Scene {
+  constructor() {
+    super({ key: 'VfxStubScene' });
+  }
+}
 
 /** Every field that must be populated on a resolved parameter set. */
 const REQUIRED_FIELDS: Array<keyof PlayerDeathJuiceParams> = [
@@ -159,5 +171,111 @@ describe('resolveJuiceParams — pure player-death parameter model (F1)', () => 
       expect(Number.isFinite(value)).toBe(true);
       expect(value).toBeGreaterThan(0);
     }
+  });
+});
+
+// ── F3: screen shake and flash layers ───────────────────────────────
+
+describe('applyShake — scene-camera shake (F3, parent AC2)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it("fires camera.shake once with the configured 'respawn' params", async () => {
+    const scene = await boot();
+    const shake = vi.spyOn(scene.cameras.main, 'shake').mockImplementation(() => scene.cameras.main as never);
+    const params = resolveJuiceParams('respawn');
+
+    applyShake(scene, params);
+
+    expect(shake).toHaveBeenCalledTimes(1);
+    expect(shake).toHaveBeenCalledWith(params.shakeDurationMs, params.shakeIntensity);
+  });
+
+  it("fires camera.shake once with the heavier 'fatal' params", async () => {
+    const scene = await boot();
+    const shake = vi.spyOn(scene.cameras.main, 'shake').mockImplementation(() => scene.cameras.main as never);
+    const params = resolveJuiceParams('fatal');
+
+    applyShake(scene, params);
+
+    expect(shake).toHaveBeenCalledTimes(1);
+    expect(shake).toHaveBeenCalledWith(params.shakeDurationMs, params.shakeIntensity);
+  });
+
+  it('is a no-op when the shake toggle is disabled', async () => {
+    const scene = await boot();
+    const shake = vi.spyOn(scene.cameras.main, 'shake').mockImplementation(() => scene.cameras.main as never);
+
+    applyShake(scene, { ...resolveJuiceParams('respawn'), shakeEnabled: false });
+
+    expect(shake).not.toHaveBeenCalled();
+  });
+});
+
+describe('spawnDeathFlash — full-screen fade (F3, parent AC4/AC6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('creates the flash at the configured alpha/colour and tween duration', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveJuiceParams('fatal');
+
+    const flash = spawnDeathFlash(scene, params, registry);
+
+    expect(flash).not.toBeNull();
+    expect(registry).toContain(flash);
+    expect((flash as Phaser.GameObjects.Rectangle).fillColor).toBe(params.flashColor);
+    expect((flash as Phaser.GameObjects.Rectangle).fillAlpha).toBeCloseTo(params.flashAlpha, 5);
+    expect(flash?.getData('juiceLayer')).toBe('flash');
+
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(params.flashDurationMs);
+  });
+
+  it('destroys the flash and removes it from the registry on tween completion', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const flash = spawnDeathFlash(scene, resolveJuiceParams('respawn'), registry);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(registry).not.toContain(flash);
+    expect(flash?.active).toBe(false);
+  });
+
+  it('is a no-op when the flash toggle is disabled', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const flash = spawnDeathFlash(
+      scene,
+      { ...resolveJuiceParams('respawn'), flashEnabled: false },
+      registry,
+    );
+
+    expect(flash).toBeNull();
+    expect(registry).toHaveLength(0);
   });
 });

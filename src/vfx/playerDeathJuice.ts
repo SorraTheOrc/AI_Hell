@@ -26,6 +26,7 @@
  */
 
 import { SHIP_COLOR } from '../core/constants';
+import Phaser from 'phaser';
 
 // ── Severity ────────────────────────────────────────────────────────
 
@@ -181,7 +182,6 @@ export interface PlayerDeathJuiceParams {
 function scaleCount(base: number, mult: number): number {
   return Math.max(0, Math.round(base * mult));
 }
-
 /**
  * Resolves the complete player-death juice parameters for `severity`.
  *
@@ -230,4 +230,94 @@ export function resolveJuiceParams(
     shockwaveEnabled: PLAYER_DEATH_ENABLE_SHOCKWAVE,
     soundEnabled: PLAYER_DEATH_ENABLE_SOUND,
   };
+}
+
+// ── Teardown registry contract (shared by every juice layer) ───────
+
+/**
+ * Minimal registry contract for juice-owned display objects. Any array of
+ * Phaser display objects satisfies it (the scenes pass a
+ * `Phaser.GameObjects.GameObject[]`), and it is also structurally compatible
+ * with the `registry` option accepted by `spawnExplosionParticles`.
+ *
+ * Layers `push` their handle on spawn and `splice` it out on completion, so a
+ * scene's `SHUTDOWN` handler can destroy any leftovers exactly like the
+ * existing `playerExplosions` pattern (parent AC6).
+ */
+export interface JuiceRegistry {
+  push(...items: unknown[]): number;
+  indexOf(item: unknown): number;
+  splice(start: number, deleteCount: number): unknown[];
+}
+
+/** Depth for the full-screen flash — above the world and HUD. */
+export const PLAYER_DEATH_FLASH_DEPTH = 900;
+
+/**
+ * Triggers the scene-camera shake for a player death (parent AC2).
+ *
+ * Full-2D, single shake: Phaser `camera.shake(duration, intensity)` with the
+ * severity-resolved duration/intensity. Cosmetic only — it never moves the
+ * player, reads gameplay state or blocks input. No-op when the shake toggle is
+ * off or the scene has no main camera.
+ *
+ * @returns `true` when a shake was triggered, `false` on the no-op paths.
+ */
+export function applyShake(scene: Phaser.Scene, params: PlayerDeathJuiceParams): boolean {
+  if (!params.shakeEnabled) return false;
+  const camera = scene.cameras?.main;
+  if (!camera || typeof camera.shake !== 'function') return false;
+  camera.shake(params.shakeDurationMs, params.shakeIntensity);
+  return true;
+}
+
+/**
+ * Spawns the brief full-screen player-death flash (parent AC4).
+ *
+ * A non-interactive full-screen rectangle in the player colour, fixed to the
+ * camera (scroll factor 0) at {@link PLAYER_DEATH_FLASH_DEPTH}, fading from
+ * the resolved alpha to 0 over the resolved duration. On completion it is
+ * destroyed and removed from `registry` (parent AC6).
+ *
+ * No-op (`null`) when the flash toggle is off.
+ *
+ * @returns The flash rectangle, or `null` when disabled.
+ */
+export function spawnDeathFlash(
+  scene: Phaser.Scene,
+  params: PlayerDeathJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Rectangle | null {
+  if (!params.flashEnabled) return null;
+
+  const width = scene.scale?.width ?? 0;
+  const height = scene.scale?.height ?? 0;
+  const flash = scene.add.rectangle(
+    width / 2,
+    height / 2,
+    width,
+    height,
+    params.flashColor,
+    params.flashAlpha,
+  );
+  flash.setDepth(PLAYER_DEATH_FLASH_DEPTH);
+  flash.setScrollFactor(0);
+  flash.setData('juiceLayer', 'flash');
+  registry?.push(flash);
+
+  scene.tweens.add({
+    targets: flash,
+    alpha: 0,
+    duration: params.flashDurationMs,
+    ease: 'Power2',
+    onComplete: () => {
+      if (registry) {
+        const index = registry.indexOf(flash);
+        if (index >= 0) registry.splice(index, 1);
+      }
+      flash.destroy();
+    },
+  });
+
+  return flash;
 }
