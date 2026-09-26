@@ -35,6 +35,10 @@ import {
   resolveJuiceParams,
   applyShake,
   spawnDeathFlash,
+  spawnDeathDebris,
+  spawnDeathShockwave,
+  PLAYER_DEATH_DEBRIS_TRAVEL,
+  PLAYER_DEATH_SHOCKWAVE_START_SCALE,
   type PlayerDeathJuiceParams,
 } from './playerDeathJuice';
 import { SHIP_COLOR } from '../core/constants';
@@ -277,5 +281,157 @@ describe('spawnDeathFlash — full-screen fade (F3, parent AC4/AC6)', () => {
 
     expect(flash).toBeNull();
     expect(registry).toHaveLength(0);
+  });
+});
+
+// ── F4: debris shards and shockwave ring ────────────────────────────
+
+describe('spawnDeathDebris — outward shards (F4, parent AC4/AC6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('spawns one shard per resolved debris count and registers each', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = resolveJuiceParams('fatal');
+
+    const shards = spawnDeathDebris(scene, 100, 100, params, registry, { seed: 1 });
+
+    expect(shards).toHaveLength(params.debrisCount);
+    expect(registry).toHaveLength(params.debrisCount);
+    for (const shard of shards) expect(registry).toContain(shard);
+  });
+
+  it('tweens each shard for the resolved debris lifespan and travels outward', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveJuiceParams('respawn');
+
+    const shards = spawnDeathDebris(scene, 10, 20, params, registry, { seed: 7 });
+
+    expect(tweenSpy).toHaveBeenCalledTimes(params.debrisCount);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(params.debrisLifespanMs);
+
+    // Every shard is tweened to an outward target within [0.6, 1.0] × travel.
+    const targets = tweenSpy.mock.calls.map(
+      (call) => call[0] as Phaser.Types.Tweens.TweenBuilderConfig,
+    );
+    for (const target of targets) {
+      const distance = Math.hypot(
+        (target.x as number) - 10,
+        (target.y as number) - 20,
+      );
+      expect(distance).toBeGreaterThanOrEqual(PLAYER_DEATH_DEBRIS_TRAVEL * 0.6 - 1e-6);
+      expect(distance).toBeLessThanOrEqual(PLAYER_DEATH_DEBRIS_TRAVEL + 1e-6);
+    }
+    expect(shards.length).toBe(targets.length);
+  });
+
+  it('destroys shards and removes them from the registry on completion', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    spawnDeathDebris(scene, 0, 0, resolveJuiceParams('respawn'), registry, { seed: 3 });
+    const shard = registry[0] as Phaser.GameObjects.Graphics;
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(registry).not.toContain(shard);
+    expect(shard.active).toBe(false);
+  });
+
+  it('is a no-op when the debris toggle is disabled', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const shards = spawnDeathDebris(
+      scene,
+      0,
+      0,
+      { ...resolveJuiceParams('respawn'), debrisEnabled: false },
+      registry,
+    );
+
+    expect(shards).toHaveLength(0);
+    expect(registry).toHaveLength(0);
+  });
+});
+
+describe('spawnDeathShockwave — expanding ring (F4, parent AC4/AC6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('draws a ring at the resolved radius and tweens for the resolved duration', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveJuiceParams('fatal');
+
+    const ring = spawnDeathShockwave(scene, 5, 6, params, registry);
+
+    expect(ring).not.toBeNull();
+    expect(registry).toContain(ring);
+    expect(ring?.getData('shockwaveRadius')).toBe(params.shockwaveRadius);
+    expect(ring?.getData('juiceLayer')).toBe('shockwave');
+
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(params.shockwaveDurationMs);
+    expect(ring?.scale).toBe(PLAYER_DEATH_SHOCKWAVE_START_SCALE);
+  });
+
+  it('destroys the ring and removes it from the registry on completion', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const ring = spawnDeathShockwave(scene, 0, 0, resolveJuiceParams('respawn'), registry);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(registry).not.toContain(ring);
+    expect(ring?.active).toBe(false);
+  });
+
+  it('is a no-op when the shockwave toggle is disabled', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const ring = spawnDeathShockwave(
+      scene,
+      0,
+      0,
+      { ...resolveJuiceParams('respawn'), shockwaveEnabled: false },
+      registry,
+    );
+
+    expect(ring).toBeNull();
+    expect(registry).toHaveLength(0);
+  });
+
+  it('shard travel and shockwave start scale are positive tunables', () => {
+    expect(PLAYER_DEATH_DEBRIS_TRAVEL).toBeGreaterThan(0);
+    expect(PLAYER_DEATH_SHOCKWAVE_START_SCALE).toBeGreaterThan(0);
+    expect(PLAYER_DEATH_SHOCKWAVE_START_SCALE).toBeLessThan(1);
   });
 });

@@ -26,6 +26,7 @@
  */
 
 import { SHIP_COLOR } from '../core/constants';
+import { createRng } from './explosionParticles';
 import Phaser from 'phaser';
 
 // ── Severity ────────────────────────────────────────────────────────
@@ -320,4 +321,146 @@ export function spawnDeathFlash(
   });
 
   return flash;
+}
+
+// ── F4: debris shards and shockwave ring ───────────────────────────
+
+/** Distance (px) a debris shard travels outward from the death point. */
+export const PLAYER_DEATH_DEBRIS_TRAVEL = 74;
+
+/** Debris shard radius (px). */
+export const PLAYER_DEATH_DEBRIS_RADIUS = 3;
+
+/** Depth for debris shards — above the world, below the flash. */
+export const PLAYER_DEATH_DEBRIS_DEPTH = 6;
+
+/**
+ * Fraction of its final radius the shockwave ring starts at, so it visibly
+ * expands outward rather than popping in at full size.
+ */
+export const PLAYER_DEATH_SHOCKWAVE_START_SCALE = 0.15;
+
+/** Stroke width (px) of the shockwave ring. */
+export const PLAYER_DEATH_SHOCKWAVE_LINE_WIDTH = 4;
+
+/** Depth for the shockwave ring — just above the debris. */
+export const PLAYER_DEATH_SHOCKWAVE_DEPTH = 7;
+
+/** Optional overrides for the deterministic debris test seam. */
+export interface DeathDebrisOptions {
+  /** PRNG seed — defaults to a `Date.now()`-derived seed. */
+  seed?: number;
+  /** PRNG override taking precedence over `seed`. */
+  rng?: () => number;
+}
+
+/**
+ * Spawns `params.debrisCount` debris shards at (x, y) that fly outward in
+ * random directions, shrinking and fading over `params.debrisLifespanMs`
+ * (parent AC4).
+ *
+ * Each shard is an individual small filled Graphics so it can follow its own
+ * direction and be torn down independently. Every shard is pushed to
+ * `registry` on spawn and spliced out when its tween completes — the same
+ * contract as the flash/particle layers (parent AC6). A seeded RNG keeps the
+ * directions deterministic for tests.
+ *
+ * No-op (`[]`) when the debris toggle is off.
+ *
+ * @returns The spawned shard Graphics (empty when disabled).
+ */
+export function spawnDeathDebris(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  params: PlayerDeathJuiceParams,
+  registry?: JuiceRegistry,
+  options: DeathDebrisOptions = {},
+): Phaser.GameObjects.Graphics[] {
+  if (!params.debrisEnabled || params.debrisCount <= 0) return [];
+
+  const rng = options.rng ?? createRng(options.seed ?? Date.now());
+  const shards: Phaser.GameObjects.Graphics[] = [];
+
+  for (let i = 0; i < params.debrisCount; i++) {
+    const angle = rng() * Math.PI * 2;
+    const travel = PLAYER_DEATH_DEBRIS_TRAVEL * (0.6 + rng() * 0.4);
+    const dx = Math.cos(angle) * travel;
+    const dy = Math.sin(angle) * travel;
+
+    const shard = scene.add.graphics({ x, y });
+    shard.setDepth(PLAYER_DEATH_DEBRIS_DEPTH);
+    shard.fillStyle(params.flashColor, 1);
+    shard.fillCircle(0, 0, PLAYER_DEATH_DEBRIS_RADIUS);
+    shard.setData('juiceLayer', 'debris');
+    registry?.push(shard);
+    shards.push(shard);
+
+    scene.tweens.add({
+      targets: shard,
+      x: x + dx,
+      y: y + dy,
+      alpha: 0,
+      scale: 0.2,
+      duration: params.debrisLifespanMs,
+      ease: 'Power2',
+      onComplete: () => {
+        if (registry) {
+          const index = registry.indexOf(shard);
+          if (index >= 0) registry.splice(index, 1);
+        }
+        shard.destroy();
+      },
+    });
+  }
+
+  return shards;
+}
+
+/**
+ * Spawns an expanding stroked shockwave ring at (x, y) (parent AC4).
+ *
+ * A single Graphics draws a ring at `params.shockwaveRadius` and starts at
+ * {@link PLAYER_DEATH_SHOCKWAVE_START_SCALE}, tweening to full scale while
+ * fading to 0 over `params.shockwaveDurationMs`. On completion it is destroyed
+ * and removed from `registry` (parent AC6).
+ *
+ * No-op (`null`) when the shockwave toggle is off.
+ *
+ * @returns The shockwave Graphics, or `null` when disabled.
+ */
+export function spawnDeathShockwave(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  params: PlayerDeathJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Graphics | null {
+  if (!params.shockwaveEnabled) return null;
+
+  const ring = scene.add.graphics({ x, y });
+  ring.setDepth(PLAYER_DEATH_SHOCKWAVE_DEPTH);
+  ring.lineStyle(PLAYER_DEATH_SHOCKWAVE_LINE_WIDTH, params.flashColor, 1);
+  ring.strokeCircle(0, 0, params.shockwaveRadius);
+  ring.setScale(PLAYER_DEATH_SHOCKWAVE_START_SCALE);
+  ring.setData('juiceLayer', 'shockwave');
+  ring.setData('shockwaveRadius', params.shockwaveRadius);
+  registry?.push(ring);
+
+  scene.tweens.add({
+    targets: ring,
+    scale: 1,
+    alpha: 0,
+    duration: params.shockwaveDurationMs,
+    ease: 'Power2',
+    onComplete: () => {
+      if (registry) {
+        const index = registry.indexOf(ring);
+        if (index >= 0) registry.splice(index, 1);
+      }
+      ring.destroy();
+    },
+  });
+
+  return ring;
 }
