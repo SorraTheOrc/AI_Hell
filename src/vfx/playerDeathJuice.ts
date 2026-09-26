@@ -25,8 +25,9 @@
  * and live in this same module so the layer set stays in one place.
  */
 
-import { SHIP_COLOR } from '../core/constants';
-import { createRng } from './explosionParticles';
+import { SHIP_COLOR, SHIP_SIZE } from '../core/constants';
+import { createRng, spawnExplosionParticles, resolvePatterns, type ExplosionHandle } from './explosionParticles';
+import { playPlayerDestructionSound } from '../audio/effects';
 import Phaser from 'phaser';
 
 // ── Severity ────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ export function resolveJuiceParams(
  * existing `playerExplosions` pattern (parent AC6).
  */
 export interface JuiceRegistry {
+  readonly length: number;
   push(...items: unknown[]): number;
   indexOf(item: unknown): number;
   splice(start: number, deleteCount: number): unknown[];
@@ -463,4 +465,89 @@ export function spawnDeathShockwave(
   });
 
   return ring;
+}
+
+// ── F5: composition entry point ────────────────────────────────────
+
+/** Options for {@link spawnPlayerDeathJuice}. */
+export interface PlayerDeathJuiceOptions {
+  /**
+   * Caller-owned registry every juice display object is added to (removed on
+   * completion). Defaults to a fresh array when omitted. Scenes pass their
+   * `playerDeathEffects` array so `SHUTDOWN` can destroy any leftovers (AC6).
+   */
+  registry?: JuiceRegistry;
+  /** PRNG seed for deterministic particle/debris layout in tests. */
+  seed?: number;
+}
+
+/** Handle returned by {@link spawnPlayerDeathJuice}. */
+export interface PlayerDeathJuiceHandle {
+  /** The resolved severity parameters the effect ran with. */
+  params: PlayerDeathJuiceParams;
+  /** Every juice-owned display object (flash, debris, shockwave, particles). */
+  registry: JuiceRegistry;
+  /** The delegated particle burst handle (or `null` when particles are off). */
+  particles: ExplosionHandle | null;
+}
+
+/**
+ * Composes and plays the full player-death juice effect (parent AC1).
+ *
+ * The single shared entry point every player-death path calls: it resolves
+ * the severity parameters, then plays the dedicated player-destruction SFX
+ * exactly once, triggers the camera shake, and spawns the flash, debris and
+ * shockwave layers — delegating the particle burst to the existing
+ * {@link spawnExplosionParticles} with the `'player'` pattern set.
+ *
+ * Guarantees the scenes rely on:
+ *   - the generic enemy `playDestructionSound()` is **never** called here
+ *     (the dedicated cue fully replaces it on the player path);
+ *   - exactly one dedicated sound and exactly one particle burst per call;
+ *   - every spawned display object is added to `options.registry` (or a fresh
+ *     array) so `SHUTDOWN` teardown can destroy them;
+ *   - no gameplay state is read or written — purely cosmetic.
+ *
+ * Each layer respects its `PLAYER_DEATH_ENABLE_*` toggle via the resolved
+ * params, so any layer can be dropped without code surgery.
+ *
+ * @param scene    — the scene to render into.
+ * @param x        — death X coordinate.
+ * @param y        — death Y coordinate.
+ * @param severity — `'respawn'` (mid-run) or `'fatal'` (run-ending).
+ * @param options  — registry and seed injection (tests / teardown ownership).
+ */
+export function spawnPlayerDeathJuice(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  severity: PlayerDeathSeverity | string | null | undefined,
+  options: PlayerDeathJuiceOptions = {},
+): PlayerDeathJuiceHandle {
+  const params = resolveJuiceParams(severity);
+  const registry: JuiceRegistry = options.registry ?? [];
+
+  // Dedicated hull-breach cue — exactly once, never the generic enemy cue.
+  if (params.soundEnabled) playPlayerDestructionSound();
+
+  // Shake and the secondary visual layers (each self-guarded by its toggle).
+  applyShake(scene, params);
+  spawnDeathFlash(scene, params, registry);
+  const debrisOptions = options.seed !== undefined ? { seed: options.seed } : {};
+  spawnDeathDebris(scene, x, y, params, registry, debrisOptions);
+  spawnDeathShockwave(scene, x, y, params, registry);
+
+  // Base particle layer — delegate to the existing shared particle helper.
+  const particles = params.particlesEnabled
+    ? spawnExplosionParticles(scene, x, y, SHIP_COLOR, SHIP_SIZE, {
+        patterns: resolvePatterns('player'),
+        registry,
+        count: params.particleCount,
+        lifespan: params.particleLifespanMs,
+        scale: params.particleScale,
+        seed: options.seed,
+      })
+    : null;
+
+  return { params, registry, particles };
 }

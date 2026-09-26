@@ -11,6 +11,8 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
+import * as explosionParticlesModule from './explosionParticles';
 import {
   PLAYER_DEATH_DEBRIS_COUNT,
   PLAYER_DEATH_DEBRIS_LIFESPAN_MS,
@@ -37,11 +39,12 @@ import {
   spawnDeathFlash,
   spawnDeathDebris,
   spawnDeathShockwave,
+  spawnPlayerDeathJuice,
   PLAYER_DEATH_DEBRIS_TRAVEL,
   PLAYER_DEATH_SHOCKWAVE_START_SCALE,
   type PlayerDeathJuiceParams,
 } from './playerDeathJuice';
-import { SHIP_COLOR } from '../core/constants';
+import { SHIP_COLOR, SHIP_SIZE } from '../core/constants';
 
 /** Minimal bootable scene for the VFX helpers. */
 class VfxStubScene extends Phaser.Scene {
@@ -433,5 +436,91 @@ describe('spawnDeathShockwave — expanding ring (F4, parent AC4/AC6)', () => {
     expect(PLAYER_DEATH_DEBRIS_TRAVEL).toBeGreaterThan(0);
     expect(PLAYER_DEATH_SHOCKWAVE_START_SCALE).toBeGreaterThan(0);
     expect(PLAYER_DEATH_SHOCKWAVE_START_SCALE).toBeLessThan(1);
+  });
+});
+
+// ── F5: spawnPlayerDeathJuice composition entry point ───────────────
+
+describe('spawnPlayerDeathJuice — single composition entry point (F5, parent AC1/AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('composes shake + exactly one dedicated sound + particles + flash + debris + shockwave', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const soundSpy = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSpy = vi.spyOn(effectsModule, 'playDestructionSound');
+    const particleSpy = vi.spyOn(explosionParticlesModule, 'spawnExplosionParticles');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+    const params = resolveJuiceParams('fatal');
+
+    const handle = spawnPlayerDeathJuice(scene, 100, 120, 'fatal', { registry, seed: 42 });
+
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    expect(genericSpy).not.toHaveBeenCalled();
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(shakeSpy).toHaveBeenCalledWith(params.shakeDurationMs, params.shakeIntensity);
+    expect(particleSpy).toHaveBeenCalledTimes(1);
+
+    // Particles delegate to the existing helper with the player patterns and
+    // the caller's registry (AC1).
+    const opts = particleSpy.mock.calls[0][5] as Record<string, unknown>;
+    expect(opts.patterns).toEqual(explosionParticlesModule.resolvePatterns('player'));
+    expect(opts.registry).toBe(registry);
+
+    // Flash + debris + shockwave + particle graphics all tracked.
+    expect(handle.registry).toBe(registry);
+    expect(registry.filter((o) => o.getData?.('juiceLayer') === 'flash')).toHaveLength(1);
+    expect(registry.filter((o) => o.getData?.('juiceLayer') === 'debris')).toHaveLength(
+      params.debrisCount,
+    );
+    expect(registry.filter((o) => o.getData?.('juiceLayer') === 'shockwave')).toHaveLength(1);
+    expect(handle.params).toEqual(params);
+  });
+
+  it('uses SHIP_COLOR and SHIP_SIZE for the delegated particle burst', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const particleSpy = vi.spyOn(explosionParticlesModule, 'spawnExplosionParticles');
+
+    spawnPlayerDeathJuice(scene, 1, 2, 'respawn', { registry, seed: 1 });
+
+    const call = particleSpy.mock.calls[0];
+    expect(call[1]).toBe(1);
+    expect(call[2]).toBe(2);
+    expect(call[3]).toBe(SHIP_COLOR);
+    expect(call[4]).toBe(SHIP_SIZE);
+  });
+
+  it('creates its own registry when the caller does not supply one', async () => {
+    const scene = await boot();
+    vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+
+    const handle = spawnPlayerDeathJuice(scene, 0, 0, 'respawn', { seed: 2 });
+
+    expect(Array.isArray(handle.registry)).toBe(true);
+    expect(handle.registry.length).toBeGreaterThan(0);
+  });
+
+  it('does not play the generic destruction cue on the player path', async () => {
+    const scene = await boot();
+    const genericSpy = vi.spyOn(effectsModule, 'playDestructionSound');
+    vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+
+    spawnPlayerDeathJuice(scene, 0, 0, 'respawn', { registry: [], seed: 3 });
+
+    expect(genericSpy).not.toHaveBeenCalled();
   });
 });
