@@ -756,6 +756,22 @@ the **bottom-right** in the same change so both the panel and the controls stay
 usable. The stylesheet contract is regression-tested in `src/style.test.ts`
 (computed styles for each panel id) plus per-scene class/coordinate assertions.
 
+**Collapsible panels (AH-0MUDYFMUX007Q0W3).** Every gym panel is made
+collapsible by the shared `makeCollapsible({ panel, title })` helper in
+`src/utils/gymPanel.ts`: it wraps the panel's existing children in
+`.gym-panel-body` and prepends a `.gym-panel-header` containing a native
+`<button class="gym-panel-toggle">`. The button carries `aria-expanded` and
+`aria-controls` pointing at the body, and activating it flips the panel's
+`data-collapsed` attribute; `src/style.css` hides `.gym-panel-body` when
+`data-collapsed="true"`, so a collapsed panel shrinks to its header only. The
+header/toggle stay visible, keeping the control discoverable and keyboard
+activatable. Panels start **expanded** (`data-collapsed="false"`); the state
+is per-scene and deliberately not persisted. Toggle titles are `Ship Config`
+(`GymPlayer`), `AI Config` (`GymEnemies`) and `Boss Config` (`GymBoss`). The
+helper is unit-tested in `src/utils/gymPanel.test.ts`, the collapsed CSS
+contract in `src/style.test.ts`, and the per-scene toggle in each scene's test
+file.
+
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
 `count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,

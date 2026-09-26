@@ -34,6 +34,52 @@ body {
   overflow-y: auto;
 }
 
+/* ── Collapsible gym-panel header/body (AH-0MUDYFMUX007Q0W3) ──────
+ * Each panel's controls live in `.gym-panel-body` under a
+ * `.gym-panel-header` carrying a native `.gym-panel-toggle` button.
+ * Collapsing the panel hides the body, leaving only the header — so a
+ * tall panel (e.g. the ~21-row enemy editor) shrinks to one bar and the
+ * whole scene becomes visible. State lives on the panel's
+ * `data-collapsed` attribute.  */
+.gym-panel-header {
+  display: flex;
+  align-items: center;
+}
+
+.gym-panel-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 8px;
+  background: #1a1a1a;
+  color: #ccc;
+  border: 1px solid #444;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gym-panel-toggle:hover {
+  border-color: #666;
+}
+
+.gym-panel-toggle:focus-visible {
+  outline: 2px solid #00ff00;
+  outline-offset: 1px;
+}
+
+.gym-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gym-panel[data-collapsed='true'] .gym-panel-body {
+  display: none;
+}
+
 /* ── Gym scene ship-config panel ────────────────────────────────── */
 /* Anchored via shared .gym-panel to bottom-left (AH-0MUAYB7O4009LWBF). */
 #gym-config-panel {

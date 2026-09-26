@@ -100,4 +100,24 @@ describe('gym-panel anchoring stylesheet (AH-0MUAYB7O4009LWBF)', () => {
     expect(computed.left).toBe('8px');
     expect(computed.overflowY).toBe('auto');
   });
+
+  it("hides .gym-panel-body when the panel is collapsed but keeps the header visible (AH-0MUDYFMUX007Q0W3)", () => {
+    injectStylesheet();
+
+    const panel = makePanel('enemy-gym-panel');
+    const header = document.createElement('div');
+    header.className = 'gym-panel-header';
+    const body = document.createElement('div');
+    body.className = 'gym-panel-body';
+    panel.append(header, body);
+
+    // Default expanded: the body is laid out.
+    panel.setAttribute('data-collapsed', 'false');
+    expect(getComputedStyle(body).display).not.toBe('none');
+
+    // Collapsed: the body is hidden, the header (and toggle) stay visible.
+    panel.setAttribute('data-collapsed', 'true');
+    expect(getComputedStyle(body).display).toBe('none');
+    expect(getComputedStyle(header).display).not.toBe('none');
+  });
 });

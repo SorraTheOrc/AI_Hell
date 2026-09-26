@@ -34,6 +34,7 @@ import {
   applyAndPersistSpawnInterval,
   buildSpawnIntervalSlider,
 } from '../../utils/gymPowerUpControl';
+import { makeCollapsible } from '../../utils/gymPanel';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
 import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
@@ -297,6 +298,9 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
 
     actions.append(save, saveAsInput, saveAs, status);
     panel.appendChild(actions);
+
+    // Wrap the controls in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
+    makeCollapsible({ panel, title: 'AI Config' });
 
     host.appendChild(panel);
     this.panel = panel;

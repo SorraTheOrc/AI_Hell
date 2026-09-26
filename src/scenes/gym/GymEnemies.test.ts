@@ -303,6 +303,28 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
   });
 
+  it('renders a collapsible header and toggles the panel body (AH-0MUDYFMUX007Q0W3)', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const toggle = panel.querySelector<HTMLButtonElement>('.gym-panel-toggle');
+    expect(toggle, 'collapse toggle missing').not.toBeNull();
+    expect(toggle!.textContent).toContain('AI Config');
+
+    const body = panel.querySelector('.gym-panel-body');
+    expect(body, 'panel body missing').not.toBeNull();
+    expect(toggle!.getAttribute('aria-controls')).toBe(body!.id);
+    expect(panel.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+
+    toggle!.click();
+    expect(panel.getAttribute('data-collapsed')).toBe('true');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('false');
+
+    toggle!.click();
+    expect(panel.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('AC — the editor panel carries the shared .gym-panel class for bottom-left anchoring (AH-0MUAYB7O4009LWBF)', async () => {
     await bootWithKey('scout');
     const panel = document.getElementById('enemy-gym-panel');

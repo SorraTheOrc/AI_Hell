@@ -520,6 +520,28 @@ describe('GymBoss — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () => 
     expect(getSlider().value).toBe('12.5');
   });
 
+  it('AC1 — renders a collapsible header and toggles the panel body (AH-0MUDYFMUX007Q0W3)', async () => {
+    await bootScene([GymBoss]);
+    const panel = document.getElementById('boss-gym-panel')!;
+    const toggle = panel.querySelector<HTMLButtonElement>('.gym-panel-toggle');
+    expect(toggle, 'collapse toggle missing').not.toBeNull();
+    expect(toggle!.textContent).toContain('Boss Config');
+
+    const body = panel.querySelector('.gym-panel-body');
+    expect(body, 'panel body missing').not.toBeNull();
+    expect(toggle!.getAttribute('aria-controls')).toBe(body!.id);
+    expect(panel.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+
+    toggle!.click();
+    expect(panel.getAttribute('data-collapsed')).toBe('true');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('false');
+
+    toggle!.click();
+    expect(panel.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('AC2/AC3/AC4 — changing the slider applies live and persists across a reboot', async () => {
     booted = await bootScene([GymBoss]);
     const scene = booted.scene as GymBoss;

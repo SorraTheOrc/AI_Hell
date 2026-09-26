@@ -34,6 +34,7 @@ import {
   ControlSchemeType,
 } from '../../utils/movementModel';
 import { WasdKeysLike } from '../../utils/input';
+import { makeCollapsible } from '../../utils/gymPanel';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import {
   loadShipConfig,
@@ -183,6 +184,9 @@ export class GymPlayer extends Phaser.Scene {
     actions.className = 'gym-panel-actions';
     actions.append(save, status);
     panel.appendChild(actions);
+
+    // Wrap the controls in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
+    makeCollapsible({ panel, title: 'Ship Config' });
 
     host.appendChild(panel);
     this.panel = panel;

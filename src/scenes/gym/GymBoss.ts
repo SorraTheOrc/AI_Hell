@@ -43,6 +43,7 @@ import {
   applyAndPersistSpawnInterval,
   buildSpawnIntervalSlider,
 } from '../../utils/gymPowerUpControl';
+import { makeCollapsible } from '../../utils/gymPanel';
 import { FormationOffset } from '../../utils/formations';
 import {
   EnemyFormationConfig,
@@ -209,6 +210,9 @@ export class GymBoss extends GymFormationScene<
       applyAndPersistSpawnInterval(seconds);
     });
     panel.appendChild(control.row);
+
+    // Wrap the control in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
+    makeCollapsible({ panel, title: 'Boss Config' });
 
     host.appendChild(panel);
     this.panel = panel;
