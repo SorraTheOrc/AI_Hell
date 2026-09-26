@@ -466,15 +466,26 @@ src/
 │   │                      eight shared methods exactly once, enforced repo-wide by
 │   │                      `CombatScene.equivalence.test.ts`; extended by `PlayScene`,
 │   │                      `GymFormationScene` and `GymPowerUpsCombat`.
-│   │   └── mineralKillDrops.ts — Shared mineral kill-drop rule (implemented,
-│   │                      AH-0MUHMT5JC004WRSB): `resolveMineralKillDrops(scene,
-│   │                      entity, rng)` decides the drops for a destroyed enemy
-│   │                      (small asteroid → one mineral at the death site; large/
-│   │                      medium asteroid → none; non-asteroid enemy → the configured
-│   │                      25–50 % re-drop, scattered near the death site). Consumed by
-│   │                      `PlayScene` and `GymFormationScene` so the game and the gyms
-│   │                      cannot diverge; the repo-wide guard in
-│   │                      `CombatScene.equivalence.test.ts` pins the single definition.
+│   │   ├── mineralKillDrops.ts — Shared mineral kill-drop rule (implemented,
+│   │   │                      AH-0MUHMT5JC004WRSB): `resolveMineralKillDrops(scene,
+│   │   │                      entity, rng)` decides the drops for a destroyed enemy
+│   │   │                      (small asteroid → one mineral at the death site; large/
+│   │   │                      medium asteroid → none; non-asteroid enemy → the configured
+│   │   │                      25–50 % re-drop, scattered near the death site). Consumed by
+│   │   │                      `PlayScene` and `GymFormationScene` so the game and the gyms
+│   │   │                      cannot diverge; the repo-wide guard in
+│   │   │                      `CombatScene.equivalence.test.ts` pins the single definition.
+│   │   └── bulletLifecycle.ts — Shared projectile-lifecycle helpers (implemented,
+│   │                      AH-0MUII3CF00024EDM, gap 3): `advanceWrappingBullets(bullets,
+│   │                      dt, width, height)` advances enemy bullets (velocity
+│   │                      integration, four-edge wrap, lifetime expiry) and
+│   │                      `advancePlayerBullets(bullets, dt)` advances player bullets via
+│   │                      the existing `advanceAndCull`. Consumed by `PlayScene`,
+│   │                      `GymFormationScene`, `GymWeapons` and `GymPowerUpsCombat` so the
+│   │                      wrap/expiry semantics cannot drift (AH-0MU960UTE001PTV0); the
+│   │                      repo-wide guard plus cross-scene equivalence tests in
+│   │                      `CombatScene.equivalence.test.ts` pin the definition and the
+│   │                      behaviour.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;

@@ -6,7 +6,9 @@
  * spawn loop, EXPLODE/SHOOT HUD buttons, status line, hint line,
  * back-to-index button, formation drift + respawn, per-entity
  * `applyFormationPosition` updates, and bullet collection/advance/
- * wrap + lifetime expiry. This base class encapsulates all of that; each
+ * wrap + lifetime expiry (now the shared
+ * `src/scenes/core/bulletLifecycle.ts` helpers, AH-0MUII3CF00024EDM). This
+ * base class encapsulates all of that; each
  * concrete scene supplies only its entity-specific configuration via
  * {@link EnemyFormationConfig}.
  *
@@ -50,10 +52,7 @@ import {
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
-import {
-  PlayerBullet,
-  advanceAndCull,
-} from '../../../entities/PlayerBullet';
+import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
   WasdKeysLike,
 } from '../../../utils/input';
@@ -90,6 +89,10 @@ import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
 import { Mineral } from '../../../entities/Mineral';
 import { Asteroid } from '../../../entities/Asteroid';
+import {
+  advancePlayerBullets,
+  advanceWrappingBullets,
+} from '../../core/bulletLifecycle';
 import {
   resolveMineralKillDrops,
   type MineralKillDropEntity,
@@ -1279,21 +1282,10 @@ export class GymFormationScene<
     }
 
     // Advance bullets; wrap across all four edges and expire by lifetime
-    // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen position.
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const bullet = this.bullets[i];
-      bullet.elapsed += dt;
-      bullet.graphics.x += bullet.vx * dt;
-      bullet.graphics.y += bullet.vy * dt;
-      if (bullet.graphics.x < 0) bullet.graphics.x += GAME_WIDTH;
-      if (bullet.graphics.x >= GAME_WIDTH) bullet.graphics.x -= GAME_WIDTH;
-      if (bullet.graphics.y < 0) bullet.graphics.y += GAME_HEIGHT;
-      if (bullet.graphics.y >= GAME_HEIGHT) bullet.graphics.y -= GAME_HEIGHT;
-      if (bullet.elapsed >= bullet.lifetime) {
-        bullet.graphics.destroy();
-        this.bullets.splice(i, 1);
-      }
-    }
+    // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen
+    // position. Shared with PlayScene/GymPowerUpsCombat so the semantics
+    // cannot drift (AH-0MUII3CF00024EDM, gap 3).
+    this._advanceEnemyBullets(dt);
 
     // ── Player ship: input → thrust, auto-fire, bullet lifecycle ──
     if (this.player) {
@@ -1390,7 +1382,16 @@ export class GymFormationScene<
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */
   private _advancePlayerBullets(dt: number): void {
-    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
+    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
+  }
+
+  /**
+   * Advances enemy bullets through the shared lifecycle helper: four-edge
+   * wrap + lifetime expiry, the single implementation every scene consumes
+   * (AH-0MUII3CF00024EDM, gap 3).
+   */
+  private _advanceEnemyBullets(dt: number): void {
+    advanceWrappingBullets(this.bullets, dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
   /**

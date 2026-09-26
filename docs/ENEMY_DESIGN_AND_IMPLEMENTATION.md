@@ -216,6 +216,16 @@ the first three enemy gym scenes duplicated:
 - **Update loop** — formation drift + respawn off the left edge,
   per-entity `applyFormationPosition()`, fire-bullet collection, bullet
   advance with four-edge wrap, and lifetime-based bullet expiry.
+- **Shared projectile lifecycle** (AH-0MUII3CF00024EDM, gap 3) — the
+  enemy-bullet advance + four-edge wrap + lifetime expiry above is owned
+  once by `src/scenes/core/bulletLifecycle.ts` (`advanceWrappingBullets`),
+  and player-bullet advancement (`advancePlayerBullets`, delegating to
+  `advanceAndCull`) is shared too. Consumed by `PlayScene`,
+  `GymFormationScene`, `GymWeapons` and `GymPowerUpsCombat` so the
+  semantics cannot drift; bullets are never culled off-screen — they wrap
+  across the seam and expire only by lifetime (AH-0MU960UTE001PTV0). The
+  single definition and the cross-scene equivalence are pinned by
+  `src/scenes/core/CombatScene.equivalence.test.ts`.
 - **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
   enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
   `destroySelf()` — mid-explosion counts), the base scene starts a

@@ -62,10 +62,7 @@ import {
   playSpreadPickupSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
-import {
-  PlayerBullet,
-  advanceAndCull,
-} from '../entities/PlayerBullet';
+import { PlayerBullet } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
@@ -106,6 +103,10 @@ import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
 } from './core/CombatScene';
+import {
+  advancePlayerBullets,
+  advanceWrappingBullets,
+} from './core/bulletLifecycle';
 import { resolveMineralKillDrops } from './core/mineralKillDrops';
 import {
   applyPhaseGhost,
@@ -1041,24 +1042,11 @@ export class PlayScene extends CombatScene<
   // ── Bullet lifecycles ───────────────────────────────────────────
 
   private _advanceBullets(dt: number): void {
-    for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
-      const b = this.enemyBullets[i];
-      b.elapsed += dt;
-      b.graphics.x += b.vx * dt;
-      b.graphics.y += b.vy * dt;
-      // Four-edge wrap — leave left → reappear right, etc., matching the
-      // player ship / asteroid model (AH-0MU960UTE001PTV0). Bullets are
-      // never culled for leaving the screen, only when their lifetime ends.
-      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
-      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
-      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
-      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
-      if (b.elapsed >= b.lifetime) {
-        b.graphics.destroy();
-        this.enemyBullets.splice(i, 1);
-      }
-    }
-    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
+    // Shared projectile lifecycle: enemy bullets wrap at all four edges and
+    // expire by lifetime; player bullets advance through the same shared
+    // `advanceAndCull` path every scene uses (AH-0MUII3CF00024EDM, gap 3).
+    advanceWrappingBullets(this.enemyBullets, dt, GAME_WIDTH, GAME_HEIGHT);
+    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
   }
 
   // ── Collisions ──────────────────────────────────────────────────

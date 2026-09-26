@@ -25,7 +25,9 @@
  * emitted on the same fire cycle when their individual cooldowns have
  * elapsed.  Player bullets are demonstration-only: they fly in their
  * pattern, wrap across all four screen edges, and expire after their
- * per-weapon lifetime; no collision damage (AH-0MU960UTE001PTV0).
+ * per-weapon lifetime; no collision damage (AH-0MU960UTE001PTV0). Their
+ * lifecycle is owned by the shared `scenes/core/bulletLifecycle.ts`
+ * helper (`advancePlayerBullets`), AH-0MUII3CF00024EDM.
  *
  * Collection (AC4): a drop is collectible once its current scale is at
  * least 3% of full size; collection requires ship overlap (drop radius
@@ -40,7 +42,8 @@ import Phaser from 'phaser';
 
 import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
 import { Player } from '../../entities/Player';
-import { advanceAndCull, PlayerBullet } from '../../entities/PlayerBullet';
+import { advancePlayerBullets } from '../core/bulletLifecycle';
+import { PlayerBullet } from '../../entities/PlayerBullet';
 import { WeaponId } from '../../utils/weapons';
 import { EffectsRegistry } from '../../powerups/effects';
 import type { DropId, WeaponDropId } from '../../powerups/types';
@@ -250,7 +253,7 @@ export class GymWeapons extends CombatCoreScene<
 
   /** Advances all bullets by `dt` and removes those whose lifetime elapsed. */
   private _advanceBullets(dt: number): void {
-    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
+    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
   }
 
   // ── Spawning / lifecycle (AC3, AC5) ──────────────────────────────
@@ -425,10 +428,11 @@ export class GymWeapons extends CombatCoreScene<
   }
 
   /**
-   * Advances bullets by the given delta time. Public for testing.
+   * Advances bullets by the given delta time. Public for testing; delegates
+   * to the same shared helper as the per-frame path (no duplicate body).
    */
   advanceBullets(dt: number): void {
-    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
+    this._advanceBullets(dt);
   }
 
   /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */

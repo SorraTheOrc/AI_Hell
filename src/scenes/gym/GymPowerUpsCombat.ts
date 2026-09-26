@@ -46,6 +46,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import { advanceWrappingBullets } from '../core/bulletLifecycle';
 import {
   applyPhaseGhost,
   drawShieldBubble,
@@ -431,22 +432,10 @@ export class GymPowerUpsCombat extends CombatScene<
   }
 
   private _advanceEnemyBullets(dt: number): void {
-    for (let i = this.scoutBullets.length - 1; i >= 0; i--) {
-      const b = this.scoutBullets[i];
-      b.elapsed += dt;
-      b.graphics.x += b.vx * dt;
-      b.graphics.y += b.vy * dt;
-      // Four-edge wrap + lifetime expiry, matching the shipped game
-      // (AH-0MU960UTE001PTV0). Bullets are never culled off-screen.
-      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
-      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
-      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
-      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
-      if (b.elapsed >= b.lifetime) {
-        try { b.graphics.destroy(); } catch { /* ignore */ }
-        this.scoutBullets.splice(i, 1);
-      }
-    }
+    // Shared projectile lifecycle: four-edge wrap + lifetime expiry, the
+    // same helper PlayScene and the formation gym use (AH-0MUII3CF00024EDM,
+    // gap 3). The helper keeps the defensive destruction this gym had.
+    advanceWrappingBullets(this.scoutBullets, dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
   // ── Teleport (P7, S/↓) ─────────────────────────────────────────

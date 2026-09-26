@@ -33,11 +33,12 @@ export function definesMethod(source: string, method: string): boolean {
  * `export function resolveMineralKillDrops(`).
  *
  * The matcher anchors the declaration to the start of a line so call sites
- * and imports do not count as definitions.
+ * and imports do not count as definitions. An optional type-parameter clause
+ * (`<T extends Foo>`) is accepted so generic shared helpers are matchable.
  */
 export function definesFunction(source: string, name: string): boolean {
   const re = new RegExp(
-    `^[ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`,
+    `^[ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${name}(?:\\s*<[^>{}()]*>)?\\s*\\(`,
     'm',
   );
   return re.test(source);
