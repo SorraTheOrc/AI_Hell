@@ -699,6 +699,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
       '_collectDrop',
       '_clearEnemyBullets',
       '_handleTeleport',
+      'triggerTeleport',
       '_hitPlayer',
       '_readPlayerInput',
       '_handleCollisions',
@@ -725,6 +726,34 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
         '_handleHits'
       ],
     ).toBeUndefined();
+  });
+
+  it('AC2 — supplies its teleport hit radii through the overridable CombatScene hooks', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    const hooks = scene as unknown as {
+      getTeleportEnemyHitRadius(): number;
+      getTeleportBulletHitRadius(): number;
+    };
+
+    // The gym owns the hooks rather than relying on the shared defaults.
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'getTeleportEnemyHitRadius',
+      ),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'getTeleportBulletHitRadius',
+      ),
+    ).toBe(true);
+    // SCOUT_SIZE / 2 + 4 and the shared 5 px bullet radius.
+    expect(hooks.getTeleportEnemyHitRadius()).toBe(12);
+    expect(hooks.getTeleportBulletHitRadius()).toBe(5);
+
+    booted.game.destroy(true);
   });
 
   it('AC5 — the inherited hit lifecycle uses the gym’s 0.8 s invulnerability hook', async () => {

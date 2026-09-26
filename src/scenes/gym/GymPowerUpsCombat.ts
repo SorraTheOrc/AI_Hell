@@ -35,8 +35,14 @@
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *
- * Teleport (S/↓): consumes one P7 stack FIFO, warps to the nearest safe
- * spot along the heading ray, clamped to screen bounds, then applies P6.
+ * Teleport (S/↓): routed through the shared `CombatScene.triggerTeleport`
+ * so the game and every gym resolve teleports through one implementation;
+ * it consumes one P7 stack FIFO, warps to the nearest safe spot along the
+ * heading ray, clamped to screen bounds, then applies P6. The gym supplies
+ * only its hit radii (`getTeleportEnemyHitRadius` / `getTeleportBulletHitRadius`)
+ * and its enemy list (`getEnemyEntities`); destination selection, FIFO
+ * consumption and the P6-on-arrival grant are shared (gap 7,
+ * AH-0MUII3EPU0039R5O).
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically via
@@ -64,7 +70,6 @@ import {
   getPowerUpById,
 } from '../../powerups/types';
 import { drawPowerUpDrop, dropCollectRadius } from '../../powerups/icons';
-import { findTeleportDestination } from '../../powerups/teleport';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
 import { playSpawnSound } from '../../audio/effects';
@@ -101,7 +106,7 @@ const COMBAT_START_X = GAME_WIDTH * 0.2;
 const COMBAT_START_Y = 110;
 const COMBAT_DRIFT_SPEED = 18;
 
-/** Hit radii used for player collision checks (px). */
+/** Teleport-avoidance hit radii supplied through the shared hooks (px). */
 const ENEMY_HIT_RADIUS = SCOUT_SIZE / 2 + 4;
 const BULLET_HIT_RADIUS = 5;
 
@@ -477,47 +482,24 @@ export class GymPowerUpsCombat extends CombatScene<
     advanceWrappingBullets(this.scoutBullets, dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
-  // ── Teleport (P7, S/↓) ─────────────────────────────────────────
+  // ── Shared combat-core hooks ─────────────────────────────────────
 
-  /**
-   * Consumes one P7 teleport stack and warps the player to the nearest
-   * safe spot along the heading ray. Public so tests can trigger
-   * teleport deterministically without faking keyboard state.
-   * Returns true if a teleport was performed.
-   */
-  override triggerTeleport(): boolean {
-    if (!this.player) return false;
-    if (!this.effectsRegistry.hasTeleport()) return false;
+  // Teleports (S/↓) run through the single shared
+  // `CombatScene.triggerTeleport` path; the gym supplies only its
+  // specifics below. Destination selection, FIFO stack consumption and
+  // the P6-on-arrival grant all live in the shared core (gap 7,
+  // AH-0MUII3EPU0039R5O). `canTeleport` keeps the shared default
+  // (always allowed) — this gym has no opt-in drop layer to gate on.
 
-    const heading = this.player.getHeading();
-    const enemies = this.scouts.filter((s) => s.alive).map((s) => ({ x: s.x, y: s.y }));
-    const bullets = this.scoutBullets.map((b) => ({ x: b.graphics.x, y: b.graphics.y }));
-
-    const dest = findTeleportDestination(
-      this.player.x,
-      this.player.y,
-      heading,
-      enemies,
-      bullets,
-      this.scale.width,
-      this.scale.height,
-      { enemyHitRadius: ENEMY_HIT_RADIUS, bulletHitRadius: BULLET_HIT_RADIUS },
-    );
-
-    // Consume one stack FIFO and grant P6 phase shift at landing.
-    this.effectsRegistry.consumeTeleport();
-    this.player.setPosition(dest.x, dest.y);
-    // Keep the movement state's position in sync (physicsTick base).
-    const state = this.player.getMovementState();
-    (this.player as unknown as { _movementState: { x: number; y: number } })._movementState = {
-      ...state,
-      x: dest.x,
-      y: dest.y,
-    };
-    return true;
+  /** Enemy hit radius used for teleport destination avoidance (px). */
+  protected override getTeleportEnemyHitRadius(): number {
+    return ENEMY_HIT_RADIUS;
   }
 
-  // ── Shared combat-core hooks ─────────────────────────────────────
+  /** Enemy-bullet hit radius used for teleport avoidance (px). */
+  protected override getTeleportBulletHitRadius(): number {
+    return BULLET_HIT_RADIUS;
+  }
 
   /** Combat gym invulnerability window (0.8 s, operator decision Q2-B). */
   protected override getInvulnerabilityDuration(): number {

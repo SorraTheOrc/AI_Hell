@@ -771,3 +771,199 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
     expect(source).not.toContain('_nextFireTime');
   });
 });
+
+// ── Shared teleport path (gap 7, AH-0MUII3EPU0039R5O) ───────────────
+
+/**
+ * The combat gym used to carry a full copy of the shared
+ * `CombatScene.triggerTeleport` that bypassed `canTeleport()` and
+ * hard-coded the hit radii. It now resolves to the single shared path and
+ * supplies its specifics through the overridable hooks.
+ */
+describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('GymPowerUpsCombat does not define triggerTeleport; it resolves to the shared core', () => {
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'triggerTeleport',
+      ),
+    ).toBe(false);
+    expect(
+      (GymPowerUpsCombat.prototype as unknown as Record<string, unknown>)
+        .triggerTeleport,
+    ).toBe(
+      (CombatScene.prototype as unknown as Record<string, unknown>)
+        .triggerTeleport,
+    );
+  });
+
+  it('triggerTeleport is defined exactly once repo-wide, in the shared combat core', () => {
+    const definers = productionSceneFiles()
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), 'triggerTeleport'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(definers).toEqual(['src/scenes/core/CombatScene.ts']);
+  });
+
+  it('the gym supplies its teleport hit radii through the overridable hooks', async () => {
+    const booted = await bootScene(
+      [GymPowerUpsCombat],
+      'teleport-hooks-host',
+    );
+    games.push(booted);
+    const hooks = booted.scene as unknown as {
+      getTeleportEnemyHitRadius(): number;
+      getTeleportBulletHitRadius(): number;
+    };
+
+    // The gym owns the hooks rather than relying on the shared defaults.
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'getTeleportEnemyHitRadius',
+      ),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'getTeleportBulletHitRadius',
+      ),
+    ).toBe(true);
+    // SCOUT_SIZE / 2 + 4 and the shared 5 px bullet radius.
+    expect(hooks.getTeleportEnemyHitRadius()).toBe(12);
+    expect(hooks.getTeleportBulletHitRadius()).toBe(5);
+  });
+
+  it('avoids an enemy body identically to a config-driven gym (per-entity radius)', async () => {
+    const combat = await bootScene(
+      [GymPowerUpsCombat],
+      'teleport-combat-enemy-host',
+    );
+    const formation = await bootScene(
+      [EquivGymScene],
+      'teleport-formation-enemy-host',
+    );
+    games.push(combat, formation);
+    const combatScene = combat.scene as GymPowerUpsCombat;
+    const formationScene = formation.scene as EquivGymScene;
+
+    // No bullets; one enemy each at the same spot, 71 px beyond the 80 px
+    // ray candidate. It is safe for a 10 px entity radius (60 + 10 = 70)
+    // but not for the old hard-coded 12 px scalar (60 + 12 = 72).
+    (combatScene as unknown as { scoutBullets: unknown[] }).scoutBullets.length = 0;
+    (formationScene as unknown as { bullets: unknown[] }).bullets.length = 0;
+    const targetX = 300 + 80 + 71;
+    const targetY = 400;
+    combatScene.getScouts().forEach((scout, index) => {
+      if (index === 0) scout.setPosition(targetX, targetY);
+      else scout.destroySelf();
+    });
+    (
+      formationScene as unknown as { entities: EquivEnemy[] }
+    ).entities.forEach((entity, index) => {
+      if (index === 0) entity.setPosition(targetX, targetY);
+      else entity.destroySelf();
+    });
+
+    for (const player of [
+      combatScene.getPlayer()!,
+      formationScene.getPlayer()!,
+    ]) {
+      player.setPosition(300, 400);
+      const state = player.getMovementState();
+      (
+        player as unknown as { _movementState: Record<string, unknown> }
+      )._movementState = {
+        ...state,
+        x: 300,
+        y: 400,
+        vx: 0,
+        vy: 0,
+        facing: 0,
+      };
+    }
+
+    combatScene.getEffectsRegistry().applyCollect('P7');
+    formationScene.getEffectsRegistry().applyCollect('P7');
+
+    expect(combatScene.triggerTeleport()).toBe(true);
+    expect(formationScene.triggerTeleport()).toBe(true);
+
+    // Both resolve the nearest safe ray candidate through the shared path.
+    expect(combatScene.getPlayer()!.x).toBeCloseTo(380, 5);
+    expect(formationScene.getPlayer()!.x).toBeCloseTo(380, 5);
+    expect(combatScene.getPlayer()!.y).toBeCloseTo(400, 5);
+    expect(formationScene.getPlayer()!.y).toBeCloseTo(400, 5);
+  });
+
+  it('destination selection, FIFO consumption and P6-on-arrival match the game', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'teleport-play-host',
+    );
+    const combat = await bootScene(
+      [GymPowerUpsCombat],
+      'teleport-combat-host',
+    );
+    games.push(play, combat);
+    const playScene = play.scene as PlayScene;
+    const combatScene = combat.scene as GymPowerUpsCombat;
+
+    // Remove live obstacles so both scenes resolve the same safe-spot ray.
+    (playScene as unknown as { spawned: unknown[] }).spawned.length = 0;
+    (playScene as unknown as { enemyBullets: unknown[] }).enemyBullets.length = 0;
+    (combatScene as unknown as { scouts: unknown[] }).scouts.length = 0;
+    (combatScene as unknown as { scoutBullets: unknown[] }).scoutBullets.length = 0;
+
+    // Park each ship at the same spot with the same heading (facing right).
+    for (const player of [playScene.getPlayer()!, combatScene.getPlayer()!]) {
+      player.setPosition(300, 400);
+      const state = player.getMovementState();
+      (
+        player as unknown as { _movementState: Record<string, unknown> }
+      )._movementState = {
+        ...state,
+        x: 300,
+        y: 400,
+        vx: 0,
+        vy: 0,
+        facing: 0,
+      };
+    }
+
+    // Two P7 stacks each so FIFO consumption is observable.
+    for (const registry of [
+      playScene.getEffectsRegistry(),
+      combatScene.getEffectsRegistry(),
+    ]) {
+      registry.applyCollect('P7');
+      registry.applyCollect('P7');
+    }
+
+    expect(playScene.triggerTeleport()).toBe(true);
+    expect(combatScene.triggerTeleport()).toBe(true);
+
+    // Same inputs through the same shared algorithm → same landing spot.
+    expect(combatScene.getPlayer()!.x).toBe(playScene.getPlayer()!.x);
+    expect(combatScene.getPlayer()!.y).toBe(playScene.getPlayer()!.y);
+    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(1);
+    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(1);
+    expect(playScene.getEffectsRegistry().isPhased).toBe(true);
+    expect(combatScene.getEffectsRegistry().isPhased).toBe(true);
+
+    // The second teleport consumes the remaining stack on both.
+    expect(playScene.triggerTeleport()).toBe(true);
+    expect(combatScene.triggerTeleport()).toBe(true);
+    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
+    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
+  });
+});
