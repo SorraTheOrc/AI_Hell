@@ -2252,3 +2252,157 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
     expect(popSound).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Regression for the parent bug AH-0MUHM66ES0027QQV: the enemy gym
+ * (`GymFormationScene`, base of `GymEnemies`/`GymBoss`/`GymMinerals`)
+ * recorded P3/P6 in the shared `EffectsRegistry` but never consulted it in
+ * the shared hit path, so the player still took hits. These tests pin the
+ * expected enemy-gym behaviour and are the red-to-green proof for the
+ * shared-gating fix.
+ */
+describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES0027QQV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const PLAYER_SPAWN = { x: 480, y: 270 };
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  /**
+   * Boots a stub formation scene with the player + power-up layer enabled
+   * and a one-shot parked enemy bullet, so a registered hit can be placed
+   * deterministically on the ship (mirrors the collision suite's
+   * `bootParked`). Auto-fire is disabled so a freshly spawned player bullet
+   * cannot intercept the parked enemy bullet in the shared bullet-vs-bullet
+   * pass before it reaches the player.
+   */
+  async function bootGated(id: PowerUpId): Promise<{
+    scene: BootedScene;
+    parkAt: { x: number; y: number };
+    armed: () => void;
+  }> {
+    let armedFlag = false;
+    const parkAt = { x: 0, y: 0 };
+
+    const collect = (enemy: StubEnemy): StubBullet[] => {
+      if (!armedFlag) return [];
+      armedFlag = false; // one-shot
+      const bullet = new StubBullet(enemy.scene, 0, 0, 999);
+      bullet.graphics.setPosition(parkAt.x, parkAt.y);
+      return [bullet];
+    };
+
+    const powerUps: PowerUpLayerConfig = {
+      spawner: new RoundRobinSpawner<PowerUpId>([id]),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    };
+    booted = await bootScene([
+      makeStubScene(collect, PLAYER_SPAWN, undefined, StubEnemy, powerUps),
+    ]);
+    const scene = booted.scene as BootedScene;
+    vi.spyOn(scene.getPlayer()!, 'tryFire').mockReturnValue([]);
+    return {
+      scene,
+      parkAt,
+      armed: () => {
+        armedFlag = true;
+      },
+    };
+  }
+
+  /** Drops a power-up on the ship and ticks once so it is collected. */
+  function collectOnShip(scene: BootedScene, id: PowerUpId): void {
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop(id, player.x, player.y);
+    scene.tick(0.1);
+  }
+
+  /** Parks the player on an entity's post-tick position (formation drift aware). */
+  function placePlayerAtEntity(scene: BootedScene, entity: FormationSceneEntity): void {
+    const player = scene.getPlayer()!;
+    const postTickX =
+      scene.formationX + DRIFT_SPEED * 0.05 + entity.offset.col * SPACING_X;
+    const postTickY = scene.formationY + entity.offset.row * SPACING_Y;
+    player.setPosition(postTickX, postTickY);
+    (player as unknown as { _movementState: unknown })._movementState = {
+      x: postTickX,
+      y: postTickY,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+  }
+
+  it('AC1 — P6 phase shift makes the gym player immune to enemy bullets; the next hit lands after it expires', async () => {
+    const { scene, parkAt, armed } = await bootGated('P6');
+    const player = scene.getPlayer()!;
+
+    collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(0);
+
+    // An enemy bullet parked on the ship is ignored while phased.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.isPlayerInvulnerable()).toBe(false);
+
+    // The parked bullet is long-lived and still live. Wait out the 3 s
+    // phase window; the same bullet then lands normally.
+    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    expect(scene.getEffectsRegistry().isPhased).toBe(false);
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+
+  it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
+    const { scene } = await bootGated('P6');
+    collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+
+    const target = scene.formationEntities[0];
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    // No hit and the enemy survives — the player passed straight through.
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(target.alive).toBe(true);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('AC2 — P3 shield absorbs exactly one hit in the gym; the next hit lands after the invulnerability window', async () => {
+    const { scene, parkAt, armed } = await bootGated('P3');
+    const player = scene.getPlayer()!;
+
+    collectOnShip(scene, 'P3');
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+
+    // First hit: absorbed — no hit counted, shield consumed, the post-hit
+    // invulnerability window starts.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // Wait out the invulnerability window, then the following hit lands.
+    for (let i = 0; i < 20; i += 1) scene.tick(0.2); // 4 s
+    expect(scene.isPlayerInvulnerable()).toBe(false);
+
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(1);
+  });
+});

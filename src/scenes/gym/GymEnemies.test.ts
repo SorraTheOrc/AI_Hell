@@ -40,6 +40,7 @@ vi.mock('../../core/configStore', async (importOriginal) => {
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID } from './GymEnemies';
+import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
 import { TANK_COLOR } from '../../entities/Tank';
@@ -1103,5 +1104,97 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     for (const asteroid of liveAsteroids(scene)) {
       expect(asteroid.shootEnabled).toBe(false);
     }
+  });
+});
+
+/**
+ * Regression for AH-0MUHM66ES0027QQV on the real reusable enemy gym route:
+ * the Diver is an `enemyKey` routed to `GymEnemies`, which inherits the
+ * (previously missing) P3/P6 hit-gating. These tests prove the effects gate
+ * a hit on the real scene, not just the stub base.
+ */
+describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route (AH-0MUHM66ES0027QQV)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    resetConfigStore();
+    seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  /** Boots the real GymEnemies diver route with a deterministic power-up layer
+   *  whose next drop lands on the ship. */
+  function makeGatedScene(enemyKey: string, id: PowerUpId): typeof Phaser.Scene {
+    class GatedGymEnemies extends GymEnemies {
+      override init(): void {
+        super.init({ enemyKey });
+        this.config.powerUps = {
+          spawner: new RoundRobinSpawner<PowerUpId>([id]),
+          placement: { place: (context) => ({ x: context.player.x, y: context.player.y }) },
+          spawnInterval: 1000,
+        };
+      }
+    }
+    Object.defineProperty(GatedGymEnemies, 'name', {
+      value: `GatedGymEnemies_${enemyKey}_${id}`,
+    });
+    return GatedGymEnemies as unknown as typeof Phaser.Scene;
+  }
+
+  /** Parks a stationary enemy bullet on the player's current position. */
+  function placeEnemyBulletOnPlayer(scene: GymEnemies): FormationSceneBullet {
+    const player = scene.getPlayer()!;
+    const graphics = scene.add.graphics();
+    graphics.setPosition(player.x, player.y);
+    const bullet: FormationSceneBullet = {
+      graphics,
+      vx: 0,
+      vy: 0,
+      lifetime: 999,
+      elapsed: 0,
+    };
+    (scene as unknown as { bullets: FormationSceneBullet[] }).bullets.push(bullet);
+    return bullet;
+  }
+
+  it('AC1 — collecting P6 in the diver gym phases the player through an enemy bullet', async () => {
+    booted = await bootScene([makeGatedScene('diver', 'P6')]);
+    const scene = booted.scene as unknown as GymEnemies;
+    const player = scene.getPlayer()!;
+    vi.spyOn(player, 'tryFire').mockReturnValue([]);
+
+    // The booted heavy weight drop sits on the ship and is collected on tick.
+    scene.tick(0.05);
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+
+    placeEnemyBulletOnPlayer(scene);
+    scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.isPlayerInvulnerable()).toBe(false);
+  });
+
+  it('AC2 — collecting P3 in the diver gym absorbs the next enemy bullet', async () => {
+    booted = await bootScene([makeGatedScene('diver', 'P3')]);
+    const scene = booted.scene as unknown as GymEnemies;
+    const player = scene.getPlayer()!;
+    vi.spyOn(player, 'tryFire').mockReturnValue([]);
+
+    scene.tick(0.05);
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+
+    placeEnemyBulletOnPlayer(scene);
+    scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
   });
 });
