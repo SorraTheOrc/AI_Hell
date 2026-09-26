@@ -13,6 +13,7 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
+import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
@@ -374,6 +375,88 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getGameState().lives).toBe(livesBefore - 1);
     expect(scene.getHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+
+  // ── F7: composed player-death juice on the lose-life path ─────────
+
+  it('F7 — a mid-run death uses respawn severity, the dedicated cue and registers juice', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
+
+    // Drive the player-hit path directly (no tick) so enemy fire cannot add
+    // unrelated generic-destruction calls to the assertion.
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    expect(juiceSpy).toHaveBeenCalledTimes(1);
+    expect(juiceSpy.mock.calls[0][3]).toBe('respawn');
+    expect(deathSound).toHaveBeenCalledTimes(1);
+    expect(genericSound).not.toHaveBeenCalled();
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+  });
+
+  it('F7 — the final life uses fatal severity', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const gs = scene.getGameState();
+    gs.lives = 1;
+    const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    expect(juiceSpy).toHaveBeenCalledTimes(1);
+    expect(juiceSpy.mock.calls[0][3]).toBe('fatal');
+    expect(gs.lives).toBe(0);
+  });
+
+  it('F7 — the wave-timeout penalty (explodeShip=false) spawns no player juice', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    // The timeout detonates enemies but must not run the player-death juice.
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+  });
+
+  it('F7 — shield absorption keeps the generic cue and spawns no player juice', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Collect a fresh P3 shield.
+    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isShielded).toBe(true);
+
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
+
+    (scene as unknown as { _hitPlayer(): void })._hitPlayer();
+
+    expect(registry.isShielded).toBe(false);
+    expect(genericSound).toHaveBeenCalled();
+    expect(deathSound).not.toHaveBeenCalled();
+    expect(juiceSpy).not.toHaveBeenCalled();
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+  });
+
+  it('F7 — SHUTDOWN clears the juice registry (no leak across restart)', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
   });
 
   it('AC5 — player bullet vs enemy bullet plays the dedicated impact cue from the shared path', async () => {

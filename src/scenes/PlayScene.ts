@@ -70,6 +70,7 @@ import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactor
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
+import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
@@ -483,6 +484,10 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     for (const e of this.playerExplosions) e.destroy();
     this.playerExplosions = [];
+    // Composed player-death juice registry (flash/debris/shockwave/particles)
+    // must not survive SHUTDOWN (parent AH-0MUAYB4R3002ZIZY AC6).
+    for (const effect of this.playerDeathEffects) effect.destroy();
+    this.playerDeathEffects = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
     this.bombNoticeLabel?.destroy();
@@ -1266,6 +1271,11 @@ export class PlayScene extends CombatScene<
    * the wave time-limit penalty always costs exactly one life
    * (AH-0MU7JTG9R002ZWA6).
    *
+   * When the ship actually explodes, the composed player-death juice plays
+   * with `'fatal'` severity for a run-ending death (final life) and
+   * `'respawn'` otherwise. The wave-timeout penalty (`explodeShip === false`)
+   * keeps the existing lighter generic cue and spawns no juice VFX.
+   *
    * @param explodeShip — whether to play the ship explosion VFX.
    */
   private _loseLife(explodeShip = true): void {
@@ -1277,8 +1287,19 @@ export class PlayScene extends CombatScene<
     // lives counter updates immediately (GDD §4.5 display).
     this.effectsRegistry.setLives(this.gameState.lives);
     this.hud?.refresh();
-    playDestructionSound();
-    if (explodeShip) this._spawnPlayerExplosion(this.player.x, this.player.y);
+
+    if (explodeShip) {
+      // Run-ending death (final life) reads heavier than a mid-run respawn.
+      const severity = this.gameState.lives <= 0 ? 'fatal' : 'respawn';
+      // Spawn the juice before the game-over transition so the 'fatal'
+      // effect still fires even though _finishRun starts GameOverScene.
+      spawnPlayerDeathJuice(this, this.player.x, this.player.y, severity, {
+        registry: this.playerDeathEffects,
+      });
+    } else {
+      // Wave-timeout penalty: lighter generic cue only, no juice VFX.
+      playDestructionSound();
+    }
 
     if (this.gameState.lives <= 0) {
       this._finishRun(false);
@@ -2008,6 +2029,11 @@ export class PlayScene extends CombatScene<
   /** Number of times the player has been hit. */
   getHitCount(): number {
     return this.playerHitCount;
+  }
+
+  /** Active composed player-death juice effects (empty once torn down). */
+  getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
+    return this.playerDeathEffects.slice();
   }
 
   /** True while the player is invulnerable after a hit. */
