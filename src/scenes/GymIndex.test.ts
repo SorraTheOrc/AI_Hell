@@ -22,6 +22,7 @@ import {
   GYM_INDEX_COLUMN_X,
   GYM_INDEX_ENEMIES_HEADER,
   GYM_INDEX_BOSSES_HEADER,
+  GYM_INDEX_DEV_UTILITIES_HEADER,
 } from './GymIndex';
 import { GymBoss } from './gym/GymBoss';
 import { MenuScene } from './MenuScene';
@@ -297,6 +298,49 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     // Columns are strictly ordered left-to-right.
     expect(scenesCol).toBeLessThan(enemiesCol);
     expect(enemiesCol).toBeLessThan(bossesCol);
+  });
+});
+
+describe('GymIndex — Dev Utilities section (AH-0MUGXDVPH005TIZL)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+    document.getElementById('gym-curve-panel')?.remove();
+  });
+
+  it('AC1+AC2 — lists GymCurveSequencer under a DEV UTILITIES column', async () => {
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+
+    expect(idx.listedDevUtilityScenes).toEqual([
+      { key: 'GymCurveSequencer', label: 'CurveSequencer', sceneKey: 'GymCurveSequencer' },
+    ]);
+    // It must be categorised away from the plain scene list.
+    expect(idx.listedScenes.some((s) => s.key === 'GymCurveSequencer')).toBe(false);
+
+    const devCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
+    expect(findTextAt(idx, GYM_INDEX_DEV_UTILITIES_HEADER, devCol)).toBeDefined();
+    const row = findTextAt(idx, 'CurveSequencer', devCol);
+    expect(row.getData('sceneKey')).toBe('GymCurveSequencer');
+
+    // The Dev Utilities column sits to the right of the other three.
+    expect(devCol).toBeGreaterThan(GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses);
+  });
+
+  it('AC2 — clicking the Dev Utilities row launches GymCurveSequencer', async () => {
+    booted = await bootScene([GymIndex]);
+    const idx = booted.scene as GymIndex;
+
+    const devCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
+    findTextAt(idx, 'CurveSequencer', devCol).emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted.game.scene.isActive('GymCurveSequencer')).toBe(true);
   });
 });
 
