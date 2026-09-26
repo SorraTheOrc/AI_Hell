@@ -97,6 +97,39 @@ export abstract class CombatScene<
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
 
+  // ── Shared effect gating (P3 shield / P6 phase) ─────────────────
+
+  /**
+   * Whether the player is P6 phase-shifted and therefore immune to enemy
+   * bullets and enemy body contact. Backed by the shared effects registry,
+   * so every `CombatScene` subclass (including `GymFormationScene` and its
+   * `GymEnemies`/`GymBoss`/`GymMinerals` subclasses) inherits the same
+   * gating exactly once and cannot diverge.
+   */
+  protected override isPlayerPhased(): boolean {
+    return this.getEffectsRegistry().isPhased;
+  }
+
+  /**
+   * P3 shield absorbs one hit: consume exactly one shield, run the
+   * scene-specific absorb cue ({@link CombatScene.onShieldAbsorbed}), start
+   * the shared post-hit invulnerability window and report the hit as
+   * absorbed. The shield is not re-applied, so the following hit lands
+   * normally.
+   */
+  protected override tryAbsorbPlayerHit(_player: Player): boolean {
+    if (!this.getEffectsRegistry().tryAbsorbShield()) return false;
+    this.onShieldAbsorbed();
+    this._startInvulnerability();
+    return true;
+  }
+
+  /**
+   * Scene hook for the P3 shield-absorb cue. Default no-op — the generic
+   * gym is silent; `PlayScene` plays its destruction sound here.
+   */
+  protected onShieldAbsorbed(): void {}
+
   /**
    * Whether the player may teleport right now. The gym gates teleports
    * on its opt-in power-up layer; the game always allows them.

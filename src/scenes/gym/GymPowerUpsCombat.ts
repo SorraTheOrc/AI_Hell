@@ -504,24 +504,6 @@ export class GymPowerUpsCombat extends CombatScene<
     return COMBAT_HIT_INVULNERABLE_DURATION;
   }
 
-  /** P6 phase shift: complete pass-through while active. */
-  protected override isPlayerPhased(): boolean {
-    return this.effectsRegistry.isPhased;
-  }
-
-  /**
-   * P3 shield absorbs one hit: pop the shield and start the shared
-   * post-hit invulnerability blink (per the parent risk mitigation).
-   *
-   * @returns whether the hit was absorbed.
-   */
-  protected override tryAbsorbPlayerHit(_player: Player): boolean {
-    if (!this.effectsRegistry.isShielded) return false;
-    this.effectsRegistry.tryAbsorbShield();
-    this._startInvulnerability();
-    return true;
-  }
-
   /** P4 bomb notice (the shared collect path already cleared bullets). */
   protected override onPowerUpCollected(drop: CombatActiveDrop): void {
     if (drop.dropId === 'P4') this._flashBombNotice();

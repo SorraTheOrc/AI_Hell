@@ -195,7 +195,10 @@ export class CombatCoreScene<
 
   /**
    * Scene hook for shield-style absorption. Default: no absorption (the
-   * hit always lands). Combat scenes override this to try their shield.
+   * hit always lands). {@link CombatScene} provides the shared
+   * registry-backed implementation (P3 shield consumes one shield and
+   * starts the post-hit invulnerability window), so concrete combat scenes
+   * should not re-implement it.
    *
    * @returns whether the hit was fully absorbed.
    */
@@ -205,7 +208,9 @@ export class CombatCoreScene<
 
   /**
    * Whether the player is phase-shifted (P6) and therefore immune.
-   * Default false; combat scenes return their registry's phase state.
+   * Default false; {@link CombatScene} provides the shared registry-backed
+   * implementation (`getEffectsRegistry().isPhased`) so every combat scene
+   * gates hits identically.
    */
   protected isPlayerPhased(): boolean {
     return false;

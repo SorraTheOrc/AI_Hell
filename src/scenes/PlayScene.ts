@@ -1084,11 +1084,6 @@ export class PlayScene extends CombatScene<
     this.enemyBullets = bullets;
   }
 
-  /** The game skips bullet/ram collisions while the player is P6-phased. */
-  protected override isPlayerPhased(): boolean {
-    return this.effectsRegistry.isPhased;
-  }
-
   /** Enemy destroyed by a player bullet: award score and advance waves. */
   protected override onEnemyDestroyed(enemy: EnemyEntity): void {
     const s = this.spawned.find((candidate) => candidate.entity === enemy);
@@ -1243,20 +1238,12 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Player hit: absorb with a shield if active, otherwise lose a life
-   * and either respawn with invulnerability or end the run — the game's
-   * hook for the shared {@link CombatScene._hitPlayer} flow.
+   * Shield-absorb cue for the shared gating path (`CombatScene` owns the
+   * consume + invulnerability semantics): the game pops the bubble with its
+   * destruction sound. The hit is absorbed — no life lost.
    */
-  protected override tryAbsorbPlayerHit(): boolean {
-    if (this.effectsRegistry.tryAbsorbShield()) {
-      // Shield absorbs the hit — no life lost. The bubble pops (P3 removed
-      // from the registry) and the player gets a brief invulnerability
-      // blink so the absorb is observable (mirrors GymPowerUpsCombat).
-      playDestructionSound();
-      this._startInvulnerability();
-      return true;
-    }
-    return false;
+  protected override onShieldAbsorbed(): void {
+    playDestructionSound();
   }
 
   /** Unabsorbed hit: run the standard lose-life / respawn flow. */
