@@ -250,9 +250,11 @@ The following rules govern how enemy entities interact with each other and with 
 - **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
   children at its position; a `medium` spawns two `small`; a `small` destroys
   cleanly. Children move in directions different from the parent and from each
-  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
-  and every spawned child counts toward the wave's alive target (dynamic
-  spawn registration in `WaveManager`).
+  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies.
+  Asteroids (including split children) are **not** registered with the
+  `WaveManager` and do **not** count toward a wave's alive target: a wave
+  clears once its **enemy ships** are destroyed, regardless of how many
+  asteroids remain (AH-0MUJM746P000QAEO).
 - **Wave placement — random offscreen spawner**: Asteroids are **not** a
   fixed formation group. Every **regular wave** (Levels 1–5) plans a set of
   asteroid spawns with the pure planner `src/waves/AsteroidSpawner.ts`
@@ -275,7 +277,13 @@ The following rules govern how enemy entities interact with each other and with 
 
 ### 4.2 Wave / Formation Structures
 
-Each level consists of one or more **waves** of enemies. A wave is a set of enemies that spawn together, execute their pattern, and are cleared when all are destroyed.
+Each level consists of one or more **waves** of enemies. A wave is a set of
+enemy ships that spawn together and execute their pattern; the wave is
+**cleared when its enemy ships are destroyed**. Asteroids do **not** gate that
+clear: surviving asteroids persist in the field across wave and level
+transitions (still drifting, wrapping, rotating and shootable), as do minerals
+already on the field. Only the boss encounter removes carried-over asteroids,
+on entry (AH-0MUJM746P000QAEO).
 
 | Wave Type | Description | Levels |
 |-----------|-------------|--------|
@@ -290,8 +298,9 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 > **Asteroids are not a wave structure.** Since the random offscreen spawner
 > landed, no wave declares a fixed asteroid group: every regular wave
 > additionally spawns random offscreen asteroids (see §4.1 E6), while the boss
-> encounter spawns none. The rows above describe the **formation** enemies
-> only.
+> encounter spawns none. The rows above describe the **enemy ships** only.
+> Asteroids do not gate wave completion and survive wave/level transitions;
+> minerals already on the field persist across them too (AH-0MUJM746P000QAEO).
 
 ### 4.3 Boss Design
 

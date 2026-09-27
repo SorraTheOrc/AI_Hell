@@ -63,10 +63,11 @@ loop lives **once** in the shared helper `src/scenes/core/asteroidSplit.ts`
 `PlayScene._splitAsteroid` and the `GymEnemies`/`GymMinerals` destruction seams,
 so a split-physics change is made in one place.
 
-**Wave-aware splitting**: dynamically spawned children MUST be registered with
-the `WaveManager` — the scene calls `registerDynamicSpawn(n)` when spawning
-children and they count toward `enemiesAlive`, so the wave neither clears
-early nor stalls. See `PlayScene._splitAsteroid`.
+**Wave-aware splitting**: split children are **not** registered with the
+`WaveManager` and do **not** count toward `enemiesAlive`. A wave clears once
+its **enemy ships** are destroyed, regardless of how many asteroids remain,
+and the children persist in the field across wave and level transitions
+(AH-0MUJM746P000QAEO). See `PlayScene._splitAsteroid`.
 
 **Scoring** (GDD §4.5): large and medium asteroids award **no** points; small
 asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
@@ -91,9 +92,11 @@ one on schedule during `tick(dt)`:
   to 20 when it reaches 2× medium (**160**), at which point the count doubles.
 - **Timing**: the wave window is split into equal segments with ±5% jitter; the
   first asteroid is constrained to the first 10% of the window.
-- **Registration**: each released asteroid is registered with the `WaveManager`
-  via `registerDynamicSpawn(1)`, so wave-clear accounting includes it (the same
-  path the split children use).
+- **Registration**: asteroids are **not** registered with the `WaveManager`,
+  so they do not gate wave completion and persist across wave/level
+  transitions. (The generic `registerDynamicSpawn` / `unregisterDynamicSpawn`
+  seam remains on `WaveManager` for any future dynamically spawned enemy that
+  must be wave-accounted.)
 
 The **boss encounter spawns no asteroids**: `planAsteroidSpawns()` clears the
 plan outside a regular wave and the release loop is guarded on boss state.
