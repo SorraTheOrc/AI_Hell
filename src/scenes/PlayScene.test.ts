@@ -84,6 +84,22 @@ function killAllEnemies(scene: PlayScene): void {
   }
 }
 
+/**
+ * Destroys every live non-asteroid enemy via player bullets (deterministic),
+ * leaving any live asteroids in the field. Used to assert that a wave clears
+ * with asteroids still alive (AH-0MUJM746P000QAEO).
+ */
+function killNonAsteroidEnemies(scene: PlayScene): void {
+  for (let guard = 0; guard < 500; guard++) {
+    const enemy = scene
+      .getEnemies()
+      .find((e) => e.alive && !(e instanceof Asteroid));
+    if (!enemy) return;
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+  }
+}
+
 /** Advances past the transition pause, spawning the next wave. */
 function finishTransition(scene: PlayScene): void {
   if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
@@ -147,37 +163,19 @@ async function bootSceneWithLevels(
 }
 
 /**
- * Reconstructs the pre-spawner campaign fixture: the shipped five-level
- * campaign with the original fixed Asteroid group re-added to Level 1
- * Wave 1. The asteroid integration tests (`AH-0MU8BZ2ZM004J47F`,
- * `AH-0MU8TWF1H007OG2L`, `AH-0MUCG5SWH008104P`, `AH-0MUCG5TIU000VPVO`,
- * `AH-0MU7JTG9R002ZWA6`) were written against that fixed group; the shipped
- * campaign now relies on the dynamic spawner instead.
+ * A deep copy of the shipped campaign, without any fixed asteroid. The
+ * asteroid integration tests spawn their asteroid through the public
+ * `spawnAsteroidAt` seam instead, because asteroids are not wave-accounted
+ * (AH-0MUJM746P000QAEO) and must not be part of a wave definition.
  */
-function campaignWithFixedAsteroid(): LevelDefinition[] {
+function plainCampaign(): LevelDefinition[] {
   return CAMPAIGN_LEVELS.map((lvl) => ({
     ...lvl,
     waves: lvl.waves.map((w) => ({
       ...w,
       groups: w.groups.map((g) => ({ ...g })),
     })),
-  })).map((lvl) => {
-    if (lvl.level === 1) {
-      lvl.waves[0].groups = [
-        ...lvl.waves[0].groups,
-        {
-          enemyKey: 'asteroid',
-          formation: 'single' as const,
-          count: 1,
-          spacingX: 28,
-          spacingY: 22,
-          startX: GAME_WIDTH * 0.6,
-          startY: GAME_HEIGHT * 0.25,
-        },
-      ];
-    }
-    return lvl;
-  });
+  }));
 }
 
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
@@ -198,17 +196,19 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     return booted.scene as PlayScene;
   }
 
-  /** Boots with the fixed-asteroid campaign fixture (see
-   * `campaignWithFixedAsteroid`). */
+  /** Boots with a deterministic large asteroid placed outside the wave
+   * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
-    // Isolate the fixed asteroid: disable the dynamic spawner from before
-    // the scene restarts so these legacy asteroid-behaviour tests are not
-    // perturbed by random spawns.
+    // Isolate the asteroid: disable the dynamic spawner from before the scene
+    // restarts so these asteroid-behaviour tests are not perturbed by random
+    // spawns, then place one deterministic large asteroid through the public
+    // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
     const { booted: game, scene } = await bootSceneWithLevels(
-      campaignWithFixedAsteroid(),
+      plainCampaign(),
       { asteroidSpawner: false },
     );
     booted = game;
+    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return scene;
   }
 
@@ -861,11 +861,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
   });
 
-  it('AH-0MU8TWF1H007OG2L AC5 — carried-over asteroids are re-registered with WaveManager for the next wave', async () => {
+  it('AH-0MU8TWF1H007OG2L AC5 — surviving asteroids are NOT re-registered with WaveManager after timeout (AH-0MUJM746P000QAEO)', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
-    const asteroids = findAsteroids(scene);
-    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroidsBefore = findAsteroids(scene);
+    expect(asteroidsBefore.length).toBeGreaterThan(0);
 
     // Time out the wave to trigger transition.
     scene.setWaveTimerRemaining(0.05);
@@ -873,11 +873,99 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // Finish the transition so the next wave is spawned.
     finishTransition(scene);
 
-    // The WaveManager should account for the carried-over asteroids.
-    // After timeout: enemiesAlive was decremented by _advanceAfterTimeout replay;
-    // re-registered asteroids add them back.
-    const aliveCount = scene.getAliveCount();
-    expect(wm.enemiesAlive).toBe(aliveCount);
+    // Asteroids survived the timeout and are still alive.
+    const asteroidsAfter = findAsteroids(scene);
+    expect(asteroidsAfter.length).toBeGreaterThan(0);
+
+    // enemiesAlive reflects ONLY the next wave's formation enemies.
+    expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
+  });
+
+  // ── Wave-timeout major-explosion SFX (AH-0MUJ1YZJ9008O4RC) ─────
+
+  it('AH-0MUJ1YZJ9008O4RC AC2 — timeout fires the major-explosion cue once per detonated survivor', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    expect(detonated).toBeGreaterThan(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(scene.getAliveCount()).toBe(findAsteroids(scene).length);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC2/AC4 — asteroids survive the timeout and do not trigger the cue', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlayWithAsteroid();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const detonated = scene.getAliveCount() - asteroids.length;
+    expect(detonated).toBeGreaterThan(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    for (const asteroid of asteroids) expect(asteroid.alive).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC4 — no survivors means no cue and the wave timer is hidden', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    scene.setAsteroidSpawnerEnabled(false);
+    for (const e of scene.getEnemies()) e.destroySelf();
+    expect(scene.getAliveCount()).toBe(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).not.toHaveBeenCalled();
+    expect(scene.isWaveTimerActive()).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC4 — the timeout life loss keeps the generic cue and never the player cue', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const generic = vi.spyOn(effectsModule, 'playDestructionSound');
+    const playerCue = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(generic).toHaveBeenCalledTimes(1);
+    expect(playerCue).not.toHaveBeenCalled();
+    expect(majorCue).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC2 — detonation scale, life penalty and wave advance are unchanged', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlayWithAsteroid();
+    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    const livesBefore = scene.getGameState().lives;
+    const waveBefore = scene.getWaveManager().waveNumber;
+    waveVfx.scales.length = 0;
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(
+      waveVfx.scales.filter((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE).length,
+    ).toBe(detonated);
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
+    vi.restoreAllMocks();
   });
 
   // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
@@ -971,6 +1059,119 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(findAsteroids(scene).length).toBe(asteroids.length);
   });
 
+  // ── Asteroid-independent wave completion + persistence (AH-0MUJM746P000QAEO) ──
+
+  it('AH-0MUJM746P000QAEO AC1 — a released offscreen asteroid does not increment enemiesAlive', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const before = new Set(findAsteroids(scene));
+    const aliveBefore = wm.enemiesAlive;
+
+    // Release one planned asteroid directly through the public spawn seam.
+    scene.spawnAsteroidAt(-20, GAME_HEIGHT / 2, 'large');
+
+    const spawned = findAsteroids(scene).filter((a) => !before.has(a));
+    expect(spawned).toHaveLength(1);
+    // The asteroid is not wave-accounted (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
+  });
+
+  it('AH-0MUJM746P000QAEO AC1 — a split child does not increment enemiesAlive', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+    const large = findAsteroids(scene)[0];
+    const aliveBefore = wm.enemiesAlive;
+
+    // Shoot the large asteroid: it splits into 2 medium children.
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(large.alive).toBe(false);
+    expect(findAsteroids(scene)).toHaveLength(2);
+
+    // The asteroid is not wave-accounted, so the split leaves enemiesAlive
+    // unchanged (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
+  });
+
+  it('AH-0MUJM746P000QAEO AC2 — a live asteroid persists across a wave transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+    const asteroid = findAsteroids(scene)[0];
+    expect(asteroid.alive).toBe(true);
+    const xBefore = asteroid.x;
+    const yBefore = asteroid.y;
+
+    // Clear only the wave-1 Scouts; the asteroid survives and the wave clears.
+    killNonAsteroidEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(asteroid.alive).toBe(true);
+
+    finishTransition(scene);
+    // Now on wave 2 with the asteroid still alive and still moving.
+    expect(wm.waveNumber).toBe(2);
+    expect(asteroid.alive).toBe(true);
+    scene.tick(0.5);
+    expect(
+      Math.abs(asteroid.x - xBefore) + Math.abs(asteroid.y - yBefore),
+    ).toBeGreaterThan(0);
+  });
+
+  it('AH-0MUJM746P000QAEO AC2 — a live asteroid persists across a level transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+    const asteroid = findAsteroids(scene)[0];
+
+    // Clear wave 1 and wave 2 of Level 1; the asteroid lives through both.
+    killNonAsteroidEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+    expect(wm.waveNumber).toBe(2);
+    expect(asteroid.alive).toBe(true);
+
+    killNonAsteroidEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+
+    // Now on Level 2 with the carried-over asteroid still alive.
+    expect(wm.level).toBe(2);
+    expect(asteroid.alive).toBe(true);
+    expect(findAsteroids(scene)).toContain(asteroid);
+  });
+
+  it('AH-0MUJM746P000QAEO AC2 — a live asteroid is shootable after a transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const asteroid = findAsteroids(scene)[0];
+
+    // Clear wave 1 and carry the asteroid into wave 2.
+    killNonAsteroidEnemies(scene);
+    finishTransition(scene);
+    expect(asteroid.alive).toBe(true);
+
+    // The persisted asteroid is still a valid bullet target and splits.
+    scene.spawnPlayerBullet(asteroid.x, asteroid.y, 0, 0);
+    scene.tick(0.016);
+    expect(asteroid.alive).toBe(false);
+    expect(findAsteroids(scene)).toHaveLength(2);
+  });
+
+  it('AH-0MUJM746P000QAEO AC5 — minerals persist across a wave transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+
+    // Place a mineral on the field through the public seam.
+    scene.spawnMineralAt(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    const mineralsBefore = scene.getMinerals();
+    expect(mineralsBefore.length).toBeGreaterThan(0);
+
+    // Clear wave 1 and complete the transition.
+    killNonAsteroidEnemies(scene);
+    expect(wm.waveNumber).toBe(2);
+    finishTransition(scene);
+
+    // The mineral is still on the field after the wave transition.
+    expect(scene.getMinerals().length).toBe(mineralsBefore.length);
+  });
+
   // ── Power-up drop separation (AH-0MU7JTFM5000R4ME) ─────────────
 
   it('AH-0MU7JTFM5000R4ME AC3 — drops spawned at the same position keep minimum separation', async () => {
@@ -1024,17 +1225,19 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     return booted.scene as PlayScene;
   }
 
-  /** Boots with the fixed-asteroid campaign fixture (see
-   * `campaignWithFixedAsteroid`). */
+  /** Boots with a deterministic large asteroid placed outside the wave
+   * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
-    // Isolate the fixed asteroid: disable the dynamic spawner from before
-    // the scene restarts so these legacy asteroid-behaviour tests are not
-    // perturbed by random spawns.
+    // Isolate the asteroid: disable the dynamic spawner from before the scene
+    // restarts so these asteroid-behaviour tests are not perturbed by random
+    // spawns, then place one deterministic large asteroid through the public
+    // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
     const { booted: game, scene } = await bootSceneWithLevels(
-      campaignWithFixedAsteroid(),
+      plainCampaign(),
       { asteroidSpawner: false },
     );
     booted = game;
+    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return scene;
   }
 
@@ -1197,17 +1400,19 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     return booted.scene as PlayScene;
   }
 
-  /** Boots with the fixed-asteroid campaign fixture (see
-   * `campaignWithFixedAsteroid`). */
+  /** Boots with a deterministic large asteroid placed outside the wave
+   * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
-    // Isolate the fixed asteroid: disable the dynamic spawner from before
-    // the scene restarts so these legacy asteroid-behaviour tests are not
-    // perturbed by random spawns.
+    // Isolate the asteroid: disable the dynamic spawner from before the scene
+    // restarts so these asteroid-behaviour tests are not perturbed by random
+    // spawns, then place one deterministic large asteroid through the public
+    // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
     const { booted: game, scene } = await bootSceneWithLevels(
-      campaignWithFixedAsteroid(),
+      plainCampaign(),
       { asteroidSpawner: false },
     );
     booted = game;
+    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return scene;
   }
 
@@ -1226,18 +1431,19 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(asteroids.length).toBe(1);
     expect(asteroids[0].getSizeTier()).toBe('large');
 
-    // Wave accounting includes the asteroid: 6 scouts + 1 asteroid.
+    // Wave accounting counts only the 6 Scouts: the asteroid is not
+    // wave-accounted (AH-0MUJM746P000QAEO).
     const waveDef = wm.currentWave()!;
     const total = waveDef.groups.reduce((sum, g) => sum + g.count, 0);
-    expect(total).toBe(7);
+    expect(total).toBe(6);
     expect(wm.enemiesAlive).toBe(total);
-    expect(scene.getAliveCount()).toBe(total);
+    expect(scene.getAliveCount()).toBe(total + 1); // 6 Scouts + 1 asteroid
   });
 
   it('AC3 — shooting the large asteroid spawns exactly 2 medium children in divergent directions', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
-    const aliveBefore = wm.enemiesAlive; // 7
+    const aliveBefore = wm.enemiesAlive; // 6 (Scouts only)
 
     const large = findAsteroids(scene)[0];
     const scoreBefore = scene.getGameState().score;
@@ -1254,8 +1460,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(children.length).toBe(2);
     expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
 
-    // Both children registered with the WaveManager: 7 - 1 parent + 2 = 8.
-    expect(wm.enemiesAlive).toBe(aliveBefore + 1);
+    // Split children are NOT registered with the WaveManager (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
 
     // Children move in directions different from each other (>= pi/3).
     const a1 = Math.atan2(children[0].vy, children[0].vx);
@@ -1326,25 +1532,37 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(findAsteroids(scene).filter((a) => a.getSizeTier() === 'small')).toHaveLength(3);
   });
 
-  it('AC6 — the wave clears only after ALL split children are destroyed (no stall, no early clear)', async () => {
+  it('AH-0MUJM746P000QAEO AC1 — the wave clears as soon as non-asteroid enemies are destroyed, even with live asteroids', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
 
-    // Destroy everything: 6 scouts + full asteroid chain
-    // (1 large -> 2 medium -> 4 small = 7 asteroid enemies, 13 total).
-    killAllEnemies(scene);
+    // The wave has 6 Scouts; the asteroid is not wave-accounted.
+    expect(wm.enemiesAlive).toBe(6);
 
-    // All enemies dead -> the wave wiped -> transition to Wave 2 loaded.
+    // Destroy the asteroid first — this spawns 2 medium children.
+    const large = findAsteroids(scene)[0];
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(large.alive).toBe(false);
+    expect(findAsteroids(scene)).toHaveLength(2);
+
+    // The split leaves enemiesAlive unchanged (asteroids are not counted).
+    expect(wm.enemiesAlive).toBe(6);
+
+    // Now destroy all Scouts. The wave should clear despite 2 medium asteroids alive.
+    killNonAsteroidEnemies(scene);
+
+    // The wave cleared and transition to Wave 2 began — the asteroids persist.
     expect(scene.isTransitioning()).toBe(true);
-    expect(scene.getAliveCount()).toBe(0);
-    // Wave 2 is now current: the manager pre-loads its 8 Scouts (they are
-    // not spawned on screen until the transition completes).
     expect(wm.waveNumber).toBe(2);
+    expect(findAsteroids(scene)).toHaveLength(2);
+    // Wave 2 pre-loads its 8 Scouts.
     expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
 
     finishTransition(scene);
     expect(wm.waveNumber).toBe(2);
-    expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
+    // The 8 Scouts are now spawned on screen alongside the 2 persisted asteroids.
+    expect(scene.getAliveCount()).toBe(wm.waveEnemyCount() + 2);
   });
 
   it('AC5 — asteroids move independently of formation drift (constant velocity + wrap + rotation)', async () => {
@@ -2339,8 +2557,8 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
     expect(spawned[0].getSizeTier()).toBe(plan[0].sizeTier);
     expect(spawned[0].x).toBeCloseTo(plan[0].x, 3);
     expect(spawned[0].y).toBeCloseTo(plan[0].y, 3);
-    // Registered as a dynamic spawn so wave-clear accounting includes it.
-    expect(wm.enemiesAlive).toBe(aliveBefore + 1);
+    // Released asteroids are NOT registered with the WaveManager (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
   });
 
   it('AC2 — spawned asteroids appear offscreen and drift inward', async () => {

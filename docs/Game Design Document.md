@@ -211,7 +211,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Fires**: No (Levels 1–3); yes, aimed shot (Level 4+).
 
 #### E2 — Diver
-- **Behavior**: Dives straight down toward the player (x locked at its formation slot — a vertical trajectory), then returns to its current formation slot. While a Diver is away from the formation (diving, pausing or returning), the rest of its cluster holds position — the formation drift is frozen — and resumes once every Diver has rejoined.
+- **Behavior**: Dives diagonally toward the player's position snapshotted at dive start (a quadratic-bezier parabolic arc in which both x and y follow the curve — no x-lock; AH-0MTGBOKLC006N8UX), then returns to its current formation slot. While a Diver is away from the formation (diving, pausing or returning), the rest of its cluster holds position — the formation drift is frozen — and resumes once every Diver has rejoined.
 - **Appearance**: Medium, dart-shaped neon entity.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.
@@ -250,9 +250,11 @@ The following rules govern how enemy entities interact with each other and with 
 - **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
   children at its position; a `medium` spawns two `small`; a `small` destroys
   cleanly. Children move in directions different from the parent and from each
-  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
-  and every spawned child counts toward the wave's alive target (dynamic
-  spawn registration in `WaveManager`).
+  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies.
+  Asteroids (including split children) are **not** registered with the
+  `WaveManager` and do **not** count toward a wave's alive target: a wave
+  clears once its **enemy ships** are destroyed, regardless of how many
+  asteroids remain (AH-0MUJM746P000QAEO).
 - **Wave placement — random offscreen spawner**: Asteroids are **not** a
   fixed formation group. Every **regular wave** (Levels 1–5) plans a set of
   asteroid spawns with the pure planner `src/waves/AsteroidSpawner.ts`
@@ -275,7 +277,13 @@ The following rules govern how enemy entities interact with each other and with 
 
 ### 4.2 Wave / Formation Structures
 
-Each level consists of one or more **waves** of enemies. A wave is a set of enemies that spawn together, execute their pattern, and are cleared when all are destroyed.
+Each level consists of one or more **waves** of enemies. A wave is a set of
+enemy ships that spawn together and execute their pattern; the wave is
+**cleared when its enemy ships are destroyed**. Asteroids do **not** gate that
+clear: surviving asteroids persist in the field across wave and level
+transitions (still drifting, wrapping, rotating and shootable), as do minerals
+already on the field. Only the boss encounter removes carried-over asteroids,
+on entry (AH-0MUJM746P000QAEO).
 
 | Wave Type | Description | Levels |
 |-----------|-------------|--------|
@@ -290,8 +298,9 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 > **Asteroids are not a wave structure.** Since the random offscreen spawner
 > landed, no wave declares a fixed asteroid group: every regular wave
 > additionally spawns random offscreen asteroids (see §4.1 E6), while the boss
-> encounter spawns none. The rows above describe the **formation** enemies
-> only.
+> encounter spawns none. The rows above describe the **enemy ships** only.
+> Asteroids do not gate wave completion and survive wave/level transitions;
+> minerals already on the field persist across them too (AH-0MUJM746P000QAEO).
 
 ### 4.3 Boss Design
 
@@ -919,6 +928,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Interactions** | Teleport activate (S/↓) | Short whoosh + portal effect | Medium | Immediate |
 | **Impacts** | Player hit (life lost) | Low, heavy layered "hull breach" boom (`playPlayerDestructionSound()`: impact thump + descending body + shrapnel hiss); replaces the generic enemy cue on the player-death paths | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
+| **Impacts** | Wave timeout — surviving enemies detonate | Heavy layered "major explosion" boom (`playMajorExplosionSound()`: deep impact thump + descending body + low-pass rumble wash), one cue per detonating ship, voice-capped at `MAJOR_EXPLOSION_MAX_VOICES` (4) with excess triggers attenuated | High | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
 | **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
@@ -970,6 +980,7 @@ enemies get:
 
 - **Thruster hum** — single ship-level continuous jet-engine roar (NOT per-engine flame port), synthesised as a soft triangle fundamental (60 Hz) with a sine undertone (35 Hz) for low rumble plus white noise through a band-pass filter (700–1100 Hz, Q 0.6–1.1) for jet-engine whoosh; filtered noise is the dominant texture, all through one reused gain node; gain follows `getEngineSoundLevel` level `min(1, thrustAcceleration / FLAME_REF_THRUST)` (GDD §2.2 `ShipConfig`), so the tuning slider is audible (half thrust → ~0.5 level). Contour: smooth fade-in ramping over `THRUSTER_HUM_GROWTH_TIME` (30 ms at reference thrust) and ~4× quicker decay when thrust stops (mirrors the flame growth/shrink timing), with no clicks on retrigger; volume ≤ 0.075 (halved from 0.15 to sit comfortably behind other cues, within the "≤ 0.2" ceiling for all player cues). Driven per-frame by `Player.preUpdate` → `getEngineSoundLevel(state, input, thrustAcceleration)` → `updateThrusterSound(level)` for both `fourDirectional` (any arrow/WASD) and `asteroids` (forward/turn) schemes; stops on release, respawn, player destroy, or scene shutdown so no audio nodes leak.
 - **Player destruction** — the dedicated `playPlayerDestructionSound()` in `src/audio/effects.ts` is a heavier, layered cue distinct from the generic enemy `playDestructionSound()` (440 → 60 Hz sawtooth): a sawtooth impact thump (120 → 32 Hz, ~0.4 s) plus a slower triangle body sliding 260 → 42 Hz (~0.6 s) and a short high-pass filtered noise tail (~0.28 s) for the shrapnel hiss. It is played **exactly once** per player destruction by the shared `spawnPlayerDeathJuice` helper (§7.2) and fully replaces the generic enemy cue on the player-death paths (`PlayScene._loseLife`, `CombatScene.applyPlayerHit`, and the inherited `GymPowerUpsCombat` hit lifecycle). Its amplitudes and lengths are exported `PLAYER_DESTRUCTION_*` constants, and every layer stays within the ≤ 0.2 player-cue volume ceiling. The wave-timeout life penalty and shield absorption keep the generic cue; the dedicated cue is a safe no-op without an `AudioContext`.
+- **Wave-timeout major explosion** — when the wave timer expires, every surviving non-asteroid enemy detonates at 10× scale and each one plays the dedicated `playMajorExplosionSound()` (AH-0MUJ1YZJ9008O4RC): a sawtooth impact thump (150 → 26 Hz, ~0.45 s) plus a triangle descending body (340 → 38 Hz, ~0.7 s) and a short low-pass filtered noise rumble wash (~0.35 s, distinct from the player cue's high-pass shrapnel hiss). A concurrency limiter caps **full-gain** voices at `MAJOR_EXPLOSION_MAX_VOICES` (4, aligned to the ≤ 3–4 concurrent-SFX guidance below); per-ship triggers beyond the cap still sound but are attenuated by `MAJOR_EXPLOSION_OVERFLOW_ATTENUATION` (0.35) so a large wipe does not stack at full gain. A voice holds its slot for `MAJOR_EXPLOSION_VOICE_DURATION` (the longest layer) and then expires, so a later timeout plays at full gain again rather than being silently dropped. The player's timeout life loss (via `_loseLife(false)`) keeps the lighter generic `playDestructionSound()` and never `playPlayerDestructionSound()`; asteroids survive the timeout and trigger no cue. Every `MAJOR_EXPLOSION_*` amplitude/duration/window/attenuation is exported for playtest tuning, and the cue is a safe no-op without an `AudioContext`.
 - **Shoot cues play once per shot** (not once per bullet), keyed off each
   firing weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
 - **Pickup activation cues** are unique per pickup type and distinct from the
@@ -1010,7 +1021,7 @@ AudioContext must be created and resumed only after a user gesture (e.g., clicki
 
 #### SFX Rate Limiting
 
-To prevent cacophony from high-frequency events, SFX instances are rate-limited (maximum 3–4 concurrent sounds). Auto-fire and rapid bullet hits use short, low-volume sounds to minimize overlap impact. See §6.7 (risk entry).
+To prevent cacophony from high-frequency events, SFX instances are rate-limited (maximum 3–4 concurrent sounds). Auto-fire and rapid bullet hits use short, low-volume sounds to minimize overlap impact. The wave-timeout major-explosion cue implements this cap directly: `playMajorExplosionSound()` sounds at most `MAJOR_EXPLOSION_MAX_VOICES` (4) full-gain voices concurrently and attenuates excess per-ship triggers within the active window (`MAJOR_EXPLOSION_OVERFLOW_ATTENUATION`). See §6.7 (risk entry).
 
 ---
 

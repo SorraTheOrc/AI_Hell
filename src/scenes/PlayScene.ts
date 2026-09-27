@@ -49,6 +49,7 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
+  playMajorExplosionSound,
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
@@ -699,8 +700,9 @@ export class PlayScene extends CombatScene<
 
   /**
    * Spawns one planned asteroid at its offscreen position with the planned
-   * inward velocity, registering it with the WaveManager as a dynamic spawn
-   * so wave-clear accounting includes it.
+   * inward velocity. Asteroids are NOT registered with the WaveManager
+   * (AH-0MUJM746P000QAEO): they do not gate wave completion, and they persist
+   * in the field across wave and level transitions.
    */
   private _spawnScheduledAsteroid(event: SpawnEvent): void {
     const entity = new Asteroid(this, {
@@ -721,7 +723,6 @@ export class PlayScene extends CombatScene<
       spacingX: 0,
       spacingY: 0,
     });
-    this.waveManager.registerDynamicSpawn(1);
   }
 
   /** Advances formation drift and repositions every live enemy. */
@@ -751,6 +752,14 @@ export class PlayScene extends CombatScene<
       // motion with four-edge wrap (never formation drift).
       if (s.enemyKey === 'asteroid') {
         (s.entity as Asteroid).updatePosition(dt);
+        continue;
+      }
+      // Live mineral-seek: push the scene's live mineral field so roaming
+      // seekers (Harvester) steer toward the nearest mineral, then advance
+      // their own motion. The gym's shared tick calls the same seam (F4).
+      if (s.entity.setSeekTargets) {
+        s.entity.setSeekTargets(this.minerals);
+        s.entity.updatePosition?.(dt);
         continue;
       }
       s.entity.applyFormationPosition(
@@ -1150,20 +1159,23 @@ export class PlayScene extends CombatScene<
     this.minerals.push(
       ...resolveMineralKillDrops(this, s.entity, this.rng),
     );
-    this._advanceAfterKill();
+    // Asteroids are not wave-accounted (AH-0MUJM746P000QAEO): destroying one
+    // must not advance the wave. Only non-asteroid enemy ships drive
+    // wave/level/boss progression.
+    if (s.enemyKey !== 'asteroid') this._advanceAfterKill();
   }
 
   /**
    * Splits a destroyed large/medium asteroid into exactly two smaller
    * children moving in directions different from the parent and from each
-   * other. Children are registered with the WaveManager so the wave's
-   * alive count tracks them (the wave neither clears early nor stalls).
+   * other. Children are NOT registered with the WaveManager
+   * (AH-0MUJM746P000QAEO), so the split does not affect wave accounting; the
+   * children persist and remain shootable.
    */
   private _splitAsteroid(s: SpawnedEnemy): void {
     const parent = s.entity as Asteroid;
     // Shared asteroid-split helper (gap 8): the same spawn code the gyms
-    // consume. Children are registered with the WaveManager so the wave's
-    // alive count tracks them (the wave neither clears early nor stalls).
+    // consume. Split children are not wave-accounted (AH-0MUJM746P000QAEO).
     splitAsteroid({
       scene: this,
       parent,
@@ -1176,8 +1188,6 @@ export class PlayScene extends CombatScene<
           spacingX: 0,
           spacingY: 0,
         });
-        // Register the dynamic child so `enemiesAlive` stays correct.
-        this.waveManager.registerDynamicSpawn(1);
       },
     });
   }
@@ -1385,9 +1395,15 @@ export class PlayScene extends CombatScene<
    * Wave time-limit expired. If enemies remain, every non-asteroid survivor
    * detonates at 10x scale and the run loses exactly one life (running the
    * normal game-over flow at 0 lives), then the wave advances. Asteroids
-   * survive the timeout (they are not detonated) and are re-registered with
-   * the WaveManager so they gate the next wave's clear (AH-0MU8TWF1H007OG2L).
-   * If no enemies remain, nothing happens (AC3).
+   * survive the timeout (they are not detonated), are NOT re-registered with
+   * the WaveManager (they no longer gate the next wave), and persist in the
+   * field (AH-0MUJM746P000QAEO). If no enemies remain, nothing happens (AC3).
+   *
+   * Gym↔game parity: the game is the only scene with a wave timer/timeout,
+   * so this cue + limiter is the single implementation. If a gym ever gains
+   * a wave-timeout path it must call `playMajorExplosionSound()` (reusing
+   * the shared limiter) rather than duplicating the cue — see
+   * AH-0MUK5ONAA0007YEX and AH-0MUJ1YZJ9008O4RC.
    */
   private _timeoutWave(): void {
     const survivors = this.spawned.filter((s) => s.entity.alive);
@@ -1398,21 +1414,17 @@ export class PlayScene extends CombatScene<
     }
 
     // Asteroids survive the timeout — separate them from detonatable enemies.
-    const survivingAsteroids = survivors.filter((s) => s.enemyKey === 'asteroid');
     const detonateList = survivors.filter((s) => s.enemyKey !== 'asteroid');
 
-    // Detonate all non-asteroid survivors at 10x scale.
+    // Detonate all non-asteroid survivors at 10x scale, each with the
+    // dedicated major-explosion cue (AH-0MUJ1YZJ9008O4RC AC2). Asteroids
+    // are excluded above and carry over silently.
     for (const s of detonateList) {
+      playMajorExplosionSound();
       s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
     }
     this._loseLife(false);
     this._advanceAfterTimeout();
-
-    // Re-register surviving asteroids so the WaveManager tracks them
-    // for the next wave (prevents early wave-clear, AH-0MU8TWF1H007OG2L).
-    if (survivingAsteroids.length > 0) {
-      this.waveManager.registerDynamicSpawn(survivingAsteroids.length);
-    }
   }
 
   /**
@@ -1702,9 +1714,10 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Spawns an asteroid of the given size tier at (x, y) and registers it as
-   * a wave spawn. Public so tests and the mineral gym can place asteroids
-   * deterministically.
+   * Spawns an asteroid of the given size tier at (x, y). Asteroids are NOT
+   * registered with the WaveManager (AH-0MUJM746P000QAEO): they do not gate
+   * wave completion and persist in the field across wave/level transitions.
+   * Public so tests and the mineral gym can place asteroids deterministically.
    */
   spawnAsteroidAt(x: number, y: number, sizeTier: AsteroidSizeTier): Asteroid {
     const entity = new Asteroid(this, {
@@ -1722,8 +1735,24 @@ export class PlayScene extends CombatScene<
       spacingX: 0,
       spacingY: 0,
     });
-    this.waveManager.registerDynamicSpawn(1);
     return entity;
+  }
+
+  /**
+   * Registers an already-constructed enemy in the live simulation (public
+   * integration/test seam). Mirrors `GymFormationScene.registerDynamicEntity`
+   * so the game and gym can be driven identically by parity tests (F4).
+   */
+  registerEnemy(entity: EnemyEntity, enemyKey: string): void {
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey,
+      startX: entity.x,
+      startY: entity.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
   }
 
   /** Whether the hold-full choice overlay is currently open. */

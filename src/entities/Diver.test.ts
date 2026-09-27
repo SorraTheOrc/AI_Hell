@@ -126,8 +126,9 @@ describe('Diver entity (E2 diver, GDD §4.1 — live aim tracking)', () => {
       t,
     );
 
-    // x is locked at the dive-start slot: the snapshot path and B diverge
-    // only in y, and (x+y) both match the snapshot arc.
+    // Both axes follow the snapshot arc (no x-lock): the in-flight dive
+    // matches snapshot path A, not the mid-dive aim B. Here A and B differ
+    // only in y (both aims share x), and diver (x, y) matches path A.
     expect(diver.x).toBeCloseTo(pointA.x, 5);
     expect(diver.y).toBeCloseTo(pointA.y, 5);
     expect(Math.abs(diver.y - pointB.y)).toBeGreaterThan(5);

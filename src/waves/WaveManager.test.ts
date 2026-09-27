@@ -406,7 +406,10 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
   });
 });
 
-describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F)', () => {
+describe('WaveManager — dynamic spawn registration (generic seam)', () => {
+  // The dynamic-spawn seam is retained for any future dynamically spawned
+  // enemies. Asteroids are NOT registered through it (AH-0MUJM746P000QAEO):
+  // they do not gate wave completion. These tests exercise the seam itself.
   it('registerDynamicSpawn increments the alive count by the supplied amount', () => {
     const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
     wm.beginGame();
@@ -437,12 +440,12 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
     expect(wm.enemiesAlive).toBe(0);
   });
 
-  it('a full split chain (1 large -> 2 medium -> 4 small = 7) keeps enemiesAlive correct and does not clear early', () => {
-    // Two waves so the split-chain wipe emits a 'waveCleared' boundary
+  it('a full registered-child chain keeps enemiesAlive correct and does not clear early', () => {
+    // Two waves so the chain wipe emits a 'waveCleared' boundary
     // instead of the final-level boss trigger.
     const defs = [
       level(1, 'Test', [
-        wave('asteroid', 'single', 1, false),
+        wave('scout', 'single', 1, false),
         wave('scout', 'v', 1, false),
       ]),
     ];
@@ -451,22 +454,22 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
     expect(wm.waveNumber).toBe(1);
     expect(wm.enemiesAlive).toBe(1);
 
-    // Destroy the large parent and register its 2 medium children.
+    // Destroy the original and register its 2 children.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(2);
 
-    // Destroy the first medium and register its 2 small children.
+    // Destroy the first child and register its 2 children.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(3);
 
-    // Destroy the second medium and register its 2 small children.
+    // Destroy the second child and register its 2 children.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(4);
 
-    // Destroy the 4 small asteroids one by one — each stays 'continue'
+    // Destroy the 4 children one by one — each stays 'continue'
     // while children remain alive (the wave does not clear early).
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(3);
@@ -482,11 +485,11 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
   });
 
   it('a registered child keeps the wave alive until every original AND child is destroyed', () => {
-    const defs = [level(1, 'Test', [wave('asteroid', 'single', 1, false)])];
+    const defs = [level(1, 'Test', [wave('scout', 'single', 1, false)])];
     const wm = new WaveManager(defs);
     wm.beginGame();
 
-    // Parent destroyed, but 2 registered children still alive.
+    // Original destroyed, but 2 registered children still alive.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(2);

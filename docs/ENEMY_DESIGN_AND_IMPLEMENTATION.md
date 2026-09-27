@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|-----|-----------|------------|---------------------|
 | E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Vertical dive toward player (x locked at formation slot), returns to current formation slot. The whole cluster holds its drift while a living Diver is away (`DIVING`/`PAUSING`/`RETURNING`) and resumes once every Diver has rejoined | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), returns to current formation slot. The whole cluster holds its drift while a living Diver is away (`DIVING`/`PAUSING`/`RETURNING`) and resumes once every Diver has rejoined | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -63,10 +63,11 @@ loop lives **once** in the shared helper `src/scenes/core/asteroidSplit.ts`
 `PlayScene._splitAsteroid` and the `GymEnemies`/`GymMinerals` destruction seams,
 so a split-physics change is made in one place.
 
-**Wave-aware splitting**: dynamically spawned children MUST be registered with
-the `WaveManager` — the scene calls `registerDynamicSpawn(n)` when spawning
-children and they count toward `enemiesAlive`, so the wave neither clears
-early nor stalls. See `PlayScene._splitAsteroid`.
+**Wave-aware splitting**: split children are **not** registered with the
+`WaveManager` and do **not** count toward `enemiesAlive`. A wave clears once
+its **enemy ships** are destroyed, regardless of how many asteroids remain,
+and the children persist in the field across wave and level transitions
+(AH-0MUJM746P000QAEO). See `PlayScene._splitAsteroid`.
 
 **Scoring** (GDD §4.5): large and medium asteroids award **no** points; small
 asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
@@ -91,9 +92,11 @@ one on schedule during `tick(dt)`:
   to 20 when it reaches 2× medium (**160**), at which point the count doubles.
 - **Timing**: the wave window is split into equal segments with ±5% jitter; the
   first asteroid is constrained to the first 10% of the window.
-- **Registration**: each released asteroid is registered with the `WaveManager`
-  via `registerDynamicSpawn(1)`, so wave-clear accounting includes it (the same
-  path the split children use).
+- **Registration**: asteroids are **not** registered with the `WaveManager`,
+  so they do not gate wave completion and persist across wave/level
+  transitions. (The generic `registerDynamicSpawn` / `unregisterDynamicSpawn`
+  seam remains on `WaveManager` for any future dynamically spawned enemy that
+  must be wave-accounted.)
 
 The **boss encounter spawns no asteroids**: `planAsteroidSpawns()` clears the
 plan outside a regular wave and the release loop is guarded on boss state.
@@ -708,9 +711,11 @@ collecting bullets, so that frame's shots use the current position:
   the volley) are unchanged.
 - **Diver** — **snapshots the target at dive start** (recorded seam
   decision): a mid-dive aim change does not alter the in-flight dive arc.
-  Dives are x-locked at the formation slot. While a Diver is away from the
-  formation (`DIVING`/`PAUSING`/`RETURNING`) the cluster's drift is held —
-  see §7.6.
+  The dive is a **diagonal parabolic arc** — both x and y follow the
+  quadratic bezier from the formation slot to the snapshotted player
+  position (`computeDivePoint`; AH-0MTGBOKLC006N8UX); there is no x-lock.
+  While a Diver is away from the formation (`DIVING`/`PAUSING`/`RETURNING`)
+  the cluster's drift is held — see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
   is untouched (no aim seam).
 
