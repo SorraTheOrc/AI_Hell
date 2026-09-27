@@ -184,6 +184,14 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    */
   takeDamage?(): number | void;
   /**
+   * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
+   * base scene pushes its live mineral field to the entity each frame so a
+   * roaming enemy can steer toward the nearest mineral. Defined once on the
+   * shared contract and consumed by the game and the gyms; entities that do
+   * not seek simply omit it (optional chaining skips them).
+   */
+  setSeekTargets?(minerals: readonly Mineral[]): void;
+  /**
    * Hit radius (px) used for circle-vs-circle collision checks.
    *
    * Each entity returns a value proportional to its visual half-size
@@ -1287,6 +1295,12 @@ export class GymFormationScene<
 
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
+      // Live mineral-seek: push the scene's live mineral field BEFORE the
+      // entity advances its own motion, so a roaming seeker (Harvester)
+      // steers on the same frame it receives a target — matching the game's
+      // `PlayScene._moveEnemies` ordering exactly (F4 parity).
+      entity.setSeekTargets?.(this.minerals);
+
       // Roaming enemies (e.g. Asteroid) advance their own straight-line
       // motion + wrap + rotation; a no-op for formation enemies.
       entity.updatePosition?.(dt);

@@ -753,6 +753,14 @@ export class PlayScene extends CombatScene<
         (s.entity as Asteroid).updatePosition(dt);
         continue;
       }
+      // Live mineral-seek: push the scene's live mineral field so roaming
+      // seekers (Harvester) steer toward the nearest mineral, then advance
+      // their own motion. The gym's shared tick calls the same seam (F4).
+      if (s.entity.setSeekTargets) {
+        s.entity.setSeekTargets(this.minerals);
+        s.entity.updatePosition?.(dt);
+        continue;
+      }
       s.entity.applyFormationPosition(
         s.startX + this.driftX,
         s.startY,
@@ -1721,6 +1729,23 @@ export class PlayScene extends CombatScene<
       spacingY: 0,
     });
     return entity;
+  }
+
+  /**
+   * Registers an already-constructed enemy in the live simulation (public
+   * integration/test seam). Mirrors `GymFormationScene.registerDynamicEntity`
+   * so the game and gym can be driven identically by parity tests (F4).
+   */
+  registerEnemy(entity: EnemyEntity, enemyKey: string): void {
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey,
+      startX: entity.x,
+      startY: entity.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
   }
 
   /** Whether the hold-full choice overlay is currently open. */

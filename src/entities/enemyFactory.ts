@@ -15,6 +15,7 @@ import { Scout } from './Scout';
 import { Swarm } from './Swarm';
 import { Tank } from './Tank';
 import type { FormationOffset } from '../utils/formations';
+import type { Mineral } from './Mineral';
 import type { EnemyConfig } from '../core/enemyConfig';
 import { SWARM_CLUSTER_COUNT } from './Swarm';
 import { SWARM_CLUSTER_ROW_STRIDE } from '../utils/formations';
@@ -40,9 +41,21 @@ interface FormationHoldSeam {
   requiresFormationHold?(): boolean;
 }
 
+/**
+ * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
+ * scene pushes its live mineral field to the entity each frame so a roaming
+ * enemy can steer toward the nearest mineral; the entity advances its own
+ * motion through the optional `updatePosition` seam.
+ */
+interface SeekSeam {
+  setSeekTargets?(minerals: readonly Mineral[]): void;
+  updatePosition?(dt: number): void;
+}
+
 export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid) &
   DestructionAudioSeam &
-  FormationHoldSeam;
+  FormationHoldSeam &
+  SeekSeam;
 
 /** Build one entity of the right type from the config key / formationKind. */
 export function createEnemyFromConfig(

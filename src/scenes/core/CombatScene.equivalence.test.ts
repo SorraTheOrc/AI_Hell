@@ -34,6 +34,8 @@ import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { GymBoss } from '../gym/GymBoss';
+import { Harvester } from '../../entities/Harvester';
+import { Mineral } from '../../entities/Mineral';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
@@ -1747,5 +1749,73 @@ describe('shared enemy fire — cross-scene equivalence for every archetype (AC2
         expect(gymSpeed, `${key}[${i}] speed`).toBeCloseTo(gameSpeed, 3);
       }
     }
+  });
+});
+
+// ── Shared mineral-seek seam parity (F4, AH-0MUJRVZP2002G8GC) ────────
+
+describe('shared mineral-seek seam — game/gym parity for the Harvester (F4)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the Harvester seeks and absorbs identically in PlayScene and GymEnemies', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'seek-equiv-play-host',
+    );
+    const gym = await bootScene([GymEnemies], 'seek-equiv-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymEnemies;
+
+    // Place a deterministic mineral field and a Harvester in each scene.
+    // Start the Harvester within absorption reach of the nearest mineral so
+    // the same step exercises both seeking and absorption.
+    const playHarvester = new Harvester(playScene, {
+      x: 280,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+    });
+    playScene.registerEnemy(playHarvester as unknown as never, 'harvester');
+    playScene.spawnMineralAt(300, 100);
+    playScene.spawnMineralAt(500, 400);
+
+    // Clear the gym's pre-seeded random field, then mirror the game's two
+    // minerals exactly so the two scenes see an identical field.
+    for (const m of gymScene.getMinerals()) m.destroy();
+    const gymField = gymScene as unknown as { minerals: Mineral[] };
+    gymField.minerals = [
+      new Mineral(gymScene, { x: 300, y: 100 }),
+      new Mineral(gymScene, { x: 500, y: 400 }),
+    ];
+
+    const gymHarvester = new Harvester(gymScene, {
+      x: 280,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+    });
+    gymScene.registerDynamicEntity(gymHarvester as never);
+
+    // Advance one deterministic step in each scene (the shared tick).
+    playScene.tick(1);
+    gymScene.tick(1);
+
+    // Identical seek: both steered to the nearest mineral and closed the
+    // same distance (parity of the shared seam from each scene's tick).
+    expect(playHarvester.seekTargetX).toBe(300);
+    expect(gymHarvester.seekTargetX).toBe(300);
+    expect(gymHarvester.seekTargetY).toBe(100);
+    expect(gymHarvester.x).toBeCloseTo(playHarvester.x, 5);
+    expect(gymHarvester.y).toBeCloseTo(playHarvester.y, 5);
+
+    // Identical absorption: both absorbed exactly one mineral through the
+    // shared `collectMinerals` rule, leaving one on each field.
+    expect(playHarvester.mineralCount).toBe(1);
+    expect(gymHarvester.mineralCount).toBe(1);
+    expect(playScene.getMinerals()).toHaveLength(1);
+    expect(gymScene.getMinerals()).toHaveLength(1);
   });
 });

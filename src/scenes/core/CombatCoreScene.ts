@@ -116,6 +116,14 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * once (destruction audio + `onEnemyDestroyed`) by observing `alive`.
    */
   takeDamage?(): number | void;
+  /**
+   * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
+   * shared tick hands the scene's live mineral field to the entity so it can
+   * steer toward the nearest mineral. Defined once here and consumed by the
+   * game and the gyms so seeking is never re-implemented per scene
+   * (AH-0MUII2FJ5007MDDA gym-parity epic).
+   */
+  setSeekTargets?(minerals: readonly import('../../entities/Mineral').Mineral[]): void;
 }
 
 /** Structural contract an enemy bullet must satisfy. */
