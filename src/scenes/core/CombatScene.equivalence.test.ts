@@ -1095,6 +1095,79 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     }
   });
 
+  it('applies the shared Phase Shift juice overlays in every scene while phased', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-juice-play-host',
+    );
+    const combat = await bootScene(
+      [GymPowerUpsCombat],
+      'phase-juice-combat-host',
+    );
+    const formation = await bootScene(
+      [EquivGymScene],
+      'phase-juice-formation-host',
+    );
+    games.push(play, combat, formation);
+    const playScene = play.scene as PlayScene;
+    const combatScene = combat.scene as GymPowerUpsCombat;
+    const formationScene = formation.scene as EquivGymScene;
+    const scenes: Array<PlayScene | GymPowerUpsCombat | EquivGymScene> = [
+      playScene,
+      combatScene,
+      formationScene,
+    ];
+
+    for (const scene of scenes) {
+      const player = scene.getPlayer()!;
+      player.setPosition(120, 120);
+      (
+        player as unknown as { _movementState: Record<string, unknown> }
+      )._movementState = {
+        ...player.getMovementState(),
+        x: 120,
+        y: 120,
+        vx: 0,
+        vy: 0,
+        facing: 0,
+      };
+      scene.getEffectsRegistry().applyCollect('P6');
+    }
+
+    const threats: Array<[number, number]> = [
+      [130, 120],
+      [120, 130],
+      [120, 110],
+    ];
+    for (const [x, y] of threats) {
+      playScene.spawnEnemyBullet(x, y, 0, 0);
+      combatScene.spawnEnemyBullet(x, y, 0, 0);
+    }
+    const formationBullets = (
+      formationScene as unknown as { bullets: EquivBullet[] }
+    ).bullets;
+    for (const [x, y] of threats) {
+      const bullet = new EquivBullet(formationScene);
+      bullet.graphics.setPosition(x, y);
+      formationBullets.push(bullet);
+    }
+
+    for (const scene of scenes) scene.tick(0.016);
+
+    for (const scene of scenes) {
+      expect(scene.getEffectsRegistry().isPhased).toBe(true);
+      const overlays = scene.children.list.filter(
+        (obj) =>
+          (
+            obj as Phaser.GameObjects.GameObject & {
+              getData?: (key: string) => unknown;
+            }
+          ).getData?.('juiceLayer') === 'phaseShift',
+      );
+      expect(overlays.length).toBeGreaterThan(0);
+    }
+  });
+
   it('plays the Phase Shift cue exactly once when danger auto-triggers (parent AH-0MUIYX1EE008FVS8)', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
