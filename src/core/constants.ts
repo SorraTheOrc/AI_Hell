@@ -177,8 +177,19 @@ export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 /** P3 Shield duration in seconds (15 s, absorbs one hit). */
 export const COMBAT_SHIELD_DURATION = 15;
 
-/** P6 Phase Shift duration in seconds (3 s, pass-through). */
-export const COMBAT_PHASE_SHIFT_DURATION = 3;
+/**
+ * P6 Phase Shift duration in seconds (1.5 s, pass-through). Applied
+ * automatically when the player is in danger and a charge is available
+ * (parent AH-0MUIYX1EE008FVS8).
+ */
+export const PHASE_DURATION = 1.5;
+
+/**
+ * Cooldown (seconds) after a Phase Shift expires before it may auto-trigger
+ * again. Combined with the danger-cleared gate, this stops a permanent P6
+ * from becoming perpetual invincibility (Q2).
+ */
+export const PHASE_REARM_COOLDOWN = 0.5;
 
 /** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
 export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;

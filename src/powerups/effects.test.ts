@@ -13,7 +13,7 @@ import {
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
 } from './effects';
-import { MAX_SPEED, SHIP_SIZE } from '../core/constants';
+import { MAX_SPEED, PHASE_DURATION, PHASE_REARM_COOLDOWN, SHIP_SIZE } from '../core/constants';
 
 // Movement config used to verify live speed application.
 const BASE_CONFIG = {
@@ -298,33 +298,117 @@ describe('P4 Bomb (AC5): instant bullet clear, no registry state', () => {
   });
 });
 
-describe('P6 Phase Shift (AC6): 3 s intangibility, pass-through, refresh', () => {
-  it('is phased while active', () => {
+describe('P6 Phase Shift (Q2/Q3/Q6): charge-based auto-trigger', () => {
+  it('collecting P6 stores one charge and does not phase immediately', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6');
-    expect(reg.isPhased).toBe(true);
-    expect(reg.isHitImmune).toBe(true);
+    expect(reg.isPhased).toBe(false);
+    expect(reg.phaseCharges()).toBe(1);
+    expect(reg.isPhasePermanent()).toBe(false);
   });
 
-  it('expires after 3 s', () => {
+  it('auto-triggers for 1.5 s when in danger with a charge and consumes it', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6');
-    reg.tick(2.9);
+
+    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.isPhased).toBe(true);
+    expect(reg.remaining('P6')).toBeCloseTo(PHASE_DURATION);
+    expect(PHASE_DURATION).toBe(1.5);
+    expect(reg.phaseCharges()).toBe(0);
+  });
+
+  it('does not trigger without a charge', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.updateDanger(true, 0.016)).toBe(false);
+    expect(reg.isPhased).toBe(false);
+  });
+
+  it('does not trigger when not in danger', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    expect(reg.updateDanger(false, 0.016)).toBe(false);
+    expect(reg.isPhased).toBe(false);
+    expect(reg.phaseCharges()).toBe(1);
+  });
+
+  it('expires after 1.5 s', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.updateDanger(true, 0.016);
+    reg.tick(1.4);
     expect(reg.isPhased).toBe(true);
     reg.tick(0.2);
     expect(reg.isPhased).toBe(false);
   });
 
-  it('refreshes on re-collect', () => {
+  it('permanent P6 triggers repeatedly across distinct danger episodes', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6', true);
+    expect(reg.isPhasePermanent()).toBe(true);
+
+    // Episode 1.
+    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    reg.tick(PHASE_DURATION + 0.01); // expire
+    expect(reg.isPhased).toBe(false);
+    reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01); // danger clears
+
+    // Episode 2.
+    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.phaseCharges()).toBe(0); // permanent never consumes
+  });
+
+  it('does not immediately re-trigger while danger is continuous (Q2)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6', true);
+    reg.updateDanger(true, 0.016);
+    reg.tick(PHASE_DURATION + 0.01); // expire while still in danger
+
+    // Advance well past the cooldown but keep danger continuously true.
+    expect(reg.updateDanger(true, 5)).toBe(false);
+    expect(reg.isPhased).toBe(false);
+  });
+
+  it('re-arms once danger clears and the cooldown elapses, but not before', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6', true);
+    reg.updateDanger(true, 0.016);
+    reg.tick(PHASE_DURATION + 0.01); // expire → cooldown starts
+
+    // Danger clears, but the cooldown has not elapsed yet.
+    reg.updateDanger(false, 0.1);
+    expect(reg.updateDanger(true, 0)).toBe(false); // blocked by cooldown
+
+    // Cooldown elapses → auto-trigger allowed again.
+    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe(true);
+  });
+
+  it('P7 teleport grants a direct 1.5 s phase without consuming a charge', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P7');
+    expect(reg.consumeTeleport()).toBe(true);
+    expect(reg.isPhased).toBe(true);
+    expect(reg.remaining('P6')).toBeCloseTo(PHASE_DURATION);
+    expect(reg.phaseCharges()).toBe(0);
+  });
+
+  it('applyPhaseShift refreshes an active phase to the full duration', () => {
+    const reg = new EffectsRegistry();
+    reg.applyPhaseShift();
+    reg.tick(1);
+    expect(reg.remaining('P6')).toBeCloseTo(0.5);
+    reg.applyPhaseShift();
+    expect(reg.remaining('P6')).toBeCloseTo(PHASE_DURATION);
+  });
+
+  it('reset() restores the initial charge state', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6');
-    reg.tick(2); // 1 s remaining
-    reg.applyCollect('P6'); // refresh
-    expect(reg.remaining('P6')).toBeCloseTo(3);
-    // applyPhaseShift refresh path
-    reg.tick(1);
-    reg.applyPhaseShift();
-    expect(reg.remaining('P6')).toBeCloseTo(3);
+    reg.applyCollect('P6', true);
+    reg.reset();
+    expect(reg.phaseCharges()).toBe(0);
+    expect(reg.isPhasePermanent()).toBe(false);
+    expect(reg.isPhased).toBe(false);
   });
 });
 
@@ -372,8 +456,9 @@ describe('combat hit model (AC8): hit immunity via shield / phase', () => {
     reg.tryAbsorbShield();
     expect(reg.isHitImmune).toBe(false);
     reg.applyCollect('P6');
+    reg.updateDanger(true, 0.016);
     expect(reg.isHitImmune).toBe(true);
-    reg.tick(3.1);
+    reg.tick(PHASE_DURATION + 0.01);
     expect(reg.isHitImmune).toBe(false);
   });
 });

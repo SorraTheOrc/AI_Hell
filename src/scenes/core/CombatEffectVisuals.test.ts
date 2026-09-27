@@ -116,7 +116,7 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
     const alphas: number[] = [];
     const player = { setAlpha: (a: number) => alphas.push(a) };
 
-    registry.applyCollect('P6');
+    registry.applyPhaseShift();
     applyPhaseGhost(player, registry, false);
     expect(alphas).toEqual([PHASE_GHOST_ALPHA]);
 
@@ -127,7 +127,7 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
 
   it('leaves the alpha alone while the invulnerability blink is active and is safe with no player', () => {
     const registry = new EffectsRegistry();
-    registry.applyCollect('P6');
+    registry.applyPhaseShift();
     const alphas: number[] = [];
     const player = { setAlpha: (a: number) => alphas.push(a) };
 

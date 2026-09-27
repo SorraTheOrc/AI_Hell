@@ -16,12 +16,17 @@
  *   refreshes on re-collect before expiry.
  * - **P4 Bomb** — instant: clears on-screen enemy bullets on collect (does
  *   not damage 1-HP enemies, GDD §4.4); no registry state itself.
- * - **P6 Phase Shift** — timed 3 s intangibility; pass-through enemies and
- *   bullets; refreshes on re-collect.
+ * - **P6 Phase Shift** — charge-based auto-trigger (parent
+ *   AH-0MUIYX1EE008FVS8). Collecting P6 stores one auto-activation charge
+ *   (or grants unlimited activations for the hold-full reward); the shared
+ *   combat core calls {@link EffectsRegistry.updateDanger} each frame and the
+ *   registry activates a 1.5 s pass-through the moment the player is in real
+ *   danger and a charge is available. After expiry it re-arms only once
+ *   danger has cleared and a short cooldown has elapsed (Q2/Q3).
  * - **P7 Teleport** — stored FIFO stacks (no timer); Space consumes one use
- *   and grants P6 Phase Shift (3 s) at the landing spot. Safe-spot
- *   resolution is the scene's responsibility; this module tracks only the
- *   stored count.
+ *   and grants P6 Phase Shift (1.5 s) at the landing spot without consuming
+ *   an auto-activation charge (Q6). Safe-spot resolution is the scene's
+ *   responsibility; this module tracks only the stored count.
  *
  * The registry is pure (no Phaser imports). The scene layers
  * movement/ship integration, bullet clearing, hit-response and teleport
@@ -37,6 +42,8 @@ import {
   MAGNET_ATTRACTION_SPEED,
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
+  PHASE_DURATION,
+  PHASE_REARM_COOLDOWN,
 } from '../core/constants';
 import type { WeaponId } from '../utils/weapons';
 
@@ -66,7 +73,6 @@ export const P9_MAX_STACKS = 5;
 
 /** Timed durations for combat-coupled effects (seconds). */
 export const P3_SHIELD_DURATION = 15;
-export const P6_PHASE_DURATION = 3;
 
 /** Duration in seconds for timed weapon effects (GDD §4.4). */
 export const WEAPON_EFFECT_DURATION = 10;
@@ -150,6 +156,20 @@ export class EffectsRegistry {
   /** Active timed weapons: each weapon has its own countdown. */
   private _weapons: Map<WeaponId, WeaponEffect> = new Map();
 
+  // ── P6 auto-trigger state (Q2/Q3/Q6) ─────────────────────────────
+  /** Stored auto-activation charges from normally-collected P6 pickups. */
+  private _phaseCharges = 0;
+  /** True when the hold-full reward granted unlimited activations. */
+  private _phasePermanent = false;
+  /**
+   * Whether danger has cleared since the last auto-trigger. A fresh P6 is
+   * armed (`true`); firing latches it off until danger drops below the
+   * threshold (Q2).
+   */
+  private _phaseDangerCleared = true;
+  /** Seconds of re-arm cooldown remaining after the last phase expired. */
+  private _phaseRearmCooldown = 0;
+
   /**
    * Applies the effect of a collected power-up.
    *
@@ -176,9 +196,8 @@ export class EffectsRegistry {
 
     switch (entry.type) {
       case PowerUpType.SHIELD:
-      case PowerUpType.SPEED_BOOST:
-      case PowerUpType.PHASE_SHIFT: {
-        const duration = entry.duration ?? (entry.type === PowerUpType.SHIELD ? P3_SHIELD_DURATION : entry.type === PowerUpType.PHASE_SHIFT ? P6_PHASE_DURATION : 10);
+      case PowerUpType.SPEED_BOOST: {
+        const duration = entry.duration ?? (entry.type === PowerUpType.SHIELD ? P3_SHIELD_DURATION : 10);
         const existing = this._timed.get(id);
         if (existing) {
           // Refresh to full duration — never additive.
@@ -195,6 +214,16 @@ export class EffectsRegistry {
         }
         break;
       }
+      case PowerUpType.PHASE_SHIFT:
+        // Collecting P6 stores an auto-activation charge (hold-full reward:
+        // unlimited). The phase itself is applied later by the shared combat
+        // core via `updateDanger` when the player is in real danger (Q3).
+        if (permanent) {
+          this._phasePermanent = true;
+        } else {
+          this._phaseCharges += 1;
+        }
+        break;
       case PowerUpType.BOMB:
         // Instant effect — no registry state. The scene clears bullets on collect.
         break;
@@ -236,6 +265,10 @@ export class EffectsRegistry {
       effect.remaining -= dt;
       if (effect.remaining <= 0) {
         this._timed.delete(id);
+        // Start the P6 re-arm cooldown the moment a phase expires (Q2).
+        if (id === 'P6') {
+          this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
+        }
       }
     }
     // Expire timed weapons (permanent weapons are skipped).
@@ -281,10 +314,17 @@ export class EffectsRegistry {
   }
 
   /**
-   * Activates P6 Phase Shift for its full duration (e.g. on teleport
-   * arrival). Refreshes if already active — never additive.
+   * Activates P6 Phase Shift for its full duration (e.g. on P7 teleport
+   * arrival). Refreshes if already active — never additive. This is the
+   * direct, charge-free activation path; it does not consume an
+   * auto-activation charge (Q6).
    */
   applyPhaseShift(): void {
+    this._activatePhase();
+  }
+
+  /** (Re)activates the P6 timed effect at its full duration. */
+  private _activatePhase(): void {
     const existing = this._timed.get('P6');
     if (existing) {
       existing.remaining = existing.duration;
@@ -292,10 +332,54 @@ export class EffectsRegistry {
       this._timed.set('P6', {
         id: 'P6' as PowerUpId,
         type: PowerUpType.PHASE_SHIFT,
-        duration: P6_PHASE_DURATION,
-        remaining: P6_PHASE_DURATION,
+        duration: PHASE_DURATION,
+        remaining: PHASE_DURATION,
       });
     }
+  }
+
+  /**
+   * Feeds the shared per-frame danger signal into the P6 auto-trigger model
+   * (Q1/Q2/Q3). Call once per frame after {@link tick}.
+   *
+   * When `inDanger` is true, the player is not already phased, a charge is
+   * available (or the reward is permanent), danger has cleared since the
+   * last trigger and the re-arm cooldown has elapsed, this activates Phase
+   * Shift for {@link PHASE_DURATION} seconds and consumes one charge
+   * (permanent rewards do not consume).
+   *
+   * @param inDanger — whether the danger helper reports the ship surrounded.
+   * @param dt — frame delta in seconds (advances the re-arm cooldown).
+   * @returns whether Phase Shift was auto-activated this frame.
+   */
+  updateDanger(inDanger: boolean, dt: number): boolean {
+    if (this._phaseRearmCooldown > 0) {
+      this._phaseRearmCooldown = Math.max(0, this._phaseRearmCooldown - dt);
+    }
+    if (!inDanger) {
+      // Danger has cleared — re-arm for the next episode.
+      this._phaseDangerCleared = true;
+      return false;
+    }
+    if (this._timed.has('P6')) return false;
+    if (!this._phaseDangerCleared) return false;
+    if (this._phaseRearmCooldown > 0) return false;
+    if (!this._phasePermanent && this._phaseCharges <= 0) return false;
+
+    if (!this._phasePermanent) this._phaseCharges -= 1;
+    this._activatePhase();
+    this._phaseDangerCleared = false;
+    return true;
+  }
+
+  /** Stored P6 auto-activation charges (0 for a permanent reward). */
+  phaseCharges(): number {
+    return this._phaseCharges;
+  }
+
+  /** Whether the hold-full reward granted unlimited Phase Shift activations. */
+  isPhasePermanent(): boolean {
+    return this._phasePermanent;
   }
 
   /** Stored teleport uses (P7). */
@@ -451,5 +535,9 @@ export class EffectsRegistry {
     this._magnetStacks = 0;
     this._teleportStacks = 0;
     this._weapons.clear();
+    this._phaseCharges = 0;
+    this._phasePermanent = false;
+    this._phaseDangerCleared = true;
+    this._phaseRearmCooldown = 0;
   }
 }

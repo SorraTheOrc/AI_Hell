@@ -1321,8 +1321,11 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
 
-    // The booted heavy weight drop sits on the ship and is collected on tick.
+    // The booted heavy weight drop sits on the ship and is collected on tick,
+    // storing an auto-activation charge; the danger feed triggers the phase.
     scene.tick(0.05);
+    expect(scene.getEffectsRegistry().phaseCharges()).toBe(1);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     placeEnemyBulletOnPlayer(scene);

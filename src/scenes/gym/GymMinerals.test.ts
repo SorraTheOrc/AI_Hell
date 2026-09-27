@@ -249,6 +249,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
+    expect(registry.updateDanger(true, 0.016)).toBe(true);
     expect(registry.isPhased).toBe(true);
 
     placeEnemyBulletOnPlayer(scene);
@@ -261,6 +262,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   it('AC3 — P6 phase also passes the player through enemy bodies', async () => {
     const scene = await bootMinerals();
     grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.016)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities.find((e) => e.alive)!;

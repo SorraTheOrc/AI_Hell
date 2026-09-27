@@ -1679,11 +1679,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P6 phase shift.
-    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    // Directly activate the phase — the ghost visual is independent of how
+    // the phase was triggered (auto-trigger is covered in effects.test.ts).
+    registry.applyPhaseShift();
     expect(registry.isPhased).toBe(true);
 
     expect(scene.isPhaseGhostActive()).toBe(true);
@@ -1698,19 +1696,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P6 phase shift.
-    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    // Directly activate the phase (trigger-independent ghost visual).
+    registry.applyPhaseShift();
     expect(registry.isPhased).toBe(true);
 
     // Ghost alpha on the next tick.
     scene.tick(0.016);
     expect(player.alpha).toBeCloseTo(0.45);
 
-    // Advance past the 3 s duration.
-    for (let i = 0; i < 188; i++) scene.tick(0.016); // ~3 s
+    // Advance past the 1.5 s duration.
+    for (let i = 0; i < 100; i++) scene.tick(0.016); // ~1.6 s
     expect(registry.isPhased).toBe(false);
     scene.tick(0.016);
     expect(player.alpha).toBeCloseTo(1);
@@ -1721,11 +1716,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P6 phase shift (phased → ghosted).
-    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    // Directly activate the phase (phased → ghosted).
+    registry.applyPhaseShift();
     expect(registry.isPhased).toBe(true);
 
     // Apply the ghost alpha first (phased → 0.45).
@@ -2067,7 +2059,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // Verify each category was active before the restart (AC1).
     expect(registry.isActive('P5')).toBe(true);
     expect(registry.isShielded).toBe(true);
-    expect(registry.isPhased).toBe(true);
+    expect(registry.phaseCharges()).toBe(1);
     expect(registry.lives()).toBe(4);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);
@@ -2091,6 +2083,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(restartedRegistry.activeEffects()).toHaveLength(0);
     expect(restartedRegistry.isShielded).toBe(false);
     expect(restartedRegistry.isPhased).toBe(false);
+    expect(restartedRegistry.phaseCharges()).toBe(0);
     expect(restartedRegistry.speedMultiplier()).toBe(1);
     expect(restartedRegistry.magnetStacks()).toBe(0);
     expect(restartedRegistry.hasTeleport()).toBe(false);

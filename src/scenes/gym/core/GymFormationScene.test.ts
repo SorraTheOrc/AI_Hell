@@ -2360,6 +2360,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     const player = scene.getPlayer()!;
 
     collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     expect(scene.getPlayerHitCount()).toBe(0);
 
@@ -2371,9 +2372,9 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     expect(scene.getPlayerHitCount()).toBe(0);
     expect(scene.isPlayerInvulnerable()).toBe(false);
 
-    // The parked bullet is long-lived and still live. Wait out the 3 s
+    // The parked bullet is long-lived and still live. Wait out the 1.5 s
     // phase window; the same bullet then lands normally.
-    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    for (let i = 0; i < 20; i += 1) scene.tick(0.1); // 2 s
     expect(scene.getEffectsRegistry().isPhased).toBe(false);
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
@@ -2382,6 +2383,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
     const { scene } = await bootGated('P6');
     collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities[0];
@@ -2446,11 +2448,15 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     const player = scene.getPlayer()!;
 
     collectOnShip(scene, 'P6');
+    scene.getEffectsRegistry().updateDanger(true, 0.05);
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    // The shared visuals pass applies the ghost alpha on the next tick.
+    scene.tick(0.016);
     expect(scene.isPhaseGhostActive()).toBe(true);
     expect(player.alpha).toBeCloseTo(PHASE_GHOST_ALPHA);
 
-    // Expiry (3 s phase duration) restores full alpha.
-    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    // Expiry (1.5 s phase duration) restores full alpha.
+    for (let i = 0; i < 20; i += 1) scene.tick(0.1); // 2 s
     expect(scene.isPhaseGhostActive()).toBe(false);
     expect(player.alpha).toBe(1);
   });
