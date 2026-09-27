@@ -172,6 +172,62 @@ describe('PlayScene mineral wiring', () => {
     expect(gs.minerals).toBe(3); // overflow carried
   });
 
+  it('AC6 — the HUD hold bar tracks the growing capacity after each hold', async () => {
+    const scene = await bootPlay();
+    const gs = scene.getGameState();
+    scene.setMineralChoiceStrategy(
+      fixedStrategy([
+        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'P9', name: 'Magnet', kind: 'powerup' },
+        { id: 'P3', name: 'Shield', kind: 'powerup' },
+      ]),
+    );
+
+    // First hold: capacity 5, HUD mirrors it.
+    expect(gs.mineralCapacity).toBe(5);
+    expect(scene.getHUD()?.getMineralStoreValue().capacity).toBe(5);
+
+    gs.minerals = 5;
+    scene.openMineralChoice();
+    scene.selectMineralChoice(0);
+
+    // After resolving, the next hold is 10 and the HUD bar grows with it.
+    expect(gs.mineralCapacity).toBe(10);
+    expect(scene.getHUD()?.getMineralStoreValue().capacity).toBe(10);
+
+    gs.minerals = 10;
+    scene.openMineralChoice();
+    scene.selectMineralChoice(0);
+
+    expect(gs.mineralCapacity).toBe(20);
+    expect(scene.getHUD()?.getMineralStoreValue().capacity).toBe(20);
+    // The bar stays proportional to the current capacity.
+    const bar = scene.getHUD()?.getMineralBarState();
+    expect(bar?.visible).toBe(true);
+    expect(bar?.total).toBeGreaterThan(0);
+  });
+
+  it('AC3 — the capacity progression resets on a new run', async () => {
+    const scene = await bootPlay();
+    const gs = scene.getGameState();
+    scene.setMineralChoiceStrategy(
+      fixedStrategy([
+        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'P9', name: 'Magnet', kind: 'powerup' },
+        { id: 'P3', name: 'Shield', kind: 'powerup' },
+      ]),
+    );
+
+    gs.minerals = 5;
+    scene.openMineralChoice();
+    scene.selectMineralChoice(0);
+    expect(gs.mineralCapacity).toBe(10);
+
+    // Restarting the run restores the first-hold capacity.
+    gs.startGame();
+    expect(gs.mineralCapacity).toBe(5);
+  });
+
   it('a non-asteroid enemy absorbs an overlapping mineral without damage', async () => {
     const scene = await bootPlay();
     const enemy = scene.getEnemies().find((e) => e.alive)!;

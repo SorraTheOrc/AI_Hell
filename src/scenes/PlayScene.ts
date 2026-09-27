@@ -411,8 +411,12 @@ export class PlayScene extends CombatScene<
     // Start the run.
     this.gameState.startGame();
     this.effectsRegistry.setLives(this.gameState.lives);
-    // Hold capacity comes from the game-rules config (GDD §4.5).
-    this.gameState.mineralCapacity = loadRules().mineralHoldCapacity;
+    // Hold capacity (first hold) and its growth multiplier come from the
+    // game-rules config, so the game and every gym progress identically
+    // (GDD §4.5, AH-0MUKC6IML0082ZR4).
+    this.gameState.mineralCapacity = rules.mineralHoldCapacity;
+    this.gameState.mineralHoldGrowthMultiplier =
+      rules.mineralHoldGrowthMultiplier;
     this._syncMineralHud();
     // Campaign source: static `LEVELS` by default, generated when the
     // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the

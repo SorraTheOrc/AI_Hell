@@ -53,8 +53,20 @@ export interface GameRules {
   weaponWeights: WeaponWeights;
   /** Minerals granted per mineral absorbed by the player ship (default 1). */
   mineralCollectAmount: number;
-  /** Ship's hold capacity before the hold-full power-up choice (default 20). */
+  /**
+   * Ship's hold capacity for the **first** hold-full power-up choice
+   * (default 5, AH-0MUKC6IML0082ZR4). Each resolution multiplies the
+   * capacity by {@link mineralHoldGrowthMultiplier}, so the n-th hold
+   * requires `mineralHoldCapacity × mineralHoldGrowthMultiplier^(n−1)`
+   * minerals (5, 10, 20, 40, … by default).
+   */
   mineralHoldCapacity: number;
+  /**
+   * Multiplier applied to {@link mineralHoldCapacity} after each hold-full
+   * resolution (default 2, AH-0MUKC6IML0082ZR4). A value of 1 disables
+   * growth (every hold stays at the first-hold capacity).
+   */
+  mineralHoldGrowthMultiplier: number;
   /** Minimum fraction of a destroyed enemy's minerals re-dropped (default 0.25). */
   mineralRedropFractionMin: number;
   /** Maximum fraction of a destroyed enemy's minerals re-dropped (default 0.5). */
@@ -107,8 +119,18 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
 /** Default minerals granted per collected mineral (GDD §4.5). */
 export const DEFAULT_MINERAL_COLLECT_AMOUNT = 1;
 
-/** Default ship's-hold capacity before the power-up choice (GDD §4.5). */
-export const DEFAULT_MINERAL_HOLD_CAPACITY = 20;
+/**
+ * Default ship's-hold capacity for the first hold-full power-up choice
+ * (GDD §4.5, AH-0MUKC6IML0082ZR4). The first hold fills at 5 minerals;
+ * each subsequent hold doubles (5, 10, 20, 40, …).
+ */
+export const DEFAULT_MINERAL_HOLD_CAPACITY = 5;
+
+/**
+ * Default multiplier applied to the hold capacity after each hold-full
+ * resolution (AH-0MUKC6IML0082ZR4). 2 doubles the next hold's requirement.
+ */
+export const DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER = 2;
 
 /** Default minimum re-drop fraction of a destroyed enemy's minerals (25 %). */
 export const DEFAULT_MINERAL_REDROP_FRACTION_MIN = 0.25;
@@ -152,6 +174,7 @@ export const DEFAULT_RULES: GameRules = {
   weaponWeights: defaultWeaponWeights(),
   mineralCollectAmount: DEFAULT_MINERAL_COLLECT_AMOUNT,
   mineralHoldCapacity: DEFAULT_MINERAL_HOLD_CAPACITY,
+  mineralHoldGrowthMultiplier: DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
   mineralRedropFractionMin: DEFAULT_MINERAL_REDROP_FRACTION_MIN,
   mineralRedropFractionMax: DEFAULT_MINERAL_REDROP_FRACTION_MAX,
   sequencedWavesEnabled: DEFAULT_SEQUENCED_WAVES_ENABLED,
@@ -159,6 +182,18 @@ export const DEFAULT_RULES: GameRules = {
 
 /** localStorage key under which the game-rules JSON is persisted. */
 export const RULES_STORAGE_KEY = 'ai-hell-game-rules';
+
+/**
+ * Persisted game-rules schema version (AH-0MUKC6IML0082ZR4).
+ *
+ * Version 2 introduced `mineralHoldGrowthMultiplier` and changed
+ * `mineralHoldCapacity` from a fixed capacity (default 20) to the
+ * first-hold capacity (default 5). Configs written by version 1 carry a
+ * fixed-capacity value that would defeat the new progression, so
+ * {@link loadRules} migrates them by resetting the two mineral-hold
+ * tunables to the new defaults while preserving every other rule.
+ */
+export const RULES_SCHEMA_VERSION = 2;
 
 // ── Internals ───────────────────────────────────────────────────────
 
@@ -184,6 +219,7 @@ function cloneDefaultRules(): GameRules {
     weaponWeights: { ...DEFAULT_RULES.weaponWeights },
     mineralCollectAmount: DEFAULT_RULES.mineralCollectAmount,
     mineralHoldCapacity: DEFAULT_RULES.mineralHoldCapacity,
+    mineralHoldGrowthMultiplier: DEFAULT_RULES.mineralHoldGrowthMultiplier,
     mineralRedropFractionMin: DEFAULT_RULES.mineralRedropFractionMin,
     mineralRedropFractionMax: DEFAULT_RULES.mineralRedropFractionMax,
     sequencedWavesEnabled: DEFAULT_RULES.sequencedWavesEnabled,
@@ -291,7 +327,14 @@ export function loadRules(): GameRules {
   if (!raw) return cloneDefaultRules();
 
   try {
-    const parsed = JSON.parse(raw) as Partial<GameRules>;
+    const parsed = JSON.parse(raw) as Partial<GameRules> & {
+      version?: number;
+    };
+    // Version 1 stored a *fixed* hold capacity; honouring it as the
+    // first-hold capacity would keep the old 20-mineral grind. Migrate
+    // legacy configs by resetting the mineral-hold tunables to the new
+    // defaults (the semantic changed), keeping every other rule.
+    const legacy = !isCurrentSchemaVersion(parsed.version);
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       powerUpWeights: mergeWeights(parsed.powerUpWeights),
@@ -300,10 +343,18 @@ export function loadRules(): GameRules {
         parsed.mineralCollectAmount,
         DEFAULT_MINERAL_COLLECT_AMOUNT,
       ),
-      mineralHoldCapacity: coercePositiveNumber(
-        parsed.mineralHoldCapacity,
-        DEFAULT_MINERAL_HOLD_CAPACITY,
-      ),
+      mineralHoldCapacity: legacy
+        ? DEFAULT_MINERAL_HOLD_CAPACITY
+        : coercePositiveNumber(
+            parsed.mineralHoldCapacity,
+            DEFAULT_MINERAL_HOLD_CAPACITY,
+          ),
+      mineralHoldGrowthMultiplier: legacy
+        ? DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER
+        : coercePositiveNumber(
+            parsed.mineralHoldGrowthMultiplier,
+            DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
+          ),
       mineralRedropFractionMin: coerceFraction(
         parsed.mineralRedropFractionMin,
         DEFAULT_MINERAL_REDROP_FRACTION_MIN,
@@ -323,11 +374,24 @@ export function loadRules(): GameRules {
 }
 
 /**
- * Persists the supplied rules to the rules storage as JSON.
- * No-op when storage is unavailable.
+ * Whether a persisted schema version matches the current one. Anything
+ * that is not the current version (including `undefined`, older numbers or
+ * a corrupt value) is treated as legacy and migrated.
+ */
+function isCurrentSchemaVersion(version: unknown): boolean {
+  return version === RULES_SCHEMA_VERSION;
+}
+
+/**
+ * Persists the supplied rules to the rules storage as JSON, stamped with
+ * the current {@link RULES_SCHEMA_VERSION} so a later load can tell which
+ * schema wrote it. No-op when storage is unavailable.
  */
 export function saveRules(values: GameRules): void {
   const store = storage();
   if (!store) return;
-  store.setItem(RULES_STORAGE_KEY, JSON.stringify(values));
+  store.setItem(
+    RULES_STORAGE_KEY,
+    JSON.stringify({ ...values, version: RULES_SCHEMA_VERSION }),
+  );
 }

@@ -1068,8 +1068,13 @@ export class GymFormationScene<
   /** Creates the mineral HUD and seeds the field; called from `create()`. */
   private _initMineralLayer(): void {
     const rules = loadRules();
+    // First-hold capacity and growth multiplier come from the shared rules,
+    // so the gym's hold progression matches the game exactly
+    // (AH-0MUKC6IML0082ZR4).
     this.mineralHoldModel.capacity = rules.mineralHoldCapacity;
     this.mineralHoldModel.collectAmount = rules.mineralCollectAmount;
+    this.mineralHoldModel.growthMultiplier =
+      rules.mineralHoldGrowthMultiplier;
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];

@@ -16,6 +16,7 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
+import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
 
 /** Live asteroid entities of the given tier in a mineral gym. */
 function liveAsteroids(scene: GymMinerals): Asteroid[] {
@@ -52,7 +53,8 @@ describe('GymMinerals', () => {
     // running demo loop before the assertion).
     expect(scene.getMinerals().length).toBeGreaterThan(80);
     expect(scene.getMineralHold()).toBeGreaterThanOrEqual(0);
-    expect(scene.getMineralCapacity()).toBe(20);
+    expect(scene.getMineralCapacity()).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    expect(scene.getMineralCapacity()).toBe(5);
   });
 
   it('shows the mineral hold bar on the HUD', async () => {

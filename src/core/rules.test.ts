@@ -5,6 +5,7 @@ import {
   DEFAULT_EXTRA_LIFE_WEIGHT,
   DEFAULT_MINERAL_COLLECT_AMOUNT,
   DEFAULT_MINERAL_HOLD_CAPACITY,
+  DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
   DEFAULT_MINERAL_REDROP_FRACTION_MAX,
   DEFAULT_MINERAL_REDROP_FRACTION_MIN,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
@@ -13,6 +14,7 @@ import {
   DEFAULT_STANDARD_POWER_UP_WEIGHT,
   DEFAULT_WEAPON_WEIGHT,
   POWER_UP_WEIGHT_IDS,
+  RULES_SCHEMA_VERSION,
   RULES_STORAGE_KEY,
   WEAPON_WEIGHT_IDS,
   defaultPowerUpWeights,
@@ -79,6 +81,7 @@ describe('game rules configuration module', () => {
         },
         mineralCollectAmount: 2,
         mineralHoldCapacity: 30,
+        mineralHoldGrowthMultiplier: 3,
         mineralRedropFractionMin: 0.3,
         mineralRedropFractionMax: 0.6,
         sequencedWavesEnabled: true,
@@ -93,6 +96,7 @@ describe('game rules configuration module', () => {
       expect(loaded.weaponWeights.spread).toBe(3);
       expect(loaded.mineralCollectAmount).toBe(2);
       expect(loaded.mineralHoldCapacity).toBe(30);
+      expect(loaded.mineralHoldGrowthMultiplier).toBe(3);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -198,29 +202,31 @@ describe('game rules configuration module', () => {
   describe('mineral rules', () => {
     it('exposes the default mineral tunables (AC: sensible defaults)', () => {
       expect(DEFAULT_MINERAL_COLLECT_AMOUNT).toBe(1);
-      expect(DEFAULT_MINERAL_HOLD_CAPACITY).toBe(20);
+      expect(DEFAULT_MINERAL_HOLD_CAPACITY).toBe(5);
+      expect(DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER).toBe(2);
       expect(DEFAULT_MINERAL_REDROP_FRACTION_MIN).toBe(0.25);
       expect(DEFAULT_MINERAL_REDROP_FRACTION_MAX).toBe(0.5);
       expect(DEFAULT_RULES.mineralCollectAmount).toBe(1);
-      expect(DEFAULT_RULES.mineralHoldCapacity).toBe(20);
+      expect(DEFAULT_RULES.mineralHoldCapacity).toBe(5);
+      expect(DEFAULT_RULES.mineralHoldGrowthMultiplier).toBe(2);
       expect(DEFAULT_RULES.mineralRedropFractionMin).toBe(0.25);
       expect(DEFAULT_RULES.mineralRedropFractionMax).toBe(0.5);
     });
 
     it('loads mineral tunables from storage when present', () => {
-      window.localStorage.setItem(
-        RULES_STORAGE_KEY,
-        JSON.stringify({
-          mineralCollectAmount: 3,
-          mineralHoldCapacity: 50,
-          mineralRedropFractionMin: 0.1,
-          mineralRedropFractionMax: 0.9,
-        }),
-      );
+      saveRules({
+        ...DEFAULT_RULES,
+        mineralCollectAmount: 3,
+        mineralHoldCapacity: 50,
+        mineralHoldGrowthMultiplier: 4,
+        mineralRedropFractionMin: 0.1,
+        mineralRedropFractionMax: 0.9,
+      });
 
       const loaded = loadRules();
       expect(loaded.mineralCollectAmount).toBe(3);
       expect(loaded.mineralHoldCapacity).toBe(50);
+      expect(loaded.mineralHoldGrowthMultiplier).toBe(4);
       expect(loaded.mineralRedropFractionMin).toBe(0.1);
       expect(loaded.mineralRedropFractionMax).toBe(0.9);
     });
@@ -229,8 +235,10 @@ describe('game rules configuration module', () => {
       window.localStorage.setItem(
         RULES_STORAGE_KEY,
         JSON.stringify({
+          version: RULES_SCHEMA_VERSION,
           mineralCollectAmount: -4,
           mineralHoldCapacity: 'many',
+          mineralHoldGrowthMultiplier: 0,
           mineralRedropFractionMin: 2,
           mineralRedropFractionMax: 'half',
         }),
@@ -239,12 +247,49 @@ describe('game rules configuration module', () => {
       const loaded = loadRules();
       expect(loaded.mineralCollectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
       expect(loaded.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+      expect(loaded.mineralHoldGrowthMultiplier).toBe(
+        DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
+      );
       expect(loaded.mineralRedropFractionMin).toBe(
         DEFAULT_MINERAL_REDROP_FRACTION_MIN,
       );
       expect(loaded.mineralRedropFractionMax).toBe(
         DEFAULT_MINERAL_REDROP_FRACTION_MAX,
       );
+    });
+
+    it('migrates a legacy (unversioned) config to the new hold progression', () => {
+      // Version-1 configs stored a *fixed* capacity (20). Resetting it to
+      // the first-hold default is the sensible migration: the semantic
+      // changed from fixed capacity to first-hold capacity.
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          powerUpSpawnInterval: 7,
+          mineralHoldCapacity: 20,
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.mineralHoldCapacity).toBe(5);
+      expect(loaded.mineralHoldGrowthMultiplier).toBe(2);
+      // Other rules survive the migration untouched.
+      expect(loaded.powerUpSpawnInterval).toBe(7);
+    });
+
+    it('honours a customised capacity in a current-schema config', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: RULES_SCHEMA_VERSION,
+          mineralHoldCapacity: 7,
+          mineralHoldGrowthMultiplier: 3,
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.mineralHoldCapacity).toBe(7);
+      expect(loaded.mineralHoldGrowthMultiplier).toBe(3);
     });
 
     it('falls back to mineral defaults when the stored JSON is corrupt', () => {
