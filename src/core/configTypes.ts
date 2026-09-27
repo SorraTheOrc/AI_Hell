@@ -47,6 +47,14 @@ export interface EnemyConfig {
   startX: number;
   startY: number;
 
+  // Entity health
+  /**
+   * Hit points before the enemy is destroyed. Data-driven (AH-0MUI820PM0038HS2);
+   * defaults to `1` so every single-hit archetype is unchanged. Values must be
+   * positive integers — the CSV codec validates and coerces invalid input.
+   */
+  health: number;
+
   // Entity visuals / motion
   /** Body radius / half-size in px. */
   size: number;

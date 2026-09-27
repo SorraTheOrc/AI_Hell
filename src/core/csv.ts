@@ -50,8 +50,11 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'key', 'displayName', 'formationKind', 'count', 'spacingX', 'spacingY',
   'driftSpeed', 'startX', 'startY', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
-  'bulletLifetime', 'burstCount', 'shotProbability',
+  'bulletLifetime', 'burstCount', 'shotProbability', 'health',
 ];
+
+/** Documented default hit points for an enemy when the column is absent/invalid. */
+export const DEFAULT_ENEMY_HEALTH = 1;
 
 // ── Ship config column order (for serialization) ───────────────────
 
@@ -270,6 +273,14 @@ export function validateEnemyConfig(
     }
   }
 
+  // Validate health: optional, but when present must be a positive integer.
+  const health = row.health;
+  if (health != null && health.trim() !== '' && !isPositiveInteger(health)) {
+    errors.push(
+      `Invalid health: "${health}" — must be a positive integer`,
+    );
+  }
+
   // Validate hex colours.
   for (const field of ['color', 'bulletColor']) {
     const val = row[field];
@@ -377,6 +388,7 @@ export function coerceEnemyConfig(
   merged.bulletLifetime = coerceNumber(row.bulletLifetime, merged.bulletLifetime);
   merged.burstCount = coerceNumber(row.burstCount, merged.burstCount);
   merged.shotProbability = coerceNumber(row.shotProbability, merged.shotProbability);
+  merged.health = coerceHealth(row.health, merged.health ?? DEFAULT_ENEMY_HEALTH);
 
   return merged;
 }
@@ -491,6 +503,17 @@ function normaliseDifficultySource(
 function isPositiveInteger(value: string): boolean {
   if (!/^\d+$/.test(value.trim())) return false;
   return Number(value) >= 1;
+}
+
+/**
+ * Coerce an enemy `health` value. A missing/blank value falls back to the
+ * documented default (`1`); any other malformed value (non-numeric, zero,
+ * negative, fractional) also falls back to the default rather than to `0`, so
+ * an enemy can never be created with zero/negative hit points.
+ */
+function coerceHealth(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === '') return fallback;
+  return isPositiveInteger(value) ? Number(value) : fallback;
 }
 
 /**

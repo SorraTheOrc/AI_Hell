@@ -209,6 +209,7 @@ function resolveBaseConfig(candidate: CandidateGroup): EnemyConfig {
       bulletLifetime: 1.5,
       burstCount: 1,
       shotProbability: 1.0,
+      health: 1,
     };
   }
   // Merge the candidate's overrides onto the seed.

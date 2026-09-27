@@ -1043,3 +1043,91 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
     ]);
   });
 });
+
+// ── AC (F1): data-driven enemy health column ────────────────────────
+
+describe('Enemy health column (F1)', () => {
+  it('health is part of the stable enemy column order', async () => {
+    const m = await loadCsvModule();
+    expect(m.ENEMY_COLUMN_ORDER).toContain('health');
+  });
+
+  it('coerceEnemyConfig reads the health column as a number', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+      health: '5',
+    };
+    const config = m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(config.health).toBe(5);
+  });
+
+  it('a missing health column coerces to the documented default of 1', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'scout', displayName: 'Scout', formationKind: 'v',
+      count: '6', spacingX: '26', spacingY: '22', driftSpeed: '40',
+      startX: '240', startY: '270', size: '16',
+      color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+      shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '200',
+      bulletLifetime: '1.5', burstCount: '1', shotProbability: '1',
+    };
+    const config = m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(config.health).toBe(1);
+  });
+
+  it('health round-trips through serializeEnemyConfigs → parseCsvRows → coerceEnemyConfig', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.tank, health: 5 };
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([config]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.health).toBe(5);
+  });
+
+  it('every serialized archetype round-trips its health value', async () => {
+    const m = await loadCsvModule();
+    const configs = [
+      { ...DEFAULT_ENEMY_CONFIGS.scout, health: 1 },
+      { ...DEFAULT_ENEMY_CONFIGS.tank, health: 3 },
+    ];
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs(configs));
+    expect(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS).health).toBe(1);
+    expect(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS).health).toBe(3);
+  });
+
+  it('validateEnemyConfig rejects non-positive and non-integer health', async () => {
+    const m = await loadCsvModule();
+    const base: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+    };
+    expect(m.validateEnemyConfig({ ...base, health: '5' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
+    expect(m.validateEnemyConfig({ ...base, health: '0' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: '-2' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: '2.5' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: 'many' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+  });
+
+  it('a malformed health value coerces to 1 rather than 0', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+      health: 'not-a-number',
+    };
+    expect(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS).health).toBe(1);
+  });
+});

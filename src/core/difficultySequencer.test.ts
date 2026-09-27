@@ -41,6 +41,7 @@ function makeConfig(overrides: Partial<EnemyConfig> = {}): EnemyConfig {
     bulletLifetime: overrides.bulletLifetime ?? 1.5,
     burstCount: overrides.burstCount ?? 1,
     shotProbability: overrides.shotProbability ?? 1.0,
+    health: overrides.health ?? 1,
   };
 }
 

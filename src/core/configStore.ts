@@ -209,6 +209,7 @@ function genericEnemyDefault(key: string): EnemyConfig {
     bulletLifetime: 1.5,
     burstCount: 1,
     shotProbability: 1.0,
+    health: 1,
   };
 }
 
