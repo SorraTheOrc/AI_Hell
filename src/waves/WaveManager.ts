@@ -259,14 +259,19 @@ export class WaveManager {
     return planGroupSpawns(wave.groups, wave.shootEnabled);
   }
 
-  // ── Dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F) ──
+  // ── Dynamic spawn registration (generic seam) ───────────────────
 
   /**
-   * Registers `count` dynamically spawned enemies (e.g. split asteroid
-   * children) so the wave's alive count tracks them and the wave does
-   * not clear early or stall. Must be called exactly once per spawned
-   * child before that child can be destroyed. Safe no-op when no regular
-   * wave is active (before `beginGame()`, boss due/active, run over).
+   * Registers `count` dynamically spawned enemies so the wave's alive count
+   * tracks them and the wave does not clear early or stall. Must be called
+   * exactly once per spawned child before that child can be destroyed. Safe
+   * no-op when no regular wave is active (before `beginGame()`, boss
+   * due/active, run over).
+   *
+   * Asteroids are NOT registered through this seam (AH-0MUJM746P000QAEO):
+   * they do not gate wave completion and persist across wave/level
+   * transitions. The seam is retained for any future dynamically spawned
+   * enemy that must be wave-accounted.
    */
   registerDynamicSpawn(count: number): void {
     if (!this._started || this._bossTriggered || this._bossActive || this._bossDefeated) {
