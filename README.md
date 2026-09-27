@@ -411,6 +411,29 @@ The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playg
    shipped `PlayScene` (see [AGENTS.md § Game Architecture Conventions](./AGENTS.md#game-architecture-conventions)
    and `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §5.1).
 
+#### Testing conventions (deterministic scene boot)
+
+Phaser suites boot a real `Phaser.Game` through `bootScene()`
+(`src/test/gameHarness.ts`). By default the harness waits a fixed **real-time**
+150 ms while the live requestAnimationFrame loop runs, so the scene drains an
+unpredictable number of frames — frame timing varies under full-suite parallel
+load, which makes assertions taken right after boot flaky.
+
+- **Opt into deterministic boot** for suites that assert on scene state:
+  `bootScene([...], { deterministicBoot: true })`. The live loop is stopped
+  before its first frame, the scene is booted with fixed-delta `game.step`
+  calls (150 ms of simulated time, matching the legacy settle window), and the
+  loop is then resumed so tests that `await` a scene transition (for example
+  the game-over flow) still work. The PlayScene suites (`PlayScene.test.ts`,
+  `PlaySceneHUD.test.ts`, `PlayScenePause.test.ts`) opt in.
+- **Drive behaviour with explicit `scene.tick(dt)`**, accumulating deterministic
+  time and polling for the expected condition, rather than wall-clock waits.
+  This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,
+  AH-0MTFSM3IR001QR0C, AH-0MUHA0MMP001DZ5C).
+- **Never weaken an assertion to hide a flake** — fix the nondeterminism at its
+  source (assertions stay exact; a guard may poll with bounded deterministic
+  ticks and fail loudly with diagnostic state).
+
 #### Configuration (CSV)
 
 Enemy and ship tuning is held in committed CSV files — the **single, human-editable source of truth**. No code edit is needed to retune or add an archetype.

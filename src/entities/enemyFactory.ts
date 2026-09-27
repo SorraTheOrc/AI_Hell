@@ -9,6 +9,7 @@
 import Phaser from 'phaser';
 
 import { Asteroid } from './Asteroid';
+import { Harvester } from './Harvester';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
@@ -52,7 +53,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester) &
   DestructionAudioSeam &
   FormationHoldSeam &
   SeekSeam;
@@ -81,6 +82,8 @@ export function createEnemyFromConfig(
   switch (config.key) {
     case 'asteroid':
       return new Asteroid(scene, { x, y, formationOffset: offset, ...opts });
+    case 'harvester':
+      return new Harvester(scene, { x, y, formationOffset: offset, ...opts });
     case 'diver':
       return new Diver(scene, { x, y, formationOffset: offset, ...opts });
     case 'tank':
