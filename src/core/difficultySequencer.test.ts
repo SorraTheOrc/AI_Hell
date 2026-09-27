@@ -328,6 +328,13 @@ describe('defaultCandidatePool', () => {
     expect(asteroid!.minCount).toBe(asteroid!.baseCount);
     expect(asteroid!.maxCount).toBe(asteroid!.baseCount);
   });
+
+  it('F6 — excludes the Harvester from the auto-sequencer candidate pool', () => {
+    // The Harvester is a rare later-level roaming spawn delivered by the
+    // dedicated HarvesterSpawner, never selected as a wave group.
+    const keys = defaultCandidatePool().map((c) => c.enemyKey);
+    expect(keys).not.toContain('harvester');
+  });
 });
 
 // ── Multi-group wave composition (AH-0MUGXDVPH005TIZL) ──────────────
