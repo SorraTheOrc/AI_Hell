@@ -1642,6 +1642,10 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],
+  // F8 (Harvester, AH-0MUI820PM0038HS2): the shared multi-hit kill
+  // finalisation (destruction audio + `onEnemyDestroyed`) is defined once in
+  // the shared core; a scene must not re-implement it.
+  ['finaliseEnemyKill', 'src/scenes/core/CombatScene.ts'],
   ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
   ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
 ];
@@ -1867,5 +1871,61 @@ describe('shared mineral-seek seam — game/gym parity for the Harvester (F4)', 
     expect(gymHarvester.mineralCount).toBe(1);
     expect(playScene.getMinerals()).toHaveLength(1);
     expect(gymScene.getMinerals()).toHaveLength(1);
+  });
+});
+
+// ── F8: Harvester health-finalise & mineral-seek seam guards ────────
+
+describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0MUJRW1720037VEX)', () => {
+  const PRODUCTION = (rel: string) =>
+    fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
+
+  it('defines the shared multi-hit kill finalisation exactly once (CombatScene)', () => {
+    const definers = relativeProductionDefiners((source) =>
+      definesMethod(source, 'finaliseEnemyKill'),
+    );
+    expect(definers).toEqual(['src/scenes/core/CombatScene.ts']);
+  });
+
+  it('defines the shared entity health/takeDamage in BaseEnemy only', () => {
+    const definers = relativeProductionDefiners((source) =>
+      definesMethod(source, 'takeDamage'),
+    );
+    // Boss intentionally owns its own phased takeDamage; BaseEnemy provides
+    // the shared regular-enemy implementation (Harvester inherits it).
+    expect(definers).toContain('src/entities/BaseEnemy.ts');
+    expect(definers).toContain('src/entities/Boss.ts');
+    expect(definers).not.toContain('src/entities/Harvester.ts');
+  });
+
+  it('defines the mineral-seek seam on the Harvester only (no per-scene copy)', () => {
+    const entityDefiners = relativeProductionDefiners((source) =>
+      definesMethod(source, 'setSeekTargets'),
+    );
+    // The entity implements the seam; no scene defines its own version.
+    expect(entityDefiners).toEqual(['src/entities/Harvester.ts']);
+  });
+
+  it('both PlayScene and the gym tick invoke the shared seek seam', () => {
+    // The seam is *called* by both scenes and never re-implemented, so the
+    // game and gyms cannot diverge on seeking. PlayScene guards with a truthy
+    // check; the gym uses optional chaining.
+    expect(PRODUCTION('src/scenes/PlayScene.ts')).toContain(
+      'setSeekTargets(this.minerals)',
+    );
+    expect(
+      PRODUCTION('src/scenes/gym/core/GymFormationScene.ts'),
+    ).toContain('setSeekTargets?.(this.minerals)');
+  });
+
+  it('the Harvester is the only production definer of the health/finalise consumer path', () => {
+    // Sanity: the Harvester extends BaseEnemy (inheriting health/takeDamage)
+    // rather than re-implementing health accounting.
+    expect(PRODUCTION('src/entities/Harvester.ts')).toContain(
+      'extends BaseEnemy',
+    );
+    expect(
+      definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
+    ).toBe(false);
   });
 });
