@@ -5,7 +5,10 @@
  * and the boss trigger; this scene spawns the wave's enemies in their
  * formations, integrates the player ship (auto-fire, weapons, effects),
  * resolves collisions, applies power-up collection, and advances levels
- * automatically when a wave/level is cleared.
+ * automatically when a wave/level is cleared. At run start it injects the
+ * campaign into the `WaveManager` — the scripted `LEVELS` by default, or a
+ * data-driven sequenced campaign when the opt-in `sequencedWavesEnabled`
+ * rule is enabled (AH-0MUH6LEYY0054E63; see `resolveCampaignLevels`).
  *
  * **Shared combat core:** extends {@link CombatScene}
  * (`src/scenes/core/CombatScene.ts`), which owns collision resolution,

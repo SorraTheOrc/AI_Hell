@@ -2,8 +2,9 @@
  * CSV codec module (AH-0MTZWZ9TE009CVUA — task AH-0MUE7Y2940000LVE).
  *
  * RFC 4180 CSV parser and serializer with typed coercion and validation
- * for `EnemyConfig` and `ShipConfig`.  The codec reads flat CSV rows into
- * typed configuration objects, validates required fields and enums, and
+ * for `EnemyConfig`, `ShipConfig` and the sequenced-campaign
+ * `DifficultyCurveRow` (AH-0MUH6LEYY0054E63).  The codec reads flat CSV rows
+ * into typed configuration objects, validates required fields and enums, and
  * falls back to sensible defaults when data is missing or malformed.
  *
  * Column mapping follows the seed configs in `src/core/enemyConfig.ts`

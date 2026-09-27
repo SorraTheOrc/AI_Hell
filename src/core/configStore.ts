@@ -2,7 +2,9 @@
  * Config store (AH-0MTZWZ9TE009CVUA — task AH-0MUE2MGZM0016U3L).
  *
  * In-memory registry that serves typed `EnemyConfig` / `ShipConfig`
- * synchronously from data loaded out of the committed CSV files. At boot
+ * synchronously from data loaded out of the committed CSV files, plus the
+ * optional sequenced-campaign difficulty curve (`DifficultyCurveRow`,
+ * AH-0MUH6LEYY0054E63) from `src/data/difficulty-curves.csv`. At boot
  * {@link loadConfigs} fetches (dev) or reads the bundled (production) CSV,
  * parses and validates it with the CSV codec, and populates the registry.
  *

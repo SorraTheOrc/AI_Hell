@@ -114,6 +114,22 @@ This creates a unique gameplay tension: the player must manage both their own sh
 - Bullet patterns include radial bursts, sweeping arcs, and aimed shots.
 - The predictability of patterns is intentional — players should be able to learn and exploit them through practice.
 
+#### 2.5.1 Optional sequenced (data-driven) campaigns
+
+The fire rules above describe the shipped campaign, but the campaign can
+optionally be **generated at runtime** from a target difficulty curve. When the
+opt-in `sequencedWavesEnabled` rule is enabled (default **off**), `PlayScene`
+builds the level list from `src/data/difficulty-curves.csv` through the runtime
+auto-sequencer (`src/core/difficultySequencer.ts`) via
+`buildSequencedLevels()` (`src/waves/sequencedLevels.ts`): one curve per
+configured level, the curve length sets that level's wave count, and the level
+name comes from the config. The fire rule is derived from the **1-based level
+number** — configured levels 1–3 do not fire and levels 4+ do — so generated
+campaigns obey §2.4/§2.5. With the toggle off (or when the curve config is
+empty, the candidate pool is empty, or generation fails) the scripted `LEVELS`
+campaign ships unchanged. The boss still triggers after the final configured
+level.
+
 ---
 
 ### 2.6 Enemy Interaction Rules
@@ -154,6 +170,14 @@ The following rules govern how enemy entities interact with each other and with 
 | Boss | AI Throne | N/A | Yes (complex) | Final boss encounter with multi-phase attack patterns |
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
+
+> **Optional sequenced campaigns (AH-0MUH6LEYY0054E63).** The table above
+describes the shipped scripted campaign. With the opt-in
+`sequencedWavesEnabled` game rule enabled (default **off**), the level count,
+level names and per-wave enemy composition are generated from
+`src/data/difficulty-curves.csv` instead (see §2.5.1); the scripted campaign
+remains the default and the fallback, and the boss still triggers after the
+final configured level.
 
 ---
 
