@@ -404,6 +404,10 @@ The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playg
 1. Create `src/scenes/gym/Gym<Name>.ts` with `export class Gym<Name> extends Phaser.Scene` (key `Gym<Name>`). No registry edit needed — the index discovers it automatically.
 2. In `create()`, call `addBackToIndexButton(this)` (from `src/utils/gymNavigation.ts`) so the scene can return to the index, and `addBackToMenuOnEsc(this)` so **ESC** returns to the main menu.
 3. Add a `Gym<Name>.test.ts` next to it (excluded from the index automatically).
+4. Keep the scene consistent with the game: gyms are the canonical parity
+   reference, so an enabled gameplay object must run the **same code** as the
+   shipped `PlayScene` (see [AGENTS.md § Game Architecture Conventions](./AGENTS.md#game-architecture-conventions)
+   and `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §5.1).
 
 #### Configuration (CSV)
 
