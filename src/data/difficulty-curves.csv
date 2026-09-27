@@ -1,0 +1,29 @@
+# Difficulty Curves CSV
+# One row per (level, wave). A level's row count sets its wave count; the
+# targets are the desired difficulty score (0–100, same scale as
+# `levelDifficulty`/`enemyDifficulty`) the runtime auto-sequencer aims for.
+# Edit to retune the generated campaign; refresh `npm run dev` to see changes.
+#
+# Columns:
+#   level             — 1-based level number.
+#   levelName         — Level theme name (shown in the HUD).
+#   wave              — 1-based wave number within the level.
+#   targetDifficulty  — Target difficulty score for that wave (0–100).
+#
+# The seeded values below are derived from the static LEVELS calibration
+# (see `defaultDifficultyCurves()` in `src/core/configStore.ts`): each level's
+# measured difficulty is spread non-decreasingly across its waves.
+level,levelName,wave,targetDifficulty
+1,Entry,1,3.49
+1,Entry,2,6.97
+2,Descent,1,8.88
+2,Descent,2,10.79
+2,Descent,3,12.7
+3,The Core,1,13.23
+3,The Core,2,13.75
+3,The Core,3,14.28
+4,Firestorm,1,17.23
+4,Firestorm,2,20.19
+4,Firestorm,3,23.14
+5,Predictable Death,1,27.53
+5,Predictable Death,2,31.92

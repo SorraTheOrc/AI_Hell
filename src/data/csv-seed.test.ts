@@ -9,9 +9,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { parseCsvRows } from '../core/csv';
+import { parseCsvRows, parseDifficultyCurves } from '../core/csv';
 import { DEFAULT_ENEMY_CONFIGS, DEFAULT_ENEMY_KEYS } from '../core/enemyConfig';
 import { DEFAULT_CONFIG } from '../core/config';
+import { defaultDifficultyCurves } from '../core/configStore';
 
 function readCsvFile(name: string): string {
   return readFileSync(resolve(__dirname, name), 'utf8');
@@ -68,5 +69,41 @@ describe('ship-config.csv seed data', () => {
     expect(coerced.shipSize).toBe(DEFAULT_CONFIG.shipSize);
     expect(coerced.shipColor).toBe(DEFAULT_CONFIG.shipColor);
     expect(coerced.controlScheme).toBe(DEFAULT_CONFIG.controlScheme);
+  });
+});
+
+describe('difficulty-curves.csv seed data', () => {
+  it('exists and contains a header comment', () => {
+    const csv = readCsvFile('difficulty-curves.csv');
+    expect(csv).toMatch(/^# /);
+  });
+
+  it('has the expected difficulty-curve columns', () => {
+    const csv = readCsvFile('difficulty-curves.csv');
+    expect(csv).toContain('level,levelName,wave,targetDifficulty');
+  });
+
+  it('parses into one typed row per (level, wave)', () => {
+    const csv = readCsvFile('difficulty-curves.csv');
+    const rows = parseDifficultyCurves(csv);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(Number.isInteger(row.level)).toBe(true);
+      expect(row.level).toBeGreaterThanOrEqual(1);
+      expect(Number.isInteger(row.wave)).toBe(true);
+      expect(row.levelName.length).toBeGreaterThan(0);
+      expect(row.targetDifficulty).toBeGreaterThanOrEqual(0);
+      expect(row.targetDifficulty).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it('matches the computed default curve exactly', () => {
+    const csv = readCsvFile('difficulty-curves.csv');
+    expect(parseDifficultyCurves(csv)).toEqual(defaultDifficultyCurves());
+  });
+
+  it('has no malformed rows (parse count equals raw row count)', () => {
+    const csv = readCsvFile('difficulty-curves.csv');
+    expect(parseDifficultyCurves(csv).length).toBe(parseCsvRows(csv).length);
   });
 });

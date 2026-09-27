@@ -902,3 +902,88 @@ describe('Codec AC refinements (AH-0MUE7Y2940000LVE)', () => {
     expect(result.errors.some((e: string) => e.toLowerCase().includes('malformed'))).toBe(true);
   });
 });
+
+// ── Difficulty-curve codec (AH-0MUITRZZE000OYQE) ────────────────────
+
+describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
+  function validRow(): Record<string, string> {
+    return { level: '2', levelName: 'Descent', wave: '1', targetDifficulty: '8.88' };
+  }
+
+  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER', async () => {
+    const m = await loadCsvModule();
+    expect(m.DIFFICULTY_CURVE_COLUMN_ORDER).toEqual([
+      'level', 'levelName', 'wave', 'targetDifficulty',
+    ]);
+  });
+
+  it('parses typed rows from a CSV string', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty\n3,The Core,2,13.75\n',
+    );
+    expect(rows).toEqual([
+      { level: 3, levelName: 'The Core', wave: 2, targetDifficulty: 13.75 },
+    ]);
+  });
+
+  it('round-trips rows through serialize → parse', async () => {
+    const m = await loadCsvModule();
+    const rows = [
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49 },
+      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12 },
+    ];
+    expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(rows))).toEqual(rows);
+  });
+
+  it('validation passes for a valid row', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow(validRow());
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('validation reports every malformed field', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      level: 'not-a-level',
+      levelName: '',
+      wave: '0',
+      targetDifficulty: 'nope',
+    });
+    expect(result.ok).toBe(false);
+    const joined = result.errors.join(' ').toLowerCase();
+    expect(joined).toContain('level');
+    expect(joined).toContain('levelname');
+    expect(joined).toContain('wave');
+    expect(joined).toContain('targetdifficulty');
+  });
+
+  it('validation flags out-of-range targets', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({ ...validRow(), targetDifficulty: '150' });
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e: string) => e.toLowerCase().includes('range'))).toBe(true);
+  });
+
+  it('validation is non-destructive (does not mutate the input row)', async () => {
+    const m = await loadCsvModule();
+    const row = { level: 'bad', levelName: 'Descent', wave: '1', targetDifficulty: 'x' };
+    const before = JSON.stringify(row);
+    m.validateDifficultyCurveRow(row);
+    expect(JSON.stringify(row)).toBe(before);
+  });
+
+  it('parse drops malformed rows instead of throwing', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty\n' +
+        '1,Entry,1,5\n' +
+        '1,Entry,2,not-a-number\n' +
+        'bad,Entry,3,9\n',
+    );
+    expect(rows).toEqual([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5 },
+    ]);
+  });
+});

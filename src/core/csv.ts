@@ -17,6 +17,7 @@ import {
   type EnemyShotPattern,
   type ShipConfig,
   type ControlScheme,
+  type DifficultyCurveRow,
 } from './configTypes';
 import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
 
@@ -395,6 +396,111 @@ export function coerceShipConfig(
   result.asteroidsRotationSpeed = coerceNumber(row.asteroidsRotationSpeed, result.asteroidsRotationSpeed);
 
   return result;
+}
+
+// ── Difficulty-curve codec (AH-0MUITRZZE000OYQE) ────────────────────
+
+/** Stable column order for the difficulty-curve CSV. Exported for plugin validation. */
+export const DIFFICULTY_CURVE_COLUMN_ORDER: (keyof DifficultyCurveRow)[] = [
+  'level', 'levelName', 'wave', 'targetDifficulty',
+];
+
+/**
+ * Validate a single difficulty-curve row. Non-destructive: the input row is
+ * never modified. Reports every malformed/missing field so the dev write
+ * path can reject the row with a helpful HTTP 400.
+ */
+export function validateDifficultyCurveRow(
+  row: Record<string, string>,
+): ValidationResult {
+  const errors: string[] = [];
+
+  const level = row.level;
+  if (level == null || level.trim() === '') {
+    errors.push('Missing required field: level');
+  } else if (!isPositiveInteger(level)) {
+    errors.push(`Invalid level: "${level}" — must be a positive integer`);
+  }
+
+  const wave = row.wave;
+  if (wave == null || wave.trim() === '') {
+    errors.push('Missing required field: wave');
+  } else if (!isPositiveInteger(wave)) {
+    errors.push(`Invalid wave: "${wave}" — must be a positive integer`);
+  }
+
+  const levelName = row.levelName;
+  if (levelName == null || levelName.trim() === '') {
+    errors.push('Missing required field: levelName');
+  }
+
+  const target = row.targetDifficulty;
+  if (target == null || target.trim() === '') {
+    errors.push('Missing required field: targetDifficulty');
+  } else {
+    const n = Number(target);
+    if (Number.isNaN(n)) {
+      errors.push(`Malformed number for targetDifficulty: "${target}"`);
+    } else if (n < 0 || n > 100) {
+      errors.push(
+        `targetDifficulty out of range (0–100): "${target}"`,
+      );
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+/** True when `value` is a string holding a positive integer (`1`, `2`, …). */
+function isPositiveInteger(value: string): boolean {
+  if (!/^\d+$/.test(value.trim())) return false;
+  return Number(value) >= 1;
+}
+
+/**
+ * Coerce a flat CSV row into a typed `DifficultyCurveRow`, or `null` when the
+ * row is malformed. Callers use `null` to detect unusable rows and fall back
+ * to the computed defaults.
+ */
+export function coerceDifficultyCurveRow(
+  row: Record<string, string>,
+): DifficultyCurveRow | null {
+  if (!validateDifficultyCurveRow(row).ok) return null;
+  return {
+    level: Number(row.level),
+    levelName: row.levelName.trim(),
+    wave: Number(row.wave),
+    targetDifficulty: Number(row.targetDifficulty),
+  };
+}
+
+/**
+ * Parse a difficulty-curve CSV string into typed rows. Malformed rows are
+ * dropped so a partially-broken file never crashes the game; callers that
+ * need strictness compare the parsed count against the raw row count.
+ */
+export function parseDifficultyCurves(csv: string): DifficultyCurveRow[] {
+  const rows: DifficultyCurveRow[] = [];
+  for (const raw of parseCsvRows(csv)) {
+    const row = coerceDifficultyCurveRow(raw);
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Serialize typed difficulty-curve rows to a CSV string. Headers follow
+ * {@link DIFFICULTY_CURVE_COLUMN_ORDER}; field values are RFC 4180 quoted
+ * when necessary. Round-trips through {@link parseDifficultyCurves}.
+ */
+export function serializeDifficultyCurves(rows: DifficultyCurveRow[]): string {
+  const header = DIFFICULTY_CURVE_COLUMN_ORDER.join(',');
+  const body = rows.map((row) =>
+    DIFFICULTY_CURVE_COLUMN_ORDER.map((col) =>
+      quoteCsvField(String(row[col] ?? '')),
+    ).join(','),
+  );
+  return [header, ...body].join('\n');
 }
 
 // ── AC4: CSV serialization ──────────────────────────────────────────

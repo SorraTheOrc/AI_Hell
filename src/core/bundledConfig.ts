@@ -9,5 +9,6 @@
 
 import bundledEnemyCsv from '../data/enemy-configs.csv?raw';
 import bundledShipCsv from '../data/ship-config.csv?raw';
+import bundledDifficultyCurvesCsv from '../data/difficulty-curves.csv?raw';
 
-export { bundledEnemyCsv, bundledShipCsv };
+export { bundledEnemyCsv, bundledShipCsv, bundledDifficultyCurvesCsv };
