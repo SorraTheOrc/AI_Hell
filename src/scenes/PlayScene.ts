@@ -93,6 +93,10 @@ import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManag
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
+import {
+  computeHarvesterSpawns,
+  type HarvesterSpawnEvent,
+} from '../waves/HarvesterSpawner';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -339,6 +343,16 @@ export class PlayScene extends CombatScene<
    */
   private pendingAsteroidSpawns: SpawnEvent[] = [];
 
+  /**
+   * Planned Harvester spawns for the active regular wave (Levels 4–5 only),
+   * computed once per wave by `planHarvesterSpawns()`. Each released spawn is
+   * registered with the WaveManager (they gate wave completion — unlike
+   * asteroids).
+   */
+  private pendingHarvesterSpawns: HarvesterSpawnEvent[] = [];
+  /** Number of planned Harvester spawns already released this wave. */
+  private harvestersSpawnedThisWave = 0;
+
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
 
@@ -472,6 +486,8 @@ export class PlayScene extends CombatScene<
     this.waveTimerActive = false;
     this.pendingAsteroidSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
+    this.pendingHarvesterSpawns = [];
+    this.harvestersSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this.paused = false;
   }
@@ -598,6 +614,10 @@ export class PlayScene extends CombatScene<
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
       this._releaseDueAsteroidSpawns();
+      // Release any planned Harvester spawns (Levels 4–5 only) whose time
+      // has passed; each is registered with the WaveManager so wave-clear
+      // accounting stays correct (F6).
+      this._releaseDueHarvesterSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -618,6 +638,8 @@ export class PlayScene extends CombatScene<
     // Plan the random offscreen asteroid spawns for this wave. Empty during
     // the boss encounter (see `planAsteroidSpawns`).
     this.planAsteroidSpawns();
+    // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
+    this.planHarvesterSpawns();
     const spawns = this.waveManager.planSpawns();
     if (spawns.length > 0) {
       for (const spawn of spawns) this._spawnEnemy(spawn);
@@ -725,6 +747,89 @@ export class PlayScene extends CombatScene<
       spacingX: 0,
       spacingY: 0,
     });
+  }
+
+  /**
+   * Plans the rare Harvester spawns for the active regular wave. Only
+   * Levels 4–5 are eligible; Levels 1–3 and the boss encounter produce no
+   * plan. Called once per wave from `spawnWave()` so the scene rng stream
+   * advances only at wave boundaries (F6).
+   */
+  planHarvesterSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.asteroidSpawnerEnabled ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingHarvesterSpawns = [];
+      this.harvestersSpawnedThisWave = 0;
+      return;
+    }
+    this.pendingHarvesterSpawns = computeHarvesterSpawns(
+      wm.currentLevel()?.level ?? 0,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.harvestersSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned Harvester spawn whose scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition,
+   * pause or boss encounter) and stops at the first not-yet-due event — the
+   * plan is time-ordered.
+   */
+  private _releaseDueHarvesterSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.harvestersSpawnedThisWave < this.pendingHarvesterSpawns.length) {
+      const event = this.pendingHarvesterSpawns[this.harvestersSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledHarvester(event);
+      this.harvestersSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned Harvester at its position and registers it with the
+   * WaveManager so the wave's alive count tracks it. Unlike asteroids, a
+   * Harvester holds station when no mineral is present, so it must be
+   * wave-accounted (the wave neither clears early nor stalls) — hence the
+   * on-screen placement in the planner.
+   */
+  private _spawnScheduledHarvester(event: HarvesterSpawnEvent): void {
+    const cfg = loadEnemyConfig('harvester');
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      event.x,
+      event.y,
+      { row: 0, col: 0 },
+    );
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: 'harvester',
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
   }
 
   /** Advances formation drift and repositions every live enemy. */
