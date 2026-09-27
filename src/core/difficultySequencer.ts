@@ -87,7 +87,9 @@ export interface ShootableWave {
  *
  * `waves` is the sequence of waves to play; `errors` is the absolute
  * difference between each wave's actual difficulty and its target (lower is
- * better).
+ * better). A wave's actual difficulty is the **sum** of its groups' scores;
+ * when a single group cannot reach the target the sequencer composes the wave
+ * from several groups (see {@link SequencerOptions.allowMultipleGroups}).
  */
 export interface SequencerResult {
   /** The produced waves in play order. */
@@ -119,12 +121,31 @@ export interface SequencerOptions {
    * @default false
    */
   defaultShootEnabled?: boolean;
+  /**
+   * Whether a wave may be composed from more than one candidate group.
+   *
+   * A single group's `enemyDifficulty` score saturates well below 100 — the
+   * tunable counts alone cannot push one archetype to the top of the scale —
+   * so targets above a single group's ceiling are only reachable by combining
+   * groups. Greedy composition also gives higher-difficulty waves varied
+   * compositions instead of repeating one saturated archetype.
+   * @default true
+   */
+  allowMultipleGroups?: boolean;
+  /**
+   * Maximum number of groups a single wave may be composed from.
+   * @default 5
+   */
+  maxGroupsPerWave?: number;
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────
 
 const DEFAULT_TOLERANCE = 10;
 const DEFAULT_MAX_ITERATIONS = 50;
+const DEFAULT_MAX_GROUPS_PER_WAVE = 5;
+/** Ignore floating-point noise when comparing candidate errors. */
+const COMPOSE_EPSILON = 1e-9;
 
 /**
  * The default candidate pool — one entry per seed archetype with sensible
@@ -300,6 +321,89 @@ function evaluateCandidate(
   return { adjusted, error };
 }
 
+/**
+ * True when the named archetype fires projectiles (used to derive a composed
+ * wave's `shootEnabled` flag when the caller does not force it).
+ */
+function groupFires(enemyKey: string, count: number): boolean {
+  const base = resolveBaseConfig({
+    enemyKey,
+    baseCount: count,
+    minCount: count,
+    maxCount: count,
+    adjustableFields: [],
+  });
+  return base.shotPattern !== 'none';
+}
+
+/**
+ * Greedily add candidate groups to a wave until the summed difficulty of the
+ * wave is within `tolerance` of `target`, or no additional group improves it.
+ *
+ * Each added group is tuned against the *remaining gap* (`target − total`),
+ * so the composed wave lands on the target rather than re-aiming at it. Ties
+ * are broken in favour of archetypes that have not yet been used, which keeps
+ * high-difficulty waves varied instead of stacking one saturated archetype.
+ *
+ * @returns the (possibly grown) groups and their summed score.
+ */
+function composeWaveGroups(
+  initial: AdjustedGroup,
+  target: number,
+  candidates: CandidateGroup[],
+  tolerance: number,
+  maxIterations: number,
+  maxGroups: number,
+): { groups: AdjustedGroup[]; total: number } {
+  const groups: AdjustedGroup[] = [initial];
+  let total = initial.score;
+  let error = Math.abs(total - target);
+  const used = new Map<string, number>([[initial.enemyKey, 1]]);
+
+  while (error > tolerance && groups.length < maxGroups) {
+    const residual = target - total;
+    let choice: {
+      adjusted: AdjustedGroup;
+      error: number;
+      used: number;
+    } | null = null;
+
+    for (const candidate of candidates) {
+      const baseConfig = resolveBaseConfig(candidate);
+      const adjusted = adjustGroupForTarget(
+        candidate,
+        baseConfig,
+        residual,
+        tolerance,
+        maxIterations,
+      );
+      if (adjusted.score <= 0) continue;
+
+      const nextError = Math.abs(total + adjusted.score - target);
+      const usedCount = used.get(candidate.enemyKey) ?? 0;
+
+      if (
+        !choice ||
+        nextError < choice.error - COMPOSE_EPSILON ||
+        (Math.abs(nextError - choice.error) <= COMPOSE_EPSILON &&
+          usedCount < choice.used)
+      ) {
+        choice = { adjusted, error: nextError, used: usedCount };
+      }
+    }
+
+    // No candidate improves the wave — stop rather than overshoot it.
+    if (!choice || choice.error >= error - COMPOSE_EPSILON) break;
+
+    groups.push(choice.adjusted);
+    total += choice.adjusted.score;
+    error = choice.error;
+    used.set(choice.adjusted.enemyKey, (used.get(choice.adjusted.enemyKey) ?? 0) + 1);
+  }
+
+  return { groups, total };
+}
+
 // ── Public API ───────────────────────────────────────────────────────
 
 /**
@@ -361,23 +465,32 @@ export function sequencer(
       continue;
     }
 
-    // Determine shootEnabled based on the chosen candidate's archetype.
-    const candidateForShoot = candidates.find(
-      (c) => c.enemyKey === bestResult!.adjusted.enemyKey,
-    );
-    const baseConfig = resolveBaseConfig(
-      candidateForShoot ?? { enemyKey: bestResult.adjusted.enemyKey, baseCount: 1, minCount: 1, maxCount: 1, adjustableFields: [] },
-    );
+    // Compose the wave: start from the best single group and, if it cannot
+    // reach the target, add further groups until it does (or no improvement
+    // remains). This is what lets targets above a single archetype's ceiling
+    // be met with varied compositions (AH-0MUGXDVPH005TIZL).
+    const composed =
+      options.allowMultipleGroups === false
+        ? { groups: [bestResult.adjusted], total: bestResult.adjusted.score }
+        : composeWaveGroups(
+            bestResult.adjusted,
+            target,
+            candidates,
+            tolerance,
+            maxIterations,
+            options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE,
+          );
+
     const shootEnabled =
       options.defaultShootEnabled ??
-      baseConfig.shotPattern !== 'none';
+      composed.groups.some((group) => groupFires(group.enemyKey, group.count));
 
     waves.push({
-      groups: [bestResult.adjusted],
+      groups: composed.groups,
       shootEnabled,
       targetDifficulty: target,
     });
-    errors.push(bestResult.error);
+    errors.push(Math.round(Math.abs(composed.total - target) * 100) / 100);
   }
 
   return { waves, errors };

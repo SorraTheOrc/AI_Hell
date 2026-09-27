@@ -24,6 +24,7 @@ import {
   CURVE_REGENERATE_BUTTON_ID,
   CURVE_TARGET_MAX,
   CURVE_TARGET_MIN,
+  CURVE_TARGET_TOLERANCE,
   CURVE_WAVE_REMOVE_ATTR,
   CURVE_WAVE_SLIDER_ATTR,
   CURVE_WAVE_VALUE_ATTR,
@@ -229,15 +230,14 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
     preview.forEach((entry, index) => {
       expect(entry.waveNumber).toBe(index + 1);
       expect(entry.targetDifficulty).toBe(curve[index]);
-      expect(entry.actualDifficulty).toBeGreaterThanOrEqual(0);
-      expect(entry.actualDifficulty).toBeLessThanOrEqual(100);
-      // Signed error is target minus actual (AC6).
-      expect(entry.error).toBeCloseTo(
-        entry.targetDifficulty - entry.actualDifficulty,
-        5,
+      // AC12 — the generated wave lands within a small tolerance of target.
+      expect(
+        Math.abs(entry.actualDifficulty - entry.targetDifficulty),
+      ).toBeLessThanOrEqual(CURVE_TARGET_TOLERANCE + 2);
+      // Composition renders as one or more `<enemyKey> ×<count>` groups.
+      expect(entry.composition).toMatch(
+        /^[a-z0-9-]+ ×\d+( \+ [a-z0-9-]+ ×\d+)*$/,
       );
-      // Composition renders as `<enemyKey> ×<count>`.
-      expect(entry.composition).toMatch(/^[a-z0-9-]+ ×\d+/);
       expect(typeof entry.shootEnabled).toBe('boolean');
     });
 
@@ -254,12 +254,56 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
     rows.forEach((row, index) => {
       const entry = preview[index];
       expect(row.text).toContain(String(entry.targetDifficulty));
-      expect(row.text).toContain(entry.actualDifficulty.toFixed(1));
       expect(row.text).toContain(entry.composition);
       expect(row.text).toContain(entry.shootEnabled ? 'yes' : 'no');
       // Same fixed width as the header keeps the columns aligned.
       expect(row.text.length).toBe(header!.text.length);
     });
+  });
+
+  it('AC12 — targets above the old single-group ceiling are matched, up to 100', async () => {
+    const scene = await boot();
+    const targets = [10, 30, 50, 70, 90, 100];
+    targets.forEach((t, i) => setSlider(i, String(t)));
+    (
+      panel()!.querySelector(`#${CURVE_REGENERATE_BUTTON_ID}`) as HTMLButtonElement
+    ).click();
+
+    const preview = scene.wavePreview;
+    expect(preview).toHaveLength(targets.length);
+    preview.forEach((entry, index) => {
+      expect(entry.targetDifficulty).toBe(targets[index]);
+      expect(
+        Math.abs(entry.actualDifficulty - entry.targetDifficulty),
+      ).toBeLessThanOrEqual(CURVE_TARGET_TOLERANCE + 2);
+    });
+    // The previous single-group sequencer saturated near 33; the top target
+    // must now genuinely exceed that ceiling.
+    expect(preview[preview.length - 1].actualDifficulty).toBeGreaterThan(80);
+  });
+
+  it('AC13 — higher targets yield varied, multi-group compositions', async () => {
+    const scene = await boot();
+    const targets = [50, 60, 70, 80, 90, 100];
+    targets.forEach((t, i) => setSlider(i, String(t)));
+    (
+      panel()!.querySelector(`#${CURVE_REGENERATE_BUTTON_ID}`) as HTMLButtonElement
+    ).click();
+
+    const preview = scene.wavePreview;
+    expect(preview).toHaveLength(targets.length);
+    preview.forEach((entry, index) => {
+      expect(entry.targetDifficulty).toBe(targets[index]);
+      expect(
+        Math.abs(entry.actualDifficulty - entry.targetDifficulty),
+      ).toBeLessThanOrEqual(CURVE_TARGET_TOLERANCE + 2);
+    });
+    // No two consecutive high waves repeat the exact same composition.
+    for (let i = 1; i < preview.length; i++) {
+      expect(preview[i].composition).not.toBe(preview[i - 1].composition);
+    }
+    // The very high targets require composing more than one group.
+    expect(preview[preview.length - 1].composition).toContain(' + ');
   });
 
   it('AC11 — renders a bottom-right help box summarising every column', async () => {
@@ -282,9 +326,8 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
     const sampleEntry: WavePreviewEntry = {
       waveNumber: 3,
       targetDifficulty: 42,
-      actualDifficulty: 40.5,
-      error: 1.5,
-      composition: 'scout ×12',
+      actualDifficulty: 41.5,
+      composition: 'scout ×12 + phaser ×4',
       shootEnabled: true,
     };
 
@@ -298,23 +341,18 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
       const row = formatWaveTableRow(sampleEntry, widths);
       expect(row).toContain('3');
       expect(row).toContain('42');
-      expect(row).toContain('40.5');
-      expect(row).toContain('+1.5');
-      expect(row).toContain('scout ×12');
+      expect(row).toContain('scout ×12 + phaser ×4');
       expect(row).toContain('yes');
       // Fixed-width cells make the header and every row the same width.
       expect(row.length).toBe(header.length);
     });
 
-    it('renders a negative error without a leading plus sign', () => {
+    it('renders a non-firing wave as "no"', () => {
       const entry: WavePreviewEntry = {
         ...sampleEntry,
-        error: -0.5,
         shootEnabled: false,
       };
       const row = formatWaveTableRow(entry, waveTableColumnWidths([entry]));
-      expect(row).toContain('-0.5');
-      expect(row).not.toContain('+-0.5');
       expect(row).toContain('no');
     });
 

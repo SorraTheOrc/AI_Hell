@@ -11,10 +11,9 @@
  *   gyms): one 0–100 slider per wave plus a Remove button, an Add Wave button,
  *   and a Regenerate button.
  * - **Wave preview table** (Phaser canvas text): a column-heading row
- *   followed by one aligned row per wave — number, target difficulty,
- *   actual difficulty, signed error (target − actual), enemy composition
- *   and shooting status (AC10) — plus a bottom-right column-guide help box
- *   (AC11) summarising each column.
+ *   followed by one aligned row per wave — number, target difficulty, enemy
+ *   composition and shooting status (AC6/AC10/AC12) — plus a bottom-right
+ *   column-guide help box (AC11) summarising each column.
  * - **Edit-to-clear**: any curve change marks the preview stale, clears the
  *   wave list and shows {@link CURVE_PREVIEW_STALE_TEXT} until Regenerate is
  *   pressed again.
@@ -71,6 +70,13 @@ export const CURVE_TARGET_MIN = 0;
 export const CURVE_TARGET_MAX = 100;
 /** Target applied to a newly added wave row. */
 export const CURVE_NEW_WAVE_TARGET = 50;
+/**
+ * Accuracy (in difficulty points) the sequencer aims for per wave. The gym is
+ * a design tool, so it asks the sequencer for a tighter match than the runtime
+ * default; this is what lets it compose multi-group waves at higher targets
+ * rather than settling for one saturated archetype (AC12/AC13).
+ */
+export const CURVE_TARGET_TOLERANCE = 3;
 
 /** Wave-table layout on the Phaser canvas. */
 const PREVIEW_HEADER_X = 40;
@@ -88,12 +94,14 @@ export interface WavePreviewEntry {
   waveNumber: number;
   /** Design-time target score for this wave. */
   targetDifficulty: number;
-  /** Actual score of the sequencer's chosen group(s) (0–100). */
-  actualDifficulty: number;
-  /** Signed error `target − actual` (positive = easier than intended). */
-  error: number;
-  /** Enemy composition, e.g. `scout ×12`. */
+  /** Enemy composition, e.g. `scout ×12` (multiple groups joined by ` + `). */
   composition: string;
+  /**
+   * Summed difficulty score of the wave's chosen groups (0–100+). Kept on
+   * the model so tests (and future tooling) can verify the sequencer matched
+   * the target; it is deliberately not a table column (AC12).
+   */
+  actualDifficulty: number;
   /** Whether the wave's enemies fire projectiles. */
   shootEnabled: boolean;
 }
@@ -125,16 +133,6 @@ export const WAVE_TABLE_COLUMNS: readonly WaveTableColumn[] = [
     value: (entry) => String(entry.targetDifficulty),
   },
   {
-    heading: 'ACTUAL',
-    help: 'Sequencer-chosen group score',
-    value: (entry) => entry.actualDifficulty.toFixed(1),
-  },
-  {
-    heading: 'ERROR',
-    help: 'Target minus actual (signed)',
-    value: (entry) => `${entry.error >= 0 ? '+' : ''}${entry.error.toFixed(1)}`,
-  },
-  {
     heading: 'COMPOSITION',
     help: 'Enemy type and count',
     value: (entry) => entry.composition,
@@ -148,11 +146,6 @@ export const WAVE_TABLE_COLUMNS: readonly WaveTableColumn[] = [
 
 /** Title line of the bottom-right column-guide help box (AC11). */
 export const CURVE_HELP_BOX_TITLE = 'COLUMN GUIDE';
-
-/** Round to two decimals so preview values are stable and comparable. */
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 /**
  * Per-column character widths, sized to the widest of each heading and its
@@ -450,25 +443,22 @@ export class GymCurveSequencer extends Phaser.Scene {
    * also run once on scene create.
    */
   regenerate(): void {
-    const result = sequencer(this.curve, this.candidates);
-    this.preview = result.waves.map((wave, index) => {
-      // The sequencer currently picks exactly one candidate group per wave, so
-      // the wave's actual difficulty is that group's `enemyDifficulty` score.
-      const actualDifficulty = round2(
-        wave.groups.reduce((sum, group) => sum + group.score, 0),
-      );
-      const targetDifficulty = wave.targetDifficulty;
-      return {
-        waveNumber: index + 1,
-        targetDifficulty,
-        actualDifficulty,
-        error: round2(targetDifficulty - actualDifficulty),
-        composition:
-          wave.groups.map((group) => `${group.enemyKey} ×${group.count}`).join(', ') ||
-          'none',
-        shootEnabled: wave.shootEnabled,
-      };
+    const result = sequencer(this.curve, this.candidates, {
+      tolerance: CURVE_TARGET_TOLERANCE,
     });
+    this.preview = result.waves.map((wave, index) => ({
+      waveNumber: index + 1,
+      targetDifficulty: wave.targetDifficulty,
+      composition:
+        wave.groups
+          .map((group) => `${group.enemyKey} ×${group.count}`)
+          .join(' + ') || 'none',
+      actualDifficulty:
+        Math.round(
+          wave.groups.reduce((sum, group) => sum + group.score, 0) * 100,
+        ) / 100,
+      shootEnabled: wave.shootEnabled,
+    }));
     this.previewStale = false;
     this._renderPreview();
   }

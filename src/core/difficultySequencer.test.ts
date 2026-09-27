@@ -329,6 +329,72 @@ describe('defaultCandidatePool', () => {
   });
 });
 
+// ── Multi-group wave composition (AH-0MUGXDVPH005TIZL) ──────────────
+
+describe('multi-group wave composition (AH-0MUGXDVPH005TIZL)', () => {
+  it('composes several groups when a single group cannot reach the target', () => {
+    // A single group's score saturates well below 100, so the high targets an
+    // interactive curve editor supports must be reached by combining groups.
+    const result = sequencer([90], defaultCandidatePool());
+    const wave = result.waves[0];
+
+    expect(wave.groups.length).toBeGreaterThan(1);
+    expect(result.errors[0]).toBeLessThanOrEqual(10);
+    const total = wave.groups.reduce((sum, group) => sum + group.score, 0);
+    expect(total).toBeCloseTo(90, 0);
+  });
+
+  it('keeps a single group when it already reaches the target', () => {
+    const result = sequencer([20], defaultCandidatePool());
+    const wave = result.waves[0];
+    expect(wave.groups).toHaveLength(1);
+    expect(result.errors[0]).toBeLessThanOrEqual(10);
+  });
+
+  it('does not compose when allowMultipleGroups is false', () => {
+    const result = sequencer([90], defaultCandidatePool(), {
+      allowMultipleGroups: false,
+    });
+    expect(result.waves[0].groups).toHaveLength(1);
+    // The single group cannot get near 90, so the error stays large.
+    expect(result.errors[0]).toBeGreaterThan(20);
+  });
+
+  it('respects maxGroupsPerWave', () => {
+    const result = sequencer([100], defaultCandidatePool(), {
+      maxGroupsPerWave: 2,
+    });
+    expect(result.waves[0].groups.length).toBeLessThanOrEqual(2);
+  });
+
+  it('produces a distinct composition per high target', () => {
+    const curve = [50, 60, 70, 80, 90, 100];
+    const result = sequencer(curve, defaultCandidatePool());
+    const compositions = result.waves.map((wave) =>
+      wave.groups.map((g) => `${g.enemyKey}x${g.count}`).join('+'),
+    );
+    // The old single-group sequencer returned `phaserx12` for every one of
+    // these; the composed waves must differ.
+    expect(new Set(compositions).size).toBeGreaterThan(1);
+    for (const composition of compositions) {
+      expect(composition).not.toBe('phaserx12');
+    }
+  });
+
+  it('is deterministic when composing groups', () => {
+    const curve = [40, 70, 100];
+    const first = sequencer(curve, defaultCandidatePool());
+    const second = sequencer(curve, defaultCandidatePool());
+    expect(second).toEqual(first);
+  });
+
+  it('derives shootEnabled from any firing group in a composed wave', () => {
+    const result = sequencer([90], defaultCandidatePool());
+    // At least one non-Asteroid group fires; the composed wave must report it.
+    expect(result.waves[0].shootEnabled).toBe(true);
+  });
+});
+
 // ── AdjustedGroup ────────────────────────────────────────────────────
 
 describe('AdjustedGroup', () => {
