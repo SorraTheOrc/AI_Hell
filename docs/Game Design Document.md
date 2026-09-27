@@ -97,7 +97,7 @@ the game-over screen (the in-game pause menu follows the same model).
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
-- **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
+- **Enemy health**: Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**). Enemies E1–E6 are 1 HP and are destroyed by a single player bullet hit; the **E7 Harvester** (§4.1) has **5 HP** and survives five hits. The Boss (§4.3) remains multi-hit via its 4-phase health bar. P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
 - **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with S or ↓), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **S key or ↓** activates the teleport power-up while the player holds at least one Teleport power-up.
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
@@ -152,9 +152,9 @@ boss still triggers after the final level.
 
 The following rules govern how enemy entities interact with each other and with bullets. These rules are universal across all levels and enemy types.
 
-- **Enemy pass-through**: Enemies **do not collide with or block** other enemies at any time. All enemy types pass freely through one another regardless of formation, wave, or level. This applies to all enemy types (E1–E5) and all wave configurations (Line, V-Formation, Circle, Wall, Dive Bomb, Orbital). There is no special "shielding" or "blocking" behavior between enemy types.
+- **Enemy pass-through**: Enemies **do not collide with or block** other enemies at any time. All enemy types pass freely through one another regardless of formation, wave, or level. This applies to all enemy types (E1–E7) and all wave configurations (Line, V-Formation, Circle, Wall, Dive Bomb, Orbital). There is no special "shielding" or "blocking" behavior between enemy types.
 
-- **Bullet–enemy interaction**: A single player bullet is **consumed** (destroyed) when it hits and destroys an enemy. The first enemy hit by a bullet is destroyed; the bullet does not pass through. There is no multi-hit bullet, no shield layer, and no piercing behavior. Each enemy requires exactly one bullet to destroy (see also §4.1 for enemy health).
+- **Bullet–enemy interaction**: A player bullet is **consumed** (destroyed) when it hits an enemy. The first enemy hit by a bullet takes the hit; the bullet does not pass through. There is no multi-hit bullet, no shield layer, and no piercing behaviour. A 1-HP enemy is destroyed by the bullet; a multi-hit enemy (E7 Harvester) loses one hit point per bullet and the **fifth** hit destroys it (see also §4.1 for enemy health).
 
 - **The Wall wave (density challenge)**: Level 3's Wall wave is a **density challenge, not a blocking mechanic**. The Wall consists of a dense horizontal line of enemies that advances slowly. Enemies in the Wall pass through each other freely. To create a gap through which the player can advance or through which bullets can reach enemies behind the Wall, the player must destroy each Wall enemy individually — one bullet per enemy. There is no special "Wall shielding" that blocks bullets from reaching enemies behind the line; bullets simply pass through gaps created by destroyed enemies.
 
@@ -275,6 +275,27 @@ The following rules govern how enemy entities interact with each other and with 
   enemy-body → lose-one-life model).
 - **Fires**: Never.
 
+#### E7 — Harvester
+- **Behavior**: A large, slow **mineral-denial roamer**. It always steers toward
+  the **nearest live mineral anywhere on the field** at its slow speed and
+  **absorbs** it on overlap through the shared enemy-absorption rule
+  (`collectMinerals`), incrementing its tracked mineral count. With no mineral
+  present it holds station. It can never take minerals from the player's hold.
+- **Appearance**: Large (≈ 44 px half-size), slow (≈ 24 px/s) violet hexagonal
+  "collector" body — bigger than the Tank and easy to hit.
+- **Health**: **5 HP** — survives five player bullets; the fifth hit destroys it
+  (destruction audio, ≈ 400 score, wave accounting and the 25–50 % mineral
+  re-drop all fire exactly once on the killing blow).
+- **Spawn**: a **rare roaming spawn** in later levels (Levels 4–5) only, via the
+  pure planner `src/waves/HarvesterSpawner.ts`; at most one per qualifying wave.
+  Every Harvester spawn is registered with the `WaveManager` so the wave neither
+  clears early nor stalls. Levels 1–3 and the boss encounter never spawn one.
+  It is deliberately excluded from the difficulty auto-sequencer's candidate
+  pool (`defaultCandidatePool`).
+- **Threat level**: Medium–High (resource denial; durable, but never fires).
+- **Fires**: **Never** — `shootEnabled` is a no-op and its effective shot
+  pattern is `none`.
+
 ### 4.2 Wave / Formation Structures
 
 Each level consists of one or more **waves** of enemies. A wave is a set of
@@ -331,7 +352,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
 | P9 | **Magnet** *(permanent, passive)* | Collecting this power-up permanently attracts **all power-up drops on screen** — including rare types such as P8 Extra Life — toward the player ship, making pickups easier to grab during dense bullet patterns. It is a **permanent** effect for the rest of the run (no activation key required, nothing is consumed), unlike the timed P1–P6 effects. Collecting additional Magnets **stacks**, increasing the attraction radius by **+50% per stack**, starting from a **base radius of 2× the player ship size**, up to a **cap of 5 stacks**. The attraction speed is **slower than the ship's movement speed**, so the player must still move toward the power-up — or remain stationary for it to drift in — to collect it. | Horseshoe magnet with neon glow |
 
-> **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
+> **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E7) cannot be damaged by Bomb (E1–E6 are 1 HP, E7 is 5 HP). It clears all on-screen enemy bullets only.
 
 > **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when S or ↓ is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
 
@@ -355,7 +376,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 
-Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
+Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through. The **E7 Harvester** (§4.1) is the one enemy that **actively seeks** the nearest live mineral rather than absorbing only what it happens to overlap; it steers toward it and absorbs it through the same shared rule, but it cannot take minerals from the player's hold.
 
 - **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected. The rule is implemented **once** in the shared helper `src/scenes/core/mineralKillDrops.ts` (`resolveMineralKillDrops`, plus the shared scatter maths in `src/entities/Mineral.ts`) and consumed by **both** `PlayScene` and `GymFormationScene`, so the game and every formation gym (`GymMinerals`, the `GymEnemies` asteroid row, …) drop identically and cannot drift apart.
 - **Collection**: the pickup/absorption pass (player collects, non-asteroid enemy absorbs, asteroids inert) is implemented **once** in `src/scenes/core/mineralLayer.ts` (`collectMinerals`) and called by `PlayScene` and `GymFormationScene`, so the two scenes can no longer run divergent collection loops.
@@ -377,6 +398,7 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 | Destroy E4 Phaser | 250 |
 | Destroy E5 Swarm | 150 |
 | Destroy E6 Asteroid (small only) | 50 (large/medium award none) |
+| Destroy E7 Harvester | 400 |
 | Destroy Boss Phase 1 | 1000 |
 | Destroy Boss Phase 2 | 2000 |
 | Destroy Boss Phase 3 | 3000 |
@@ -799,12 +821,12 @@ interface PlayerEffect {
 ```typescript
 interface Enemy {
   id: string;
-  type: 'scout' | 'diver' | 'tank' | 'phaser' | 'swarm';
+  type: 'scout' | 'diver' | 'tank' | 'phaser' | 'swarm' | 'asteroid' | 'harvester';
   x: number;
   y: number;
   width: number;
   height: number;
-  health: number;       // All regular enemies: health = 1 (one-hit kill); Boss handled by phase system
+  health: number;       // Data-driven hit points (EnemyConfig.health, default 1). E1–E6 = 1 (one-hit kill); E7 Harvester = 5; Boss handled by the phase system
   scoreValue: number;
   behavior: FormationBehavior | DiveBehavior;
   canFire: boolean;

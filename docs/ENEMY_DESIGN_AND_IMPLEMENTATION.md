@@ -21,11 +21,13 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
 | E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
+| E7 | Harvester | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
 | Boss | The Central AI | §4.3 | 4 attack phases, multi-hit health (4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
-All enemies are **1 HP** (single bullet destroys them, except the Boss which is
-multi-hit) and **never collide with each other** (GDD §2.6) — no collision
-system is installed in the gym scenes.
+Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
+E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
+Boss is multi-hit via its 4-phase bar. All enemies **never collide with each
+other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
@@ -465,7 +467,8 @@ for reference implementations (the base class drives them).
 ### 2.5 Wipe → countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5)
 
 - **Signal:** `aliveCount === 0` — every `FormationSceneEntity.alive ===
-  false` (1 HP enemies, `destroySelf()`). Explosion VFX still playing
+  false` (single-hit enemies via `destroySelf()`; multi-hit enemies only after
+  their last hit point is spent). Explosion VFX still playing
   counts as killed.
 - **Countdown:** 3 s wall-clock (`tick(dt)`), visible centred text
   (`GAME_WIDTH/2, GAME_HEIGHT/2`, depth 100): `Respawning in 3…` → `2…`
@@ -664,8 +667,10 @@ combat testbeds.
 Resolved in the shared `CombatScene._handleCollisions` (inherited by
 `GymFormationScene`; the same path `PlayScene` uses) each tick:
 
-1. Player bullets → enemies (hit radius 20): enemy destroyed (`alive=false`,
-   1 HP) + explosion SFX; the bullet is consumed.
+1. Player bullets → enemies (hit radius 20): the entity takes one hit
+   (`takeDamage()` for multi-hit entities, otherwise `destroySelf()`); on the
+   killing blow `alive=false` + explosion SFX + `onEnemyDestroyed` run exactly
+   once, and the bullet is consumed either way.
 2. Player bullets → enemy bullets (radii 3 + 6): both consumed (mutual
    destruction — bullets pass through *aliens* per GDD §2.6, but not each
    other). The shared `onBulletVsBulletImpact` hook then plays the dedicated
@@ -800,6 +805,7 @@ The Diver reports this through the optional `requiresFormationHold?()` seam
 | `driftSpeed` | `number` | Rightward drift (px/s). |
 | `startX` / `startY` | `number` | Base position (px). |
 | `size` | `number` | Body radius/half-size (px). |
+| `health` | `number` | Hit points before destruction (positive integer, default **1**). Data-driven so multi-hit archetypes need no code branch; the Harvester (E7) is **5**. |
 | `color` | `number` | Body colour `0xRRGGBB`. |
 | `bulletColor` / `bulletSize` | `number` | Bullet colour / radius. |
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
@@ -811,7 +817,7 @@ The Diver reports this through the optional `requiresFormationHold?()` seam
 
 Types live in `src/core/configTypes.ts`; seed fallbacks in
 `src/core/configDefaults.ts` (`DEFAULT_ENEMY_CONFIGS` scout/diver/tank/phaser/
-swarm/boss/asteroid, `DEFAULT_ENEMY_KEYS`). `createEnemyFromConfig()` in
+swarm/boss/asteroid/harvester, `DEFAULT_ENEMY_KEYS`). `createEnemyFromConfig()` in
 `src/entities/enemyFactory.ts` maps a config to its entity class (unknown keys
 fall back to Scout; Swarm's `clusterIndex` is `row / SWARM_CLUSTER_ROW_STRIDE`).
 
@@ -1002,9 +1008,13 @@ click (AH-0MUDZFBYY008P7ZE).
    a builder in `src/utils/formations.ts` or a shot pattern in
    `src/utils/enemyShotPatterns.ts` with tests, add its archetype key →
    `tryFire*` method to `ENEMY_FIRE_METHODS` in
-   `src/entities/enemyFire.ts` (the single fire-dispatch seam), wire it in
-   `src/entities/enemyFactory.ts`, and add a seed fallback to
-   `DEFAULT_ENEMY_CONFIGS` in `src/core/configDefaults.ts`.
+   `src/entities/enemyFire.ts` (the single fire-dispatch seam; non-firing
+   archetypes get an explicit `tryFireNone` entry so they never fall back to
+   the aimed shot), wire it in `src/entities/enemyFactory.ts`, and add a seed
+   fallback to `DEFAULT_ENEMY_CONFIGS` in `src/core/configDefaults.ts` plus a
+   `health` value (default 1). If the entity is multi-hit, implement
+   `takeDamage()` (extend `BaseEnemy`, which already provides it from the
+   configured `health`).
 5. **CSV hygiene.** The committed CSV is the source of truth; a missing or
    malformed file (or a failed dev fetch) falls back to the seed defaults
    without throwing, and `npm test` resets the registry between suites. The
