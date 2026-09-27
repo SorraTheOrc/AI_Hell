@@ -880,6 +880,93 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(wm.enemiesAlive).toBe(aliveCount);
   });
 
+  // ── Wave-timeout major-explosion SFX (AH-0MUJ1YZJ9008O4RC) ─────
+
+  it('AH-0MUJ1YZJ9008O4RC AC2 — timeout fires the major-explosion cue once per detonated survivor', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    expect(detonated).toBeGreaterThan(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(scene.getAliveCount()).toBe(findAsteroids(scene).length);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC2/AC4 — asteroids survive the timeout and do not trigger the cue', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlayWithAsteroid();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const detonated = scene.getAliveCount() - asteroids.length;
+    expect(detonated).toBeGreaterThan(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    for (const asteroid of asteroids) expect(asteroid.alive).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC4 — no survivors means no cue and the wave timer is hidden', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    scene.setAsteroidSpawnerEnabled(false);
+    for (const e of scene.getEnemies()) e.destroySelf();
+    expect(scene.getAliveCount()).toBe(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).not.toHaveBeenCalled();
+    expect(scene.isWaveTimerActive()).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC4 — the timeout life loss keeps the generic cue and never the player cue', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const generic = vi.spyOn(effectsModule, 'playDestructionSound');
+    const playerCue = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(generic).toHaveBeenCalledTimes(1);
+    expect(playerCue).not.toHaveBeenCalled();
+    expect(majorCue).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC2 — detonation scale, life penalty and wave advance are unchanged', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlayWithAsteroid();
+    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    const livesBefore = scene.getGameState().lives;
+    const waveBefore = scene.getWaveManager().waveNumber;
+    waveVfx.scales.length = 0;
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(
+      waveVfx.scales.filter((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE).length,
+    ).toBe(detonated);
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
+    vi.restoreAllMocks();
+  });
+
   // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
 
   it('AH-0MUCG5SWH008104P AC1 — carried-over asteroids continue moving during transition', async () => {

@@ -49,6 +49,7 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
+  playMajorExplosionSound,
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
@@ -1400,8 +1401,11 @@ export class PlayScene extends CombatScene<
     const survivingAsteroids = survivors.filter((s) => s.enemyKey === 'asteroid');
     const detonateList = survivors.filter((s) => s.enemyKey !== 'asteroid');
 
-    // Detonate all non-asteroid survivors at 10x scale.
+    // Detonate all non-asteroid survivors at 10x scale, each with the
+    // dedicated major-explosion cue (AH-0MUJ1YZJ9008O4RC AC2). Asteroids
+    // are excluded above and carry over silently.
     for (const s of detonateList) {
+      playMajorExplosionSound();
       s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
     }
     this._loseLife(false);
