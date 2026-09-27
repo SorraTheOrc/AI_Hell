@@ -562,6 +562,25 @@ When a new enemy needs the base scene to behave differently:
    optional or defaulted) so existing scenes need no changes.
 4. Update this document's checklist if the convention changes.
 
+### 5.1 Gym parity
+
+A gym may enable only a **constrained set of features** (one enemy type, the
+editor, fixed formations, no campaign/wave progression), but the code that
+runs an enabled object must be the **same code** as the shipped game. The
+only legitimate difference is a disabled feature — never a divergent copy.
+Every shared behaviour therefore lives once: the core template methods and
+hooks (§2.1), the pure helpers under `src/scenes/core/`
+(`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
+`asteroidSplit`), the shared dispatcher
+`src/entities/enemyFire.ts`, and the scheme→input helper
+`mapControlInput` in `src/utils/movementModel.ts`. The repo-wide
+duplicate-body guard in `src/scenes/core/CombatScene.equivalence.test.ts`
+(`EPIC_SHARED_HELPERS` / `EPIC_SHARED_METHODS`) fails the suite if a
+production scene re-introduces a copy, and the cross-scene equivalence
+tests boot `PlayScene` and each gym to prove identical outcomes under the
+same input and `dt`. See `AGENTS.md` for the governing principle (tracked by
+AH-0MUGZDTFX004RBD1).
+
 ---
 
 ## 6. Testing strategy

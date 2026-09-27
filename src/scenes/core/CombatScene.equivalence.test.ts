@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import Phaser from 'phaser';
 
@@ -11,6 +12,7 @@ import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { GymPowerUpsCombat } from '../gym/GymPowerUpsCombat';
+import { GymEnemies } from '../gym/GymEnemies';
 import { GymPowerUpsUtility } from '../gym/GymPowerUpsUtility';
 import { GymWeapons } from '../gym/GymWeapons';
 import {
@@ -28,7 +30,16 @@ import {
 } from '../../test/duplicateBodyGuard';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import type { Boss } from '../../entities/Boss';
+import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
+import { createEnemyFromConfig } from '../../entities/enemyFactory';
+import { loadEnemyConfig } from '../../core/enemyConfig';
 import { GymBoss } from '../gym/GymBoss';
+
+// These equivalence tests boot full Phaser games and walk PlayScene to the
+// boss encounter; under full-suite parallel load the Vitest default 5 s
+// timeout is too tight (AH-0MUIPP1UU000UT88). Give the file headroom so a
+// slow parallel run does not fail on timing alone (AH-0MUII3GOO001XEBB).
+vi.setConfig({ testTimeout: 20000 });
 
 /** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
 const SHARED_METHODS = [
@@ -1459,6 +1470,216 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
       expect(
         (GymBoss.prototype as unknown as Record<string, unknown>)[method],
       ).toBe(core[method]);
+    }
+  });
+});
+
+// ── Consolidated epic parity guard (AH-0MUII3GOO001XEBB, AC1) ───────
+
+/**
+ * Every shared pure helper introduced or touched by the gym-parity epic
+ * (parent AH-0MUII2FJ5007MDDA) and the one production file allowed to define
+ * it. A scene that re-introduces a copy fails this guard.
+ */
+const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
+  ['advanceWrappingBullets', 'src/scenes/core/bulletLifecycle.ts'],
+  ['advancePlayerBullets', 'src/scenes/core/bulletLifecycle.ts'],
+  ['fireForEnemy', 'src/entities/enemyFire.ts'],
+  ['enemyFireMethod', 'src/entities/enemyFire.ts'],
+  ['buildDefaultDropSpawner', 'src/scenes/core/dropLayer.ts'],
+  ['advanceDropLifecycles', 'src/scenes/core/dropLayer.ts'],
+  ['collectOverlappingDrops', 'src/scenes/core/dropLayer.ts'],
+  ['applyDropMagnet', 'src/scenes/core/dropLayer.ts'],
+  ['playDropPickupCue', 'src/scenes/core/dropLayer.ts'],
+  ['collectMinerals', 'src/scenes/core/mineralLayer.ts'],
+  ['applyMineralChoiceReward', 'src/scenes/core/mineralLayer.ts'],
+  ['isMineralAbsorbingEnemy', 'src/scenes/core/mineralLayer.ts'],
+  ['resolveMineralKillDrops', 'src/scenes/core/mineralKillDrops.ts'],
+  ['mapControlInput', 'src/utils/movementModel.ts'],
+  ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
+];
+
+/**
+ * Every shared template method the epic introduced or touched, with the one
+ * core that must define it. Overridable seams (`onBossAdvanced`,
+ * `respawnFormation`, `getBoss`, …) are intentionally excluded: a scene may
+ * override a hook, but must not re-implement the shared behaviour.
+ */
+const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
+  ['_tickPlayer', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_readPlayerInput', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_autoFire', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_collectDrop', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_spawnPlayerExplosion', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_clearEnemyBullets', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_buildDefaultDropSpawner', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_advanceDropLifecycles', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_collectOverlappingDrops', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_applyDropMagnet', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_updateDropLayer', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
+  ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
+  ['_handleTeleport', 'src/scenes/core/CombatScene.ts'],
+  ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
+  ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
+  ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],
+  ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
+  ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
+];
+
+/** Relative paths of production files satisfying `predicate`, sorted. */
+function relativeProductionDefiners(
+  predicate: (source: string) => boolean,
+): string[] {
+  return collectProductionSourceFiles(path.resolve(process.cwd(), 'src'))
+    .filter((file) => predicate(fs.readFileSync(file, 'utf8')))
+    .map((file) => path.relative(process.cwd(), file))
+    .sort();
+}
+
+describe('epic parity guard — every shared helper is defined exactly once (AC1)', () => {
+  it('defines every shared pure helper exactly once, in its canonical module', () => {
+    for (const [helper, expected] of EPIC_SHARED_HELPERS) {
+      const definers = relativeProductionDefiners((source) =>
+        definesFunction(source, helper),
+      );
+      expect(definers, helper).toEqual([expected]);
+    }
+  });
+
+  it('defines every shared template method exactly once, in its canonical core', () => {
+    for (const [method, expected] of EPIC_SHARED_METHODS) {
+      const definers = relativeProductionDefiners((source) =>
+        definesMethod(source, method),
+      );
+      expect(definers, method).toEqual([expected]);
+    }
+  });
+});
+
+describe('epic parity guard — the guard detects a re-introduced duplicate (AC3)', () => {
+  it('fails when a production-like fixture redefines a shared method', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-guard-'));
+    try {
+      const fixture = path.join(dir, 'DuplicateTickPlayer.ts');
+      fs.writeFileSync(
+        fixture,
+        [
+          'export class DuplicateTickPlayer {',
+          '  protected _tickPlayer(_dt: number): void {}',
+          '}',
+          '',
+        ].join('\n'),
+      );
+
+      // The scanner observes the fixture as production source ...
+      const fixtureFiles = collectProductionSourceFiles(dir);
+      expect(fixtureFiles).toEqual([fixture]);
+      expect(
+        definesMethod(fs.readFileSync(fixture, 'utf8'), '_tickPlayer'),
+      ).toBe(true);
+
+      // ... so combined with the real core the guard's single-definer
+      // invariant is violated and the guard would fail.
+      const combined = [
+        ...fixtureFiles,
+        ...collectProductionSourceFiles(path.resolve(process.cwd(), 'src')),
+      ];
+      const definers = combined
+        .filter((file) =>
+          definesMethod(fs.readFileSync(file, 'utf8'), '_tickPlayer'),
+        )
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers.length).toBeGreaterThan(1);
+      expect(definers).not.toEqual(['src/scenes/core/CombatCoreScene.ts']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores *.test.ts files, so the duplicate must live in production-like source', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-guard-test-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, 'Duplicate.test.ts'),
+        'export class Duplicate {}\n',
+      );
+      expect(collectProductionSourceFiles(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Cross-scene equivalence for every enemy archetype's fire (AC2) ──
+
+describe('shared enemy fire — cross-scene equivalence for every archetype (AC2)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('each archetype fires identical bullets in the game and the enemy gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'fire-equiv-play-host',
+    );
+    const gym = await bootScene([GymEnemies], 'fire-equiv-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene;
+    const gymScene = gym.scene;
+
+    const make = (scene: Phaser.Scene, key: string) => {
+      const cfg = {
+        ...loadEnemyConfig(key),
+        fireInterval: 1,
+        shotProbability: 1,
+      };
+      const entity = createEnemyFromConfig(
+        scene,
+        cfg,
+        100,
+        100,
+        { row: 0, col: 0 },
+      );
+      entity.shootEnabled = true;
+      (
+        entity as { setAimTarget?(x: number, y: number): void }
+      ).setAimTarget?.(400, 100);
+      return entity;
+    };
+
+    for (const key of Object.keys(ENEMY_FIRE_METHODS)) {
+      const gameEntity = make(playScene, key);
+      const gymEntity = make(gymScene, key);
+
+      // Identical clock sequence: first call opens the tell, second fires.
+      fireForEnemy(gameEntity, key, 1_000);
+      fireForEnemy(gymEntity, key, 1_000);
+      const gameBullets = fireForEnemy<{ vx: number; vy: number }>(
+        gameEntity,
+        key,
+        2_000,
+      );
+      const gymBullets = fireForEnemy<{ vx: number; vy: number }>(
+        gymEntity,
+        key,
+        2_000,
+      );
+
+      expect(gymBullets.length, `${key} bullet count`).toBe(
+        gameBullets.length,
+      );
+      for (let i = 0; i < gameBullets.length; i++) {
+        // Spread patterns fan out with a (seeded-by-scene) random angle, so
+        // compare the deterministic speed magnitude rather than the vector.
+        const gameSpeed = Math.hypot(gameBullets[i].vx, gameBullets[i].vy);
+        const gymSpeed = Math.hypot(gymBullets[i].vx, gymBullets[i].vy);
+        expect(gymSpeed, `${key}[${i}] speed`).toBeCloseTo(gameSpeed, 3);
+      }
     }
   });
 });
