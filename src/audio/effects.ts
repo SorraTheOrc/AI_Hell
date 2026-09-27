@@ -31,15 +31,15 @@
 // once per frame from Player.preUpdate via the level returned by
 // getEngineSoundLevel(state, input, thrustAcceleration) so audio stays
 // in lockstep with the tuning slider and both control schemes. Gain
-// never exceeds THRUSTER_HUM_MAX_VOLUME (0.15) and the smoothed envelope
+// never exceeds THRUSTER_HUM_MAX_VOLUME (0.075) and the smoothed envelope
 // mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
 // Safe no-op without an AudioContext (headless tests / autoplay-blocked).
 // Architecture: triangle (60 Hz) + sine (35 Hz) for soft low rumble +
 // white noise through a band-pass filter for jet-engine "whoosh"; no
 // harsh sawtooth — the filtered noise is the dominant jet texture.
 
-/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). */
-export const THRUSTER_HUM_MAX_VOLUME = 0.15;
+/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). Halved from 0.15 to 0.075 (AH-0MUAYB8S50029QB8). */
+export const THRUSTER_HUM_MAX_VOLUME = 0.075;
 /** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum, jet roar). */
 export const THRUSTER_HUM_BASE_FREQ = 60;
 /** Undertone frequency (sine) — adds body to the low jet rumble. */
@@ -248,7 +248,7 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
  * decay is ~4× faster. `level` in [0, 1] comes from
  * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
  * scaled by thrustAcceleration; the gain target is
- * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.15).
+ * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.075).
  *
  * Call once per frame from `Player.preUpdate` — 0 silences the hum,
  * > 0 reuses the same nodes and ramps the gain. Does not leak oscillators.
@@ -457,6 +457,152 @@ export function playDestructionSound(): void {
   // Volume 0.3 (doubled from initial 0.15) so explosion feedback is
   // clearly audible over the action (feedback from Swarm audio playtest).
   blip(440 * pitch, 60 * pitch, 0.28, 'sawtooth', 0.3);
+}
+
+// ── Dedicated player-destruction cue (AH-0MUDY2ID7006VY3A) ─────────
+//
+// The player losing a ship is the most consequential event in the game,
+// so it gets its own heavier "hull breach" boom rather than the generic
+// enemy pop. Three layers: (1) a deep impact thump, (2) a slow
+// descending body sweep, (3) a short filtered-noise tail. All three
+// route through the master SFX gain and are no-ops without an
+// AudioContext (headless tests / autoplay-blocked browsers).
+//
+// This cue deliberately does NOT reuse `playDestructionSound()`: the
+// player-death paths call this instead, so the two never double-play
+// (parent AH-0MUAYB4R3002ZIZY AC3).
+
+/**
+ * Impact-thump start frequency (Hz) for the player-destruction cue —
+ * deeper and heavier than the generic enemy fall (440 Hz).
+ */
+export const PLAYER_DESTRUCTION_THUMP_START_HZ = 120;
+
+/** Impact-thump end frequency (Hz) — a hard fall to sub-bass. */
+export const PLAYER_DESTRUCTION_THUMP_END_HZ = 32;
+
+/** Impact-thump duration (seconds). */
+export const PLAYER_DESTRUCTION_THUMP_DURATION = 0.4;
+
+/** Impact-thump layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const PLAYER_DESTRUCTION_THUMP_VOLUME = 0.2;
+
+/** Descending-body start frequency (Hz). */
+export const PLAYER_DESTRUCTION_BODY_START_HZ = 260;
+
+/** Descending-body end frequency (Hz) — a long, mournful slide. */
+export const PLAYER_DESTRUCTION_BODY_END_HZ = 42;
+
+/** Descending-body duration (seconds) — the longest layer, the "tail". */
+export const PLAYER_DESTRUCTION_BODY_DURATION = 0.6;
+
+/** Descending-body layer gain. */
+export const PLAYER_DESTRUCTION_BODY_VOLUME = 0.16;
+
+/** Filtered-noise tail duration (seconds). */
+export const PLAYER_DESTRUCTION_TAIL_DURATION = 0.28;
+
+/** Filtered-noise tail layer gain. */
+export const PLAYER_DESTRUCTION_TAIL_VOLUME = 0.12;
+
+/** High-pass centre (Hz) for the noise tail — a bright shrapnel hiss. */
+export const PLAYER_DESTRUCTION_TAIL_FILTER_HZ = 1200;
+
+/**
+ * Heavier, layered player-destruction cue — "hull breach" boom
+ * (AH-0MUDY2ID7006VY3A, parent AH-0MUAYB4R3002ZIZY AC3).
+ *
+ * Three layers played together so the player's death reads unmistakably
+ * differently from an enemy kill:
+ *   1. **Impact thump** — a sawtooth falling
+ *      {@link PLAYER_DESTRUCTION_THUMP_START_HZ} →
+ *      {@link PLAYER_DESTRUCTION_THUMP_END_HZ} over
+ *      {@link PLAYER_DESTRUCTION_THUMP_DURATION}.
+ *   2. **Descending body** — a triangle sliding
+ *      {@link PLAYER_DESTRUCTION_BODY_START_HZ} →
+ *      {@link PLAYER_DESTRUCTION_BODY_END_HZ} over
+ *      {@link PLAYER_DESTRUCTION_BODY_DURATION}, giving the cue its
+ *      heavier, longer character.
+ *   3. **Noise tail** — a short high-pass filtered white-noise burst for
+ *      the shrapnel hiss.
+ *
+ * Every layer's amplitude and length is an exported constant (no inline
+ * literals), so the cue is fully tunable in one place. Scheduled at the
+ * current time; called exactly once per player destruction. Safe no-op
+ * without an AudioContext (never throws).
+ */
+export function playPlayerDestructionSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'sawtooth';
+  thump.frequency.setValueAtTime(PLAYER_DESTRUCTION_THUMP_START_HZ, t);
+  thump.frequency.exponentialRampToValueAtTime(
+    PLAYER_DESTRUCTION_THUMP_END_HZ,
+    t + PLAYER_DESTRUCTION_THUMP_DURATION,
+  );
+  thumpGain.gain.setValueAtTime(PLAYER_DESTRUCTION_THUMP_VOLUME, t);
+  thumpGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + PLAYER_DESTRUCTION_THUMP_DURATION,
+  );
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
+  thump.start(t);
+  thump.stop(t + PLAYER_DESTRUCTION_THUMP_DURATION + 0.02);
+
+  // ── Layer 2: descending body (triangle slide) — the "tail". ───────
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = 'triangle';
+  body.frequency.setValueAtTime(PLAYER_DESTRUCTION_BODY_START_HZ, t);
+  body.frequency.exponentialRampToValueAtTime(
+    PLAYER_DESTRUCTION_BODY_END_HZ,
+    t + PLAYER_DESTRUCTION_BODY_DURATION,
+  );
+  bodyGain.gain.setValueAtTime(PLAYER_DESTRUCTION_BODY_VOLUME, t);
+  bodyGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + PLAYER_DESTRUCTION_BODY_DURATION,
+  );
+  body.connect(bodyGain).connect(ensureMasterGain(ctx));
+  body.start(t);
+  body.stop(t + PLAYER_DESTRUCTION_BODY_DURATION + 0.02);
+
+  // ── Layer 3: shrapnel hiss (high-pass filtered white noise). ──────
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * PLAYER_DESTRUCTION_TAIL_DURATION)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'highpass';
+  noiseFilter.frequency.setValueAtTime(PLAYER_DESTRUCTION_TAIL_FILTER_HZ, t);
+  noiseFilter.Q.setValueAtTime(0.8, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(PLAYER_DESTRUCTION_TAIL_VOLUME, t);
+  noiseGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + PLAYER_DESTRUCTION_TAIL_DURATION,
+  );
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + PLAYER_DESTRUCTION_TAIL_DURATION + 0.02);
 }
 
 /**

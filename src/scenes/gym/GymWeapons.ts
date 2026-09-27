@@ -25,12 +25,21 @@
  * emitted on the same fire cycle when their individual cooldowns have
  * elapsed.  Player bullets are demonstration-only: they fly in their
  * pattern, wrap across all four screen edges, and expire after their
- * per-weapon lifetime; no collision damage (AH-0MU960UTE001PTV0).
+ * per-weapon lifetime; no collision damage (AH-0MU960UTE001PTV0). Their
+ * lifecycle is owned by the shared `scenes/core/bulletLifecycle.ts`
+ * helper (`advancePlayerBullets`), AH-0MUII3CF00024EDM.
  *
  * Collection (AC4): a drop is collectible once its current scale is at
  * least 3% of full size; collection requires ship overlap (drop radius
  * + ship hull radius); collecting plays the pickup cue and applies the
  * weapon effect without pausing the next spawn's cadence.
+ *
+ * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * run through the shared `src/scenes/core/dropLayer.ts` template methods
+ * (`_advanceDropLifecycles`, `_collectOverlappingDrops`, `_applyDropMagnet`,
+ * `_playPickupCue`), so the gym cannot drift from the game; only the
+ * round-robin spawn *source* and its spawn/despawn cues are gym-specific
+ * (AH-0MUII3CXX0023H24, gap 4).
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
@@ -38,53 +47,34 @@
 
 import Phaser from 'phaser';
 
+import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
 import { Player } from '../../entities/Player';
-import {
-  createPlayerBullet,
-  advanceAndCull,
-  PlayerBullet,
-} from '../../entities/PlayerBullet';
-import {
-  WeaponId,
-  createBulletsFromHeading,
-  angleToVelocity,
-} from '../../utils/weapons';
+import { advancePlayerBullets } from '../core/bulletLifecycle';
+import { PlayerBullet } from '../../entities/PlayerBullet';
+import { WeaponId } from '../../utils/weapons';
+import { EffectsRegistry } from '../../powerups/effects';
+import type { DropId, WeaponDropId } from '../../powerups/types';
 import { drawWeaponDrop, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
-  playPowerUpCollectPopSound,
   playCannonFireSound,
   playSpreadFireSound,
   playDualFireSound,
   playRapidFireSound,
-  playSpreadPickupSound,
-  playDualPickupSound,
-  playRapidPickupSound,
-  playResetPickupSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
-import {
-  AsteroidsInputHandler,
-  ControlInput,
-  FourDirectionalInputHandler,
-} from '../../utils/movementModel';
+import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
   WEAPON_DROP_LIFETIME,
   WEAPON_DROP_SIZE,
-  PLAYER_BULLET_SPEED,
-  PLAYER_BULLET_RADIUS,
-  SHIP_SIZE,
 } from '../../core/constants';
-import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
-import {
-  spawnCollectAnimation,
-  type CollectAnimationHandle,
-} from '../../powerups/collectAnimation';
+import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 
 /** A weapon-drop type: one of the three weapons, or 'reset'. */
 type DropType = WeaponId | 'reset';
@@ -111,30 +101,42 @@ interface ActiveDrop {
   despawnSoundPlayed: boolean;
   /** True once collected and playing its absorb VFX (AC4). */
   absorbing?: boolean;
+  /** Unified drop id for the shared collect path. */
+  dropId: DropId;
+  /** Weapon drop id for the shared collect path. */
+  weaponDropId: WeaponDropId;
 }
 
-export class GymWeapons extends Phaser.Scene {
+/**
+ * Weapon power-ups gym. Extends the narrower shared
+ * {@link CombatCoreScene} so auto-fire and drop collection flow through
+ * the one shared implementation (the gym is threat-free, so it does not
+ * need the combat-only collision/teleport surface).
+ */
+export class GymWeapons extends CombatCoreScene<
+  CombatEnemyEntity,
+  CombatEnemyBullet,
+  ActiveDrop
+> {
   private player: Player | null = null;
   private drops: ActiveDrop[] = [];
-  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
-  private collectAnimations: CollectAnimationHandle[] = [];
+  /** Shared registry for the collect path (AC3). */
+  private effectsRegistry = new EffectsRegistry();
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner<DropType>(ROUND_ROBIN_ORDER);
   /** Countdown to the next round-robin spawn (starts at 0 → immediate first drop). */
   private spawnTimer = 0;
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
-  /** Active player bullets (demonstration only). */
-  private bullets: PlayerBullet[] = [];
+  /** Shared help affordance (AH-0MUAYB67I002REOZ). */
+  private helpHandle: GymHelpHandle | null = null;
 
   constructor() {
     super({ key: 'GymWeapons' });
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -143,6 +145,13 @@ export class GymWeapons extends Phaser.Scene {
 
     // Shared "← INDEX" button (reused by every gym).
     addBackToIndexButton(this);
+    // Shared "Help (?)" button + overlay: lists every drop this gym can
+    // spawn (cannon + Spread/Dual/Rapid/Reset), sourced from the shared
+    // catalogues (AH-0MUAYB67I002REOZ).
+    this.helpHandle = addHelpButton(this, {
+      gymKey: 'GymWeapons',
+      drops: ['cannon', ...ROUND_ROBIN_ORDER],
+    });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
@@ -155,11 +164,35 @@ export class GymWeapons extends Phaser.Scene {
     this._spawnRoundRobin();
     this.spawnTimer = WEAPON_DROP_LIFETIME;
 
-    // Release any in-flight absorb animations on shutdown/restart.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-    });
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
+  }
+
+  /**
+   * Resets shared per-run state (effects registry + bullet/animation
+   * registries via the core) plus this gym's player, drops and spawn
+   * timer (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.player = null;
+    this.drops = [];
+    this.spawnTimer = 0;
+    this.helpHandle = null;
+  }
+
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    for (const drop of this.drops) drop.graphics.destroy();
+    this.drops = [];
+    this.player?.destroy();
+    this.player = null;
+    this.helpHandle = null;
   }
 
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */
@@ -175,25 +208,15 @@ export class GymWeapons extends Phaser.Scene {
   tick(dt: number): void {
     if (!this.player) return;
 
-    // ── Weapon timers: advance each timed weapon's 10 s countdown ──
-    // Expired weapons are silently dropped before auto-fire so they
-    // stop firing this step (AC2, AC5).
-    this.player.tickWeaponTimers(dt * 1000);
-
-    // ── Ship: input → thrust movement + screen-wrap ─────────────
-    const input = this._readInput();
-    if (input) {
-      this.player.setInput(input);
-    }
-    this.player.physicsTick(dt, this.scale.width, this.scale.height);
-
-    // ── Auto-fire: emit bullets per weapon fire rate (AC1) ──────
-    this._autoFire(dt);
+    // ── Shared player-control step: timers → multipliers → input →
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1).
+    this._tickPlayer(dt);
 
     // ── Bullet lifecycle: advance + wrap + lifetime expiry ─────
     this._advanceBullets(dt);
 
     // ── Drop lifecycles (grow/hold/shrink) ─────────────────────
+    this._applyDropMagnet(this.drops, dt);
     this.advanceDrops(dt);
 
     // ── Spawner: one drop per lifetime, round-robin (AC3) ──────
@@ -212,54 +235,15 @@ export class GymWeapons extends Phaser.Scene {
     this._updateCollectAnimations(dt);
   }
 
-  // ── Auto-fire (AC1, AC3) ─────────────────────────────────────────
+  // ── Auto-fire cue (AC1, AC3) ─────────────────────────────────────
 
   /**
-   * Auto-fires every active weapon whose cooldown has elapsed this
-   * frame, each at its own fire rate (AC3). Bullets spawn in the
-   * direction of travel (or the most-recent heading when stationary)
-   * using each firing weapon's pattern.
+   * Shared auto-fire hook: plays each firing weapon's distinct cue once
+   * per shot (not per bullet). The shared `_autoFire` spawns the bullets
+   * into the inherited `playerBullets` list.
    */
-  private _autoFire(dt: number): void {
-    if (!this.player) return;
-
-    // tryFire decrements every active weapon's cooldown and returns the
-    // ids that fired — empty means nothing is due this frame.
-    const firedWeapons = this.player.tryFire(dt);
-    if (firedWeapons.length === 0) return;
-
-    const headingDeg = (this.player.getHeading() * 180) / Math.PI;
-
-    // AC — player shoot audio: play each firing weapon's distinct cue
-    // exactly once per shot (not per bullet) so fast weapons stay
-    // legible.
-    for (const weaponId of firedWeapons) {
-      this._playShootCue(weaponId);
-
-      const weaponDef = this.player.getWeaponDef(weaponId);
-      const bulletDescs = createBulletsFromHeading(
-        weaponDef,
-        headingDeg,
-        this.player.x,
-        this.player.y,
-      );
-
-      for (const bd of bulletDescs) {
-        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.bullets.push(
-          createPlayerBullet(
-            this,
-            bd.x,
-            bd.y,
-            bd.color,
-            PLAYER_BULLET_RADIUS,
-            vel.vx,
-            vel.vy,
-            weaponDef.bulletLifetime,
-          ),
-        );
-      }
-    }
+  protected override onWeaponFired(weaponId: WeaponId): void {
+    this._playShootCue(weaponId);
   }
 
   /**
@@ -287,7 +271,7 @@ export class GymWeapons extends Phaser.Scene {
 
   /** Advances all bullets by `dt` and removes those whose lifetime elapsed. */
   private _advanceBullets(dt: number): void {
-    this.bullets = this.bullets.filter((b) => advanceAndCull(b, dt));
+    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
   }
 
   // ── Spawning / lifecycle (AC3, AC5) ──────────────────────────────
@@ -329,6 +313,8 @@ export class GymWeapons extends Phaser.Scene {
       y,
       graphics,
       despawnSoundPlayed: false,
+      dropId: weaponType as DropId,
+      weaponDropId: weaponType as WeaponDropId,
     };
     this.drops.push(drop);
     playPowerUpSpawnSound(); // AC6 spawn cue
@@ -340,139 +326,37 @@ export class GymWeapons extends Phaser.Scene {
    * scaling its icon to match, and plays the despawn cue when a drop
    * fades away uncollected (AC6).
    */
+  /**
+   * Advances every drop's lifecycle by `dt` seconds through the shared
+   * helper (grow/hold/shrink) and plays the despawn cue when an uncollected
+   * drop fades away (AC6). Public test seam.
+   */
   advanceDrops(dt: number): void {
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      // Icon scale tracks the lifecycle scale factor (0 → 1 → 0).
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state === PowerUpState.DESPAWNED) {
-        if (!drop.despawnSoundPlayed) {
-          playPowerUpDespawnSound(); // AC6 despawn cue
-          drop.despawnSoundPlayed = true;
-        }
-        // Remove the drop's visuals from the display list.
-        drop.graphics.destroy();
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  // ── Collection (AC2, AC4, AC6) ───────────────────────────────────
-
-  /**
-   * Collects drops overlapping the ship hull when they are above the 3%
-   * scale threshold.  A collected drop applies its weapon effect
-   * (equip or reset) exactly once and is removed; an uncollected drop
-   * that fades away applies nothing.
-   */
-  /**
-   * Checks all drops for overlap collection (public so tests can drive
-   * the collection gate deterministically without advancing lifecycles).
-   */
-  collectOverlapping(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // Collection gated by the shared ≥ 3% scale lifecycle (AC4).
-      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  private _overlapsShip(drop: ActiveDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = WEAPON_DROP_SIZE * drop.powerUp.currentScale;
-    const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
-    return dist <= hull + dropRadius;
-  }
-
-  /**
-   * Applies the drop's weapon effect (equip or reset to cannon),
-   * plays the appropriate cue, and removes the drop.
-   *
-   * AC — pickup activation audio: each weapon pickup (Spread, Dual,
-   * Rapid, Reset) plays a unique activation sound on collection,
-   * distinct from the generic `playPowerUpCollectSound()` and
-   * `playWeaponChangeSound()`.
-   */
-  private _collectDrop(drop: ActiveDrop): void {
-    if (!this.player) return;
-
-    if (drop.weaponType === 'reset') {
-      this.player.resetWeapon(); // AC4 — clears all timed weapons, leaves the cannon
-      playResetPickupSound();
-    } else {
-      this.player.equipWeapon(drop.weaponType); // AC1/AC2 — cumulative: adds to the active set
-      switch (drop.weaponType) {
-        case 'spread':
-          playSpreadPickupSound();
-          break;
-        case 'dual':
-          playDualPickupSound();
-          break;
-        case 'rapid':
-          playRapidPickupSound();
-          break;
-      }
-    }
-
-    // Mark the drop so the overlap gate cannot re-collect it while the
-    // absorb animation plays (AC4); keep the Graphics alive until the
-    // animation completes (AC3).
-    drop.absorbing = true;
-    this._startCollectAnimation(drop);
-
-    // Generic pop plays alongside the per-type weapon pickup cue (AC1).
-    try {
-      playPowerUpCollectPopSound();
-    } catch { /* ignore */ }
-  }
-
-  /** Starts the absorb animation for a collected drop (AC3). */
-  private _startCollectAnimation(drop: ActiveDrop): void {
-    const shipX = this.player?.x ?? drop.x;
-    const shipY = this.player?.y ?? drop.y;
-    this.collectAnimations.push(
-      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
+    this.drops = this._advanceDropLifecycles(this.drops, dt, (drop) =>
+      this._playDespawnCue(drop),
     );
   }
 
-  /** Advances in-flight absorb animations and prunes completed handles. */
-  private _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (this.player) handle.setAttractor(this.player.x, this.player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
-    }
-    this.collectAnimations = kept;
+  /** Plays the weapon-drop despawn cue once per drop (AC6). */
+  private _playDespawnCue(drop: ActiveDrop): void {
+    if (drop.despawnSoundPlayed) return;
+    playPowerUpDespawnSound();
+    drop.despawnSoundPlayed = true;
   }
 
-  // ── Input ─────────────────────────────────────────────────────────
-
   /**
-   * Reads the current held-key state into the scheme-appropriate
-   * `ControlInput`, keyed off the player's saved control scheme (mirrors
-   * GymPlayer._readInput — parent AC3). Returns null when no keyboard is
-   * available or the player is absent.
+   * Collects drops overlapping the ship hull when they are above the 3%
+   * scale threshold, through the shared collection gate. Public test seam.
    */
-  private _readInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
+  collectOverlapping(): void {
+    this.drops = this._collectOverlappingDrops(this.drops);
+  }
+
+  // ── Shared collect-path hooks (AC2, AC3, AC6) ───────────────────
+
+  /** Shared registry consumed by the collect path (AC3). */
+  override getEffectsRegistry(): EffectsRegistry {
+    return this.effectsRegistry;
   }
 
   // ── Public test accessors ─────────────────────────────────────────
@@ -501,13 +385,19 @@ export class GymWeapons extends Phaser.Scene {
   }
 
   getBullets(): PlayerBullet[] {
-    return [...this.bullets];
+    return [...this.playerBullets];
   }
 
   /**
-   * Advances bullets by the given delta time. Public for testing.
+   * Advances bullets by the given delta time. Public for testing; delegates
+   * to the same shared helper as the per-frame path (no duplicate body).
    */
   advanceBullets(dt: number): void {
-    this.bullets = this.bullets.filter((b) => advanceAndCull(b, dt));
+    this._advanceBullets(dt);
+  }
+
+  /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */
+  getHelpHandle(): GymHelpHandle | null {
+    return this.helpHandle;
   }
 }

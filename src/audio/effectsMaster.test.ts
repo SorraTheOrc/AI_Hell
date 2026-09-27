@@ -15,6 +15,7 @@ import {
   setSfxMuted,
   playSpawnSound,
   updateThrusterSound,
+  THRUSTER_HUM_MAX_VOLUME,
   _getThrusterHumStateForTests,
   _resetAudioContextForTests,
 } from './effects';
@@ -229,7 +230,7 @@ describe('AC3 — live volume change', () => {
     expect(hum).not.toBeNull();
     // The hum's own gain tracks level × max volume (unchanged),
     // but routes through the master gain (0.4) in series.
-    expect(hum!.currentGain).toBe(0.8 * 0.15);
+    expect(hum!.currentGain).toBe(0.8 * THRUSTER_HUM_MAX_VOLUME);
     expect(lastGainValue(masterGain()!)).toBe(0.4);
   });
 });

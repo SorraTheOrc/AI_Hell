@@ -26,6 +26,9 @@ import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
+import { CombatCoreScene } from '../core/CombatCoreScene';
+import { HelpScene } from '../HelpScene';
+import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 
 describe('GymWeapons AC1/AC3: gym index discovery', () => {
   let booted: BootedGame | null = null;
@@ -720,17 +723,31 @@ describe('GymWeapons — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)'
     expect(scene.children.list).not.toContain(graphics);
   });
 
-  it('AC3 — at full scale a weapon drop within the pickup radius is collectible', async () => {
+  it('AC3 — a weapon drop whose hull touches the visible bubble (31 px) is collected', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // 8 px weapon drop + 10 px ship hull = 18 px pickup radius → 15 px away should be caught.
-    scene.spawnDrop('dual', 495, 270);
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull touches the crisp bubble ring → collected.
+    scene.spawnDrop('dual', 511, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.collectOverlapping();
 
     expect(player.getEquippedWeapon()).toBe('dual');
+  });
+
+  it('AC3 — a weapon drop just beyond the bubble boundary (34 px) is not collected', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnDrop('dual', 480 + 34, 270); // 34 px > 32.4 px bubble boundary
+    scene.advanceDrops(0.5); // grow to full size (collectible but out of range)
+    scene.collectOverlapping();
+
+    expect(player.getEquippedWeapon()).toBe('cannon');
+    expect(scene.getDrops().length).toBeGreaterThan(0); // drop still on field
   });
 });
 
@@ -793,5 +810,157 @@ describe('GymWeapons — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)',
 
     scene.tick(0.5);
     expect(popSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
+  let booted: BootedGame | null = null;
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHelp(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons, HelpScene]);
+    return booted.scene as GymWeapons;
+  }
+
+  it('AC1 — renders a Help (?) button next to ← INDEX', async () => {
+    const scene = await bootHelp();
+    expect(scene.getHelpHandle()).not.toBeNull();
+    expect(scene.getHelpHandle()!.button.text).toBe(HELP_BUTTON_LABEL);
+  });
+
+  it('AC1/AC2 — opening help pauses the gym and lists cannon + drop pool', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    expect(booted!.game.scene.isPaused('GymWeapons')).toBe(true);
+    const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
+    expect(help.getEntries().map((e) => e.id)).toEqual([
+      'cannon',
+      'spread',
+      'dual',
+      'rapid',
+      'reset',
+    ]);
+  });
+
+  it('AC4 — ? closes help and resumes the gym where it paused', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    await settle();
+
+    expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
+    expect(scene.sys.isActive()).toBe(true);
+  });
+});
+
+// ── Parent AH-0MUDCT7EU0061OSZ: re-based on the narrower shared core ───
+
+describe('GymWeapons — re-based on the shared CombatCoreScene core', () => {
+  it('extends the narrower shared base (prototype identity)', () => {
+    expect(Object.getPrototypeOf(GymWeapons.prototype)).toBe(
+      CombatCoreScene.prototype,
+    );
+  });
+
+  it('inherits auto-fire/collection/input instead of defining local copies', () => {
+    for (const method of [
+      '_autoFire',
+      '_collectDrop',
+      '_readPlayerInput',
+      'spawnPlayerBullet',
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          GymWeapons.prototype,
+          method,
+        ),
+      ).toBe(false);
+      expect(
+        (GymWeapons.prototype as unknown as Record<string, unknown>)[method],
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      );
+    }
+  });
+
+  it('manages its bullets through the shared playerBullets list (AC4)', async () => {
+    const booted = await bootScene([GymWeapons]);
+    const scene = booted.scene as GymWeapons;
+
+    // The shared `spawnPlayerBullet` writes into the same list that the
+    // gym exposes through `getBullets()` — no gym-local bullet list.
+    const bullet = scene.spawnPlayerBullet(1, 2, 3, 4);
+    expect(scene.getBullets()).toContain(bullet);
+    const shared = (scene as unknown as { playerBullets: unknown[] })
+      .playerBullets;
+    expect(shared).toContain(bullet);
+
+    booted.game.destroy(true);
+  });
+});
+
+describe('GymWeapons — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted.scene as GymWeapons;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await bootWeapons();
+    const registry = scene.getEffectsRegistry();
+
+    registry.applyWeapon('spread', true);
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P7');
+    expect(registry.activeWeapons().length).toBeGreaterThan(0);
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(scene.getEffectsRegistry().activeWeapons()).toHaveLength(0);
+    expect(scene.getEffectsRegistry().magnetStacks()).toBe(0);
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
+  });
+
+  it('AC2 — teardown clears the ship, drops, bullets and animations', async () => {
+    const scene = await bootWeapons();
+    scene.spawnDrop('spread', 480, 270);
+    scene.spawnPlayerBullet(1, 1, 0, 0);
+    expect(scene.getDrops().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+    expect(scene.getBullets()).toHaveLength(0);
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.getBullets()).toHaveLength(0);
   });
 });

@@ -98,3 +98,23 @@ describe('LeaderboardScene — full view (AH-0MUD9ZNZJ001P7RF)', () => {
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
 });
+
+describe('LeaderboardScene — no prospective row (AH-0MUE86S5F002VVQD regression)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  it('AC7 — the main-menu table never renders a highlight marker', async () => {
+    addEntry('AAA', 100);
+    addEntry('BBB', 50);
+    booted = await bootScene([LeaderboardScene, MenuScene]);
+    const scene = booted.scene as LeaderboardScene;
+
+    expect(rowsOf(scene)).toHaveLength(2);
+    expect(rowsOf(scene).every((r) => !r.text.includes('▶'))).toBe(true);
+  });
+});

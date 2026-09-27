@@ -6,7 +6,9 @@
  * spawn loop, EXPLODE/SHOOT HUD buttons, status line, hint line,
  * back-to-index button, formation drift + respawn, per-entity
  * `applyFormationPosition` updates, and bullet collection/advance/
- * wrap + lifetime expiry. This base class encapsulates all of that; each
+ * wrap + lifetime expiry (now the shared
+ * `src/scenes/core/bulletLifecycle.ts` helpers, AH-0MUII3CF00024EDM). This
+ * base class encapsulates all of that; each
  * concrete scene supplies only its entity-specific configuration via
  * {@link EnemyFormationConfig}.
  *
@@ -18,6 +20,29 @@
  * `bullets`) and config-driven hooks (teleport gate, bullet hit radius,
  * `config.onEntityDestroyed`).
  *
+ * **Shared mineral kill-drop rule:** the gym's mineral layer seeds and
+ * collects minerals, and its destruction paths (`onEnemyDestroyed` and the
+ * EXPLODE button) call the shared `resolveMineralKillDrops` rule from
+ * `src/scenes/core/mineralKillDrops.ts` — the *same code* the game runs —
+ * so a small asteroid drops one mineral and a non-asteroid enemy re-drops a
+ * fraction of the minerals it absorbed, exactly as in `PlayScene`.
+ *
+ * **Shared power-up drop layer:** the opt-in power-up layer runs the same
+ * lifecycle, collection gate, P9 magnet, P4 bomb notice and per-type pickup
+ * cues as the game, via the shared `src/scenes/core/dropLayer.ts` template
+ * methods (`_updateDropLayer` etc.) and `BombNotice`; only the spawn *source*
+ * (a timer, not a kill chance) is gym-specific (AH-0MUII3CXX0023H24, gap 4).
+ *
+ * **Shared mineral collection + hold + choice:** the collection/absorption
+ * pass is the shared `collectMinerals` routine (`scenes/core/mineralLayer.ts`),
+ * the hold is the shared `MineralHold` model (`core/mineralHold.ts`), and the
+ * permanent reward is the shared `applyMineralChoiceReward` helper — the
+ * *same code* `PlayScene` runs. The gym therefore adopts the game's
+ * overflow-carry semantics (resolving the hold restores
+ * `collected − capacity`, not 0) and offers the exact options it applies
+ * through `MineralChoiceScene`'s single `onSelect` contract
+ * (AH-0MUII3DHM008L7JF, gap 5).
+ *
  * **Discovery note:** this file lives in the `core/` subfolder, so the
  * gym index glob (`src/scenes/gym/*.ts`) never lists it as a scene.
  */
@@ -26,9 +51,12 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
+  applyPhaseGhost,
+  drawShieldBubble,
+} from '../../core/CombatEffectVisuals';
+import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  MINERAL_SIZE,
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../../../core/constants';
@@ -39,22 +67,13 @@ import {
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
-import {
-  PlayerBullet,
-  advanceAndCull,
-} from '../../../entities/PlayerBullet';
+import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
   WasdKeysLike,
 } from '../../../utils/input';
-import {
-  loadRules,
-  POWER_UP_WEIGHT_IDS,
-  WEAPON_WEIGHT_IDS,
-  type PowerUpWeights,
-  type WeaponWeights,
-} from '../../../core/rules';
+import { loadRules } from '../../../core/rules';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
-import { PowerUp, PowerUpState } from '../../../powerups/PowerUp';
+import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
 import {
   type CollectAnimationHandle,
@@ -64,10 +83,8 @@ import {
   type PlacementContext,
   type PowerUpPlacement,
 } from '../../../powerups/placement';
-import {
-  WeightedRandomSpawner,
-  type PowerUpSpawner,
-} from '../../../powerups/spawner';
+import { type PowerUpSpawner } from '../../../powerups/spawner';
+import { BombNotice } from '../../core/BombNotice';
 import {
   getPowerUpById,
   isWeaponDrop,
@@ -75,10 +92,24 @@ import {
   type PowerUpId,
   type WeaponDropId,
 } from '../../../powerups/types';
-import type { WeaponId } from '../../../utils/weapons';
 import { HUD } from '../../../ui/HUD';
 import { Mineral } from '../../../entities/Mineral';
 import { Asteroid } from '../../../entities/Asteroid';
+import {
+  advancePlayerBullets,
+  advanceWrappingBullets,
+} from '../../core/bulletLifecycle';
+import {
+  resolveMineralKillDrops,
+  type MineralKillDropEntity,
+} from '../../core/mineralKillDrops';
+import {
+  applyMineralChoiceReward,
+  collectMinerals,
+  isMineralAbsorbingEnemy,
+  MineralHold,
+  type MineralAbsorbingEnemy,
+} from '../../core/mineralLayer';
 import {
   randomChoiceStrategy,
   type ChoiceOption,
@@ -135,6 +166,13 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * Phaser.
    */
   playDestructionAudio?(): void;
+  /**
+   * Optional: reports that this entity is currently away from its formation
+   * and the scene must hold the cluster's drift in place (GDD §4.1 —
+   * E2 Diver). Only formation-holding archetypes implement it; other
+   * entities omit it and the base scene uses optional chaining.
+   */
+  requiresFormationHold?(): boolean;
   /**
    * Optional multi-hit damage seam (Boss, GDD §4.3). When present,
    * player-bullet collisions delegate to this instead of `destroySelf()`
@@ -341,6 +379,14 @@ export class GymFormationScene<
   /** Keyboard-controlled player ship (null unless `config.player` set). */
   protected player: Player | null = null;
 
+  /**
+   * Canonical player spawn (px) — the point {@link setPlayerEnabled}(true)
+   * restores. Derived from `config.player` in `create()`; null when the
+   * scene has no player component (AH-0MUII3F7Q002O7WX, gap 9).
+   */
+  protected playerSpawnX: number | null = null;
+  protected playerSpawnY: number | null = null;
+
   protected formationBaseX: number;
   protected formationBaseY: number;
   private shootEnabled = false;
@@ -363,11 +409,17 @@ export class GymFormationScene<
   private powerUpSpawnInterval = 0;
   private powerUpSpawnTimer = 0;
   private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
+  /** Shared P4 bomb notice (created with the opt-in drop layer). */
+  private bombNotice: BombNotice | null = null;
   private powerUpSpawnCount = 0;
   /** Shared active-effect registry (effects applied by collected drops). */
   private effectsRegistry = new EffectsRegistry();
   /** Standalone HUD rendering the active effects (null when disabled). */
   private hud: HUD | null = null;
+  /** Shared P3 shield-bubble graphics (draws the shared helper output). */
+  private shieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the shield bubble was drawn in the last visual update. */
+  private shieldBubbleDrawn = false;
 
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
@@ -375,14 +427,24 @@ export class GymFormationScene<
   private minerals: Mineral[] = [];
   /** Cumulative minerals seeded since the gym started. */
   private mineralsSeeded = 0;
-  /** Run-scoped mineral hold for the gym demo. */
-  private mineralHold = 0;
-  /** Hold capacity (from the game-rules config). */
-  private mineralCapacity = 20;
+  /**
+   * Run-scoped mineral hold. This is the shared `MineralHold` model
+   * (capacity, pick-up amount, overflow carry) that `GameState` also uses,
+   * so the gym adopts the game's overflow semantics instead of resetting
+   * to 0 (AH-0MUII3DHM008L7JF · AC2).
+   */
+  private mineralHoldModel = new MineralHold();
   /** Whether the hold-full choice overlay is currently open. */
   private mineralChoiceOpen = false;
+  /** The options currently offered by the hold-full choice. */
+  private mineralChoiceOptions: ChoiceOption[] = [];
   /** Pluggable choice strategy for the hold-full overlay. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
+  /**
+   * Scene-level random-number generator for the mineral kill-drop rule.
+   * Defaults to `Math.random`; injectable so gym drop tests are deterministic.
+   */
+  private _sceneRng: () => number = Math.random;
 
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
@@ -392,6 +454,9 @@ export class GymFormationScene<
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     const { config } = this;
 
     // ── Spawn the formation ─────────────────────────────────────────
@@ -412,6 +477,8 @@ export class GymFormationScene<
 
     // ── Player ship (optional per-scene opt-in) ────────────────────
     if (config.player) {
+      this.playerSpawnX = config.player.x;
+      this.playerSpawnY = config.player.y;
       this.player = new Player(this, {
         x: config.player.x,
         y: config.player.y,
@@ -424,15 +491,34 @@ export class GymFormationScene<
       ) as WasdKeysLike | undefined;
     }
 
-    // ── Controls (bottom-left HUD, minimal) ─────────────────────────
-    this.explodeButton = this._addButton(10, GAME_HEIGHT - 60, 'EXPLODE', LABEL_STYLE);
-    this.shootButton = this._addButton(120, GAME_HEIGHT - 60, 'SHOOT: OFF', LABEL_STYLE);
+    // ── Shared P3/P6 player visuals (parity with PlayScene/gym combat) ──
+    // Drawn through the shared CombatEffectVisuals helper so the enemy gym
+    // cannot drift from the other scenes (AH-0MUICQC34005QOYF).
+    this.shieldBubble = this.add.graphics();
+    this.shieldBubble.setDepth(50);
+    this.shieldBubbleDrawn = false;
+
+    // ── Controls (bottom-right HUD, minimal) ───────────────────────
+    // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
+    // overlap with the bottom-left anchored gym editor panels.
+    this.explodeButton = this._addButton(
+      GAME_WIDTH - 120,
+      GAME_HEIGHT - 60,
+      'EXPLODE',
+      LABEL_STYLE,
+    );
+    this.shootButton = this._addButton(
+      GAME_WIDTH - 240,
+      GAME_HEIGHT - 60,
+      'SHOOT: OFF',
+      LABEL_STYLE,
+    );
 
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
     this.statusText = this.add.text(
-      10,
+      GAME_WIDTH - 10,
       GAME_HEIGHT - 36,
       `SCORE: n/a — ${config.statusLabel}: ${this.entities.length}`,
       {
@@ -440,9 +526,9 @@ export class GymFormationScene<
         fontSize: '12px',
         color: '#888888',
       },
-    );
+    ).setOrigin(1, 0);
 
-    // ── Hint line ───────────────────────────────────────────────────
+    // ── Hint line (centred, above the controls) ─────────────────────
     this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, config.hintText, {
       fontFamily: 'monospace',
       fontSize: '12px',
@@ -458,7 +544,13 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
-    // ── Mineral layer: seed 100 random minerals + HUD counter ───────
+    // ── P7 teleport keys (S/↓) — bound whenever a player exists ─────
+    // Independent of the opt-in power-up drop layer: the minerals gym
+    // grants P7 through the hold-full choice, not field drops, so teleport
+    // must be usable there too (AH-0MUHMXWGC0058BO4 · AC2).
+    this._bindTeleportKeys();
+
+    // ── Mineral layer: seed 100 random minerals + HUD hold bar ─────
     this._initMineralLayer();
 
     // Ensure any stale countdown state from a prior create() (e.g. after
@@ -466,59 +558,92 @@ export class GymFormationScene<
     // fresh scene never starts mid-countdown.
     this._cancelRespawnCountdown();
 
-    // Clean up the countdown overlay if the scene is torn down
-    // mid-countdown so a restart does not leak or double-fire.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this._cancelRespawnCountdown();
-      // The countdown overlay Text is a display-list child destroyed by the
-      // DisplayList shutdown; drop the reference so a restart's respawn
-      // creates a fresh overlay on the new display list.
-      this.countdownText = null;
-      // ── Full teardown: destroy and clear all scene-owned objects ──
-      // This prevents stale references from being iterated after a
-      // stop/restart of the same scene instance (the only restart
-      // vector in the gym index flow).  Phaser's DisplayList.shutdown
-      // already sets each display-list child's `scene = undefined`,
-      // but the bookkeeping arrays (`entities`, `bullets`,
-      // `playerBullets`) are never cleared — on a fresh create() they
-      // are populated again on top of the stale array, so tick() now
-      // iterates destroyed objects whose `scene` property is
-      // undefined.  Destroying them explicitly and clearing the arrays
-      // avoids that double-population.
-      for (const entity of this.entities) entity.destroy(true);
-      this.entities.length = 0;
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
+  }
 
-      for (const bullet of this.bullets) bullet.graphics.destroy();
-      this.bullets.length = 0;
+  /**
+   * Resets shared per-run state (effects registry + bullet/effect
+   * registries via the core) plus this scene's own per-run state:
+   * formation, bullets, player, power-up layer, mineral layer, HUD and
+   * wipe/countdown. Called at the top of `create()`
+   * (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.entities = [];
+    this.bullets = [];
+    this.player = null;
+    this.playerSpawnX = null;
+    this.playerSpawnY = null;
+    this.shootEnabled = false;
+    this.respawnCountdown = 0;
+    this.respawnCountdownActive = false;
+    this.countdownText = null;
+    this.powerUpsEnabled = false;
+    this.powerUpDrops = [];
+    this.powerUpSpawner = null;
+    this.powerUpPlacement = null;
+    this.powerUpSpawnInterval = 0;
+    this.powerUpSpawnTimer = 0;
+    this.powerUpSpawnCount = 0;
+    this.bombNotice = null;
+    this.hud = null;
+    this.shieldBubble = null;
+    this.shieldBubbleDrawn = false;
+    this.minerals = [];
+    this.mineralsSeeded = 0;
+    this.mineralHoldModel.reset();
+    this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
+    this.formationBaseX = this.config.startX;
+    this.formationBaseY = this.config.startY;
+  }
 
-      for (const pb of this.playerBullets) pb.destroy();
-      this.playerBullets.length = 0;
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    this._cancelRespawnCountdown();
+    // The countdown overlay Text is a display-list child destroyed by the
+    // DisplayList shutdown; drop the reference so a restart's respawn
+    // creates a fresh overlay on the new display list.
+    this.countdownText = null;
 
-      for (const exp of this.playerExplosions) exp.destroy();
-      this.playerExplosions.length = 0;
+    for (const entity of this.entities) entity.destroy(true);
+    this.entities = [];
 
-      // Null-out the player reference so any stale callback does not
-      // reach the destroyed ship.
-      this.player = null;
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets = [];
 
-      // Reset scene toggle state so a fresh create() starts clean.
-      this.shootEnabled = false;
+    // Null-out the player reference so any stale callback does not
+    // reach the destroyed ship.
+    this.player = null;
 
-      // Tear down any power-up drops owned by the scene.
-      for (const drop of this.powerUpDrops) drop.graphics.destroy();
-      this.powerUpDrops = [];
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-      this.powerUpSpawnCount = 0;
-      for (const mineral of this.minerals) mineral.destroy();
-      this.minerals = [];
-      this.mineralHold = 0;
-      this.mineralChoiceOpen = false;
-      this.hud?.destroy();
-      this.hud = null;
-      this.teleportKey = null;
-      this.downKey = null;
-    });
+    // Reset scene toggle state so a fresh create() starts clean.
+    this.shootEnabled = false;
+
+    // Tear down any power-up drops owned by the scene.
+    for (const drop of this.powerUpDrops) drop.graphics.destroy();
+    this.powerUpDrops = [];
+    this.powerUpSpawnCount = 0;
+    this.bombNotice?.destroy();
+    this.bombNotice = null;
+
+    for (const mineral of this.minerals) mineral.destroy();
+    this.minerals = [];
+    this.mineralHoldModel.reset();
+    this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
+
+    this.hud?.destroy();
+    this.hud = null;
+    this.shieldBubble?.destroy();
+    this.shieldBubble = null;
+    this.shieldBubbleDrawn = false;
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -545,6 +670,10 @@ export class GymFormationScene<
     } else {
       playDestructionSound();
     }
+    // Shared mineral kill-drop rule (GDD §4.5) — the EXPLODE path bypasses
+    // `onEnemyDestroyed`, so it must drop here too (no double-drop: the two
+    // paths are mutually exclusive).
+    this._dropMineralsForKill(victim);
     // Dynamic-replacement seam (Asteroid split children, GDD §4.1).
     this.config.onEntityDestroyed?.(victim);
     this.statusText.setText(
@@ -577,7 +706,7 @@ export class GymFormationScene<
       cfg.placement ?? new RandomAvoidingPlacement({ rng });
     this.powerUpSpawner =
       cfg.spawner ??
-      this._buildDefaultPowerUpSpawner(
+      this._buildDefaultDropSpawner(
         rules.powerUpWeights,
         rules.weaponWeights,
         rng,
@@ -588,41 +717,41 @@ export class GymFormationScene<
       cfg.margin ?? DEFAULT_POWER_UP_PLACEMENT_MARGIN;
     this.powerUpSpawnTimer = this.powerUpSpawnInterval;
 
-    // Fresh registry + standalone HUD per scene start (lives visible so
-    // P8 is observable).
-    this.effectsRegistry = new EffectsRegistry();
+    // The registry is reset by `resetRunState()` at the top of `create()`,
+    // so it is already clean here; only the standalone HUD is rebuilt per
+    // scene start (lives visible so P8 is observable). Sharing the one
+    // reset path stops the registry drifting on restart (gap 10).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
 
-    // P7 teleport keys (only meaningful when a player is present).
-    if (this.player) {
-      this.teleportKey =
-        this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
-      this.downKey =
-        this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
-    }
+    // Shared P4 bomb notice — shown by the shared collect path when the
+    // scene collects a P4 (gap 4, AC3).
+    this.bombNotice = new BombNotice(this, {
+      x: GAME_WIDTH / 2,
+      y: 24,
+      fontSize: '14px',
+      padding: { x: 6, y: 2 },
+    });
 
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
   }
 
+  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
+  protected override _getBombNotice(): BombNotice | null {
+    return this.bombNotice;
+  }
+
   /**
-   * Builds the default weighted-random spawner over power-up IDs AND
-   * weapon drops (spread, dual, rapid, reset) using the rules weights.
+   * Binds the S / ↓ teleport keys whenever a player exists, independent of
+   * the opt-in power-up drop layer. `addKey` is idempotent for the same
+   * key code, so this is safe to call from `create()` on every restart.
    */
-  private _buildDefaultPowerUpSpawner(
-    powerUpWeights: PowerUpWeights,
-    weaponWeights: WeaponWeights,
-    rng: () => number,
-  ): PowerUpSpawner<DropId> {
-    const ids: DropId[] = [...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS];
-    const spawner = new WeightedRandomSpawner<DropId>(ids, rng);
-    for (const id of POWER_UP_WEIGHT_IDS) {
-      spawner.setWeight(id, powerUpWeights[id]);
-    }
-    for (const id of WEAPON_WEIGHT_IDS) {
-      spawner.setWeight(id, weaponWeights[id]);
-    }
-    return spawner;
+  private _bindTeleportKeys(): void {
+    if (!this.player) return;
+    this.teleportKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    this.downKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
   }
 
   /** Snapshot of the live bodies a drop must avoid (enemies + player). */
@@ -711,66 +840,16 @@ export class GymFormationScene<
   private _updatePowerUpLayer(dt: number): void {
     if (!this.powerUpsEnabled) return;
 
-    this._handleTeleport();
-
-    const kept: FormationSceneDrop[] = [];
-    for (const drop of this.powerUpDrops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
-        kept.push(drop);
-      } else {
-        drop.graphics.destroy();
-      }
-    }
-    this.powerUpDrops = kept;
-
-    this._collectOverlappingDrops();
-    // Advance the absorb VFX for collected drops (cosmetic only).
-    this._updateCollectAnimations(dt);
+    // Single shared drop sequence (gap 4): P4 notice, P9 magnet,
+    // lifecycle, overlap collection, absorb VFX. Only the spawn *source*
+    // (the cadence below) differs from the game (OQ6).
+    this.powerUpDrops = this._updateDropLayer(this.powerUpDrops, dt);
 
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
       this._spawnPowerUpDrop();
       this.powerUpSpawnTimer = this.powerUpSpawnInterval;
     }
-
-    this.effectsRegistry.tick(dt);
-    this.hud?.refresh();
-  }
-
-  // ── Drop collection (fly-over) ───────────────────────────────────
-
-  /** Collects any collectible drop overlapping the player's hull. */
-  private _collectOverlappingDrops(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-
-    const kept: FormationSceneDrop[] = [];
-    for (const drop of this.powerUpDrops) {
-      if (
-        !drop.absorbing &&
-        drop.powerUp.canCollect() &&
-        this._dropOverlapsShip(drop, hull)
-      ) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.powerUpDrops = kept;
-  }
-
-  /** Whether a drop's current radius overlaps the player's hull. */
-  private _dropOverlapsShip(drop: FormationSceneDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
-    return (
-      Math.hypot(this.player.x - drop.x, this.player.y - drop.y) <=
-      hull + dropRadius
-    );
   }
 
   /**
@@ -784,9 +863,13 @@ export class GymFormationScene<
 
   // ── Teleport (P7, S/↓) ───────────────────────────────────────────
 
-  /** Teleports are gated on the gym's opt-in power-up layer. */
+  /**
+   * Teleports are allowed when the opt-in drop layer is active, or whenever
+   * a stored P7 use is available (the minerals gym grants P7 through the
+   * hold-full choice, not field drops — AH-0MUHMXWGC0058BO4 · AC2).
+   */
   protected override canTeleport(): boolean {
-    return this.powerUpsEnabled;
+    return this.powerUpsEnabled || this.effectsRegistry.hasTeleport();
   }
 
   /** Enemy hit radius used for teleport destination avoidance (px). */
@@ -809,6 +892,16 @@ export class GymFormationScene<
   /** All enemies in the scene (alive or destroyed). */
   get formationEntities(): TEntity[] {
     return this.entities.slice();
+  }
+
+  /**
+   * Registers a dynamically spawned entity (e.g. an asteroid-split child)
+   * with the live formation list. Public so a scene config's
+   * `onEntityDestroyed` hook can register children without casting into the
+   * base's protected `entities` (AH-0MUII3F7Q002O7WX, gap 8).
+   */
+  registerDynamicEntity(entity: TEntity): void {
+    this.entities.push(entity);
   }
 
   /** Number of enemies still alive. */
@@ -866,6 +959,35 @@ export class GymFormationScene<
     return this.effectsRegistry;
   }
 
+  /**
+   * Draws the shared P3 shield bubble and applies the shared P6 phase ghost
+   * each frame (parity with `PlayScene`/`GymPowerUpsCombat`). Safe when no
+   * player is present.
+   */
+  private _updateEffectVisuals(): void {
+    this.shieldBubbleDrawn = drawShieldBubble(
+      this.shieldBubble,
+      this.player,
+      this.effectsRegistry,
+    );
+    applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
+  }
+
+  /** Whether the P3 shield bubble was drawn in the last visual update. */
+  isShieldBubbleVisible(): boolean {
+    return this.shieldBubbleDrawn;
+  }
+
+  /** Whether the P6 phase ghost is currently active. */
+  isPhaseGhostActive(): boolean {
+    return this.effectsRegistry.isPhased;
+  }
+
+  /** The shield-bubble Graphics (null before create/teardown; for tests). */
+  getShieldBubbleGraphics(): Phaser.GameObjects.Graphics | null {
+    return this.shieldBubble;
+  }
+
   /** The standalone effects HUD (null when the power-up layer is disabled). */
   getHUD(): HUD | null {
     return this.hud;
@@ -902,12 +1024,12 @@ export class GymFormationScene<
 
   /** Current gym mineral hold value. */
   getMineralHold(): number {
-    return this.mineralHold;
+    return this.mineralHoldModel.store;
   }
 
   /** Current gym mineral hold capacity. */
   getMineralCapacity(): number {
-    return this.mineralCapacity;
+    return this.mineralHoldModel.capacity;
   }
 
   /** Whether the hold-full choice overlay is open. */
@@ -915,113 +1037,109 @@ export class GymFormationScene<
     return this.mineralChoiceOpen;
   }
 
+  /** The options currently offered by the hold-full choice (copy). */
+  getMineralChoiceOptions(): ChoiceOption[] {
+    return [...this.mineralChoiceOptions];
+  }
+
   /** Overrides the pluggable choice strategy. */
   setMineralChoiceStrategy(strategy: ChoiceStrategy): void {
     this.mineralChoiceStrategy = strategy;
   }
 
+  /**
+   * Injects the scene-level RNG used by the shared mineral kill-drop rule.
+   * Exposed so gym tests can make non-asteroid re-drops deterministic; the
+   * default (`Math.random`) is used in production.
+   */
+  setSceneRng(rng: () => number): void {
+    this._sceneRng = rng;
+  }
+
   /** Creates the mineral HUD and seeds the field; called from `create()`. */
   private _initMineralLayer(): void {
-    this.mineralCapacity = loadRules().mineralHoldCapacity;
-    this.mineralHold = 0;
+    const rules = loadRules();
+    this.mineralHoldModel.capacity = rules.mineralHoldCapacity;
+    this.mineralHoldModel.collectAmount = rules.mineralCollectAmount;
+    this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
+    this.mineralChoiceOptions = [];
     this.mineralsSeeded = 0;
     if (!this.hud) {
       this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
     }
-    this.hud.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this._syncMineralHud();
     this.seedMinerals(100);
   }
 
   /**
    * Player collects overlapping minerals into the hold; non-asteroid
-   * enemies absorb them. Asteroids are inert to minerals.
+   * enemies absorb them. Asteroids are inert to minerals. Runs the shared
+   * `collectMinerals` routine — the same code the game runs
+   * (AH-0MUII3DHM008L7JF · AC1).
    */
   private _updateMinerals(): void {
     if (this.minerals.length === 0) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: Mineral[] = [];
-    for (const mineral of this.minerals) {
-      if (!mineral.alive) continue;
+    // Only mineral-absorbing, non-asteroid entities collect minerals
+    // (asteroids are inert — GDD §4.5).
+    const absorbers = this.entities.filter(
+      (entity): entity is TEntity & MineralAbsorbingEnemy =>
+        !(entity instanceof Asteroid) && isMineralAbsorbingEnemy(entity),
+    );
+    this.minerals = collectMinerals(
+      this.minerals,
+      this.player,
+      absorbers,
+      () => this._collectMineral(),
+    );
+  }
 
-      if (
-        this.player &&
-        this._collide(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)
-      ) {
-        mineral.handleOverlap('player');
-        this.mineralHold = Math.min(
-          this.mineralCapacity,
-          this.mineralHold + loadRules().mineralCollectAmount,
-        );
-        this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
-        if (this.mineralHold >= this.mineralCapacity && !this.mineralChoiceOpen) {
-          this.openMineralChoice();
-        }
-        continue;
-      }
+  /** Collects a mineral into the shared hold; opens the choice when full. */
+  private _collectMineral(): void {
+    this.mineralHoldModel.collect();
+    this._syncMineralHud();
+    if (this.mineralHoldModel.isFull) this.openMineralChoice();
+  }
 
-      let absorbed = false;
-      for (const entity of this.entities) {
-        if (!entity.alive || entity instanceof Asteroid) continue;
-        const collector = entity as unknown as { collectMineral?: () => void };
-        if (!collector.collectMineral) continue;
-        if (
-          this._collide(
-            mineral.x,
-            mineral.y,
-            MINERAL_SIZE,
-            entity.x,
-            entity.y,
-            entity.getHitRadius(),
-          )
-        ) {
-          collector.collectMineral();
-          mineral.handleOverlap('enemy');
-          absorbed = true;
-          break;
-        }
-      }
-      if (!absorbed) kept.push(mineral);
-    }
-    for (const mineral of this.minerals) {
-      if (!kept.includes(mineral)) mineral.destroy();
-    }
-    this.minerals = kept;
+  /** Mirrors the gym hold onto the HUD mineral hold bar. */
+  private _syncMineralHud(): void {
+    this.hud?.setMineralStore(
+      this.mineralHoldModel.store,
+      this.mineralHoldModel.capacity,
+    );
   }
 
   /**
    * Opens the hold-full choice overlay, pausing the gym scene and launching
-   * `MineralChoiceScene`. The pick is applied permanently and the hold reset.
+   * `MineralChoiceScene` with the single `onSelect` contract. The pick is
+   * applied permanently and the hold resolved with any overflow.
    */
   openMineralChoice(): ChoiceOption[] {
-    if (this.mineralChoiceOpen) return [];
-    const options = this.mineralChoiceStrategy.choose(3);
+    if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3);
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {
-      options,
-      onSelect: (index: number) => this.selectMineralChoice(index, options),
+      options: [...this.mineralChoiceOptions],
+      onSelect: (index: number) => this.selectMineralChoice(index),
     });
     this.scene.pause();
-    return options;
+    return [...this.mineralChoiceOptions];
   }
 
   /**
    * Applies the chosen option permanently for the gym run, resumes the gym
-   * scene, and resets the hold.
+   * scene, and resolves the hold with the override carry
+   * (store = collected − capacity). Returns the chosen option, or null for
+   * an out-of-range index.
    */
-  selectMineralChoice(index: number, options: ChoiceOption[]): ChoiceOption | null {
-    const option = options[index];
+  selectMineralChoice(index: number): ChoiceOption | null {
+    const option = this.mineralChoiceOptions[index];
     if (!option) return null;
-    if (option.kind === 'weapon') {
-      const weaponId = option.id as WeaponId;
-      this.effectsRegistry.applyWeapon(weaponId, true);
-      this.player?.equipWeapon(weaponId, true);
-    } else {
-      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
-    }
+    applyMineralChoiceReward(option, this.effectsRegistry, this.player);
     this.mineralChoiceOpen = false;
-    this.mineralHold = 0;
-    this.hud?.setMineralStore(this.mineralHold, this.mineralCapacity);
+    this.mineralChoiceOptions = [];
+    this.mineralHoldModel.resolve();
+    this._syncMineralHud();
     this.scene.resume();
     return option;
   }
@@ -1034,6 +1152,11 @@ export class GymFormationScene<
   /** In-flight absorb animations for collected drops (test seam). */
   getCollectAnimations(): CollectAnimationHandle[] {
     return [...this.collectAnimations];
+  }
+
+  /** Whether the P4 bomb notice is currently visible (for tests). */
+  isBombNoticeVisible(): boolean {
+    return this.bombNotice?.isVisible() ?? false;
   }
 
   /** Cumulative number of drops spawned since the scene started. */
@@ -1111,6 +1234,11 @@ export class GymFormationScene<
     return this.playerExplosions.slice();
   }
 
+  /** Active composed player-death juice effects (empty once torn down). */
+  getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
+    return this.playerDeathEffects.slice();
+  }
+
   /** Hit radius (px) used for player-bullet vs entity collisions. */
   getEntityHitRadius(): number {
     return this.config.entityHitRadius ?? DEFAULT_ENTITY_HIT_RADIUS;
@@ -1138,11 +1266,21 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
-    // Advance the formation base; when the whole formation has crossed
-    // the right edge, respawn it off the left edge so it flies again.
-    this.formationBaseX += config.driftSpeed * dt;
-    if (this.formationBaseX > GAME_WIDTH + 60) {
-      this.formationBaseX = this._respawnX();
+    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING entity is away
+    // from the formation (`DIVING`/`PAUSING`/`RETURNING`), the whole cluster
+    // holds its current position and the right-edge wrap/respawn is
+    // suppressed. Destroyed entities are ignored, so a mid-dive kill can
+    // never freeze the cluster forever.
+    const holdFormation = this.entities.some(
+      (entity) => entity.alive && entity.requiresFormationHold?.() === true,
+    );
+    if (!holdFormation) {
+      // Advance the formation base; when the whole formation has crossed
+      // the right edge, respawn it off the left edge so it flies again.
+      this.formationBaseX += config.driftSpeed * dt;
+      if (this.formationBaseX > GAME_WIDTH + 60) {
+        this.formationBaseX = this._respawnX();
+      }
     }
 
     // Position each enemy from the formation base + its own offset.
@@ -1170,33 +1308,22 @@ export class GymFormationScene<
       this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 
-    // Advance bullets; wrap across all four edges and expire by lifetime
-    // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen position.
-    for (let i = this.bullets.length - 1; i >= 0; i--) {
-      const bullet = this.bullets[i];
-      bullet.elapsed += dt;
-      bullet.graphics.x += bullet.vx * dt;
-      bullet.graphics.y += bullet.vy * dt;
-      if (bullet.graphics.x < 0) bullet.graphics.x += GAME_WIDTH;
-      if (bullet.graphics.x >= GAME_WIDTH) bullet.graphics.x -= GAME_WIDTH;
-      if (bullet.graphics.y < 0) bullet.graphics.y += GAME_HEIGHT;
-      if (bullet.graphics.y >= GAME_HEIGHT) bullet.graphics.y -= GAME_HEIGHT;
-      if (bullet.elapsed >= bullet.lifetime) {
-        bullet.graphics.destroy();
-        this.bullets.splice(i, 1);
-      }
-    }
+    // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
+    // are advanced by the shared bullet lifecycle below, matching the
+    // PlayScene ordering relative to collisions. A no-op without a boss.
+    this._advanceBoss(dt);
 
-    // ── Player ship: input → thrust, auto-fire, bullet lifecycle ──
+    // Advance bullets; wrap across all four edges and expire by lifetime
+    // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen
+    // position. Shared with PlayScene/GymPowerUpsCombat so the semantics
+    // cannot drift (AH-0MUII3CF00024EDM, gap 3).
+    this._advanceEnemyBullets(dt);
+
+    // ── Player ship: shared control step + bullet lifecycle ────
     if (this.player) {
-      // Advance timed weapon countdowns (collected weapon drops expire
-      // after 10 s, mirroring GymWeapons) before auto-fire so an expired
-      // weapon stops firing this frame.
-      this.player.tickWeaponTimers(dt * 1000);
-      const input = this._readPlayerInput();
-      if (input) this.player.setInput(input);
-      this.player.physicsTick(dt, this.scale.width, this.scale.height);
-      this._autoFire(dt);
+      // Shared input → timers → multipliers → physics → auto-fire step
+      // (AH-0MUII39KX007YUQ0, AC1).
+      this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
 
       // Collisions + post-hit invulnerability blink (player component only).
@@ -1209,6 +1336,23 @@ export class GymFormationScene<
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
+
+    // ── P7 teleport (S/↓) — independent of the opt-in drop layer ─────
+    // The minerals gym grants P7 through the hold-full choice, so the
+    // handler must run even when field drops are disabled
+    // (AH-0MUHMXWGC0058BO4 · AC2).
+    this._handleTeleport();
+
+    // ── Effect timers + HUD — independent of the opt-in drop layer ───
+    // Timed effects (e.g. P6 granted on teleport arrival) and the HUD must
+    // advance in every gym, not only those with field drops.
+    this.effectsRegistry.tick(dt);
+    this.hud?.refresh();
+
+    // ── Shared P3/P6 player visuals (parity with the other scenes) ──
+    // Runs after the power-up layer so a drop collected this frame is
+    // reflected immediately. Safe when no player is present.
+    this._updateEffectVisuals();
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
@@ -1240,12 +1384,38 @@ export class GymFormationScene<
 
   /** Enemy destroyed through the generic path: forward to the config seam. */
   protected override onEnemyDestroyed(entity: TEntity): void {
+    // Shared mineral kill-drop rule (GDD §4.5): a small asteroid leaves one
+    // mineral, large/medium split instead, and a non-asteroid enemy re-drops
+    // a fraction of the minerals it absorbed — exactly as the game does.
+    this._dropMineralsForKill(entity);
     this.config.onEntityDestroyed?.(entity);
+  }
+
+  /**
+   * Applies the shared mineral kill-drop rule to a destroyed entity and adds
+   * the resulting minerals to this gym's live mineral field.
+   */
+  private _dropMineralsForKill(entity: TEntity): void {
+    const drops = resolveMineralKillDrops(
+      this,
+      entity as unknown as MineralKillDropEntity,
+      this._sceneRng,
+    );
+    if (drops.length > 0) this.minerals.push(...drops);
   }
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */
   private _advancePlayerBullets(dt: number): void {
-    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
+    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
+  }
+
+  /**
+   * Advances enemy bullets through the shared lifecycle helper: four-edge
+   * wrap + lifetime expiry, the single implementation every scene consumes
+   * (AH-0MUII3CF00024EDM, gap 3).
+   */
+  private _advanceEnemyBullets(dt: number): void {
+    advanceWrappingBullets(this.bullets, dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
   /**
@@ -1260,21 +1430,6 @@ export class GymFormationScene<
       g.y < -20 ||
       g.y > GAME_HEIGHT + 20
     );
-  }
-
-  /**
-   * Circle-vs-circle collision test using manual distance checks
-   * (`Math.hypot <= rA + rB`), consistent with `GymWeapons._overlapsShip`.
-   */
-  private _collide(
-    ax: number,
-    ay: number,
-    aRadius: number,
-    bx: number,
-    by: number,
-    bRadius: number,
-  ): boolean {
-    return Math.hypot(ax - bx, ay - by) <= aRadius + bRadius;
   }
 
   // ── Wipe → 3s countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5) ─
@@ -1323,7 +1478,7 @@ export class GymFormationScene<
         );
       }
       if (this.respawnCountdown <= 0) {
-        this._respawnFormation();
+        this.respawnFormation();
       }
       return;
     }
@@ -1335,7 +1490,17 @@ export class GymFormationScene<
     }
   }
 
-  private _respawnFormation(): void {
+  /**
+   * Shared formation-respawn seam (AH-0MUII3F7Q002O7WX, gap 9): clears
+   * enemy bullets, rebuilds the formation at its initial geometry and
+   * preserves the SHOOT toggle. Subclasses that need a manual respawn (e.g.
+   * the enemy-gym Respawn button) call this instead of re-implementing it;
+   * the wipe→countdown path calls it too.
+   *
+   * Player bullets are intentionally kept — a subclass that wants a clean
+   * slate clears them before calling this (see `GymEnemies._onRespawn`).
+   */
+  protected respawnFormation(): void {
     // Clear enemy bullets so a stale shot does not instantly hit the player
     // after the respawn. Player bullets are intentionally kept.
     for (const bullet of this.bullets) bullet.graphics.destroy();
@@ -1368,6 +1533,47 @@ export class GymFormationScene<
       `SCORE: n/a — ${this.config.statusLabel}: ${this.entities.length}`,
     );
     playSpawnSound();
+  }
+
+  /**
+   * Respawns the player ship at the canonical spawn point when it is
+   * currently absent; a no-op returning the existing ship otherwise.
+   * Returns null when the scene has no player component.
+   */
+  protected respawnPlayer(): Player | null {
+    if (this.player) return this.player;
+    const spawn = this.config.player;
+    if (this.playerSpawnX === null || this.playerSpawnY === null) {
+      if (!spawn) return null;
+      this.playerSpawnX = spawn.x;
+      this.playerSpawnY = spawn.y;
+    }
+    const player = new Player(this, {
+      x: this.playerSpawnX,
+      y: this.playerSpawnY,
+    });
+    this.add.existing(player);
+    this.player = player;
+    return player;
+  }
+
+  /**
+   * Protected player-enable seam (AH-0MUII3F7Q002O7WX, gap 9). Disabling
+   * destroys the ship and clears its bullets; enabling respawns the ship at
+   * the canonical spawn point. Returns whether a player is present
+   * afterwards so subclasses can drive their own panel/UI state without
+   * casting into base internals.
+   */
+  protected setPlayerEnabled(enabled: boolean): boolean {
+    if (enabled) {
+      this.respawnPlayer();
+    } else {
+      this.player?.destroy();
+      this.player = null;
+      for (const bullet of this.playerBullets) bullet.destroy();
+      this.playerBullets = [];
+    }
+    return this.player !== null;
   }
 
   /** x-coordinate that puts the whole formation off the left edge. */

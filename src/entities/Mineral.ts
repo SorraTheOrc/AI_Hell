@@ -17,7 +17,12 @@
 
 import Phaser from 'phaser';
 
-import { MINERAL_COLOR, MINERAL_DEPTH, MINERAL_SIZE } from '../core/constants';
+import {
+  MINERAL_COLOR,
+  MINERAL_DEPTH,
+  MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SIZE,
+} from '../core/constants';
 
 /**
  * Configuration for creating a mineral collectable.
@@ -118,4 +123,44 @@ export class Mineral extends Phaser.GameObjects.Graphics {
   updatePosition(_dt: number): void {
     // Minerals do not move.
   }
+}
+
+/**
+ * Spawns `count` mineral collectables scattered uniformly within
+ * {@link MINERAL_REDROP_SCATTER_RADIUS} px of `(x, y)`. This is the single
+ * shared implementation of the re-drop scatter maths used by both
+ * `BaseEnemy.spawnMineralDrops` and the shared kill-drop rule
+ * (`resolveMineralKillDrops`).
+ *
+ * Each drop consumes two `rng` draws in a fixed order (angle, then radius),
+ * so callers that depended on the original `BaseEnemy.spawnMineralDrops`
+ * draw sequence are byte-for-byte unchanged.
+ *
+ * @param scene — scene that owns the new mineral display objects
+ * @param x — scatter-centre x position
+ * @param y — scatter-centre y position
+ * @param count — number of minerals to spawn (returns none when ≤ 0)
+ * @param rng — random-number generator (defaults to `Math.random`)
+ */
+export function scatterMineralDrops(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  count: number,
+  rng: () => number = Math.random,
+): Mineral[] {
+  if (count <= 0) return [];
+
+  const drops: Mineral[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const angle = rng() * Math.PI * 2;
+    const radius = rng() * MINERAL_REDROP_SCATTER_RADIUS;
+    drops.push(
+      new Mineral(scene, {
+        x: x + Math.cos(angle) * radius,
+        y: y + Math.sin(angle) * radius,
+      }),
+    );
+  }
+  return drops;
 }

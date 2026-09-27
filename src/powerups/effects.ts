@@ -7,8 +7,9 @@
  * (P3/P4/P6/P7) are exercised by the GymPowerUpsCombat scene with live
  * scout threats (AH-0MTC2P6G3007PJ40).
  *
- * - **P5 Speed Boost** — timed: +50% movement speed for 10 s; re-collecting
- *   refreshes the timer to full duration (never additive).
+ * - **P5 Speed Boost** — timed: +50% movement speed and +50% rate of fire
+ *   for 10 s (both use the same 1.5× multiplier); re-collecting refreshes
+ *   the timer to full duration (never additive).
  * - **P8 Extra Life** — immediate: +1 life (starts 3, cap 5).
  * - **P9 Magnet** — permanent stack (cap 5); radius 2× ship size +50%/stack.
  * - **P3 Shield** — timed 15 s bubble; absorbs one hit, popped on absorb,
@@ -328,6 +329,15 @@ export class EffectsRegistry {
    * Current movement multiplier from P5: 1.5 while active, else 1.
    */
   speedMultiplier(): number {
+    return this._timed.has('P5') ? P5_SPEED_MULTIPLIER : 1;
+  }
+
+  /**
+   * Current fire-rate multiplier from P5: 1.5 while active, else 1.
+   * Uses the same constant as the movement multiplier so both axes
+   * cannot diverge (single source of truth — AC3).
+   */
+  fireRateMultiplier(): number {
     return this._timed.has('P5') ? P5_SPEED_MULTIPLIER : 1;
   }
 

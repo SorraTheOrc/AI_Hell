@@ -119,6 +119,28 @@ describe('GymPlayer ship config panel', () => {
     expect(p!.querySelector('#gym-save-config')).not.toBeNull();
   });
 
+  it('renders a collapsible header and toggles the panel body (AH-0MUDYFMUX007Q0W3)', async () => {
+    await bootPlayer();
+    const p = panel()!;
+    const toggle = p.querySelector<HTMLButtonElement>('.gym-panel-toggle');
+    expect(toggle, 'collapse toggle missing').not.toBeNull();
+    expect(toggle!.textContent).toContain('Ship Config');
+
+    const body = p.querySelector('.gym-panel-body');
+    expect(body, 'panel body missing').not.toBeNull();
+    expect(toggle!.getAttribute('aria-controls')).toBe(body!.id);
+    expect(p.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+
+    toggle!.click();
+    expect(p.getAttribute('data-collapsed')).toBe('true');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('false');
+
+    toggle!.click();
+    expect(p.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+  });
+
   // ── Render ──────────────────────────────────────────────────────
 
   it('renders the player ship on the display list at the canvas centre', async () => {
@@ -229,6 +251,31 @@ describe('GymPlayer ship config panel', () => {
     expect(player!.getScheme()).toBe('asteroids');
   });
 
+  it('AC2 — update() maps held keys through the shared scheme→input helper', async () => {
+    const scene = await bootPlayer();
+    await tick();
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Default scheme is Asteroids; switch to fourDirectional so the
+    // right-arrow key produces four-directional thrust.
+    (panel()!.querySelector(`#${SCHEME_TOGGLE_ID}`) as HTMLButtonElement).click();
+    expect(player!.getScheme()).toBe('fourDirectional');
+
+    // Hold the right cursor key and run one frame through update().
+    const cursors = (
+      scene as unknown as {
+        cursors: Phaser.Types.Input.Keyboard.CursorKeys;
+      }
+    ).cursors;
+    cursors.right.isDown = true;
+    const beforeX = player!.x;
+    scene.update(0, 1000);
+    cursors.right.isDown = false;
+
+    expect(player!.x).toBeGreaterThan(beforeX);
+  });
+
   it('applies the rotation-speed slider live in Asteroids mode (AC3)', async () => {
     const scene = await bootPlayer();
     await tick();
@@ -285,6 +332,15 @@ describe('GymPlayer ship config panel', () => {
     expect(toggle.dataset['scheme']).toBe('asteroids');
   });
 
+  // ── Panel anchoring (AH-0MUAYB7O4009LWBF) ───────────────────────
+
+  it('panel has the shared .gym-panel class for bottom-left anchoring (AH-0MUAYB7O4009LWBF)', async () => {
+    await bootPlayer();
+    const p = panel();
+    expect(p).not.toBeNull();
+    expect(p!.className).toContain('gym-panel');
+  });
+
   // ── Deceleration slider ─────────────────────────────────────────
 
   it('applies deceleration slider changes live to the ship movement', async () => {
@@ -324,5 +380,43 @@ describe('GymPlayer ship config panel', () => {
     const decelDistance = player!.x - xAtRelease - driftDistance;
     expect(decelDistance).toBeLessThan(driftDistance);
     expect(decelDistance).toBeLessThan(100);
+  });
+});
+
+describe('GymPlayer — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore([], DEFAULT_CONFIG);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  it('AC2 — SHUTDOWN destroys the ship and clears the input bindings', async () => {
+    booted = await bootScene([GymPlayer]);
+    const scene = booted.scene as GymPlayer;
+    const internal = scene as unknown as {
+      player: Player | null;
+      cursors: unknown;
+      wasd: unknown;
+    };
+    expect(internal.player).not.toBeNull();
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(internal.player).toBeNull();
+    expect(internal.cursors).toBeUndefined();
+    expect(internal.wasd).toBeUndefined();
+
+    // A same-instance restart must rebuild a fresh ship.
+    expect(() => scene.create()).not.toThrow();
+    expect(internal.player).not.toBeNull();
   });
 });

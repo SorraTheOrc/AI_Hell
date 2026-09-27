@@ -12,7 +12,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
-import { addEntry, getEntries } from '../core/Leaderboard';
+import { addEntry, getEntries, MAX_ENTRIES } from '../core/Leaderboard';
+import {
+  LEADERBOARD_PREVIEW_COLOR,
+  LEADERBOARD_TEXT_COLOR,
+} from '../ui/leaderboardView';
 import { GameOverScene, INITIALS_LENGTH, isInitialsLetter } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 
@@ -273,12 +277,20 @@ describe('GameOverScene — full leaderboard display (AC6)', () => {
     }
   });
 
-  it('shows a placeholder when the leaderboard is empty', async () => {
+  it('shows a prospective #1 row (not the empty message) on an empty board', async () => {
     booted = await bootGameOver();
     const scene = booted.scene as GameOverScene;
 
     expect(getEntries()).toEqual([]);
-    expect(findTextContaining(scene, 'No scores yet')).toBeDefined();
+    // A qualifying score replaces the empty-state message with the preview row
+    // (AC1 has no persisted entries to show but still renders the rank).
+    const preview = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text.startsWith('▶'),
+    );
+    expect(preview).toBeDefined();
+    expect(preview!.text).toContain('#1');
+    expect(preview!.text).toContain('___');
+    expect(findTextContaining(scene, 'No scores yet')).toBeUndefined();
   });
 });
 
@@ -412,5 +424,137 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
 
     await new Promise((r) => setTimeout(r, 350));
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+});
+
+describe('GameOverScene — live leaderboard preview (AH-0MUE86S5F002VVQD)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Rendered prospective row texts (they start with the highlight marker). */
+  function previewRows(scene: GameOverScene): Phaser.GameObjects.Text[] {
+    return (scene.children.list as Phaser.GameObjects.Text[]).filter(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text.startsWith('▶'),
+    );
+  }
+
+  /** Numeric score column for each persisted row rendered on screen. */
+  function scoresOf(scene: GameOverScene): number[] {
+    return leaderboardRows(scene).map((r) =>
+      Number(r.text.split(/\s+/).filter(Boolean)[2]),
+    );
+  }
+
+  async function startWith(score: number): Promise<GameOverScene> {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', { score, won: false });
+    await new Promise((r) => setTimeout(r, 350));
+    return booted.game.scene.getScene('GameOverScene') as GameOverScene;
+  }
+
+  it('AC1 — qualifying score shows one highlighted row immediately, before typing', async () => {
+    addEntry('AAA', 300);
+    addEntry('BBB', 100);
+
+    const scene = await startWith(200);
+
+    expect(scene.getQualifies()).toBe(true);
+    const preview = previewRows(scene);
+    expect(preview).toHaveLength(1);
+    expect(preview[0].text).toContain('#2');
+    expect(preview[0].text).toContain('___');
+    expect(preview[0].style.color).toBe(LEADERBOARD_PREVIEW_COLOR);
+    expect(scene.getPreviewEntry()).toMatchObject({
+      rank: 2,
+      initials: '',
+      score: 200,
+      isPreview: true,
+    });
+  });
+
+  it('AC2 — each letter and Backspace updates the prospective row live', async () => {
+    addEntry('AAA', 300);
+    const scene = await startWith(200);
+
+    scene.handleInitialsKey('A');
+    expect(previewRows(scene)[0].text).toContain('A__');
+    scene.handleInitialsKey('B');
+    expect(previewRows(scene)[0].text).toContain('AB_');
+    scene.handleInitialsKey('Backspace');
+    expect(previewRows(scene)[0].text).toContain('A__');
+    scene.handleInitialsKey('Backspace');
+    expect(previewRows(scene)[0].text).toContain('___');
+
+    // Re-rendering replaces the row rather than accumulating text objects.
+    expect(previewRows(scene)).toHaveLength(1);
+    // Only the prospective row shows placeholders.
+    expect(leaderboardRows(scene).every((r) => !r.text.includes('_'))).toBe(true);
+  });
+
+  it('AC3 — only the prospective row is highlighted and marked', async () => {
+    addEntry('AAA', 300);
+    addEntry('BBB', 100);
+    const scene = await startWith(200);
+
+    expect(previewRows(scene)).toHaveLength(1);
+    for (const row of leaderboardRows(scene)) {
+      expect(row.text).not.toContain('▶');
+      expect(row.style.color).toBe(LEADERBOARD_TEXT_COLOR);
+    }
+    expect(previewRows(scene)[0].style.color).toBe(LEADERBOARD_PREVIEW_COLOR);
+  });
+
+  it(`AC4 — full table inserts the prospective row at its rank and drops the lowest`, async () => {
+    for (let i = 1; i <= 10; i++) addEntry('AAA', i * 100);
+    const scene = await startWith(1100);
+
+    expect(scene.getQualifies()).toBe(true);
+    // Nine persisted rows survive (the 100-point entry is displaced) + preview.
+    expect(leaderboardRows(scene)).toHaveLength(MAX_ENTRIES - 1);
+    expect(scoresOf(scene)).not.toContain(100);
+    expect(scoresOf(scene)).toContain(200);
+
+    const preview = previewRows(scene);
+    expect(preview).toHaveLength(1);
+    expect(preview[0].text).toContain('#1');
+    expect(scene.getPreviewEntry()).toMatchObject({ rank: 1, score: 1100 });
+  });
+
+  it('AC5 — non-qualifying score renders no prospective row and writes nothing', async () => {
+    for (let i = 1; i <= 10; i++) addEntry('AAA', i * 100);
+    const before = getEntries();
+
+    const scene = await startWith(50);
+
+    expect(scene.getQualifies()).toBe(false);
+    expect(previewRows(scene)).toHaveLength(0);
+    expect(scene.getPreviewEntry()).toBeNull();
+
+    scene.submitScoreAndReturn();
+    await new Promise((r) => setTimeout(r, 350));
+    expect(getEntries()).toEqual(before);
+  });
+
+  it('AC6 — the persisted entry takes the rank shown by the preview', async () => {
+    addEntry('AAA', 500);
+    addEntry('BBB', 300);
+    const scene = await startWith(400);
+
+    const previewRank = scene.getPreviewEntry()!.rank;
+    expect(previewRank).toBe(2);
+
+    scene.handleInitialsKey('X');
+    scene.handleInitialsKey('Y');
+    scene.handleInitialsKey('Z');
+    scene.handleInitialsKey('Enter');
+
+    const persisted = getEntries().find((e) => e.initials === 'XYZ')!;
+    expect(persisted.rank).toBe(previewRank);
+    expect(persisted.score).toBe(400);
   });
 });

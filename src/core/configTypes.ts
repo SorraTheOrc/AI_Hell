@@ -76,6 +76,26 @@ export interface EnemyConfig {
   [extra: string]: unknown;
 }
 
+// ── Difficulty-curve config ─────────────────────────────────────────
+
+/**
+ * One (level, wave) row of the data-driven difficulty curve
+ * (AH-0MUH6LEYY0054E63). The curve length of a level (its number of rows)
+ * defines that level's wave count; `levelName` supplies the level's theme
+ * name. Kept in this leaf module so the CSV codec and the Vite plugin can
+ * use the shape without pulling in `configStore.ts`.
+ */
+export interface DifficultyCurveRow {
+  /** 1-based level number (the configured campaign skeleton is data-driven). */
+  level: number;
+  /** Human-readable level theme name, e.g. `The Core`. */
+  levelName: string;
+  /** 1-based wave number within the level. */
+  wave: number;
+  /** Target difficulty score for this wave (0–100, same scale as the sequencer). */
+  targetDifficulty: number;
+}
+
 // ── Ship config ─────────────────────────────────────────────────────
 
 export type ControlScheme = 'fourDirectional' | 'asteroids';

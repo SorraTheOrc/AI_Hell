@@ -893,6 +893,73 @@ describe('Player ship entity', () => {
     // After remaining cooldown: fires again (450 ms total ≥ 400 ms).
     expect(player!.tryFire(0.35)).toEqual(['cannon']);
   });
+
+  it('setFireRateMultiplier scales the effective cooldown (P5 AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Baseline: the cannon fires, then is blocked for a sub-400 ms interval.
+    player!.setFireRateMultiplier(1);
+    expect(player!.tryFire(0.5)).toEqual(['cannon']);
+    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 400 ms → blocked
+
+    // With a 1.5× multiplier the effective cooldown is 400 / 1.5 ≈ 266.7 ms,
+    // so the same 300 ms gap now clears the cooldown.
+    player!.setFireRateMultiplier(1.5);
+    expect(player!.tryFire(0.3)).toEqual(['cannon']);
+  });
+
+  it('effective fire interval is fireRateMs / multiplier (P5 AC1)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // At 1.5× a 400 ms cannon reloads in ~266.7 ms. 260 ms must still be
+    // blocked, 270 ms must have elapsed — proving the interval was divided.
+    player!.setFireRateMultiplier(1.5);
+    expect(player!.tryFire(0.5)).toEqual(['cannon']);
+    expect(player!.tryFire(0.26)).toEqual([]); // 260 ms < 266.7 ms
+    expect(player!.tryFire(0.02)).toEqual(['cannon']); // 280 ms ≥ 266.7 ms
+  });
+
+  it('fire-rate multiplier returns to 1 (normal) when reset (P5 AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    // Boosted: a 300 ms gap fires.
+    player!.setFireRateMultiplier(1.5);
+    expect(player!.tryFire(0.5)).toEqual(['cannon']);
+    expect(player!.tryFire(0.3)).toEqual(['cannon']);
+
+    // Back to normal: the next fire re-arms at the 400 ms cannon rate, so
+    // a subsequent 300 ms gap is below the cooldown and must be blocked.
+    player!.setFireRateMultiplier(1);
+    expect(player!.tryFire(0.3)).toEqual(['cannon']); // re-arm at 400 ms
+    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 400 ms → blocked
+  });
+
+  it('a boosted ship keeps firing after respawn without re-setting (P5 AC2)', async () => {
+    const scene = await bootPlayerScene();
+    await tick();
+
+    const player = playerOf(scene);
+    expect(player).toBeDefined();
+
+    player!.setFireRateMultiplier(1.5);
+    player!.respawnInPlace();
+
+    // Multiplier persists across respawn (scene re-applies each frame).
+    expect(player!.tryFire(0.5)).toEqual(['cannon']);
+    expect(player!.tryFire(0.3)).toEqual(['cannon']);
+  });
 });
 
 // ── Asteroids control scheme (AC1, AC2, AC3, AC5) ───────────────────

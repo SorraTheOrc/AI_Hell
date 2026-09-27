@@ -28,13 +28,14 @@ import { enemyDifficulty } from '../../core/enemyDifficulty';
 import type { FormationOffset } from '../../utils/formations';
 import { getFormationBuilder } from '../../utils/formations';
 import { PLAYER_SPAWN, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
-import { Player } from '../../entities/Player';
-import { playSpawnSound } from '../../audio/effects';
+import { splitAsteroid } from '../core/asteroidSplit';
 import {
   applyAndPersistSpawnInterval,
   buildSpawnIntervalSlider,
 } from '../../utils/gymPowerUpControl';
+import { makeCollapsible } from '../../utils/gymPanel';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
+import { fireForEnemy } from '../../entities/enemyFire';
 import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
@@ -70,6 +71,9 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   fireInterval: { min: 100, max: 5000, step: 50 },
   shotProbability: { min: 0, max: 1, step: 0.05 },
   bulletSpeed: { min: 40, max: 600, step: 5 },
+  // Bullet TTL in seconds — matches FACTOR_RANGES.bulletLifetime so designers
+  // stay inside the difficulty model's normalised range (AH-0MUDYTPMC002GLEJ).
+  bulletLifetime: { min: 0.1, max: 5.0, step: 0.1 },
   burstCount: { min: 1, max: 24, step: 1 },
 };
 
@@ -94,38 +98,10 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
   const key = cfg.key || enemyKey || GYM_ENEMIES_DEFAULT_KEY;
   const builder = getFormationBuilder(cfg.formationKind);
 
-  const collectBullets = (entity: EnemyEntity, now: number): GymEnemiesBullet[] => {
-    const e = entity as unknown as Record<string, unknown>;
-    switch (key) {
-      case 'scout': {
-        const m = e['tryFireAimedBullet'] as ((now: number) => unknown) | undefined;
-        const b = m?.call(entity, now) as GymEnemiesBullet | null | undefined;
-        return b ? [b] : [];
-      }
-      case 'diver': {
-        const m = e['tryFireSpreadBurst'] as ((now: number) => GymEnemiesBullet[]) | undefined;
-        return m?.call(entity, now) ?? [];
-      }
-      case 'tank': {
-        const m = e['tryFireRadialBurst'] as ((now: number) => GymEnemiesBullet[]) | undefined;
-        return m?.call(entity, now) ?? [];
-      }
-      case 'phaser': {
-        const m = e['tryFireRadialBullets'] as ((now: number) => GymEnemiesBullet[]) | undefined;
-        return m?.call(entity, now) ?? [];
-      }
-      case 'swarm': {
-        const m = e['tryFireBurstBullet'] as ((now: number) => GymEnemiesBullet | null) | undefined;
-        const b = m?.call(entity, now) as GymEnemiesBullet | null | undefined;
-        return b ? [b] : [];
-      }
-      default: {
-        const m = e['tryFireAimedBullet'] as ((now: number) => unknown) | undefined;
-        const b = m?.call(entity, now) as GymEnemiesBullet | null | undefined;
-        return b ? [b] : [];
-      }
-    }
-  };
+  // Shared archetype→tryFire dispatch (AH-0MUII3BBW000XZ46): a new
+  // archetype is wired once, in `src/entities/enemyFire.ts`.
+  const collectBullets = (entity: EnemyEntity, now: number): GymEnemiesBullet[] =>
+    fireForEnemy<GymEnemiesBullet>(entity, key, now);
 
   return {
     sceneKey: 'GymEnemies',
@@ -150,27 +126,18 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     // rock spawns exactly two smaller children that join the live formation
     // list, so the EXPLODE button and player bullets both cascade splits and
     // the wipe→respawn cycle only fires once the whole chain is cleared.
+    // Uses the shared helper the shipped game also consumes (gap 8).
     onEntityDestroyed: (entity: EnemyEntity): void => {
       if (!(entity instanceof Asteroid)) return;
-      const parent = entity as Asteroid;
-      const children = parent.getSplitChildren(parent.x, parent.y);
-      if (!children) return; // small tier — clean destruction
-      const scene = parent.scene as Phaser.Scene;
+      const scene = entity.scene as
+        | GymFormationScene<EnemyEntity, GymEnemiesBullet>
+        | null;
       if (!scene) return;
-      const live = (scene as unknown as { entities: EnemyEntity[] }).entities;
-      for (const spec of children) {
-        const child = new Asteroid(scene, {
-          x: spec.x,
-          y: spec.y,
-          formationOffset: { row: 0, col: 0 },
-          sizeTier: spec.sizeTier,
-          vx: spec.vx,
-          vy: spec.vy,
-          rotationSpeed: spec.rotationSpeed,
-        });
-        scene.add.existing(child);
-        live.push(child);
-      }
+      splitAsteroid({
+        scene,
+        parent: entity,
+        register: (child) => scene.registerDynamicEntity(child),
+      });
     },
   };
 }
@@ -213,6 +180,8 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     document.getElementById(ENEMY_PANEL_ID)?.remove();
     const panel = document.createElement('div');
     panel.id = ENEMY_PANEL_ID;
+    // Shared bottom-left anchoring + viewport height cap (AH-0MUAYB7O4009LWBF).
+    panel.className = 'gym-panel';
 
     // Live archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5) — gives
     // designers immediate feedback while tuning, without a running game.
@@ -295,6 +264,9 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
 
     actions.append(save, saveAsInput, saveAs, status);
     panel.appendChild(actions);
+
+    // Wrap the controls in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
+    makeCollapsible({ panel, title: 'AI Config' });
 
     host.appendChild(panel);
     this.panel = panel;
@@ -461,6 +433,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       if ('_bulletColor' in e) (e as Record<string, unknown>)['_bulletColor'] = config.bulletColor;
       if ('_bulletSize' in e) (e as Record<string, unknown>)['_bulletSize'] = config.bulletSize;
       if ('_bulletSpeed' in e) (e as Record<string, unknown>)['_bulletSpeed'] = config.bulletSpeed;
+      if ('_bulletLifetime' in e) (e as Record<string, unknown>)['_bulletLifetime'] = config.bulletLifetime;
       if ('_fireInterval' in e) (e as Record<string, unknown>)['_fireInterval'] = config.fireInterval;
       if ('_burstCount' in e) (e as Record<string, unknown>)['_burstCount'] = config.burstCount;
       if ('_shotProbability' in e) (e as Record<string, unknown>)['_shotProbability'] = config.shotProbability;
@@ -475,7 +448,9 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     const cfg = this._readPanelValues();
     this.activeConfig = cfg;
 
-    // Keep the protected formation seam in sync so future ticks use the new tuning.
+    // Keep the protected formation seam in sync so future ticks use the new
+    // tuning, and rebuild the entity factory so the shared respawn spawns with
+    // the live-edited config (createEntity is closed over the construction cfg).
     const builder = getFormationBuilder(cfg.formationKind);
     this.config.buildOffsets = builder;
     this.config.count = cfg.count;
@@ -484,66 +459,33 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     this.config.driftSpeed = cfg.driftSpeed;
     this.config.startX = cfg.startX;
     this.config.startY = cfg.startY;
+    this.config.createEntity = (scene, x, y, offset) =>
+      createEnemyFromConfig(scene, cfg, x, y, offset);
 
-    // Tear down existing enemies and enemy bullets.
-    for (const e of this.entities) e.destroy();
-    (this.entities as EnemyEntity[]).length = 0;
-    for (const b of this.bullets) b.graphics.destroy();
-    (this.bullets as GymEnemiesBullet[]).length = 0;
-    // Also clear player bullets so the respawn is a clean slate.
+    // A manual respawn is a clean slate for the player's shots too; the
+    // shared respawn seam deliberately keeps them for the wipe→countdown path.
     for (const pb of this.playerBullets) pb.destroy();
-    (this.playerBullets as unknown[]).length = 0;
+    this.playerBullets = [];
 
-    // Reset formation origin to the (possibly new) start.
-    this.formationBaseX = cfg.startX;
-    this.formationBaseY = cfg.startY;
+    // Shared formation-respawn seam (gap 9) — the same code the
+    // wipe→countdown path runs, so the two can never drift apart.
+    this.respawnFormation();
 
-    // Spawn a fresh formation using the same factory the initial create() used.
-    // createEntity is closed over the original cfg at construction time, so
-    // rebuild a config-aware factory that captures the new cfg.
-    const offsets = builder(cfg.count);
-    for (const offset of offsets) {
-      const entity = createEnemyFromConfig(this, cfg, this.formationBaseX + offset.col * cfg.spacingX, this.formationBaseY + offset.row * cfg.spacingY, offset);
-      this.add.existing(entity);
-      this.entities.push(entity);
-    }
-    // Preserve SHOOT toggle state across the respawn.
-    for (const e of this.entities) e.shootEnabled = this.shootingEnabled;
-
-    // Refresh the status line so the count is correct.
-    const st = (this as unknown as { statusText?: Phaser.GameObjects.Text }).statusText;
-    st?.setText(`SCORE: n/a — ${cfg.displayName.toLowerCase()}: ${this.entities.length}`);
-    playSpawnSound();
+    // The active config's display name may differ from the construction-time
+    // status label after Save As; keep the HUD accurate.
+    this.statusText?.setText(
+      `SCORE: n/a — ${cfg.displayName.toLowerCase()}: ${this.entities.length}`,
+    );
   }
 
   private _onTogglePlayer(): void {
     const btn = this.panel?.querySelector<HTMLButtonElement>(`#${ENEMY_TOGGLE_PLAYER_ID}`);
-    if (this._playerEnabled) {
-      // Turn OFF — despawn the ship and clear its bullets.
-      if (this.player) {
-        this.player.destroy();
-        (this as unknown as { player: Player | null }).player = null;
-      }
-      for (const pb of this.playerBullets) pb.destroy();
-      (this.playerBullets as unknown[]).length = 0;
-      this._playerEnabled = false;
-      if (btn) {
-        btn.dataset['enabled'] = 'false';
-        btn.textContent = 'Player: OFF';
-      }
-    } else {
-      // Turn ON — respawn at the canonical spawn point.
-      const p = new Player(this, { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y });
-      this.add.existing(p);
-      (this as unknown as { player: Player | null }).player = p;
-      // Keep private spawn coords in sync (accessed via any — they are private in the base).
-      (this as unknown as Record<string, unknown>)['playerSpawnX'] = PLAYER_SPAWN.x;
-      (this as unknown as Record<string, unknown>)['playerSpawnY'] = PLAYER_SPAWN.y;
-      this._playerEnabled = true;
-      if (btn) {
-        btn.dataset['enabled'] = 'true';
-        btn.textContent = 'Player: ON';
-      }
+    // Shared player-enable seam (gap 9): the base owns the destroy/respawn
+    // and spawn-coordinate bookkeeping — no casts into base internals.
+    this._playerEnabled = this.setPlayerEnabled(!this._playerEnabled);
+    if (btn) {
+      btn.dataset['enabled'] = this._playerEnabled ? 'true' : 'false';
+      btn.textContent = this._playerEnabled ? 'Player: ON' : 'Player: OFF';
     }
   }
 

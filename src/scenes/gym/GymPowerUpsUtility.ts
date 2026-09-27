@@ -7,8 +7,9 @@
  * collecting drops; each collected drop applies its FULL GDD §4.4
  * behaviour observable without threats:
  *
- * - **P5 Speed Boost** — +50% thrust/max-speed live for 10 s (refresh on
- *   re-collect), applied to the ship via `Player.setSpeedMultiplier`.
+ * - **P5 Speed Boost** — +50% thrust/max-speed and +50% rate of fire live
+ *   for 10 s (refresh on re-collect), applied to the ship via
+ *   `Player.setSpeedMultiplier` + `Player.setFireRateMultiplier`.
  * - **P8 Extra Life** — +1 life immediately (starts 3, cap 5).
  * - **P9 Magnet** — permanent stack (cap 5); drops within
  *   `2× ship size +50%/stack` are pulled toward the ship at
@@ -19,43 +20,36 @@
  * so the next spawn coincides with the previous drop's despawn (exactly
  * one drop on screen while nothing is collected).
  *
+ * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * run through the shared `src/scenes/core/dropLayer.ts` template methods
+ * (`_updateDropLayer`, `_advanceDropLifecycles`, `_collectOverlappingDrops`,
+ * `_applyDropMagnet`, `_playPickupCue`), so this gym cannot drift from the
+ * game; only the round-robin spawn *source* is gym-specific
+ * (AH-0MUII3CXX0023H24, gap 4).
+ *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
  */
 
 import Phaser from 'phaser';
 
+import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
 import { Player } from '../../entities/Player';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
-import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import { getPowerUpById, PowerUpId } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
-import { applyMagnetAttraction } from '../../powerups/magnet';
-import {
-  spawnCollectAnimation,
-  type CollectAnimationHandle,
-} from '../../powerups/collectAnimation';
-import {
-  playPowerUpCollectPopSound,
-  playSpeedBoostCollectSound,
-  playExtraLifeCollectSound,
-  playMagnetCollectSound,
-} from '../../audio/effects';
+import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
-import {
-  AsteroidsInputHandler,
-  ControlInput,
-  FourDirectionalInputHandler,
-} from '../../utils/movementModel';
+import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
-  SHIP_SIZE,
 } from '../../core/constants';
 
 /** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9). */
@@ -80,14 +74,24 @@ export interface ActiveDrop {
   graphics: Phaser.GameObjects.Graphics;
   /** True once collected and playing its absorb VFX (AC4). */
   absorbing?: boolean;
+  /** Unified drop id for the shared collect path. */
+  dropId: PowerUpId;
 }
 
-export class GymPowerUpsUtility extends Phaser.Scene {
+/**
+ * Non-combat power-ups gym. Extends the narrower shared
+ * {@link CombatCoreScene} so drop collection and the input path flow
+ * through the one shared implementation; the gym supplies its P5/P8/P9
+ * pickup cues through hooks.
+ */
+export class GymPowerUpsUtility extends CombatCoreScene<
+  CombatEnemyEntity,
+  CombatEnemyBullet,
+  ActiveDrop
+> {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
-  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
-  private collectAnimations: CollectAnimationHandle[] = [];
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner(NON_COMBAT_ORDER);
   /** Index into the deterministic spawn positions. */
@@ -95,17 +99,17 @@ export class GymPowerUpsUtility extends Phaser.Scene {
   /** Countdown to the next round-robin spawn (starts at 0 → immediate first drop). */
   private spawnTimer = 0;
   private hud: HUD | null = null;
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  /** Pluggable input handlers (one per control scheme, mirrors GymPlayer). */
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
+  /** Shared help affordance (AH-0MUAYB67I002REOZ). */
+  private helpHandle: GymHelpHandle | null = null;
 
   constructor() {
     super({ key: 'GymPowerUpsUtility' });
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -114,17 +118,21 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
     // Shared "← INDEX" button (AC5 of the parent), reused by every gym.
     addBackToIndexButton(this);
+    // Shared "Help (?)" button + overlay: lists every drop this gym can
+    // spawn, sourced from the shared catalogues (AH-0MUAYB67I002REOZ).
+    this.helpHandle = addHelpButton(this, {
+      gymKey: 'GymPowerUpsUtility',
+      drops: NON_COMBAT_ORDER,
+    });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
 
-    // Release any in-flight absorb animations on shutdown/restart.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-    });
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys(
@@ -132,9 +140,48 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     ) as WasdKeysLike | undefined;
   }
 
+  /**
+   * Resets shared per-run state (effects registry + bullet/animation
+   * registries via the core) plus this gym's player, drops and spawn
+   * timer (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.player = null;
+    this.drops = [];
+    this.spawnIndex = 0;
+    this.spawnTimer = 0;
+    this.hud = null;
+    this.helpHandle = null;
+  }
+
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    for (const drop of this.drops) drop.graphics.destroy();
+    this.drops = [];
+    this.player?.destroy();
+    this.player = null;
+    this.hud?.destroy();
+    this.hud = null;
+    this.helpHandle = null;
+  }
+
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */
   update(_time: number, delta: number): void {
     this.tick(delta / 1000);
+  }
+
+  /**
+   * This gym demonstrates non-combat power-ups only: it has no weapon
+   * drops and its player must not fire, so the shared step's auto-fire
+   * resolves to a no-op (AH-0MUII39KX007YUQ0, AC1).
+   */
+  protected override autoFireEnabled(): boolean {
+    return false;
   }
 
   /**
@@ -145,14 +192,10 @@ export class GymPowerUpsUtility extends Phaser.Scene {
   tick(dt: number): void {
     if (!this.player) return;
 
-    // ── Ship: input → thrust movement + screen-wrap ─────────────
-    const input = this._readInput();
-    if (input) {
-      this.player.setInput(input);
-    }
-    // P5 live boost: scale thrust/max-speed each frame.
-    this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
-    this.player.physicsTick(dt, this.scale.width, this.scale.height);
+    // ── Shared player-control step: timers → multipliers → input →
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1). The P5 multipliers
+    // land here so the boost is live on this frame.
+    this._tickPlayer(dt);
 
     // ── Spawner: one drop per interval, round-robin ─────────────
     if (this.spawnTimer <= 0) {
@@ -162,16 +205,9 @@ export class GymPowerUpsUtility extends Phaser.Scene {
       this.spawnTimer -= dt;
     }
 
-    // ── Drop lifecycles ─────────────────────────────────────────
-    this.advanceDrops(dt);
-
-    // ── Magnet attraction (P9) ──────────────────────────────────
-    this._applyMagnet(dt);
-
-    // ── Overlap collection (gated by the >3% scale threshold) ──
-    this._collectOverlapping();
-    // Advance the absorb VFX for collected drops (cosmetic only).
-    this._updateCollectAnimations(dt);
+    // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
+    //    lifecycle, overlap collection, absorb VFX ──
+    this.drops = this._updateDropLayer(this.drops, dt);
 
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
@@ -209,135 +245,17 @@ export class GymPowerUpsUtility extends Phaser.Scene {
     // Start at scale 0 — the lifecycle grows it in.
     graphics.setScale(0);
 
-    const drop: ActiveDrop = { powerUp: new PowerUp(id), x, y, graphics };
+    const drop: ActiveDrop = { powerUp: new PowerUp(id), x, y, graphics, dropId: id };
     this.drops.push(drop);
     return drop;
   }
 
-  /** Advances every drop's lifecycle by `dt` seconds (grow/hold/shrink). */
+  /**
+   * Advances every drop's lifecycle by `dt` seconds through the shared
+   * helper (grow/hold/shrink). Public test seam.
+   */
   advanceDrops(dt: number): void {
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      // Bubble + icon scale tracks the lifecycle scale factor (0 → 1 → 0).
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
-        kept.push(drop);
-      } else {
-        // Fully despawned — remove the drop's visuals from the display list.
-        drop.graphics.destroy();
-      }
-    }
-    this.drops = kept;
-  }
-
-  // ── Magnet / collection ──────────────────────────────────────────
-
-  /** P9: pulls collectible drops within range toward the ship. */
-  private _applyMagnet(dt: number): void {
-    if (!this.player) return;
-    const stacks = this.effectsRegistry.magnetStacks();
-    if (stacks <= 0) return;
-    applyMagnetAttraction(this.drops, this.player, stacks, dt);
-  }
-
-  /**
-   * Collects drops overlapping the ship hull when they are above the 3%
-   * scale threshold. A collected drop applies its effect exactly once and
-   * is removed; an uncollected drop that fades away applies nothing.
-   */
-  private _collectOverlapping(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: ActiveDrop[] = [];
-    for (const drop of this.drops) {
-      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  private _overlapsShip(drop: ActiveDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
-    const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
-    return dist <= hull + dropRadius;
-  }
-
-  /** Applies the drop's effect to the registry; marks it collected. */
-  private _collectDrop(drop: ActiveDrop): void {
-    const effect = drop.powerUp.tryCollect();
-    if (!effect) return;
-    this.effectsRegistry.applyCollect(effect.id as PowerUpId);
-
-    // Mark the drop so the overlap gate cannot re-collect it while the
-    // absorb animation plays (AC4).
-    drop.absorbing = true;
-    // Start the cosmetic absorb VFX; the Graphics stays alive until the
-    // animation completes, then is destroyed (AC3).
-    this._startCollectAnimation(drop);
-
-    // AC — non-combat pickup activation audio: each pickup type plays
-    // a unique activation sound on collection, plus the generic pop.
-    // Safe no-op without an AudioContext.
-    try {
-      playPowerUpCollectPopSound();
-      switch (effect.id) {
-        case 'P5':
-          playSpeedBoostCollectSound();
-          break;
-        case 'P8':
-          playExtraLifeCollectSound();
-          break;
-        case 'P9':
-          playMagnetCollectSound();
-          break;
-      }
-    } catch {
-      // Audio is best-effort (headless tests have no AudioContext).
-    }
-  }
-
-  /** Starts the absorb animation for a collected drop (AC3). */
-  private _startCollectAnimation(drop: ActiveDrop): void {
-    const shipX = this.player?.x ?? drop.x;
-    const shipY = this.player?.y ?? drop.y;
-    this.collectAnimations.push(
-      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
-    );
-  }
-
-  /** Advances in-flight absorb animations and prunes completed handles. */
-  private _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (this.player) handle.setAttractor(this.player.x, this.player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
-    }
-    this.collectAnimations = kept;
-  }
-
-  // ── Input ─────────────────────────────────────────────────────────
-
-  /**
-   * Reads the current held-key state into the scheme-appropriate
-   * `ControlInput`, keyed off the player's saved control scheme (mirrors
-   * GymPlayer._readInput — parent AC3). Returns null when no keyboard is
-   * available or the player is absent.
-   */
-  private _readInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
+    this.drops = this._advanceDropLifecycles(this.drops, dt);
   }
 
   // ── Public test accessors ─────────────────────────────────────────
@@ -371,5 +289,10 @@ export class GymPowerUpsUtility extends Phaser.Scene {
 
   getHud(): HUD | null {
     return this.hud;
+  }
+
+  /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */
+  getHelpHandle(): GymHelpHandle | null {
+    return this.helpHandle;
   }
 }

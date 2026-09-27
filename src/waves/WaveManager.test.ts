@@ -81,18 +81,16 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
     expect(getLevelDefinition(6)).toBeNull();
   });
 
-  it('AC1 — Level 1 uses Scout V-formations plus a roaming Asteroid, with no enemy fire', () => {
+  it('AC1 — Level 1 uses Scout V-formations with no enemy fire', () => {
     const l1 = getLevelDefinition(1)!;
     const keys = new Set(
       l1.waves.flatMap((w) => w.groups.map((g) => g.enemyKey)),
     );
-    // Wave 1 pairs the standard Scout V-formation with one Asteroid group
-    // (E6 — GDD §4.1); Wave 2 is Scouts only.
-    expect(keys).toEqual(new Set(['scout', 'asteroid']));
+    // Wave 1 is Scouts only (asteroids now come from the random spawner,
+    // GDD §4.1 — E6 Asteroid); Wave 2 is Scouts only.
+    expect(keys).toEqual(new Set(['scout']));
     expect(l1.waves.every((w) => w.shootEnabled === false)).toBe(true);
-    // The asteroid group is present in Level 1 Wave 1 alongside Scouts.
     const wave1 = l1.waves[0];
-    expect(wave1.groups.map((g) => g.enemyKey)).toContain('asteroid');
     expect(wave1.groups.map((g) => g.enemyKey)).toContain('scout');
   });
 
@@ -333,6 +331,78 @@ describe('WaveManager — progression (AH-0MU72ZK3P006CH9G)', () => {
     const wm = new WaveManager();
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.started).toBe(false);
+  });
+});
+
+describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () => {
+  it('globalWaveIndex is 0 before beginGame is called', () => {
+    const wm = new WaveManager();
+    expect(wm.globalWaveIndex).toBe(0);
+  });
+
+  it('globalWaveIndex is 0 after beginGame at Level 1 Wave 1', () => {
+    const wm = new WaveManager();
+    wm.beginGame();
+    expect(wm.globalWaveIndex).toBe(0);
+  });
+
+  it('globalWaveIndex increments through waves within a level', () => {
+    // Level 2 has 3 waves.
+    const wm = new WaveManager();
+    wm.beginGame();
+    expect(wm.globalWaveIndex).toBe(0); // L1 W1
+    clearWave(wm); // L1 W1 → L1 W2
+    expect(wm.globalWaveIndex).toBe(1);
+    clearWave(wm); // L1 W2 → L2 W1
+    expect(wm.globalWaveIndex).toBe(2);
+  });
+
+  it('globalWaveIndex increments correctly across levels', () => {
+    // Level 1 has 2 waves, Level 2 has 3 waves, Level 3 has 3 waves.
+    const wm = new WaveManager();
+    wm.beginGame();
+    // Clear Level 1 (2 waves) → L2 W1, globalWaveIndex = 2
+    expect(clearLevel(wm)).toBe('levelCleared');
+    expect(wm.globalWaveIndex).toBe(2);
+    clearWave(wm); // L2 W1 → L2 W2, globalWaveIndex = 3
+    expect(wm.globalWaveIndex).toBe(3);
+    clearWave(wm); // L2 W2 → L2 W3, globalWaveIndex = 4
+    expect(wm.globalWaveIndex).toBe(4);
+    clearWave(wm); // L2 W3 → L3 W1, globalWaveIndex = 5
+    expect(wm.globalWaveIndex).toBe(5);
+  });
+
+  it('globalWaveIndex for the full campaign — last regular wave is index 12', () => {
+    const wm = new WaveManager();
+    wm.beginGame();
+    // Clear all 5 levels (wave counts: 2+3+3+3+2 = 13 regular waves).
+    for (let level = 1; level <= 5; level++) {
+      const levelStartGWI = wm.globalWaveIndex;
+      const waveCount = wm.waveCount;
+      for (let w = 0; w < waveCount; w++) {
+        if (level < 5) {
+          expect(wm.globalWaveIndex).toBe(levelStartGWI + w);
+        }
+        clearWave(wm);
+      }
+    }
+    // After clearing Level 5 Wave 2, boss should trigger.
+    expect(wm.bossTriggered).toBe(true);
+    expect(wm.globalWaveIndex).toBe(12);
+  });
+
+  it('globalWaveIndex is 0 during a boss encounter', () => {
+    const wm = new WaveManager([level(5, 'Final', [wave('phaser', 'orbital', 1)])]);
+    wm.beginGame();
+    clearLevel(wm);
+    expect(wm.bossTriggered).toBe(true);
+    expect(wm.globalWaveIndex).toBe(0);
+    wm.beginBoss();
+    expect(wm.bossActive).toBe(true);
+    expect(wm.globalWaveIndex).toBe(0);
+    wm.onBossDefeated();
+    expect(wm.bossDefeated).toBe(true);
+    expect(wm.globalWaveIndex).toBe(0);
   });
 });
 

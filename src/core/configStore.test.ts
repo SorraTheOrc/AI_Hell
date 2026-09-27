@@ -21,18 +21,38 @@ import {
   listEnemyConfigKeys,
   loadAllEnemyConfigs,
   resetConfigStore,
+  loadDifficultyCurves,
+  saveDifficultyCurves,
+  seedDifficultyCurves,
+  defaultDifficultyCurves,
   ENEMY_CSV_PATH,
   SHIP_CSV_PATH,
+  DIFFICULTY_CURVES_CSV_PATH,
   CSV_API_PREFIX,
 } from './configStore';
 import { DEFAULT_ENEMY_CONFIGS } from './enemyConfig';
 import { DEFAULT_CONFIG } from './config';
 import type { EnemyConfig } from './enemyConfig';
+import { levelDifficulty } from './enemyDifficulty';
+import { LEVELS } from '../waves/Formations';
 
 // ── Mock server helpers ─────────────────────────────────────────────
 
 const ENEMY_FILE = 'src/data/enemy-configs.csv';
 const SHIP_FILE = 'src/data/ship-config.csv';
+const DIFFICULTY_FILE = 'src/data/difficulty-curves.csv';
+
+/** Build a valid difficulty-curve CSV with a distinguishable first target. */
+function difficultyCsvFixture(firstTarget = 5): string {
+  return (
+    '# Difficulty Curves CSV\n' +
+    'level,levelName,wave,targetDifficulty\n' +
+    `1,Entry,1,${firstTarget}\n` +
+    '1,Entry,2,9\n' +
+    '2,Descent,1,14\n' +
+    '\n'
+  );
+}
 
 /** Build a valid enemy CSV with a distinguishable scout value. */
 function enemyCsvFixture(scoutCount = 99): string {
@@ -105,6 +125,7 @@ function defaultServer(): ReturnType<typeof createServer> {
   return createServer({
     [ENEMY_FILE]: enemyCsvFixture(),
     [SHIP_FILE]: shipCsvFixture(),
+    [DIFFICULTY_FILE]: difficultyCsvFixture(),
   });
 }
 
@@ -495,5 +516,167 @@ describe('No localStorage dependency (AC7)', () => {
     expect(setItem).not.toHaveBeenCalled();
     getItem.mockRestore();
     setItem.mockRestore();
+  });
+});
+
+// ── Difficulty-curve config (AH-0MUITRZZE000OYQE) ───────────────────
+
+describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
+  it('loadDifficultyCurves falls back to the computed defaults before load', () => {
+    expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
+  });
+
+  it('dev load reads the curve CSV through the plugin pipeline', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]: difficultyCsvFixture(42),
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+
+    const curves = loadDifficultyCurves();
+    expect(curves[0]).toEqual({
+      level: 1,
+      levelName: 'Entry',
+      wave: 1,
+      targetDifficulty: 42,
+    });
+    expect(curves.length).toBe(3);
+  });
+
+  it('a missing curve file falls back to the computed defaults', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+
+    expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
+  });
+
+  it('a malformed curve file falls back to the computed defaults', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]:
+        'level,levelName,wave,targetDifficulty\n' +
+        'one,Entry,bad,not-a-number\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await expect(loadConfigs()).resolves.toBeUndefined();
+    expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
+  });
+
+  it('an empty curve file falls back to the computed defaults', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]: '# only a comment\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+    expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
+  });
+
+  it('a partially malformed curve file falls back as a whole', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]:
+        'level,levelName,wave,targetDifficulty\n' +
+        '1,Entry,1,5\n' +
+        '1,Entry,2,NOPE\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+    expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
+  });
+
+  it('saveDifficultyCurves PUTs the serialised curve and refreshes the registry', async () => {
+    const server = defaultServer();
+    vi.stubGlobal('fetch', server.fetchMock);
+    await loadConfigs();
+
+    const updated = [
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 55 },
+      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 77 },
+    ];
+    const result = await saveDifficultyCurves(updated);
+
+    expect(result.ok).toBe(true);
+    const put = server.calls.find((c) => c.method === 'PUT');
+    expect(put!.url).toContain(DIFFICULTY_CURVES_CSV_PATH);
+    expect(put!.body).toContain('55');
+    expect(put!.body).toContain('77');
+    expect(loadDifficultyCurves()).toEqual(updated);
+  });
+
+  it('saveDifficultyCurves is a no-op in production', async () => {
+    const server = defaultServer();
+    vi.stubGlobal('fetch', server.fetchMock);
+    vi.stubEnv('DEV', false);
+    await loadConfigs();
+
+    const result = await saveDifficultyCurves([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 1 },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBeTruthy();
+    expect(server.calls.some((c) => c.method === 'PUT')).toBe(false);
+  });
+
+  it('seedDifficultyCurves overrides the accessor', () => {
+    const seeded = [
+      { level: 9, levelName: 'Seeded', wave: 1, targetDifficulty: 99 },
+    ];
+    seedDifficultyCurves(seeded);
+    expect(loadDifficultyCurves()).toEqual(seeded);
+  });
+
+  it('loadDifficultyCurves returns copies so callers cannot mutate the registry', async () => {
+    const server = defaultServer();
+    vi.stubGlobal('fetch', server.fetchMock);
+    await loadConfigs();
+
+    const first = loadDifficultyCurves();
+    first[0].targetDifficulty = -1;
+    expect(loadDifficultyCurves()[0].targetDifficulty).not.toBe(-1);
+  });
+
+  it('the computed defaults are derived from the measured LEVELS scores', () => {
+    const curves = defaultDifficultyCurves();
+    for (let i = 0; i < LEVELS.length; i++) {
+      const levelRows = curves
+        .filter((row) => row.level === LEVELS[i].level)
+        .sort((a, b) => a.wave - b.wave);
+      expect(levelRows.length).toBe(LEVELS[i].waves.length);
+      const expected = Math.round(levelDifficulty(LEVELS[i].waves).score * 100) / 100;
+      expect(levelRows[levelRows.length - 1].targetDifficulty).toBe(expected);
+    }
+  });
+
+  it('the computed defaults are non-decreasing within each level and within 0–100', () => {
+    const curves = defaultDifficultyCurves();
+    const byLevel = new Map<number, number[]>();
+    for (const row of curves) {
+      expect(row.targetDifficulty).toBeGreaterThanOrEqual(0);
+      expect(row.targetDifficulty).toBeLessThanOrEqual(100);
+      const list = byLevel.get(row.level) ?? [];
+      list.push(row.targetDifficulty);
+      byLevel.set(row.level, list);
+    }
+    for (const targets of byLevel.values()) {
+      for (let i = 1; i < targets.length; i++) {
+        expect(targets[i]).toBeGreaterThanOrEqual(targets[i - 1]);
+      }
+    }
   });
 });

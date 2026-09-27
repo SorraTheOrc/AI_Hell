@@ -17,7 +17,7 @@
 
 import Phaser from 'phaser';
 
-import { HIT_RADIUS_BUFFER_PX, MINERAL_REDROP_SCATTER_RADIUS } from '../core/constants';
+import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { loadRules } from '../core/rules';
 import {
   FormationOffset,
@@ -26,7 +26,7 @@ import {
 } from '../utils/formations';
 import { resolvePatterns, spawnExplosionParticles } from '../vfx/explosionParticles';
 import type { ExplosionHandle } from '../vfx/explosionParticles';
-import { Mineral } from './Mineral';
+import { Mineral, scatterMineralDrops } from './Mineral';
 
 /**
  * Minimal shared config fields accepted by every regular enemy subclass.
@@ -309,20 +309,10 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   ): Mineral[] {
     const count = this.mineralRedropCount(rng);
     const scene = this.scene as Phaser.Scene | undefined;
-    if (!scene || count <= 0) return [];
-
-    const drops: Mineral[] = [];
-    for (let i = 0; i < count; i++) {
-      const angle = rng() * Math.PI * 2;
-      const radius = rng() * MINERAL_REDROP_SCATTER_RADIUS;
-      drops.push(
-        new Mineral(scene, {
-          x: x + Math.cos(angle) * radius,
-          y: y + Math.sin(angle) * radius,
-        }),
-      );
-    }
-    return drops;
+    if (!scene) return [];
+    // Shared scatter maths (single definition in Mineral.ts, also used by the
+    // shared kill-drop rule) keeps the RNG draw order unchanged.
+    return scatterMineralDrops(scene, x, y, count, rng);
   }
 
   /** Whether the enemy is allowed to fire. */
