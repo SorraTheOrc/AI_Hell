@@ -52,6 +52,10 @@ import {
   MAJOR_EXPLOSION_TAIL_DURATION,
   MAJOR_EXPLOSION_TAIL_VOLUME,
   MAJOR_EXPLOSION_MAX_VOICES,
+  MAJOR_EXPLOSION_OVERFLOW_ATTENUATION,
+  MAJOR_EXPLOSION_VOICE_DURATION,
+  _getMajorExplosionVoiceCountForTests,
+  _resetMajorExplosionLimiterForTests,
   playTankDestructionSound,
   EXPLOSION_PITCH_JITTER,
   playDiverFireSound,
@@ -1505,6 +1509,131 @@ describe('major-explosion cue — layered wave-timeout blast (AH-0MUJ1YZJ9008O4R
       playMajorExplosionSound();
       const gains = newGains(snap);
       expect(peakGain(gains)).toBeLessThanOrEqual(0.3);
+    });
+  });
+});
+
+// ── Major-explosion voice limiter (AH-0MUJS85X0006EXGV) ─────────────
+
+describe('major-explosion voice limiter — concurrency cap (AH-0MUJS85X0006EXGV)', () => {
+  beforeEach(() => {
+    // Clear the cached AudioContext first (deleting the ctor alone leaves a
+    // module-scoped context cached), then remove the ctor so `getAudioContext`
+    // returns null.
+    _resetAudioContextForTests();
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('is a safe no-op without an AudioContext and leaves no limiter state', () => {
+    _resetMajorExplosionLimiterForTests();
+    for (let i = 0; i < 10; i++) {
+      expect(() => playMajorExplosionSound()).not.toThrow();
+    }
+    expect(_getMajorExplosionVoiceCountForTests()).toBe(0);
+  });
+
+  describe('with a recording context', () => {
+    beforeEach(() => {
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      _resetAudioContextForTests();
+      RecordingAudioContext.instances.length = 0;
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      playCannonFireSound(); // prime the module-scoped context
+    });
+
+    it('fires 10 simultaneous triggers but never exceeds the 4-voice cap', () => {
+      const before = mockCtx().gains.length;
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+
+      // Active (full-gain) voices are capped; the rest are attenuated.
+      expect(_getMajorExplosionVoiceCountForTests()).toBe(
+        MAJOR_EXPLOSION_MAX_VOICES,
+      );
+
+      // 10 cues × 3 layers each.
+      const layerGains = mockCtx().gains.slice(before);
+      expect(layerGains).toHaveLength(30);
+    });
+
+    it('keeps the total burst gain bounded (excess voices attenuated)', () => {
+      const before = mockCtx().gains.length;
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+      const layerGains = mockCtx().gains.slice(before);
+
+      // Each trigger creates thump, body, noise gains in that order, so
+      // the thump gains are indices 0, 3, 6, …
+      const thumpPeaks = layerGains
+        .filter((_, idx) => idx % 3 === 0)
+        .map((g) => g.gainEvents[0].value);
+
+      const full = MAJOR_EXPLOSION_THUMP_VOLUME;
+      const attenuated =
+        MAJOR_EXPLOSION_THUMP_VOLUME * MAJOR_EXPLOSION_OVERFLOW_ATTENUATION;
+
+      expect(thumpPeaks.slice(0, MAJOR_EXPLOSION_MAX_VOICES)).toEqual(
+        Array(MAJOR_EXPLOSION_MAX_VOICES).fill(full),
+      );
+      expect(
+        thumpPeaks.slice(MAJOR_EXPLOSION_MAX_VOICES),
+      ).toEqual(Array(10 - MAJOR_EXPLOSION_MAX_VOICES).fill(attenuated));
+
+      const total = thumpPeaks.reduce((sum, v) => sum + v, 0);
+      const uncapped = 10 * full;
+      expect(total).toBeLessThan(uncapped);
+      expect(total).toBeCloseTo(
+        MAJOR_EXPLOSION_MAX_VOICES * full +
+          (10 - MAJOR_EXPLOSION_MAX_VOICES) * attenuated,
+        6,
+      );
+    });
+
+    it('expires voices after the active window so later timeouts play at full gain', () => {
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+      expect(_getMajorExplosionVoiceCountForTests()).toBe(
+        MAJOR_EXPLOSION_MAX_VOICES,
+      );
+
+      // Advance past the voice-active window: all voices expire.
+      mockCtx().currentTime = MAJOR_EXPLOSION_VOICE_DURATION + 1;
+
+      const before = mockCtx().gains.length;
+      for (let i = 0; i < MAJOR_EXPLOSION_MAX_VOICES; i++) {
+        playMajorExplosionSound();
+      }
+      expect(_getMajorExplosionVoiceCountForTests()).toBe(
+        MAJOR_EXPLOSION_MAX_VOICES,
+      );
+
+      const layerGains = mockCtx().gains.slice(before);
+      const thumpPeaks = layerGains
+        .filter((_, idx) => idx % 3 === 0)
+        .map((g) => g.gainEvents[0].value);
+      // A fresh burst plays the full-gain cue again.
+      expect(thumpPeaks).toEqual(
+        Array(MAJOR_EXPLOSION_MAX_VOICES).fill(MAJOR_EXPLOSION_THUMP_VOLUME),
+      );
+    });
+
+    it('does not alter the generic or player-destruction cues', () => {
+      // Saturate the major-explosion limiter.
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+
+      const genericSnap = snapshot();
+      playDestructionSound();
+      expect(newOscillators(genericSnap).filter((o) => o.type !== 'noise')).toHaveLength(1);
+
+      const playerSnap = snapshot();
+      playPlayerDestructionSound();
+      const playerGains = newGains(playerSnap);
+      const playerValues = playerGains.flatMap((g) =>
+        g.gainEvents.map((e) => e.value),
+      );
+      // Player cue still plays at its own full volumes.
+      expect(playerValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+      expect(playerValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+      expect(playerValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
     });
   });
 });

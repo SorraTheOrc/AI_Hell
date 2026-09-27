@@ -356,6 +356,7 @@ export function _resetAudioContextForTests(): void {
   }
   diverDiveSound = null;
   diverDiveSoundRefCount = 0;
+  majorExplosionVoiceExpiries = [];
   audioCtx = null;
   masterSfxGain = null;
   sfxVolume = 1;
@@ -664,6 +665,68 @@ export const MAJOR_EXPLOSION_TAIL_FILTER_Q = 0.8;
 export const MAJOR_EXPLOSION_MAX_VOICES = 4;
 
 /**
+ * Gain multiplier applied to major-explosion voices triggered while the
+ * {@link MAJOR_EXPLOSION_MAX_VOICES} cap is already saturated. Excess
+ * triggers from the same wave timeout are attenuated rather than stacked
+ * at full gain, keeping the burst from clipping or swamping other cues.
+ */
+export const MAJOR_EXPLOSION_OVERFLOW_ATTENUATION = 0.35;
+
+/**
+ * How long (seconds) a major-explosion voice counts against the concurrency
+ * cap — the cue's longest layer (the descending body,
+ * {@link MAJOR_EXPLOSION_BODY_DURATION}). Triggers that fall inside this
+ * window are treated as concurrent; once it elapses the voice expires, so a
+ * later timeout is never silently dropped.
+ */
+export const MAJOR_EXPLOSION_VOICE_DURATION = MAJOR_EXPLOSION_BODY_DURATION;
+
+/**
+ * Expiry timestamps (AudioContext time) of the currently-active
+ * major-explosion voices. A voice holds a slot for
+ * {@link MAJOR_EXPLOSION_VOICE_DURATION}; expired entries are pruned on each
+ * trigger. Kept module-scoped so the cap applies across the per-ship calls
+ * made by `PlayScene._timeoutWave()` in a single tick.
+ */
+let majorExplosionVoiceExpiries: number[] = [];
+
+/** Removes voices whose active window has already elapsed. */
+function pruneMajorExplosionVoices(now: number): void {
+  majorExplosionVoiceExpiries = majorExplosionVoiceExpiries.filter(
+    (expiry) => expiry > now,
+  );
+}
+
+/**
+ * Registers one major-explosion voice against the concurrency cap and
+ * returns the gain multiplier to apply to that voice.
+ *
+ * A voice below the {@link MAJOR_EXPLOSION_MAX_VOICES} cap holds a slot for
+ * {@link MAJOR_EXPLOSION_VOICE_DURATION} and plays at full gain (1). Once the
+ * cap is saturated the trigger still sounds — so the wipe stays audible — but
+ * at {@link MAJOR_EXPLOSION_OVERFLOW_ATTENUATION} so simultaneous detonations
+ * do not stack at full gain.
+ */
+function registerMajorExplosionVoice(now: number): number {
+  pruneMajorExplosionVoices(now);
+  if (majorExplosionVoiceExpiries.length >= MAJOR_EXPLOSION_MAX_VOICES) {
+    return MAJOR_EXPLOSION_OVERFLOW_ATTENUATION;
+  }
+  majorExplosionVoiceExpiries.push(now + MAJOR_EXPLOSION_VOICE_DURATION);
+  return 1;
+}
+
+/** For tests: number of active (full-gain) major-explosion voices. */
+export function _getMajorExplosionVoiceCountForTests(): number {
+  return majorExplosionVoiceExpiries.length;
+}
+
+/** For tests: clears the limiter state so suites stay isolated. */
+export function _resetMajorExplosionLimiterForTests(): void {
+  majorExplosionVoiceExpiries = [];
+}
+
+/**
  * Heavier, layered wave-timeout explosion cue — "major blast"
  * (AH-0MUJ1YZJ9008O4RC, parent AC1).
  *
@@ -685,13 +748,20 @@ export const MAJOR_EXPLOSION_MAX_VOICES = 4;
  * Every layer's amplitude and length is an exported constant (no inline
  * tuning literals), so the cue is fully tunable in one place. All layers
  * route through the master SFX gain, so volume/mute apply. Called once per
- * detonating ship by `PlayScene._timeoutWave()`. Safe no-op without an
- * `AudioContext` (headless tests / autoplay-blocked browsers).
+ * detonating ship by `PlayScene._timeoutWave()`, under a concurrency cap:
+ * at most {@link MAJOR_EXPLOSION_MAX_VOICES} full-gain voices sound at once,
+ * with excess triggers attenuated by
+ * {@link MAJOR_EXPLOSION_OVERFLOW_ATTENUATION} (GDD §7.3). Safe no-op without
+ * an `AudioContext` (headless tests / autoplay-blocked browsers).
  */
 export function playMajorExplosionSound(): void {
   const ctx = getAudioContext();
   if (!ctx) return;
   const t = ctx.currentTime;
+
+  // Concurrency/rate limiter (GDD §7.3 ≤ 3–4 concurrent SFX). Excess
+  // triggers in the same burst sound at reduced gain instead of stacking.
+  const voiceGain = registerMajorExplosionVoice(t);
 
   // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
   const thump = ctx.createOscillator();
@@ -702,7 +772,10 @@ export function playMajorExplosionSound(): void {
     MAJOR_EXPLOSION_THUMP_END_HZ,
     t + MAJOR_EXPLOSION_THUMP_DURATION,
   );
-  thumpGain.gain.setValueAtTime(MAJOR_EXPLOSION_THUMP_VOLUME, t);
+  thumpGain.gain.setValueAtTime(
+    MAJOR_EXPLOSION_THUMP_VOLUME * voiceGain,
+    t,
+  );
   thumpGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + MAJOR_EXPLOSION_THUMP_DURATION,
@@ -720,7 +793,10 @@ export function playMajorExplosionSound(): void {
     MAJOR_EXPLOSION_BODY_END_HZ,
     t + MAJOR_EXPLOSION_BODY_DURATION,
   );
-  bodyGain.gain.setValueAtTime(MAJOR_EXPLOSION_BODY_VOLUME, t);
+  bodyGain.gain.setValueAtTime(
+    MAJOR_EXPLOSION_BODY_VOLUME * voiceGain,
+    t,
+  );
   bodyGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + MAJOR_EXPLOSION_BODY_DURATION,
@@ -749,7 +825,10 @@ export function playMajorExplosionSound(): void {
   noiseFilter.Q.setValueAtTime(MAJOR_EXPLOSION_TAIL_FILTER_Q, t);
 
   const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(MAJOR_EXPLOSION_TAIL_VOLUME, t);
+  noiseGain.gain.setValueAtTime(
+    MAJOR_EXPLOSION_TAIL_VOLUME * voiceGain,
+    t,
+  );
   noiseGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + MAJOR_EXPLOSION_TAIL_DURATION,
