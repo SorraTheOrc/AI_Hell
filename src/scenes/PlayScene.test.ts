@@ -28,6 +28,7 @@ import {
   LEVEL_TRANSITION_SECONDS,
   PlayScene,
   resolveCampaignLevels,
+  SCORE_VALUES,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -195,6 +196,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
     return booted.scene as PlayScene;
   }
+
+  it('F5 — the Harvester is worth ≈400 points (between Tank 300 and the boss phases)', () => {
+    expect(SCORE_VALUES.harvester).toBe(400);
+    expect(SCORE_VALUES.harvester).toBeGreaterThan(SCORE_VALUES.tank);
+    expect(SCORE_VALUES.harvester).toBeLessThan(BOSS_PHASE_SCORES[1]);
+  });
 
   /** Boots with a deterministic large asteroid placed outside the wave
    * definition (see `plainCampaign`). */

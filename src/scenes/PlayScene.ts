@@ -126,6 +126,8 @@ export const SCORE_VALUES: Record<string, number> = {
   // Asteroids: only small asteroids award points (50); large/medium award
   // none (GDD §4.5, E6 Asteroid). The tier check happens in `_onEnemyKilled`.
   asteroid: 50,
+  // Harvester: a durable five-hit mineral-denial threat (GDD §4.5, E7).
+  harvester: 400,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */

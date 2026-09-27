@@ -43,6 +43,7 @@ import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID } from './GymE
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
+import { Harvester } from '../../entities/Harvester';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
@@ -144,6 +145,40 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.aliveCount).toBe(expected);
   });
 
+  it('F5 — the Harvester spawns, renders and is a no-fire roamer', async () => {
+    const scene = await bootWithKey('harvester');
+    expect(scene.activeEnemyKey).toBe('harvester');
+    expect(scene.formationEntities).toHaveLength(1);
+
+    const h = scene.formationEntities[0] as unknown as Harvester;
+    expect(h).toBeInstanceOf(Harvester);
+    expect(h.shootEnabled).toBe(false);
+    expect(h.effectiveShotPattern).toBe('none');
+    // Renders: on the scene display list.
+    expect(scene.children.list).toContain(h);
+    // The seeded Harvester carries the data-driven five-hit health from the
+    // config pipeline (it may already have taken player fire during the boot
+    // delay, so assert the configured maximum, not the current value).
+    expect(DEFAULT_ENEMY_CONFIGS.harvester.health).toBe(5);
+
+    // Five-hit destruction through the shared multi-hit path on a fresh
+    // entity (the seeded one may already be engaged by the gym player).
+    const fresh = new Harvester(scene, {
+      x: 700,
+      y: 500,
+      formationOffset: { row: 0, col: 0 },
+    });
+    for (let hit = 1; hit <= 4; hit++) {
+      expect(fresh.alive).toBe(true);
+      expect(fresh.health).toBe(5 - hit + 1);
+      fresh.takeDamage();
+    }
+    expect(fresh.alive).toBe(true);
+    fresh.takeDamage();
+    expect(fresh.alive).toBe(false);
+    fresh.destroy(true);
+  });
+
   it.each(Object.keys(DEFAULT_ENEMY_CONFIGS))('respects spacing/start/drift for seed "%s"', async (key) => {
     const scene = await bootWithKey(key);
     const cfg = DEFAULT_ENEMY_CONFIGS[key];
@@ -156,9 +191,10 @@ describe('GymEnemies — single reusable enemy gym', () => {
 
     // The roaming Asteroid is a non-formation enemy: its position is driven
     // by its own constant-velocity updatePosition (straight-line drift +
-    // wrap + rotation), not by a formation slot. It still spawns near its
+    // wrap + rotation), not by a formation slot. The Harvester is likewise a
+    // self-propelled roamer (mineral seek). Both still spawn near their
     // configured start with a small boot-delay drift budget.
-    if (key === 'asteroid') {
+    if (key === 'asteroid' || key === 'harvester') {
       const e = scene.formationEntities[0];
       expect(Math.abs(e.x - cfg.startX)).toBeLessThan(40);
       expect(Math.abs(e.y - cfg.startY)).toBeLessThan(40);

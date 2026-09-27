@@ -24,10 +24,10 @@ describe('enemy-configs.csv seed data', () => {
     expect(csv).toMatch(/^# /);
   });
 
-  it('contains exactly 7 enemy rows matching the seed keys', () => {
+  it('contains exactly 8 enemy rows matching the seed keys', () => {
     const csv = readCsvFile('enemy-configs.csv');
     const rows = parseCsvRows(csv);
-    expect(rows.length).toBe(7);
+    expect(rows.length).toBe(8);
     const keys = rows.map((r) => r.key).sort();
     expect(keys).toEqual(DEFAULT_ENEMY_KEYS.slice().sort());
   });

@@ -25,6 +25,10 @@ export const ENEMY_FIRE_METHODS = {
   tank: 'tryFireRadialBurst',
   phaser: 'tryFireRadialBullets',
   swarm: 'tryFireBurstBullet',
+  // The Harvester never fires. An explicit non-firing entry (rather than a
+  // missing key) keeps it out of the aimed-shot fallback and documents the
+  // intent next to the firing archetypes.
+  harvester: 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */
@@ -37,6 +41,14 @@ export type EnemyFireMethod =
  * firing with the aimed-shot behaviour.
  */
 export const DEFAULT_ENEMY_FIRE_METHOD: EnemyFireMethod = 'tryFireAimedBullet';
+
+/**
+ * Method name used for archetypes that deliberately never fire. It is not
+ * implemented by any entity, so {@link fireForEnemy} always returns `[]` for
+ * such an archetype — and, because it is an explicit mapping, the key can
+ * never fall back to the aimed shot.
+ */
+export const NON_FIRING_FIRE_METHOD: EnemyFireMethod = 'tryFireNone';
 
 /** Resolves the `tryFire*` method name for an enemy archetype key. */
 export function enemyFireMethod(enemyKey: string): EnemyFireMethod {

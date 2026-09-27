@@ -21,7 +21,7 @@ import {
 } from './enemyConfig';
 import { resetConfigStore, seedConfigStore } from './configStore';
 
-const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid'];
+const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid', 'harvester'];
 
 describe('EnemyConfig schema', () => {
   it('DEFAULT_ENEMY_CONFIGS has one entry per seed archetype and the expected keys', () => {
@@ -173,10 +173,15 @@ describe('Store-backed loaders', () => {
 });
 
 describe('Data-driven enemy health (F1)', () => {
-  it('every existing seed archetype carries health: 1', () => {
-    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
-      expect(config.health).toBe(1);
+  it('every single-hit seed archetype carries health: 1', () => {
+    for (const [key, config] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
+      if (key === 'harvester') continue; // the five-hit archetype (F5)
+      expect(config.health, key).toBe(1);
     }
+  });
+
+  it('the Harvester seed carries health: 5 (the only multi-hit regular enemy)', () => {
+    expect(DEFAULT_ENEMY_CONFIGS.harvester.health).toBe(5);
   });
 
   it('health is a positive integer for every seed', () => {

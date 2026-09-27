@@ -33,3 +33,4 @@ phaser,Phaser,orbital,4,80,80,30,336,270,14,0xff00ff,0xff4444,3,radial,2000,180,
 swarm,Swarm,swarm,15,28,24,60,144,162,15,0x0066ff,0x00ccff,3,coordinated,900,180,1.5,1,0.25,1
 boss,"Boss Swarm",single,1,0,0,0,480,170,50,0xff0000,0xffffff,4,radial,1200,160,2,8,1,1
 asteroid,Asteroid,single,1,0,0,0,480,162,42,0x888888,0x888888,3,none,1000,100,1.5,1,1,1
+harvester,Harvester,single,1,0,0,0,480,135,44,0x9b30ff,0xcc88ff,3,none,1000,100,1.5,1,1,5

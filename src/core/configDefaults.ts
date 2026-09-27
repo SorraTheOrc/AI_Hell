@@ -179,6 +179,28 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     burstCount: 1,
     shotProbability: 1.0,
   },
+  harvester: {
+    key: 'harvester',
+    displayName: 'Harvester',
+    formationKind: 'single',
+    count: 1,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 0,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.25,
+    size: 44,
+    health: 5,
+    color: 0x9b30ff,
+    bulletColor: 0xcc88ff,
+    bulletSize: 3,
+    shotPattern: 'none',
+    fireInterval: 1000,
+    bulletSpeed: 100,
+    bulletLifetime: 1.5,
+    burstCount: 1,
+    shotProbability: 1.0,
+  },
 };
 
 export const DEFAULT_ENEMY_KEYS = Object.keys(DEFAULT_ENEMY_CONFIGS);
