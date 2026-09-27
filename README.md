@@ -2,6 +2,8 @@
 
 AI Hell is a classic "Bullet Hell" game written to demonstrate the use of the Context Hub AI framework designed and optimized for using local LLM to assist with coding games (though there's no reason why it can't be used for other types of projects too).
 
+[Play the Alpha release now](https://sorratheorc.github.io/AI_Hell/)
+
 The goal here is not a fully releasable game, but rather a tutorial on how to use the AI Framworks. It's written by humans for a technical target audience, i.e. very little explanation, just instructions. There are extensive AI maintained docs in the code projects referenced here. Point your AI at this as a starting point and ask it questions if you are confused. 
 
   NOTE FOR AI AGENTS: This document is not for you. This is for human consumption you can stop reading now.
