@@ -114,6 +114,22 @@ This creates a unique gameplay tension: the player must manage both their own sh
 - Bullet patterns include radial bursts, sweeping arcs, and aimed shots.
 - The predictability of patterns is intentional — players should be able to learn and exploit them through practice.
 
+#### 2.5.1 Optional sequenced (data-driven) campaigns
+
+The fire rules above describe the shipped campaign, but the campaign can
+optionally be **generated at runtime** from a target difficulty curve. When the
+opt-in `sequencedWavesEnabled` rule is enabled (default **off**), `PlayScene`
+builds the level list from `src/data/difficulty-curves.csv` through the runtime
+auto-sequencer (`src/core/difficultySequencer.ts`) via
+`buildSequencedLevels()` (`src/waves/sequencedLevels.ts`): one curve per
+configured level, the curve length sets that level's wave count, and the level
+name comes from the config. The fire rule is derived from the **1-based level
+number** — configured levels 1–3 do not fire and levels 4+ do — so generated
+campaigns obey §2.4/§2.5. With the toggle off (or when the curve config is
+empty, the candidate pool is empty, or generation fails) the scripted `LEVELS`
+campaign ships unchanged. The boss still triggers after the final configured
+level.
+
 ---
 
 ### 2.6 Enemy Interaction Rules
@@ -146,7 +162,7 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Level | Theme | Enemy Count | Enemy-Fired Bullets | Description |
 |-------|-------|-------------|---------------------|-------------|
-| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus a roaming, self-splitting Asteroid group in Wave 1 — simple movement patterns, no enemy bullets |
+| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus randomly spawning, self-splitting Asteroids that drift in from a random offscreen edge every wave — simple movement patterns, no enemy bullets |
 | 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
 | 3 | The Core | Large | No | Dense formations; maximum positional threat |
 | 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
@@ -154,6 +170,14 @@ The following rules govern how enemy entities interact with each other and with 
 | Boss | AI Throne | N/A | Yes (complex) | Final boss encounter with multi-phase attack patterns |
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
+
+> **Optional sequenced campaigns (AH-0MUH6LEYY0054E63).** The table above
+describes the shipped scripted campaign. With the opt-in
+`sequencedWavesEnabled` game rule enabled (default **off**), the level count,
+level names and per-wave enemy composition are generated from
+`src/data/difficulty-curves.csv` instead (see §2.5.1); the scripted campaign
+remains the default and the fallback, and the boss still triggers after the
+final configured level.
 
 ---
 
@@ -169,7 +193,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Fires**: No (Levels 1–3); yes, aimed shot (Level 4+).
 
 #### E2 — Diver
-- **Behavior**: Dives straight down toward the player (x locked at its formation slot — a vertical trajectory), then returns to its current formation slot.
+- **Behavior**: Dives straight down toward the player (x locked at its formation slot — a vertical trajectory), then returns to its current formation slot. While a Diver is away from the formation (diving, pausing or returning), the rest of its cluster holds position — the formation drift is frozen — and resumes once every Diver has rejoined.
 - **Appearance**: Medium, dart-shaped neon entity.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.
@@ -211,6 +235,20 @@ The following rules govern how enemy entities interact with each other and with 
   other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
   and every spawned child counts toward the wave's alive target (dynamic
   spawn registration in `WaveManager`).
+- **Wave placement — random offscreen spawner**: Asteroids are **not** a
+  fixed formation group. Every **regular wave** (Levels 1–5) plans a set of
+  asteroid spawns with the pure planner `src/waves/AsteroidSpawner.ts`
+  (`computeSpawns`), and `PlayScene` releases each one at its scheduled time
+  during the wave. Each asteroid appears **fully offscreen** on a random edge
+  (top/bottom/left/right, uniform) — offset outward by its half-size plus a
+  small margin — and drifts **inward** (perpendicular to the edge, with a ±30°
+  spread) into the playfield. The **boss encounter spawns no asteroids**.
+- **Escalation**: each wave starts at **2** asteroids. Weights are medium
+  **80** (fixed) vs large **20** (+20 each wave); when the large weight
+  reaches 2× the medium weight (**160**) the weights reset to 80:20 and the
+  per-wave count **doubles** (2 → 4 → 8 …). Spawn times divide the wave window
+  into equal segments with ±5% jitter; the first asteroid is constrained to
+  the first 10% of the window.
 - **Threat level**: Low–Medium (drifting, escalating hazard; no bullets).
 - **Collision**: passes through other enemies (GDD §2.6 — no enemy–enemy
   collision); colliding with the player is destructive to the player (GDD §2.3
@@ -230,6 +268,12 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 | **Dive Bomb** | Enemies alternate between formation flight and diving toward the player | 3, 4 |
 | **Orbital** | Enemies in fixed orbital paths around a central point (Level 5) | 5 |
 | **Boss Phases** | The boss cycles through 3–4 distinct attack patterns | Boss |
+
+> **Asteroids are not a wave structure.** Since the random offscreen spawner
+> landed, no wave declares a fixed asteroid group: every regular wave
+> additionally spawns random offscreen asteroids (see §4.1 E6), while the boss
+> encounter spawns none. The rows above describe the **formation** enemies
+> only.
 
 ### 4.3 Boss Design
 
@@ -254,7 +298,7 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Stacked dots (stream of bullets) |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
-| P5 | **Speed Boost** | Increases movement speed by 50% for 10 seconds | Arrow with motion lines |
+| P5 | **Speed Boost** | Increases movement speed and rate of fire by 50% for 10 seconds | Arrow with motion lines |
 | P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
 | P7 | **Teleport** *(collectable)* | Press S or ↓ to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
@@ -272,22 +316,29 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 > **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), per-weapon fire cooldowns (`tryFire` returns every active weapon that fired this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, stacked dots for Rapid, return/undo arrow for Reset.
 
-> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
+> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. P7 teleport runs through the single shared `CombatScene.triggerTeleport` path — the gym supplies only its enemy list and hit radii through the `getEnemyEntities`/`getTeleportEnemyHitRadius`/`getTeleportBulletHitRadius` hooks, so game and gym cannot diverge on the teleport safety rule (gap 7, AH-0MUII3EPU0039R5O). `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
 
-> **Implemented in the combat formation gyms (§6.4, `src/scenes/gym/GymEnemies.ts` / `src/scenes/gym/GymBoss.ts`, AH-0MU3VOQKH005YOBH):** From here the enemy-bearing formation gyms run a **shared opt-in power-up layer** in `GymFormationScene`: a `WeightedRandomSpawner` over **the full drop pool — P3–P9 power-ups plus the weapon drops (Spread → Dual, Rapid, Reset)** seeded from the game-rules config (`src/core/rules.ts`), a `RandomAvoidingPlacement` strategy (`src/powerups/placement.ts`) that avoids live enemy bodies and the player, **one drop on screen at a time** on the configured interval (default **12.5 s**), fly-over collection (≥ 3 % scale + hull overlap) applied through the shared `EffectsRegistry`, and the standalone HUD with the lives counter visible (one row per active effect, plus one row per equipped weapon). The §4.4 rarity guidance is encoded as **relative weights** — standard power-up IDs (P3–P7, P9) default to **4** and **P8 Extra Life** to **1**, while each weapon drop (spread/dual/rapid/reset) defaults to **2** so weapons appear alongside standard effects without dominating them; the existing `WeightedRandomSpawner` normalises them internally. Collecting a weapon drop equips it through the registry for 10 s (independent countdown per weapon); the **Reset** drop clears every active weapon. A **live spawn-interval slider** (`src/utils/gymPowerUpControl.ts`) tunes the cadence of the running scene and persists the value through the rules config, so the interval is no longer a compile-time constant.
+> **Implemented in the combat formation gyms (§6.4, `src/scenes/gym/GymEnemies.ts` / `src/scenes/gym/GymBoss.ts`, AH-0MU3VOQKH005YOBH):** From here the enemy-bearing formation gyms run a **shared opt-in power-up layer** in `GymFormationScene`: a `WeightedRandomSpawner` over **the full drop pool — P3–P9 power-ups plus the weapon drops (Spread → Dual, Rapid, Reset)** seeded from the game-rules config (`src/core/rules.ts`), a `RandomAvoidingPlacement` strategy (`src/powerups/placement.ts`) that avoids live enemy bodies and the player, **one drop on screen at a time** on the configured interval (default **12.5 s**), fly-over collection (≥ 3 % scale; the ship hull collects a drop on first contact with its visible bubble ring — `POWER_UP_DROP_SIZE × POWER_UP_BUBBLE_RADIUS_FACTOR × scale`, 32.4 px at full scale) applied through the shared `EffectsRegistry`, and the standalone HUD with the lives counter visible (one row per active effect, plus one row per equipped weapon). The §4.4 rarity guidance is encoded as **relative weights** — standard power-up IDs (P3–P7, P9) default to **4** and **P8 Extra Life** to **1**, while each weapon drop (spread/dual/rapid/reset) defaults to **2** so weapons appear alongside standard effects without dominating them; the existing `WeightedRandomSpawner` normalises them internally. Collecting a weapon drop equips it through the registry for 10 s (independent countdown per weapon); the **Reset** drop clears every active weapon. A **live spawn-interval slider** (`src/utils/gymPowerUpControl.ts`) tunes the cadence of the running scene and persists the value through the rules config, so the interval is no longer a compile-time constant.
+
+> **Shared P3/P6 hit-gating in the formation gyms (AH-0MUHM66ES0027QQV):** Collecting a dropped **P3 Shield** or **P6 Phase Shift** in a formation gym now has the **same defensive effect as in `PlayScene`**: the gating lives once in the shared `CombatScene` (`isPlayerPhased()` reads `getEffectsRegistry().isPhased`; `tryAbsorbPlayerHit()` consumes one shield, runs the `onShieldAbsorbed()` cue seam, starts the shared invulnerability window and reports the hit absorbed). `GymFormationScene` and its `GymEnemies`/`GymBoss`/`GymMinerals` subclasses inherit it — a gym scene must **not** re-implement the hooks. The P3 shield bubble and P6 phase ghost are drawn through the shared `CombatEffectVisuals` helper, so the enemy gym looks identical to the shipped game and the combat gym.
 
 > **Collection feedback — pop SFX + absorb VFX (AH-0MUAYB3OU0087H9W):** Every collected drop — power-up or weapon — plays the generic percussive pop (`playPowerUpCollectPopSound()` in `src/audio/effects.ts`) alongside its existing per-type pickup cue, and is visibly "sucked into the ship" by a shared absorb animation (`src/powerups/collectAnimation.ts`): over ≤ 0.3 s the drop's position converges on the ship's world position, its scale shrinks to zero, and its shape shears/rotates toward the hull before its `Graphics` is destroyed. One generic treatment is used for all drop types; the VFX is cosmetic only and never delays the gameplay effect (registry/lives/weapon updates, P4 bullet clear), which fires immediately on overlap. Wired into `PlayScene`, the shared `GymFormationScene` (covering `GymEnemies`/`GymBoss`), and the legacy `GymPowerUpsUtility`/`GymPowerUpsCombat`/`GymWeapons` scenes so the game and gyms never diverge.
+
+> **Catalogue descriptions + gym help overlay (AH-0MUAYB67I002REOZ):** Every catalogue entry now carries a one-line player-facing `description`: `POWER_UP_CATALOGUE.description` (`src/powerups/types.ts`) for P3–P9, and `WEAPON_CATALOGUE.description` plus a `RESET_DROP` entry (`src/utils/weapons.ts`) for Cannon/Spread/Dual/Rapid/Reset. The three tuning gyms (`GymPowerUpsUtility`, `GymPowerUpsCombat`, `GymWeapons`) each render a `Help (?)` button next to `← INDEX` and also respond to the `?` key. Opening the help **pauses** the gym's simulation and launches the full-screen `HelpScene` (`src/scenes/HelpScene.ts`), which lists **exactly the drops that gym can spawn**, one row each showing the same code-drawn icon as the field drop, the display name and the catalogue description — read from the shared catalogues so the help text cannot drift from implemented behaviour. Closing via `?`, the `Close` control (focused by default, keyboard-operable) or **ESC** resumes the gym exactly where it paused; while the overlay is open ESC closes the help and does **not** return to the menu. The shared helper is `addHelpButton` (`src/utils/gymHelp.ts`), wired into the three gyms only (the full-pool formation gyms and the shipped `PlayScene` are out of scope).
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 
 Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
 
-- **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected.
-- **Ship's hold**: collected minerals fill a run-scoped hold (`GameState.minerals`), capacity default **20** (configurable). The hold is shown on the HUD as `Minerals: n/20`, resets on `GameState.startGame()`, and is never written to the leaderboard.
-- **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries.
-- **Permanent pick**: the chosen option is applied to the player **permanently for the current run** — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
+- **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected. The rule is implemented **once** in the shared helper `src/scenes/core/mineralKillDrops.ts` (`resolveMineralKillDrops`, plus the shared scatter maths in `src/entities/Mineral.ts`) and consumed by **both** `PlayScene` and `GymFormationScene`, so the game and every formation gym (`GymMinerals`, the `GymEnemies` asteroid row, …) drop identically and cannot drift apart.
+- **Collection**: the pickup/absorption pass (player collects, non-asteroid enemy absorbs, asteroids inert) is implemented **once** in `src/scenes/core/mineralLayer.ts` (`collectMinerals`) and called by `PlayScene` and `GymFormationScene`, so the two scenes can no longer run divergent collection loops.
+- **Ship's hold**: collected minerals fill a run-scoped hold modelled by the shared **`MineralHold`** (`src/core/mineralHold.ts`), capacity default **20** (configurable) and pick-up amount default **1**. `GameState` (game) and `GymFormationScene` (every formation gym) both hold this one model, so the gym adopts the game's **overflow-carry** semantics (resolving the hold restores `collected − capacity`, never 0 — the gym previously reset to 0). The hold is shown on the HUD as a fixed-length, hollow-outlined bar that fills proportionally from empty to full (`src/ui/HUD.ts`), resets on `GameState.startGame()`, and is never written to the leaderboard.
+- **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The overlay knows nothing about its launcher: its only selection contract is an optional `onSelect(index, option)` callback, supplied by `PlayScene` and by every gym. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries, and the launcher always passes the exact options it will apply.
+- **Permanent pick**: the chosen option is applied to the player **permanently for the current run** via the shared `applyMineralChoiceReward` helper (also in `src/scenes/core/mineralLayer.ts`), so a choice grants the same effect in the game and in every gym — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
 - **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
 - **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
+
+> **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — every launcher (`PlayScene` and each formation gym) passes its stored `options` plus an `onSelect` callback to the single `MineralChoiceScene` contract. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting P6 on arrival), **P3 Shield** and **P6 Phase Shift** are honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and the effects registry ticks every frame (driving the HUD) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
 
 ### 4.5 Scoring System
 
@@ -323,18 +374,27 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 - **Storage**: Browser `localStorage` (key: `ai_hell_leaderboard`), max 10
   entries.
 - **Module**: `src/core/Leaderboard.ts` owns the table — `getEntries()`,
-  `addEntry(initials, score)`, `getTopN(n)` and `isQualifying(score)` — and
-  persists through the injectable `LeaderboardStore` interface so a future
-  online backend can replace `localStorage` without touching the scenes
-  (§5.3 migration note; also §6.6).
+  `addEntry(initials, score)`, `buildPreview(entries, score, initials)`,
+  `getTopN(n)` and `isQualifying(score)` — and persists through the injectable
+  `LeaderboardStore` interface so a future online backend can replace
+  `localStorage` without touching the scenes (§5.3 migration note; also §6.6).
 - **Entry**: On game over, prompt for a 3-character **neon-style initials**
   entry. A score qualifies while fewer than 10 entries exist, or when it
   strictly beats the current lowest entry; a non-qualifying score shows an
   explanatory message and can be skipped without writing.
+- **Live preview (game-over)**: While a qualifying score is being entered,
+  the game-over table also shows a single **prospective row** at the rank the
+  score will occupy — highlighted in a distinct colour with a leading `▶`
+  marker and initials filling in live (`___` placeholders until typing
+  begins). It is inserted with the same stable score-descending tie-break
+  and 10-entry cap as `addEntry`, so it matches the persisted entry on submit
+  and the current lowest entry is displaced when the table is full. A
+  non-qualifying score renders no prospective row.
 - **Display**: The full ranked table (rank, initials, score, date) is shown
   on the game-over screen (`GameOverScene`) and from the main menu
   (`MenuScene` → `LeaderboardScene`), both through the shared rendering path
-  in `src/ui/leaderboardView.ts`.
+  in `src/ui/leaderboardView.ts`. The main-menu table never shows a
+  prospective row.
 - **Content**: Rank, initials, score, date.
 
 > The earlier `GameOverScene` leaderboard stub (`readLeaderboard` /
@@ -350,6 +410,13 @@ keys move focus to **Return to Menu**, and **Enter** / **Space** activate the
 focused control. **Enter** on the initials field auto-submits once three
 letters are entered, persisting the score before returning to the main menu.
 Pointer entry (clicking **Return to Menu**) continues to work unchanged.
+
+For a **qualifying** score the ranked table shows a live prospective row: it
+appears immediately on screen open with `___` placeholders and is refreshed
+on every **A–Z** key and **Backspace**, so the player can see the position
+their run will take before committing. The row is highlighted with a leading
+`▶` marker and a distinct colour, and is replaced (never accumulated) on
+each keystroke.
 
 ### 5.2 Data Model
 
@@ -408,7 +475,12 @@ The selected engine for AI_Hell is **Phaser (TypeScript / HTML5)**. This decisio
 src/
 ├── core/
 │   ├── Game.ts          — Main game class, scene management
-│   ├── GameState.ts     — Game state (lives, score, level)
+│   ├── GameState.ts     — Game state (lives, score, level, ship's mineral hold)
+│   ├── mineralHold.ts   — Shared mineral hold model (implemented, AH-0MUII3DHM008L7JF,
+│   │                      gap 5): `MineralHold` owns the capacity, per-pickup collect amount
+│   │                      and overflow carry used by *both* `GameState` and `GymFormationScene`,
+│   │                      so the gym adopts the game's hold/overflow semantics (resolve carries
+│   │                      `collected − capacity`) instead of resetting to 0
 │   ├── Input.ts         — Input handling (keyboard, auto-fire)
 │   └── rules.ts         — General game-rules config (implemented): localStorage-backed
 │                          `loadRules()` / `saveRules()` holding the power-up spawn
@@ -417,35 +489,126 @@ src/
 │                          from it in `../core/constants.ts`
 ├── scenes/
 │   ├── core/
-│   │   └── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
-│   │                      defines the eight combat/lifecycle template methods exactly
-│   │                      once (`_handleCollisions`, `_hitPlayer`, `_autoFire`,
-│   │                      `_collectDrop`, `_spawnPlayerExplosion`, `_clearEnemyBullets`,
-│   │                      `_handleTeleport`, `_readPlayerInput`) plus the overridable
-│   │                      hook contract (participant accessors + `onWeaponFired`,
+│   │   ├── CombatCoreScene.ts — Narrower shared combat/lifecycle base (implemented,
+│   │   │                      AH-0MUDCT7EU0061OSZ): owns the shared player-control
+│   │   │                      step (`_tickPlayer`: weapon timers → live P5
+│   │   │                      multipliers → input → physics → auto-fire, with the
+│   │   │                      `autoFireEnabled` feature toggle) and the input path
+│   │   │                      (`_readPlayerInput`, delegating to the shared
+│   │   │                      `mapControlInput` helper in `src/utils/movementModel.ts`),
+│   │   │                      auto-fire (`_autoFire` +
+│   │   │                      `spawnPlayerBullet`, with the `onWeaponFired` cue hook) and
+│   │   │                      drop collection (`_collectDrop` + absorb VFX + the
+│   │   │                      `onWeaponCollected`/`onPowerUpCollected`/`_playPickupCue`
+│   │   │                      hooks), the player-explosion/collect registries,
+│   │   │                      `_clearEnemyBullets`/`_spawnPlayerExplosion`, and the shared
+│   │   │                      invulnerability/phase/absorption hooks
+│   │   │                      (`getInvulnerabilityDuration`, `isPlayerPhased`,
+│   │   │                      `tryAbsorbPlayerHit`). It also owns the shared run
+│   │   │                      lifecycle (`resetRunState`/`teardownRunState`) that clears
+│   │   │                      the active effects registry (through the polymorphic
+│   │   │                      `getEffectsRegistry()` accessor) and the shared per-run object
+│   │   │                      families on create/`SHUTDOWN`, so a stop/restart of any scene
+│   │   │                      starts clean (AH-0MUII3FYN0072QRT, gap 10). Extended directly
+│   │   │                      by the threat-free gyms `GymWeapons` and `GymPowerUpsUtility`.
+│   │   ├── CombatScene.ts — Shared abstract combat core (implemented, AH-0MUD8E015004C4JO):
+│   │                      extends `CombatCoreScene` and adds the combat-only template
+│   │                      methods (`_handleCollisions`, `_hitPlayer`, `_handleTeleport`/
+│   │                      `triggerTeleport`) plus the bullet-vs-bullet impact feedback
+│   │                      (`src/vfx/bulletImpact.ts` + `playBulletDestructionSound`), with
+│   │                      the participant accessors and combat hooks (`onWeaponFired`,
 │   │                      `onEnemyDestroyed`, `onPlayerHit`, `tryAbsorbPlayerHit`,
-│   │                      `onPowerUpCollected`, `canTeleport`, `onBulletVsBulletImpact`, …);
-│   │                      extended by both `PlayScene` and `GymFormationScene` so the
-│   │                      shipped game and the gyms share one combat code path and cannot
-│   │                      drift apart. Hosts the shared bullet-vs-bullet impact feedback
-│   │                      (`src/vfx/bulletImpact.ts` + `playBulletDestructionSound`).
+│   │                      `onBulletVsBulletImpact`, …). Together the two files define the
+│   │                      nine shared methods exactly once, enforced repo-wide by
+│   │                      `CombatScene.equivalence.test.ts`; extended by `PlayScene`,
+│   │                      `GymFormationScene` and `GymPowerUpsCombat`.
+│   │   ├── mineralKillDrops.ts — Shared mineral kill-drop rule (implemented,
+│   │   │                      AH-0MUHMT5JC004WRSB): `resolveMineralKillDrops(scene,
+│   │   │                      entity, rng)` decides the drops for a destroyed enemy
+│   │   │                      (small asteroid → one mineral at the death site; large/
+│   │   │                      medium asteroid → none; non-asteroid enemy → the configured
+│   │   │                      25–50 % re-drop, scattered near the death site). Consumed by
+│   │   │                      `PlayScene` and `GymFormationScene` so the game and the gyms
+│   │   │                      cannot diverge; the repo-wide guard in
+│   │   │                      `CombatScene.equivalence.test.ts` pins the single definition.
+│   │   ├── dropLayer.ts — Shared power-up drop layer (implemented, AH-0MUII3CXX0023H24,
+│   │   │                      gap 4): `buildDefaultDropSpawner` (default weighted pool over
+│   │   │                      P3–P9 + weapon drops), `advanceDropLifecycles` (grow → hold →
+│   │   │                      shrink → despawn), `collectOverlappingDrops` (collect-gate: ≥ 3 %
+│   │   │                      scale + hull-touches-bubble via `dropCollectRadius`),
+│   │   │                      `applyDropMagnet` (P9 range/speed) and `playDropPickupCue`
+│   │   │                      (per-type P5/P8/P9 + weapon/Reset cue dispatcher with the generic
+│   │   │                      chime fallback). `CombatCoreScene` wraps them as template methods
+│   │   │                      (`_updateDropLayer`, `_advanceDropLifecycles`,
+│   │   │                      `_collectOverlappingDrops`, `_applyDropMagnet`,
+│   │   │                      `_buildDefaultDropSpawner`, `_playPickupCue`) consumed by
+│   │   │                      `PlayScene` and every gym, so an enabled drop behaves identically
+│   │   │                      everywhere. Only the spawn *source* (kill chance vs timer vs
+│   │   │                      round-robin) stays per-scene (OQ6). Pinned by the repo-wide guard
+│   │   │                      and the cross-scene equivalence tests in
+│   │   │                      `CombatScene.equivalence.test.ts`.
+│   │   ├── BombNotice.ts — Shared P4 bomb notice (implemented, AH-0MUII3CXX0023H24, gap 4):
+│   │   │                      owns the centred “BOMB! Bullets cleared” flash and its 1.2 s
+│   │   │                      auto-hide timer. `CombatCoreScene.onPowerUpCollected` shows it
+│   │   │                      through the polymorphic `_getBombNotice()` accessor, so every
+│   │   │                      scene that can collect a P4 (`PlayScene`, `GymFormationScene`,
+│   │   │                      `GymPowerUpsCombat`) shows the same notice.
+│   │   ├── asteroidSplit.ts — Shared asteroid-split helper (implemented,
+│   │   │                      AH-0MUII3F7Q002O7WX, gap 8): `splitAsteroid({ scene,
+│   │   │                      parent, register })` spawns the two smaller children of
+│   │   │                      a destroyed large/medium rock (position, velocity fan,
+│   │   │                      rotation) and hands each to the caller's registration
+│   │   │                      callback. Consumed by `PlayScene._splitAsteroid` and the
+│   │   │                      `GymEnemies`/`GymMinerals` destruction seams so the split
+│   │   │                      physics cannot drift; pinned by the repo-wide source guard
+│   │   │                      in `src/scenes/core/asteroidSplit.test.ts`.
+│   │   ├── bulletLifecycle.ts — Shared projectile-lifecycle helpers (implemented,
+│   │                      AH-0MUII3CF00024EDM, gap 3): `advanceWrappingBullets(bullets,
+│   │                      dt, width, height)` advances enemy bullets (velocity
+│   │                      integration, four-edge wrap, lifetime expiry) and
+│   │                      `advancePlayerBullets(bullets, dt)` advances player bullets via
+│   │                      the existing `advanceAndCull`. Consumed by `PlayScene`,
+│   │                      `GymFormationScene`, `GymWeapons` and `GymPowerUpsCombat` so the
+│   │                      wrap/expiry semantics cannot drift (AH-0MU960UTE001PTV0); the
+│   │                      repo-wide guard plus cross-scene equivalence tests in
+│   │                      `CombatScene.equivalence.test.ts` pin the definition and the
+│   │                      behaviour.
+│   │   └── mineralLayer.ts — Shared mineral collection + choice-reward layer (implemented,
+│   │                      AH-0MUII3DHM008L7JF, gap 5): `collectMinerals(minerals,
+│   │                      player, enemies, onPlayerCollected)` runs the single player-pickup/
+│   │                      non-asteroid-absorption pass, `applyMineralChoiceReward(option, ...)`
+│   │                      applies a hold-full choice permanently, and `MineralHold` is
+│   │                      re-exported from `core/mineralHold.ts` so the whole collection + hold
+│   │                      seam lives together. Consumed by `PlayScene` and
+│   │                      `GymFormationScene`; the single-definition guard and the cross-scene
+│   │                      overflow test live in `mineralLayer.equivalence.test.ts`.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
 │   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
 │   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
 │   │                      FocusManager keyboard navigation (default focus on Play Game)
 │   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
-│   │                      base (implementing its hooks for boss multi-hit, asteroid split,
+│   │                      base (which extends `CombatCoreScene`; implementing its hooks for
+│   │                      boss multi-hit, asteroid split (delegated to the shared
+│   │                      `scenes/core/asteroidSplit.ts` helper),
 │   │                      mineral absorption, wave accounting, lives/game-over and the P4
 │   │                      bomb notice); WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
 │   │                      to GameOverScene on win or loss; **ESC pauses** the run and
 │   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable);
 │   │                      mineral drops/hold and the hold-full power-up choice overlay
-│   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (3 distinct options, paused
-│   │                      SceneManager overlay; applies the pick permanently, resumes, resets hold)
+│   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (implemented): 3 distinct
+│   │                      options, paused SceneManager overlay; the only selection contract is
+│   │                      the optional `onSelect(index, option)` callback (no launcher-specific
+│   │                      branches), so the exact option shown is the option the launcher applies;
+│   │                      resumes and resolves the hold with the overflow carry
 │   ├── PauseScene.ts    — In-game pause menu (implemented): full-screen replacement scene
 │   │                      with Resume / Settings / Quit (pointer + keyboard), launched by
 │   │                      PlayScene's ESC toggle; resume continues the run exactly
+│   ├── HelpScene.ts     — Gym help overlay (implemented, AH-0MUAYB67I002REOZ): opaque
+│   │                      full-screen replacement launched by the shared gym helper;
+│   │                      icon + name + catalogue description per spawnable drop, with a
+│   │                      default-focused Close control; `?`/Close/ESC resume the paused gym
+│   │                      (ESC never exits to the menu while the overlay is open)
 │   ├── SettingsScene.ts — Settings screen (implemented): SFX volume slider (0.0–1.0),
 │   │                      SFX mute toggle, and key-binding remapping with conflict
 │   │                      warnings + Reset to defaults; persisted to `ai_hell_settings`;
@@ -460,29 +623,48 @@ src/
 │   │                      opened from the main menu; Back returns to MenuScene
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
-│   │                      scenes from scenes/gym/ via import.meta.glob)
+│   │                      scenes from scenes/gym/ via import.meta.glob;
+│   │                      FocusManager keyboard navigation — Tab/arrows move focus,
+│   │                      Enter/Space launch the focused row)
 │   └── gym/
 │       ├── core/
 │       │   └── GymFormationScene.ts — Shared gym formation base (implemented): extends the
-│       │                      shared `scenes/core/CombatScene`, generic over the entity/bullet
+│       │                      shared `scenes/core/CombatScene` (itself extending
+│       │                      `CombatCoreScene`), generic over the entity/bullet
 │       │                      types and driven by an `EnemyFormationConfig`; owns formation
 │       │                      spawn/drift/respawn, the opt-in power-up layer and the
-│       │                      enemy-only mode. Concrete E1–E5 gyms and GymEnemies/GymBoss
-│       │                      supply only their entity-specific config.
+│       │                      shared mineral layer (`scenes/core/mineralLayer.ts` collection +
+│       │                      `core/mineralHold.ts` hold) and the
+│       │                      enemy-only mode. Exposes the protected `respawnFormation()`
+│       │                      and `setPlayerEnabled(enabled)` seams plus
+│       │                      `registerDynamicEntity(child)` (AH-0MUII3F7Q002O7WX, gaps 8/9),
+│       │                      so subclasses share the game's respawn/player lifecycle
+│       │                      instead of casting into base internals. Concrete E1–E5 gyms
+│       │                      and GymEnemies/GymBoss supply only their entity-specific config.
 │       ├── GymDiver.ts  — E2 Diver gym (key GymDiver, label "Diver")
 │       ├── GymPhaser.ts — E4 Phaser gym (key GymPhaser, label "Phaser")
 │       ├── GymMinerals.ts — asteroids-only mineral gym (key GymMinerals, label "Minerals"):
-│       │                   small-asteroid mineral drops, hold fill + HUD counter,
-│       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals)
-│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player")
+│       │                   small-asteroid mineral drops (via the shared
+│       │                   `scenes/core/mineralKillDrops.ts` rule), the shared
+│       │                   `scenes/core/mineralLayer.ts` collection/hold/choice layer,
+│       │                   hold fill + HUD hold bar,
+│       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
+│       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
+│       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)
+│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player");
+│       │                   consumes the shared `mapControlInput` scheme→input helper
+│       │                   (AH-0MUII39KX007YUQ0, gap 11)
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
+│       │                  extends the narrower shared `scenes/core/CombatCoreScene`;
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
 │       ├── GymPowerUpsCombat.ts — combat-coupled power-up gym (key GymPowerUpsCombat, label "PowerUpsCombat"):
+│       │                  extends the shared `scenes/core/CombatScene` (hook-based shield/phase/bomb/invuln);
 │       │                  round-robin P3/P4/P6/P7 with low-level scout threats; P3 Shield, P4 Bomb, P6 Phase, P7 Teleport (S/↓)
 │       ├── GymScout.ts  — E1 Scout gym (key GymScout, label "Scout")
 │       ├── GymSwarm.ts  — E5 Swarm gym (key GymSwarm, label "Swarm")
 │       ├── GymTank.ts   — E3 Tank gym (key GymTank, label "Tank")
 │       └── GymWeapons.ts — weapon power-up gym (key GymWeapons, label "Weapons"):
+│                           extends the narrower shared `scenes/core/CombatCoreScene`;
 │                           auto-fire ship + round-robin Spread/Dual/Rapid/Reset
 │                           drops (7 s lifetime, persistent weapon switching)
 ├── entities/
@@ -490,6 +672,13 @@ src/
 │   ├── Mineral.ts       — Mineral collectable (small gold dot; collected by the player,
 │   │                      absorbed by non-asteroid enemies; inert to bullets/asteroids)
 │   ├── PlayerBullet.ts  — Player-fired projectile (Graphics, vx/vy, per-type lifetime; four-edge wrap)
+│   ├── enemyFire.ts     — Shared enemy-fire dispatcher (implemented, AH-0MUII3BBW000XZ46,
+│   │                      gap 2): `fireForEnemy(entity, enemyKey, now)` maps an archetype
+│   │                      key → its `tryFire*` method once (unknown/custom keys fall back
+│   │                      to the aimed shot) and takes the caller's scene clock explicitly.
+│   │                      Consumed by `PlayScene`, `GymEnemies` and `GymPowerUpsCombat` so a
+│   │                      new archetype is wired once and every scene fires it identically;
+│   │                      pinned by the repo-wide guard in `CombatScene.equivalence.test.ts`.
 │   ├── Enemy.ts         — Base enemy class
 │   ├── Scout.ts         — E1 Scout
 │   ├── Diver.ts         — E2 Diver
@@ -515,6 +704,7 @@ src/
 │   │                      findTeleportDestination reused by GymPowerUpsCombat and
 │   │                      the combat base (ray + grid candidates, clamped to screen)
 │   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
+│   │                      with a one-line `description` per entry (gym help source of truth)
 │   ├── choice.ts        — Pluggable hold-full choice strategy (default: 3 distinct random
 │   │                      picks from P3–P9 + Spread/Dual/Rapid; graceful degradation)
 │   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
@@ -542,6 +732,10 @@ src/
     │                      Enter/Space activation, visible focus style, shutdown cleanup
     ├── gymDiscovery.ts  — Gym-scene discovery (import.meta.glob, .test.ts filter, labels, sort)
     ├── gymNavigation.ts — Shared "← INDEX" back-button helper for gym scenes
+    ├── gymHelp.ts      — Shared gym help helper (implemented, AH-0MUAYB67I002REOZ):
+    │                      `addHelpButton(scene, { gymKey, drops })` renders the `Help (?)`
+    │                      button beside `← INDEX`, pauses + launches HelpScene on click/`?`,
+    │                      and exposes the id → { name, description, drawIcon } catalogue lookup
     └── gymPowerUpControl.ts — Live spawn-interval slider (implemented): plain-DOM range input
                            mounted in GymEnemies/GymBoss that applies the new cadence to the
                            running scene and persists it via the rules config (stable DOM id)
@@ -681,6 +875,19 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
   | Player | radial + ring | cyan shell + spray on death |
 
   Counts, lifespan, jitter ranges (including the per-particle `EXPLOSION_SIZE_JITTER` / `EXPLOSION_POSITION_JITTER`), and per-pattern speeds/radii are all tunable constants in `src/vfx/explosionParticles.ts`; the initial values here (and the table above) are the pre-tuning baseline. Size and position jitter apply uniformly to all three patterns and every entity type — the `ring` pattern's particles are position-jittered too, so it reads as a slightly ragged ring rather than a perfect circle.
+- **Player-death juice**: The player's destruction is the most consequential event in the game, so it plays a deliberately layered effect rather than a single particle puff. The composed effect lives in one shared module, `src/vfx/playerDeathJuice.ts`, and is invoked through a single entry point `spawnPlayerDeathJuice(scene, x, y, severity, options?)` so no scene has to know the layer set. One call composes:
+  1. **Camera shake** (`applyShake`) — full-2D `camera.shake(duration, intensity)`, short (~250–400 ms) to avoid motion discomfort.
+  2. **Dedicated SFX** (`playPlayerDestructionSound`, see §7.3) — played exactly once; the generic enemy cue is never played on this path.
+  3. **Particle burst** — delegated to `spawnExplosionParticles()` with the `'player'` (`radial + ring`) pattern assignment, so the player keeps the cyan shell-and-spray identity from the table above.
+  4. **Full-screen flash** (`spawnDeathFlash`) — a brief non-interactive cyan-white overlay that fades from a peak alpha to zero in ~120–200 ms.
+  5. **Debris shards** (`spawnDeathDebris`) — small cyan fragments flung outward on seeded-random headings, fading and shrinking over ~0.5 s.
+  6. **Shockwave ring** (`spawnDeathShockwave`) — an expanding stroked ring that outlives the particle burst briefly before fading.
+
+  **Severity scaling:** `resolveJuiceParams(severity)` maps a `'respawn'` (mid-run life lost) or `'fatal'` (final life / game over) death to a complete parameter set; `'fatal'` scales every magnitude up via the `PLAYER_DEATH_SEVERITY_FATAL_*` multipliers (shake intensity/duration, flash alpha, debris count, shockwave radius), so a run-ending death reads heavier without becoming disorienting. Unknown severities fall back to `'respawn'` (never throws).
+
+  **Per-layer toggles:** each layer is individually switchable via a `PLAYER_DEATH_ENABLE_*` constant (shake, flash, particles, debris, shockwave, sound), and all intensities/counts/durations are exported constants in the same module — a designer can drop or retune any layer without code surgery. Every juice-owned display object is pushed to a caller-owned `playerDeathEffects` registry and removed on completion, and the scenes clear that registry on `SHUTDOWN`, so a stop/restart leaks nothing.
+
+  The three player-hit paths all route through the helper: `PlayScene._loseLife` (real run — `'fatal'` at 0 lives, `'respawn'` otherwise), the shared `CombatScene.applyPlayerHit` used by the formation gyms (`GymEnemies` / `GymBoss` / `GymMinerals`), and `GymPowerUpsCombat` via the inherited hit lifecycle. The wave-timeout life penalty (`_loseLife(false)`) deliberately keeps the lighter generic cue and spawns no juice VFX, and shield absorption is unchanged in both the run and the combat gym.
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
@@ -692,7 +899,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 |----------|-------|-----------------|--------|-----------|
 | **Interactions** | Power-up pickup | Short percussive pop + "sucked into ship" absorb VFX | Medium | Immediate |
 | **Interactions** | Teleport activate (S/↓) | Short whoosh + portal effect | Medium | Immediate |
-| **Impacts** | Player hit (life lost) | Low, jarring zap | High | Immediate |
+| **Impacts** | Player hit (life lost) | Low, heavy layered "hull breach" boom (`playPlayerDestructionSound()`: impact thump + descending body + shrapnel hiss); replaces the generic enemy cue on the player-death paths | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
@@ -740,9 +947,11 @@ enemies get:
 | P5 Speed Boost pickup | Bright ascending zip | Square 600 → 1800 Hz | 0.13 |
 | P8 Extra Life pickup | Warm two-note chime | Sine 440 → 880 then 660 → 990 Hz | 0.13 |
 | P9 Magnet pickup | Low pulsing field hum | Square 180 → 90 → 180 Hz + sine undertone | ≤ 0.12 |
-| Thruster hum (held thrust) | Continuous jet-engine roar | Triangle 60 Hz + sine 35 Hz rumble + band-pass filtered white noise (700–1100 Hz) whoosh, thrust-scaled (≤ 0.15) | ≤ 0.15 |
+| Thruster hum (held thrust) | Continuous jet-engine roar | Triangle 60 Hz + sine 35 Hz rumble + band-pass filtered white noise (700–1100 Hz) whoosh, thrust-scaled (≤ 0.075) | ≤ 0.075 |
+| Player death (hull breach) | Heavy layered boom — deep impact thump + slow descending body + brief shrapnel hiss | Sawtooth 120 → 32 Hz (~0.4 s) + triangle 260 → 42 Hz (~0.6 s) + high-pass filtered noise tail (~0.28 s) | ≤ 0.2 |
 
-- **Thruster hum** — single ship-level continuous jet-engine roar (NOT per-engine flame port), synthesised as a soft triangle fundamental (60 Hz) with a sine undertone (35 Hz) for low rumble plus white noise through a band-pass filter (700–1100 Hz, Q 0.6–1.1) for jet-engine whoosh; filtered noise is the dominant texture, all through one reused gain node; gain follows `getEngineSoundLevel` level `min(1, thrustAcceleration / FLAME_REF_THRUST)` (GDD §2.2 `ShipConfig`), so the tuning slider is audible (half thrust → ~0.5 level). Contour: smooth fade-in ramping over `THRUSTER_HUM_GROWTH_TIME` (30 ms at reference thrust) and ~4× quicker decay when thrust stops (mirrors the flame growth/shrink timing), with no clicks on retrigger; volume ≤ 0.15 (within the "≤ 0.2" ceiling for all player cues). Driven per-frame by `Player.preUpdate` → `getEngineSoundLevel(state, input, thrustAcceleration)` → `updateThrusterSound(level)` for both `fourDirectional` (any arrow/WASD) and `asteroids` (forward/turn) schemes; stops on release, respawn, player destroy, or scene shutdown so no audio nodes leak.
+- **Thruster hum** — single ship-level continuous jet-engine roar (NOT per-engine flame port), synthesised as a soft triangle fundamental (60 Hz) with a sine undertone (35 Hz) for low rumble plus white noise through a band-pass filter (700–1100 Hz, Q 0.6–1.1) for jet-engine whoosh; filtered noise is the dominant texture, all through one reused gain node; gain follows `getEngineSoundLevel` level `min(1, thrustAcceleration / FLAME_REF_THRUST)` (GDD §2.2 `ShipConfig`), so the tuning slider is audible (half thrust → ~0.5 level). Contour: smooth fade-in ramping over `THRUSTER_HUM_GROWTH_TIME` (30 ms at reference thrust) and ~4× quicker decay when thrust stops (mirrors the flame growth/shrink timing), with no clicks on retrigger; volume ≤ 0.075 (halved from 0.15 to sit comfortably behind other cues, within the "≤ 0.2" ceiling for all player cues). Driven per-frame by `Player.preUpdate` → `getEngineSoundLevel(state, input, thrustAcceleration)` → `updateThrusterSound(level)` for both `fourDirectional` (any arrow/WASD) and `asteroids` (forward/turn) schemes; stops on release, respawn, player destroy, or scene shutdown so no audio nodes leak.
+- **Player destruction** — the dedicated `playPlayerDestructionSound()` in `src/audio/effects.ts` is a heavier, layered cue distinct from the generic enemy `playDestructionSound()` (440 → 60 Hz sawtooth): a sawtooth impact thump (120 → 32 Hz, ~0.4 s) plus a slower triangle body sliding 260 → 42 Hz (~0.6 s) and a short high-pass filtered noise tail (~0.28 s) for the shrapnel hiss. It is played **exactly once** per player destruction by the shared `spawnPlayerDeathJuice` helper (§7.2) and fully replaces the generic enemy cue on the player-death paths (`PlayScene._loseLife`, `CombatScene.applyPlayerHit`, and the inherited `GymPowerUpsCombat` hit lifecycle). Its amplitudes and lengths are exported `PLAYER_DESTRUCTION_*` constants, and every layer stays within the ≤ 0.2 player-cue volume ceiling. The wave-timeout life penalty and shield absorption keep the generic cue; the dedicated cue is a safe no-op without an `AudioContext`.
 - **Shoot cues play once per shot** (not once per bullet), keyed off each
   firing weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
 - **Pickup activation cues** are unique per pickup type and distinct from the

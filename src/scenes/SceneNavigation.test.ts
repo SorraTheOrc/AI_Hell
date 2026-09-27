@@ -7,7 +7,7 @@
  * bullets, or canvases).
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
@@ -16,6 +16,13 @@ import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
+
+// These integration tests boot full Phaser games with real timers and
+// `sleep()` waits; under the full-suite parallel load the Vitest default
+// 5 s timeout is too tight and the heaviest walk-to-the-boss test reports
+// a spurious timeout (AH-0MUINWNPI000G6MU). Give the file headroom so a
+// slow parallel run does not fail on timing alone.
+vi.setConfig({ testTimeout: 20000 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -169,7 +176,11 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     await sleep(300);
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
-    expect(play.getAliveCount()).toBe(play.getWaveManager().waveEnemyCount());
+    // The wave's formation enemies are all present; the random asteroid
+    // spawner may add more on top, so the static wave count is a lower bound.
+    expect(play.getAliveCount()).toBeGreaterThanOrEqual(
+      play.getWaveManager().waveEnemyCount(),
+    );
     expect(play.getEnemies().length).toBe(play.getAliveCount());
     expect(play.getPlayerBullets().length).toBeGreaterThanOrEqual(0);
     expect(play.getEnemyBullets().length).toBe(0);

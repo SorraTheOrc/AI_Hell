@@ -77,7 +77,7 @@ export interface EnemySpawn {
  * → `beginBoss()` → `onBossDefeated()`.
  */
 export class WaveManager {
-  private readonly levels: LevelDefinition[];
+  private levels: LevelDefinition[];
 
   private _levelIndex = 0;
   private _waveIndex = 0;
@@ -93,6 +93,16 @@ export class WaveManager {
    */
   constructor(levels: LevelDefinition[] = LEVELS) {
     this.levels = levels;
+  }
+
+  /**
+   * Replaces the level definitions at runtime. Resets internal state so
+   * the next `beginGame()` starts from the new levels. Injectable for
+   * tests that need custom wave configurations.
+   */
+  setLevels(levels: LevelDefinition[]): void {
+    this.levels = levels;
+    this.reset();
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
@@ -149,6 +159,29 @@ export class WaveManager {
   /** Number of waves in the active level. */
   get waveCount(): number {
     return this.currentLevel()?.waves.length ?? 0;
+  }
+
+  /**
+   * Cumulative zero-based regular-wave index across the whole campaign
+   * (0 for Level 1 Wave 1). Increments once per regular wave and never
+   * decreases. Returns 0 when no regular wave is active (before
+   * `beginGame()`, once the boss is due, during/after the boss
+   * encounter) so it can never rise outside a playable wave.
+   */
+  get globalWaveIndex(): number {
+    // Before `beginGame()`, during the boss encounter (active or defeated),
+    // or after game complete — no regular wave is active.
+    // We allow the index to persist when `bossTriggered` is true (boss is
+    // queued but not yet active) so that callers can observe the last
+    // regular-wave index.
+    if (!this._started || this._bossActive || this._bossDefeated) {
+      return 0;
+    }
+    let index = 0;
+    for (let i = 0; i < this._levelIndex; i++) {
+      index += this.levels[i]?.waves.length ?? 0;
+    }
+    return index + this._waveIndex;
   }
 
   /** Total number of regular levels in the campaign (excludes the boss). */

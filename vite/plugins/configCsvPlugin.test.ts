@@ -38,6 +38,7 @@ import { DEFAULT_ENEMY_CONFIGS } from '../../src/core/enemyConfig';
 
 const ENEMY_REL = 'src/data/enemy-configs.csv';
 const SHIP_REL = 'src/data/ship-config.csv';
+const DIFFICULTY_REL = 'src/data/difficulty-curves.csv';
 
 function enemyCsv(scoutCount = 6): string {
   const header =
@@ -67,6 +68,15 @@ function enemyRow(key: string, displayName: string, count: number): string {
   return `${key},${displayName},v,${count},26,22,40,240,270,16,0x00ff00,0xff4444,3,aimed,1200,200,1.5,1,1`;
 }
 
+function difficultyCsv(): string {
+  return (
+    '# Difficulty Curves CSV\n' +
+    'level,levelName,wave,targetDifficulty\n' +
+    '1,Entry,1,5\n' +
+    '1,Entry,2,9\n'
+  );
+}
+
 let tempRoot: string;
 const servers: Server[] = [];
 
@@ -74,6 +84,7 @@ function createFixtures(root: string): void {
   mkdirSync(join(root, 'src', 'data'), { recursive: true });
   writeFileSync(join(root, ENEMY_REL), enemyCsv());
   writeFileSync(join(root, SHIP_REL), shipCsv());
+  writeFileSync(join(root, DIFFICULTY_REL), difficultyCsv());
 }
 
 interface TestServer {
@@ -167,6 +178,15 @@ describe('GET endpoint (AC1)', () => {
     expect(body).toContain('thrustAcceleration');
   });
 
+  it('serves the difficulty-curve CSV', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(`${url}${CSV_API_PREFIX}${DIFFICULTY_REL}`);
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('level,levelName,wave,targetDifficulty');
+  });
+
   it('returns 404 for an unknown CSV path', async () => {
     const { url } = await startServer(tempRoot);
     const res = await fetch(`${url}${CSV_API_PREFIX}src/data/other.csv`);
@@ -235,6 +255,42 @@ describe('PUT endpoint — upsert (AC2)', () => {
     expect(res.status).toBe(200);
     const persisted = readFileSync(join(tempRoot, SHIP_REL), 'utf8');
     expect(persisted).toContain(',400,');
+  });
+
+  it('writes valid difficulty-curve rows', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(`${url}${CSV_API_PREFIX}${DIFFICULTY_REL}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body:
+        'level,levelName,wave,targetDifficulty\n' +
+        '1,Entry,1,12\n' +
+        '1,Entry,2,24\n',
+    });
+
+    expect(res.status).toBe(200);
+    const persisted = readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8');
+    expect(persisted).toContain('1,Entry,1,12');
+    expect(persisted).toContain('1,Entry,2,24');
+  });
+
+  it('rejects malformed difficulty-curve rows with 400 and does not modify the file', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8');
+
+    const res = await fetch(`${url}${CSV_API_PREFIX}${DIFFICULTY_REL}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body:
+        'level,levelName,wave,targetDifficulty\n' +
+        '1,Entry,1,not-a-number\n',
+    });
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { ok: boolean; errors: string[] };
+    expect(payload.ok).toBe(false);
+    expect(payload.errors.length).toBeGreaterThan(0);
+    expect(readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8')).toBe(before);
   });
 });
 

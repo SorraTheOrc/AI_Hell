@@ -8,6 +8,7 @@ import { bootScene, BootedGame } from '../../../test/gameHarness';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  MINERAL_REDROP_SCATTER_RADIUS,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
 } from '../../../core/constants';
@@ -17,6 +18,7 @@ import {
   SHIP_SIZE,
 } from '../../../core/constants';
 import { Player } from '../../../entities/Player';
+import { BaseEnemy } from '../../../entities/BaseEnemy';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
 import { FormationOffset } from '../../../utils/formations';
 import {
@@ -44,6 +46,7 @@ import {
 } from '../../../test/powerUpTestFixtures';
 import { DEFAULT_CONFIG } from '../../../core/config';
 import { seedConfigStore } from '../../../core/configStore';
+import { PHASE_GHOST_ALPHA } from '../../core/CombatEffectVisuals';
 
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -112,6 +115,19 @@ class AimStubEnemy extends StubEnemy {
 
   setAimTarget(x: number, y: number): void {
     this.aimCalls.push({ x, y });
+  }
+}
+
+/**
+ * Stub that implements the optional formation-hold seam. `requiresHold` is
+ * deliberately independent of `alive` so the scene-level alive filter is
+ * exercised (a dead holder must NOT freeze the formation).
+ */
+class HoldStubEnemy extends StubEnemy {
+  requiresHold = false;
+
+  requiresFormationHold(): boolean {
+    return this.requiresHold;
   }
 }
 
@@ -232,6 +248,40 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
     expect(labels).toContain(`SCORE: n/a — stubs: ${FORMATION_COUNT}`);
     expect(labels).toContain('stub gym — formation demo');
     expect(labels).toContain(BACK_TO_INDEX_LABEL);
+  });
+
+  it('AC — places EXPLODE/SHOOT and the status line in the bottom-right, clear of the bottom-left panels (AH-0MUAYB7O4009LWBF)', async () => {
+    const scene = await bootGym();
+
+    const textOf = (label: string) =>
+      scene.children.list.find(
+        (c): c is Phaser.GameObjects.Text =>
+          c instanceof Phaser.GameObjects.Text && c.text === label,
+      )!;
+
+    const explode = textOf('EXPLODE');
+    const shoot = textOf('SHOOT: OFF');
+    const status = scene.children.list.find(
+      (c): c is Phaser.GameObjects.Text =>
+        c instanceof Phaser.GameObjects.Text && c.text.startsWith('SCORE: n/a'),
+    )!;
+    const hint = textOf('stub gym — formation demo');
+
+    // In-canvas controls live in the bottom quarter, on the right half of
+    // the canvas so they remain interactive alongside the bottom-left
+    // anchored editor panels.
+    for (const control of [explode, shoot, status]) {
+      expect(control.y).toBeGreaterThan(GAME_HEIGHT / 2);
+      expect(control.x).toBeGreaterThan(GAME_WIDTH / 2);
+    }
+
+    // The status line is right-aligned so it cannot overflow the canvas edge.
+    expect(status.originX).toBe(1);
+
+    // The hint line stays centred — horizontally clear of the left-anchored
+    // panels and the right-anchored controls.
+    expect(hint.originX).toBeCloseTo(0.5, 5);
+    expect(hint.x).toBeCloseTo(GAME_WIDTH / 2, 5);
   });
 
   it('AC1 — formation advances at the configured drift speed', async () => {
@@ -869,7 +919,7 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
   });
 
   it('AC3 — an enemy bullet hitting the player triggers explosion VFX/SFX + in-place respawn + invulnerability blink', async () => {
-    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const { scene, parkAt, armed } = await bootParked();
     const player = scene.getPlayer()!;
 
@@ -892,14 +942,14 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
     const preHitFacing = preHitState.facing ?? 0;
     parkAt.x = preHitX;
     parkAt.y = preHitY;
-    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    const callsBefore = vi.mocked(deathSound).mock.calls.length;
     armed();
     scene.tick(0.05);
 
     // Hit: VFX/SFX fired, hit counter incremented, respawned in-place.
     expect(scene.getPlayerHitCount()).toBe(1);
-    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
-    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+    expect(vi.mocked(deathSound).mock.calls.length).toBeGreaterThan(
       callsBefore,
     );
     // AC1: player is at the SAME position (not relocated to spawn).
@@ -1460,25 +1510,28 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
   });
 
-  it('AC1 — the enemy destruction sound plays on player-vs-enemy collision', async () => {
-    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+  it('AC1 — the dedicated player-death cue plays on player-vs-enemy collision', async () => {
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const scene = await bootWithPlayer();
     const target = scene.formationEntities[0];
 
-    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    const callsBefore = vi.mocked(deathSound).mock.calls.length;
     placePlayerAtEntity(scene, target);
     scene.tick(0.05);
 
-    expect(vi.mocked(destroySound).mock.calls.length).toBe(callsBefore + 1);
+    expect(vi.mocked(deathSound).mock.calls.length).toBe(callsBefore + 1);
   });
 
   it('AC2 — the player is treated as "hit": explosion VFX/SFX + respawn + invulnerability', async () => {
-    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
     const scene = await bootWithPlayer();
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
     const target = scene.formationEntities[0];
 
-    const callsBefore = vi.mocked(destroySound).mock.calls.length;
+    const callsBefore = vi.mocked(deathSound).mock.calls.length;
     placePlayerAtEntity(scene, target);
     const hitX = scene.getPlayer()!.x;
     const hitY = scene.getPlayer()!.y;
@@ -1486,10 +1539,10 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
 
     // Hit counter incremented.
     expect(scene.getPlayerHitCount()).toBe(1);
-    // Explosion VFX spawned.
-    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
-    // Destruction sound played (enemy destruction).
-    expect(vi.mocked(destroySound).mock.calls.length).toBeGreaterThan(callsBefore);
+    // Composed player-death juice spawned (dedicated cue + particles + layers).
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+    // Dedicated player cue played exactly once (no generic cue).
+    expect(vi.mocked(deathSound).mock.calls.length).toBe(callsBefore + 1);
     // The player burst is spawned through the shared particle helper with
     // the ship colour/size and the 'player' pattern assignment (AC2).
     expect(spawnSpy).toHaveBeenCalledTimes(1);
@@ -1508,6 +1561,30 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     // Invulnerability window engaged.
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeGreaterThan(0);
+    // Screen shake fired exactly once by the composed helper.
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('F9 — applyPlayerHit plays only the dedicated cue and registers juice (no generic cue)', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const spawnSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+
+    // Drive the shared VFX/respawn method directly so no enemy destruction
+    // can add an unrelated generic cue to the assertion.
+    (scene as unknown as { applyPlayerHit(p: Player): void }).applyPlayerHit(player);
+
+    expect(deathSound).toHaveBeenCalledTimes(1);
+    expect(genericSound).not.toHaveBeenCalled();
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
   });
 
   it('AC4 — SHUTDOWN destroys active player particle Graphics; restart leaks none', async () => {
@@ -1517,17 +1594,17 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
     placePlayerAtEntity(scene, target);
     scene.tick(0.05);
 
-    // A player particle burst is active and registered for teardown.
-    const active = scene.getPlayerExplosions();
+    // A player juice burst is active and registered for teardown.
+    const active = scene.getPlayerDeathEffects();
     expect(active.length).toBeGreaterThan(0);
 
     // Simulate the Phaser stop/restart vector.
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
-    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
 
     // Restarting the same instance must not throw and must start clean.
     expect(() => scene.create()).not.toThrow();
-    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
     expect(() => scene.tick(0.016)).not.toThrow();
   });
 
@@ -1797,6 +1874,31 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getPowerUpDrops()).not.toContain(drop);
   });
 
+  it('AH-0MTVYCM2N002NKE4 — a drop whose hull touches the visible bubble (31 px) is collected', async () => {
+    const scene = await boot(layer('P3', CLEAR));
+    scene.getPlayer()!.setPosition(480, 270);
+
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px.
+    const drop = scene.spawnPowerUpDrop('P3', 480 + 31, 270)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+    scene.tick(0.016);
+
+    expect(scene.getPowerUpDrops()).not.toContain(drop);
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+  });
+
+  it('AH-0MTVYCM2N002NKE4 — a drop just beyond the bubble boundary (34 px) is not collected', async () => {
+    const scene = await boot(layer('P3', CLEAR));
+    scene.getPlayer()!.setPosition(480, 270);
+
+    const drop = scene.spawnPowerUpDrop('P3', 480 + 34, 270)!; // 34 px > 32.4 px
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+    scene.tick(0.016);
+
+    expect(scene.getPowerUpDrops()).toContain(drop);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+  });
+
   it('AC2 — collecting applies the effect through the shared EffectsRegistry', async () => {
     const scene = await boot(layer('P9', CLEAR));
     const player = scene.getPlayer()!;
@@ -1806,6 +1908,34 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     scene.tick(0.1);
 
     expect(scene.getEffectsRegistry().magnetStacks()).toBe(1);
+  });
+
+  it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
+    const scene = await boot(layer('P5', CLEAR));
+    const player = scene.getPlayer()!;
+
+    // Baseline: no P5, both multipliers normal.
+    scene.tick(0.1);
+    const baseThrust = player.getMovementConfig().thrust;
+    expect(player.getFireRateMultiplier()).toBe(1);
+
+    // Collect P5 on the ship.
+    scene.spawnPowerUpDrop('P5', player.x, player.y);
+    scene.tick(0.1);
+    expect(scene.getEffectsRegistry().fireRateMultiplier()).toBe(1.5);
+
+    // The player section runs before drop collection each tick, so the
+    // boost lands on the following tick.
+    scene.tick(0.1);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
+    expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust * 1.5);
+
+    // Expires after 10 s → both speeds return to normal.
+    for (let i = 0; i < 110; i++) scene.tick(0.1); // ~11 s
+    expect(scene.getEffectsRegistry().isActive('P5')).toBe(false);
+    scene.tick(0.1);
+    expect(player.getFireRateMultiplier()).toBe(1);
+    expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust);
   });
 
   it('AC3 — renders the standalone HUD with lives counter and active-effect rows', async () => {
@@ -2136,5 +2266,558 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 
     for (let i = 0; i < 4; i++) scene.tick(0.05);
     expect(popSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Regression for the parent bug AH-0MUHM66ES0027QQV: the enemy gym
+ * (`GymFormationScene`, base of `GymEnemies`/`GymBoss`/`GymMinerals`)
+ * recorded P3/P6 in the shared `EffectsRegistry` but never consulted it in
+ * the shared hit path, so the player still took hits. These tests pin the
+ * expected enemy-gym behaviour and are the red-to-green proof for the
+ * shared-gating fix.
+ */
+describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES0027QQV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const PLAYER_SPAWN = { x: 480, y: 270 };
+  const INTERVAL = 1000;
+  const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
+
+  /**
+   * Boots a stub formation scene with the player + power-up layer enabled
+   * and a one-shot parked enemy bullet, so a registered hit can be placed
+   * deterministically on the ship (mirrors the collision suite's
+   * `bootParked`). Auto-fire is disabled so a freshly spawned player bullet
+   * cannot intercept the parked enemy bullet in the shared bullet-vs-bullet
+   * pass before it reaches the player.
+   */
+  async function bootGated(id: PowerUpId): Promise<{
+    scene: BootedScene;
+    parkAt: { x: number; y: number };
+    armed: () => void;
+  }> {
+    let armedFlag = false;
+    const parkAt = { x: 0, y: 0 };
+
+    const collect = (enemy: StubEnemy): StubBullet[] => {
+      if (!armedFlag) return [];
+      armedFlag = false; // one-shot
+      const bullet = new StubBullet(enemy.scene, 0, 0, 999);
+      bullet.graphics.setPosition(parkAt.x, parkAt.y);
+      return [bullet];
+    };
+
+    const powerUps: PowerUpLayerConfig = {
+      spawner: new RoundRobinSpawner<PowerUpId>([id]),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    };
+    booted = await bootScene([
+      makeStubScene(collect, PLAYER_SPAWN, undefined, StubEnemy, powerUps),
+    ]);
+    const scene = booted.scene as BootedScene;
+    vi.spyOn(scene.getPlayer()!, 'tryFire').mockReturnValue([]);
+    return {
+      scene,
+      parkAt,
+      armed: () => {
+        armedFlag = true;
+      },
+    };
+  }
+
+  /** Drops a power-up on the ship and ticks once so it is collected. */
+  function collectOnShip(scene: BootedScene, id: PowerUpId): void {
+    const player = scene.getPlayer()!;
+    scene.spawnPowerUpDrop(id, player.x, player.y);
+    scene.tick(0.1);
+  }
+
+  /** Parks the player on an entity's post-tick position (formation drift aware). */
+  function placePlayerAtEntity(scene: BootedScene, entity: FormationSceneEntity): void {
+    const player = scene.getPlayer()!;
+    const postTickX =
+      scene.formationX + DRIFT_SPEED * 0.05 + entity.offset.col * SPACING_X;
+    const postTickY = scene.formationY + entity.offset.row * SPACING_Y;
+    player.setPosition(postTickX, postTickY);
+    (player as unknown as { _movementState: unknown })._movementState = {
+      x: postTickX,
+      y: postTickY,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+  }
+
+  it('AC1 — P6 phase shift makes the gym player immune to enemy bullets; the next hit lands after it expires', async () => {
+    const { scene, parkAt, armed } = await bootGated('P6');
+    const player = scene.getPlayer()!;
+
+    collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(0);
+
+    // An enemy bullet parked on the ship is ignored while phased.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.isPlayerInvulnerable()).toBe(false);
+
+    // The parked bullet is long-lived and still live. Wait out the 3 s
+    // phase window; the same bullet then lands normally.
+    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    expect(scene.getEffectsRegistry().isPhased).toBe(false);
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+
+  it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
+    const { scene } = await bootGated('P6');
+    collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+
+    const target = scene.formationEntities[0];
+    placePlayerAtEntity(scene, target);
+    scene.tick(0.05);
+
+    // No hit and the enemy survives — the player passed straight through.
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(target.alive).toBe(true);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+  });
+
+  it('AC2 — P3 shield absorbs exactly one hit in the gym; the next hit lands after the invulnerability window', async () => {
+    const { scene, parkAt, armed } = await bootGated('P3');
+    const player = scene.getPlayer()!;
+
+    collectOnShip(scene, 'P3');
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+
+    // First hit: absorbed — no hit counted, shield consumed, the post-hit
+    // invulnerability window starts.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+
+    // Wait out the invulnerability window, then the following hit lands.
+    for (let i = 0; i < 20; i += 1) scene.tick(0.2); // 4 s
+    expect(scene.isPlayerInvulnerable()).toBe(false);
+
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getPlayerHitCount()).toBe(1);
+  });
+
+  it('AC4 — P3 shield renders the shared bubble in the gym and clears it when the shield pops', async () => {
+    const { scene, parkAt, armed } = await bootGated('P3');
+    const player = scene.getPlayer()!;
+
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+
+    collectOnShip(scene, 'P3');
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+    expect(scene.isShieldBubbleVisible()).toBe(true);
+
+    // Absorbing the hit pops the shield and clears the bubble.
+    parkAt.x = player.x;
+    parkAt.y = player.y;
+    armed();
+    scene.tick(0.05);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+  });
+
+  it('AC4 — P6 applies the shared phase-ghost alpha and restores it on expiry', async () => {
+    const { scene } = await bootGated('P6');
+    const player = scene.getPlayer()!;
+
+    collectOnShip(scene, 'P6');
+    expect(scene.isPhaseGhostActive()).toBe(true);
+    expect(player.alpha).toBeCloseTo(PHASE_GHOST_ALPHA);
+
+    // Expiry (3 s phase duration) restores full alpha.
+    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    expect(scene.isPhaseGhostActive()).toBe(false);
+    expect(player.alpha).toBe(1);
+  });
+
+  it('AC4 — the shared visual update is safe when the scene has no player', async () => {
+    const powerUps: PowerUpLayerConfig = {
+      spawner: new RoundRobinSpawner<PowerUpId>(['P3']),
+      placement: CLEAR,
+      spawnInterval: INTERVAL,
+    };
+    booted = await bootScene([
+      makeStubScene(() => [], undefined, undefined, StubEnemy, powerUps),
+    ]);
+    const scene = booted.scene as BootedScene;
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(() => scene.tick(0.1)).not.toThrow();
+    expect(scene.isShieldBubbleVisible()).toBe(false);
+  });
+});
+
+// ── Shared mineral kill-drop wiring (AH-0MUHMT5JC004WRSB, AC2) ──────
+
+/**
+ * Non-asteroid gym entity backed by the real mineral-absorbing `BaseEnemy`,
+ * so the gym test exercises the production re-drop rule (never a re-impl).
+ */
+class MineralTestEnemy extends BaseEnemy implements FormationSceneEntity {
+  constructor(scene: Phaser.Scene, offset: FormationOffset) {
+    super(scene, 0, 0, { formationOffset: offset, size: 16, color: 0x00ff00 });
+  }
+
+  protected getExplosionPatternName(): string {
+    return 'scout';
+  }
+
+  protected _drawBody(): void {
+    // No body needed for the kill-drop contract.
+  }
+
+  applyFormationPosition(
+    baseX: number,
+    baseY: number,
+    _dt: number,
+    spacingX: number,
+    spacingY: number,
+  ): void {
+    this.setPosition(
+      baseX + this.offset.col * spacingX,
+      baseY + this.offset.row * spacingY,
+    );
+  }
+}
+
+const MINERAL_GYM_CONFIG: EnemyFormationConfig<MineralTestEnemy, StubBullet> = {
+  sceneKey: 'MineralKillDropGym',
+  count: 1,
+  spacingX: 20,
+  spacingY: 20,
+  driftSpeed: 0,
+  startX: GAME_WIDTH * 0.25,
+  startY: GAME_HEIGHT * 0.5,
+  statusLabel: 'mineral',
+  hintText: 'mineral kill-drop test gym',
+  buildOffsets: () => [{ row: 0, col: 0 }],
+  createEntity: (scene, x, y, offset) => {
+    const enemy = new MineralTestEnemy(scene, offset);
+    enemy.setPosition(x, y);
+    return enemy;
+  },
+  collectBullets: () => [],
+};
+
+class MineralKillDropGym extends GymFormationScene<
+  MineralTestEnemy,
+  StubBullet
+> {
+  constructor() {
+    super(MINERAL_GYM_CONFIG);
+  }
+}
+
+describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootMineralGym(): Promise<MineralKillDropGym> {
+    booted = await bootScene([MineralKillDropGym]);
+    return booted.scene as MineralKillDropGym;
+  }
+
+  /** Empties the seeded field without involving a player. */
+  function clearField(scene: MineralKillDropGym): void {
+    for (const mineral of scene.getMinerals()) mineral.handleOverlap('player');
+    scene.tick(0.016);
+  }
+
+  it('a non-asteroid enemy re-drops the shared rule output on destruction (AC2)', async () => {
+    const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
+    clearField(scene);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    for (let i = 0; i < 10; i += 1) enemy.collectMineral();
+    const collected = enemy.mineralCount;
+    expect(collected).toBeGreaterThanOrEqual(10);
+
+    // Inject a deterministic RNG for the re-drop, then destroy the enemy
+    // through the EXPLODE path (which bypasses `onEnemyDestroyed`).
+    scene.setSceneRng(createSeededRng(5));
+    const expected = enemy.mineralRedropCount(createSeededRng(5));
+    expect(expected).toBeGreaterThan(0);
+    expect(expected).toBeLessThanOrEqual(collected);
+
+    const ex = enemy.x;
+    const ey = enemy.y;
+    scene.explodeRandom();
+
+    const minerals = scene.getMinerals();
+    expect(minerals).toHaveLength(expected);
+    for (const mineral of minerals) {
+      expect(
+        Math.hypot(mineral.x - ex, mineral.y - ey),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
+  });
+
+  it('drops nothing when a non-asteroid enemy absorbed nothing (AC2)', async () => {
+    const scene = await bootMineralGym();
+    clearField(scene);
+
+    scene.explodeRandom();
+
+    expect(scene.getMinerals()).toHaveLength(0);
+  });
+});
+
+describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHoldGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
+    booted = await bootScene([
+      makeStubScene(() => [], undefined, undefined, HoldStubEnemy),
+    ]);
+    return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
+  }
+
+  /** The stub entities, typed with the formation-hold seam. */
+  function holders(
+    scene: GymFormationScene<StubEnemy, StubBullet>,
+  ): HoldStubEnemy[] {
+    return scene.formationEntities as HoldStubEnemy[];
+  }
+
+  it('AC1 — a holding entity freezes the formation base', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+    holder.requiresHold = true;
+
+    const before = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBe(before);
+  });
+
+  it('AC1 — the gate ignores destroyed entities (a dead holder cannot freeze the formation)', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+    holder.requiresHold = true;
+    holder.destroySelf();
+    expect(holder.alive).toBe(false);
+
+    const before = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('AC1/AC2 — while any one entity still holds the formation stays frozen; both rejoined resumes from the held position', async () => {
+    const scene = await bootHoldGym();
+    const [a, b] = holders(scene);
+    a.requiresHold = true;
+    b.requiresHold = true;
+
+    scene.tick(0.5);
+    const frozenAt = scene.formationX;
+
+    // One diver rejoins; the other is still away — no drift.
+    a.requiresHold = false;
+    scene.tick(0.5);
+    expect(scene.formationX).toBe(frozenAt);
+
+    // Both rejoined → the formation resumes from exactly the held base.
+    b.requiresHold = false;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(frozenAt + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('AC1 — a hold suppresses the right-edge wrap/respawn', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+
+    // Advance until the NEXT 1 s tick would cross the wrap threshold.
+    for (
+      let i = 0;
+      i < 100 && scene.formationX + DRIFT_SPEED <= GAME_WIDTH + 60;
+      i++
+    ) {
+      scene.tick(1.0);
+    }
+    expect(scene.formationX + DRIFT_SPEED).toBeGreaterThan(GAME_WIDTH + 60);
+
+    holder.requiresHold = true;
+    const heldX = scene.formationX;
+    // Without the hold this 1 s tick crosses the threshold and wraps.
+    scene.tick(1.0);
+    expect(scene.formationX).toBe(heldX);
+
+    // Releasing the hold lets the wrap happen again.
+    holder.requiresHold = false;
+    scene.tick(1.0);
+    expect(scene.formationX).toBeLessThan(0);
+  });
+
+  it('AC2 — the formation resumes from exactly the held position with no jump', async () => {
+    const scene = await bootHoldGym();
+    const [holder] = holders(scene);
+    holder.requiresHold = true;
+    scene.tick(0.5);
+    const heldX = scene.formationX;
+    // A second held tick confirms the base really is pinned.
+    scene.tick(0.5);
+    expect(scene.formationX).toBe(heldX);
+
+    holder.requiresHold = false;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(heldX + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('AC4 — a formation with no holder still drifts', async () => {
+    const scene = await bootHoldGym();
+    const before = scene.formationX;
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
+  });
+});
+
+describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWithPlayer(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect (no stale permanent effects)', async () => {
+    const scene = await bootWithPlayer();
+    const registry = scene.getEffectsRegistry();
+
+    // Apply one of every category the registry can hold — all permanent so
+    // a timer expiry could never be mistaken for the reset under test.
+    registry.applyCollect('P9', true); // permanent magnet stack
+    registry.applyCollect('P5', true); // permanent speed boost
+    registry.applyWeapon('spread', true); // permanent weapon
+    registry.applyCollect('P7'); // stored teleport use
+
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.activeWeapons()).toHaveLength(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    // The gym-index restart vector: stop (SHUTDOWN teardown) then create()
+    // on the SAME scene instance.
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    // Apply again before restart so this also proves `create()` resets the
+    // registry, not only `SHUTDOWN`.
+    registry.applyCollect('P9', true);
+    expect(registry.magnetStacks()).toBe(1);
+
+    expect(() => scene.create()).not.toThrow();
+    const restarted = scene.getEffectsRegistry();
+    // The gym keeps one registry instance and clears it — no reallocation.
+    expect(restarted).toBe(registry);
+    expect(restarted.activeEffects()).toHaveLength(0);
+    expect(restarted.activeWeapons()).toHaveLength(0);
+    expect(restarted.magnetStacks()).toBe(0);
+    expect(restarted.hasTeleport()).toBe(false);
+    expect(restarted.isShielded).toBe(false);
+    expect(restarted.isPhased).toBe(false);
+    expect(restarted.lives()).toBe(3);
+  });
+
+  it('AC1 — a power-up-enabled gym restart keeps its HUD bound to the same, freshly-reset registry', async () => {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, {}),
+    ]);
+    const scene = booted!.scene as BootedScene;
+    const registry = scene.getEffectsRegistry();
+    expect(scene.isPowerUpLayerEnabled()).toBe(true);
+
+    registry.applyCollect('P3', true);
+    expect(registry.isShielded).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(() => scene.create()).not.toThrow();
+
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.isShielded).toBe(false);
+    expect(scene.getHUD()).not.toBeNull();
+  });
+
+  it('AC2 — teardown clears every scene-owned object category (no leaks)', async () => {
+    const scene = await bootWithPlayer();
+    const player = scene.getPlayer()!;
+
+    // Populate every tracked family: player bullets, minerals, player
+    // explosions and composed player-death juice.
+    scene.spawnPlayerBullet(1, 1, 0, 0);
+    scene.seedMinerals(3);
+    (scene as unknown as { _spawnPlayerExplosion(x: number, y: number): void })
+      ._spawnPlayerExplosion(player.x, player.y);
+    (scene as unknown as { applyPlayerHit(p: Player): void }).applyPlayerHit(
+      player,
+    );
+
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+    expect(scene.getMinerals().length).toBeGreaterThan(0);
+    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.formationEntities).toHaveLength(0);
+    expect(scene.activeBullets).toHaveLength(0);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.getPowerUpDrops()).toHaveLength(0);
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(scene.getMinerals()).toHaveLength(0);
+    expect(scene.getPlayerExplosions()).toHaveLength(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getHUD()).toBeNull();
+    expect(scene.getShieldBubbleGraphics()).toBeNull();
+
+    // A restart of the same instance must not throw and must be clean.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
   });
 });

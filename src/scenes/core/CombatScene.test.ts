@@ -201,6 +201,12 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   }
   bulletRadius = 5;
 
+  /** Overridable invulnerability window (AC4 hook coverage). */
+  invulnDuration = PLAYER_RESPAWN_INVULNERABLE;
+  protected override getInvulnerabilityDuration(): number {
+    return this.invulnDuration;
+  }
+
   // ── Public wrappers for the protected template methods ───────────
   runReadInput() {
     return this._readPlayerInput();
@@ -238,6 +244,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   getPlayerExplosions() {
     return this.playerExplosions;
   }
+  getPlayerDeathEffects() {
+    return this.playerDeathEffects;
+  }
   getBulletImpactEffects() {
     return this.bulletImpactEffects;
   }
@@ -267,6 +276,7 @@ describe('CombatScene — shared combat core hook contract', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     booted?.game.destroy(true);
     booted = null;
   });
@@ -433,13 +443,21 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getPlayerHitCount()).toBe(0);
   });
 
-  it('AC4 — applyPlayerHit registers the explosion and starts invulnerability', async () => {
+  it('AC4 — applyPlayerHit runs the composed player-death juice and starts invulnerability', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 300, y: 300 });
+    const soundSpy = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSpy = vi.spyOn(effectsModule, 'playDestructionSound');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
 
     scene.runApplyPlayerHit(player);
 
-    expect(scene.getPlayerExplosions().length).toBeGreaterThan(0);
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    expect(genericSpy).not.toHaveBeenCalled();
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
     expect(scene.getInvulnerable()).toBeGreaterThan(0);
   });
 
@@ -455,6 +473,17 @@ describe('CombatScene — shared combat core hook contract', () => {
     scene.runUpdateInvulnerability(PLAYER_RESPAWN_INVULNERABLE + 0.01);
     expect(scene.getInvulnerable()).toBe(0);
     expect(player.alpha).toBe(1);
+  });
+
+  it('AC4 — _startInvulnerability uses the overridable getInvulnerabilityDuration hook', async () => {
+    const scene = await boot();
+    scene.invulnDuration = 0.8;
+    const player = scene.addPlayer({ x: 300, y: 300 });
+
+    scene.runApplyPlayerHit(player);
+
+    // The hook is what supplies the window (inherited default is 1.5 s).
+    expect(scene.getInvulnerable()).toBe(0.8);
   });
 
   // ── Teleport ──────────────────────────────────────────────────────

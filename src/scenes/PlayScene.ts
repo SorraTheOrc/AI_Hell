@@ -5,15 +5,24 @@
  * and the boss trigger; this scene spawns the wave's enemies in their
  * formations, integrates the player ship (auto-fire, weapons, effects),
  * resolves collisions, applies power-up collection, and advances levels
- * automatically when a wave/level is cleared.
+ * automatically when a wave/level is cleared. At run start it injects the
+ * campaign into the `WaveManager` — the scripted `LEVELS` by default, or a
+ * data-driven sequenced campaign when the opt-in `sequencedWavesEnabled`
+ * rule is enabled (AH-0MUH6LEYY0054E63; see `resolveCampaignLevels`).
  *
  * **Shared combat core:** extends {@link CombatScene}
  * (`src/scenes/core/CombatScene.ts`), which owns collision resolution,
  * player hits, auto-fire, drop collection, teleports, player explosions
  * and bullet clearing. This scene supplies the game's hooks (boss
  * multi-hit, asteroid split, mineral absorption, wave accounting,
- * lives/game-over, the P4 bomb notice). The gym formation base runs the
- * same shared path, so the game and gyms cannot diverge.
+ * lives/game-over). The gym formation base runs the same shared path, so
+ * the game and gyms cannot diverge.
+ *
+ * **Shared power-up drop layer:** the drop lifecycle, collection gate, P9
+ * magnet, P4 bomb notice and per-type pickup cues are inherited from the
+ * shared drop layer (`src/scenes/core/dropLayer.ts`, `BombNotice.ts`); this
+ * scene supplies only the kill-chance spawn *source* (AH-0MUII3CXX0023H24,
+ * gap 4).
  *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
  *
@@ -27,7 +36,6 @@ import Phaser from 'phaser';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  MINERAL_SIZE,
   PLAYER_BULLET_RADIUS,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
@@ -36,56 +44,38 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState } from '../core/GameState';
-import {
-  DEFAULT_RULES,
-  loadRules,
-  POWER_UP_WEIGHT_IDS,
-  WEAPON_WEIGHT_IDS,
-  type PowerUpWeights,
-  type WeaponWeights,
-} from '../core/rules';
+import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
-  playDualPickupSound,
-  playExtraLifeCollectSound,
-  playMagnetCollectSound,
-  playPowerUpCollectPopSound,
-  playPowerUpCollectSound,
   playRapidFireSound,
-  playRapidPickupSound,
-  playResetPickupSound,
   playSpawnSound,
-  playSpeedBoostCollectSound,
   playSpreadFireSound,
-  playSpreadPickupSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
-import {
-  PlayerBullet,
-  advanceAndCull,
-} from '../entities/PlayerBullet';
+import { PlayerBullet } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
+import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
-import { PowerUp, PowerUpState } from '../powerups/PowerUp';
+import { PowerUp } from '../powerups/PowerUp';
 import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
-import { applyMagnetAttraction } from '../powerups/magnet';
 import {
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
-import { WeightedRandomSpawner, type PowerUpSpawner } from '../powerups/spawner';
-import { type TeleportBody } from '../powerups/teleport';
+import { type PowerUpSpawner } from '../powerups/spawner';
+import { BombNotice } from './core/BombNotice';
 import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
@@ -99,11 +89,28 @@ import {
 } from '../core/settingsStore';
 import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
+import { LEVELS, type LevelDefinition } from '../waves/Formations';
+import { buildSequencedLevels } from '../waves/sequencedLevels';
+import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
 } from './core/CombatScene';
+import {
+  advancePlayerBullets,
+  advanceWrappingBullets,
+} from './core/bulletLifecycle';
+import { resolveMineralKillDrops } from './core/mineralKillDrops';
+import { splitAsteroid } from './core/asteroidSplit';
+import {
+  applyMineralChoiceReward,
+  collectMinerals,
+} from './core/mineralLayer';
+import {
+  applyPhaseGhost,
+  drawShieldBubble,
+} from './core/CombatEffectVisuals';
 
 // ── Scoring (GDD §4.5) ──────────────────────────────────────────────
 
@@ -179,6 +186,31 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   backgroundColor: '#000000',
   padding: { x: 20, y: 12 },
 };
+
+/**
+ * Resolve the campaign the run should play (AH-0MUITS1SM008GPR9).
+ *
+ * With the opt-in `sequencedWavesEnabled` toggle off (the default) the static
+ * `LEVELS` campaign is returned unchanged. With it on, the campaign is
+ * generated from the difficulty-curve config; if generation throws or yields
+ * nothing the static campaign is used instead, so the game always boots into
+ * a playable campaign.
+ *
+ * Exported so the toggle/fallback decision can be unit-tested without
+ * booting a Phaser scene; `PlayScene.create()` calls it with the live rules.
+ */
+export function resolveCampaignLevels(
+  rules: Pick<GameRules, 'sequencedWavesEnabled'> = loadRules(),
+  build: () => LevelDefinition[] = () => buildSequencedLevels(),
+): LevelDefinition[] {
+  if (!rules.sequencedWavesEnabled) return LEVELS;
+  try {
+    const generated = build();
+    return generated.length > 0 ? generated : LEVELS;
+  } catch {
+    return LEVELS;
+  }
+}
 
 /** One spawned enemy plus the formation group it belongs to. */
 interface SpawnedEnemy {
@@ -260,9 +292,8 @@ export class PlayScene extends CombatScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
-  /** P4 Bomb notice — brief centred 'BOMB!' flash after collection. */
-  private bombNoticeLabel: Phaser.GameObjects.Text | null = null;
-  private bombNoticeTimer = 0;
+  /** P4 Bomb notice — shared component (gap 4), hidden until collected. */
+  private bombNotice: BombNotice | null = null;
 
   private driftX = 0;
   private driftDir = 1;
@@ -285,11 +316,28 @@ export class PlayScene extends CombatScene<
   /** Whether the wave time-limit is currently counting down. */
   private waveTimerActive = false;
 
+  /**
+   * Whether random offscreen asteroid spawning is active. Enabled for the
+   * campaign; switchable so gym/legacy fixtures can isolate a single fixed
+   * asteroid without the dynamic spawner adding more.
+   */
+  private asteroidSpawnerEnabled = true;
+
   /** Rendered wave time-limit bar (top of the screen). */
   private waveTimerBar: Phaser.GameObjects.Graphics | null = null;
 
   private dropSpawner: PowerUpSpawner<DropId> | null = null;
   private rng: () => number = Math.random;
+
+  /**
+   * Asteroid spawn events planned for the active wave (empty outside a
+   * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
+   * scene rng stream is only advanced at wave boundaries.
+   */
+  private pendingAsteroidSpawns: SpawnEvent[] = [];
+
+  /** How many of the planned asteroid spawns have been released this wave. */
+  private asteroidsSpawnedThisWave = 0;
 
   constructor() {
     super('PlayScene');
@@ -303,7 +351,7 @@ export class PlayScene extends CombatScene<
   create(): void {
     // Reset any state carried over from a previous session (restarts reuse
     // the same scene instance — never leak stale enemies/bullets/timers).
-    this._resetRunState();
+    this.resetRunState();
 
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
 
@@ -320,17 +368,8 @@ export class PlayScene extends CombatScene<
     // P3 Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    // P4 Bomb notice — centred flash, hidden until a bomb is collected.
-    this.bombNoticeLabel = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, '', {
-        fontFamily: 'monospace',
-        fontSize: '16px',
-        color: '#ff4444',
-        backgroundColor: '#1a1a1a',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0.5)
-      .setVisible(false);
+    // P4 Bomb notice — shared component (gap 4), hidden until collected.
+    this.bombNotice = new BombNotice(this);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
@@ -346,7 +385,7 @@ export class PlayScene extends CombatScene<
 
     // Power-up drop pool.
     const rules = loadRules();
-    this.dropSpawner = this._buildDropSpawner(
+    this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
       this.rng,
@@ -358,13 +397,21 @@ export class PlayScene extends CombatScene<
     // Hold capacity comes from the game-rules config (GDD §4.5).
     this.gameState.mineralCapacity = loadRules().mineralHoldCapacity;
     this._syncMineralHud();
+    // Campaign source: static `LEVELS` by default, generated when the
+    // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the
+    // manager's levels when enabled so an injected campaign (tests, future
+    // callers) is left untouched — preserving shipped behaviour. Never
+    // throws: `resolveCampaignLevels` falls back to `LEVELS`.
+    if (rules.sequencedWavesEnabled) {
+      this.waveManager.setLevels(resolveCampaignLevels(rules));
+    }
     this.waveManager.beginGame();
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
     this.spawnWave();
     this._announceLevel();
 
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this._teardown());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
     // A rebind made in SettingsScene must take effect when the player
     // returns to the paused game (parent AH-0MU9LPZ0G0015292).
     this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
@@ -397,32 +444,33 @@ export class PlayScene extends CombatScene<
     this.teleportKey = keyForAction('layerDrop');
   }
 
-  /** Clears all per-run state so a restarted session starts fresh. */
-  private _resetRunState(): void {
+  /**
+   * Clears all per-run state so a restarted session starts fresh.
+   *
+   * The shared core reset ({@link CombatCoreScene.resetRunState}) clears
+   * the effects registry and the shared bullet/effect/animation
+   * registries; this override adds the campaign-only state (waves,
+   * minerals, boss, timers, pause).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
     this.spawned = [];
     this.enemyBullets = [];
-    this.playerBullets = [];
     this.drops = [];
-    // Release any in-flight absorb animations — their drops are no longer
-    // in `this.drops`, so this is their only teardown path.
-    for (const anim of this.collectAnimations) anim.destroy();
-    this.collectAnimations = [];
     this.minerals = [];
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.boss = null;
-    this.playerHitCount = 0;
-    this.invulnerable = 0;
-    this.blinkPhase = 0;
     this.driftX = 0;
     this.driftDir = 1;
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
     this.waveTimerActive = false;
+    this.pendingAsteroidSpawns = [];
+    this.asteroidsSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this.paused = false;
-    this.effectsRegistry.reset();
   }
 
   /** Builds the fixed score / level text readouts (lives live in the HUD). */
@@ -447,26 +495,27 @@ export class PlayScene extends CombatScene<
       .setOrigin(0.5, 0);
   }
 
-  /** Destroys scene-owned objects on shutdown (no leaks across sessions). */
-  private _teardown(): void {
+  /**
+   * Destroys scene-owned objects on shutdown (no leaks across sessions).
+   *
+   * The shared core teardown ({@link CombatCoreScene.teardownRunState})
+   * destroys the shared bullets/effects/animations; this override adds
+   * the campaign-only object families.
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
     for (const s of this.spawned) s.entity.destroy(true);
     this.spawned = [];
     for (const b of this.enemyBullets) b.graphics.destroy();
     this.enemyBullets = [];
-    for (const b of this.playerBullets) b.destroy();
-    this.playerBullets = [];
     for (const d of this.drops) d.graphics.destroy();
     this.drops = [];
-    for (const anim of this.collectAnimations) anim.destroy();
-    this.collectAnimations = [];
     for (const m of this.minerals) m.destroy();
     this.minerals = [];
-    for (const e of this.playerExplosions) e.destroy();
-    this.playerExplosions = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNoticeLabel?.destroy();
-    this.bombNoticeLabel = null;
+    this.bombNotice?.destroy();
+    this.bombNotice = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -522,31 +571,31 @@ export class PlayScene extends CombatScene<
     } else {
       this._moveEnemies(dt);
       this._collectEnemyFire();
-      this._updateBoss(dt);
+      // Shared boss advance (AH-0MUII3E5E006A93F, AC1) — same ordering
+      // relative to collisions as every gym.
+      this._advanceBoss(dt);
     }
 
     // Player input, thrust and auto-fire run in every phase, including the
     // wave/level transition pause.
-    if (this.player) {
-      this.player.tickWeaponTimers(dt * 1000);
-      // P5 live boost: scale thrust/max-speed each frame (mirror gym).
-      this.player.setSpeedMultiplier(this.effectsRegistry.speedMultiplier());
-      // P7 Teleport (S/↓ JustDown) — runs before physics so the warp
-      // position is consumed by this frame's physics.
-      this._handleTeleport();
-      const input = this._readPlayerInput();
-      if (input) this.player.setInput(input);
-      this.player.physicsTick(dt, this.scale.width, this.scale.height);
-      this._autoFire(dt);
-    }
+    //
+    // P7 Teleport (S/↓ JustDown) runs first so the warp position is
+    // consumed by this frame's physics.
+    this._handleTeleport();
+    // Shared player-control step (timers → multipliers → input → physics →
+    // auto-fire) — identical in every scene (AH-0MUII39KX007YUQ0, AC1).
+    this._tickPlayer(dt);
 
     this._advanceBullets(dt);
     if (!transitioning) {
       this._handleCollisions();
+      // Release any asteroid spawns whose planned time has passed — before
+      // the timer advances so a wave-timeout cannot release the whole plan.
+      this._releaseDueAsteroidSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
-    this._updateVisuals(dt);
+    this._updateVisuals();
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
@@ -559,6 +608,9 @@ export class PlayScene extends CombatScene<
    * tests and the (future) boss integration can drive it deterministically.
    */
   spawnWave(): void {
+    // Plan the random offscreen asteroid spawns for this wave. Empty during
+    // the boss encounter (see `planAsteroidSpawns`).
+    this.planAsteroidSpawns();
     const spawns = this.waveManager.planSpawns();
     if (spawns.length > 0) {
       for (const spawn of spawns) this._spawnEnemy(spawn);
@@ -585,15 +637,108 @@ export class PlayScene extends CombatScene<
     });
   }
 
+  /**
+   * Plans the random offscreen asteroid spawns for the active regular wave
+   * (AH-0MUGCNZNE002D7QJ). Called once per wave from `spawnWave()` so the
+   * scene rng stream advances only at wave boundaries. Outside a regular
+   * wave — before `beginGame()`, during or after the boss encounter — the
+   * plan is cleared and no asteroids spawn.
+   */
+  planAsteroidSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.asteroidSpawnerEnabled ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingAsteroidSpawns = [];
+      this.asteroidsSpawnedThisWave = 0;
+      return;
+    }
+    this.pendingAsteroidSpawns = computeSpawns(
+      wm.globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.asteroidsSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned asteroid spawn whose scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition,
+   * pause or boss encounter) and stops at the first not-yet-due event — the
+   * plan is time-ordered.
+   */
+  private _releaseDueAsteroidSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.asteroidsSpawnedThisWave < this.pendingAsteroidSpawns.length) {
+      const event = this.pendingAsteroidSpawns[this.asteroidsSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledAsteroid(event);
+      this.asteroidsSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned asteroid at its offscreen position with the planned
+   * inward velocity, registering it with the WaveManager as a dynamic spawn
+   * so wave-clear accounting includes it.
+   */
+  private _spawnScheduledAsteroid(event: SpawnEvent): void {
+    const entity = new Asteroid(this, {
+      x: event.x,
+      y: event.y,
+      formationOffset: { row: 0, col: 0 },
+      sizeTier: event.sizeTier,
+      vx: event.vx,
+      vy: event.vy,
+      enterFromOffscreen: true,
+    });
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: 'asteroid',
+      startX: 0,
+      startY: 0,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
-    this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
-    if (this.driftX > FORMATION_DRIFT_RANGE) {
-      this.driftX = FORMATION_DRIFT_RANGE;
-      this.driftDir = -1;
-    } else if (this.driftX < 0) {
-      this.driftX = 0;
-      this.driftDir = 1;
+    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING enemy is away
+    // from its formation (`DIVING`/`PAUSING`/`RETURNING`), the cluster's
+    // ping-pong drift freezes in place — `driftX` and `driftDir` are left
+    // untouched — and resumes once every diver has rejoined. Destroyed
+    // enemies are ignored, so a mid-dive kill cannot freeze the cluster.
+    const holdFormation = this.spawned.some(
+      (s) => s.entity.alive && s.entity.requiresFormationHold?.() === true,
+    );
+    if (!holdFormation) {
+      this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
+      if (this.driftX > FORMATION_DRIFT_RANGE) {
+        this.driftX = FORMATION_DRIFT_RANGE;
+        this.driftDir = -1;
+      } else if (this.driftX < 0) {
+        this.driftX = 0;
+        this.driftDir = 1;
+      }
     }
 
     for (const s of this.spawned) {
@@ -702,6 +847,10 @@ export class PlayScene extends CombatScene<
    * spawns the Central AI.
    */
   protected onBossTriggered(): void {
+    // No random asteroids in the boss encounter: drop the last wave's plan
+    // so no spawn can leak in after the transition (AH-0MUGCNZNE002D7QJ).
+    this.pendingAsteroidSpawns = [];
+    this.asteroidsSpawnedThisWave = 0;
     this.waveManager.beginBoss();
     this._startTransition();
   }
@@ -755,31 +904,6 @@ export class PlayScene extends CombatScene<
     this._spawnMinions(1);
     // No per-wave time limit applies to the boss encounter.
     this._hideWaveTimer();
-  }
-
-  /**
-   * Advances the Boss state machine: attack telegraphing, bullet
-   * collection, and pulse-wave expansion (mirrors GymBoss). Boss bullets
-   * are tracked by the scene's enemy-bullet list; pulse waves are managed
-   * by the Boss itself.
-   */
-  private _updateBoss(dt: number): void {
-    const boss = this.boss;
-    if (!boss || !boss.alive) return;
-    if (this.player) boss.setAimTarget(this.player.x, this.player.y);
-
-    const bullets = boss.update(
-      this.time.now,
-      dt * 1000,
-      GAME_WIDTH,
-      GAME_HEIGHT,
-    );
-    for (const bullet of bullets) {
-      if (!('isPulseWave' in bullet && bullet.isPulseWave)) {
-        this.enemyBullets.push(bullet as unknown as PlayEnemyBullet);
-      }
-    }
-    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
@@ -877,64 +1001,22 @@ export class PlayScene extends CombatScene<
         };
         target.setAimTarget?.(this.player.x, this.player.y);
       }
-      for (const bullet of this._fireFor(s)) this.enemyBullets.push(bullet);
-    }
-  }
-
-  /** Dispatches to the entity's archetype-specific fire method. */
-  private _fireFor(s: SpawnedEnemy): PlayEnemyBullet[] {
-    const e = s.entity as unknown as Record<string, unknown>;
-    const now = this.time.now;
-    const call = (name: string): unknown => {
-      const fn = e[name] as ((n: number) => unknown) | undefined;
-      return fn ? fn.call(s.entity, now) : undefined;
-    };
-    switch (s.enemyKey) {
-      case 'diver': {
-        const b = call('tryFireSpreadBurst');
-        return Array.isArray(b) ? (b as PlayEnemyBullet[]) : [];
-      }
-      case 'tank': {
-        const b = call('tryFireRadialBurst');
-        return Array.isArray(b) ? (b as PlayEnemyBullet[]) : [];
-      }
-      case 'phaser': {
-        const b = call('tryFireRadialBullets');
-        return Array.isArray(b) ? (b as PlayEnemyBullet[]) : [];
-      }
-      case 'swarm': {
-        const b = call('tryFireBurstBullet');
-        return b ? [b as PlayEnemyBullet] : [];
-      }
-      case 'scout':
-      default: {
-        const b = call('tryFireAimedBullet');
-        return b ? [b as PlayEnemyBullet] : [];
-      }
+      // Shared archetype→tryFire dispatch, driven by the scene clock
+      // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
+      this.enemyBullets.push(
+        ...fireForEnemy<PlayEnemyBullet>(s.entity, s.enemyKey, this.time.now),
+      );
     }
   }
 
   // ── Bullet lifecycles ───────────────────────────────────────────
 
   private _advanceBullets(dt: number): void {
-    for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
-      const b = this.enemyBullets[i];
-      b.elapsed += dt;
-      b.graphics.x += b.vx * dt;
-      b.graphics.y += b.vy * dt;
-      // Four-edge wrap — leave left → reappear right, etc., matching the
-      // player ship / asteroid model (AH-0MU960UTE001PTV0). Bullets are
-      // never culled for leaving the screen, only when their lifetime ends.
-      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
-      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
-      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
-      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
-      if (b.elapsed >= b.lifetime) {
-        b.graphics.destroy();
-        this.enemyBullets.splice(i, 1);
-      }
-    }
-    this.playerBullets = this.playerBullets.filter((b) => advanceAndCull(b, dt));
+    // Shared projectile lifecycle: enemy bullets wrap at all four edges and
+    // expire by lifetime; player bullets advance through the same shared
+    // `advanceAndCull` path every scene uses (AH-0MUII3CF00024EDM, gap 3).
+    advanceWrappingBullets(this.enemyBullets, dt, GAME_WIDTH, GAME_HEIGHT);
+    this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
   }
 
   // ── Collisions ──────────────────────────────────────────────────
@@ -963,11 +1045,6 @@ export class PlayScene extends CombatScene<
   /** Replaces the enemy-bullet collection after a shared collision pass. */
   protected override setEnemyBullets(bullets: PlayEnemyBullet[]): void {
     this.enemyBullets = bullets;
-  }
-
-  /** The game skips bullet/ram collisions while the player is P6-phased. */
-  protected override isPlayerPhased(): boolean {
-    return this.effectsRegistry.isPhased;
   }
 
   /** Enemy destroyed by a player bullet: award score and advance waves. */
@@ -1026,30 +1103,18 @@ export class PlayScene extends CombatScene<
    */
   private _handleMinerals(): void {
     if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const keptMinerals: Mineral[] = [];
-    for (const mineral of this.minerals) {
-      if (!mineral.alive) continue;
-      if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, this.player.x, this.player.y, hull)) {
-        this._collectMineral(mineral);
-        continue;
-      }
-      let absorbed = false;
-      for (const s of this.spawned) {
-        if (!s.entity.alive || s.enemyKey === 'asteroid') continue;
-        if (this._overlaps(mineral.x, mineral.y, MINERAL_SIZE, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
-          s.entity.collectMineral();
-          mineral.handleOverlap('enemy');
-          absorbed = true;
-          break;
-        }
-      }
-      if (!absorbed) keptMinerals.push(mineral);
-    }
-    for (const mineral of this.minerals) {
-      if (!keptMinerals.includes(mineral)) mineral.destroy();
-    }
-    this.minerals = keptMinerals;
+    // Non-asteroid enemies absorb minerals; asteroids are inert (GDD §4.5).
+    const absorbers = this.spawned
+      .filter((s) => s.enemyKey !== 'asteroid')
+      .map((s) => s.entity);
+    // Shared collection/absorption routine — the same code the gyms run
+    // (AH-0MUII3DHM008L7JF, gap 5).
+    this.minerals = collectMinerals(
+      this.minerals,
+      this.player,
+      absorbers,
+      () => this._collectMineral(),
+    );
   }
 
   /**
@@ -1072,19 +1137,13 @@ export class PlayScene extends CombatScene<
       this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
     }
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
-    // Mineral drops (GDD §4.5): a destroyed small asteroid leaves a mineral
-    // at the site; large/medium asteroids do not (their small split children
-    // do). A non-asteroid enemy re-drops a fraction of the minerals it
-    // absorbed while alive.
-    if (s.enemyKey === 'asteroid') {
-      if ((s.entity as Asteroid).getSizeTier() === 'small') {
-        this.spawnMineralAt(s.entity.x, s.entity.y);
-      }
-    } else {
-      this.minerals.push(
-        ...s.entity.spawnMineralDrops(s.entity.x, s.entity.y, this.rng),
-      );
-    }
+    // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
+    // asteroid leaves one mineral at the site, large/medium asteroids do not
+    // (their small split children do), and a non-asteroid enemy re-drops a
+    // fraction of the minerals it absorbed while alive.
+    this.minerals.push(
+      ...resolveMineralKillDrops(this, s.entity, this.rng),
+    );
     this._advanceAfterKill();
   }
 
@@ -1096,48 +1155,34 @@ export class PlayScene extends CombatScene<
    */
   private _splitAsteroid(s: SpawnedEnemy): void {
     const parent = s.entity as Asteroid;
-    const children = parent.getSplitChildren(parent.x, parent.y);
-    if (!children) return; // small tier — clean destruction, no children
-
-    for (const spec of children) {
-      const entity = new Asteroid(this, {
-        x: spec.x,
-        y: spec.y,
-        formationOffset: { row: 0, col: 0 },
-        sizeTier: spec.sizeTier,
-        vx: spec.vx,
-        vy: spec.vy,
-        rotationSpeed: spec.rotationSpeed,
-      });
-      this.add.existing(entity);
-      this.spawned.push({
-        entity,
-        enemyKey: 'asteroid',
-        startX: 0,
-        startY: 0,
-        spacingX: 0,
-        spacingY: 0,
-      });
-      // Register the dynamic child so `enemiesAlive` stays correct.
-      this.waveManager.registerDynamicSpawn(1);
-    }
+    // Shared asteroid-split helper (gap 8): the same spawn code the gyms
+    // consume. Children are registered with the WaveManager so the wave's
+    // alive count tracks them (the wave neither clears early nor stalls).
+    splitAsteroid({
+      scene: this,
+      parent,
+      register: (child) => {
+        this.spawned.push({
+          entity: child,
+          enemyKey: 'asteroid',
+          startX: 0,
+          startY: 0,
+          spacingX: 0,
+          spacingY: 0,
+        });
+        // Register the dynamic child so `enemiesAlive` stays correct.
+        this.waveManager.registerDynamicSpawn(1);
+      },
+    });
   }
 
   /**
-   * Player hit: absorb with a shield if active, otherwise lose a life
-   * and either respawn with invulnerability or end the run — the game's
-   * hook for the shared {@link CombatScene._hitPlayer} flow.
+   * Shield-absorb cue for the shared gating path (`CombatScene` owns the
+   * consume + invulnerability semantics): the game pops the bubble with its
+   * destruction sound. The hit is absorbed — no life lost.
    */
-  protected override tryAbsorbPlayerHit(): boolean {
-    if (this.effectsRegistry.tryAbsorbShield()) {
-      // Shield absorbs the hit — no life lost. The bubble pops (P3 removed
-      // from the registry) and the player gets a brief invulnerability
-      // blink so the absorb is observable (mirrors GymPowerUpsCombat).
-      playDestructionSound();
-      this._startInvulnerability();
-      return true;
-    }
-    return false;
+  protected override onShieldAbsorbed(): void {
+    playDestructionSound();
   }
 
   /** Unabsorbed hit: run the standard lose-life / respawn flow. */
@@ -1152,6 +1197,11 @@ export class PlayScene extends CombatScene<
    * the wave time-limit penalty always costs exactly one life
    * (AH-0MU7JTG9R002ZWA6).
    *
+   * When the ship actually explodes, the composed player-death juice plays
+   * with `'fatal'` severity for a run-ending death (final life) and
+   * `'respawn'` otherwise. The wave-timeout penalty (`explodeShip === false`)
+   * keeps the existing lighter generic cue and spawns no juice VFX.
+   *
    * @param explodeShip — whether to play the ship explosion VFX.
    */
   private _loseLife(explodeShip = true): void {
@@ -1163,8 +1213,19 @@ export class PlayScene extends CombatScene<
     // lives counter updates immediately (GDD §4.5 display).
     this.effectsRegistry.setLives(this.gameState.lives);
     this.hud?.refresh();
-    playDestructionSound();
-    if (explodeShip) this._spawnPlayerExplosion(this.player.x, this.player.y);
+
+    if (explodeShip) {
+      // Run-ending death (final life) reads heavier than a mid-run respawn.
+      const severity = this.gameState.lives <= 0 ? 'fatal' : 'respawn';
+      // Spawn the juice before the game-over transition so the 'fatal'
+      // effect still fires even though _finishRun starts GameOverScene.
+      spawnPlayerDeathJuice(this, this.player.x, this.player.y, severity, {
+        registry: this.playerDeathEffects,
+      });
+    } else {
+      // Wave-timeout penalty: lighter generic cue only, no juice VFX.
+      playDestructionSound();
+    }
 
     if (this.gameState.lives <= 0) {
       this._finishRun(false);
@@ -1190,47 +1251,29 @@ export class PlayScene extends CombatScene<
    * SHIP_SIZE × 1.6, mirrors GymPowerUpsCombat) and cleared otherwise, and
    * the P6 phase ghost alpha is applied when phased.
    */
-  private _updateVisuals(dt: number): void {
-    // Shield bubble: drawn around the ship while P3 is active.
-    if (this.shieldBubble && this.player) {
-      this.shieldBubble.clear();
-      this.shieldBubbleDrawn = false;
-      if (this.effectsRegistry.isShielded) {
-        this.shieldBubble.lineStyle(2, 0x3399ff, 0.9);
-        this.shieldBubble.strokeCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
-        this.shieldBubble.fillStyle(0x3399ff, 0.12);
-        this.shieldBubble.fillCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
-        this.shieldBubbleDrawn = true;
-      }
+  private _updateVisuals(): void {
+    // Shield bubble: drawn around the ship while P3 is active (shared helper).
+    if (this.shieldBubble) {
+      this.shieldBubbleDrawn = drawShieldBubble(
+        this.shieldBubble,
+        this.player,
+        this.effectsRegistry,
+      );
     }
     // Phase ghost: semi-transparent ship while P6 is active (keeps the
     // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
-    if (this.player) {
-      if (this.effectsRegistry.isPhased) {
-        if (this.invulnerable <= 0) this.player.setAlpha(0.45);
-      } else if (this.invulnerable <= 0) {
-        this.player.setAlpha(1);
-      }
-    }
-    // Bomb notice: brief centred flash after P4 collection.
-    if (this.bombNoticeTimer > 0) {
-      this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
-      if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
-    }
+    applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
+    // Bomb notice: advanced by the shared drop layer (`_updateDropLayer`).
   }
 
   // ── Power-up drops ──────────────────────────────────────────────
 
-  private _buildDropSpawner(
-    powerUpWeights: PowerUpWeights,
-    weaponWeights: WeaponWeights,
-    rng: () => number,
-  ): PowerUpSpawner<DropId> {
-    const ids: DropId[] = [...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS];
-    const spawner = new WeightedRandomSpawner<DropId>(ids, rng);
-    for (const id of POWER_UP_WEIGHT_IDS) spawner.setWeight(id, powerUpWeights[id]);
-    for (const id of WEAPON_WEIGHT_IDS) spawner.setWeight(id, weaponWeights[id]);
-    return spawner;
+  /**
+   * The scene's P4 bomb notice (shared component, gap 4) — the shared
+   * collect path shows it through this accessor (AC3).
+   */
+  protected override _getBombNotice(): BombNotice | null {
+    return this.bombNotice;
   }
 
   /** Rolls (and possibly spawns) a power-up drop at a kill position. */
@@ -1280,128 +1323,27 @@ export class PlayScene extends CombatScene<
     return drop;
   }
 
-  /** Advances drop lifecycles and resolves fly-over collection. */
+  /**
+   * Advances the drop layer through the single shared sequence (gap 4):
+   * advance the P4 notice, apply the P9 magnet, advance the lifecycle,
+   * collect overlaps and advance the absorb VFX. The per-scene spawn
+   * *source* (kill chance) stays in `_maybeDropPowerUp` (OQ6).
+   */
   private _updateDrops(dt: number): void {
-    // ── Magnet attraction (P9) ──────────────────────────────────
-    this._applyMagnet(dt);
-
-    const kept: PlayDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state === PowerUpState.DESPAWNED) {
-        drop.graphics.destroy();
-        continue;
-      }
-      if (this._collectIfOverlapping(drop)) continue;
-      kept.push(drop);
-    }
-    this.drops = kept;
-
-    // Advance the absorb VFX for collected drops (cosmetic only — the
-    // gameplay effect already fired on overlap, AC1/AC4).
-    this._updateCollectAnimations(dt);
-  }
-
-  /** P9: pulls collectible drops within range toward the player ship. */
-  private _applyMagnet(dt: number): void {
-    if (!this.player) return;
-    const stacks = this.effectsRegistry.magnetStacks();
-    if (stacks <= 0) return;
-    applyMagnetAttraction(this.drops, this.player, stacks, dt);
-  }
-
-  /** Collects the drop when it overlaps the player's hull. */
-  private _collectIfOverlapping(drop: PlayDrop): boolean {
-    if (!this.player) return false;
-    if (drop.absorbing) return false;
-    if (!drop.powerUp.canCollect()) return false;
-    const hull = SHIP_SIZE / 2;
-    const radius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
-    if (!this._overlaps(drop.x, drop.y, radius, this.player.x, this.player.y, hull)) {
-      return false;
-    }
-    this._collectDrop(drop);
-    return true;
+    this.drops = this._updateDropLayer(this.drops, dt);
   }
 
   /**
-   * Game extras after a power-up is collected: the P4 bomb notice, and the
-   * P8 extra life (keeping the HUD lives counter aligned with run state).
+   * Game extras after a power-up is collected: the shared P4 bomb notice
+   * plus the P8 extra life (keeping the HUD lives counter aligned with run
+   * state). The base shows the notice through `_getBombNotice()`.
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
-    if (drop.dropId === 'P4') this._flashBombNotice();
+    super.onPowerUpCollected(drop);
     if (drop.dropId === 'P8') {
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
-  }
-
-  /**
-   * Plays the per-type pickup activation cue for a collected drop
-   * (GDD §7.3 — unique cue per pickup type, distinct from the generic
-   * collection chime). Where no dedicated cue exists in the audio module
-   * for a type, the generic chime plays as fallback. Safe no-op without
-   * an AudioContext (audio is best-effort in headless tests).
-   */
-  protected override _playPickupCue(drop: PlayDrop): void {
-    try {
-      // Generic collection pop — immediate tactile feedback on every pickup
-      // (AH-0MUBYXR280018HST); plays alongside the per-type cue below.
-      playPowerUpCollectPopSound();
-      if (drop.weaponDropId) {
-        switch (drop.weaponDropId) {
-          case 'reset':
-            playResetPickupSound();
-            break;
-          case 'spread':
-            playSpreadPickupSound();
-            break;
-          case 'dual':
-            playDualPickupSound();
-            break;
-          case 'rapid':
-            playRapidPickupSound();
-            break;
-          default:
-            playPowerUpCollectSound();
-        }
-        return;
-      }
-      switch (drop.dropId) {
-        case 'P5':
-          playSpeedBoostCollectSound();
-          break;
-        case 'P8':
-          playExtraLifeCollectSound();
-          break;
-        case 'P9':
-          playMagnetCollectSound();
-          break;
-        default:
-          // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated
-          // cue in the audio module yet — generic chime fallback.
-          playPowerUpCollectSound();
-      }
-    } catch {
-      // Audio is best-effort in headless tests.
-    }
-  }
-
-  /** Shows the brief centred 'BOMB! Bullets cleared' notice (mirrors the gym). */
-  private _flashBombNotice(): void {
-    this.bombNoticeTimer = 1.2;
-    this.bombNoticeLabel?.setText('BOMB! Bullets cleared').setVisible(true);
-  }
-
-  // ── Teleport (P7, S/↓) ──────────────────────────────────────────
-
-  /** The boss is a body a P7 teleport destination must also avoid. */
-  protected override getAdditionalTeleportBodies(): TeleportBody[] {
-    if (!this.boss?.alive) return [];
-    return [{ x: this.boss.x, y: this.boss.y, radius: this.boss.getHitRadius() }];
   }
 
   // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────
@@ -1633,7 +1575,7 @@ export class PlayScene extends CombatScene<
 
   /** Whether the P4 bomb notice is currently visible (for tests). */
   isBombNoticeVisible(): boolean {
-    return this.bombNoticeLabel?.visible ?? false;
+    return this.bombNotice?.isVisible() ?? false;
   }
 
   /** Whether the P6 phase ghost is currently active (for tests). */
@@ -1654,6 +1596,20 @@ export class PlayScene extends CombatScene<
   /** Live enemies (one per spawned entity, destroyed ones included). */
   getEnemies(): EnemyEntity[] {
     return this.spawned.map((s) => s.entity);
+  }
+
+  /**
+   * Current formation ping-pong drift offset (px), relative to each enemy
+   * group's `startX`. Frozen in place while a Diver is away from the
+   * formation (see `_moveEnemies`). Exposed for observability/tests.
+   */
+  getFormationDriftX(): number {
+    return this.driftX;
+  }
+
+  /** Current formation drift direction: `+1` right, `-1` left. */
+  getFormationDriftDir(): number {
+    return this.driftDir;
   }
 
   /** Number of live enemies. */
@@ -1792,7 +1748,19 @@ export class PlayScene extends CombatScene<
     this.setPaused(true);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.pause();
-      this.scene.launch('MineralChoiceScene', { origin: 'PlayScene' });
+      // Pass the exact options (and the active strategy) the overlay must
+      // present, so the displayed option is the option applied. Without
+      // this the overlay draws its own independent sample and
+      // `selectMineralChoice(index)` applies a different option than the
+      // label shown (AH-0MUHMXWGC0058BO4 · AC1).
+      this.scene.launch('MineralChoiceScene', {
+        origin: 'PlayScene',
+        options: [...this.mineralChoiceOptions],
+        // Single overlay contract (AH-0MUII3DHM008L7JF · AC3): the launcher
+        // supplies the selection callback; the overlay never reaches back
+        // into `PlayScene` by key.
+        onSelect: (index: number) => this.selectMineralChoice(index),
+      });
     }
     return [...this.mineralChoiceOptions];
   }
@@ -1821,25 +1789,19 @@ export class PlayScene extends CombatScene<
 
   /** Applies a chosen option permanently for the current run. */
   private _applyChoicePermanently(option: ChoiceOption): void {
-    if (isWeaponDrop(option.id)) {
-      const weaponId = option.id as WeaponId;
-      this.effectsRegistry.applyWeapon(weaponId, true);
-      this.player?.equipWeapon(weaponId, true);
-    } else {
-      this.effectsRegistry.applyCollect(option.id as PowerUpId, true);
-    }
+    // Shared reward application — the same code the gyms run, so a choice
+    // grants the same effect in every scene (AH-0MUII3DHM008L7JF · AC4).
+    applyMineralChoiceReward(option, this.effectsRegistry, this.player);
   }
 
   /** Collects a mineral: adds it to the hold and opens the choice when full. */
-  private _collectMineral(mineral: Mineral): void {
-    if (!mineral.alive) return;
-    mineral.handleOverlap('player');
+  private _collectMineral(): void {
     this.gameState.addMinerals(loadRules().mineralCollectAmount);
     this._syncMineralHud();
     if (this.gameState.isHoldFull()) this.openMineralChoice();
   }
 
-  /** Mirrors the GameState hold onto the HUD mineral counter row. */
+  /** Mirrors the GameState hold onto the HUD mineral hold bar. */
   private _syncMineralHud(): void {
     this.hud?.setMineralStore(
       this.gameState.minerals,
@@ -1896,6 +1858,11 @@ export class PlayScene extends CombatScene<
     return this.playerHitCount;
   }
 
+  /** Active composed player-death juice effects (empty once torn down). */
+  getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
+    return this.playerDeathEffects.slice();
+  }
+
   /** True while the player is invulnerable after a hit. */
   isPlayerInvulnerable(): boolean {
     return this.invulnerable > 0;
@@ -1905,11 +1872,25 @@ export class PlayScene extends CombatScene<
   setRng(rng: () => number): void {
     this.rng = rng;
     const rules = loadRules();
-    this.dropSpawner = this._buildDropSpawner(
+    this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
       rng,
     );
+  }
+
+  /**
+   * Enables or disables random offscreen asteroid spawning (default enabled).
+   * Disabling immediately drops any pending plan and clears the released
+   * counter; re-enabling takes effect from the next `spawnWave()`. A tuning
+   * and test seam mirroring `setRng` / `setWaveTimerRemaining`.
+   */
+  setAsteroidSpawnerEnabled(enabled: boolean): void {
+    this.asteroidSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingAsteroidSpawns = [];
+      this.asteroidsSpawnedThisWave = 0;
+    }
   }
 }
 

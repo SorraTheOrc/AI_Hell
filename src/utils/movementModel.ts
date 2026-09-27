@@ -340,3 +340,29 @@ export class AsteroidsInputHandler implements InputHandler {
     };
   }
 }
+
+// ── Shared scheme→input mapping ─────────────────────────────────────
+
+/**
+ * Stateless handler pair reused by {@link mapControlInput}. Both handlers
+ * are pure (no per-scene state), so one shared pair lets every scene map
+ * held keys to the same `ControlInput` for a given scheme
+ * (AH-0MUII39KX007YUQ0, AC1/AC2).
+ */
+const sharedFourDirInputHandler = new FourDirectionalInputHandler();
+const sharedAsteroidsInputHandler = new AsteroidsInputHandler();
+
+/**
+ * Maps raw held-key state to the `ControlInput` for the given control
+ * scheme — the single mapping consumed by `CombatCoreScene` (via
+ * `_readPlayerInput`) and the bare-bones `GymPlayer` scene so the
+ * scheme→input branch lives once (AH-0MUII39KX007YUQ0, AC1/AC2).
+ */
+export function mapControlInput(
+  scheme: ControlSchemeType,
+  raw: { cursors?: CursorKeysLike; wasd?: WasdKeysLike },
+): ControlInput {
+  return scheme === 'asteroids'
+    ? sharedAsteroidsInputHandler.mapInput(raw)
+    : sharedFourDirInputHandler.mapInput(raw);
+}

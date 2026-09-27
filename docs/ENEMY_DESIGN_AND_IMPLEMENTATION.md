@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|-----|-----------|------------|---------------------|
 | E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Vertical dive toward player (x locked at formation slot), returns to current formation slot | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | §4.1 | Vertical dive toward player (x locked at formation slot), returns to current formation slot. The whole cluster holds its drift while a living Diver is away (`DIVING`/`PAUSING`/`RETURNING`) and resumes once every Diver has rejoined | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -57,7 +57,11 @@ children at its position; a `medium` spawns two `small`; a `small` destroys
 cleanly with no children (the chain from one large is 1 + 2 + 4 = **7**
 destroyed enemies). `getSplitChildren()` returns the child specs (tier +
 position + velocity + rotation); the two children always move in directions
-**different from the parent and from each other** (≥ π/3 separation).
+**different from the parent and from each other** (≥ π/3 separation). The spawn
+loop lives **once** in the shared helper `src/scenes/core/asteroidSplit.ts`
+(`splitAsteroid({ scene, parent, register })`), consumed by
+`PlayScene._splitAsteroid` and the `GymEnemies`/`GymMinerals` destruction seams,
+so a split-physics change is made in one place.
 
 **Wave-aware splitting**: dynamically spawned children MUST be registered with
 the `WaveManager` — the scene calls `registerDynamicSpawn(n)` when spawning
@@ -69,17 +73,45 @@ asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
 `PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
 always.
 
-**Wave placement**: an asteroid group (`formationKind: 'single'`, count 1)
-joins Level 1 Wave 1 in `src/waves/Formations.ts` alongside the Scout
-V-formation. The asteroid config defaults to the large tier; smaller tiers
-appear only as split children.
+**Wave placement — random offscreen spawner**: Asteroids are **not** a fixed
+group in Level 1 Wave 1. Every regular wave plans its asteroid spawns with the
+pure planner `src/waves/AsteroidSpawner.ts` (`computeSpawns`), and
+`PlayScene.planAsteroidSpawns()` / `_releaseDueAsteroidSpawns()` release each
+one on schedule during `tick(dt)`:
+
+- **Offscreen origin**: a random edge (top/bottom/left/right, uniform), placed
+  half-size + `ASTEROID_SPAWN_OUTWARD_MARGIN` beyond the viewport, with inward
+  velocity (perpendicular to the edge, ±30° spread) at the tier's canonical
+  speed. Offscreen spawns defer screen-wrap until their centre enters the
+  viewport (`AsteroidConfig.enterFromOffscreen`), so they visibly drift in
+  rather than teleporting to the opposite edge.
+- **Count escalation**: 2 per wave, doubling when the large weight reaches the
+  reset threshold (2 → 4 → 8 …).
+- **Size weighting**: medium **80** (fixed); large **20 + 20 per wave**, reset
+  to 20 when it reaches 2× medium (**160**), at which point the count doubles.
+- **Timing**: the wave window is split into equal segments with ±5% jitter; the
+  first asteroid is constrained to the first 10% of the window.
+- **Registration**: each released asteroid is registered with the `WaveManager`
+  via `registerDynamicSpawn(1)`, so wave-clear accounting includes it (the same
+  path the split children use).
+
+The **boss encounter spawns no asteroids**: `planAsteroidSpawns()` clears the
+plan outside a regular wave and the release loop is guarded on boss state.
+`PlayScene.setAsteroidSpawnerEnabled(false)` is a tuning/test seam that
+suppresses the spawner entirely.
 
 **Gym support**: the asteroid is selectable in the enemy gym (auto-discovery
 via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
 optional `updatePosition(dt)` on `FormationSceneEntity` (roamer motion) and
 optional `onEntityDestroyed(entity)` on `EnemyFormationConfig` (dynamic split
 children) — so EXPLODE, player bullets and body-rams all cascade splits and
-the wipe→respawn cycle runs only once the whole chain is cleared.
+the wipe→respawn cycle runs only once the whole chain is cleared. Split
+children are registered through the base's `registerDynamicEntity(child)` seam
+(no casting into `entities`), and the base also exposes the protected
+`respawnFormation()` and `setPlayerEnabled(enabled)` seams
+(AH-0MUII3F7Q002O7WX, gap 9) so `GymEnemies._onRespawn`/`_onTogglePlayer`
+consume the shared respawn and player lifecycle instead of re-implementing
+them.
 
 Enemy archetypes are **data, not code**. The runtime type is `EnemyConfig`
 (`src/core/configTypes.ts`) — a record of formation, visual and shot tuning.
@@ -132,32 +164,104 @@ keyed by `enemyKey`.
 
 `src/scenes/gym/core/GymFormationScene.ts` is a generic base class that
 **extends the shared `src/scenes/core/CombatScene.ts` abstract combat
-core** (type parameters `<TEntity, TBullet>`) and encapsulates everything
+core** (which itself extends the narrower `src/scenes/core/CombatCoreScene.ts`;
+type parameters `<TEntity, TBullet>`) and encapsulates everything
 the first three enemy gym scenes duplicated:
 
-- **Shared combat/lifecycle core** — inherited from `CombatScene`
-  (AH-0MUD8E015004C4JO), the same base `PlayScene` extends. It defines the
-  eight combat/lifecycle template methods exactly once
+- **Shared combat/lifecycle core** — inherited from `CombatScene` /
+  `CombatCoreScene` (AH-0MUD8E015004C4JO; standalone-gym consolidation
+  AH-0MUDCT7EU0061OSZ). The eight combat/lifecycle template methods
   (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`,
   `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`,
-  `_readPlayerInput`) and dispatches to overridable hooks. The gym supplies
+  `_readPlayerInput`) are defined exactly once across all production scenes —
+  the input/auto-fire/drop-collection group in `CombatCoreScene`, the
+  combat-only collision/hit/teleport group in `CombatScene` — and dispatch to
+  overridable hooks. The gym supplies
   its participant accessors (`getEnemyEntities()` → `entities`,
   `getEnemyBullets()`/`setEnemyBullets()` → `bullets`) and its hooks
-  (`canTeleport()` → `powerUpsEnabled`, `getEnemyBulletRadius()` →
+  (`canTeleport()` → `powerUpsEnabled || hasTeleport()`, `getEnemyBulletRadius()` →
   `config.bulletHitRadius`, `onEnemyDestroyed()` →
   `config.onEntityDestroyed`, teleport-radius hooks); the game supplies its
   own. Bullet-vs-bullet impact feedback is likewise hosted once in the
   shared path. The shipped game and the gyms therefore cannot diverge on
   collision, auto-fire, drops, teleport or player-hit behaviour.
 
+  **Shared P3/P6 hit-gating (**AH-0MUHM66ES0027QQV**).** The shield/phase
+  hit-gating hooks are part of the shared core and are **not** per-scene
+  overrides: `CombatScene` provides the registry-backed defaults
+  `isPlayerPhased()` → `getEffectsRegistry().isPhased` and
+  `tryAbsorbPlayerHit()` → `getEffectsRegistry().tryAbsorbShield()` (consume
+  **one** shield, run the `onShieldAbsorbed()` cue seam, start the shared
+  post-hit invulnerability window, return `true`). `CombatCoreScene` keeps
+  its safe non-combat `false` defaults for threat-free direct subclasses
+  (`GymWeapons`, `GymPowerUpsUtility`). Every `CombatScene` subclass
+  inherits the gating exactly once — `PlayScene`, `GymPowerUpsCombat`, and
+  `GymFormationScene` (`GymEnemies`/`GymBoss`/`GymMinerals`) — so collecting
+  P3 Shield or P6 Phase Shift behaves identically in the shipped game and
+  the enemy gym. **No scene should re-implement these hooks**; a scene may
+  add a per-type cue only through the `onShieldAbsorbed()` seam. The P3
+  shield-bubble and P6 phase-ghost player visuals live once in
+  `src/scenes/core/CombatEffectVisuals.ts` and are used by all three scenes
+  (see §7.2).
+
+  **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
+  `GymMinerals` has no field power-up drops, so its rewards come from the
+  hold-full choice overlay. Because the choice can grant P7 Teleport, the
+  S / ↓ teleport keys are bound whenever a player exists and the shared
+  `_handleTeleport()` runs every tick — independent of `powerUpsEnabled` —
+  so a stored P7 use is consumable; `canTeleport()` accepts a stored use in
+  addition to the opt-in drop layer. The effects registry ticks (and the
+  HUD refreshes) every frame in all formation gyms, so a P6 granted on
+  teleport arrival expires normally. The overlay renders the caller's
+  stored options, so the displayed label is the option applied.
+
 - **Formation spawn** — builds offsets, creates each entity at
   `(baseX + col * spacingX, baseY + row * spacingY)`, and calls
   `add.existing()` so entities actually render (see §4.1).
 - **HUD controls** — the `EXPLODE` / `SHOOT: ON/OFF` buttons, the status
-  line, the bottom hint line, and the shared `← INDEX` back button.
+  line, the bottom hint line, and the shared `← INDEX` back button. The
+  in-canvas controls and right-aligned status line sit in the **bottom-right**
+  (the hint line stays centred) so they never collide with the bottom-left
+  anchored gym editor panels (AH-0MUAYB7O4009LWBF).
 - **Update loop** — formation drift + respawn off the left edge,
   per-entity `applyFormationPosition()`, fire-bullet collection, bullet
   advance with four-edge wrap, and lifetime-based bullet expiry.
+- **Shared projectile lifecycle** (AH-0MUII3CF00024EDM, gap 3) — the
+  enemy-bullet advance + four-edge wrap + lifetime expiry above is owned
+  once by `src/scenes/core/bulletLifecycle.ts` (`advanceWrappingBullets`),
+  and player-bullet advancement (`advancePlayerBullets`, delegating to
+  `advanceAndCull`) is shared too. Consumed by `PlayScene`,
+  `GymFormationScene`, `GymWeapons` and `GymPowerUpsCombat` so the
+  semantics cannot drift; bullets are never culled off-screen — they wrap
+  across the seam and expire only by lifetime (AH-0MU960UTE001PTV0). The
+  single definition and the cross-scene equivalence are pinned by
+  `src/scenes/core/CombatScene.equivalence.test.ts`.
+- **Shared enemy-fire dispatch** (AH-0MUII3BBW000XZ46, gap 2) — the
+  archetype-key → `tryFire*` mapping lives once in
+  `src/entities/enemyFire.ts`: `fireForEnemy(entity, enemyKey, now)` reads a
+  single `ENEMY_FIRE_METHODS` table and normalises a `null`/single/array
+  result to a bullet array. `PlayScene`, `GymEnemies` and
+  `GymPowerUpsCombat` all route through it, so a new archetype is wired by
+  one table entry and every scene fires it with the same cadence. The helper
+  takes the scene clock as an explicit `now` argument — never a frame-count
+  accumulator — so the combat gym's fire timing matches the game's. The
+  single definition is pinned by
+  `src/scenes/core/CombatScene.equivalence.test.ts` and the
+  dispatch/fallback behaviour by `src/entities/enemyFire.test.ts`.
+- **Shared boss integration** (AH-0MUII3E5E006A93F, gap 6) — the boss
+  advance (`_advanceBoss(dt)`) and the P7 teleport boss-avoidance
+  (`getAdditionalTeleportBodies()`) live once in `CombatScene` and are
+  driven by each scene's own `tick(dt)`, so a single deterministic tick
+  advances the boss with the same ordering relative to collisions in the
+  shipped game and in `GymBoss`. A scene exposes its boss through the
+  `getBoss()` accessor (`GymBoss` returns its single formation entity); the
+  boss is also added to the teleport-avoidance body list. Phase minions are
+  summoned from the shared `planMinionSpawns(phase)`
+  (`src/waves/BossMinions.ts`) — the same plan the game uses — and advanced
+  and fired on the shared tick through the overridable `onBossAdvanced(dt)`
+  hook. The single definition is pinned by
+  `src/scenes/core/CombatScene.equivalence.test.ts` and `GymBoss.test.ts`.
+
 - **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
   enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
   `destroySelf()` — mid-explosion counts), the base scene starts a
@@ -171,6 +275,23 @@ the first three enemy gym scenes duplicated:
   `isRespawnCountdownActive()`, `getRespawnCountdownRemaining()`,
   `getRespawnCountdownText()`. Core-library owned — every formation gym
   (`GymEnemies` for every `enemyKey`) inherits it with no per-scene code.
+- **Shared restart/teardown lifecycle** (AH-0MUII3FYN0072QRT, gap 10) — the
+  per-run reset/teardown lives once in `CombatCoreScene.resetRunState()` /
+  `teardownRunState()`. `create()` calls `resetRunState()`, which clears the
+  active `EffectsRegistry` through the polymorphic `getEffectsRegistry()`
+  accessor — so a gym that owns its own registry (every gym) is cleared by
+  the same code as the shipped game — plus the shared bullet/effect/animation
+  registries; `SHUTDOWN` calls `teardownRunState()`, which destroys those
+  registries and resets the effects registry. `CombatScene` overrides both to
+  add invulnerability, hit-count, teleport-key and bullet-impact state;
+  `GymFormationScene`, `GymWeapons`, `GymPowerUpsCombat` and
+  `GymPowerUpsUtility` override them to add their own object families
+  (enemies, drops, minerals, player, HUD) and call `super` first. `GymPlayer`
+  (a bare `Phaser.Scene`) resets its ship/input in the same create/SHUTDOWN
+  pair. A stop/restart of any instance therefore starts with a clean registry
+  and no leaked display objects, and the behaviour is pinned by the
+  restart/teardown parity tests in `GymFormationScene.test.ts` and each gym's
+  test file.
 
 The generic geometry (formation offsets) lives in
 `src/utils/formations.ts`:
@@ -204,10 +325,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
   hintText: 'E1 Scout gym — V-formation demo',
   createEntity: (scene, x, y, formationOffset) =>
     new Scout(scene, { x, y, formationOffset }),
-  collectBullets: (scout, now) => {
-    const bullet = scout.tryFireAimedBullet(now);
-    return bullet ? [bullet] : [];
-  },
+  collectBullets: (scout, now) => fireForEnemy<ScoutBullet>(scout, 'scout', now),
 };
 ```
 
@@ -219,7 +337,7 @@ const SCOUT_CONFIG: EnemyFormationConfig<Scout, ScoutBullet> = {
 | `statusLabel` | Lowercase plural noun shown in the status line. |
 | `hintText` | Bottom hint line. |
 | `createEntity` | Factory for one enemy at an absolute position + its formation offset. |
-| `collectBullets` | Called per entity per frame; returns any bullets that entity fired (empty array if none). |
+| `collectBullets` | Called per entity per frame; returns any bullets that entity fired (empty array if none). Configs normally delegate to the shared `fireForEnemy(entity, enemyKey, now)` dispatcher (see §2.1) rather than mapping `tryFire*` names themselves. |
 | `player` | *Optional* player spawn position `{x, y}` — when present the scene spawns the keyboard-controlled Player ship there with live combat interaction (see §7). |
 
 ### 2.3 Entity & bullet contracts
@@ -262,7 +380,8 @@ for reference implementations (the base class drives them).
 1. **Entity first.** Create `src/entities/<Name>.ts` with:
    - a `Container`-based class satisfying `FormationSceneEntity`,
    - a `tryFire…(now)` method returning `null`, a single bullet, or an
-     array (whichever fits — the scene config normalises it to an array),
+     array (whichever fits — the shared `fireForEnemy` dispatcher
+     normalises it to an array),
    - `export`ed tuning constants and bullet types,
    - the shared `FormationOffset` type (import from `../utils/formations`).
 2. **Formation geometry.** Reuse an existing builder from
@@ -350,7 +469,10 @@ for reference implementations (the base class drives them).
   `startX/startY`-derived positions, restores `shootEnabled` across the
   respawn, refreshes `statusText`, hides the countdown, and calls
   `playSpawnSound()`. Fully repeatable — the next wipe starts a fresh
-  countdown.
+  countdown. The shared seam is `GymFormationScene.respawnFormation()`
+  (protected); a subclass's manual respawn (e.g. `GymEnemies._onRespawn`)
+  syncs its live config then calls it (and clears player bullets itself when
+  it wants a clean slate) rather than re-implementing the rebuild.
 - **Scope:** core-library owned in `GymFormationScene`; inherited by
   every formation gym (including `GymEnemies` for every `enemyKey`).
   `GymBoss` (multi-phase) is out of scope.
@@ -366,6 +488,13 @@ for reference implementations (the base class drives them).
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
+
+`GymBoss` also consumes the shared boss hooks (§2.1): its `tick(dt)`
+advances the Boss through `CombatScene._advanceBoss`, P7 teleports avoid the
+boss via the shared `getAdditionalTeleportBodies()`, and its phase minions
+are summoned from the shared `planMinionSpawns()` plan and advanced on the
+same tick path through `onBossAdvanced()` — so the gym Boss runs the same
+code as the shipped game's Boss (AH-0MUII3E5E006A93F).
 
 ---
 
@@ -433,6 +562,26 @@ When a new enemy needs the base scene to behave differently:
    optional or defaulted) so existing scenes need no changes.
 4. Update this document's checklist if the convention changes.
 
+### 5.1 Gym parity
+
+A gym may enable only a **constrained set of features** (one enemy type, the
+editor, fixed formations, no campaign/wave progression), but the code that
+runs an enabled object must be the **same code** as the shipped game. The
+only legitimate difference is a disabled feature — never a divergent copy.
+Every shared behaviour therefore lives once: the core template methods and
+hooks (§2.1), the pure helpers under `src/scenes/core/`
+(`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
+`asteroidSplit`), the shared dispatcher
+`src/entities/enemyFire.ts`, and the scheme→input helper
+`mapControlInput` in `src/utils/movementModel.ts`. The repo-wide
+duplicate-body guard in `src/scenes/core/CombatScene.equivalence.test.ts`
+(`EPIC_SHARED_HELPERS` / `EPIC_SHARED_METHODS`) fails the suite if a
+production scene re-introduces a copy, and the cross-scene equivalence
+tests boot `PlayScene` and each gym to prove identical outcomes under the
+same input and `dt`. See
+[AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
+for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
+
 ---
 
 ## 6. Testing strategy
@@ -484,8 +633,10 @@ combat testbeds.
   - **Asteroids scheme:** `W`/Arrow Up thrust the ship **forward** (in its
     current facing direction), `A`/Arrow Left turn it **left**, and
     `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
-  `GymPowerUpsUtility` and `GymWeapons` implement the same scheme-aware routing in
-  their own `_readInput` methods.
+  `GymPowerUpsUtility` and `GymWeapons` inherit the same scheme-aware routing
+  from `CombatCoreScene._readPlayerInput` (their former private `_readInput`
+  copies were removed in AH-0MUDCT7EU0061OSZ); the standalone `GymPlayer`
+  tuning scene routes its keys the same way.
 
   > **Data-driven successor:** the per-scene wiring described in this §7
   > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
@@ -520,6 +671,29 @@ Resolved in the shared `CombatScene._handleCollisions` (inherited by
 > respawn* is in-place. Supersedes the respawn clause of AH-0MTVYBCUW008BEQT
 > AC4 ("the respawn position matches the initial spawn position").
 
+**Power-up hit-gating (P3 Shield / P6 Phase Shift).** The P3/P6 gating is
+inherited from the shared `CombatScene`, not re-implemented in the gym:
+
+- **P6 Phase Shift** — `CombatScene.isPlayerPhased()` returns
+  `getEffectsRegistry().isPhased`; while active, `_handleCollisions()` skips
+  both the enemy-bullet-vs-player and player-body-vs-enemy passes, so the
+  ship passes through bullets and bodies for the 3 s effect window (no
+  `getPlayerHitCount()` increment, no respawn).
+- **P3 Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
+  shield (`tryAbsorbShield()`), runs the `onShieldAbsorbed()` cue seam (the
+  play scene plays `playDestructionSound()`; the gym stays silent), starts
+  the shared post-hit invulnerability window and reports the hit absorbed,
+  so an absorbed hit costs no life; the following hit lands normally.
+- **Visuals** — `GymFormationScene` draws the same P3 shield bubble
+  (colour `0x3399ff`, line width 2, radius `SHIP_SIZE * 1.6`, fill alpha
+  `0.12`) and P6 phase ghost (alpha `0.45`, blink-aware) as `PlayScene` and
+  `GymPowerUpsCombat`, through the shared `CombatEffectVisuals` helper. Test
+  seams: `isShieldBubbleVisible()`, `isPhaseGhostActive()`.
+
+`GymFormationScene`-based scenes therefore record **and** apply P3/P6
+identically to the other combat scenes — a regression is guarded by the
+enemy-gym phase/shield tests and the cross-scene equivalence tests.
+
 ### 7.3 Live aim tracking
 
 The base scene pushes the player's live position into every alive enemy each
@@ -534,7 +708,9 @@ collecting bullets, so that frame's shots use the current position:
   the volley) are unchanged.
 - **Diver** — **snapshots the target at dive start** (recorded seam
   decision): a mid-dive aim change does not alter the in-flight dive arc.
-  Dives are x-locked at the formation slot.
+  Dives are x-locked at the formation slot. While a Diver is away from the
+  formation (`DIVING`/`PAUSING`/`RETURNING`) the cluster's drift is held —
+  see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
   is untouched (no aim seam).
 
@@ -560,9 +736,39 @@ Deterministic combat loops stop on the first `getPlayerHitCount()` increment
 
 ### 7.5 Boss gym
 
-The Boss gym work item (`AH-0MT99QBDW001O7PE`) is **out of scope** for this
-convention and will follow it when built: spawn the player via the same
-`player` config seam and reuse the live-combat collision/respawn machinery.
+The Boss gym (`GymBoss`) follows this convention: it spawns the player via
+the same `player` config seam, reuses the live-combat collision/respawn
+machinery, and routes the Boss itself through the shared boss hooks
+(`CombatScene._advanceBoss` / `getAdditionalTeleportBodies`, §2.1). Its
+phase minions are summoned from the shared `planMinionSpawns()` plan and
+advanced on the shared `tick(dt)` path via `onBossAdvanced()`, so the gym
+Boss and the shipped game's Boss run the same code
+(AH-0MUII3E5E006A93F, gap 6).
+
+### 7.6 Formation hold while a Diver is away (AH-0MUAYB957002EMYV)
+
+A Diver leaves the formation for the whole `DIVING → PAUSING → RETURNING`
+attack window, and the cluster must not keep drifting out from under it.
+The Diver reports this through the optional `requiresFormationHold?()` seam
+(on `FormationSceneEntity` and the shared `EnemyEntity` type alongside
+`DestructionAudioSeam`):
+
+- `Diver.requiresFormationHold()` returns `this.alive && this._state !==
+  DiverState.FORMATION` — true for `DIVING`/`PAUSING`/`RETURNING`, false in
+  `FORMATION`, and false once destroyed.
+- Both independent drift implementations consult the seam each frame and hold
+  the cluster's base while any **living** holder exists:
+  - `GymFormationScene.tick()` freezes `formationBaseX` and suppresses the
+    right-edge wrap/respawn.
+  - `PlayScene._moveEnemies()` freezes `driftX` and leaves `driftDir`
+    untouched, so ping-pong direction is preserved across the hold.
+- Destroyed entities are ignored by both gates, so a Diver killed mid-dive
+  cannot freeze the cluster forever.
+- Every entity's `applyFormationPosition` still runs each frame with the
+  unchanged base, so a returning Diver glides onto the slot evaluated live
+  from the (now stationary) base, and normal drift resumes on the first
+  frame after the last Diver re-enters `FORMATION`.
+- Non-Diver entities omit the seam and are unaffected.
 
 ---
 
@@ -601,6 +807,9 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
 
 - `src/data/enemy-configs.csv` — one row per enemy archetype.
 - `src/data/ship-config.csv` — the single player-ship row.
+- `src/data/difficulty-curves.csv` — one row per `(level, wave)` for the optional
+  runtime-sequenced campaign (AH-0MUH6LEYY0054E63): `level`, `levelName`,
+  `wave`, `targetDifficulty` (0–100). See §9.6.
 - `enemy-configs.csv` starts with a `#` comment header listing every column,
   the enum values and how to add an entry. The header is optional and is **not**
   rewritten by the dev save path, so `ship-config.csv` is currently headerless.
@@ -616,14 +825,22 @@ Supporting modules:
   (missing → default, malformed → `0` / `0x000000`); `validateEnemyConfig` /
   `validateShipConfig` return `{ ok, errors }`; `serializeEnemyConfigs` /
   `serializeShipConfigs` round-trip back. `ENEMY_COLUMN_ORDER` /
-  `SHIP_COLUMN_ORDER` are the stable exported column orders.
+  `SHIP_COLUMN_ORDER` are the stable exported column orders. The
+  difficulty-curve codec (`DIFFICULTY_CURVE_COLUMN_ORDER`,
+  `parseDifficultyCurves`, `serializeDifficultyCurves`,
+  `validateDifficultyCurveRow`, `coerceDifficultyCurveRow`) mirrors these for
+  the sequenced-campaign CSV (§9.6).
 - `src/core/configStore.ts` — in-memory registry. `loadConfigs()` (async,
   awaited by `src/core/boot.ts` before the game/scenes are constructed) fetches
   both CSVs through the dev plugin (or reads the bundled CSV in production),
   parses/validates them and populates the registry;
   a failed fetch falls back to `DEFAULT_ENEMY_CONFIGS` / `DEFAULT_CONFIG`
   without throwing. `loadEnemyConfig` / `loadShipConfig` / `listEnemyConfigKeys`
-  / `loadAllEnemyConfigs` are synchronous reads of the registry.
+  / `loadAllEnemyConfigs` are synchronous reads of the registry. The
+  difficulty-curve loader (`DIFFICULTY_CURVES_CSV_PATH`,
+  `loadDifficultyCurves()`, `saveDifficultyCurves()`,
+  `seedDifficultyCurves()`, `defaultDifficultyCurves()`) follows the same
+  pipeline and never throws (§9.6).
 - `vite/plugins/configCsvPlugin.ts` — dev-only Vite middleware. `GET
   /api/csv/src/data/<file>.csv` returns the file; `PUT` upserts the supplied
   row(s) after validation and writes atomically (temp file + rename).
@@ -668,12 +885,42 @@ guard (never while a telegraph is scheduled).
 `GymEnemies` is the only enemy gym scene. `init({ enemyKey })` loads the
 config and calls `getFormationBuilder(cfg.formationKind)` to build
 `EnemyFormationConfig` via `enemyConfigToFormationConfig`. `collectBullets`
-dispatches by `cfg.key` (Scout/Diver/…) so per-enemy quirks stay behind the
-seam.
+delegates to the shared `fireForEnemy(entity, cfg.key, now)` dispatcher
+(`src/entities/enemyFire.ts`, §2.1), so per-enemy quirks stay behind the
+seam and a new archetype is wired once, in the dispatcher table.
+
+**Panel anchoring (AH-0MUAYB7O4009LWBF).** Every plain-DOM gym panel
+(`#gym-config-panel` in `GymPlayer`, `#enemy-gym-panel` here and
+`#boss-gym-panel` in `GymBoss`) carries the shared `gym-panel` class and is
+anchored **bottom-left** (`position: fixed; bottom: 8px; left: 8px`) with a
+viewport-relative `max-height: calc(100vh - 120px)` and `overflow-y: auto`.
+This keeps the panel clear of the top-left Phaser HUD (lives, power-ups,
+weapons, minerals) and caps a tall panel (e.g. the ~21-row enemy editor) so it
+scrolls internally instead of extending above the viewport. The in-canvas
+`EXPLODE`/`SHOOT`/`DAMAGE` controls and the right-aligned status line moved to
+the **bottom-right** in the same change so both the panel and the controls stay
+usable. The stylesheet contract is regression-tested in `src/style.test.ts`
+(computed styles for each panel id) plus per-scene class/coordinate assertions.
+
+**Collapsible panels (AH-0MUDYFMUX007Q0W3).** Every gym panel is made
+collapsible by the shared `makeCollapsible({ panel, title })` helper in
+`src/utils/gymPanel.ts`: it wraps the panel's existing children in
+`.gym-panel-body` and prepends a `.gym-panel-header` containing a native
+`<button class="gym-panel-toggle">`. The button carries `aria-expanded` and
+`aria-controls` pointing at the body, and activating it flips the panel's
+`data-collapsed` attribute; `src/style.css` hides `.gym-panel-body` when
+`data-collapsed="true"`, so a collapsed panel shrinks to its header only. The
+header/toggle stay visible, keeping the control discoverable and keyboard
+activatable. Panels start **expanded** (`data-collapsed="false"`); the state
+is per-scene and deliberately not persisted. Toggle titles are `Ship Config`
+(`GymPlayer`), `AI Config` (`GymEnemies`) and `Boss Config` (`GymBoss`). The
+helper is unit-tested in `src/utils/gymPanel.test.ts`, the collapsed CSS
+contract in `src/style.test.ts`, and the per-scene toggle in each scene's test
+file.
 
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
-`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,
+`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
@@ -683,7 +930,9 @@ or a red **`Save failed — …`** status (`enemy-gym-save-status`). In producti
 builds writes are unavailable and the status reports it. After a successful
 write the scene re-reads the config from the store.
 Live `input`/`change` events patch `config.buildOffsets/spacing/drift/start/count`
-and best-effort mutate entity `_*` fields. Panel is removed on scene
+and best-effort mutate entity `_*` fields (including `_bulletLifetime`, so the
+`bulletLifetime` 0.1–5.0 s TTL slider live-applies to already-spawned entities).
+Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
 Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
@@ -702,7 +951,12 @@ dedicated **"Boss"** row (scene key `GymBoss`) that boots the multi-phase
 `GymBoss` scene directly. Bare `GymEnemies` is excluded from the plain scene
 list, and `GymBoss` is likewise excluded there so the real boss is not
 duplicated (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Save As
-enemies appear on next index load without code changes.
+enemies appear on next index load without code changes. Index rows are
+keyboard-operable through the shared `src/utils/focusManager.ts`
+(`FocusManager`): rows are focused in reading order with the first row
+focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
+and Enter/Space launch the focused row through the same path as a pointer
+click (AH-0MUDZFBYY008P7ZE).
 
 ### 8.6 Adding a new enemy (convention)
 
@@ -721,7 +975,9 @@ enemies appear on next index load without code changes.
    needs new movement/shot code beyond the existing registries: add a new
    entity in `src/entities/<Name>.ts` with the same seam (`size? color? …`),
    a builder in `src/utils/formations.ts` or a shot pattern in
-   `src/utils/enemyShotPatterns.ts` with tests, wire it in
+   `src/utils/enemyShotPatterns.ts` with tests, add its archetype key →
+   `tryFire*` method to `ENEMY_FIRE_METHODS` in
+   `src/entities/enemyFire.ts` (the single fire-dispatch seam), wire it in
    `src/entities/enemyFactory.ts`, and add a seed fallback to
    `DEFAULT_ENEMY_CONFIGS` in `src/core/configDefaults.ts`.
 5. **CSV hygiene.** The committed CSV is the source of truth; a missing or
@@ -771,13 +1027,15 @@ constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
 | `fireInterval` | 12 | 100–5000 ms | **Inverted** (fire rate) — a shorter interval scores higher. |
 | `shotProbability` | 5 | 0–1 | Chance an enemy fires per cycle. |
 | `bulletSpeed` | 5 | 40–600 px/s | Bullet velocity. |
+| `bulletLifetime` | 6 | 0.1–5.0 s | Bullet TTL — **not** inverted: a longer-lived bullet wraps the screen and stays lethal, so a higher value scores higher. Matches the gym slider range. |
 | `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
 | `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
 | `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
 
-**Firing factors contribute zero** when `shotPattern === 'none'` (e.g. the
-Asteroid) or when `waveDifficulty` scores a wave with `shootEnabled: false`
-(GDD §2.4 — Levels 1–3).
+**Firing factors** (`fireInterval`, `shotProbability`, `bulletSpeed`,
+`bulletLifetime`, `burstCount`) **contribute zero** when
+`shotPattern === 'none'` (e.g. the Asteroid) or when `waveDifficulty` scores a
+wave with `shootEnabled: false` (GDD §2.4 — Levels 1–3).
 
 ### 9.3 Composition
 
@@ -813,15 +1071,15 @@ ordering is **non-decreasing** and enforced by
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
-| 1 | Entry | 7.17 |
-| 2 | Descent | 12.70 |
-| 3 | The Core | 14.28 |
-| 4 | Firestorm | 23.14 |
-| 5 | Predictable Death | 31.92 |
+| 1 | Entry | 6.58 |
+| 2 | Descent | 11.98 |
+| 3 | The Core | 13.46 |
+| 4 | Firestorm | 23.61 |
+| 5 | Predictable Death | 32.02 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
-fires): Scout 14.03, Diver 23.18, Tank 29.09, Phaser 31.85, Swarm 20.17,
-Boss Swarm 22.50, Asteroid 10.00 (split chain only — it never fires).
+fires): Scout 14.86, Diver 23.49, Tank 29.64, Phaser 31.95, Swarm 20.65,
+Boss Swarm 23.42, Asteroid 9.43 (split chain only — it never fires).
 
 > **Tuning guidance.** The weights are subjective by nature; the index is a
 > relative, monotonic ordering, not an absolute truth. Tests pin *ordering*
@@ -837,12 +1095,46 @@ Boss Swarm 22.50, Asteroid 10.00 (split chain only — it never fires).
 - **Library:** `enemyDifficulty` / `waveDifficulty` / `levelDifficulty` are
   importable for scripts, docs tables and future tooling.
 
-### 9.6 Out of scope
+### 9.6 Runtime auto-sequencer & sequenced campaigns (AH-0MUDIWETP003XC3X, AH-0MUH6LEYY0054E63)
 
-A runtime **auto-sequencer** that picks enemies to hit a target difficulty
-curve is explicitly deferred (Producer Q4) and tracked separately as
-`AH-0MUDIWETP003XC3X` (`discovered-from` AH-0MTZWZ7MC002B01K). This module is
-the design-time primitive such work would build on.
+The runtime **auto-sequencer** (`src/core/difficultySequencer.ts`,
+`sequencer(curve, candidates, options)`) is the delivered, pure primitive that
+picks and tunes candidate enemy groups to best approximate a target difficulty
+curve (one target per wave). It is wired into the playable run by
+`src/waves/sequencedLevels.ts` (`buildSequencedLevels(rows?, candidates?)`),
+which calls `sequencer()` **once per configured level** (so the fire rule can
+vary by level), converts each `ShootableWave` to a `WaveDefinition`, and applies
+the campaign fire rule.
+
+- **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`.
+  Columns: `level` (1-based), `levelName`, `wave` (1-based), `targetDifficulty`
+  (0–100). The number of rows for a level sets its wave count; the level count
+  and names are therefore data-driven. The CSV is loaded through the same
+  `configStore` / `configCsvPlugin` pipeline as the enemy/ship CSVs (editable in
+  dev via `/api/csv/...`, bundled read-only in production) with the
+  `parseDifficultyCurves` / `serializeDifficultyCurves` /
+  `validateDifficultyCurveRow` codec (`src/core/csv.ts`).
+- **Toggle:** the opt-in `GameRules.sequencedWavesEnabled` scalar
+  (`src/core/rules.ts`, default `false`) in the `ai-hell-game-rules`
+  localStorage record. `PlayScene.create()` only overrides the campaign when it
+  is `true`; otherwise the static `LEVELS` campaign is used untouched.
+- **Fire rule:** derived from the 1-based level number — levels 1–3 do not fire,
+  levels 4+ do (GDD §2.4/§2.5) — and passed to `sequencer()` as
+  `defaultShootEnabled`.
+- **Determinism:** generation is a pure function of the config and the
+  candidate pool (no RNG, no clock, no I/O), so the same inputs yield identical
+  level/wave definitions.
+- **Fallback:** with no rows, an empty candidate pool, or a throw from the
+  sequencer, `buildSequencedLevels()` returns the static `LEVELS` campaign; a
+  missing/malformed curve CSV falls back to the computed default curve
+  (`defaultDifficultyCurves()`, seeded from the measured `LEVELS` scores); and
+  `PlayScene` catches any error and leaves the static campaign active. The run
+  is therefore never left unplayable.
+
+Related work: the sequencer primitive was delivered by `AH-0MUDIWETP003XC3X`;
+the wiring is `AH-0MUH6LEYY0054E63`; player-state adaptation, runtime curve
+editing (`AH-0MUGXDVPH005TIZL`) and per-level generated-vs-scripted mixing
+(`AH-0MUH7Q6HN0006QPD`) remain out of scope.
 
 ## Audio Best Practices
 

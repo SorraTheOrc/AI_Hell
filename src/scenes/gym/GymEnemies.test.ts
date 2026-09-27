@@ -40,6 +40,7 @@ vi.mock('../../core/configStore', async (importOriginal) => {
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
 import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID } from './GymEnemies';
+import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
 import { TANK_COLOR } from '../../entities/Tank';
@@ -302,6 +303,35 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
   });
 
+  it('renders a collapsible header and toggles the panel body (AH-0MUDYFMUX007Q0W3)', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const toggle = panel.querySelector<HTMLButtonElement>('.gym-panel-toggle');
+    expect(toggle, 'collapse toggle missing').not.toBeNull();
+    expect(toggle!.textContent).toContain('AI Config');
+
+    const body = panel.querySelector('.gym-panel-body');
+    expect(body, 'panel body missing').not.toBeNull();
+    expect(toggle!.getAttribute('aria-controls')).toBe(body!.id);
+    expect(panel.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+
+    toggle!.click();
+    expect(panel.getAttribute('data-collapsed')).toBe('true');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('false');
+
+    toggle!.click();
+    expect(panel.getAttribute('data-collapsed')).toBe('false');
+    expect(toggle!.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('AC — the editor panel carries the shared .gym-panel class for bottom-left anchoring (AH-0MUAYB7O4009LWBF)', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel');
+    expect(panel, 'enemy-gym-panel missing').not.toBeNull();
+    expect(panel!.className).toContain('gym-panel');
+  });
+
   it('panel input live-updates in-memory config and is observable via currentConfig', async () => {
     const scene = await bootWithKey('scout');
     const input = document.querySelector<HTMLInputElement>('input[data-config="driftSpeed"]')!;
@@ -413,6 +443,89 @@ describe('GymEnemies — single reusable enemy gym', () => {
     (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'Prob Enemy';
     (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
     await vi.waitFor(() => expect(lec('prob-enemy').shotProbability).toBeCloseTo(0.45, 5));
+  });
+
+  // ── bulletLifetime slider (AH-0MUDYTPMC002GLEJ, AC1/AC2) ────────
+
+  it('renders a bulletLifetime slider immediately after bulletSpeed with the documented 0.1–5.0 s range', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const slider = panel.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]');
+    expect(slider, 'bulletLifetime slider missing').not.toBeNull();
+    expect(Number(slider!.min)).toBe(0.1);
+    expect(Number(slider!.max)).toBe(5.0);
+    expect(Number(slider!.step)).toBe(0.1);
+
+    // DOM order: bulletSpeed then bulletLifetime then burstCount.
+    const configInputs = [...panel.querySelectorAll<HTMLInputElement>('input[data-config]')]
+      .map((el) => el.dataset['config']);
+    expect(configInputs.indexOf('bulletLifetime')).toBe(configInputs.indexOf('bulletSpeed') + 1);
+    expect(configInputs.indexOf('bulletLifetime')).toBe(configInputs.indexOf('burstCount') - 1);
+  });
+
+  it('seeds the bulletLifetime slider from the active config (scout 1.5, tank 2.0)', async () => {
+    await bootWithKey('tank');
+    const tankSlider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    expect(Number(tankSlider.value)).toBe(DEFAULT_ENEMY_CONFIGS.tank.bulletLifetime);
+
+    // Tear the tank boot down before booting the scout harness.
+    booted?.game.destroy(true);
+    booted = null;
+
+    const scene = await bootWithKey('scout');
+    expect(scene.currentConfig.bulletLifetime).toBe(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime);
+    const scoutSlider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    expect(Number(scoutSlider.value)).toBe(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime);
+  });
+
+  it('updates currentConfig and the live difficulty readout when bulletLifetime changes', async () => {
+    const scene = await bootWithKey('scout');
+    const el = document.getElementById(ENEMY_DIFFICULTY_ID)!;
+    const before = el.textContent ?? '';
+
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '5.0';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(scene.currentConfig.bulletLifetime).toBeCloseTo(5.0, 5);
+    const after = el.textContent ?? '';
+    // A longer TTL is a positive difficulty factor, so the readout must move
+    // and must still match the library score for the live config.
+    expect(after).not.toBe(before);
+    expect(after).toBe(`${enemyDifficulty(scene.currentConfig).score.toFixed(1)} / 100`);
+  });
+
+  it('live-applies bulletLifetime to the spawned entities without a respawn', async () => {
+    const scene = await bootWithKey('scout');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '4.5';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.bulletLifetime).toBeCloseTo(4.5, 5);
+    for (const e of scene.formationEntities) {
+      expect((e as unknown as { _bulletLifetime: number })._bulletLifetime).toBeCloseTo(4.5, 5);
+    }
+  });
+
+  it('Save round-trips bulletLifetime through the CSV store', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    const scene = await bootWithKey('tank');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '3.3';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
+    expect(scene.currentConfig.bulletLifetime).toBeCloseTo(3.3, 5);
+    await vi.waitFor(() => expect(lec('tank').bulletLifetime).toBeCloseTo(3.3, 5));
+  });
+
+  it('Save As round-trips bulletLifetime into the new custom enemy', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '2.7';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'TTL Enemy';
+    (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(lec('ttl-enemy').bulletLifetime).toBeCloseTo(2.7, 5));
   });
 
   it('Save overwrites the active config and round-trips via loadEnemyConfig', async () => {
@@ -616,7 +729,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
       // at full-suite load). Never rely on one volley's luck: poll with bounded
       // quarter-interval clock steps so the swarm re-fires fresh aimed volleys
       // until one lands (mirrors the GymScout AC2 poll idiom, commit e48b046).
-      vi.spyOn(effectsModule, 'playDestructionSound');
+      vi.spyOn(effectsModule, 'playPlayerDestructionSound');
       scene.toggleShooting();
       const hitsBefore = scene.getPlayerHitCount();
       for (let i = 0; i < 160 && scene.getPlayerHitCount() === hitsBefore; i++) {
@@ -628,7 +741,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
       expect(player.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
       expect(player.y).toBeCloseTo(PLAYER_SPAWN.y, 5);
       expect(scene.isPlayerInvulnerable()).toBe(true);
-      expect(effectsModule.playDestructionSound).toHaveBeenCalled();
+      expect(effectsModule.playPlayerDestructionSound).toHaveBeenCalled();
     });
   });
 
@@ -1084,6 +1197,52 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     ).toBe(1);
   });
 
+  it('a destroyed small asteroid drops one mineral at its position (AC1)', async () => {
+    const scene = await bootAsteroidGym();
+    const clearBullets = (): void => {
+      (
+        scene as unknown as { playerBullets: unknown[] }
+      ).playerBullets.length = 0;
+    };
+
+    // Empty the seeded field so the count delta is unambiguous.
+    for (const mineral of scene.getMinerals()) mineral.handleOverlap('player');
+    scene.tick(0.016);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    // Split large → medium → small.
+    const large = liveAsteroids(scene)[0];
+    clearBullets();
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    const medium = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'medium',
+    )!;
+    clearBullets();
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+    const small = liveAsteroids(scene).find(
+      (a) => a.getSizeTier() === 'small',
+    )!;
+    // Remove every other live asteroid so the bullet can only hit the target
+    // (siblings spawn on top of each other in the split chain).
+    for (const other of liveAsteroids(scene)) {
+      if (other !== small) other.destroySelf();
+    }
+    const sx = small.x;
+    const sy = small.y;
+
+    clearBullets();
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    const minerals = scene.getMinerals();
+    expect(minerals).toHaveLength(1);
+    // The drop is at the death site; the asteroid advances one tick before the
+    // collision resolves, so allow for that single-tick drift.
+    expect(Math.hypot(minerals[0].x - sx, minerals[0].y - sy)).toBeLessThanOrEqual(2);
+  });
+
   it('asteroids never fire in the gym even when SHOOT is toggled on', async () => {
     const scene = await bootAsteroidGym();
     const before = scene.activeBullets.length;
@@ -1096,5 +1255,138 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     for (const asteroid of liveAsteroids(scene)) {
       expect(asteroid.shootEnabled).toBe(false);
     }
+  });
+});
+
+/**
+ * Regression for AH-0MUHM66ES0027QQV on the real reusable enemy gym route:
+ * the Diver is an `enemyKey` routed to `GymEnemies`, which inherits the
+ * (previously missing) P3/P6 hit-gating. These tests prove the effects gate
+ * a hit on the real scene, not just the stub base.
+ */
+describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route (AH-0MUHM66ES0027QQV)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    resetConfigStore();
+    seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  /** Boots the real GymEnemies diver route with a deterministic power-up layer
+   *  whose next drop lands on the ship. */
+  function makeGatedScene(enemyKey: string, id: PowerUpId): typeof Phaser.Scene {
+    class GatedGymEnemies extends GymEnemies {
+      override init(): void {
+        super.init({ enemyKey });
+        this.config.powerUps = {
+          spawner: new RoundRobinSpawner<PowerUpId>([id]),
+          placement: { place: (context) => ({ x: context.player.x, y: context.player.y }) },
+          spawnInterval: 1000,
+        };
+      }
+    }
+    Object.defineProperty(GatedGymEnemies, 'name', {
+      value: `GatedGymEnemies_${enemyKey}_${id}`,
+    });
+    return GatedGymEnemies as unknown as typeof Phaser.Scene;
+  }
+
+  /** Parks a stationary enemy bullet on the player's current position. */
+  function placeEnemyBulletOnPlayer(scene: GymEnemies): FormationSceneBullet {
+    const player = scene.getPlayer()!;
+    const graphics = scene.add.graphics();
+    graphics.setPosition(player.x, player.y);
+    const bullet: FormationSceneBullet = {
+      graphics,
+      vx: 0,
+      vy: 0,
+      lifetime: 999,
+      elapsed: 0,
+    };
+    (scene as unknown as { bullets: FormationSceneBullet[] }).bullets.push(bullet);
+    return bullet;
+  }
+
+  it('AC1 — collecting P6 in the diver gym phases the player through an enemy bullet', async () => {
+    booted = await bootScene([makeGatedScene('diver', 'P6')]);
+    const scene = booted.scene as unknown as GymEnemies;
+    const player = scene.getPlayer()!;
+    vi.spyOn(player, 'tryFire').mockReturnValue([]);
+
+    // The booted heavy weight drop sits on the ship and is collected on tick.
+    scene.tick(0.05);
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+
+    placeEnemyBulletOnPlayer(scene);
+    scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.isPlayerInvulnerable()).toBe(false);
+  });
+
+  it('AC2 — collecting P3 in the diver gym absorbs the next enemy bullet', async () => {
+    booted = await bootScene([makeGatedScene('diver', 'P3')]);
+    const scene = booted.scene as unknown as GymEnemies;
+    const player = scene.getPlayer()!;
+    vi.spyOn(player, 'tryFire').mockReturnValue([]);
+
+    scene.tick(0.05);
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+
+    placeEnemyBulletOnPlayer(scene);
+    scene.tick(0.05);
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+});
+
+describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  it('AC1 — a real scene.start restart of the same instance clears every applied effect', async () => {
+    booted = await bootScene([GymEnemies]);
+    const manager = booted.game.scene;
+    const scene = booted.scene as GymEnemies;
+    const registry = scene.getEffectsRegistry();
+
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P3', true);
+    registry.applyWeapon('dual', true);
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.activeWeapons()).toHaveLength(1);
+
+    // The exact gym-index restart vector: scene.start on the same key
+    // stops and restarts the SAME registered instance.
+    manager.start('GymEnemies', { enemyKey: 'scout' });
+
+    const restarted = manager.getScene('GymEnemies') as GymEnemies;
+    expect(restarted).toBe(scene);
+    expect(restarted.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.isShielded).toBe(false);
+    expect(() => restarted.tick(0.016)).not.toThrow();
   });
 });

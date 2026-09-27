@@ -24,7 +24,7 @@
  * Spawn cadence mirrors `GymPowerUps`: one drop at a time, round-robin
  * P3 → P4 → P6 → P7, each living `POWER_UP_LIFETIME` (12.5 s, grow →
  * hold → shrink, framerate-independent via `PowerUp`), collection
- * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (8 px)
+ * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (16 px)
  * bubble + icon visuals. NEXT spawn coincides with previous despawn
  * while nothing is collected — one drop on screen.
  *
@@ -35,8 +35,20 @@
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *
- * Teleport (S/↓): consumes one P7 stack FIFO, warps to the nearest safe
- * spot along the heading ray, clamped to screen bounds, then applies P6.
+ * Teleport (S/↓): routed through the shared `CombatScene.triggerTeleport`
+ * so the game and every gym resolve teleports through one implementation;
+ * it consumes one P7 stack FIFO, warps to the nearest safe spot along the
+ * heading ray, clamped to screen bounds, then applies P6. The gym supplies
+ * only its hit radii (`getTeleportEnemyHitRadius` / `getTeleportBulletHitRadius`)
+ * and its enemy list (`getEnemyEntities`); destination selection, FIFO
+ * consumption and the P6-on-arrival grant are shared (gap 7,
+ * AH-0MUII3EPU0039R5O).
+ *
+ * The drop lifecycle, collection gate, P9 magnet, P4 bomb notice and
+ * per-type pickup cues run through the shared `src/scenes/core/dropLayer.ts`
+ * template methods and `BombNotice`, so this gym cannot drift from the game;
+ * only the round-robin spawn *source* is gym-specific
+ * (AH-0MUII3CXX0023H24, gap 4).
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically via
@@ -45,11 +57,18 @@
 
 import Phaser from 'phaser';
 
+import { CombatScene } from '../core/CombatScene';
+import { advanceWrappingBullets } from '../core/bulletLifecycle';
+import {
+  applyPhaseGhost,
+  drawShieldBubble,
+} from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
+import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
-import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
+import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import {
   PowerUpId,
@@ -57,41 +76,20 @@ import {
   getPowerUpById,
 } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
-import { findTeleportDestination } from '../../powerups/teleport';
-import {
-  spawnCollectAnimation,
-  type CollectAnimationHandle,
-} from '../../powerups/collectAnimation';
+import { BombNotice } from '../core/BombNotice';
+import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
-import {
-  resolvePatterns,
-  spawnExplosionParticles,
-} from '../../vfx/explosionParticles';
-import {
-  playPowerUpCollectPopSound,
-  playPowerUpCollectSound,
-  playDestructionSound,
-  playSpawnSound,
-} from '../../audio/effects';
+import { playSpawnSound } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
-import {
-  AsteroidsInputHandler,
-  ControlInput,
-  FourDirectionalInputHandler,
-} from '../../utils/movementModel';
+import { addHelpButton, type GymHelpHandle } from '../../utils/gymHelp';
 import { buildVFormationOffsets } from '../../utils/formations';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
-  PLAYER_HIT_SCALE_PEAK,
-  PLAYER_HIT_SCALE_PULSE_DURATION,
   POWER_UP_DROP_SIZE,
   POWER_UP_SPAWN_INTERVAL,
-  SHIP_COLOR,
-  SHIP_SIZE,
   COMBAT_HIT_INVULNERABLE_DURATION,
-  COMBAT_HIT_BLINK_INTERVAL,
 } from '../../core/constants';
 
 // ── Spawn / formation tuning ───────────────────────────────────────
@@ -114,7 +112,7 @@ const COMBAT_START_X = GAME_WIDTH * 0.2;
 const COMBAT_START_Y = 110;
 const COMBAT_DRIFT_SPEED = 18;
 
-/** Hit radii used for player collision checks (px). */
+/** Teleport-avoidance hit radii supplied through the shared hooks (px). */
 const ENEMY_HIT_RADIUS = SCOUT_SIZE / 2 + 4;
 const BULLET_HIT_RADIUS = 5;
 
@@ -126,16 +124,25 @@ export interface CombatActiveDrop {
   x: number;
   y: number;
   graphics: Phaser.GameObjects.Graphics;
+  /** Unified drop id, consumed by the shared collect path. */
+  dropId: PowerUpId;
   /** True once collected and playing its absorb VFX (AC4). */
   absorbing?: boolean;
 }
 
-export class GymPowerUpsCombat extends Phaser.Scene {
+/**
+ * Combat-coupled power-ups gym. Extends the shared {@link CombatScene}
+ * core so its collision, teleport and hit lifecycle flow through the one
+ * shared implementation; the gym supplies scene specifics through hooks.
+ */
+export class GymPowerUpsCombat extends CombatScene<
+  Scout,
+  ScoutBullet,
+  CombatActiveDrop
+> {
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: CombatActiveDrop[] = [];
-  /** In-flight absorb animations for collected drops (AH-0MUBYXRT4002H3GY). */
-  private collectAnimations: CollectAnimationHandle[] = [];
   private roundRobinSpawner = new RoundRobinSpawner<PowerUpId>(COMBAT_ORDER);
   private spawnIndex = 0;
   private spawnTimer = 0;
@@ -148,35 +155,23 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   private formationBaseY = COMBAT_START_Y;
   private shootEnabled = true;
 
-  // Input
-  private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
-  private wasd: WasdKeysLike | undefined;
-  private teleportKey: Phaser.Input.Keyboard.Key | undefined;
-  private downKey: Phaser.Input.Keyboard.Key | undefined;
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
-
-  // Hit response
-  private playerHitCount = 0;
-  private playerInvulnerable = 0;
-  private playerBlinkPhase = 0;
-
-  // Player death VFX (tracks explosion Graphics for tests/SHUTDOWN).
-  private playerExplosions: Phaser.GameObjects.Graphics[] = [];
-
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
-  private bombNoticeTimer = 0;
-  private bombNoticeLabel: Phaser.GameObjects.Text | null = null;
+  private bombNotice: BombNotice | null = null;
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
+  /** Shared help affordance (AH-0MUAYB67I002REOZ). */
+  private helpHandle: GymHelpHandle | null = null;
 
   constructor() {
     super({ key: 'GymPowerUpsCombat' });
   }
 
   create(): void {
+    // Reset shared + scene-owned per-run state so a stop/restart of the
+    // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
+    this.resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -184,33 +179,35 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.add.existing(this.player);
 
     addBackToIndexButton(this);
+    // Shared "Help (?)" button + overlay: lists every drop this gym can
+    // spawn, sourced from the shared catalogues (AH-0MUAYB67I002REOZ).
+    this.helpHandle = addHelpButton(this, {
+      gymKey: 'GymPowerUpsCombat',
+      drops: COMBAT_ORDER,
+    });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
     this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
 
-    // Clean up on shutdown to prevent stale references on restart.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const exp of this.playerExplosions) exp.destroy();
-      this.playerExplosions.length = 0;
-      // Release any in-flight absorb animations on shutdown/restart.
-      for (const anim of this.collectAnimations) anim.destroy();
-      this.collectAnimations = [];
-    });
+    // Tear down all scene-owned objects on shutdown so a stop/restart of
+    // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    this.bombNoticeLabel = this.add.text(GAME_WIDTH / 2, 24, '', {
-      fontFamily: 'monospace',
+    this.bombNotice = new BombNotice(this, {
+      x: GAME_WIDTH / 2,
+      y: 24,
       fontSize: '14px',
-      color: '#ff4444',
-      backgroundColor: '#1a1a1a',
       padding: { x: 6, y: 2 },
-    }).setOrigin(0.5).setVisible(false);
+    });
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    this.teleportKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-    this.downKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
+    this.teleportKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
+    this.downKey =
+      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
 
     // Spawn the small scout formation.
     const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
@@ -249,9 +246,67 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.spawnTimer = POWER_UP_SPAWN_INTERVAL;
   }
 
+  /**
+   * Resets shared per-run state (effects registry + bullet/effect
+   * registries via the core) plus this gym's player, drops, scout
+   * formation, HUD and visual state (AH-0MUII3FYN0072QRT, gap 10).
+   */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.player = null;
+    this.drops = [];
+    this.spawnIndex = 0;
+    this.spawnTimer = 0;
+    this.hud = null;
+    this.scouts = [];
+    this.scoutBullets = [];
+    this.formationBaseX = COMBAT_START_X;
+    this.formationBaseY = COMBAT_START_Y;
+    this.shootEnabled = true;
+    this.shieldBubble = null;
+    this.bombNotice = null;
+    this.shootButton = null;
+    this.helpHandle = null;
+  }
+
+  /**
+   * Destroys every scene-owned object on `SHUTDOWN` after the shared core
+   * teardown has run, so a stop/restart leaks nothing (AC2).
+   */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    for (const drop of this.drops) drop.graphics.destroy();
+    this.drops = [];
+    for (const scout of this.scouts) scout.destroy();
+    this.scouts = [];
+    for (const bullet of this.scoutBullets) bullet.graphics.destroy();
+    this.scoutBullets = [];
+    this.player?.destroy();
+    this.player = null;
+    this.hud?.destroy();
+    this.hud = null;
+    this.shieldBubble?.destroy();
+    this.shieldBubble = null;
+    this.bombNotice?.destroy();
+    this.bombNotice = null;
+    this.shootButton?.destroy();
+    this.shootButton = null;
+    this.helpHandle = null;
+  }
+
   /** Phaser per-frame hook — delegates to the deterministic `tick`. */
   update(_time: number, delta: number): void {
     this.tick(delta / 1000);
+  }
+
+  /**
+   * This gym's scouts are persistent demonstration threats and must never
+   * be destroyed, and it has no weapon drops, so the player does not
+   * auto-fire; the shared step's auto-fire resolves to a no-op
+   * (AH-0MUII39KX007YUQ0, AC1/AC4).
+   */
+  protected override autoFireEnabled(): boolean {
+    return false;
   }
 
   /**
@@ -263,10 +318,10 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   tick(dt: number): void {
     if (!this.player) return;
 
-    // ── Ship: input → thrust + screen-wrap ──────────────────────
-    const input = this._readInput();
-    if (input) this.player.setInput(input);
-    this.player.physicsTick(dt, this.scale.width, this.scale.height);
+    // ── Shared player-control step: timers → multipliers → input →
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1/AC4). The player is
+    // advanced from the supplied `dt`; auto-fire is a no-op here.
+    this._tickPlayer(dt);
 
     // ── Teleport (S/↓) — before hit checks so arrival phase protects ─
     this._handleTeleport();
@@ -288,16 +343,12 @@ export class GymPowerUpsCombat extends Phaser.Scene {
       this.spawnTimer -= dt;
     }
 
-    // ── Drop lifecycles ─────────────────────────────────────────
-    this.advanceDrops(dt);
-
-    // ── Overlap collection ──────────────────────────────────────
-    this._collectOverlapping();
-    // Advance the absorb VFX for collected drops (cosmetic only).
-    this._updateCollectAnimations(dt);
+    // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
+    //    lifecycle, overlap collection, absorb VFX ──
+    this.drops = this._updateDropLayer(this.drops, dt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
-    this._handleHits();
+    this._handleCollisions();
 
     // ── Invulnerability blink ───────────────────────────────────
     this._updateInvulnerability(dt);
@@ -306,7 +357,7 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     this.effectsRegistry.tick(dt);
 
     // ── Visuals (shield bubble + phase ghost + bomb notice) ─
-    this._updateVisuals(dt);
+    this._updateVisuals();
 
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();
@@ -314,36 +365,14 @@ export class GymPowerUpsCombat extends Phaser.Scene {
 
   // ── Visuals ──────────────────────────────────────────────────────
 
-  private _updateVisuals(dt: number): void {
-    // Shield bubble: drawn around the ship while P3 is active.
-    if (this.shieldBubble && this.player) {
-      this.shieldBubble.clear();
-      if (this.effectsRegistry.isShielded) {
-        this.shieldBubble.lineStyle(2, 0x3399ff, 0.9);
-        this.shieldBubble.strokeCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
-        this.shieldBubble.fillStyle(0x3399ff, 0.12);
-        this.shieldBubble.fillCircle(this.player.x, this.player.y, SHIP_SIZE * 1.6);
-      }
+  private _updateVisuals(): void {
+    // Shield bubble: drawn around the ship while P3 is active (shared helper).
+    if (this.shieldBubble) {
+      drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
     }
-    // Phase ghost: semi-transparent ship while P6 is active.
-    if (this.player) {
-      if (this.effectsRegistry.isPhased) {
-        // Ghost outline — keep blink alpha if invulnerable, else ghost alpha.
-        if (this.playerInvulnerable <= 0) this.player.setAlpha(0.45);
-      } else if (this.playerInvulnerable <= 0) {
-        this.player.setAlpha(1);
-      }
-    }
-    // Bomb notice: brief centered flash after P4.
-    if (this.bombNoticeTimer > 0) {
-      this.bombNoticeTimer = Math.max(0, this.bombNoticeTimer - dt);
-      if (this.bombNoticeTimer <= 0) this.bombNoticeLabel?.setVisible(false);
-    }
-  }
-
-  private _flashBombNotice(): void {
-    this.bombNoticeTimer = 1.2;
-    this.bombNoticeLabel?.setText('BOMB! Bullets cleared').setVisible(true);
+    // Phase ghost: semi-transparent ship while P6 is active (keeps the
+    // blink alpha when invulnerable) — shared helper.
+    applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
   }
 
   // ── Spawning / lifecycle ─────────────────────────────────────────
@@ -366,104 +395,17 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     const entry = getPowerUpById(id);
     drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
     graphics.setScale(0);
-    const drop: CombatActiveDrop = { powerUp: new PowerUp(id), x, y, graphics };
+    const drop: CombatActiveDrop = { powerUp: new PowerUp(id), x, y, graphics, dropId: id };
     this.drops.push(drop);
     return drop;
   }
 
-  /** Advances every drop's lifecycle by `dt` seconds. */
+  /**
+   * Advances every drop's lifecycle by `dt` seconds through the shared
+   * helper. Public test seam.
+   */
   advanceDrops(dt: number): void {
-    const kept: CombatActiveDrop[] = [];
-    for (const drop of this.drops) {
-      // An absorbing drop is owned by its animation — never re-process it.
-      if (drop.absorbing) continue;
-      drop.powerUp.advance(dt);
-      drop.graphics.setScale(drop.powerUp.currentScale);
-      if (drop.powerUp.state !== PowerUpState.DESPAWNED) {
-        kept.push(drop);
-      } else {
-        drop.graphics.destroy();
-      }
-    }
-    this.drops = kept;
-  }
-
-  // ── Collection ───────────────────────────────────────────────────
-
-  private _collectOverlapping(): void {
-    if (!this.player) return;
-    const hull = SHIP_SIZE / 2;
-    const kept: CombatActiveDrop[] = [];
-    for (const drop of this.drops) {
-      if (!drop.absorbing && drop.powerUp.canCollect() && this._overlapsShip(drop, hull)) {
-        this._collectDrop(drop);
-      } else {
-        kept.push(drop);
-      }
-    }
-    this.drops = kept;
-  }
-
-  private _overlapsShip(drop: CombatActiveDrop, hull: number): boolean {
-    if (!this.player) return false;
-    const dropRadius = POWER_UP_DROP_SIZE * drop.powerUp.currentScale;
-    const dist = Math.hypot(this.player.x - drop.x, this.player.y - drop.y);
-    return dist <= hull + dropRadius;
-  }
-
-  private _collectDrop(drop: CombatActiveDrop): void {
-    const effect = drop.powerUp.tryCollect();
-    if (!effect) return;
-    const id = effect.id as PowerUpId;
-
-    // P4 Bomb: clear enemy bullets instantly (no enemy damage).
-    if (id === 'P4') {
-      this._clearEnemyBullets();
-      this._flashBombNotice();
-    }
-
-    this.effectsRegistry.applyCollect(id);
-
-    // Mark the drop so the overlap gate cannot re-collect it while the
-    // absorb animation plays (AC4); keep the Graphics alive until the
-    // animation completes (AC3).
-    drop.absorbing = true;
-    this._startCollectAnimation(drop);
-
-    // Generic pop plus the shared collection chime on collection (AC2).
-    try {
-      playPowerUpCollectPopSound();
-      playPowerUpCollectSound();
-    } catch { /* ignore */ }
-  }
-
-  /** Starts the absorb animation for a collected drop (AC3). */
-  private _startCollectAnimation(drop: CombatActiveDrop): void {
-    const shipX = this.player?.x ?? drop.x;
-    const shipY = this.player?.y ?? drop.y;
-    this.collectAnimations.push(
-      spawnCollectAnimation(drop.graphics, drop.x, drop.y, shipX, shipY),
-    );
-  }
-
-  /** Advances in-flight absorb animations and prunes completed handles. */
-  private _updateCollectAnimations(dt: number): void {
-    if (this.collectAnimations.length === 0) return;
-    const kept: CollectAnimationHandle[] = [];
-    for (const handle of this.collectAnimations) {
-      if (this.player) handle.setAttractor(this.player.x, this.player.y);
-      handle.update(dt);
-      if (!handle.isComplete()) kept.push(handle);
-    }
-    this.collectAnimations = kept;
-  }
-
-  /** Clears all on-screen enemy bullets (P4, GDD §4.4 — no enemy damage). */
-  private _clearEnemyBullets(): void {
-    for (const b of this.scoutBullets) {
-      try { b.graphics.destroy(); } catch { /* ignore */ }
-    }
-    this.scoutBullets = [];
+    this.drops = this._advanceDropLifecycles(this.drops, dt);
   }
 
   // ── Scouts / formation ───────────────────────────────────────────
@@ -487,199 +429,74 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     }
   }
 
-  /** Headless clock for scouts: advances with the deterministic dt. */
-  private _nextFireTime = 0;
-
   private _tickScouts(): void {
     if (!this.shootEnabled) return;
-    // Advance the virtual clock by the scene's dt accumulated elsewhere.
-    // Use a fixed step that mirrors the test harness tick() cadence so
-    // scouts fire deterministically without relying on this.time.now
-    // (which is 0 in headless happy-dom).
-    this._nextFireTime += 16; // ms — one 60 Hz tick
-    const now = this._nextFireTime;
+    // Real scene clock — the same time base the game and the other gyms
+    // use (AH-0MUII3BBW000XZ46, AC2). No frame-count accumulator.
+    const now = this.time.now;
     for (const scout of this.scouts) {
       if (!scout.alive) continue;
-      const bullet = scout.tryFireAimedBullet(now);
-      if (bullet) this.scoutBullets.push(bullet);
+      this.scoutBullets.push(
+        ...fireForEnemy<ScoutBullet>(scout, 'scout', now),
+      );
     }
   }
 
   private _advanceEnemyBullets(dt: number): void {
-    for (let i = this.scoutBullets.length - 1; i >= 0; i--) {
-      const b = this.scoutBullets[i];
-      b.elapsed += dt;
-      b.graphics.x += b.vx * dt;
-      b.graphics.y += b.vy * dt;
-      // Four-edge wrap + lifetime expiry, matching the shipped game
-      // (AH-0MU960UTE001PTV0). Bullets are never culled off-screen.
-      if (b.graphics.x < 0) b.graphics.x += GAME_WIDTH;
-      if (b.graphics.x >= GAME_WIDTH) b.graphics.x -= GAME_WIDTH;
-      if (b.graphics.y < 0) b.graphics.y += GAME_HEIGHT;
-      if (b.graphics.y >= GAME_HEIGHT) b.graphics.y -= GAME_HEIGHT;
-      if (b.elapsed >= b.lifetime) {
-        try { b.graphics.destroy(); } catch { /* ignore */ }
-        this.scoutBullets.splice(i, 1);
-      }
-    }
+    // Shared projectile lifecycle: four-edge wrap + lifetime expiry, the
+    // same helper PlayScene and the formation gym use (AH-0MUII3CF00024EDM,
+    // gap 3). The helper keeps the defensive destruction this gym had.
+    advanceWrappingBullets(this.scoutBullets, dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
-  // ── Teleport (P7, S/↓) ─────────────────────────────────────────
+  // ── Shared combat-core hooks ─────────────────────────────────────
 
-  private _handleTeleport(): void {
-    if (!this.player || !this.teleportKey) return;
-    // Phaser Key JustDown check; in headless tests we also expose
-    // `triggerTeleport()` so tests don't need to fake keyboard state.
-    // Accept S key or down arrow as activation keys.
-    const justDown = (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
-      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.teleportKey)
-      : this.teleportKey.isDown;
-    const justDownDown = this.downKey ? (Phaser.Input.Keyboard as unknown as { JustDown?: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown
-      ? (Phaser.Input.Keyboard as unknown as { JustDown: (k: Phaser.Input.Keyboard.Key) => boolean }).JustDown(this.downKey)
-      : this.downKey.isDown : false;
-    if (!justDown && !justDownDown) return;
-    // To avoid auto-repeat every frame while Space is held, only act on
-    // the first frame isDown becomes true. The headless JustDown helper
-    // already gates this; for fallback isDown we gate via a flag.
-    // In practice tests call `triggerTeleport()` directly, so this path
-    // is the live keyboard path only.
-    if (!justDown) return;
-    this.triggerTeleport();
+  // Teleports (S/↓) run through the single shared
+  // `CombatScene.triggerTeleport` path; the gym supplies only its
+  // specifics below. Destination selection, FIFO stack consumption and
+  // the P6-on-arrival grant all live in the shared core (gap 7,
+  // AH-0MUII3EPU0039R5O). `canTeleport` keeps the shared default
+  // (always allowed) — this gym has no opt-in drop layer to gate on.
+
+  /** Enemy hit radius used for teleport destination avoidance (px). */
+  protected override getTeleportEnemyHitRadius(): number {
+    return ENEMY_HIT_RADIUS;
   }
 
-  /**
-   * Consumes one P7 teleport stack and warps the player to the nearest
-   * safe spot along the heading ray. Public so tests can trigger
-   * teleport deterministically without faking keyboard state.
-   * Returns true if a teleport was performed.
-   */
-  triggerTeleport(): boolean {
-    if (!this.player) return false;
-    if (!this.effectsRegistry.hasTeleport()) return false;
-
-    const heading = this.player.getHeading();
-    const enemies = this.scouts.filter((s) => s.alive).map((s) => ({ x: s.x, y: s.y }));
-    const bullets = this.scoutBullets.map((b) => ({ x: b.graphics.x, y: b.graphics.y }));
-
-    const dest = findTeleportDestination(
-      this.player.x,
-      this.player.y,
-      heading,
-      enemies,
-      bullets,
-      this.scale.width,
-      this.scale.height,
-      { enemyHitRadius: ENEMY_HIT_RADIUS, bulletHitRadius: BULLET_HIT_RADIUS },
-    );
-
-    // Consume one stack FIFO and grant P6 phase shift at landing.
-    this.effectsRegistry.consumeTeleport();
-    this.player.setPosition(dest.x, dest.y);
-    // Keep the movement state's position in sync (physicsTick base).
-    const state = this.player.getMovementState();
-    (this.player as unknown as { _movementState: { x: number; y: number } })._movementState = {
-      ...state,
-      x: dest.x,
-      y: dest.y,
-    };
-    return true;
+  /** Enemy-bullet hit radius used for teleport avoidance (px). */
+  protected override getTeleportBulletHitRadius(): number {
+    return BULLET_HIT_RADIUS;
   }
 
-  // ── Hit response ─────────────────────────────────────────────────
-
-  private _handleHits(): void {
-    if (!this.player) return;
-
-    // P6 phase: complete pass-through — skip all hit checks.
-    if (this.effectsRegistry.isPhased) return;
-
-    // Brief post-hit invulnerability blink.
-    if (this.playerInvulnerable > 0) return;
-
-    const hull = SHIP_SIZE / 2;
-    const playerX = this.player.x;
-    const playerY = this.player.y;
-
-    // 1. Enemy bullets vs player.
-    for (let i = this.scoutBullets.length - 1; i >= 0; i--) {
-      const b = this.scoutBullets[i];
-      if (Math.hypot(b.graphics.x - playerX, b.graphics.y - playerY) <= hull + BULLET_HIT_RADIUS) {
-        // Shield absorbs one hit.
-        if (this.effectsRegistry.isShielded) {
-          this.effectsRegistry.tryAbsorbShield();
-          try { b.graphics.destroy(); } catch { /* ignore */ }
-          this.scoutBullets.splice(i, 1);
-          this._startInvulnerability();
-          return; // one hit per frame
-        }
-        // Unshielded hit.
-        try { b.graphics.destroy(); } catch { /* ignore */ }
-        this.scoutBullets.splice(i, 1);
-        this._hitPlayer();
-        return;
-      }
-    }
-
-    // 2. Enemy bodies vs player.
-    for (const scout of this.scouts) {
-      if (!scout.alive) continue;
-      if (Math.hypot(scout.x - playerX, scout.y - playerY) <= hull + ENEMY_HIT_RADIUS) {
-        if (this.effectsRegistry.isShielded) {
-          this.effectsRegistry.tryAbsorbShield();
-          this._startInvulnerability();
-          return;
-        }
-        this._hitPlayer();
-        return;
-      }
-    }
+  /** Combat gym invulnerability window (0.8 s, operator decision Q2-B). */
+  protected override getInvulnerabilityDuration(): number {
+    return COMBAT_HIT_INVULNERABLE_DURATION;
   }
 
-  private _hitPlayer(): void {
-    if (!this.player) return;
-    this.playerHitCount += 1;
-    try { playDestructionSound(); } catch { /* ignore */ }
-
-    // Particle burst VFX at the player's hit position.
-    spawnExplosionParticles(
-      this,
-      this.player.x,
-      this.player.y,
-      SHIP_COLOR,
-      SHIP_SIZE,
-      {
-        patterns: resolvePatterns('player'),
-        registry: this.playerExplosions,
-      },
-    );
-
-    // Scale-pulse VFX: expand the ship to 150% then contract back to 100%.
-    this.tweens.add({
-      targets: this.player,
-      scale: PLAYER_HIT_SCALE_PEAK,
-      duration: PLAYER_HIT_SCALE_PULSE_DURATION / 2,
-      yoyo: true,
-      ease: 'Power2',
-    });
-
-    // In-place respawn: preserve position and facing, zero velocity.
-    this.player.respawnInPlace();
-    this._startInvulnerability();
+  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
+  protected override _getBombNotice(): BombNotice | null {
+    return this.bombNotice;
   }
 
-  private _startInvulnerability(): void {
-    this.playerInvulnerable = COMBAT_HIT_INVULNERABLE_DURATION;
-    this.playerBlinkPhase = 0;
-    this.player?.setAlpha(1);
+  /** Scouts are persistent threats — ramming does not destroy them. */
+  protected override onPlayerRamsEnemy(_enemy: Scout): void {}
+
+  /** Enemy-destruction seam (no-op: the gym never destroys its scouts). */
+  protected override onEnemyDestroyed(_enemy: Scout): void {}
+
+  /** Live enemy entities for the shared collision/teleport passes. */
+  protected override getEnemyEntities(): readonly Scout[] {
+    return this.scouts;
   }
 
-  private _updateInvulnerability(dt: number): void {
-    if (!this.player || this.playerInvulnerable <= 0) return;
-    this.playerInvulnerable = Math.max(0, this.playerInvulnerable - dt);
-    this.playerBlinkPhase += dt;
-    const visible = Math.floor(this.playerBlinkPhase / COMBAT_HIT_BLINK_INTERVAL) % 2 === 0;
-    this.player.setAlpha(visible ? 1 : 0.3);
-    if (this.playerInvulnerable <= 0) this.player.setAlpha(1);
+  /** Live enemy bullets for the shared collision/teleport passes. */
+  getEnemyBullets(): ScoutBullet[] {
+    return this.scoutBullets.slice();
+  }
+
+  /** Replaces the enemy-bullet collection after a shared collision pass. */
+  protected override setEnemyBullets(bullets: ScoutBullet[]): void {
+    this.scoutBullets = bullets;
   }
 
   // ── Shooting toggle ──────────────────────────────────────────────
@@ -703,11 +520,16 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   }
   /** Whether the bomb notice is currently visible (for tests). */
   isBombNoticeVisible(): boolean {
-    return this.bombNoticeTimer > 0;
+    return this.bombNotice?.isVisible() ?? false;
   }
   /** Player explosion VFX graphics (empty once tweens end; for tests). */
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
     return this.playerExplosions.slice();
+  }
+
+  /** Active composed player-death juice effects (empty once torn down). */
+  getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
+    return this.playerDeathEffects.slice();
   }
 
   /** Exposes a bullet directly (for tests: place a bullet deterministically). */
@@ -721,16 +543,6 @@ export class GymPowerUpsCombat extends Phaser.Scene {
     return b;
   }
 
-  // ── Input ─────────────────────────────────────────────────────────
-
-  private _readInput(): ControlInput | null {
-    if (!this.player || !this.cursors || !this.wasd) return null;
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.player.getScheme() === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
-  }
-
   // ── Public test accessors ────────────────────────────────────────
 
   getPlayer(): Player | null { return this.player; }
@@ -741,13 +553,15 @@ export class GymPowerUpsCombat extends Phaser.Scene {
   getCollectAnimations(): CollectAnimationHandle[] { return [...this.collectAnimations]; }
   getHud(): HUD | null { return this.hud; }
   getScouts(): Scout[] { return [...this.scouts]; }
-  getEnemyBullets(): ScoutBullet[] { return [...this.scoutBullets]; }
   getPlayerHitCount(): number { return this.playerHitCount; }
-  isPlayerInvulnerable(): boolean { return this.playerInvulnerable > 0; }
-  getPlayerInvulnerableRemaining(): number { return Math.max(0, this.playerInvulnerable); }
+  isPlayerInvulnerable(): boolean { return this.invulnerable > 0; }
+  getPlayerInvulnerableRemaining(): number { return Math.max(0, this.invulnerable); }
   get shootingEnabled(): boolean { return this.shootEnabled; }
   get formationX(): number { return this.formationBaseX; }
   get formationY(): number { return this.formationBaseY; }
   getCursors(): Phaser.Types.Input.Keyboard.CursorKeys | undefined { return this.cursors; }
   getWasd(): WasdKeysLike | undefined { return this.wasd; }
+
+  /** The shared help button/overlay handle (AH-0MUAYB67I002REOZ). */
+  getHelpHandle(): GymHelpHandle | null { return this.helpHandle; }
 }

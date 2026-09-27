@@ -22,9 +22,12 @@ import {
   drawPowerUpIcon,
   drawWeaponDrop,
   drawWeaponIcon,
+  dropBubbleRadius,
+  dropCollectRadius,
   WeaponDropIconId,
 } from './icons';
 import { PowerUpType } from './types';
+import { POWER_UP_DROP_SIZE, WEAPON_DROP_SIZE } from '../core/constants';
 
 /** Minimal scene used only to allocate Graphics objects. */
 class BareScene extends Phaser.Scene {
@@ -222,6 +225,33 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
     const afterFirst = g.commandBuffer.length;
     drawDropBubble(g, 10, 10, 32, 0xff6ec7);
     expect(g.commandBuffer.length).toBeGreaterThan(afterFirst);
+  });
+
+  describe('drop collection radius matches the visible bubble (AH-0MTVYCM2N002NKE4)', () => {
+    it('derives the ring and collection radius from the shared 1.4× bubble factor', () => {
+      // 16 px icon × 1.4 = 22.4 px crisp ring at full scale.
+      expect(dropBubbleRadius(POWER_UP_DROP_SIZE)).toBeCloseTo(22.4, 5);
+      expect(dropCollectRadius(POWER_UP_DROP_SIZE, 1)).toBeCloseTo(22.4, 5);
+    });
+
+    it('tracks the lifecycle scale proportionally (grow / hold / shrink)', () => {
+      expect(dropCollectRadius(POWER_UP_DROP_SIZE, 0.5)).toBeCloseTo(11.2, 5);
+      expect(dropCollectRadius(POWER_UP_DROP_SIZE, 0.03)).toBeCloseTo(0.672, 5);
+      expect(dropCollectRadius(POWER_UP_DROP_SIZE, 0)).toBe(0);
+    });
+
+    it('is the single source of truth shared by the bubble and every drop family', () => {
+      // Collection radius at scale 1 is exactly the drawn ring radius.
+      expect(dropCollectRadius(POWER_UP_DROP_SIZE, 1)).toBeCloseTo(
+        dropBubbleRadius(POWER_UP_DROP_SIZE),
+        10,
+      );
+      // Weapon drops use the same derivation (WEAPON_DROP_SIZE mirrors the power-up size).
+      expect(dropCollectRadius(WEAPON_DROP_SIZE, 1)).toBeCloseTo(
+        dropBubbleRadius(POWER_UP_DROP_SIZE),
+        10,
+      );
+    });
   });
 
   it('drawPowerUpDrop renders bubble + icon for every non-combat type — strictly more geometry than the bare icon', async () => {

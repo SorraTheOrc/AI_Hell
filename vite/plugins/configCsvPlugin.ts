@@ -30,13 +30,16 @@ import {
   parseCsvRows,
   coerceEnemyConfig,
   coerceShipConfig,
+  coerceDifficultyCurveRow,
   serializeEnemyConfigs,
   serializeShipConfigs,
+  serializeDifficultyCurves,
   validateEnemyConfig,
   validateShipConfig,
+  validateDifficultyCurveRow,
 } from '../../src/core/csv';
 import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from '../../src/core/configDefaults';
-import type { EnemyConfig } from '../../src/core/configTypes';
+import type { DifficultyCurveRow, EnemyConfig } from '../../src/core/configTypes';
 
 /** Prefix under which the plugin serves its endpoints. */
 export const CSV_API_PREFIX = '/api/csv/';
@@ -45,6 +48,7 @@ export const CSV_API_PREFIX = '/api/csv/';
 export const ALLOWED_CSV_FILES = [
   'src/data/enemy-configs.csv',
   'src/data/ship-config.csv',
+  'src/data/difficulty-curves.csv',
 ] as const;
 
 export interface ConfigCsvPluginOptions {
@@ -175,10 +179,13 @@ function handlePut(
   // Validate every incoming row against the target schema before touching
   // the file. The store PUTs the full CSV, so all rows are checked.
   const isShip = relPath.endsWith('ship-config.csv');
+  const isDifficulty = relPath.endsWith('difficulty-curves.csv');
   for (const incoming of incomingRows) {
     const validation = isShip
       ? validateShipConfig(incoming, DEFAULT_CONFIG)
-      : validateEnemyConfig(incoming, DEFAULT_ENEMY_CONFIGS);
+      : isDifficulty
+        ? validateDifficultyCurveRow(incoming)
+        : validateEnemyConfig(incoming, DEFAULT_ENEMY_CONFIGS);
     if (!validation.ok) {
       sendJson(res, 400, { ok: false, errors: validation.errors });
       return;
@@ -193,6 +200,19 @@ function handlePut(
     const ship = coerceShipConfig(incomingRows[0], DEFAULT_CONFIG);
     atomicWrite(filePath, serializeShipConfigs([ship]));
     sendJson(res, 200, { ok: true, mode: 'upsert', row: ship });
+    return;
+  }
+
+  if (isDifficulty) {
+    // The curve file has no key to upsert by: the store PUTs the full,
+    // validated curve and the plugin replaces the file wholesale.
+    const curves: DifficultyCurveRow[] = [];
+    for (const incoming of incomingRows) {
+      const row = coerceDifficultyCurveRow(incoming);
+      if (row) curves.push(row);
+    }
+    atomicWrite(filePath, serializeDifficultyCurves(curves));
+    sendJson(res, 200, { ok: true, mode: 'upsert', rows: curves });
     return;
   }
 

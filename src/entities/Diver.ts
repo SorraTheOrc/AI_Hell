@@ -9,6 +9,13 @@
  * it exists when the return completes, so the diver rejoins the drifting
  * formation without a horizontal snap.
  *
+ * While the diver is detached from the formation (`DIVING`, `PAUSING` or
+ * `RETURNING`) it reports `requiresFormationHold() === true` through the
+ * shared entity seam, so the owning scene holds the whole cluster in
+ * place for the entire attack; normal drift resumes once every diver has
+ * rejoined. A destroyed diver reports `false`, so a mid-dive kill can
+ * never freeze the cluster forever (GDD §4.1 — E2).
+ *
  * During the formation hold phase the diver smoothly rotates its container
  * to visually face the player (nose points toward the target). The dart
  * sprite is drawn with its nose pointing "up" (negative y) so that the
@@ -245,6 +252,17 @@ export class Diver extends BaseEnemy {
   /** Current behaviour state (formation, diving, or returning). */
   get behaviourState(): DiverState {
     return this._state;
+  }
+
+  /**
+   * Optional entity seam (shared by `FormationSceneEntity` / `EnemyEntity`):
+   * true while this diver is away from its formation and the owning scene
+   * must hold the cluster's drift. Every detached state
+   * (`DIVING`/`PAUSING`/`RETURNING`) holds; `FORMATION` does not. Destroyed
+   * divers report `false` so a mid-dive kill releases the hold immediately.
+   */
+  requiresFormationHold(): boolean {
+    return this.alive && this._state !== DiverState.FORMATION;
   }
 
   /** The position aimed at when diving (defaults to the bottom-centre stand-in). */

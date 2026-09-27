@@ -20,8 +20,17 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
+import {
+  SCOUT_ADVANCE_CUE_DURATION,
+  SCOUT_FIRE_INTERVAL,
+} from '../../entities/Scout';
+import { CombatScene } from '../core/CombatScene';
+import { HelpScene } from '../HelpScene';
+import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import * as effectsModule from '../../audio/effects';
+import * as explosionModule from '../../vfx/explosionParticles';
+import * as playerDeathJuiceModule from '../../vfx/playerDeathJuice';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
@@ -166,12 +175,13 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     player.setPosition(480, 270);
 
     // SHOOT starts ON — the tell phase lasts 0.6 s then fires on the next
-    // tick past the 1.2 s interval. Drive until a bullet appears, polling
-    // each tick so the assertion does not sit on the bullet-lifetime expiry
-    // boundary (AH-0MU960UTE001PTV0) and stays robust to the harness's
-    // background game loop.
+    // tick past the 1.2 s interval. The real scene clock drives the gates
+    // (AC2), so advance it explicitly between ticks; polling each tick also
+    // keeps the assertion off the bullet-lifetime expiry boundary
+    // (AH-0MU960UTE001PTV0).
     let bullets = scene.getEnemyBullets();
     for (let i = 0; i < 400 && bullets.length === 0; i++) {
+      scene.time.now += SCOUT_FIRE_INTERVAL / 4;
       scene.tick(1 / 60);
       bullets = scene.getEnemyBullets();
     }
@@ -183,6 +193,37 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
     for (const b of bullets) {
       expect(b.graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
     }
+  });
+
+  it('fire cadence is driven by the real scene clock, not a frame counter (AC2)', async () => {
+    const scene = await bootCombat();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    // Reset the scouts' fire state (toggling off clears the interval/tell
+    // accumulators) and clear any bullets left from boot, so the test
+    // observes only the clock-driven cadence.
+    scene.getScouts().forEach((scout) => {
+      scout.shootEnabled = false;
+      scout.shootEnabled = true;
+    });
+    (scene as unknown as { scoutBullets: unknown[] }).scoutBullets.length = 0;
+
+    // Hold the real clock still: no number of frames can advance a
+    // time-based gate, so no bullet may appear (the removed frame-count
+    // accumulator fired purely on tick count).
+    scene.time.now = 0;
+    for (let i = 0; i < 400; i++) scene.tick(1 / 60);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+
+    // Advancing the clock past the fire interval starts the two-phase tell...
+    scene.time.now = SCOUT_FIRE_INTERVAL;
+    scene.tick(1 / 60);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+
+    // ...and advancing past the tell duration fires the aimed shot.
+    scene.time.now += SCOUT_ADVANCE_CUE_DURATION;
+    scene.tick(1 / 60);
+    expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
   });
 });
 
@@ -231,6 +272,48 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
 
   it('drops spawn at the configured size (16 px)', () => {
     expect(POWER_UP_DROP_SIZE).toBe(16);
+  });
+});
+
+// ── Collection boundary: ship hull touches the visible bubble (AH-0MTVYCM2N002NKE4) ──
+
+describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootCombatBoundary(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  it('collects a drop whose hull touches the visible bubble (31 px)', async () => {
+    const scene = await bootCombatBoundary();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull is already touching the crisp bubble ring → collected.
+    const drop = scene.spawnDrop('P3', 511, 270);
+    scene.advanceDrops(0.5); // grow to full size
+    scene.tick(1 / 60); // one frame runs the overlap collection
+
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+    expect(scene.getDrops()).not.toContain(drop); // consumed
+  });
+
+  it('does not collect a drop just beyond the bubble boundary (34 px)', async () => {
+    const scene = await bootCombatBoundary();
+    scene.getPlayer()!.setPosition(480, 270);
+
+    const drop = scene.spawnDrop('P3', 480 + 34, 270); // 34 px > 32.4 px boundary
+    scene.advanceDrops(0.5); // full size, collectible but out of range
+    scene.tick(1 / 60);
+
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.getDrops()).toContain(drop); // drop still on field
   });
 });
 
@@ -556,5 +639,305 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
 
     scene.tick(0.5);
     expect(popSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
+  let booted: BootedGame | null = null;
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHelp(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat, HelpScene]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  it('AC1 — renders a Help (?) button next to ← INDEX', async () => {
+    const scene = await bootHelp();
+    expect(scene.getHelpHandle()).not.toBeNull();
+    expect(scene.getHelpHandle()!.button.text).toBe(HELP_BUTTON_LABEL);
+  });
+
+  it('AC1/AC2 — opening help pauses the gym and lists its drop pool', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    expect(booted!.game.scene.isPaused('GymPowerUpsCombat')).toBe(true);
+    const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
+    expect(help.getEntries().map((e) => e.id)).toEqual(['P3', 'P4', 'P6', 'P7']);
+  });
+
+  it('AC4 — ? closes help and resumes the gym where it paused', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    await settle();
+
+    expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
+    expect(scene.sys.isActive()).toBe(true);
+  });
+});
+
+// ── Parent AH-0MUDCT7EU0061OSZ: re-based on the shared combat core ─────
+
+describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => {
+  it('AC4 — extends CombatScene (prototype identity)', () => {
+    expect(Object.getPrototypeOf(GymPowerUpsCombat.prototype)).toBe(
+      CombatScene.prototype,
+    );
+  });
+
+  it('AC1/AC6 — inherits the shared template methods instead of defining local copies', () => {
+    for (const method of [
+      '_collectDrop',
+      '_clearEnemyBullets',
+      '_handleTeleport',
+      'triggerTeleport',
+      '_hitPlayer',
+      '_readPlayerInput',
+      '_handleCollisions',
+    ] as const) {
+      // The gym must not own a local copy...
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          GymPowerUpsCombat.prototype,
+          method,
+        ),
+      ).toBe(false);
+      // ...and must resolve the shared implementation through CombatScene.
+      expect(
+        (GymPowerUpsCombat.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+      );
+    }
+    // The gym-owned `_handleHits` is gone entirely.
+    expect(
+      (GymPowerUpsCombat.prototype as unknown as Record<string, unknown>)[
+        '_handleHits'
+      ],
+    ).toBeUndefined();
+  });
+
+  it('AC2 — supplies its teleport hit radii through the overridable CombatScene hooks', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    const hooks = scene as unknown as {
+      getTeleportEnemyHitRadius(): number;
+      getTeleportBulletHitRadius(): number;
+    };
+
+    // The gym owns the hooks rather than relying on the shared defaults.
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'getTeleportEnemyHitRadius',
+      ),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymPowerUpsCombat.prototype,
+        'getTeleportBulletHitRadius',
+      ),
+    ).toBe(true);
+    // SCOUT_SIZE / 2 + 4 and the shared 5 px bullet radius.
+    expect(hooks.getTeleportEnemyHitRadius()).toBe(12);
+    expect(hooks.getTeleportBulletHitRadius()).toBe(5);
+
+    booted.game.destroy(true);
+  });
+
+  it('AC5 — the inherited hit lifecycle uses the gym’s 0.8 s invulnerability hook', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+
+    // A direct, unshielded hit arms the shared invuln window at 0.8 s.
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
+    booted.game.destroy(true);
+  });
+
+  it('AC5 — a shielded hit is absorbed without a hit, but still blinks', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    scene.getEffectsRegistry().applyCollect('P3');
+    expect(scene.getEffectsRegistry().isShielded).toBe(true);
+
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getEffectsRegistry().isShielded).toBe(false);
+    expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
+    booted.game.destroy(true);
+  });
+
+  it('AC5 — the shared teleport activates on ↓ (adopted S+↓ fix)', async () => {
+    const booted = await bootScene([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+    scene.getEffectsRegistry().applyCollect('P7');
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
+
+    // Only the down-arrow is held/just-down; S is not. The inherited
+    // `_handleTeleport` must still consume the stack and grant P6 — the
+    // deliberate S+↓ fix that replaces the gym's old S-only
+    // implementation (parent AC5b).
+    const sKey = scene.input.keyboard!.addKey('S');
+    const downKey = scene.input.keyboard!.addKey(
+      Phaser.Input.Keyboard.KeyCodes.DOWN,
+    );
+    (sKey as unknown as { _justDown: boolean })._justDown = false;
+    sKey.isDown = false;
+    (downKey as unknown as { _justDown: boolean })._justDown = true;
+    downKey.isDown = true;
+    (
+      scene as unknown as { teleportKey: Phaser.Input.Keyboard.Key | null }
+    ).teleportKey = sKey;
+    (
+      scene as unknown as { downKey: Phaser.Input.Keyboard.Key | null }
+    ).downKey = downKey;
+
+    scene['_handleTeleport']();
+
+    // The ↓ key (not S) consumed the P7 stack and granted P6 on arrival.
+    expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    booted.game.destroy(true);
+  });
+});
+
+// ── F8 (AH-0MUDY2UC3002Y3YW): composed player-death juice on the
+//    GymPowerUpsCombat hit path (inherited applyPlayerHit from CombatScene)
+
+describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
+  let booted: BootedGame | null = null;
+
+  async function bootCombat(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('an unshielded hit plays the dedicated cue once and registers juice', async () => {
+    const scene = await bootCombat();
+    const deathSound = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const particleSpy = vi.spyOn(explosionModule, 'spawnExplosionParticles');
+    const shakeSpy = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(deathSound).toHaveBeenCalledTimes(1);
+    expect(genericSound).not.toHaveBeenCalled();
+    expect(particleSpy).toHaveBeenCalledTimes(1);
+    expect(shakeSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+  });
+
+  it('SHUTDOWN clears the juice registry (no leak across stop/restart)', async () => {
+    const scene = await bootCombat();
+
+    scene['_hitPlayer']();
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+
+    // A stop/restart of the same instance must start clean and not throw.
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(() => scene.tick(0.016)).not.toThrow();
+  });
+
+  it('P3 shield absorb spawns no player juice', async () => {
+    const scene = await bootCombat();
+    scene.getEffectsRegistry().applyCollect('P3');
+    const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
+
+    scene['_hitPlayer']();
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+    expect(juiceSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('GymPowerUpsCombat — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await boot();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P3', true);
+    registry.applyWeapon('dual', true);
+    registry.applyCollect('P7');
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isShielded).toBe(true);
+    expect(registry.activeWeapons()).toHaveLength(1);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.activeWeapons()).toHaveLength(0);
+    expect(registry.isShielded).toBe(false);
+  });
+
+  it('AC2 — teardown clears the ship, drops, scouts and bullet registries', async () => {
+    const scene = await boot();
+    scene.spawnDrop('P3', 480, 270);
+    scene.spawnEnemyBullet(10, 10, 0, 0);
+    expect(scene.getDrops().length).toBeGreaterThan(0);
+    expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+    expect(scene.getScouts()).toHaveLength(0);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    expect(scene.getHud()).toBeNull();
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.getScouts().length).toBeGreaterThan(0);
   });
 });

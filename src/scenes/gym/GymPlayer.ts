@@ -8,8 +8,10 @@
  * movement, and a control panel for tuning the ship configuration values
  * live.
  *
- * The control panel is a plain-DOM overlay (beside the canvas) so it can
- * be asserted with document.querySelector in happy-dom tests:
+ * The control panel is a plain-DOM overlay anchored bottom-left (via the
+ * shared `.gym-panel` class, AH-0MUAYB7O4009LWBF) so it stays clear of the
+ * top-left HUD and can be asserted with document.querySelector in
+ * happy-dom tests:
  * - one slider per numeric config value (thrust, max speed, size, flame,
  *   deceleration),
  * - colour inputs for the ship/flame colours,
@@ -26,13 +28,9 @@
 import Phaser from 'phaser';
 
 import { Player } from '../../entities/Player';
-import {
-  FourDirectionalInputHandler,
-  AsteroidsInputHandler,
-  ControlInput,
-  ControlSchemeType,
-} from '../../utils/movementModel';
+import { mapControlInput, ControlSchemeType } from '../../utils/movementModel';
 import { WasdKeysLike } from '../../utils/input';
+import { makeCollapsible } from '../../utils/gymPanel';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import {
   loadShipConfig,
@@ -83,9 +81,6 @@ export class GymPlayer extends Phaser.Scene {
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
   private wasd: WasdKeysLike | undefined;
   private panel: HTMLDivElement | null = null;
-  /** Pluggable input handlers (one per control scheme, AC5). */
-  private fourDirHandler = new FourDirectionalInputHandler();
-  private asteroidsHandler = new AsteroidsInputHandler();
   /** The scheme currently driving player input — kept in sync with the player. */
   private scheme: ControlSchemeType = 'fourDirectional';
 
@@ -94,6 +89,9 @@ export class GymPlayer extends Phaser.Scene {
   }
 
   create(): void {
+    // A stop/restart of the same instance must start clean — no stale ship
+    // or input bindings (AH-0MUII3FYN0072QRT, gap 10).
+    this._resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -128,6 +126,9 @@ export class GymPlayer extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.panel?.remove();
       this.panel = null;
+      // Destroy the ship and drop the input bindings so a stop/restart of
+      // the same instance leaks no stale display object (AC2).
+      this._resetRunState();
     });
 
     if (!this.cursors || !this.wasd) {
@@ -138,11 +139,28 @@ export class GymPlayer extends Phaser.Scene {
 
   // ── Control panel ────────────────────────────────────────────────
 
-  /** Builds the plain-DOM tuning panel beside the canvas. */
+  /**
+   * Clears per-run state (the ship, input bindings and scheme) so a
+   * stop/restart of the same instance starts fresh
+   * (AH-0MUII3FYN0072QRT, gap 10). The `Player.destroy()` is a no-op once
+   * the display list has already torn the child down, so this is safe to
+   * call from both `create()` and the SHUTDOWN handler.
+   */
+  private _resetRunState(): void {
+    this.player?.destroy();
+    this.player = null;
+    this.cursors = undefined;
+    this.wasd = undefined;
+    this.scheme = 'fourDirectional';
+  }
+
+  /** Builds the plain-DOM tuning panel (bottom-left overlay). */
   private _buildPanel(): void {
     const host = document.querySelector('#game-container') ?? document.body;
     const panel = document.createElement('div');
     panel.id = PANEL_ID;
+    // Shared bottom-left anchoring + viewport height cap (AH-0MUAYB7O4009LWBF).
+    panel.className = 'gym-panel';
 
     // Control-scheme toggle (AC3 — button to switch schemes).
     const schemeRow = document.createElement('div');
@@ -180,6 +198,9 @@ export class GymPlayer extends Phaser.Scene {
     actions.className = 'gym-panel-actions';
     actions.append(save, status);
     panel.appendChild(actions);
+
+    // Wrap the controls in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
+    makeCollapsible({ panel, title: 'Ship Config' });
 
     host.appendChild(panel);
     this.panel = panel;
@@ -338,19 +359,6 @@ export class GymPlayer extends Phaser.Scene {
     })();
   }
 
-  /**
-   * Reads the current held-key state into a ControlInput for the active
-   * control scheme (AC5 — pluggable input handlers).
-   * Level-triggered per frame: a key that is held down returns true
-   * every frame until released, so thrust accumulates continuously.
-   */
-  private _readInput(): ControlInput | undefined {
-    const raw = { cursors: this.cursors, wasd: this.wasd };
-    return this.scheme === 'asteroids'
-      ? this.asteroidsHandler.mapInput(raw)
-      : this.fourDirHandler.mapInput(raw);
-  }
-
   update(_time: number, delta: number): void {
     if (!this.player) return;
 
@@ -358,7 +366,13 @@ export class GymPlayer extends Phaser.Scene {
     // happen on setConfig from the panel / saved config).
     this.scheme = this.player.getScheme();
 
-    const input = this._readInput();
+    // Map the held keys through the shared scheme→input helper. The
+    // scheme branch lives in `mapControlInput` so GymPlayer and the
+    // combat scenes cannot diverge (AH-0MUII39KX007YUQ0, AC2).
+    const input = mapControlInput(this.scheme, {
+      cursors: this.cursors,
+      wasd: this.wasd,
+    });
     if (input) this.player.setInput(input);
 
     const dt = delta / 1000;

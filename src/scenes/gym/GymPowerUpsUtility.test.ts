@@ -16,6 +16,9 @@ import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymPowerUpsUtility } from './GymPowerUpsUtility';
+import { CombatCoreScene } from '../core/CombatCoreScene';
+import { HelpScene } from '../HelpScene';
+import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import {
   POWER_UP_DROP_SIZE,
   WEAPON_DROP_SIZE,
@@ -147,6 +150,31 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
       .getDrops()
       .filter((d) => Math.hypot(d.x - 480, d.y - 270) < 1);
     expect(atShip).toHaveLength(0);
+  });
+
+  it('applies the P5 fire-rate multiplier to the player (gym parity, AC4)', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer()!;
+
+    // No P5 → normal fire rate.
+    scene.tick(1 / 60);
+    expect(player.getFireRateMultiplier()).toBe(1);
+
+    // Collect P5 under the ship.
+    scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(registry.fireRateMultiplier()).toBe(1.5);
+
+    // Applied at the top of tick(), so the boost lands on the next frame.
+    scene.tick(1 / 60);
+    expect(player.getFireRateMultiplier()).toBe(1.5);
+
+    // Expires after 10 s → back to normal.
+    for (let i = 0; i < 700; i++) scene.tick(1 / 60); // ~11.7 s
+    expect(registry.isActive('P5')).toBe(false);
+    expect(player.getFireRateMultiplier()).toBe(1);
   });
 
   it('does not collect a drop below the scale threshold (not yet grown)', async () => {
@@ -481,7 +509,7 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     return booted!.scene as GymPowerUpsUtility;
   }
 
-  it('AC1 — drop size constants reflect the 8 px power-up / weapon size', () => {
+  it('AC1 — drop size constants reflect the 16 px power-up / weapon size', () => {
     expect(POWER_UP_DROP_SIZE).toBe(16);
     expect(WEAPON_DROP_SIZE).toBe(POWER_UP_DROP_SIZE);
   });
@@ -508,13 +536,14 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     expect(scene.children.list).not.toContain(graphics);
   });
 
-  it('AC3 — at full scale a drop within the pickup radius (ship hull + drop size) is collectible', async () => {
+  it('AC3 — a drop whose hull touches the visible bubble (31 px) is collected', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // 8 px drop + 10 px ship hull = 18 px pickup radius → 15 px away should be caught.
+    // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
+    // ship hull is already touching the crisp bubble ring → collected.
     scene.spawnDrop('P5', 495, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.tick(1 / 60); // one frame runs the overlap collection
@@ -526,12 +555,12 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     expect(atShip).toHaveLength(0); // consumed by the collection
   });
 
-  it('AC3 — a drop beyond the pickup radius is still not collected (boundary scales with the new size)', async () => {
+  it('AC3 — a drop just beyond the bubble boundary (34 px) is not collected', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     scene.getPlayer()!.setPosition(480, 270);
 
-    scene.spawnDrop('P5', 480 + 30, 270); // 30 px > 18 px pickup radius
+    scene.spawnDrop('P5', 480 + 34, 270); // 34 px > 32.4 px bubble boundary
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
 
@@ -600,5 +629,139 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
 
     scene.tick(0.5);
     expect(popSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
+  let booted: BootedGame | null = null;
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootHelp(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility, HelpScene]);
+    return booted.scene as GymPowerUpsUtility;
+  }
+
+  it('AC1 — renders a Help (?) button next to ← INDEX', async () => {
+    const scene = await bootHelp();
+    expect(scene.getHelpHandle()).not.toBeNull();
+    expect(scene.getHelpHandle()!.button.text).toBe(HELP_BUTTON_LABEL);
+  });
+
+  it('AC1/AC2 — opening help pauses the gym and lists its drop pool', async () => {
+    await bootHelp();
+    const scene = booted!.scene as GymPowerUpsUtility;
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    expect(booted!.game.scene.isPaused('GymPowerUpsUtility')).toBe(true);
+    const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
+    expect(help.getEntries().map((e) => e.id)).toEqual(['P5', 'P8', 'P9']);
+  });
+
+  it('AC4 — ? closes help and resumes the gym where it paused', async () => {
+    const scene = await bootHelp();
+    scene.getHelpHandle()!.openHelp();
+    await settle();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }));
+    await settle();
+
+    expect(booted!.game.scene.isActive('HelpScene')).toBe(false);
+    expect(scene.sys.isActive()).toBe(true);
+  });
+});
+
+// ── Parent AH-0MUDCT7EU0061OSZ: re-based on the narrower shared core ───
+
+describe('GymPowerUpsUtility — re-based on the shared CombatCoreScene core', () => {
+  it('AC1 — extends the narrower shared base (prototype identity)', () => {
+    expect(Object.getPrototypeOf(GymPowerUpsUtility.prototype)).toBe(
+      CombatCoreScene.prototype,
+    );
+  });
+
+  it('AC1 — inherits collection/input instead of defining local copies', () => {
+    for (const method of [
+      '_collectDrop',
+      '_readPlayerInput',
+      '_autoFire',
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          GymPowerUpsUtility.prototype,
+          method,
+        ),
+      ).toBe(false);
+      expect(
+        (GymPowerUpsUtility.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+          method
+        ],
+      );
+    }
+  });
+});
+
+describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted.scene as GymPowerUpsUtility;
+  }
+
+  it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
+    const scene = await boot();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P9', true);
+    registry.applyCollect('P5', true);
+    registry.applyCollect('P8');
+    registry.applyCollect('P7');
+    expect(registry.magnetStacks()).toBe(1);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.lives()).toBe(4);
+    expect(registry.hasTeleport()).toBe(true);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.lives()).toBe(3);
+    expect(registry.hasTeleport()).toBe(false);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getEffectsRegistry()).toBe(registry);
+    expect(registry.activeEffects()).toHaveLength(0);
+    expect(registry.magnetStacks()).toBe(0);
+    expect(registry.lives()).toBe(3);
+  });
+
+  it('AC2 — teardown clears the ship, drops, HUD and animations', async () => {
+    const scene = await boot();
+    scene.spawnDrop('P5', 480, 270);
+    expect(scene.getDrops().length).toBeGreaterThan(0);
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+    expect(scene.getPlayer()).toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
+    expect(scene.getHud()).toBeNull();
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getPlayer()).not.toBeNull();
+    expect(scene.getDrops()).toHaveLength(0);
   });
 });

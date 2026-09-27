@@ -39,10 +39,18 @@ import {
   BossBullet,
 } from '../../entities/Boss';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { loadEnemyConfig } from '../../core/enemyConfig';
+import { fireForEnemy } from '../../entities/enemyFire';
+import {
+  createEnemyFromConfig,
+  type EnemyEntity,
+} from '../../entities/enemyFactory';
+import { planMinionSpawns } from '../../waves/BossMinions';
 import {
   applyAndPersistSpawnInterval,
   buildSpawnIntervalSlider,
 } from '../../utils/gymPowerUpControl';
+import { makeCollapsible } from '../../utils/gymPanel';
 import { FormationOffset } from '../../utils/formations';
 import {
   EnemyFormationConfig,
@@ -77,7 +85,7 @@ export interface PulseWaveBullet extends FormationSceneBullet {
 }
 
 const BOSS_CONFIG: EnemyFormationConfig<
-  Boss,
+  Boss | EnemyEntity,
   BossBullet | PulseWaveBullet
 > = {
   sceneKey: 'GymBoss',
@@ -117,15 +125,34 @@ const BOSS_CONFIG: EnemyFormationConfig<
  * GymBoss — Boss gym scene extending the shared core library.
  *
  * Reuses the base class for HUD, navigation, and bullet lifecycle
- * management, while overriding key methods to handle the Boss's
- * unique state machine (multi-phase health, attack patterns, telegraphing).
+ * management. The Boss itself advances through the shared
+ * `CombatScene._advanceBoss` hook on the same `tick(dt)` path as the shipped
+ * game, P7 teleports avoid it through the shared
+ * `getAdditionalTeleportBodies`, and its phase minions come from the shared
+ * `planMinionSpawns` plan and advance via `onBossAdvanced`
+ * (AH-0MUII3E5E006A93F, gap 6). Only Boss-specific presentation (health
+ * bar, damage button, telegraph cues) remains scene-side.
  */
 export class GymBoss extends GymFormationScene<
-  Boss,
+  Boss | EnemyEntity,
   BossBullet | PulseWaveBullet
 > {
   private damageButton!: Phaser.GameObjects.Text;
   private panel: HTMLDivElement | null = null;
+  /**
+   * Phase minions summoned by the boss (GDD §4.3), tracked outside the
+   * single-Boss formation so the shared formation machinery is untouched.
+   * Each entry carries the formation geometry from its `planMinionSpawns`
+   * descriptor so the shared formation positioning can advance it.
+   */
+  private minions: Array<{
+    entity: EnemyEntity;
+    enemyKey: string;
+    startX: number;
+    startY: number;
+    spacingX: number;
+    spacingY: number;
+  }> = [];
 
   constructor() {
     super(BOSS_CONFIG);
@@ -143,16 +170,23 @@ export class GymBoss extends GymFormationScene<
       this.panel = null;
     });
 
-    // ── Damage button (right side, under SHOOT) ───────────────────
-    const shootButton = this.shootButton;
+    // ── Damage button (bottom-right, alongside SHOOT/EXPLODE) ──────
+    // AH-0MUAYB7O4009LWBF — positioned relative to EXPLODE (which is
+    // at GAME_WIDTH - 120) so DAMAGE sits at GAME_WIDTH - 240.
+    const explodeButton = this.explodeButton;
     this.damageButton = this._addButton(
-      shootButton.x + 120,
-      shootButton.y,
+      explodeButton.x - 120,
+      explodeButton.y,
       'DAMAGE',
       LABEL_STYLE,
     );
 
     this.damageButton.on('pointerdown', () => this.damageBoss());
+
+    // Mirror PlayScene.spawnBoss: the encounter opens with its Phase-1
+    // minion wave, spawned from the shared `planMinionSpawns`
+    // (AH-0MUII3E5E006A93F, AC3).
+    this._spawnBossMinions(1);
 
     // Update status line with initial Boss phase.
     const boss = this.formationEntities[0] as Boss;
@@ -161,33 +195,109 @@ export class GymBoss extends GymFormationScene<
     );
   }
 
-  /** Override update to handle Boss-specific attack logic. */
-  override update(_time: number, delta: number): void {
-    const dt = delta / 1000;
+  // ── Shared boss integration (AH-0MUII3E5E006A93F, gaps 1 & 6) ───
 
-    // Run the base class tick to handle player input, auto-fire,
-    // collision detection, bullet advancement, and formation positioning.
-    super.tick(dt);
+  /**
+   * The scene's boss for the shared boss hooks. `GymBoss` hosts exactly
+   * one formation entity — the Boss.
+   */
+  protected override getBoss(): Boss | null {
+    return (this.entities[0] as Boss | undefined) ?? null;
+  }
 
-    // Advance the Boss's attack state machine and collect its bullets.
-    const boss = this.formationEntities[0] as Boss;
-    const bossBullets = boss.update(
-      this.time.now,
-      delta,
-      GAME_WIDTH,
-      GAME_HEIGHT,
-    );
-
-    // Add Boss bullets to the base class bullet collection (skip
-    // pulse waves — Boss manages their radius expansion separately).
-    for (const bullet of bossBullets) {
-      if (!('isPulseWave' in bullet && bullet.isPulseWave)) {
-        this.bullets.push(bullet);
+  /**
+   * Advances the phase minions after the shared boss advance, on the same
+   * `tick(dt)` path (AH-0MUII3E5E006A93F, AC1). Minions are positioned
+   * from their `planMinionSpawns` formation geometry and fire through the
+   * shared archetype dispatcher, so their cadence is clock-driven rather
+   * than frame-count based.
+   */
+  protected override onBossAdvanced(dt: number): void {
+    const player = this.getPlayer();
+    for (const minion of this.minions) {
+      const { entity } = minion;
+      if (!entity.alive) continue;
+      entity.applyFormationPosition(
+        minion.startX,
+        minion.startY,
+        dt,
+        minion.spacingX,
+        minion.spacingY,
+      );
+      if (player) {
+        (
+          entity as { setAimTarget?(x: number, y: number): void }
+        ).setAimTarget?.(player.x, player.y);
       }
+      this.bullets.push(
+        ...fireForEnemy<BossBullet | PulseWaveBullet>(
+          entity,
+          minion.enemyKey,
+          this.time.now,
+        ),
+      );
     }
+  }
 
-    // Advance pulse waves (radius-based, not velocity-based).
-    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
+  /**
+   * Includes the phase minions in the shared collision pass, so player
+   * bullets and rams destroy them exactly as in the game
+   * (AH-0MUII3E5E006A93F, gap 6).
+   */
+  protected override getEnemyEntities(): readonly (Boss | EnemyEntity)[] {
+    return [...this.entities, ...this.minions.map((m) => m.entity)];
+  }
+
+  /**
+   * Spawns the minion wave for `phase` through the shared `planMinionSpawns`
+   * (GDD §4.3), mirroring `PlayScene._spawnMinions` on the shared tick path
+   * (AH-0MUII3E5E006A93F, AC3).
+   */
+  private _spawnBossMinions(phase: number): void {
+    for (const spawn of planMinionSpawns(phase)) {
+      const cfg = loadEnemyConfig(spawn.enemyKey);
+      const entity = createEnemyFromConfig(
+        this,
+        cfg,
+        spawn.x,
+        spawn.y,
+        spawn.offset,
+      );
+      entity.shootEnabled = spawn.shootEnabled;
+      this.add.existing(entity);
+      this.minions.push({
+        entity,
+        enemyKey: spawn.enemyKey,
+        startX: spawn.startX,
+        startY: spawn.startY,
+        spacingX: spawn.spacingX,
+        spacingY: spawn.spacingY,
+      });
+    }
+  }
+
+  /** Destroys and forgets every phase minion. */
+  private _clearMinions(): void {
+    for (const minion of this.minions) minion.entity.destroy(true);
+    this.minions = [];
+  }
+
+  /** A formation respawn rebuilds the encounter, so the minions go with it. */
+  protected override respawnFormation(): void {
+    this._clearMinions();
+    super.respawnFormation();
+  }
+
+  /** Clears the minion run state on restart. */
+  protected override resetRunState(): void {
+    super.resetRunState();
+    this.minions = [];
+  }
+
+  /** Destroys the minion objects on shutdown. */
+  protected override teardownRunState(): void {
+    super.teardownRunState();
+    this._clearMinions();
   }
 
   // ── Spawn-interval control panel ────────────────────────────────
@@ -208,6 +318,9 @@ export class GymBoss extends GymFormationScene<
     });
     panel.appendChild(control.row);
 
+    // Wrap the control in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
+    makeCollapsible({ panel, title: 'Boss Config' });
+
     host.appendChild(panel);
     this.panel = panel;
   }
@@ -218,13 +331,17 @@ export class GymBoss extends GymFormationScene<
    * Deals damage to the Boss, advancing the health bar through phases.
    */
   damageBoss(): void {
-    const boss = this.formationEntities[0] as Boss;
+    const boss = this.formationBoss;
     if (!boss.alive) return;
 
+    const previousPhase = boss.getPhaseNumber();
     const newPhase = boss.takeDamage();
 
     // Update the status line with the new phase.
     if (newPhase > 0) {
+      // Phase advanced: summon that phase's minion wave through the shared
+      // planner, mirroring `PlayScene._damageBoss` (AC3).
+      if (newPhase !== previousPhase) this._spawnBossMinions(newPhase);
       this.statusText.setText(
         `DAMAGED — Phase ${boss.getPhaseNumber()}/${BOSS_PHASE_COUNT} | boss: ${this.aliveCount}`,
       );
@@ -234,6 +351,13 @@ export class GymBoss extends GymFormationScene<
         `Boss destroyed! — boss: ${this.aliveCount}`,
       );
     }
+  }
+
+  // ── Public test accessors ───────────────────────────────────────
+
+  /** Live phase minions (test seam for the shared minion plan). */
+  getMinions(): EnemyEntity[] {
+    return this.minions.map((m) => m.entity);
   }
 
   // ── Public test accessors ───────────────────────────────────────

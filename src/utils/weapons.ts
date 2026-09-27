@@ -112,6 +112,11 @@ export interface WeaponDefinition {
   id: WeaponId;
   /** Human-readable display name. */
   name: string;
+  /**
+   * One-line player-facing effect description (GDD §4.4). Rendered by the
+   * gym help overlay so help copy cannot drift from the catalogue.
+   */
+  description: string;
   /** Relative angle offsets in radians — each fires at `heading + offset`. */
   offsets: ReadonlyArray<number>;
   /**
@@ -150,6 +155,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   cannon: {
     id: 'cannon',
     name: 'Cannon',
+    description: 'Permanent default weapon — one bullet straight ahead.',
     offsets: [0],
     fireRateMs: WEAPON_CANNON_FIRE_RATE,
     bulletColor: BULLET_COLORS.cannon,
@@ -160,6 +166,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   spread: {
     id: 'spread',
     name: 'Spread',
+    description: 'Adds a 3-bullet fan (−30°/0°/+30°) for 10 s.',
     offsets: [(-30 * Math.PI) / 180, 0, (30 * Math.PI) / 180],
     fireRateMs: WEAPON_SPREAD_FIRE_RATE,
     bulletColor: BULLET_COLORS.spread,
@@ -170,6 +177,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   dual: {
     id: 'dual',
     name: 'Dual',
+    description: 'Adds two side-by-side bullets for 10 s.',
     // Two parallel bullets, side-by-side across the direction of travel:
     // both fly at heading + 0° but are launched offset perpendicular to
     // the heading by ±DUAL_SIDE_OFFSET px.
@@ -184,6 +192,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   rapid: {
     id: 'rapid',
     name: 'Rapid',
+    description: 'Adds single bullets at a much higher fire rate for 10 s.',
     offsets: [0],
     fireRateMs: WEAPON_RAPID_FIRE_RATE,
     bulletColor: BULLET_COLORS.rapid,
@@ -191,6 +200,28 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
   },
+};
+
+/**
+ * The **Reset** drop — not a weapon itself, but one of the weapon-pool
+ * drops: collecting it clears every timed weapon, leaving only the
+ * permanent cannon. Given a catalogue-style entry so gym help can show
+ * it alongside the weapons with a single source of truth.
+ */
+export interface ResetDropDefinition {
+  /** Drop identifier (`'reset'`). */
+  id: 'reset';
+  /** Human-readable display name. */
+  name: string;
+  /** One-line player-facing effect description. */
+  description: string;
+}
+
+/** The Reset drop entry (GDD §4.4). */
+export const RESET_DROP: ResetDropDefinition = {
+  id: 'reset',
+  name: 'Reset',
+  description: 'Clears all timed weapons, leaving only the Cannon.',
 };
 
 /**

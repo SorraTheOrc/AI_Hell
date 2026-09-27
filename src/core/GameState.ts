@@ -14,7 +14,7 @@
  * - gameState: 'menu' | 'playing' | 'gameover'
  */
 
-import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
+import { MineralHold } from './mineralHold';
 
 // ── Game state enum ───────────────────────────────────────────────────
 
@@ -69,15 +69,12 @@ export class GameState {
 
   // ── Ship's hold (minerals, GDD §4.5) ────────────────────────────
 
-  /** Current minerals in the ship's hold (run-scoped, 0..capacity). */
-  minerals: number;
-  /** Hold capacity before the hold-full power-up choice is offered. */
-  mineralCapacity: number;
   /**
-   * Overflow recorded when the hold last filled (collected − capacity).
-   * Carried back into the hold once the power-up choice is resolved.
+   * The shared mineral hold model (capacity, pick-up amount, overflow
+   * carry). The gym scenes hold the same model, so overflow semantics can
+   * no longer drift between the game and the gyms (AH-0MUII3DHM008L7JF).
    */
-  private _mineralOverflow = 0;
+  private readonly _hold: MineralHold;
 
   /**
    * Creates a new GameState with default values.
@@ -89,9 +86,30 @@ export class GameState {
     this.level = overrides?.level ?? MIN_LEVEL;
     this.bossDefeated = overrides?.bossDefeated ?? false;
     this.gameState = overrides?.gameState ?? 'menu';
-    this.minerals = overrides?.minerals ?? 0;
-    this.mineralCapacity =
-      overrides?.mineralCapacity ?? DEFAULT_MINERAL_HOLD_CAPACITY;
+    this._hold = new MineralHold({
+      capacity: overrides?.mineralCapacity,
+      store: overrides?.minerals,
+    });
+  }
+
+  // ── Ship's hold accessors (delegating to the shared model) ──────
+
+  /** Current minerals in the ship's hold (run-scoped, 0..capacity). */
+  get minerals(): number {
+    return this._hold.store;
+  }
+
+  set minerals(value: number) {
+    this._hold.store = value;
+  }
+
+  /** Hold capacity before the hold-full power-up choice is offered. */
+  get mineralCapacity(): number {
+    return this._hold.capacity;
+  }
+
+  set mineralCapacity(value: number) {
+    this._hold.capacity = value;
   }
 
   // ── Actions ─────────────────────────────────────────────────────
@@ -106,8 +124,7 @@ export class GameState {
     this.level = MIN_LEVEL;
     this.bossDefeated = false;
     this.gameState = 'playing';
-    this.minerals = 0;
-    this._mineralOverflow = 0;
+    this._hold.reset();
   }
 
   // ── Ship's hold (minerals) ──────────────────────────────────────
@@ -121,20 +138,12 @@ export class GameState {
    * @param amount — minerals to add (non-positive values are ignored).
    */
   addMinerals(amount: number): number {
-    if (amount <= 0) return 0;
-    const total = this.minerals + amount;
-    if (total >= this.mineralCapacity) {
-      this.minerals = this.mineralCapacity;
-      this._mineralOverflow = total - this.mineralCapacity;
-      return this._mineralOverflow;
-    }
-    this.minerals = total;
-    return 0;
+    return this._hold.collect(amount);
   }
 
   /** Whether the hold has reached capacity (a power-up choice is due). */
   isHoldFull(): boolean {
-    return this.minerals >= this.mineralCapacity;
+    return this._hold.isFull;
   }
 
   /**
@@ -142,8 +151,7 @@ export class GameState {
    * overflow (store = collected − capacity) recorded when it filled.
    */
   resolveHold(): void {
-    this.minerals = this._mineralOverflow;
-    this._mineralOverflow = 0;
+    this._hold.resolve();
   }
 
   /**

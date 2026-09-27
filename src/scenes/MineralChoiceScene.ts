@@ -1,17 +1,22 @@
 /**
  * Hold-full power-up choice scene (GDD §4.5, AH-0MUBVGI62004ED9Q).
  *
- * A modal overlay shown when the ship's mineral hold fills. `PlayScene`
- * pauses itself at the SceneManager level and launches this scene, so
+ * A modal overlay shown when the ship's mineral hold fills. The owning
+ * scene pauses itself at the SceneManager level and launches this scene, so
  * gameplay state is preserved exactly (mirroring `PauseScene`). It presents
- * the distinct options supplied by the pluggable choice strategy as
- * pointer- and keyboard-operable controls; selecting one hands the index
- * back to `PlayScene` (which applies the effect permanently for the run,
- * resumes play, and resets the hold with any overflow) and closes the
- * overlay.
+ * the distinct options supplied by the launcher as pointer- and
+ * keyboard-operable controls; selecting one hands the index back through the
+ * single optional `onSelect` callback (the launcher applies the effect
+ * permanently for the run, resumes play, and resets the hold with any
+ * overflow) and closes the overlay.
  *
- * The strategy is pluggable (see `powerups/choice`): the scene only renders
- * and forwards the selection, so swapping the policy needs no scene change.
+ * The overlay deliberately knows nothing about its launcher (`PlayScene`,
+ * `GymFormationScene`, …): the only selection contract is the `onSelect`
+ * callback, so the game and every gym drive it identically.
+ *
+ * The strategy is pluggable (see `powerups/choice`): when a launcher omits
+ * `options`, the scene draws its own defaults from the strategy, so swapping
+ * the policy needs no scene change.
  *
  * @module src/scenes/MineralChoiceScene
  */
@@ -20,7 +25,6 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '../powerups/choice';
-import type { PlayScene } from './PlayScene';
 
 /** Neon-gold heading colour (matches the mineral palette). */
 const CHOICE_HEADING_COLOR = '#ffdd44';
@@ -32,7 +36,7 @@ const CHOICE_BACKDROP_ALPHA = 1.0;
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
   private controls: Phaser.GameObjects.Text[] = [];
-  /** Optional generic selection handler (used by the gyms). */
+  /** Optional generic selection handler supplied by the launcher. */
   private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
 
   constructor() {
@@ -43,8 +47,9 @@ export class MineralChoiceScene extends Phaser.Scene {
    * @param data.options — the options to present (defaults to the strategy's
    *   three picks).
    * @param data.strategy — pluggable strategy used when `options` is absent.
-   * @param data.onSelect — generic selection handler; when omitted the
-   *   overlay forwards to the registered `PlayScene`.
+   * @param data.onSelect — the single selection contract every launcher
+   *   supplies: receives the chosen index and option. When omitted the
+   *   overlay simply closes (used by isolated tests).
    */
   init(
     data: {
@@ -59,6 +64,10 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Bring this scene above PlayScene in the z-order so the opaque backdrop
+    // covers the entire screen (GDD §4.5, AH-0MUDYSIRY0036EDC).
+    this.scene.bringToTop();
+
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, CHOICE_BACKDROP_ALPHA)
       .setOrigin(0);
@@ -105,24 +114,18 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   /**
-   * Selects option `index`: forwards the choice to `PlayScene` (which
-   * applies it, resumes and resets the hold), then resumes play and closes
-   * this overlay. Returns the chosen option, or null for an out-of-range
-   * index.
+   * Selects option `index`: forwards the choice to the launcher through the
+   * `onSelect` callback (which applies it, resumes and resets the hold) and
+   * closes this overlay. Returns the chosen option, or null for an
+   * out-of-range index.
    */
   select(index: number): ChoiceOption | null {
     const option = this.options[index];
     if (!option) return null;
 
-    if (this.onSelect) {
-      this.onSelect(index, option);
-    } else {
-      const play = this.scene.manager.getScene('PlayScene') as PlayScene | null;
-      if (play) {
-        play.selectMineralChoice(index);
-        this.scene.resume('PlayScene');
-      }
-    }
+    const handler = this.onSelect;
+    this.onSelect = null;
+    handler?.(index, option);
     this.scene.stop();
     return option;
   }

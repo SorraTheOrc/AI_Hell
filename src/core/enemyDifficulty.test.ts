@@ -83,11 +83,12 @@ describe('enemyDifficulty — score range and determinism', () => {
       fireInterval: 100,
       shotProbability: 1,
       bulletSpeed: 600,
+      bulletLifetime: 5.0,
       burstCount: 24,
     });
     const result = enemyDifficulty(cfg);
     // The only factor not at maximum is `asteroidSplit` (weight 10), which is
-    // zero for non-Asteroid archetypes, so the ceiling here is 90.
+    // zero for non-Asteroid archetypes, so the ceiling is just below 100.
     expect(result.score).toBeGreaterThan(85);
   });
 });
@@ -135,6 +136,16 @@ describe('enemyDifficulty — monotonicity', () => {
     }
   });
 
+  it('increasing bulletLifetime never decreases the score', () => {
+    const base = makeConfig({ bulletLifetime: 0.1 });
+    let prevScore = enemyDifficulty(base).score;
+    for (const lifetime of [0.5, 1.0, 1.5, 2.0, 3.0, 5.0]) {
+      const result = enemyDifficulty({ ...base, bulletLifetime: lifetime }).score;
+      expect(result).toBeGreaterThanOrEqual(prevScore);
+      prevScore = result;
+    }
+  });
+
   it('increasing burstCount never decreases the score', () => {
     const base = makeConfig({ burstCount: 1 });
     let prevScore = enemyDifficulty(base).score;
@@ -166,7 +177,14 @@ describe('enemyDifficulty — shotPattern none independence', () => {
     expect(result.factors.fireInterval).toBe(0);
     expect(result.factors.shotProbability).toBe(0);
     expect(result.factors.bulletSpeed).toBe(0);
+    expect(result.factors.bulletLifetime).toBe(0);
     expect(result.factors.burstCount).toBe(0);
+  });
+
+  it('a suppressFiring override zeroes bulletLifetime like the other firing factors', () => {
+    const cfg = makeConfig({ bulletLifetime: 5.0 });
+    const result = enemyDifficulty(cfg, { suppressFiring: true });
+    expect(result.factors.bulletLifetime).toBe(0);
   });
 
   it('changing firing fields on a shotPattern === none archetype does not change the score', () => {
@@ -177,6 +195,7 @@ describe('enemyDifficulty — shotPattern none independence', () => {
       fireInterval: 100,
       shotProbability: 1,
       bulletSpeed: 600,
+      bulletLifetime: 5.0,
       burstCount: 24,
     });
     const modifiedResult = enemyDifficulty(modified);
@@ -356,6 +375,15 @@ describe('enemyDifficulty — breakdown structure', () => {
     for (const factor of Object.keys(FACTOR_WEIGHTS)) {
       expect(result.factors).toHaveProperty(factor);
     }
+  });
+
+  it('exposes bulletLifetime in both breakdown and factors, non-zero when firing', () => {
+    const cfg = makeConfig({ bulletLifetime: 3.0 });
+    const result = enemyDifficulty(cfg);
+    expect(result.breakdown).toHaveProperty('bulletLifetime');
+    expect(result.factors).toHaveProperty('bulletLifetime');
+    expect(result.factors.bulletLifetime).toBeGreaterThan(0);
+    expect(result.breakdown.bulletLifetime).toBeGreaterThan(0);
   });
 
   it('breakdown values are non-negative', () => {
