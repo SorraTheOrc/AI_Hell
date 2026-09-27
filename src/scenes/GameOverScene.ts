@@ -6,6 +6,13 @@
  * score, date) from `src/core/Leaderboard.ts`. A non-qualifying score is
  * explained and can be skipped without writing to storage.
  *
+ * While a qualifying score is being entered, the leaderboard shows a single
+ * highlighted prospective row (a leading `▶` marker plus the preview colour)
+ * at the rank the score will occupy, with the initials filling in live on
+ * every A–Z key press and Backspace. The preview is inserted with the same
+ * stable tie-break and 10-entry cap as `addEntry`, so it matches the
+ * persisted entry on submit (AH-0MUE86S5F002VVQD).
+ *
  * Keyboard navigation (AH-0MU9LKQEP008LCX9-C3) is provided by the shared
  * {@link FocusManager}: the initials field is focused by default, Tab and
  * the arrow keys move focus to the Return to Menu button (and back), and
@@ -17,10 +24,12 @@ import Phaser from 'phaser';
 
 import {
   addEntry,
+  buildPreview,
   getEntries,
   INITIALS_LENGTH,
   isQualifying,
   type LeaderboardEntry,
+  type LeaderboardPreviewRow,
 } from '../core/Leaderboard';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { renderLeaderboard } from '../ui/leaderboardView';
@@ -77,6 +86,12 @@ export class GameOverScene extends Phaser.Scene {
 
   /** The visible initials text game object. */
   private initialsText: Phaser.GameObjects.Text | null = null;
+
+  /**
+   * Rendered leaderboard row texts, tracked so a keystroke re-render can
+   * destroy and replace them instead of accumulating text objects.
+   */
+  private leaderboardRows: Phaser.GameObjects.Text[] = [];
 
   /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
   private focusManager = new FocusManager();
@@ -201,6 +216,7 @@ export class GameOverScene extends Phaser.Scene {
       this.focusManager.shutdown();
       this.initials = '';
       this.initialsText = null;
+      this.leaderboardRows = [];
     });
   }
 
@@ -256,6 +272,20 @@ export class GameOverScene extends Phaser.Scene {
   /** Snapshot of the entries currently rendered on the leaderboard. */
   getLeaderboardEntries(): LeaderboardEntry[] {
     return getEntries();
+  }
+
+  /**
+   * The prospective (highlighted) leaderboard row for the score being
+   * entered, or `null` when the score does not qualify or the table is full
+   * and the score does not make it. Mirrors exactly what is rendered.
+   */
+  getPreviewEntry(): LeaderboardPreviewRow | null {
+    if (!this.qualifies) return null;
+    return (
+      buildPreview(getEntries(), this.finalScore, this.initials).find(
+        (row) => row.isPreview,
+      ) ?? null
+    );
   }
 
   /**
@@ -317,6 +347,8 @@ export class GameOverScene extends Phaser.Scene {
 
   private _updateInitialsDisplay(): void {
     this.initialsText?.setText(this._initialsDisplay());
+    // Keep the prospective row in step with the letters just typed.
+    this._renderLeaderboard();
   }
 
   /**
@@ -342,9 +374,21 @@ export class GameOverScene extends Phaser.Scene {
     ).setOrigin(0.5);
   }
 
-  /** Renders the full leaderboard, highest score first (up to 10 rows). */
+  /**
+   * Renders the leaderboard, highest score first (up to 10 rows). A
+   * qualifying score adds a single highlighted prospective row at the rank
+   * it will occupy, with initials filling in live. Previous rows are
+   * destroyed first so keystroke updates never accumulate text objects.
+   */
   private _renderLeaderboard(): void {
-    renderLeaderboard(this, getEntries(), {
+    for (const row of this.leaderboardRows) row.destroy();
+    this.leaderboardRows = [];
+
+    const rows = this.qualifies
+      ? buildPreview(getEntries(), this.finalScore, this.initials)
+      : getEntries();
+
+    this.leaderboardRows = renderLeaderboard(this, rows, {
       topY: LEADERBOARD_ROW_START_Y,
       rowHeight: LEADERBOARD_ROW_HEIGHT,
       fontSize: LEADERBOARD_ROW_FONT,

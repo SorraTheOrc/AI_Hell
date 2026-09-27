@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   addEntry,
+  buildPreview,
   defaultStore,
   getEntries,
   getTopN,
@@ -245,6 +246,72 @@ describe('Leaderboard — injectable store (AC4)', () => {
     expect(isQualifying(1, store)).toBe(true);
     // The injected store is independent of localStorage.
     expect(localStorage.getItem(LEADERBOARD_STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe('Leaderboard — buildPreview (AH-0MUE86S5F002VVQD)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('inserts a single flagged prospective row at its ranked position', () => {
+    addEntry('AAA', 100);
+    addEntry('BBB', 300);
+
+    const rows = buildPreview(getEntries(), 200, 'NEW');
+
+    expect(rows.map((r) => r.score)).toEqual([300, 200, 100]);
+    const preview = rows.filter((r) => r.isPreview);
+    expect(preview).toHaveLength(1);
+    expect(preview[0]).toMatchObject({ rank: 2, initials: 'NEW', score: 200 });
+    expect(preview[0].date).toMatch(ISO_DATE);
+    expect(rows.filter((r) => !r.isPreview).map((r) => r.rank)).toEqual([1, 3]);
+  });
+
+  it('exposes empty and partial initials while they are being typed', () => {
+    expect(buildPreview([], 500, '')[0]).toMatchObject({
+      rank: 1,
+      initials: '',
+      score: 500,
+      isPreview: true,
+    });
+    expect(buildPreview([], 500, 'A')[0].initials).toBe('A');
+    expect(buildPreview([], 500, 'AB')[0].initials).toBe('AB');
+  });
+
+  it('ranks an equal score after existing equal entries (addEntry tie-break)', () => {
+    addEntry('AAA', 500);
+
+    const rows = buildPreview(getEntries(), 500, 'NEW');
+    expect(rows.find((r) => r.isPreview)).toMatchObject({ rank: 2, score: 500 });
+
+    // The persisted result is the source of truth the preview must mirror.
+    const persisted = addEntry('NEW', 500);
+    expect(persisted.find((e) => e.initials === 'NEW')!.rank).toBe(2);
+  });
+
+  it(`caps at ${MAX_ENTRIES} rows and displaces the lowest when full`, () => {
+    seedScores(Array.from({ length: MAX_ENTRIES }, (_, i) => (i + 1) * 100));
+
+    const rows = buildPreview(getEntries(), 1100, 'TOP');
+
+    expect(rows).toHaveLength(MAX_ENTRIES);
+    expect(rows[0]).toMatchObject({ rank: 1, score: 1100, isPreview: true });
+    expect(rows.some((r) => r.score === 100)).toBe(false);
+    expect(rows.some((r) => r.isPreview && r.rank !== 1)).toBe(false);
+  });
+
+  it('omits the prospective row when a full table does not admit the score', () => {
+    seedScores(Array.from({ length: MAX_ENTRIES }, (_, i) => (i + 1) * 100));
+
+    const rows = buildPreview(getEntries(), 100, 'LOW');
+
+    expect(rows).toHaveLength(MAX_ENTRIES);
+    expect(rows.some((r) => r.isPreview)).toBe(false);
+  });
+
+  it('dates the prospective row with todayISO by default', () => {
+    expect(buildPreview([], 1, 'AAA')[0].date).toBe(todayISO());
   });
 });
 

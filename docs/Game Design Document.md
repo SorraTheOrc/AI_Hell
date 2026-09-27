@@ -374,18 +374,27 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 - **Storage**: Browser `localStorage` (key: `ai_hell_leaderboard`), max 10
   entries.
 - **Module**: `src/core/Leaderboard.ts` owns the table — `getEntries()`,
-  `addEntry(initials, score)`, `getTopN(n)` and `isQualifying(score)` — and
-  persists through the injectable `LeaderboardStore` interface so a future
-  online backend can replace `localStorage` without touching the scenes
-  (§5.3 migration note; also §6.6).
+  `addEntry(initials, score)`, `buildPreview(entries, score, initials)`,
+  `getTopN(n)` and `isQualifying(score)` — and persists through the injectable
+  `LeaderboardStore` interface so a future online backend can replace
+  `localStorage` without touching the scenes (§5.3 migration note; also §6.6).
 - **Entry**: On game over, prompt for a 3-character **neon-style initials**
   entry. A score qualifies while fewer than 10 entries exist, or when it
   strictly beats the current lowest entry; a non-qualifying score shows an
   explanatory message and can be skipped without writing.
+- **Live preview (game-over)**: While a qualifying score is being entered,
+  the game-over table also shows a single **prospective row** at the rank the
+  score will occupy — highlighted in a distinct colour with a leading `▶`
+  marker and initials filling in live (`___` placeholders until typing
+  begins). It is inserted with the same stable score-descending tie-break
+  and 10-entry cap as `addEntry`, so it matches the persisted entry on submit
+  and the current lowest entry is displaced when the table is full. A
+  non-qualifying score renders no prospective row.
 - **Display**: The full ranked table (rank, initials, score, date) is shown
   on the game-over screen (`GameOverScene`) and from the main menu
   (`MenuScene` → `LeaderboardScene`), both through the shared rendering path
-  in `src/ui/leaderboardView.ts`.
+  in `src/ui/leaderboardView.ts`. The main-menu table never shows a
+  prospective row.
 - **Content**: Rank, initials, score, date.
 
 > The earlier `GameOverScene` leaderboard stub (`readLeaderboard` /
@@ -401,6 +410,13 @@ keys move focus to **Return to Menu**, and **Enter** / **Space** activate the
 focused control. **Enter** on the initials field auto-submits once three
 letters are entered, persisting the score before returning to the main menu.
 Pointer entry (clicking **Return to Menu**) continues to work unchanged.
+
+For a **qualifying** score the ranked table shows a live prospective row: it
+appears immediately on screen open with `___` placeholders and is refreshed
+on every **A–Z** key and **Backspace**, so the player can see the position
+their run will take before committing. The row is highlighted with a leading
+`▶` marker and a distinct colour, and is replaced (never accumulated) on
+each keystroke.
 
 ### 5.2 Data Model
 
