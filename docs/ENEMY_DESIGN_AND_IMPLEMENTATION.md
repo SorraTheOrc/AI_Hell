@@ -1044,7 +1044,8 @@ campaign ordering, and a regression test pins the intended progression.
 - **Module:** `src/core/enemyDifficulty.ts` (no Phaser, no browser globals;
   runs under Vitest/happy-dom).
 - **Unit tests:** `src/core/enemyDifficulty.test.ts` (monotonicity per axis,
-  `shotPattern === 'none'` independence, Asteroid split chain, wave mix).
+  `shotPattern === 'none'` independence, health factor (monotonicity and
+  non-firing independence), Asteroid split chain, wave mix).
 - **Calibration test:** `src/waves/enemyDifficulty.campaign.test.ts` (pins the
   non-decreasing ordering of the five built-in `LEVELS`).
 
@@ -1079,11 +1080,16 @@ constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
 | `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
 | `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
 | `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
+| `health` | 10 | 1–5 HP | Enemy durability; **not** inverted — a durable multi-hit archetype is harder to survive, so a higher value scores higher. Range covers the single-hit default (1) and the 5-HP Harvester (GDD §4.2). |
 
-**Firing factors** (`fireInterval`, `shotProbability`, `bulletSpeed`,
-`bulletLifetime`, `burstCount`) **contribute zero** when
+**Non-firing axes** (`count`, `driftSpeed`, `shotPattern`, `formationKind`,
+`asteroidSplit`, `health`) always contribute. The **firing factors**
+(`fireInterval`, `shotProbability`, `bulletSpeed`, `bulletLifetime`,
+`burstCount`) **contribute zero** when
 `shotPattern === 'none'` (e.g. the Asteroid) or when `waveDifficulty` scores a
-wave with `shootEnabled: false` (GDD §2.4 — Levels 1–3).
+wave with `shootEnabled: false` (GDD §2.4 — Levels 1–3). Health is a *non-firing*
+axis — durability is not an attack behaviour — so it contributes even for an
+archetype or wave whose firing is suppressed.
 
 ### 9.3 Composition
 
@@ -1119,15 +1125,17 @@ ordering is **non-decreasing** and enforced by
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
-| 1 | Entry | 6.58 |
-| 2 | Descent | 11.98 |
-| 3 | The Core | 13.46 |
-| 4 | Firestorm | 23.61 |
-| 5 | Predictable Death | 32.02 |
+| 1 | Entry | 6.01 |
+| 2 | Descent | 10.95 |
+| 3 | The Core | 12.30 |
+| 4 | Firestorm | 21.57 |
+| 5 | Predictable Death | 29.26 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
-fires): Scout 14.86, Diver 23.49, Tank 29.64, Phaser 31.95, Swarm 20.65,
-Boss Swarm 23.42, Asteroid 9.43 (split chain only — it never fires).
+fires): Scout 13.57, Diver 21.46, Tank 27.08, Phaser 29.20, Swarm 18.87,
+Boss Swarm 21.40, Asteroid 8.62 (split chain only — it never fires),
+Harvester 8.62 (5 HP, non-firing; its durability contribution equals the
+Asteroid's split-chain contribution).
 
 > **Tuning guidance.** The weights are subjective by nature; the index is a
 > relative, monotonic ordering, not an absolute truth. Tests pin *ordering*

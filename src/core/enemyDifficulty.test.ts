@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { enemyDifficulty, waveDifficulty, FACTOR_WEIGHTS } from './enemyDifficulty';
+import { DEFAULT_ENEMY_CONFIGS } from './enemyConfig';
 import type { EnemyConfig } from './enemyConfig';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ describe('enemyDifficulty — score range and determinism', () => {
       bulletSpeed: 600,
       bulletLifetime: 5.0,
       burstCount: 24,
+      health: 5,
     });
     const result = enemyDifficulty(cfg);
     // The only factor not at maximum is `asteroidSplit` (weight 10), which is
@@ -166,6 +168,16 @@ describe('enemyDifficulty — monotonicity', () => {
       prevScore = result;
     }
   });
+
+  it('increasing health never decreases the score', () => {
+    const base = makeConfig({ health: 1 });
+    let prevScore = enemyDifficulty(base).score;
+    for (const health of [2, 3, 4, 5]) {
+      const result = enemyDifficulty({ ...base, health }).score;
+      expect(result).toBeGreaterThanOrEqual(prevScore);
+      prevScore = result;
+    }
+  });
 });
 
 // ── shotPattern 'none' independence (AC3) ────────────────────────────
@@ -201,6 +213,67 @@ describe('enemyDifficulty — shotPattern none independence', () => {
     });
     const modifiedResult = enemyDifficulty(modified);
     expect(modifiedResult.score).toBe(baseResult.score);
+  });
+});
+
+// ── Health factor (AH-0MUJPTR7Q0070BDT) ──────────────────────────────
+
+describe('enemyDifficulty — health factor', () => {
+  it('normalises health to 0 at the minimum and 100 at the maximum', () => {
+    expect(enemyDifficulty(makeConfig({ health: 1 })).factors.health).toBe(0);
+    expect(enemyDifficulty(makeConfig({ health: 5 })).factors.health).toBe(100);
+  });
+
+  it('clamps health below and above the documented range', () => {
+    expect(enemyDifficulty(makeConfig({ health: 0 })).factors.health).toBe(0);
+    expect(enemyDifficulty(makeConfig({ health: 99 })).factors.health).toBe(100);
+  });
+
+  it('contributes for a shotPattern === none archetype (non-firing axis)', () => {
+    const fragile = makeConfig({ shotPattern: 'none', health: 1 });
+    const durable = makeConfig({ shotPattern: 'none', health: 5 });
+
+    const fragileResult = enemyDifficulty(fragile);
+    const durableResult = enemyDifficulty(durable);
+
+    // All firing factors are suppressed, but health still contributes.
+    expect(fragileResult.factors.fireInterval).toBe(0);
+    expect(durableResult.factors.fireInterval).toBe(0);
+    expect(durableResult.factors.health).toBeGreaterThan(fragileResult.factors.health);
+    expect(durableResult.score).toBeGreaterThan(fragileResult.score);
+  });
+
+  it('still contributes when suppressFiring is forced true', () => {
+    const fragile = enemyDifficulty(makeConfig({ health: 1 }), { suppressFiring: true });
+    const durable = enemyDifficulty(makeConfig({ health: 5 }), { suppressFiring: true });
+
+    expect(fragile.factors.health).toBe(0);
+    expect(durable.factors.health).toBe(100);
+    expect(durable.score).toBeGreaterThan(fragile.score);
+  });
+
+  it('exposes health in both breakdown and factors', () => {
+    const result = enemyDifficulty(makeConfig({ health: 3 }));
+    expect(result.factors.health).toBeGreaterThan(0);
+    expect(result.breakdown.health).toBeGreaterThan(0);
+  });
+
+  it('pre-existing 1-HP archetypes all normalise to a zero health factor', () => {
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid']) {
+      const config = DEFAULT_ENEMY_CONFIGS[key];
+      expect(enemyDifficulty(config).factors.health).toBe(0);
+    }
+  });
+
+  it('pre-existing 1-HP archetypes keep their relative ordering', () => {
+    // Documented per-archetype ordering (docs §9.4): Asteroid < Scout < Swarm
+    // < Diver < Tank < Phaser. Adding a health weight re-normalises but must
+    // not reorder the one-hit archetypes (AH-0MUJPTR7Q0070BDT, AC4).
+    const keys = ['asteroid', 'scout', 'swarm', 'diver', 'tank', 'phaser'];
+    const scores = keys.map((key) => enemyDifficulty(DEFAULT_ENEMY_CONFIGS[key]).score);
+    for (let i = 1; i < scores.length; i++) {
+      expect(scores[i]).toBeGreaterThan(scores[i - 1]);
+    }
   });
 });
 
