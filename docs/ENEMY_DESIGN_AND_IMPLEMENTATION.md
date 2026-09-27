@@ -689,8 +689,19 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
 - **P6 Phase Shift** — `CombatScene.isPlayerPhased()` returns
   `getEffectsRegistry().isPhased`; while active, `_handleCollisions()` skips
   both the enemy-bullet-vs-player and player-body-vs-enemy passes, so the
-  ship passes through bullets and bodies for the 3 s effect window (no
-  `getPlayerHitCount()` increment, no respawn).
+  ship passes through bullets and bodies for the **1.5 s** effect window (no
+  `getPlayerHitCount()` increment, no respawn). Since the automatic Phase
+  Shift change (parent AH-0MUIYX1EE008FVS8) the phase is triggered by the
+  shared per-frame danger feed (`CombatScene._updatePhaseShiftAutoTrigger`,
+  called in `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat`
+  immediately before `_handleCollisions`): when **3 or more** hostile
+  bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and a
+  stored charge (or the permanent hold-full reward) is available, the phase
+  activates automatically; after expiry it re-arms only once danger has
+  dropped below the threshold and a **~0.5 s** cooldown has elapsed. While
+  phased the shared mineral layer (`collectMinerals({ playerPhased: true })`)
+  also blocks **mineral collection**; power-up/weapon drops stay collectable
+  and mineral pickup resumes the instant the phase expires.
 - **P3 Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
   shield (`tryAbsorbShield()`), runs the `onShieldAbsorbed()` cue seam (the
   play scene plays `playDestructionSound()`; the gym stays silent), starts
@@ -704,7 +715,9 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
 
 `GymFormationScene`-based scenes therefore record **and** apply P3/P6
 identically to the other combat scenes — a regression is guarded by the
-enemy-gym phase/shield tests and the cross-scene equivalence tests.
+enemy-gym phase/shield tests and the cross-scene equivalence tests. The
+mineral gate is unit-tested in `src/scenes/core/mineralLayer.test.ts` and
+exercised in the gym by `GymMinerals.test.ts`.
 
 ### 7.3 Live aim tracking
 
