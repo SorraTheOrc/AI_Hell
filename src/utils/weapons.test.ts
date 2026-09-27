@@ -28,10 +28,16 @@ import {
   WEAPON_SPREAD_FIRE_RATE,
   WEAPON_DUAL_FIRE_RATE,
   WEAPON_RAPID_FIRE_RATE,
+  WEAPON_CANNON_SUBDIVISION,
+  WEAPON_SPREAD_SUBDIVISION,
+  WEAPON_DUAL_SUBDIVISION,
+  WEAPON_RAPID_SUBDIVISION,
+  isOnBeatGrid,
   BULLET_SPEED,
   WEAPON_BULLET_LIFETIME,
   isTimedWeapon,
 } from './weapons';
+import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
   test('contains exactly four weapons', () => {
@@ -336,9 +342,54 @@ describe('weaponDropOrder / weaponRoundRobin', () => {
 });
 
 describe('fire rate ordering', () => {
-  test('rapid < cannon < dual < spread (lower ms = faster)', () => {
+  test('rapid < cannon < dual = spread (lower ms = faster)', () => {
     expect(WEAPON_RAPID_FIRE_RATE).toBeLessThan(WEAPON_CANNON_FIRE_RATE);
     expect(WEAPON_CANNON_FIRE_RATE).toBeLessThan(WEAPON_DUAL_FIRE_RATE);
-    expect(WEAPON_DUAL_FIRE_RATE).toBeLessThan(WEAPON_SPREAD_FIRE_RATE);
+    // Spread and dual are both whole-time (1 shot per beat) — equal rates.
+    expect(WEAPON_DUAL_FIRE_RATE).toBe(WEAPON_SPREAD_FIRE_RATE);
+  });
+});
+
+describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
+  test('every fire rate is an exact subdivision of the beat period', () => {
+    const period = beatPeriodMs();
+    for (const weapon of Object.values(WEAPON_CATALOGUE)) {
+      expect(period % weapon.fireRateMs).toBe(0);
+      expect(isOnBeatGrid(weapon.fireRateMs)).toBe(true);
+    }
+  });
+
+  test('fire rates match the producer-specified subdivisions and intervals', () => {
+    const period = beatPeriodMs();
+    expect(period).toBe(750);
+    // cannon — 2/beat (160 BPM) → 375 ms
+    expect(WEAPON_CANNON_SUBDIVISION).toBe(2);
+    expect(WEAPON_CANNON_FIRE_RATE).toBe(beatSubdivisionMs(2));
+    expect(period / WEAPON_CANNON_FIRE_RATE).toBe(2);
+    expect(WEAPON_CATALOGUE.cannon.fireRateMs).toBe(375);
+    // spread — 1/beat (80 BPM) → 750 ms
+    expect(WEAPON_SPREAD_SUBDIVISION).toBe(1);
+    expect(WEAPON_CATALOGUE.spread.fireRateMs).toBe(750);
+    // dual — 1/beat (80 BPM) → 750 ms
+    expect(WEAPON_DUAL_SUBDIVISION).toBe(1);
+    expect(WEAPON_CATALOGUE.dual.fireRateMs).toBe(750);
+    // rapid — 6/beat (480 BPM) → 125 ms
+    expect(WEAPON_RAPID_SUBDIVISION).toBe(6);
+    expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(125);
+  });
+
+  test('the invariant rejects an off-grid fire rate (guards future weapons)', () => {
+    // 200 ms does not divide the 750 ms beat period — a new weapon using it
+    // would fail the catalogue-wide check above.
+    expect(isOnBeatGrid(200)).toBe(false);
+    expect(beatPeriodMs() % 200).not.toBe(0);
+    // The future 20 BPM quarter-time weapon (4/beat = 187.5 ms) stays on-grid.
+    expect(isOnBeatGrid(beatSubdivisionMs(4))).toBe(true);
+  });
+
+  test('an invalid fire rate is never on the beat grid', () => {
+    expect(isOnBeatGrid(0)).toBe(false);
+    expect(isOnBeatGrid(-375)).toBe(false);
+    expect(isOnBeatGrid(NaN)).toBe(false);
   });
 });

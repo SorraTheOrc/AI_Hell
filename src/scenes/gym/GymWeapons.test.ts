@@ -121,7 +121,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     player.setInput({ up: false, down: false, left: false, right: true });
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
 
-    // Advance past the cannon fire rate (400 ms).
+    // Advance past the cannon fire rate (375 ms — 2 shots per 80 BPM beat).
     scene.tick(0.5);
 
     const bullets = scene.getBullets();
@@ -132,7 +132,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
 
   it('rapid weapon on top of the cannon produces more bullets over equal time (AC3)', async () => {
     // Rapid fires every 150 ms step (125 ms rate); cannon skips steps
-    // (400 ms rate). Over 0.9 s rapid fires ~6 volleys, cannon ~2. With
+    // (375 ms rate). Over 0.9 s rapid fires ~8 volleys, cannon ~3. With
     // the cumulative model the rapid scene fires cannon + rapid together,
     // so its bullet output is far higher than cannon alone.
     const scene = await bootWeapons();

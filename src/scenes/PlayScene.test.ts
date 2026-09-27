@@ -2063,7 +2063,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // shots fired below.
     vi.clearAllMocks();
 
-    scene.tick(0.5); // cannon cooldown (400 ms) elapsed → fires
+    scene.tick(0.5); // cannon cooldown (375 ms) elapsed → fires
 
     expect(cannonSound).toHaveBeenCalledTimes(1);
     // No other weapon's cue plays while the cannon is the only weapon.
@@ -2082,14 +2082,14 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // Spread: equip and wait past its fire rate. The permanently-active
     // cannon fires too (cumulative model), so both cues play per volley.
     player.equipWeapon('spread');
-    scene.tick(0.7); // spread fires every 600 ms
+    scene.tick(0.7); // spread fires every 750 ms (1/beat)
     expect(spreadSound).toHaveBeenCalledTimes(1);
     expect(cannonSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 
     // Dual.
     player.equipWeapon('dual');
-    scene.tick(0.5); // dual fires every 300 ms
+    scene.tick(0.5); // dual fires every 750 ms (1/beat)
     expect(dualSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 

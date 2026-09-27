@@ -842,10 +842,10 @@ describe('Player ship entity', () => {
     const player = playerOf(scene);
     expect(player).toBeDefined();
 
-    // Cannon: single bullet, 400 ms fire rate.
+    // Cannon: single bullet, 375 ms fire rate (2/beat at 80 BPM).
     expect(player!.getWeaponDef('cannon').id).toBe('cannon');
     expect(player!.getWeaponDef('cannon').offsets).toEqual([0]);
-    expect(player!.getWeaponDef('cannon').fireRateMs).toBe(400);
+    expect(player!.getWeaponDef('cannon').fireRateMs).toBe(375);
 
     // Per-id lookup works for any catalogue weapon.
     expect(player!.getWeaponDef('spread').offsets).toHaveLength(3);
@@ -864,7 +864,7 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     // Freshly collected weapon fires immediately alongside the cannon.
-    player!.equipWeapon('rapid'); // rapid 125 ms, cannon 400 ms
+    player!.equipWeapon('rapid'); // rapid 125 ms, cannon 375 ms
     expect(player!.tryFire(0.5)).toEqual(['cannon', 'rapid']);
 
     // +100 ms: below both rates → nothing fires.
@@ -877,7 +877,7 @@ describe('Player ship entity', () => {
     expect(player!.tryFire(0.3)).toEqual(['cannon', 'rapid']);
   });
 
-  it('tryFire with only the cannon fires at the 400 ms rate (AC3)', async () => {
+  it('tryFire with only the cannon fires at the 375 ms rate (AC3)', async () => {
     const scene = await bootPlayerScene();
     await tick();
 
@@ -885,12 +885,12 @@ describe('Player ship entity', () => {
     expect(player).toBeDefined();
 
     // First call: cannon is ready (cooldown 0).
-    expect(player!.tryFire(0.5)).toEqual(['cannon']); // 500 ms > 400 ms
+    expect(player!.tryFire(0.5)).toEqual(['cannon']); // 500 ms > 375 ms
 
     // Second call immediately: cooldown not elapsed.
-    expect(player!.tryFire(0.1)).toEqual([]); // 100 ms < 400 ms → blocked
+    expect(player!.tryFire(0.1)).toEqual([]); // 100 ms < 375 ms → blocked
 
-    // After remaining cooldown: fires again (450 ms total ≥ 400 ms).
+    // After remaining cooldown: fires again (450 ms total ≥ 375 ms).
     expect(player!.tryFire(0.35)).toEqual(['cannon']);
   });
 
@@ -901,12 +901,12 @@ describe('Player ship entity', () => {
     const player = playerOf(scene);
     expect(player).toBeDefined();
 
-    // Baseline: the cannon fires, then is blocked for a sub-400 ms interval.
+    // Baseline: the cannon fires, then is blocked for a sub-375 ms interval.
     player!.setFireRateMultiplier(1);
     expect(player!.tryFire(0.5)).toEqual(['cannon']);
-    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 400 ms → blocked
+    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 375 ms → blocked
 
-    // With a 1.5× multiplier the effective cooldown is 400 / 1.5 ≈ 266.7 ms,
+    // With a 1.5× multiplier the effective cooldown is 375 / 1.5 = 250 ms,
     // so the same 300 ms gap now clears the cooldown.
     player!.setFireRateMultiplier(1.5);
     expect(player!.tryFire(0.3)).toEqual(['cannon']);
@@ -919,12 +919,12 @@ describe('Player ship entity', () => {
     const player = playerOf(scene);
     expect(player).toBeDefined();
 
-    // At 1.5× a 400 ms cannon reloads in ~266.7 ms. 260 ms must still be
-    // blocked, 270 ms must have elapsed — proving the interval was divided.
+    // At 1.5× a 375 ms cannon reloads in 250 ms. 240 ms must still be
+    // blocked, 260 ms must have elapsed — proving the interval was divided.
     player!.setFireRateMultiplier(1.5);
     expect(player!.tryFire(0.5)).toEqual(['cannon']);
-    expect(player!.tryFire(0.26)).toEqual([]); // 260 ms < 266.7 ms
-    expect(player!.tryFire(0.02)).toEqual(['cannon']); // 280 ms ≥ 266.7 ms
+    expect(player!.tryFire(0.24)).toEqual([]); // 240 ms < 250 ms
+    expect(player!.tryFire(0.02)).toEqual(['cannon']); // 260 ms ≥ 250 ms
   });
 
   it('fire-rate multiplier returns to 1 (normal) when reset (P5 AC2)', async () => {
@@ -939,11 +939,11 @@ describe('Player ship entity', () => {
     expect(player!.tryFire(0.5)).toEqual(['cannon']);
     expect(player!.tryFire(0.3)).toEqual(['cannon']);
 
-    // Back to normal: the next fire re-arms at the 400 ms cannon rate, so
+    // Back to normal: the next fire re-arms at the 375 ms cannon rate, so
     // a subsequent 300 ms gap is below the cooldown and must be blocked.
     player!.setFireRateMultiplier(1);
-    expect(player!.tryFire(0.3)).toEqual(['cannon']); // re-arm at 400 ms
-    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 400 ms → blocked
+    expect(player!.tryFire(0.3)).toEqual(['cannon']); // re-arm at 375 ms
+    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 375 ms → blocked
   });
 
   it('a boosted ship keeps firing after respawn without re-setting (P5 AC2)', async () => {
