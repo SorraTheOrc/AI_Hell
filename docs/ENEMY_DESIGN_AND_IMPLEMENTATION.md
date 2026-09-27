@@ -578,8 +578,9 @@ duplicate-body guard in `src/scenes/core/CombatScene.equivalence.test.ts`
 (`EPIC_SHARED_HELPERS` / `EPIC_SHARED_METHODS`) fails the suite if a
 production scene re-introduces a copy, and the cross-scene equivalence
 tests boot `PlayScene` and each gym to prove identical outcomes under the
-same input and `dt`. See `AGENTS.md` for the governing principle (tracked by
-AH-0MUGZDTFX004RBD1).
+same input and `dt`. See
+[AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
+for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
 
 ---
 

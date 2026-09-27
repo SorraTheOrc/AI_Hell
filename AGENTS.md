@@ -305,6 +305,35 @@ Run `wl <command> --help` to see help text and all available flags for any comma
 
 <!-- End base Worklog AGENTS.md file -->
 
+## Game Architecture Conventions
+
+### Gym↔game parity
+
+Gyms are the canonical parity reference for the game. Any gameplay behaviour
+change must be applied consistently to the corresponding gym scene(s) and the
+game, unless a documented reason exists to diverge.
+
+- **In scope (gyms):** every gym scene in `src/scenes/gym/`, including the
+  generic base `src/scenes/gym/core/GymFormationScene.ts`.
+- **In scope (game):** the shipped `PlayScene` and the shared core in
+  `src/scenes/core/` (`CombatCoreScene`, `CombatScene` and the shared helpers
+  alongside them).
+
+An enabled gameplay object must run the **same code** in a gym and in the game;
+the only legitimate difference is a disabled feature, never a divergent copy.
+Shared behaviour therefore lives once — in the shared core (`src/scenes/core/`)
+and shared dispatchers — and is consumed by both the game and the gyms. When
+changing a player, enemy, projectile, power-up or drop behaviour, update the gym
+scene(s) that exercise it and `PlayScene` in the same change. If a gym must
+intentionally diverge, record the reason in the work item and, where it is not
+obvious, in a code comment next to the divergence.
+
+The repo-wide duplicate-body guard in
+`src/scenes/core/CombatScene.equivalence.test.ts` and the gym-parity docs
+assertion enforce this rule automatically; see
+[docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md](./docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md)
+§5.1 for the full convention. (Tracked by AH-0MUGZDTFX004RBD1.)
+
 ## Architecture Notes for Agents
 
 ### Data Storage Architecture
