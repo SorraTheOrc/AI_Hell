@@ -52,6 +52,7 @@ const SHARED_METHODS = [
   '_handleTeleport',
   '_readPlayerInput',
   '_tickPlayer',
+  '_updatePhaseShiftAutoTrigger',
 ] as const;
 
 /**
@@ -302,8 +303,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     }
   });
 
-  it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {
-    const { play, gym } = await bootBoth();
+  it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {    const { play, gym } = await bootBoth();
     play.getEffectsRegistry().applyCollect('P5');
     gym.getEffectsRegistry().applyCollect('P5');
 
@@ -1025,6 +1025,72 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(combatScene.triggerTeleport()).toBe(true);
     expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
     expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
+  });
+
+  it('danger auto-triggers Phase Shift identically in the game and both gyms (Q1/Q2/Q3)', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-play-host',
+    );
+    const combat = await bootScene(
+      [GymPowerUpsCombat],
+      'phase-combat-host',
+    );
+    const formation = await bootScene([EquivGymScene], 'phase-formation-host');
+    games.push(play, combat, formation);
+    const playScene = play.scene as PlayScene;
+    const combatScene = combat.scene as GymPowerUpsCombat;
+    const formationScene = formation.scene as EquivGymScene;
+    const scenes: Array<PlayScene | GymPowerUpsCombat | EquivGymScene> = [
+      playScene,
+      combatScene,
+      formationScene,
+    ];
+
+    // Same starting state in every scene: ship parked at a clear corner with
+    // one stored P6 auto-activation charge.
+    for (const scene of scenes) {
+      const player = scene.getPlayer()!;
+      player.setPosition(120, 120);
+      (
+        player as unknown as { _movementState: Record<string, unknown> }
+      )._movementState = {
+        ...player.getMovementState(),
+        x: 120,
+        y: 120,
+        vx: 0,
+        vy: 0,
+        facing: 0,
+      };
+      scene.getEffectsRegistry().applyCollect('P6');
+    }
+
+    // Three enemy bullets centred within DANGER_RADIUS (40 px) of the ship.
+    const threats: Array<[number, number]> = [
+      [130, 120],
+      [120, 130],
+      [120, 110],
+    ];
+    for (const [x, y] of threats) {
+      playScene.spawnEnemyBullet(x, y, 0, 0);
+      combatScene.spawnEnemyBullet(x, y, 0, 0);
+    }
+    const formationBullets = (
+      formationScene as unknown as { bullets: EquivBullet[] }
+    ).bullets;
+    for (const [x, y] of threats) {
+      const bullet = new EquivBullet(formationScene);
+      bullet.graphics.setPosition(x, y);
+      formationBullets.push(bullet);
+    }
+
+    for (const scene of scenes) scene.tick(0.016);
+
+    // Every scene auto-activated the phase and consumed the same charge.
+    for (const scene of scenes) {
+      expect(scene.getEffectsRegistry().isPhased).toBe(true);
+      expect(scene.getEffectsRegistry().phaseCharges()).toBe(0);
+    }
   });
 });
 

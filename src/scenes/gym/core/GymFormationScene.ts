@@ -1091,6 +1091,7 @@ export class GymFormationScene<
       this.player,
       absorbers,
       () => this._collectMineral(),
+      { playerPhased: this.isPlayerPhased() },
     );
   }
 
@@ -1325,6 +1326,10 @@ export class GymFormationScene<
       // (AH-0MUII39KX007YUQ0, AC1).
       this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
+
+      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
+      this._updatePhaseShiftAutoTrigger(dt);
 
       // Collisions + post-hit invulnerability blink (player component only).
       this._handleCollisions();

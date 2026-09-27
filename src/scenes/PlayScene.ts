@@ -588,6 +588,9 @@ export class PlayScene extends CombatScene<
 
     this._advanceBullets(dt);
     if (!transitioning) {
+      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
+      this._updatePhaseShiftAutoTrigger(dt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
@@ -1108,12 +1111,14 @@ export class PlayScene extends CombatScene<
       .filter((s) => s.enemyKey !== 'asteroid')
       .map((s) => s.entity);
     // Shared collection/absorption routine — the same code the gyms run
-    // (AH-0MUII3DHM008L7JF, gap 5).
+    // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
+    // (Q7); enemy absorption still runs.
     this.minerals = collectMinerals(
       this.minerals,
       this.player,
       absorbers,
       () => this._collectMineral(),
+      { playerPhased: this.isPlayerPhased() },
     );
   }
 

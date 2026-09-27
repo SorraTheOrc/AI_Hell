@@ -82,6 +82,27 @@ describe('GymMinerals', () => {
     expect(scene.getMineralHold()).toBeGreaterThanOrEqual(1);
   });
 
+  it('P6 phase blocks mineral collection and resumes on expiry (Q7)', async () => {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    const scene = booted.scene as GymMinerals;
+    const player = scene.getPlayer()!;
+    const mineral = scene.getMinerals()[0];
+
+    // Park the mineral on the ship and phase the player.
+    mineral.setPosition(player.x, player.y);
+    const holdBefore = scene.getMineralHold();
+    scene.getEffectsRegistry().applyPhaseShift();
+    scene.tick(0.016);
+
+    // While phased the mineral is not collected and stays on the field.
+    expect(scene.getMineralHold()).toBe(holdBefore);
+    expect(scene.getMinerals()).toContain(mineral);
+
+    // Advance past the 1.5 s phase: collection resumes immediately.
+    for (let i = 0; i < 100; i += 1) scene.tick(0.016);
+    expect(scene.getMineralHold()).toBeGreaterThan(holdBefore);
+  });
+
   it('is discovered by the gym index as "Minerals"', () => {
     const entries = discoverGymScenes({
       '/src/scenes/gym/GymMinerals.ts': { GymMinerals },

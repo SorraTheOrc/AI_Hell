@@ -41,6 +41,7 @@ import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
+import { isInDanger } from '../../powerups/dangerDetection';
 import {
   findTeleportDestination,
   type TeleportBody,
@@ -95,6 +96,40 @@ export abstract class CombatScene<
   protected abstract setEnemyBullets(bullets: TBullet[]): void;
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
+
+  // ── Automatic Phase Shift (P6) danger feed ──────────────────────
+
+  /**
+   * Shared per-frame danger feed for the automatic Phase Shift (parent
+   * AH-0MUIYX1EE008FVS8, Q1/Q2/Q3).
+   *
+   * Counts the live hostile bodies and enemy bullets whose centre lies
+   * within `DANGER_RADIUS` of the ship (via the pure `isInDanger` helper)
+   * and hands the result to the effects registry, which auto-activates
+   * Phase Shift when a charge is available and the re-arm conditions are
+   * met. Every combat scene calls this once per frame immediately before
+   * `_handleCollisions`, so the game and the gyms share one implementation
+   * and one ordering and cannot diverge.
+   *
+   * @param dt — frame delta (seconds); advances the P6 re-arm cooldown.
+   */
+  protected _updatePhaseShiftAutoTrigger(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    const player = this.getPlayer();
+    if (!player) {
+      // No ship: no danger, but keep the re-arm state advancing.
+      registry.updateDanger(false, dt);
+      return;
+    }
+    const bodies = this.getEnemyEntities()
+      .filter((enemy) => enemy.alive)
+      .map((enemy) => ({ x: enemy.x, y: enemy.y }));
+    const bullets = this.getEnemyBullets().map((bullet) => ({
+      x: bullet.graphics.x,
+      y: bullet.graphics.y,
+    }));
+    registry.updateDanger(isInDanger(player, bodies, bullets), dt);
+  }
 
   // ── Shared effect gating (P3 shield / P6 phase) ─────────────────
 
