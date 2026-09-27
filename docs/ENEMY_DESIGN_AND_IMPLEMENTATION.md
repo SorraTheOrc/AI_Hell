@@ -289,11 +289,13 @@ the first three enemy gym scenes duplicated:
   registries; `SHUTDOWN` calls `teardownRunState()`, which destroys those
   registries and resets the effects registry. `CombatScene` overrides both to
   add invulnerability, hit-count, teleport-key and bullet-impact state;
-  `GymFormationScene`, `GymWeapons`, `GymPowerUpsCombat` and
-  `GymPowerUpsUtility` override them to add their own object families
-  (enemies, drops, minerals, player, HUD) and call `super` first. `GymPlayer`
-  (a bare `Phaser.Scene`) resets its ship/input in the same create/SHUTDOWN
-  pair. A stop/restart of any instance therefore starts with a clean registry
+  `GymFormationScene`, `GymWeapons`, `GymPowerUpsCombat`,
+  `GymPowerUpsUtility` and `GymPlayer` override them to add their own object
+  families (enemies, drops, minerals, player, obstacles, HUD) and call
+  `super` first. `GymPlayer` (now based on the shared `CombatScene`,
+  AH-0MUAYB2XR007N10W) resets its ship, deterministic obstacle course and
+  input bindings through the same pair. A stop/restart of any instance
+  therefore starts with a clean registry
   and no leaked display objects, and the behaviour is pinned by the
   restart/teardown parity tests in `GymFormationScene.test.ts` and each gym's
   test file.
@@ -597,6 +599,16 @@ same input and `dt`. See
 [AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
 for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
 
+**Documented divergence — the Player gym's obstacle course.** `GymPlayer`
+spawns a deterministic set of indestructible obstacles
+(`src/entities/Obstacle.ts`) that the shipped `PlayScene` does not yet have.
+This is a gym-only training feature, so there is no game counterpart to
+enable; the reason is recorded here and in the `GymPlayer` scene header. The
+entity itself is shared and reusable, and the input, auto-fire and collision
+handling all run through the shared core (`_tickPlayer`, `_autoFire`,
+`_handleCollisions`) — the gym overrides only the two destruction hooks
+(`onPlayerBulletHitsEnemy` absorbs the bullet; `onPlayerRamsEnemy` leaves the
+obstacle alive), so no collision loop is copied (AH-0MUAYB2XR007N10W).
 ---
 
 ## 6. Testing strategy
@@ -650,9 +662,11 @@ combat testbeds.
     `S`/Arrow Right turn it **right** (3 rad/s) — never 4-directional.
   `GymPowerUpsUtility` and `GymWeapons` inherit the same scheme-aware routing
   from `CombatCoreScene._readPlayerInput` (their former private `_readInput`
-  copies were removed in AH-0MUDCT7EU0061OSZ); the standalone `GymPlayer`
-  tuning scene routes its keys the same way.
-
+  copies were removed in AH-0MUDCT7EU0061OSZ); `GymPlayer` (the
+  thruster-navigation training scene, re-based onto the shared `CombatScene`)
+  now inherits the same routing too, and adds a deterministic, indestructible
+  obstacle course consumed through the shared collision pass
+  (AH-0MUAYB2XR007N10W).
   > **Data-driven successor:** the per-scene wiring described in this §7
   > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
   > CSV AH-0MTZWZ9TE009CVUA): enemy tuning also lives in

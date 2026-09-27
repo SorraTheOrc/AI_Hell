@@ -702,9 +702,11 @@ src/
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
 │       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
 │       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)
-│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player");
-│       │                   consumes the shared `mapControlInput` scheme→input helper
-│       │                   (AH-0MUII39KX007YUQ0, gap 11)
+│       ├── GymPlayer.ts — Player thruster-navigation/tuning gym (key GymPlayer, label "Player");
+│       │                   extends the shared `scenes/core/CombatScene` (shared input,
+│       │                   auto-fire and collision/hit pass) and adds a deterministic,
+│       │                   indestructible obstacle course while keeping the ship-config panel
+│       │                   (AH-0MUAYB2XR007N10W)
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
 │       │                  extends the narrower shared `scenes/core/CombatCoreScene`;
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD

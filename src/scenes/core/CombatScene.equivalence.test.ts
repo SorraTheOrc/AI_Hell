@@ -1556,12 +1556,17 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
     expect(definers).toEqual(['src/utils/movementModel.ts']);
   });
 
-  it('GymPlayer consumes the shared helper and no longer inlines the handlers', () => {
+  it('GymPlayer inherits the shared scheme→input path (no inlined handlers)', () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), 'src/scenes/gym/GymPlayer.ts'),
       'utf8',
     );
-    expect(source).toContain('mapControlInput(');
+    // Re-based onto the shared combat core: input is read by the inherited
+    // `CombatCoreScene._readPlayerInput` (which delegates to
+    // `mapControlInput`), so GymPlayer must not define its own copy nor
+    // inline the legacy handlers.
+    expect(definesMethod(source, '_readPlayerInput')).toBe(false);
+    expect(definesMethod(source, '_readInput')).toBe(false);
     expect(source).not.toContain('FourDirectionalInputHandler');
     expect(source).not.toContain('AsteroidsInputHandler');
   });
