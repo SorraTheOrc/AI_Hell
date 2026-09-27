@@ -36,6 +36,7 @@ import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
 } from '../waves/Formations';
+import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns } from '../waves/AsteroidSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
@@ -2718,6 +2719,28 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
       resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
     ).toBe(CAMPAIGN_LEVELS);
   });
+
+  it('runs a mixed generated+scripted campaign when the toggle is on, static LEVELS when off', () => {
+    seedDifficultyCurves([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, source: 'scripted' },
+      { level: 2, levelName: 'Generated Descent', wave: 1, targetDifficulty: 20, source: 'generated' },
+    ]);
+
+    const mixed = resolveCampaignLevels(
+      { sequencedWavesEnabled: true },
+      () => buildSequencedLevels(),
+    );
+    // Scripted level 1 is verbatim static; level 2 comes from the sequencer.
+    expect(mixed.find((l) => l.level === 1)).toBe(CAMPAIGN_LEVELS[0]);
+    expect(mixed.find((l) => l.level === 2)?.name).toBe('Generated Descent');
+    // The toggle off path ignores the mixed config entirely.
+    expect(
+      resolveCampaignLevels(
+        { sequencedWavesEnabled: false },
+        () => buildSequencedLevels(),
+      ),
+    ).toBe(CAMPAIGN_LEVELS);
+  });
 });
 
 describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', () => {
@@ -2756,7 +2779,9 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     const wm = scene.getWaveManager();
 
     expect(wm.started).toBe(true);
-    expect(wm.levelCount).toBe(1);
+    // Mixed mode keeps the full static skeleton; level 1 is overridden by the
+    // seeded generated config and the unconfigured levels stay static.
+    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
     expect(wm.currentLevel()?.name).toBe('Generated Entry');
     expect(wm.waveCount).toBe(2);
     // The generated wave's groups are what the run spawns.

@@ -9,21 +9,27 @@
 #   levelName         — Level theme name (shown in the HUD).
 #   wave              — 1-based wave number within the level.
 #   targetDifficulty  — Target difficulty score for that wave (0–100).
+#   source            — Per-level source: `generated` (default) or `scripted`.
+#                       A `generated` level is built by the runtime
+#                       auto-sequencer from its curve; a `scripted` level is
+#                       taken verbatim from the static `LEVELS` campaign and
+#                       its targetDifficulty is ignored. All rows of a level
+#                       must agree on `source`.
 #
 # The seeded values below are derived from the static LEVELS calibration
 # (see `defaultDifficultyCurves()` in `src/core/configStore.ts`): each level's
 # measured difficulty is spread non-decreasingly across its waves.
-level,levelName,wave,targetDifficulty
-1,Entry,1,3.29
-1,Entry,2,6.58
-2,Descent,1,8.38
-2,Descent,2,10.18
-2,Descent,3,11.98
-3,The Core,1,12.47
-3,The Core,2,12.97
-3,The Core,3,13.46
-4,Firestorm,1,16.84
-4,Firestorm,2,20.23
-4,Firestorm,3,23.61
-5,Predictable Death,1,27.82
-5,Predictable Death,2,32.02
+level,levelName,wave,targetDifficulty,source
+1,Entry,1,3.29,generated
+1,Entry,2,6.58,generated
+2,Descent,1,8.38,generated
+2,Descent,2,10.18,generated
+2,Descent,3,11.98,generated
+3,The Core,1,12.47,generated
+3,The Core,2,12.97,generated
+3,The Core,3,13.46,generated
+4,Firestorm,1,16.84,generated
+4,Firestorm,2,20.23,generated
+4,Firestorm,3,23.61,generated
+5,Predictable Death,1,27.82,generated
+5,Predictable Death,2,32.02,generated

@@ -79,6 +79,14 @@ export interface EnemyConfig {
 // ── Difficulty-curve config ─────────────────────────────────────────
 
 /**
+ * Per-level source selector for a difficulty-curve level
+ * (AH-0MUH7Q6HN0006QPD). `generated` levels come from the runtime
+ * auto-sequencer; `scripted` levels are taken verbatim from the static
+ * `LEVELS` campaign and are never passed to the sequencer.
+ */
+export type DifficultySource = 'generated' | 'scripted';
+
+/**
  * One (level, wave) row of the data-driven difficulty curve
  * (AH-0MUH6LEYY0054E63). The curve length of a level (its number of rows)
  * defines that level's wave count; `levelName` supplies the level's theme
@@ -94,6 +102,13 @@ export interface DifficultyCurveRow {
   wave: number;
   /** Target difficulty score for this wave (0–100, same scale as the sequencer). */
   targetDifficulty: number;
+  /**
+   * Per-level source selector (AH-0MUH7Q6HN0006QPD). Defaults to
+   * `generated` when absent. All rows of one level must agree; conflicting
+   * values make the level (and its file) malformed. Ignored for `scripted`
+   * rows, whose waves come from the static `LEVELS` definition instead.
+   */
+  source?: DifficultySource;
 }
 
 // ── Ship config ─────────────────────────────────────────────────────

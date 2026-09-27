@@ -131,6 +131,8 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
         levelName: level.name,
         wave: wi + 1,
         targetDifficulty: round2(previous + delta * fraction),
+        // The computed default is always generated (AH-0MUH7Q6HN0006QPD).
+        source: 'generated',
       });
     }
 
@@ -141,10 +143,26 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
 }
 
 /**
+ * True when one level's rows disagree on their `source` value. A level must
+ * declare one consistent source (AH-0MUH7Q6HN0006QPD); mixed rows make the
+ * whole file malformed.
+ */
+function hasConflictingDifficultySources(rows: DifficultyCurveRow[]): boolean {
+  const byLevel = new Map<number, string>();
+  for (const row of rows) {
+    const source = row.source ?? 'generated';
+    const existing = byLevel.get(row.level);
+    if (existing !== undefined && existing !== source) return true;
+    byLevel.set(row.level, source);
+  }
+  return false;
+}
+
+/**
  * Resolve a difficulty-curve CSV into typed rows: valid rows are used, but a
- * file with no rows or any malformed row falls back to
- * {@link defaultDifficultyCurves} so a broken config can never produce an
- * unplayable campaign.
+ * file with no rows, any malformed row, or a level whose rows declare
+ * conflicting `source` values falls back to {@link defaultDifficultyCurves}
+ * so a broken config can never produce an unplayable campaign.
  */
 function resolveDifficultyCurves(csv: string): DifficultyCurveRow[] {
   let rawRows: Record<string, string>[];
@@ -155,6 +173,9 @@ function resolveDifficultyCurves(csv: string): DifficultyCurveRow[] {
   }
   const parsed = parseDifficultyCurves(csv);
   if (parsed.length === 0 || parsed.length !== rawRows.length) {
+    return defaultDifficultyCurves();
+  }
+  if (hasConflictingDifficultySources(parsed)) {
     return defaultDifficultyCurves();
   }
   return parsed;
@@ -438,7 +459,12 @@ export async function saveDifficultyCurves(
   const result = await putCsv(DIFFICULTY_CURVES_CSV_PATH, body);
   if (!result.ok) return result;
 
-  getRegistry().difficultyCurves = rows.map((row) => ({ ...row }));
+  // Normalise the stored copies so the registry matches what a re-read of the
+  // serialised file (which always writes an explicit `source`) would yield.
+  getRegistry().difficultyCurves = rows.map((row) => ({
+    ...row,
+    source: row.source ?? 'generated',
+  }));
   await reReadRegistry();
   return { ok: true };
 }
