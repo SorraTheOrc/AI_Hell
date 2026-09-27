@@ -12,11 +12,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
 import { MenuScene } from '../MenuScene';
 import {
   CURVE_ADD_BUTTON_ID,
+  CURVE_HELP_BOX_TITLE,
   CURVE_PANEL_ID,
   CURVE_PREVIEW_STALE_TEXT,
   CURVE_REGENERATE_BUTTON_ID,
@@ -27,6 +29,12 @@ import {
   CURVE_WAVE_VALUE_ATTR,
   DEFAULT_DIFFICULTY_CURVE,
   GymCurveSequencer,
+  WAVE_TABLE_COLUMNS,
+  formatCurveHelpBox,
+  formatWaveTableHeader,
+  formatWaveTableRow,
+  waveTableColumnWidths,
+  type WavePreviewEntry,
 } from './GymCurveSequencer';
 
 /** Waits for Phaser scene transitions to settle. */
@@ -40,14 +48,38 @@ function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text |
   );
 }
 
-/** Finds an on-screen text starting with a prefix. */
-function findTextStartingWith(
+/** All wave data rows — Phaser texts beginning with the 1-based wave number. */
+function findWaveRows(scene: Phaser.Scene): Phaser.GameObjects.Text[] {
+  return scene.children.list.filter(
+    (child): child is Phaser.GameObjects.Text =>
+      child instanceof Phaser.GameObjects.Text && /^\d/.test(child.text),
+  );
+}
+
+/**
+ * The wave-table header row: a single-line text carrying the WAVE and TARGET
+ * headings (the multi-line help box also mentions them, so exclude newlines).
+ */
+function findTableHeader(
   scene: Phaser.Scene,
-  prefix: string,
 ): Phaser.GameObjects.Text | undefined {
   return scene.children.list.find(
     (child): child is Phaser.GameObjects.Text =>
-      child instanceof Phaser.GameObjects.Text && child.text.startsWith(prefix),
+      child instanceof Phaser.GameObjects.Text &&
+      !child.text.includes('\n') &&
+      child.text.startsWith('WAVE') &&
+      child.text.includes('TARGET'),
+  );
+}
+
+/** The bottom-right column-guide help box (AC11). */
+function findHelpBox(
+  scene: Phaser.Scene,
+): Phaser.GameObjects.Text | undefined {
+  return scene.children.list.find(
+    (child): child is Phaser.GameObjects.Text =>
+      child instanceof Phaser.GameObjects.Text &&
+      child.text.startsWith(CURVE_HELP_BOX_TITLE),
   );
 }
 
@@ -157,8 +189,9 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
     expect(scene.isPreviewStale).toBe(true);
     expect(scene.wavePreview).toEqual([]);
     expect(findText(scene, CURVE_PREVIEW_STALE_TEXT)).toBeDefined();
-    // No wave lines remain on the canvas.
-    expect(findTextStartingWith(scene, 'Wave 1')).toBeUndefined();
+    // No table header or wave rows remain on the canvas.
+    expect(findTableHeader(scene)).toBeUndefined();
+    expect(findWaveRows(scene)).toHaveLength(0);
 
     // Adding a wave also clears the preview.
     expect(scene.isPreviewStale).toBe(true);
@@ -181,12 +214,13 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
     expect(scene.isPreviewStale).toBe(false);
     expect(scene.wavePreview.length).toBe(scene.curveTargets.length);
     expect(findText(scene, CURVE_PREVIEW_STALE_TEXT)).toBeUndefined();
-    expect(findTextStartingWith(scene, 'Wave 1')).toBeDefined();
+    expect(findTableHeader(scene)).toBeDefined();
+    expect(findWaveRows(scene)).toHaveLength(scene.curveTargets.length);
   });
 
-  // ── AC6 — wave list contents ─────────────────────────────────────
+  // ── AC6/AC10/AC11 — wave table + column guide ───────────────────
 
-  it('AC6 — each wave entry shows target, actual, error, composition and shooting', async () => {
+  it('AC6/AC10 — renders a heading row plus one aligned row per wave', async () => {
     const scene = await boot();
     const curve = scene.curveTargets;
     const preview = scene.wavePreview;
@@ -207,12 +241,91 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
       expect(typeof entry.shootEnabled).toBe('boolean');
     });
 
-    // The first wave line is rendered on the canvas.
-    const firstLine = findTextStartingWith(scene, 'Wave 1');
-    expect(firstLine).toBeDefined();
-    expect(firstLine!.text).toContain('target');
-    expect(firstLine!.text).toContain('actual');
-    expect(firstLine!.text).toContain('shooting:');
+    // The table header carries every column heading and the value columns line up.
+    const header = findTableHeader(scene);
+    expect(header, 'wave-table header row missing').toBeDefined();
+    for (const column of WAVE_TABLE_COLUMNS) {
+      expect(header!.text).toContain(column.heading);
+    }
+
+    // One row per wave, each showing target, actual, error, composition and shooting.
+    const rows = findWaveRows(scene);
+    expect(rows).toHaveLength(preview.length);
+    rows.forEach((row, index) => {
+      const entry = preview[index];
+      expect(row.text).toContain(String(entry.targetDifficulty));
+      expect(row.text).toContain(entry.actualDifficulty.toFixed(1));
+      expect(row.text).toContain(entry.composition);
+      expect(row.text).toContain(entry.shootEnabled ? 'yes' : 'no');
+      // Same fixed width as the header keeps the columns aligned.
+      expect(row.text.length).toBe(header!.text.length);
+    });
+  });
+
+  it('AC11 — renders a bottom-right help box summarising every column', async () => {
+    const scene = await boot();
+    const helpBox = findHelpBox(scene);
+    expect(helpBox, 'column-guide help box missing').toBeDefined();
+    expect(helpBox!.text).toContain(CURVE_HELP_BOX_TITLE);
+    for (const column of WAVE_TABLE_COLUMNS) {
+      expect(helpBox!.text).toContain(column.heading);
+      expect(helpBox!.text).toContain(column.help);
+    }
+    // Anchored to the bottom-right of the canvas.
+    expect(helpBox!.x).toBeGreaterThan(GAME_WIDTH / 2);
+    expect(helpBox!.y).toBeGreaterThan(GAME_HEIGHT / 2);
+  });
+
+  // ── Wave table formatting (pure) ─────────────────────────────────
+
+  describe('wave table formatting (AC6/AC10/AC11)', () => {
+    const sampleEntry: WavePreviewEntry = {
+      waveNumber: 3,
+      targetDifficulty: 42,
+      actualDifficulty: 40.5,
+      error: 1.5,
+      composition: 'scout ×12',
+      shootEnabled: true,
+    };
+
+    it('formats a header naming every column and a row with each cell', () => {
+      const widths = waveTableColumnWidths([sampleEntry]);
+      const header = formatWaveTableHeader(widths);
+      for (const column of WAVE_TABLE_COLUMNS) {
+        expect(header).toContain(column.heading);
+      }
+
+      const row = formatWaveTableRow(sampleEntry, widths);
+      expect(row).toContain('3');
+      expect(row).toContain('42');
+      expect(row).toContain('40.5');
+      expect(row).toContain('+1.5');
+      expect(row).toContain('scout ×12');
+      expect(row).toContain('yes');
+      // Fixed-width cells make the header and every row the same width.
+      expect(row.length).toBe(header.length);
+    });
+
+    it('renders a negative error without a leading plus sign', () => {
+      const entry: WavePreviewEntry = {
+        ...sampleEntry,
+        error: -0.5,
+        shootEnabled: false,
+      };
+      const row = formatWaveTableRow(entry, waveTableColumnWidths([entry]));
+      expect(row).toContain('-0.5');
+      expect(row).not.toContain('+-0.5');
+      expect(row).toContain('no');
+    });
+
+    it('help box lists every column heading and its explanation', () => {
+      const help = formatCurveHelpBox();
+      expect(help.startsWith(CURVE_HELP_BOX_TITLE)).toBe(true);
+      for (const column of WAVE_TABLE_COLUMNS) {
+        expect(help).toContain(column.heading);
+        expect(help).toContain(column.help);
+      }
+    });
   });
 
   // ── AC7/AC8 — navigation ─────────────────────────────────────────

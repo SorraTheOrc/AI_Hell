@@ -10,9 +10,11 @@
  * - **Curve editor** (plain-DOM panel, same `.gym-panel` pattern as the other
  *   gyms): one 0–100 slider per wave plus a Remove button, an Add Wave button,
  *   and a Regenerate button.
- * - **Wave preview** (Phaser canvas text): each generated wave's number,
- *   target difficulty, actual difficulty, signed error (target − actual),
- *   enemy composition and shooting status.
+ * - **Wave preview table** (Phaser canvas text): a column-heading row
+ *   followed by one aligned row per wave — number, target difficulty,
+ *   actual difficulty, signed error (target − actual), enemy composition
+ *   and shooting status (AC10) — plus a bottom-right column-guide help box
+ *   (AC11) summarising each column.
  * - **Edit-to-clear**: any curve change marks the preview stale, clears the
  *   wave list and shows {@link CURVE_PREVIEW_STALE_TEXT} until Regenerate is
  *   pressed again.
@@ -32,6 +34,7 @@ import {
   sequencer,
   type CandidateGroup,
 } from '../../core/difficultySequencer';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { makeCollapsible } from '../../utils/gymPanel';
 import {
   addBackToIndexButton,
@@ -69,11 +72,15 @@ export const CURVE_TARGET_MAX = 100;
 /** Target applied to a newly added wave row. */
 export const CURVE_NEW_WAVE_TARGET = 50;
 
-/** Wave-list layout on the Phaser canvas. */
+/** Wave-table layout on the Phaser canvas. */
 const PREVIEW_HEADER_X = 40;
 const PREVIEW_HEADER_Y = 120;
 const PREVIEW_START_Y = 150;
-const PREVIEW_LINE_HEIGHT = 22;
+const PREVIEW_LINE_HEIGHT = 20;
+/** Blank characters between adjacent table columns. */
+const COLUMN_GAP = 2;
+/** Margin (px) between the column-guide help box and the canvas edges (AC11). */
+export const CURVE_HELP_BOX_MARGIN = 16;
 
 /** A single rendered wave-preview row. */
 export interface WavePreviewEntry {
@@ -91,22 +98,118 @@ export interface WavePreviewEntry {
   shootEnabled: boolean;
 }
 
+/** One column of the wave-preview table (AC10) + its guide entry (AC11). */
+export interface WaveTableColumn {
+  /** Column heading rendered in the table header row. */
+  heading: string;
+  /** One-line explanation shown in the bottom-right help box. */
+  help: string;
+  /** Renders this column's cell for one wave. */
+  value: (entry: WavePreviewEntry) => string;
+}
+
+/**
+ * The wave-preview table columns, in render order (AC10). Single source of
+ * truth for the table header, the per-wave rows and the bottom-right
+ * column-guide help box (AC11), so the guide can never drift from the table.
+ */
+export const WAVE_TABLE_COLUMNS: readonly WaveTableColumn[] = [
+  {
+    heading: 'WAVE',
+    help: '1-based wave number',
+    value: (entry) => String(entry.waveNumber),
+  },
+  {
+    heading: 'TARGET',
+    help: 'Design-time target difficulty',
+    value: (entry) => String(entry.targetDifficulty),
+  },
+  {
+    heading: 'ACTUAL',
+    help: 'Sequencer-chosen group score',
+    value: (entry) => entry.actualDifficulty.toFixed(1),
+  },
+  {
+    heading: 'ERROR',
+    help: 'Target minus actual (signed)',
+    value: (entry) => `${entry.error >= 0 ? '+' : ''}${entry.error.toFixed(1)}`,
+  },
+  {
+    heading: 'COMPOSITION',
+    help: 'Enemy type and count',
+    value: (entry) => entry.composition,
+  },
+  {
+    heading: 'SHOOTING',
+    help: 'Enemies fire projectiles?',
+    value: (entry) => (entry.shootEnabled ? 'yes' : 'no'),
+  },
+];
+
+/** Title line of the bottom-right column-guide help box (AC11). */
+export const CURVE_HELP_BOX_TITLE = 'COLUMN GUIDE';
+
 /** Round to two decimals so preview values are stable and comparable. */
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** Renders one wave-preview row as a single monospace line. */
-export function formatWavePreviewLine(entry: WavePreviewEntry): string {
-  const sign = entry.error >= 0 ? '+' : '';
-  return (
-    `Wave ${entry.waveNumber}` +
-    `  target ${entry.targetDifficulty}` +
-    `  actual ${entry.actualDifficulty.toFixed(1)}` +
-    `  err ${sign}${entry.error.toFixed(1)}` +
-    `  ${entry.composition}` +
-    `  shooting: ${entry.shootEnabled ? 'yes' : 'no'}`
+/**
+ * Per-column character widths, sized to the widest of each heading and its
+ * rendered cells so every row lines up (AC10).
+ */
+export function waveTableColumnWidths(
+  entries: readonly WavePreviewEntry[],
+): number[] {
+  return WAVE_TABLE_COLUMNS.map((column) => {
+    const cells = entries.map((entry) => column.value(entry));
+    return Math.max(column.heading.length, 0, ...cells.map((cell) => cell.length));
+  });
+}
+
+/** Joins one padded cell per column into an aligned fixed-width row. */
+function formatTableCells(
+  cells: readonly string[],
+  widths: readonly number[],
+): string {
+  return cells
+    .map((cell, index) => cell.padEnd(widths[index], ' '))
+    .join(' '.repeat(COLUMN_GAP));
+}
+
+/** Renders the wave-table header row (AC10). */
+export function formatWaveTableHeader(widths: readonly number[]): string {
+  return formatTableCells(
+    WAVE_TABLE_COLUMNS.map((column) => column.heading),
+    widths,
   );
+}
+
+/** Renders one wave as an aligned table row (AC6/AC10). */
+export function formatWaveTableRow(
+  entry: WavePreviewEntry,
+  widths: readonly number[],
+): string {
+  return formatTableCells(
+    WAVE_TABLE_COLUMNS.map((column) => column.value(entry)),
+    widths,
+  );
+}
+
+/**
+ * Renders the bottom-right column-guide help box (AC11): one line per table
+ * column with its heading and one-line explanation.
+ */
+export function formatCurveHelpBox(): string {
+  const width = Math.max(
+    ...WAVE_TABLE_COLUMNS.map((column) => column.heading.length),
+  );
+  return [
+    CURVE_HELP_BOX_TITLE,
+    ...WAVE_TABLE_COLUMNS.map(
+      (column) => `${column.heading.padEnd(width, ' ')}  ${column.help}`,
+    ),
+  ].join('\n');
 }
 
 export class GymCurveSequencer extends Phaser.Scene {
@@ -151,13 +254,32 @@ export class GymCurveSequencer extends Phaser.Scene {
 
   // ── Wave preview (Phaser canvas) ─────────────────────────────────
 
-  /** Draws the static "WAVE PREVIEW" heading above the wave list. */
+  /**
+   * Draws the static "WAVE PREVIEW" heading above the wave list and the
+   * bottom-right column-guide help box (AC11).
+   */
   private _buildPreviewArea(): void {
     this.add.text(PREVIEW_HEADER_X, PREVIEW_HEADER_Y, CURVE_PREVIEW_HEADER, {
       fontFamily: 'monospace',
       fontSize: '14px',
       color: '#00ffff',
     });
+
+    // Bottom-right help box summarising every wave-table column (AC11).
+    this.add
+      .text(
+        GAME_WIDTH - CURVE_HELP_BOX_MARGIN,
+        GAME_HEIGHT - CURVE_HELP_BOX_MARGIN,
+        formatCurveHelpBox(),
+        {
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          color: '#8899aa',
+          backgroundColor: '#111111',
+          padding: { x: 8, y: 6 },
+        },
+      )
+      .setOrigin(1, 1);
   }
 
   /** Re-renders the wave list (or the stale instruction) from `preview`. */
@@ -176,12 +298,21 @@ export class GymCurveSequencer extends Phaser.Scene {
       return;
     }
 
+    // Header row + one aligned row per wave (AC10).
+    const widths = waveTableColumnWidths(this.preview);
+    this.previewTexts.push(
+      this.add.text(PREVIEW_HEADER_X, PREVIEW_START_Y, formatWaveTableHeader(widths), {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#00ffff',
+      }),
+    );
     this.preview.forEach((entry, index) => {
       this.previewTexts.push(
         this.add.text(
           PREVIEW_HEADER_X,
-          PREVIEW_START_Y + index * PREVIEW_LINE_HEIGHT,
-          formatWavePreviewLine(entry),
+          PREVIEW_START_Y + (index + 1) * PREVIEW_LINE_HEIGHT,
+          formatWaveTableRow(entry, widths),
           {
             fontFamily: 'monospace',
             fontSize: '14px',

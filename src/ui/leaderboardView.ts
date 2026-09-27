@@ -10,12 +10,35 @@
 import Phaser from 'phaser';
 
 import { GAME_WIDTH } from '../core/constants';
-import { INITIALS_LENGTH, type LeaderboardEntry } from '../core/Leaderboard';
+import { INITIALS_LENGTH } from '../core/Leaderboard';
 
 /** Neon-cyan colour for leaderboard text (GDD §7.1). */
 export const LEADERBOARD_TEXT_COLOR = '#00ffff';
 /** Dim colour for the empty-state message. */
 export const LEADERBOARD_EMPTY_COLOR = '#666666';
+/** Highlight colour for the prospective (being-entered) row (GDD §5.1). */
+export const LEADERBOARD_PREVIEW_COLOR = '#ffff00';
+/** Leading marker flagging the prospective (being-entered) row (GDD §5.1). */
+export const LEADERBOARD_PREVIEW_MARKER = '▶';
+
+/**
+ * One row accepted by {@link renderLeaderboard}. A persisted
+ * {@link LeaderboardEntry} satisfies it directly; the game-over screen adds
+ * preview rows flagged with {@link isPreview}, whose (possibly partial)
+ * initials are padded with `_` placeholders.
+ */
+export interface LeaderboardDisplayRow {
+  /** 1-based position once the table is sorted by score descending. */
+  rank: number;
+  /** Initials to show; preview rows may be partial and are padded with `_`. */
+  initials: string;
+  /** Points earned in the run. */
+  score: number;
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  /** True for the prospective entry being typed (rendered highlighted). */
+  isPreview?: boolean;
+}
 
 /** Options controlling {@link renderLeaderboard}. */
 export interface RenderLeaderboardOptions {
@@ -31,27 +54,39 @@ export interface RenderLeaderboardOptions {
   color?: string;
   /** Message rendered when the leaderboard is empty. */
   emptyMessage?: string;
+  /** Colour for a prospective ({@link LeaderboardDisplayRow.isPreview}) row. */
+  highlightColor?: string;
+  /** Leading marker for a prospective row. */
+  highlightMarker?: string;
 }
 
 /**
  * Formats one leaderboard row as aligned monospace columns:
- * `#rank  INITIALS  SCORE  YYYY-MM-DD`.
+ * `#rank  INITIALS  SCORE  YYYY-MM-DD`. A prospective row is prefixed with
+ * `marker` and its initials are padded with `_` placeholders.
  */
-export function formatLeaderboardRow(entry: LeaderboardEntry): string {
-  const rank = `#${entry.rank}`.padStart(3, ' ');
-  return `${rank}  ${entry.initials.padEnd(INITIALS_LENGTH, ' ')}  ${entry.score
+export function formatLeaderboardRow(
+  row: LeaderboardDisplayRow,
+  marker: string = LEADERBOARD_PREVIEW_MARKER,
+): string {
+  const rank = `#${row.rank}`.padStart(3, ' ');
+  const initials = row.initials.padEnd(INITIALS_LENGTH, '_');
+  const prefix = row.isPreview ? `${marker} ` : '';
+  return `${prefix}${rank}  ${initials}  ${row.score
     .toString()
-    .padStart(7, ' ')}  ${entry.date}`;
+    .padStart(7, ' ')}  ${row.date}`;
 }
 
 /**
- * Adds the leaderboard rows to `scene`, highest score first. Returns the
- * created text objects (a single empty-state message when `entries` is
- * empty). Callers own the surrounding title/controls.
+ * Adds the leaderboard rows to `scene`, highest score first. A prospective
+ * row ({@link LeaderboardDisplayRow.isPreview}) is rendered in the highlight
+ * colour with a leading marker. Returns the created text objects (a single
+ * empty-state message when `rows` is empty). Callers own the surrounding
+ * title/controls.
  */
 export function renderLeaderboard(
   scene: Phaser.Scene,
-  entries: LeaderboardEntry[],
+  rows: LeaderboardDisplayRow[],
   options: RenderLeaderboardOptions = {},
 ): Phaser.GameObjects.Text[] {
   const x = options.x ?? GAME_WIDTH / 2;
@@ -59,8 +94,10 @@ export function renderLeaderboard(
   const rowHeight = options.rowHeight ?? 18;
   const fontSize = options.fontSize ?? '13px';
   const color = options.color ?? LEADERBOARD_TEXT_COLOR;
+  const highlightColor = options.highlightColor ?? LEADERBOARD_PREVIEW_COLOR;
+  const highlightMarker = options.highlightMarker ?? LEADERBOARD_PREVIEW_MARKER;
 
-  if (entries.length === 0) {
+  if (rows.length === 0) {
     return [
       scene.add
         .text(x, topY, options.emptyMessage ?? 'No scores yet', {
@@ -72,12 +109,12 @@ export function renderLeaderboard(
     ];
   }
 
-  return entries.map((entry, index) =>
+  return rows.map((row, index) =>
     scene.add
-      .text(x, topY + index * rowHeight, formatLeaderboardRow(entry), {
+      .text(x, topY + index * rowHeight, formatLeaderboardRow(row, highlightMarker), {
         fontFamily: 'monospace',
         fontSize,
-        color,
+        color: row.isPreview ? highlightColor : color,
       })
       .setOrigin(0.5, 0),
   );

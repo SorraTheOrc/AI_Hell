@@ -135,11 +135,12 @@ function parseEntry(row: unknown): Omit<LeaderboardEntry, 'rank'> | null {
 
 /**
  * Sorts entries by score descending (stable for equal scores), caps the list
- * at {@link MAX_ENTRIES}, and assigns 1-based ranks.
+ * at {@link MAX_ENTRIES}, and assigns 1-based ranks. Extra fields on `T` are
+ * preserved by the spread, so callers can tag rows before ranking.
  */
-function sortAndRank(
-  entries: Array<Omit<LeaderboardEntry, 'rank'>>,
-): LeaderboardEntry[] {
+function sortAndRank<T extends { score: number }>(
+  entries: T[],
+): Array<T & { rank: number }> {
   return [...entries]
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_ENTRIES)
@@ -201,6 +202,49 @@ export function addEntry(
   const next = sortAndRank([...getEntries(store), entry]);
   store.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(next));
   return next;
+}
+
+/**
+ * One row of the ranked table shown while a qualifying score is being
+ * entered. Extends {@link LeaderboardEntry} with an {@link isPreview} flag
+ * marking the single prospective entry the player is typing. Unlike a
+ * persisted entry, a preview row's `initials` may be partial (0–3 letters)
+ * until entry is complete, and is padded with placeholders by the view.
+ */
+export interface LeaderboardPreviewRow extends LeaderboardEntry {
+  /** True for the prospective entry the player is currently typing. */
+  isPreview: boolean;
+}
+
+/**
+ * Builds the ranked table shown while a qualifying score is being entered:
+ * the persisted `entries` plus a prospective entry for `score` carrying the
+ * current (possibly partial) `initials`, flagged
+ * {@link LeaderboardPreviewRow.isPreview}.
+ *
+ * Uses the same stable, score-descending ordering and {@link MAX_ENTRIES}
+ * cap as {@link addEntry}, so the flagged row occupies exactly the rank the
+ * persisted entry will take on submit, and when the table is full the
+ * current lowest entry is displaced. The prospective row is absent from the
+ * result when it does not make the capped table (for example a
+ * non-qualifying score on a full board).
+ */
+export function buildPreview(
+  entries: LeaderboardEntry[],
+  score: number,
+  initials: string,
+  date: string = todayISO(),
+): LeaderboardPreviewRow[] {
+  const preview: Omit<LeaderboardPreviewRow, 'rank'> = {
+    initials,
+    score,
+    date,
+    isPreview: true,
+  };
+  return sortAndRank([
+    ...entries.map((entry) => ({ ...entry, isPreview: false })),
+    preview,
+  ]);
 }
 
 /**
