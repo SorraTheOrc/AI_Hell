@@ -27,12 +27,15 @@
 import Phaser from 'phaser';
 
 import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
 import { playDestructionSound } from '../../audio/effects';
+import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
@@ -144,10 +147,68 @@ export abstract class CombatScene<
     return 5;
   }
 
-  /** Extra teleport-avoidance bodies (game: the boss). Default: none. */
-  protected getAdditionalTeleportBodies(): TeleportBody[] {
-    return [];
+  /**
+   * The scene's boss, or null (game: spawned after Level 5; `GymBoss`: its
+   * single formation entity). The shared boss hooks below use this accessor
+   * so boss advancement and teleport avoidance are defined once for both
+   * scenes (AH-0MUII3E5E006A93F, gap 6).
+   */
+  protected getBoss(): Boss | null {
+    return null;
   }
+
+  /**
+   * Extra teleport-avoidance bodies (the boss when present). The default
+   * derives the boss body from {@link CombatScene.getBoss}, so a P7
+   * teleport avoids the boss identically in the game and in `GymBoss`
+   * (AH-0MUII3E5E006A93F, AC2).
+   */
+  protected getAdditionalTeleportBodies(): TeleportBody[] {
+    const boss = this.getBoss();
+    if (!boss?.alive) return [];
+    return [{ x: boss.x, y: boss.y, radius: boss.getHitRadius() }];
+  }
+
+  /**
+   * Advances the boss state machine as part of the shared tick: attack
+   * telegraphing, bullet collection, and pulse-wave expansion. Called from
+   * both `PlayScene.tick` and `GymFormationScene.tick`, so a single
+   * `tick(dt)` advances the boss with the same ordering relative to
+   * collisions in the game and in `GymBoss` (AH-0MUII3E5E006A93F, AC1).
+   *
+   * Boss bullets are appended to the scene's enemy-bullet list; pulse waves
+   * are managed by the Boss itself. A scene with no boss is a no-op.
+   */
+  protected _advanceBoss(dt: number): void {
+    const boss = this.getBoss();
+    if (!boss?.alive) return;
+    const player = this.getPlayer();
+    if (player) boss.setAimTarget(player.x, player.y);
+
+    const bullets = boss.update(
+      this.time.now,
+      dt * 1000,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+    );
+    const live = this.getEnemyBullets().slice();
+    for (const bullet of bullets) {
+      if (!('isPulseWave' in bullet && bullet.isPulseWave)) {
+        live.push(bullet as unknown as TBullet);
+      }
+    }
+    this.setEnemyBullets(live);
+    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
+
+    // Scene hook for boss-adjacent work (e.g. `GymBoss` minions).
+    this.onBossAdvanced(dt);
+  }
+
+  /**
+   * Hook run after the shared boss advance. Default no-op; `GymBoss`
+   * advances its phase minions here so they stay on the shared tick path.
+   */
+  protected onBossAdvanced(_dt: number): void {}
 
   /**
    * Player bullet hits an enemy. Default (generic gym) behaviour:

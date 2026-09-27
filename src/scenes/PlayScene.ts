@@ -73,7 +73,6 @@ import {
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { BombNotice } from './core/BombNotice';
-import { type TeleportBody } from '../powerups/teleport';
 import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
@@ -534,7 +533,9 @@ export class PlayScene extends CombatScene<
     } else {
       this._moveEnemies(dt);
       this._collectEnemyFire();
-      this._updateBoss(dt);
+      // Shared boss advance (AH-0MUII3E5E006A93F, AC1) — same ordering
+      // relative to collisions as every gym.
+      this._advanceBoss(dt);
     }
 
     // Player input, thrust and auto-fire run in every phase, including the
@@ -865,31 +866,6 @@ export class PlayScene extends CombatScene<
     this._spawnMinions(1);
     // No per-wave time limit applies to the boss encounter.
     this._hideWaveTimer();
-  }
-
-  /**
-   * Advances the Boss state machine: attack telegraphing, bullet
-   * collection, and pulse-wave expansion (mirrors GymBoss). Boss bullets
-   * are tracked by the scene's enemy-bullet list; pulse waves are managed
-   * by the Boss itself.
-   */
-  private _updateBoss(dt: number): void {
-    const boss = this.boss;
-    if (!boss || !boss.alive) return;
-    if (this.player) boss.setAimTarget(this.player.x, this.player.y);
-
-    const bullets = boss.update(
-      this.time.now,
-      dt * 1000,
-      GAME_WIDTH,
-      GAME_HEIGHT,
-    );
-    for (const bullet of bullets) {
-      if (!('isPulseWave' in bullet && bullet.isPulseWave)) {
-        this.enemyBullets.push(bullet as unknown as PlayEnemyBullet);
-      }
-    }
-    boss.advancePulseWave(dt, GAME_WIDTH, GAME_HEIGHT);
   }
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
@@ -1330,14 +1306,6 @@ export class PlayScene extends CombatScene<
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
-  }
-
-  // ── Teleport (P7, S/↓) ──────────────────────────────────────────
-
-  /** The boss is a body a P7 teleport destination must also avoid. */
-  protected override getAdditionalTeleportBodies(): TeleportBody[] {
-    if (!this.boss?.alive) return [];
-    return [{ x: this.boss.x, y: this.boss.y, radius: this.boss.getHitRadius() }];
   }
 
   // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────

@@ -1308,6 +1308,11 @@ export class GymFormationScene<
       this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 
+    // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
+    // are advanced by the shared bullet lifecycle below, matching the
+    // PlayScene ordering relative to collisions. A no-op without a boss.
+    this._advanceBoss(dt);
+
     // Advance bullets; wrap across all four edges and expire by lifetime
     // (AH-0MU960UTE001PTV0). Bullets are never culled for off-screen
     // position. Shared with PlayScene/GymPowerUpsCombat so the semantics

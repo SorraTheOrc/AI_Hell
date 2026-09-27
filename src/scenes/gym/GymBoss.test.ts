@@ -42,6 +42,7 @@ import {
 } from '../../vfx/explosionParticles';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { MenuScene } from '../MenuScene';
+import { planMinionSpawns } from '../../waves/BossMinions';
 
 /** Finds an on-screen text button by label. */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -596,6 +597,118 @@ describe('GymBoss — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(scene.sys.isActive()).toBe(false);
+  });
+});
+
+describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('boss-gym-panel')?.remove();
+  });
+
+  async function bootGym(): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    return booted.scene as GymBoss;
+  }
+
+  it('AC1 — a single tick(dt) advances the boss into the shared bullet list', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    boss.shootEnabled = true;
+    boss._simulateTelegraphElapsed();
+
+    const before = scene.activeBullets.length;
+    scene.tick(0.016);
+
+    // Before the shared hook, GymBoss only advanced the boss in its
+    // Phaser `update()` override, so `tick(dt)` alone left it idle.
+    expect(scene.activeBullets.length).toBeGreaterThan(before);
+  });
+
+  it('AC1 — the shared boss implementations are inherited, not re-implemented', () => {
+    // `_advanceBoss` and `getAdditionalTeleportBodies` own the behaviour;
+    // `getBoss`/`onBossAdvanced` are overridable scene hooks.
+    for (const method of ['_advanceBoss', 'getAdditionalTeleportBodies']) {
+      expect(
+        Object.prototype.hasOwnProperty.call(GymBoss.prototype, method),
+        `GymBoss must not define ${method}`,
+      ).toBe(false);
+    }
+  });
+
+  it('AC2 — a P7 teleport in GymBoss avoids the boss body', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    const player = scene.getPlayer()!;
+
+    // Park the ship left of the centred boss, facing right, so the boss
+    // sits on the teleport ray.
+    player.setPosition(300, boss.y);
+    const state = player.getMovementState();
+    (
+      player as unknown as { _movementState: Record<string, unknown> }
+    )._movementState = {
+      ...state,
+      x: 300,
+      y: boss.y,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+    scene.getEffectsRegistry().applyCollect('P7');
+
+    expect(scene.triggerTeleport()).toBe(true);
+
+    // The shared `getAdditionalTeleportBodies` includes the boss, so the
+    // landing spot clears its hit radius.
+    const distance = Math.hypot(player.x - boss.x, player.y - boss.y);
+    expect(distance).toBeGreaterThan(boss.getHitRadius());
+  });
+
+  it('AC3 — booting the encounter summons the shared Phase-1 minion plan', async () => {
+    const scene = await bootGym();
+    const expected = planMinionSpawns(1);
+
+    expect(expected.length).toBeGreaterThan(0);
+    expect(scene.getMinions().length).toBe(expected.length);
+  });
+
+  it('AC3 — advancing a phase summons that phase’s minion wave', async () => {
+    const scene = await bootGym();
+    const before = scene.getMinions().length;
+
+    scene.damageBoss();
+
+    expect(scene.formationBoss.getPhaseNumber()).toBe(2);
+    expect(scene.getMinions().length).toBe(
+      before + planMinionSpawns(2).length,
+    );
+  });
+
+  it('AC3 — Phase 3 (Pulse) summons no minions, matching the shared plan', async () => {
+    const scene = await bootGym();
+    scene.damageBoss();
+    const before = scene.getMinions().length;
+
+    scene.damageBoss(); // → Phase 3 (Pulse, no minions)
+
+    expect(scene.formationBoss.getPhaseNumber()).toBe(3);
+    expect(planMinionSpawns(3)).toHaveLength(0);
+    expect(scene.getMinions().length).toBe(before);
+  });
+
+  it('AC3 — a phase minion is damageable by player bullets (shared collision pass)', async () => {
+    const scene = await bootGym();
+    const minion = scene.getMinions().find((m) => m.alive);
+    expect(minion).toBeDefined();
+
+    scene.spawnPlayerBullet(minion!.x, minion!.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(minion!.alive).toBe(false);
   });
 });
 

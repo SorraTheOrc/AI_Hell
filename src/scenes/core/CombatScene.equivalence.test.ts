@@ -27,6 +27,8 @@ import {
   definesMethod,
 } from '../../test/duplicateBodyGuard';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
+import type { Boss } from '../../entities/Boss';
+import { GymBoss } from '../gym/GymBoss';
 
 /** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
 const SHARED_METHODS = [
@@ -1370,5 +1372,93 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
     expect(source).toContain('mapControlInput(');
     expect(source).not.toContain('FourDirectionalInputHandler');
     expect(source).not.toContain('AsteroidsInputHandler');
+  });
+});
+
+// ── Shared boss integration (AH-0MUII3E5E006A93F, gap 6) ───────────
+
+/**
+ * Walks the PlayScene run to the boss encounter (Level 5 cleared) by
+ * destroying every enemy deterministically.
+ */
+function reachPlayBoss(play: PlayScene): void {
+  play.getGameState().lives = 99;
+  for (let guard = 0; guard < 300 && !play.getBoss(); guard++) {
+    for (let inner = 0; inner < 500 && play.getAliveCount() > 0; inner++) {
+      const enemy = play.getEnemies().find((e) => e.alive);
+      if (!enemy) break;
+      play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+      play.tick(0.016);
+    }
+    if (play.isTransitioning()) play.tick(3.0);
+  }
+}
+
+/** Stubs a boss to emit one deterministic bullet on its next update. */
+function stubBossSingleBullet(boss: Boss): Phaser.GameObjects.Graphics {
+  const graphics = boss.scene.add.graphics();
+  boss.update = (() =>
+    [
+      {
+        graphics,
+        vx: 0,
+        vy: 0,
+        color: 0xffffff,
+        lifetime: 4,
+        elapsed: 0,
+      },
+    ]) as unknown as typeof boss.update;
+  return graphics;
+}
+
+describe('shared boss integration — advanced by one tick in both scenes (AH-0MUII3E5E006A93F, AC1)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('a single tick(dt) advances the boss in PlayScene and GymBoss alike', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'boss-equiv-play-host',
+    );
+    const gym = await bootScene([GymBoss], 'boss-equiv-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymBoss;
+
+    reachPlayBoss(playScene);
+    expect(playScene.getBoss()).not.toBeNull();
+
+    const playGraphics = stubBossSingleBullet(playScene.getBoss()!);
+    const gymGraphics = stubBossSingleBullet(gymScene.formationBoss);
+
+    playScene.tick(0.016);
+    gymScene.tick(0.016);
+
+    // Both scenes collected their boss bullet through the shared hook.
+    expect(
+      playScene.getEnemyBullets().some((b) => b.graphics === playGraphics),
+    ).toBe(true);
+    expect(
+      gymScene.activeBullets.some((b) => b.graphics === gymGraphics),
+    ).toBe(true);
+  });
+
+  it('both scenes inherit the shared boss advance and teleport avoidance', () => {
+    const core = CombatScene.prototype as unknown as Record<string, unknown>;
+    for (const method of ['_advanceBoss', 'getAdditionalTeleportBodies']) {
+      expect(
+        Object.prototype.hasOwnProperty.call(PlayScene.prototype, method),
+        `PlayScene must not define ${method}`,
+      ).toBe(false);
+      expect(
+        (PlayScene.prototype as unknown as Record<string, unknown>)[method],
+      ).toBe(core[method]);
+      expect(
+        (GymBoss.prototype as unknown as Record<string, unknown>)[method],
+      ).toBe(core[method]);
+    }
   });
 });

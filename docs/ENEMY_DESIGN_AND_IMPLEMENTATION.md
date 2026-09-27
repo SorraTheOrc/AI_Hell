@@ -248,6 +248,20 @@ the first three enemy gym scenes duplicated:
   single definition is pinned by
   `src/scenes/core/CombatScene.equivalence.test.ts` and the
   dispatch/fallback behaviour by `src/entities/enemyFire.test.ts`.
+- **Shared boss integration** (AH-0MUII3E5E006A93F, gap 6) — the boss
+  advance (`_advanceBoss(dt)`) and the P7 teleport boss-avoidance
+  (`getAdditionalTeleportBodies()`) live once in `CombatScene` and are
+  driven by each scene's own `tick(dt)`, so a single deterministic tick
+  advances the boss with the same ordering relative to collisions in the
+  shipped game and in `GymBoss`. A scene exposes its boss through the
+  `getBoss()` accessor (`GymBoss` returns its single formation entity); the
+  boss is also added to the teleport-avoidance body list. Phase minions are
+  summoned from the shared `planMinionSpawns(phase)`
+  (`src/waves/BossMinions.ts`) — the same plan the game uses — and advanced
+  and fired on the shared tick through the overridable `onBossAdvanced(dt)`
+  hook. The single definition is pinned by
+  `src/scenes/core/CombatScene.equivalence.test.ts` and `GymBoss.test.ts`.
+
 - **Wipe → 3 s countdown → respawn** (AH-0MTFXKA5Q003LBH5) — when every
   enemy is killed (`aliveCount === 0`, i.e. `alive === false` after
   `destroySelf()` — mid-explosion counts), the base scene starts a
@@ -475,6 +489,13 @@ for reference implementations (the base class drives them).
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
 
+`GymBoss` also consumes the shared boss hooks (§2.1): its `tick(dt)`
+advances the Boss through `CombatScene._advanceBoss`, P7 teleports avoid the
+boss via the shared `getAdditionalTeleportBodies()`, and its phase minions
+are summoned from the shared `planMinionSpawns()` plan and advanced on the
+same tick path through `onBossAdvanced()` — so the gym Boss runs the same
+code as the shipped game's Boss (AH-0MUII3E5E006A93F).
+
 ---
 
 ## 4. Known gotchas (browser rendering & conventions)
@@ -695,9 +716,14 @@ Deterministic combat loops stop on the first `getPlayerHitCount()` increment
 
 ### 7.5 Boss gym
 
-The Boss gym work item (`AH-0MT99QBDW001O7PE`) is **out of scope** for this
-convention and will follow it when built: spawn the player via the same
-`player` config seam and reuse the live-combat collision/respawn machinery.
+The Boss gym (`GymBoss`) follows this convention: it spawns the player via
+the same `player` config seam, reuses the live-combat collision/respawn
+machinery, and routes the Boss itself through the shared boss hooks
+(`CombatScene._advanceBoss` / `getAdditionalTeleportBodies`, §2.1). Its
+phase minions are summoned from the shared `planMinionSpawns()` plan and
+advanced on the shared `tick(dt)` path via `onBossAdvanced()`, so the gym
+Boss and the shipped game's Boss run the same code
+(AH-0MUII3E5E006A93F, gap 6).
 
 ### 7.6 Formation hold while a Diver is away (AH-0MUAYB957002EMYV)
 
