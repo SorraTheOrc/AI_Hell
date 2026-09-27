@@ -83,6 +83,12 @@ import {
   playPhaserFireSound,
   PHASER_ADVANCE_CUE_DURATION,
   playBossFireSound,
+  playPhaseShiftSound,
+  PHASE_SHIFT_CHIRP_START_HZ,
+  PHASE_SHIFT_CHIRP_END_HZ,
+  PHASE_SHIFT_CHIRP_DURATION,
+  PHASE_SHIFT_CHIRP_VOLUME,
+  PHASE_SHIFT_WHOOSH_VOLUME,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -326,6 +332,7 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playPowerUpCollectSound,
       playPowerUpCollectPopSound,
       playBulletDestructionSound,
+      playPhaseShiftSound,
     ];
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
@@ -1635,5 +1642,53 @@ describe('major-explosion voice limiter — concurrency cap (AH-0MUJS85X0006EXGV
       expect(playerValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
       expect(playerValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
     });
+  });
+});
+
+// ── P6 Phase Shift activation cue (parent AH-0MUIYX1EE008FVS8) ─────────
+
+describe('Phase Shift activation cue — synthesis (AC5.1–AC5.3)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  it('plays a rising triangle chirp layered with a noise whoosh', () => {
+    const snap = snapshot();
+    playPhaseShiftSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Two layers: the tonal chirp oscillator + the noise buffer source.
+    expect(oscs).toHaveLength(2);
+    const chirp = oscs.find((o) => o.type === 'triangle')!;
+    expect(chirp).toBeDefined();
+    expect(chirp.freqEvents[0].value).toBe(PHASE_SHIFT_CHIRP_START_HZ);
+    const last = chirp.freqEvents[chirp.freqEvents.length - 1];
+    expect(last.value).toBe(PHASE_SHIFT_CHIRP_END_HZ);
+    // Distinctly rising.
+    expect(last.value).toBeGreaterThan(chirp.freqEvents[0].value);
+    const chirpDuration = chirp.stopTime! - chirp.startTime!;
+    expect(chirpDuration).toBeGreaterThanOrEqual(PHASE_SHIFT_CHIRP_DURATION);
+    expect(chirpDuration).toBeLessThanOrEqual(PHASE_SHIFT_CHIRP_DURATION + 0.05);
+
+    const whoosh = oscs.find((o) => o.type === 'noise')!;
+    expect(whoosh).toBeDefined();
+
+    // Every layer respects the ≤ 0.2 player-cue ceiling (GDD §7.3).
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeGreaterThan(0);
+  });
+
+  it('keeps both layer volumes within the ≤ 0.2 player-cue ceiling', () => {
+    expect(PHASE_SHIFT_CHIRP_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(PHASE_SHIFT_WHOOSH_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(PHASE_SHIFT_CHIRP_VOLUME).toBeGreaterThan(0);
+    expect(PHASE_SHIFT_WHOOSH_VOLUME).toBeGreaterThan(0);
   });
 });

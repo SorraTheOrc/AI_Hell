@@ -1815,3 +1815,101 @@ export function playMagnetCollectSound(): void {
   body.start(t);
   body.stop(t + 0.26);
 }
+
+// ── P6 Phase Shift activation cue (parent AH-0MUIYX1EE008FVS8) ──────
+//
+// Phase Shift is now triggered automatically when the player is surrounded,
+// so the cue must sell the activation instantly: a rising sci-fi chirp layered
+// with a bright noise whoosh. Volume stays within the GDD §7.3 player-cue
+// ceiling (≤ 0.2 per layer) and the whole cue is a safe no-op without an
+// AudioContext (headless tests / autoplay-blocked browsers).
+
+/** Rising chirp start frequency (Hz). */
+export const PHASE_SHIFT_CHIRP_START_HZ = 320;
+
+/** Rising chirp end frequency (Hz) — a bright upward sweep. */
+export const PHASE_SHIFT_CHIRP_END_HZ = 1560;
+
+/** Rising chirp duration (seconds). */
+export const PHASE_SHIFT_CHIRP_DURATION = 0.28;
+
+/** Rising chirp layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const PHASE_SHIFT_CHIRP_VOLUME = 0.16;
+
+/** Whoosh noise filter start centre frequency (Hz). */
+export const PHASE_SHIFT_WHOOSH_START_HZ = 600;
+
+/** Whoosh noise filter end centre frequency (Hz). */
+export const PHASE_SHIFT_WHOOSH_END_HZ = 3200;
+
+/** Whoosh layer duration (seconds). */
+export const PHASE_SHIFT_WHOOSH_DURATION = 0.24;
+
+/** Whoosh layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const PHASE_SHIFT_WHOOSH_VOLUME = 0.09;
+
+/**
+ * Plays the dedicated P6 Phase Shift activation cue: a rising triangle chirp
+ * (320 → 1560 Hz) layered with a bandpass noise whoosh that sweeps 600 →
+ * 3200 Hz. Distinctly rising so it reads as "phase engaged", unlike the
+ * descending destruction cues and the flat weapon pickups.
+ *
+ * Safe no-op without a working AudioContext — never throws.
+ */
+export function playPhaseShiftSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Layer 1: rising chirp — the tonal "engage" sweep.
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(PHASE_SHIFT_CHIRP_START_HZ, t);
+  osc.frequency.exponentialRampToValueAtTime(
+    PHASE_SHIFT_CHIRP_END_HZ,
+    t + PHASE_SHIFT_CHIRP_DURATION,
+  );
+  gain.gain.setValueAtTime(PHASE_SHIFT_CHIRP_VOLUME, t);
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + PHASE_SHIFT_CHIRP_DURATION,
+  );
+  osc.connect(gain).connect(ensureMasterGain(ctx));
+  osc.start(t);
+  osc.stop(t + PHASE_SHIFT_CHIRP_DURATION + 0.02);
+
+  // Layer 2: rising bandpass noise — the sci-fi whoosh texture.
+  const whooshDuration = PHASE_SHIFT_WHOOSH_DURATION;
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.floor(ctx.sampleRate * whooshDuration),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(PHASE_SHIFT_WHOOSH_START_HZ, t);
+  noiseFilter.frequency.exponentialRampToValueAtTime(
+    PHASE_SHIFT_WHOOSH_END_HZ,
+    t + whooshDuration,
+  );
+  noiseFilter.Q.setValueAtTime(0.8, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(PHASE_SHIFT_WHOOSH_VOLUME, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + whooshDuration);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + whooshDuration + 0.02);
+}

@@ -34,7 +34,7 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import { playDestructionSound } from '../../audio/effects';
+import { playDestructionSound, playPhaseShiftSound } from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
@@ -128,7 +128,9 @@ export abstract class CombatScene<
       x: bullet.graphics.x,
       y: bullet.graphics.y,
     }));
-    registry.updateDanger(isInDanger(player, bodies, bullets), dt);
+    const fired = registry.updateDanger(isInDanger(player, bodies, bullets), dt);
+    // Dedicated activation cue on every auto-trigger (parent AH-0MUIYX1EE008FVS8).
+    if (fired) playPhaseShiftSound();
   }
 
   // ── Shared effect gating (P3 shield / P6 phase) ─────────────────
@@ -433,7 +435,9 @@ export abstract class CombatScene<
     );
 
     // Consume one stack FIFO and grant P6 phase shift at the landing spot.
-    registry.consumeTeleport();
+    const phaseActivated = registry.consumeTeleport();
+    // Direct activation also plays the dedicated cue (Q6).
+    if (phaseActivated) playPhaseShiftSound();
     player.setPosition(dest.x, dest.y);
     // Keep the movement state's position in sync with the new position
     // (physicsTick uses the internal state as its base).

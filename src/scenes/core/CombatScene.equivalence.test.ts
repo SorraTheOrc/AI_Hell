@@ -1094,6 +1094,56 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       expect(scene.getEffectsRegistry().phaseCharges()).toBe(0);
     }
   });
+
+  it('plays the Phase Shift cue exactly once when danger auto-triggers (parent AH-0MUIYX1EE008FVS8)', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-sfx-play-host',
+    );
+    games.push(play);
+    const playScene = play.scene as PlayScene;
+    const soundSpy = vi.spyOn(effectsModule, 'playPhaseShiftSound');
+
+    const player = playScene.getPlayer()!;
+    player.setPosition(120, 120);
+    (
+      player as unknown as { _movementState: Record<string, unknown> }
+    )._movementState = {
+      ...player.getMovementState(),
+      x: 120,
+      y: 120,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+    playScene.getEffectsRegistry().applyCollect('P6');
+    playScene.spawnEnemyBullet(130, 120, 0, 0);
+    playScene.spawnEnemyBullet(120, 130, 0, 0);
+    playScene.spawnEnemyBullet(120, 110, 0, 0);
+
+    playScene.tick(0.016);
+
+    expect(playScene.getEffectsRegistry().isPhased).toBe(true);
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    soundSpy.mockRestore();
+  });
+
+  it('plays the Phase Shift cue on a P7 teleport activation (parent AH-0MUIYX1EE008FVS8)', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-teleport-sfx-host',
+    );
+    games.push(play);
+    const playScene = play.scene as PlayScene;
+    const soundSpy = vi.spyOn(effectsModule, 'playPhaseShiftSound');
+
+    playScene.getEffectsRegistry().applyCollect('P7');
+    expect(playScene.triggerTeleport()).toBe(true);
+
+    expect(playScene.getEffectsRegistry().isPhased).toBe(true);
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    soundSpy.mockRestore();
+  });
 });
 
 // ── Shared power-up drop layer (gap 4, AH-0MUII3CXX0023H24) ─────────
