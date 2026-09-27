@@ -57,6 +57,12 @@ export interface GameRules {
   mineralRedropFractionMin: number;
   /** Maximum fraction of a destroyed enemy's minerals re-dropped (default 0.5). */
   mineralRedropFractionMax: number;
+  /**
+   * Opt-in switch for runtime-generated waves (AH-0MUH6LEYY0054E63).
+   * When `true`, `PlayScene` builds the campaign from the difficulty-curve
+   * config via the auto-sequencer; when `false` (the default) the static
+   * `LEVELS` campaign ships exactly as before. No settings UI is provided. */
+  sequencedWavesEnabled: boolean;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -108,6 +114,9 @@ export const DEFAULT_MINERAL_REDROP_FRACTION_MIN = 0.25;
 /** Default maximum re-drop fraction of a destroyed enemy's minerals (50 %). */
 export const DEFAULT_MINERAL_REDROP_FRACTION_MAX = 0.5;
 
+/** Default for the opt-in sequenced-waves toggle — off, shipped behaviour. */
+export const DEFAULT_SEQUENCED_WAVES_ENABLED = false;
+
 /**
  * Builds a fresh default weight table: every standard ID carries
  * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, P8 Extra Life the rarer
@@ -143,6 +152,7 @@ export const DEFAULT_RULES: GameRules = {
   mineralHoldCapacity: DEFAULT_MINERAL_HOLD_CAPACITY,
   mineralRedropFractionMin: DEFAULT_MINERAL_REDROP_FRACTION_MIN,
   mineralRedropFractionMax: DEFAULT_MINERAL_REDROP_FRACTION_MAX,
+  sequencedWavesEnabled: DEFAULT_SEQUENCED_WAVES_ENABLED,
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -174,6 +184,7 @@ function cloneDefaultRules(): GameRules {
     mineralHoldCapacity: DEFAULT_RULES.mineralHoldCapacity,
     mineralRedropFractionMin: DEFAULT_RULES.mineralRedropFractionMin,
     mineralRedropFractionMax: DEFAULT_RULES.mineralRedropFractionMax,
+    sequencedWavesEnabled: DEFAULT_RULES.sequencedWavesEnabled,
   };
 }
 
@@ -198,6 +209,15 @@ function coerceFraction(value: unknown, fallback: number): number {
     value <= 1
     ? value
     : fallback;
+}
+
+/**
+ * Coerces a stored value to a boolean, falling back to `fallback` otherwise.
+ * Only a literal boolean is accepted so a corrupt string (e.g. `"true"`)
+ * cannot silently enable the sequenced-wave campaign.
+ */
+function coerceBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
 }
 
 /**
@@ -289,6 +309,10 @@ export function loadRules(): GameRules {
       mineralRedropFractionMax: coerceFraction(
         parsed.mineralRedropFractionMax,
         DEFAULT_MINERAL_REDROP_FRACTION_MAX,
+      ),
+      sequencedWavesEnabled: coerceBoolean(
+        parsed.sequencedWavesEnabled,
+        DEFAULT_SEQUENCED_WAVES_ENABLED,
       ),
     };
   } catch {

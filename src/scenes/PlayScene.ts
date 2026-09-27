@@ -41,7 +41,7 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState } from '../core/GameState';
-import { DEFAULT_RULES, loadRules } from '../core/rules';
+import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
   playCannonFireSound,
   playDestructionSound,
@@ -86,6 +86,8 @@ import {
 } from '../core/settingsStore';
 import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
+import { LEVELS, type LevelDefinition } from '../waves/Formations';
+import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
@@ -181,6 +183,31 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   backgroundColor: '#000000',
   padding: { x: 20, y: 12 },
 };
+
+/**
+ * Resolve the campaign the run should play (AH-0MUITS1SM008GPR9).
+ *
+ * With the opt-in `sequencedWavesEnabled` toggle off (the default) the static
+ * `LEVELS` campaign is returned unchanged. With it on, the campaign is
+ * generated from the difficulty-curve config; if generation throws or yields
+ * nothing the static campaign is used instead, so the game always boots into
+ * a playable campaign.
+ *
+ * Exported so the toggle/fallback decision can be unit-tested without
+ * booting a Phaser scene; `PlayScene.create()` calls it with the live rules.
+ */
+export function resolveCampaignLevels(
+  rules: Pick<GameRules, 'sequencedWavesEnabled'> = loadRules(),
+  build: () => LevelDefinition[] = () => buildSequencedLevels(),
+): LevelDefinition[] {
+  if (!rules.sequencedWavesEnabled) return LEVELS;
+  try {
+    const generated = build();
+    return generated.length > 0 ? generated : LEVELS;
+  } catch {
+    return LEVELS;
+  }
+}
 
 /** One spawned enemy plus the formation group it belongs to. */
 interface SpawnedEnemy {
@@ -367,6 +394,14 @@ export class PlayScene extends CombatScene<
     // Hold capacity comes from the game-rules config (GDD §4.5).
     this.gameState.mineralCapacity = loadRules().mineralHoldCapacity;
     this._syncMineralHud();
+    // Campaign source: static `LEVELS` by default, generated when the
+    // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the
+    // manager's levels when enabled so an injected campaign (tests, future
+    // callers) is left untouched — preserving shipped behaviour. Never
+    // throws: `resolveCampaignLevels` falls back to `LEVELS`.
+    if (rules.sequencedWavesEnabled) {
+      this.waveManager.setLevels(resolveCampaignLevels(rules));
+    }
     this.waveManager.beginGame();
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();

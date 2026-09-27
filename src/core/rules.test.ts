@@ -9,6 +9,7 @@ import {
   DEFAULT_MINERAL_REDROP_FRACTION_MIN,
   DEFAULT_POWER_UP_SPAWN_INTERVAL,
   DEFAULT_RULES,
+  DEFAULT_SEQUENCED_WAVES_ENABLED,
   DEFAULT_STANDARD_POWER_UP_WEIGHT,
   DEFAULT_WEAPON_WEIGHT,
   POWER_UP_WEIGHT_IDS,
@@ -80,6 +81,7 @@ describe('game rules configuration module', () => {
         mineralHoldCapacity: 30,
         mineralRedropFractionMin: 0.3,
         mineralRedropFractionMax: 0.6,
+        sequencedWavesEnabled: true,
       };
       saveRules(custom);
 
@@ -252,5 +254,55 @@ describe('game rules configuration module', () => {
       expect(loaded.mineralCollectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
       expect(loaded.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
     });
+  });
+});
+
+// ── Sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9) ─────────────
+
+describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('defaults to disabled — shipped behaviour is unchanged', () => {
+    expect(DEFAULT_SEQUENCED_WAVES_ENABLED).toBe(false);
+    expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(false);
+    expect(loadRules().sequencedWavesEnabled).toBe(false);
+  });
+
+  it('loads a stored true value', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: true }),
+    );
+    expect(loadRules().sequencedWavesEnabled).toBe(true);
+  });
+
+  it('loads a stored false value', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    expect(loadRules().sequencedWavesEnabled).toBe(false);
+  });
+
+  it('coerces a non-boolean stored value to the disabled default', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: 'true' }),
+    );
+    expect(loadRules().sequencedWavesEnabled).toBe(false);
+  });
+
+  it('round-trips the toggle through saveRules', () => {
+    saveRules({ ...DEFAULT_RULES, sequencedWavesEnabled: true });
+    expect(loadRules().sequencedWavesEnabled).toBe(true);
+  });
+
+  it('returns a fresh copy so mutating it does not change the defaults', () => {
+    const loaded = loadRules();
+    loaded.sequencedWavesEnabled = true;
+    expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(false);
+    expect(loadRules().sequencedWavesEnabled).toBe(false);
   });
 });

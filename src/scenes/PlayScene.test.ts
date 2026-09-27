@@ -27,6 +27,7 @@ import {
   BOSS_PHASE_SCORES,
   LEVEL_TRANSITION_SECONDS,
   PlayScene,
+  resolveCampaignLevels,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -37,7 +38,8 @@ import {
 } from '../waves/Formations';
 import { computeSpawns } from '../waves/AsteroidSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
-import { seedConfigStore } from '../core/configStore';
+import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
+import { RULES_STORAGE_KEY } from '../core/rules';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -2682,5 +2684,91 @@ describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
     const before = scene.getFormationDriftX();
     scene.tick(0.5);
     expect(scene.getFormationDriftX()).toBeGreaterThan(before);
+  });
+});
+
+// ── Sequenced-waves opt-in toggle wiring (AH-0MUITS1SM008GPR9) ──────
+
+describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
+  const generated: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Generated',
+      waves: [{ groups: [
+        { enemyKey: 'scout', formation: 'v', count: 3, spacingX: 30, spacingY: 26, startX: 10, startY: 20 },
+      ], shootEnabled: false }],
+    },
+  ];
+
+  it('returns the static LEVELS campaign when the toggle is off', () => {
+    expect(
+      resolveCampaignLevels({ sequencedWavesEnabled: false }, () => generated),
+    ).toBe(CAMPAIGN_LEVELS);
+  });
+
+  it('returns the generated campaign when the toggle is on', () => {
+    expect(
+      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => generated),
+    ).toEqual(generated);
+  });
+
+  it('falls back to static LEVELS when generation throws', () => {
+    expect(
+      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => {
+        throw new Error('sequencer exploded');
+      }),
+    ).toBe(CAMPAIGN_LEVELS);
+  });
+
+  it('falls back to static LEVELS when generation returns nothing', () => {
+    expect(
+      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
+    ).toBe(CAMPAIGN_LEVELS);
+  });
+});
+
+describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', () => {
+  let toggleBooted: BootedGame | null = null;
+
+  afterEach(() => {
+    toggleBooted?.game.destroy(true);
+    toggleBooted = null;
+    localStorage.clear();
+  });
+
+  async function bootToggleScene(): Promise<PlayScene> {
+    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    return toggleBooted.scene as PlayScene;
+  }
+
+  it('runs the static campaign when the toggle is disabled (the default)', async () => {
+    const scene = await bootToggleScene();
+    const wm = scene.getWaveManager();
+    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
+    expect(wm.currentLevel()?.name).toBe(CAMPAIGN_LEVELS[0].name);
+    expect(wm.currentLevel()?.name).toBe('Entry');
+  });
+
+  it('runs the generated campaign when the toggle is enabled', async () => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: true }),
+    );
+    seedDifficultyCurves([
+      { level: 1, levelName: 'Generated Entry', wave: 1, targetDifficulty: 10 },
+      { level: 1, levelName: 'Generated Entry', wave: 2, targetDifficulty: 20 },
+    ]);
+
+    const scene = await bootToggleScene();
+    const wm = scene.getWaveManager();
+
+    expect(wm.started).toBe(true);
+    expect(wm.levelCount).toBe(1);
+    expect(wm.currentLevel()?.name).toBe('Generated Entry');
+    expect(wm.waveCount).toBe(2);
+    // The generated wave's groups are what the run spawns.
+    const wave = wm.currentWave()!;
+    expect(wave.groups.length).toBeGreaterThan(0);
+    expect(scene.getAliveCount()).toBeGreaterThanOrEqual(wm.waveEnemyCount());
   });
 });
