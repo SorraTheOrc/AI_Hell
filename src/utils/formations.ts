@@ -149,7 +149,15 @@ export function buildOrbitalPhaseOffsets(count: number): FormationOffset[] {
   return offsets;
 }
 
-/** Single-entity formation for the Boss. */
+/**
+ * Single-entity formation for the Boss.
+ *
+ * Deliberately count-independent: `single` represents exactly **one**
+ * entity, so this always returns one centred offset regardless of the
+ * declared `count` (see {@link formationSpawnCount}). Wave/level authors
+ * must therefore declare `count: 1` for a `single` group — a larger value
+ * is a misconfiguration (reported by `validateWaveGroups`).
+ */
 export function buildSingleOffset(_count: number): FormationOffset[] {
   return [{ row: 0, col: 0 }];
 }
@@ -169,6 +177,21 @@ export const FORMATION_BUILDERS: Record<EnemyFormationKind, (count: number) => F
 export function getFormationBuilder(kind: string): (count: number) => FormationOffset[] {
   if (kind in FORMATION_BUILDERS) return FORMATION_BUILDERS[kind as EnemyFormationKind];
   return buildVFormationOffsets;
+}
+
+/**
+ * Number of enemies a formation of `kind` actually spawns for a declared
+ * `count`: the length of the offsets returned by its builder.
+ *
+ * This is the single source of truth for "declared vs spawned" accounting.
+ * Most builders return exactly `count` offsets, but `single` is
+ * count-independent (it always represents one entity), so callers must use
+ * this helper — not the raw `count` field — when computing a group's
+ * contribution to a wave's enemy count. It keeps `waveEnemyCount()` and
+ * `planSpawns().length` equal for every wave.
+ */
+export function formationSpawnCount(kind: string, count: number): number {
+  return getFormationBuilder(kind)(count).length;
 }
 
 /** A 2D position produced by formation geometry helpers. */

@@ -18,7 +18,12 @@ import {
   type LevelDefinition,
   type WaveDefinition,
 } from './Formations';
-import { WaveManager, type WaveEvent } from './WaveManager';
+import {
+  WaveManager,
+  validateWaveGroups,
+  wavePlannedSpawnCount,
+  type WaveEvent,
+} from './WaveManager';
 
 /** Kills every enemy in the active wave; returns the final event. */
 function clearWave(wm: WaveManager): WaveEvent {
@@ -411,7 +416,8 @@ describe('WaveManager — dynamic spawn registration (generic seam)', () => {
   // enemies. Asteroids are NOT registered through it (AH-0MUJM746P000QAEO):
   // they do not gate wave completion. These tests exercise the seam itself.
   it('registerDynamicSpawn increments the alive count by the supplied amount', () => {
-    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
+    // A `single` group represents exactly one entity, so its count must be 1.
+    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 1)])]);
     wm.beginGame();
     const before = wm.enemiesAlive;
     wm.registerDynamicSpawn(2);
@@ -419,11 +425,12 @@ describe('WaveManager — dynamic spawn registration (generic seam)', () => {
   });
 
   it('unregisterDynamicSpawn decrements the alive count by the supplied amount', () => {
-    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
+    // A `single` group represents exactly one entity, so its count must be 1.
+    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 1)])]);
     wm.beginGame();
     wm.registerDynamicSpawn(2);
     wm.unregisterDynamicSpawn(1);
-    expect(wm.enemiesAlive).toBe(2 /* initial 2 */ + 2 - 1);
+    expect(wm.enemiesAlive).toBe(1 /* initial 1 */ + 2 - 1);
   });
 
   it('unregisterDynamicSpawn never drives the count below zero', () => {
@@ -499,5 +506,65 @@ describe('WaveManager — dynamic spawn registration (generic seam)', () => {
 
     // Final child destroyed → the wave is finally wiped (final level -> boss).
     expect(wm.onEnemyDestroyed()).toBe('bossTriggered');
+  });
+});
+
+describe('WaveManager — declared vs planned spawn count (AH-0MUJKJ8OO007TBSS)', () => {
+  it('AC2 — a single-formation group with count > 1 declares exactly what it spawns', () => {
+    // Two waves so clearing the first emits `waveCleared` rather than the
+    // final-level boss trigger.
+    const defs = [
+      level(1, 'Test', [
+        wave('asteroid', 'single', 5, false),
+        wave('scout', 'v', 1, false),
+      ]),
+    ];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+
+    const spawns = wm.planSpawns();
+    expect(spawns).toHaveLength(1);
+    expect(wm.waveEnemyCount()).toBe(spawns.length);
+    expect(wm.enemiesAlive).toBe(spawns.length);
+  });
+
+  it('AC1 — an over-declared single group cannot stall or clear a wave early', () => {
+    const defs = [
+      level(1, 'Test', [
+        wave('asteroid', 'single', 5, false),
+        wave('scout', 'v', 1, false),
+      ]),
+    ];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+
+    // Exactly one enemy was spawned, so one destruction clears the wave.
+    expect(wm.onEnemyDestroyed()).toBe('waveCleared');
+    expect(wm.waveNumber).toBe(2);
+  });
+
+  it('AC2 — validateWaveGroups names the offending single group and its count', () => {
+    const groups = wave('asteroid', 'single', 5).groups;
+    const errors = validateWaveGroups(groups);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ index: 0, enemyKey: 'asteroid', count: 5 });
+    expect(errors[0].message).toContain('asteroid');
+    expect(errors[0].message).toContain('single');
+    expect(errors[0].message).toContain('5');
+  });
+
+  it('AC2 — validateWaveGroups accepts a single group with count 1', () => {
+    expect(validateWaveGroups(wave('boss', 'single', 1).groups)).toEqual([]);
+  });
+
+  it('AC3 — every built-in campaign wave is valid and declares its planned size', () => {
+    for (const levelDef of LEVELS) {
+      for (const w of levelDef.waves) {
+        expect(validateWaveGroups(w.groups)).toEqual([]);
+        const declared = w.groups.reduce((sum, g) => sum + g.count, 0);
+        expect(wavePlannedSpawnCount(w.groups)).toBe(declared);
+      }
+    }
   });
 });

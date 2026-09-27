@@ -14,6 +14,7 @@ import {
   buildSingleOffset,
   buildVFormationOffsets,
   computeFormationPosition,
+  formationSpawnCount,
 } from './formations';
 import { sanitizeShotPattern, isValidShotPattern } from './enemyShotPatterns';
 
@@ -41,6 +42,24 @@ describe('FORMATION_BUILDERS registry', () => {
   it('single builder always returns a single centred offset', () => {
     expect(buildSingleOffset(99)).toEqual([{ row: 0, col: 0 }]);
     expect(buildSingleOffset(0)).toEqual([{ row: 0, col: 0 }]);
+  });
+
+  describe('formationSpawnCount', () => {
+    it('reports the number of offsets a builder produces', () => {
+      expect(formationSpawnCount('v', 6)).toBe(6);
+      expect(formationSpawnCount('rect', 6)).toBe(6);
+      expect(formationSpawnCount('orbital', 4)).toBe(4);
+    });
+
+    it('reports one for the single formation regardless of declared count', () => {
+      expect(formationSpawnCount('single', 1)).toBe(1);
+      expect(formationSpawnCount('single', 99)).toBe(1);
+      expect(formationSpawnCount('single', 0)).toBe(1);
+    });
+
+    it('falls back to the V builder for unknown formation kinds', () => {
+      expect(formationSpawnCount('not-a-formation', 5)).toBe(5);
+    });
   });
 
   it('getFormationBuilder falls back to V for unknown kinds without throwing', () => {

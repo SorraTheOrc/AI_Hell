@@ -302,6 +302,15 @@ The generic geometry (formation offsets) lives in
 `buildRectFormationOffsets`. These are pure functions — unit-test them
 directly without booting a scene.
 
+The `single` formation is **count-independent**: `buildSingleOffset` always
+returns one centred offset because a `single` group represents exactly
+**one** entity (the Boss), so its declared `count` must be `1`. Wave
+accounting derives the number of enemies a group spawns from its builder via
+`formationSpawnCount` — not the raw `count` field — so a wave's declared size
+(`WaveManager.waveEnemyCount()`) always equals its planned spawns
+(`planSpawns().length`). `validateWaveGroups` reports any `single` group whose
+`count !== 1` (see §8.3).
+
 **Formation & shot registries** (see §2.4): formation kinds map to builder
 functions (`FORMATION_BUILDERS` / `getFormationBuilder(kind)` with a safe
 `buildVFormationOffsets` fallback for unknown kinds), and shot patterns are
@@ -786,7 +795,7 @@ The Diver reports this through the optional `requiresFormationHold?()` seam
 | `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars) and CSV row identity. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
 | `displayName` | `string` | Human label shown in the index and `GymEnemies` hint. |
 | `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single'` — selects the builder in `src/utils/formations.ts`. |
-| `count` | `number` | Formation size. |
+| `count` | `number` | Formation size. Must be `1` for the `single` formation (one entity); `validateWaveGroups` reports violations. |
 | `spacingX` / `spacingY` | `number` | Slot spacing (px). |
 | `driftSpeed` | `number` | Rightward drift (px/s). |
 | `startX` / `startY` | `number` | Base position (px). |
@@ -864,8 +873,17 @@ Public loader helpers (unchanged signatures): `loadEnemyConfig(key)`
 ### 8.3 FormationKind & shot-pattern registries
 
 - `src/utils/formations.ts`: `buildOrbitalPhaseOffsets`, `buildSingleOffset`,
-  `EnemyFormationKind`, `FORMATION_BUILDERS`, `getFormationBuilder(kind)` (unknown → `buildVFormationOffsets`).
+  `EnemyFormationKind`, `FORMATION_BUILDERS`, `getFormationBuilder(kind)` (unknown → `buildVFormationOffsets`),
+  `formationSpawnCount(kind, count)` — the number of offsets a builder
+  produces, used as the source of truth for a group's spawned size.
 - `src/utils/enemyShotPatterns.ts`: `VALID_SHOT_PATTERNS`, `sanitizeShotPattern` (unknown → `'none'`), `isValidShotPattern`.
+- `src/waves/WaveManager.ts`: `wavePlannedSpawnCount(groups)` (total planned
+  spawns) and `validateWaveGroups(groups)` (returns an error naming any
+  `single` group whose `count !== 1`). The **declared-vs-planned invariant**
+  is that `waveEnemyCount() === planSpawns().length` for every wave; the
+  declared size is derived from the builders so an over-declared `single`
+  group cannot inflate the alive count, while `validateWaveGroups` surfaces
+  the misconfiguration at authoring time.
 
 ### 8.4 Entity seam
 

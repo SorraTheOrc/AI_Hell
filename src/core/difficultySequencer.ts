@@ -158,9 +158,10 @@ export function defaultCandidatePool(): CandidateGroup[] {
   return Object.entries(DEFAULT_ENEMY_CONFIGS).map(([key, cfg]) => {
     // `single`-formation archetypes (the roaming Asteroid) spawn exactly one
     // entity per group regardless of `count` (`buildSingleOffset` ignores its
-    // argument), so exposing a count range would let the sequencer request a
-    // group whose spawns cannot satisfy its declared `waveEnemyCount`. Pin the
-    // range to the archetype's own count instead of scaling it.
+    // argument). `waveEnemyCount` now derives from the planned spawns, so an
+    // over-declared `single` group can no longer inflate the alive count, but
+    // `count` must still be `1` for the group to pass `validateWaveGroups`.
+    // Pin the range to the archetype's own count instead of scaling it.
     const scalable = cfg.formationKind !== 'single';
     return {
       enemyKey: key,

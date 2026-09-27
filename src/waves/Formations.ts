@@ -18,6 +18,7 @@
  */
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { formationSpawnCount } from '../utils/formations';
 import type { EnemyFormationKind } from '../utils/formations';
 
 // ── Wave / level shapes ─────────────────────────────────────────────
@@ -28,7 +29,11 @@ export interface WaveGroup {
   enemyKey: string;
   /** Formation geometry builder kind (see `utils/formations.ts`). */
   formation: EnemyFormationKind;
-  /** Number of enemies in this group. */
+  /**
+   * Number of enemies in this group. Must be `1` for the `single`
+   * formation (it represents exactly one entity); see `validateWaveGroups`
+   * in `./WaveManager.ts`.
+   */
   count: number;
   /** Horizontal spacing between formation slots (px). */
   spacingX: number;
@@ -177,13 +182,19 @@ export function getLevelDefinition(level: number): LevelDefinition | null {
   return LEVELS[level - 1] ?? null;
 }
 
-/** Total number of enemies across every wave of a level. */
+/**
+ * Total number of enemies across every wave of a level.
+ *
+ * Derived from each group's formation builder (not the raw `count` field)
+ * so it matches what actually spawns — a `single` group always contributes
+ * one enemy even if its declared count is inconsistent.
+ */
 export function enemyCountForLevel(level: number): number {
   const def = getLevelDefinition(level);
   if (!def) return 0;
   return def.waves.reduce(
     (sum, wave) =>
-      sum + wave.groups.reduce((s, g) => s + g.count, 0),
+      sum + wave.groups.reduce((s, g) => s + formationSpawnCount(g.formation, g.count), 0),
     0,
   );
 }

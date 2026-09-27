@@ -18,8 +18,12 @@
  * GDD §2.4 — Levels 1–3 do not fire; GDD §2.5 — Levels 4–5 do.
  */
 
-import { computeFormationPosition, getFormationBuilder } from '../utils/formations';
-import type { FormationOffset } from '../utils/formations';
+import {
+  computeFormationPosition,
+  formationSpawnCount,
+  getFormationBuilder,
+} from '../utils/formations';
+import type { EnemyFormationKind, FormationOffset } from '../utils/formations';
 import {
   LEVELS,
   type LevelDefinition,
@@ -236,13 +240,22 @@ export class WaveManager {
 
   // ── Spawn planning ──────────────────────────────────────────────
 
-  /** Total number of enemies in the supplied wave (0 when null). */
+  /**
+   * Total number of enemies the supplied wave will **actually** spawn
+   * (0 when null). Derived from each group's formation builder — not the
+   * raw `count` field — so the declared size always matches
+   * {@link planSpawns} (a count-independent formation such as `single`
+   * spawns one entity regardless of its declared `count`).
+   */
   private _waveSize(wave: WaveDefinition | null): number {
     if (!wave) return 0;
-    return wave.groups.reduce((sum, g) => sum + g.count, 0);
+    return wavePlannedSpawnCount(wave.groups);
   }
 
-  /** Total number of enemies in the active wave. */
+  /**
+   * Total number of enemies the active wave will actually spawn. Always
+   * equal to `planSpawns().length` — the declared-vs-planned invariant.
+   */
   waveEnemyCount(): number {
     return this._waveSize(this.currentWave());
   }
@@ -250,8 +263,9 @@ export class WaveManager {
   /**
    * Computes the concrete spawn list for the active wave: one
    * {@link EnemySpawn} per enemy, positioned by the group's formation
-   * builder. Returns an empty array when there is no active wave
-   * (before `beginGame()` or during the boss encounter).
+   * builder. Its length always equals {@link waveEnemyCount}. Returns an
+   * empty array when there is no active wave (before `beginGame()` or
+   * during the boss encounter).
    */
   planSpawns(): EnemySpawn[] {
     const wave = this.currentWave();
@@ -356,10 +370,72 @@ export class WaveManager {
 // ── Spawn planning helper ───────────────────────────────────────────
 
 /**
+ * Total number of enemies a list of wave groups will actually spawn, derived
+ * from each group's formation builder (see `formationSpawnCount`). This is
+ * the spawn plan's source of truth: `waveEnemyCount()` and
+ * `planSpawns().length` both resolve to this value, so the declared size can
+ * never exceed what is spawned. Pure — no Phaser dependency.
+ */
+export function wavePlannedSpawnCount(groups: WaveGroup[]): number {
+  return groups.reduce((sum, g) => sum + formationSpawnCount(g.formation, g.count), 0);
+}
+
+/**
+ * One wave-group configuration problem, naming the offending group.
+ */
+export interface WaveGroupValidationError {
+  /** Index of the offending group in the supplied list. */
+  index: number;
+  /** Enemy config key of the offending group. */
+  enemyKey: string;
+  /** Formation kind of the offending group. */
+  formation: EnemyFormationKind;
+  /** Declared enemy count of the offending group. */
+  count: number;
+  /** Human-readable description naming the group and its count. */
+  message: string;
+}
+
+/**
+ * Validates a list of wave groups against the formation semantics and
+ * returns one error per misconfigured group (an empty array when all are
+ * valid).
+ *
+ * Currently the only rule is the `single` formation: it represents exactly
+ * one entity (`buildSingleOffset` always returns one centred offset), so its
+ * declared `count` must be `1`. This is an authoring-time check — it returns
+ * errors rather than throwing, so callers (level loaders, authoring tools,
+ * tests) can surface them without risking a runtime crash. Note that
+ * {@link wavePlannedSpawnCount} already keeps declared and planned counts
+ * equal even for an over-declared `single` group; this helper exists to flag
+ * the otherwise-silent misconfiguration. Pure — no Phaser dependency.
+ */
+export function validateWaveGroups(groups: WaveGroup[]): WaveGroupValidationError[] {
+  const errors: WaveGroupValidationError[] = [];
+  groups.forEach((group, index) => {
+    if (group.formation === 'single' && group.count !== 1) {
+      errors.push({
+        index,
+        enemyKey: group.enemyKey,
+        formation: group.formation,
+        count: group.count,
+        message:
+          `single-formation group ${index} ('${group.enemyKey}') declares count=${group.count}; ` +
+          `the 'single' formation spawns exactly one enemy, so count must be 1.`,
+      });
+    }
+  });
+  return errors;
+}
+
+/**
  * Computes the concrete spawn list for a list of wave groups: one
  * {@link EnemySpawn} per enemy, positioned by each group's formation
- * builder. Shared by {@link WaveManager.planSpawns} and the boss minion
- * planner (`waves/BossMinions.ts`). Pure — no Phaser dependency.
+ * builder. The number of spawns always equals
+ * {@link wavePlannedSpawnCount} for the same groups, keeping the declared
+ * wave size and the plan in lockstep. Shared by
+ * {@link WaveManager.planSpawns} and the boss minion planner
+ * (`waves/BossMinions.ts`). Pure — no Phaser dependency.
  */
 export function planGroupSpawns(
   groups: WaveGroup[],
