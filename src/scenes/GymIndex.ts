@@ -17,6 +17,13 @@
  * boss rows are labelled "Boss Swarm" and "Boss" respectively
  * (AH-0MTV8OV9V002D8B7); the Dev Utilities column was added for
  * AH-0MUGXDVPH005TIZL.
+ *
+ * Keyboard navigation (AH-0MUDZFBYY008P7ZE) is provided by the shared
+ * {@link FocusManager}: the first row is focused by default, Tab / Shift+Tab
+ * and the arrow keys cycle focus through every row in reading order (wrapping
+ * at both ends), and Enter/Space activate the focused row through the same
+ * code path as a pointer click. Pointer handlers and ESC-to-menu remain
+ * unchanged (keyboard support is additive).
  */
 
 import Phaser from 'phaser';
@@ -29,12 +36,14 @@ import {
   sceneClassFromModule,
 } from '../utils/gymDiscovery';
 import { discoverEnemyGymEntries } from '../utils/enemyGymDiscovery';
+import { FocusManager } from '../utils/focusManager';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 
 /** Index title text (asserted by tests). */
 export const GYM_INDEX_TITLE = 'GYM INDEX';
-/** Bottom hint line. */
-export const GYM_INDEX_HINT = 'select a gym scene to load it — ← INDEX returns here';
+/** Bottom hint line (advertises the keyboard controls). */
+export const GYM_INDEX_HINT =
+  'tab/arrows move · enter/space select · ESC returns to menu';
 
 /** Scene key of the dedicated multi-phase boss (the real Central AI). */
 export const BOSS_SCENE_KEY = 'GymBoss';
@@ -92,6 +101,12 @@ export interface EnemyColumnEntry {
 }
 
 export class GymIndex extends Phaser.Scene {
+  /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
+  private focusManager = new FocusManager();
+
+  /** Focusable rows in reading order (label + text object). */
+  private controls: { label: string; text: Phaser.GameObjects.Text }[] = [];
+
   private entries: GymSceneEntry[] = [];
   private enemyEntries: EnemyColumnEntry[] = [];
   private bossEntries: EnemyColumnEntry[] = [];
@@ -102,6 +117,11 @@ export class GymIndex extends Phaser.Scene {
   }
 
   create(): void {
+    // Fresh focus registry on every create() so a restarted scene does not
+    // accumulate stale controls from a previous run.
+    this.focusManager = new FocusManager();
+    this.controls = [];
+
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
@@ -226,8 +246,7 @@ export class GymIndex extends Phaser.Scene {
       const row = this.add
         .text(scenesColX, startY + index * rowGap, entry.label, entryStyle)
         .setOrigin(0.5);
-      row.setInteractive({ useHandCursor: true });
-      row.on('pointerdown', () => this.scene.start(entry.key));
+      this.registerRow(row, entry.label, () => this.scene.start(entry.key));
     });
 
     // Middle column — ENEMIES header + enemy entries.
@@ -257,6 +276,18 @@ export class GymIndex extends Phaser.Scene {
       GYM_INDEX_DEV_UTILITIES_HEADER,
       { startY, headerY, rowGap, entryStyle, headerStyle },
     );
+
+    // ── Keyboard focus (AH-0MUDZFBYY008P7ZE) ─────────────────────────
+    // The shared FocusManager owns Tab / arrow cycling and Enter / Space
+    // activation. Rows are registered in reading order (plain scenes →
+    // ENEMIES → Bosses → Dev Utilities), so the first row is focused by
+    // default. Pointer handlers stay unchanged — keyboard support is
+    // additive. Tear the listener down on scene shutdown so a restart does
+    // not leak it.
+    this.focusManager.attachKeyboard(this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.focusManager.shutdown();
+    });
 
     // ── Hint ─────────────────────────────────────────────────────────
     this.add
@@ -295,12 +326,36 @@ export class GymIndex extends Phaser.Scene {
         .setOrigin(0.5);
       if (entry.enemyKey) row.setData('enemyKey', entry.enemyKey);
       if (entry.sceneKey) row.setData('sceneKey', entry.sceneKey);
-      row.setInteractive({ useHandCursor: true });
-      row.on('pointerdown', () => {
-        if (entry.sceneKey) this.scene.start(entry.sceneKey);
-        else this.scene.start('GymEnemies', { enemyKey: entry.enemyKey });
-      });
+      this.registerRow(row, entry.label, () => this.activateEntry(entry));
     });
+  }
+
+  // ── Activation & focus helpers ────────────────────────────────────
+
+  /**
+   * Activation shared by pointer and keyboard for an ENEMIES/Bosses/Dev
+   * Utilities row: scene rows boot their `sceneKey` directly, config rows
+   * boot `GymEnemies` with `{ enemyKey }`.
+   */
+  private activateEntry(entry: EnemyColumnEntry): void {
+    if (entry.sceneKey) this.scene.start(entry.sceneKey);
+    else this.scene.start('GymEnemies', { enemyKey: entry.enemyKey });
+  }
+
+  /**
+   * Wires a row for pointer (`pointerdown`) and keyboard (FocusManager)
+   * activation through the same callback, and records its label so
+   * {@link getFocusedLabel} can report the focused row in tests.
+   */
+  private registerRow(
+    row: Phaser.GameObjects.Text,
+    label: string,
+    activate: () => void,
+  ): void {
+    row.setInteractive({ useHandCursor: true });
+    row.on('pointerdown', activate);
+    this.focusManager.register(row, activate);
+    this.controls.push({ label, text: row });
   }
 
   // ── Public test accessors ─────────────────────────────────────────
@@ -334,5 +389,21 @@ export class GymIndex extends Phaser.Scene {
    */
   get listedDevUtilityScenes(): EnemyColumnEntry[] {
     return this.devEntries.map((e) => ({ ...e }));
+  }
+
+  /** Index of the currently focused row in reading order (−1 when none). */
+  getFocusedIndex(): number {
+    return this.focusManager.getFocusedIndex();
+  }
+
+  /** Total number of focusable rows registered across all four columns. */
+  getFocusControlCount(): number {
+    return this.focusManager.getControlCount();
+  }
+
+  /** Display label of the currently focused row ('' when none). */
+  getFocusedLabel(): string {
+    const index = this.focusManager.getFocusedIndex();
+    return this.controls[index]?.label ?? '';
   }
 }

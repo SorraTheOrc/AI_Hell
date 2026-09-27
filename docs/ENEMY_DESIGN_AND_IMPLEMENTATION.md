@@ -918,7 +918,12 @@ dedicated **"Boss"** row (scene key `GymBoss`) that boots the multi-phase
 `GymBoss` scene directly. Bare `GymEnemies` is excluded from the plain scene
 list, and `GymBoss` is likewise excluded there so the real boss is not
 duplicated (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Save As
-enemies appear on next index load without code changes.
+enemies appear on next index load without code changes. Index rows are
+keyboard-operable through the shared `src/utils/focusManager.ts`
+(`FocusManager`): rows are focused in reading order with the first row
+focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
+and Enter/Space launch the focused row through the same path as a pointer
+click (AH-0MUDZFBYY008P7ZE).
 
 ### 8.6 Adding a new enemy (convention)
 

@@ -583,7 +583,9 @@ src/
 │   │                      opened from the main menu; Back returns to MenuScene
 │   ├── GymIndex.ts      — Dev-mode gym entry scene (dev tool, reachable via the
 │   │                      main menu's Gym Scene Index button; discovers + lists gym
-│   │                      scenes from scenes/gym/ via import.meta.glob)
+│   │                      scenes from scenes/gym/ via import.meta.glob;
+│   │                      FocusManager keyboard navigation — Tab/arrows move focus,
+│   │                      Enter/Space launch the focused row)
 │   └── gym/
 │       ├── core/
 │       │   └── GymFormationScene.ts — Shared gym formation base (implemented): extends the

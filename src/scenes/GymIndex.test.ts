@@ -1,20 +1,24 @@
 /**
- * Tests for the GymIndex entry scene (AC2/AC3/AC4/AC6):
+ * Tests for the GymIndex entry scene (AC2/AC3/AC4/AC6) and its keyboard
+ * navigation (AH-0MUDZFBYY008P7ZE):
  *  - boots as the entry scene and shows the title,
  *  - lists every gym scene under `src/scenes/gym/` sorted alphabetically
  *    by label, excluding `.test.ts` modules and itself,
  *  - clicking an entry immediately starts that scene by its key,
- *  - the shared "← INDEX" button on a gym scene returns to the index.
+ *  - the shared "← INDEX" button on a gym scene returns to the index,
+ *  - keyboard navigation: default focus, Tab/arrow cycling with wrap,
+ *    Enter/Space activation per row flavour, and shutdown cleanup.
  *
  * Discovery runs through the real `import.meta.glob` (Vitest supports it),
  * so these tests exercise the actual files on disk — a new `Gym<Name>.ts`
  * appearing in the folder is picked up without editing the list.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { GAME_WIDTH } from '../core/constants';
+import { FocusManager } from '../utils/focusManager';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../utils/gymNavigation';
 import {
   GymIndex,
@@ -378,12 +382,198 @@ describe('GymIndex — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
     expect(scene.sys.isActive()).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
 
-    // Fire a non-ESC key.
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    // Fire an inert key (not Enter/Space — those activate the focused row).
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q' }));
     await new Promise((r) => setTimeout(r, 350));
 
     expect(scene.sys.isActive()).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+  });
+});
+
+describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+    document.getElementById('gym-curve-panel')?.remove();
+  });
+
+  async function bootIndex(): Promise<GymIndex> {
+    booted = await bootScene([GymIndex]);
+    return booted!.scene as GymIndex;
+  }
+
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: GymIndex, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  /** Expected focus order: columns left→right, top→bottom within a column. */
+  function readingOrder(scene: GymIndex): string[] {
+    return [
+      ...scene.listedScenes.map((s) => s.label),
+      ...scene.listedEnemyScenes.map((s) => s.label),
+      ...scene.listedBossScenes.map((s) => s.label),
+      ...scene.listedDevUtilityScenes.map((s) => s.label),
+    ];
+  }
+
+  /** Focusable on-screen rows (interactive text objects, headers excluded). */
+  function focusableRows(scene: GymIndex): Phaser.GameObjects.Text[] {
+    return (scene.children.list as Phaser.GameObjects.Text[]).filter(
+      (c) => c instanceof Phaser.GameObjects.Text && c.input?.enabled,
+    );
+  }
+
+  it('AC1 — every row is registered and the first is focused + highlighted', async () => {
+    const scene = await bootIndex();
+    const order = readingOrder(scene);
+
+    expect(order.length).toBeGreaterThan(0);
+    // Every rendered row across all four columns is registered.
+    expect(scene.getFocusControlCount()).toBe(order.length);
+    expect(focusableRows(scene)).toHaveLength(order.length);
+
+    // Exactly one row focused by default — the first in reading order.
+    expect(scene.getFocusedIndex()).toBe(0);
+    expect(scene.getFocusedLabel()).toBe(order[0]);
+
+    const rows = focusableRows(scene);
+    // Default row carries the focus highlight (bright colour + stroke)...
+    expect(rows[0].style.stroke).toBeTruthy();
+    expect(rows[0].style.strokeThickness).toBeGreaterThan(0);
+    // ...while every other row is rendered unfocused (no stroke).
+    for (const row of rows.slice(1)) {
+      expect(row.style.strokeThickness ?? 0).toBe(0);
+    }
+  });
+
+  it('AC2 — Tab/arrows cycle focus in reading order and wrap at both ends', async () => {
+    const scene = await bootIndex();
+    const order = readingOrder(scene);
+    const n = order.length;
+
+    expect(scene.getFocusedIndex()).toBe(0);
+
+    // Forward: Tab, ArrowDown, ArrowRight.
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe(order[1 % n]);
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe(order[2 % n]);
+    pressKey(scene, { key: 'ArrowRight' });
+    expect(scene.getFocusedLabel()).toBe(order[3 % n]);
+
+    // Backward: Shift+Tab, ArrowUp, ArrowLeft.
+    pressKey(scene, { key: 'Tab', shiftKey: true });
+    expect(scene.getFocusedLabel()).toBe(order[2 % n]);
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe(order[1 % n]);
+    pressKey(scene, { key: 'ArrowLeft' });
+    expect(scene.getFocusedIndex()).toBe(0);
+
+    // Wrap backwards from the first row to the last.
+    pressKey(scene, { key: 'ArrowLeft' });
+    expect(scene.getFocusedIndex()).toBe(n - 1);
+    expect(scene.getFocusedLabel()).toBe(order[n - 1]);
+
+    // Wrap forwards from the last row back to the first.
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedIndex()).toBe(0);
+    expect(scene.getFocusedLabel()).toBe(order[0]);
+  });
+
+  it('AC3 — Enter activates the default-focused plain scene row', async () => {
+    const scene = await bootIndex();
+    const first = scene.listedScenes[0];
+    expect(scene.getFocusedLabel()).toBe(first.label);
+
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive(first.key)).toBe(true);
+    expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
+  });
+
+  it('AC3 — Space activates a focused enemy-config row via GymEnemies + enemyKey', async () => {
+    const scene = await bootIndex();
+    const enemyIndex = scene.listedEnemyScenes.findIndex((e) => e.enemyKey === 'scout');
+    expect(enemyIndex).toBeGreaterThanOrEqual(0);
+    const enemy = scene.listedEnemyScenes[enemyIndex];
+    const targetIndex = scene.listedScenes.length + enemyIndex;
+
+    for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe(enemy.label);
+
+    pressKey(scene, { key: ' ' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('GymEnemies')).toBe(true);
+    const enemies = booted!.game.scene.getScene('GymEnemies') as unknown as {
+      activeEnemyKey: string;
+    };
+    expect(enemies.activeEnemyKey).toBe('scout');
+  });
+
+  it('AC3 — Enter activates the focused dedicated boss (GymBoss) row', async () => {
+    const scene = await bootIndex();
+    const bossIndex = scene.listedBossScenes.findIndex((e) => e.sceneKey === 'GymBoss');
+    expect(bossIndex).toBeGreaterThanOrEqual(0);
+    const targetIndex =
+      scene.listedScenes.length + scene.listedEnemyScenes.length + bossIndex;
+
+    for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('Boss');
+
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('GymBoss')).toBe(true);
+    expect(booted!.game.scene.isActive('GymEnemies')).toBe(false);
+  });
+
+  it('AC3 — Enter activates the focused Dev Utilities row directly', async () => {
+    const scene = await bootIndex();
+    const dev = scene.listedDevUtilityScenes[0];
+    expect(dev).toBeDefined();
+    const targetIndex =
+      scene.listedScenes.length +
+      scene.listedEnemyScenes.length +
+      scene.listedBossScenes.length;
+
+    for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe(dev!.label);
+
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive(dev!.key)).toBe(true);
+  });
+
+  it('AC4 — ESC still returns to the menu and scene shutdown releases the focus manager', async () => {
+    const shutdownSpy = vi.spyOn(FocusManager.prototype, 'shutdown');
+    try {
+      booted = await bootScene([GymIndex, MenuScene]);
+      const scene = booted.scene as GymIndex;
+      expect(scene.getFocusControlCount()).toBeGreaterThan(0);
+
+      // ESC navigation is untouched by the added keyboard handling.
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      await new Promise((r) => setTimeout(r, 350));
+
+      expect(booted.game.scene.isActive('MenuScene')).toBe(true);
+      expect(shutdownSpy).toHaveBeenCalled();
+    } finally {
+      shutdownSpy.mockRestore();
+    }
   });
 });
 
