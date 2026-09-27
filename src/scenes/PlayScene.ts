@@ -1397,6 +1397,12 @@ export class PlayScene extends CombatScene<
    * survive the timeout (they are not detonated), are NOT re-registered with
    * the WaveManager (they no longer gate the next wave), and persist in the
    * field (AH-0MUJM746P000QAEO). If no enemies remain, nothing happens (AC3).
+   *
+   * Gym↔game parity: the game is the only scene with a wave timer/timeout,
+   * so this cue + limiter is the single implementation. If a gym ever gains
+   * a wave-timeout path it must call `playMajorExplosionSound()` (reusing
+   * the shared limiter) rather than duplicating the cue — see
+   * AH-0MUK5ONAA0007YEX and AH-0MUJ1YZJ9008O4RC.
    */
   private _timeoutWave(): void {
     const survivors = this.spawned.filter((s) => s.entity.alive);
