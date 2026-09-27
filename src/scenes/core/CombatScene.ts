@@ -258,17 +258,33 @@ export abstract class CombatScene<
   ): boolean {
     if (enemy.takeDamage) {
       enemy.takeDamage();
+      // Multi-hit entity: finalise the kill exactly once on the lethal blow
+      // (the entity's `takeDamage()` has already run `destroySelf()` and
+      // cleared `alive`). Non-lethal hits consume the bullet silently.
+      if (!enemy.alive) {
+        this.finaliseEnemyKill(enemy);
+      }
     } else {
       enemy.destroySelf();
-      if (enemy.playDestructionAudio) {
-        enemy.playDestructionAudio();
-      } else {
-        playDestructionSound();
-      }
-      this.onEnemyDestroyed(enemy);
+      this.finaliseEnemyKill(enemy);
     }
     bullet.destroy();
     return true;
+  }
+
+  /**
+   * Play the destruction audio and notify `onEnemyDestroyed` for a killed
+   * enemy — the shared single-finalisation seam used by the bullet and ram
+   * paths, so destruction audio and score/drop/wave accounting happen exactly
+   * once per kill.
+   */
+  private finaliseEnemyKill(enemy: TEnemy): void {
+    if (enemy.playDestructionAudio) {
+      enemy.playDestructionAudio();
+    } else {
+      playDestructionSound();
+    }
+    this.onEnemyDestroyed(enemy);
   }
 
   /**
@@ -294,10 +310,7 @@ export abstract class CombatScene<
    */
   protected onPlayerRamsEnemy(enemy: TEnemy): void {
     enemy.destroySelf();
-    if (enemy.playDestructionAudio) {
-      enemy.playDestructionAudio();
-    }
-    this.onEnemyDestroyed(enemy);
+    this.finaliseEnemyKill(enemy);
   }
 
   /**

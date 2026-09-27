@@ -11,6 +11,7 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
 import { Asteroid, ASTEROID_LARGE_ROTATION_SPEED, ASTEROID_LARGE_SPEED } from './Asteroid';
+import { BaseEnemy } from './BaseEnemy';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
@@ -156,6 +157,32 @@ describe('Config-aware entity seam', () => {
     expect(asteroid.shootEnabled).toBe(false);
     expect(asteroid.effectiveShotPattern).toBe('none');
     asteroid.destroy(true);
+  });
+
+  it('F2 — every existing archetype has 1 HP and is destroyed by a single hit', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid'] as const) {
+      const cfg = { ...DEFAULT_ENEMY_CONFIGS[key] };
+      const e = createEnemyFromConfig(scene, cfg, 10, 10, { row: 0, col: 0 }) as unknown as BaseEnemy;
+      expect(e.health).toBe(1);
+      expect(e.alive).toBe(true);
+      expect(e.takeDamage()).toBe(0);
+      expect(e.alive).toBe(false);
+      e.destroy(true);
+    }
+  });
+
+  it('F2 — health from config threads into the entity (multi-hit archetype)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const cfg = { ...DEFAULT_ENEMY_CONFIGS.tank, health: 5 };
+    const e = createEnemyFromConfig(scene, cfg, 10, 10, { row: 0, col: 0 }) as unknown as BaseEnemy;
+    expect(e.health).toBe(5);
+    expect(e.takeDamage()).toBe(4);
+    expect(e.alive).toBe(true);
+    expect(e.takeDamage()).toBe(3);
+    e.destroy(true);
   });
 
   it('custom/unknown key falls back to Scout while preserving visuals', async () => {

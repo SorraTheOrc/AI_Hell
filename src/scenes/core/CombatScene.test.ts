@@ -45,10 +45,36 @@ class StubEnemy extends Phaser.GameObjects.Container implements CombatEnemyEntit
   }
 }
 
-/** Multi-hit enemy (mirrors Boss) — `takeDamage()` instead of destruction. */
+/** Multi-hit enemy (mirrors the Harvester) — `takeDamage()` instead of destruction. */
 class ToughStubEnemy extends StubEnemy {
-  takeDamage(): number | void {
+  private _health: number;
+  destructionAudioCalls = 0;
+
+  constructor(scene: Phaser.Scene, x: number, y: number, hitRadius = 10, health = 3) {
+    super(scene, x, y, hitRadius);
+    this._health = health;
+  }
+
+  takeDamage(): number {
+    if (!this.alive) return 0;
     this.damageCalls += 1;
+    this._health -= 1;
+    if (this._health <= 0) {
+      this._health = 0;
+      this.destroySelf();
+    }
+    return this._health;
+  }
+
+  get health(): number {
+    return this._health;
+  }
+}
+
+/** Multi-hit enemy that also supplies the entity-specific destruction audio. */
+class AudibleToughStubEnemy extends ToughStubEnemy {
+  playDestructionAudio(): void {
+    this.destructionAudioCalls += 1;
   }
 }
 
@@ -586,6 +612,59 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(enemy.damageCalls).toBe(1);
     expect(enemy.destroyed).toBe(false);
+  });
+
+  it('F2 — a non-lethal multi-hit hit consumes the bullet with no destruction side effects', async () => {
+    const scene = await boot();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(true);
+    expect(enemy.health).toBe(2);
+    expect(pb.active).toBe(false);
+    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+    expect(destroySound).not.toHaveBeenCalled();
+  });
+
+  it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
+    const scene = await boot();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 2);
+    scene.entities.push(enemy);
+
+    // First hit: non-lethal — no finalisation yet.
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+    scene.runCollisions();
+    expect(enemy.alive).toBe(true);
+    expect(destroySound).not.toHaveBeenCalled();
+    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+
+    // Second hit: lethal — exactly one finalisation.
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    scene.runCollisions();
+    expect(enemy.alive).toBe(false);
+    expect(pb.active).toBe(false);
+    expect(destroySound).toHaveBeenCalledTimes(1);
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
+  });
+
+  it('F2 — a multi-hit enemy with its own destruction audio plays it once and skips the shared sound', async () => {
+    const scene = await boot();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const enemy = new AudibleToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(enemy.destructionAudioCalls).toBe(1);
+    expect(destroySound).not.toHaveBeenCalled();
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
   });
 
   it('AC4 — no boss means the boss hooks are consulted but never consume', async () => {

@@ -83,6 +83,11 @@ export interface ScoutConfig {
    * failed roll consumes the cycle — no tell cue, no shot.
    */
   shotProbability?: number;
+  /**
+   * Hit points before the enemy is destroyed (data-driven;
+   * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
+   */
+  health?: number;
   /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -127,6 +132,7 @@ export class Scout extends BaseEnemy {
       bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? SCOUT_FIRE_INTERVAL,
       shotProbability: config.shotProbability,
+      health: config.health,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

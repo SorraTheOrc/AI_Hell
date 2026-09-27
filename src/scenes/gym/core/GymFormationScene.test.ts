@@ -131,6 +131,32 @@ class HoldStubEnemy extends StubEnemy {
   }
 }
 
+/** Multi-hit stub (mirrors the Harvester) for the shared finalise path (F2). */
+class ToughStubEnemy extends StubEnemy {
+  private _health: number;
+  damageCalls = 0;
+
+  constructor(scene: Phaser.Scene, offset: FormationOffset, hitRadius = 10, health = 3) {
+    super(scene, offset, hitRadius);
+    this._health = health;
+  }
+
+  takeDamage(): number {
+    if (!this.alive) return 0;
+    this.damageCalls += 1;
+    this._health -= 1;
+    if (this._health <= 0) {
+      this._health = 0;
+      this.destroySelf();
+    }
+    return this._health;
+  }
+
+  get health(): number {
+    return this._health;
+  }
+}
+
 const FORMATION_COUNT = 6;
 const SPACING_X = 26;
 const SPACING_Y = 22;
@@ -2825,5 +2851,64 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
     expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
     expect(scene.getPlayerBullets()).toHaveLength(0);
     expect(() => scene.tick(0.016)).not.toThrow();
+  });
+});
+
+describe('GymFormationScene — shared multi-hit kill finalisation (F2)', () => {
+  let booted: BootedGame | null = null;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootTough(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, ToughStubEnemy as typeof StubEnemy),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('F2 — a non-lethal hit leaves the entity alive with no destruction sound', async () => {
+    const scene = await bootTough();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    // This file accumulates module mocks across tests, so measure the delta.
+    const before = vi.mocked(destroySound).mock.calls.length;
+    const target = scene.formationEntities[0] as unknown as ToughStubEnemy;
+
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(true);
+    expect(target.health).toBe(2);
+    expect(target.damageCalls).toBe(1);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(before);
+  });
+
+  it('F2 — the killing blow finalises exactly once through the shared gym path', async () => {
+    const scene = await bootTough();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const before = vi.mocked(destroySound).mock.calls.length;
+    const target = scene.formationEntities[0] as unknown as ToughStubEnemy;
+
+    // Two non-lethal hits, then the lethal third.
+    for (let hit = 1; hit <= 2; hit++) {
+      scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+      scene.tick(0.05);
+      expect(target.alive).toBe(true);
+      expect(vi.mocked(destroySound).mock.calls.length).toBe(before);
+    }
+
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(before + 1);
+
+    // A further bullet into the same (now dead) slot must not re-finalise.
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(before + 1);
   });
 });

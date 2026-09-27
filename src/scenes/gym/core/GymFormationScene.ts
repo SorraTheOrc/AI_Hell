@@ -174,12 +174,13 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    */
   requiresFormationHold?(): boolean;
   /**
-   * Optional multi-hit damage seam (Boss, GDD §4.3). When present,
+   * Optional multi-hit damage seam (Harvester, GDD §4.1). When present,
    * player-bullet collisions delegate to this instead of `destroySelf()`
-   * so the entity can decrement phased health and only self-destruct
-   * when depleted. The entity must handle its own SFX/visuals and
-   * `alive` flag; the base scene consumes the bullet and skips the
-   * generic destruction sound.
+   * so the entity can decrement health and only self-destruct when depleted.
+   * The entity clears its own `alive` flag on the lethal hit; the base scene
+   * then finalises the kill exactly once (destruction audio +
+   * `onEnemyDestroyed`) by observing `alive` after the call. Non-lethal hits
+   * consume the bullet with no destruction side effects.
    */
   takeDamage?(): number | void;
   /**

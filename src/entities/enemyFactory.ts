@@ -62,6 +62,7 @@ export function createEnemyFromConfig(
     fireInterval: config.fireInterval,
     burstCount: config.burstCount,
     shotProbability: config.shotProbability,
+    health: config.health,
   };
 
   switch (config.key) {

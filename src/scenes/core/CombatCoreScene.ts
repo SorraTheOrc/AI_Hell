@@ -110,8 +110,10 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
   /** Optional entity-specific destruction audio seam. */
   playDestructionAudio?(): void;
   /**
-   * Optional multi-hit seam (e.g. Boss). When present, a player bullet
-   * delegates to this instead of `destroySelf()`.
+   * Optional multi-hit seam (e.g. Harvester). When present, a player bullet
+   * delegates to this instead of `destroySelf()`. The entity clears its own
+   * `alive` flag on the lethal hit; the scene then finalises the kill exactly
+   * once (destruction audio + `onEnemyDestroyed`) by observing `alive`.
    */
   takeDamage?(): number | void;
 }
