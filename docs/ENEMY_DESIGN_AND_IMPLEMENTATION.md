@@ -562,6 +562,25 @@ When a new enemy needs the base scene to behave differently:
    optional or defaulted) so existing scenes need no changes.
 4. Update this document's checklist if the convention changes.
 
+### 5.1 Gym parity
+
+A gym may enable only a **constrained set of features** (one enemy type, the
+editor, fixed formations, no campaign/wave progression), but the code that
+runs an enabled object must be the **same code** as the shipped game. The
+only legitimate difference is a disabled feature — never a divergent copy.
+Every shared behaviour therefore lives once: the core template methods and
+hooks (§2.1), the pure helpers under `src/scenes/core/`
+(`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
+`asteroidSplit`), the shared dispatcher
+`src/entities/enemyFire.ts`, and the scheme→input helper
+`mapControlInput` in `src/utils/movementModel.ts`. The repo-wide
+duplicate-body guard in `src/scenes/core/CombatScene.equivalence.test.ts`
+(`EPIC_SHARED_HELPERS` / `EPIC_SHARED_METHODS`) fails the suite if a
+production scene re-introduces a copy, and the cross-scene equivalence
+tests boot `PlayScene` and each gym to prove identical outcomes under the
+same input and `dt`. See `AGENTS.md` for the governing principle (tracked by
+AH-0MUGZDTFX004RBD1).
+
 ---
 
 ## 6. Testing strategy
@@ -787,6 +806,9 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
 
 - `src/data/enemy-configs.csv` — one row per enemy archetype.
 - `src/data/ship-config.csv` — the single player-ship row.
+- `src/data/difficulty-curves.csv` — one row per `(level, wave)` for the optional
+  runtime-sequenced campaign (AH-0MUH6LEYY0054E63): `level`, `levelName`,
+  `wave`, `targetDifficulty` (0–100). See §9.6.
 - `enemy-configs.csv` starts with a `#` comment header listing every column,
   the enum values and how to add an entry. The header is optional and is **not**
   rewritten by the dev save path, so `ship-config.csv` is currently headerless.
@@ -802,14 +824,22 @@ Supporting modules:
   (missing → default, malformed → `0` / `0x000000`); `validateEnemyConfig` /
   `validateShipConfig` return `{ ok, errors }`; `serializeEnemyConfigs` /
   `serializeShipConfigs` round-trip back. `ENEMY_COLUMN_ORDER` /
-  `SHIP_COLUMN_ORDER` are the stable exported column orders.
+  `SHIP_COLUMN_ORDER` are the stable exported column orders. The
+  difficulty-curve codec (`DIFFICULTY_CURVE_COLUMN_ORDER`,
+  `parseDifficultyCurves`, `serializeDifficultyCurves`,
+  `validateDifficultyCurveRow`, `coerceDifficultyCurveRow`) mirrors these for
+  the sequenced-campaign CSV (§9.6).
 - `src/core/configStore.ts` — in-memory registry. `loadConfigs()` (async,
   awaited by `src/core/boot.ts` before the game/scenes are constructed) fetches
   both CSVs through the dev plugin (or reads the bundled CSV in production),
   parses/validates them and populates the registry;
   a failed fetch falls back to `DEFAULT_ENEMY_CONFIGS` / `DEFAULT_CONFIG`
   without throwing. `loadEnemyConfig` / `loadShipConfig` / `listEnemyConfigKeys`
-  / `loadAllEnemyConfigs` are synchronous reads of the registry.
+  / `loadAllEnemyConfigs` are synchronous reads of the registry. The
+  difficulty-curve loader (`DIFFICULTY_CURVES_CSV_PATH`,
+  `loadDifficultyCurves()`, `saveDifficultyCurves()`,
+  `seedDifficultyCurves()`, `defaultDifficultyCurves()`) follows the same
+  pipeline and never throws (§9.6).
 - `vite/plugins/configCsvPlugin.ts` — dev-only Vite middleware. `GET
   /api/csv/src/data/<file>.csv` returns the file; `PUT` upserts the supplied
   row(s) after validation and writes atomically (temp file + rename).
@@ -1060,12 +1090,46 @@ Boss Swarm 22.50, Asteroid 10.00 (split chain only — it never fires).
 - **Library:** `enemyDifficulty` / `waveDifficulty` / `levelDifficulty` are
   importable for scripts, docs tables and future tooling.
 
-### 9.6 Out of scope
+### 9.6 Runtime auto-sequencer & sequenced campaigns (AH-0MUDIWETP003XC3X, AH-0MUH6LEYY0054E63)
 
-A runtime **auto-sequencer** that picks enemies to hit a target difficulty
-curve is explicitly deferred (Producer Q4) and tracked separately as
-`AH-0MUDIWETP003XC3X` (`discovered-from` AH-0MTZWZ7MC002B01K). This module is
-the design-time primitive such work would build on.
+The runtime **auto-sequencer** (`src/core/difficultySequencer.ts`,
+`sequencer(curve, candidates, options)`) is the delivered, pure primitive that
+picks and tunes candidate enemy groups to best approximate a target difficulty
+curve (one target per wave). It is wired into the playable run by
+`src/waves/sequencedLevels.ts` (`buildSequencedLevels(rows?, candidates?)`),
+which calls `sequencer()` **once per configured level** (so the fire rule can
+vary by level), converts each `ShootableWave` to a `WaveDefinition`, and applies
+the campaign fire rule.
+
+- **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`.
+  Columns: `level` (1-based), `levelName`, `wave` (1-based), `targetDifficulty`
+  (0–100). The number of rows for a level sets its wave count; the level count
+  and names are therefore data-driven. The CSV is loaded through the same
+  `configStore` / `configCsvPlugin` pipeline as the enemy/ship CSVs (editable in
+  dev via `/api/csv/...`, bundled read-only in production) with the
+  `parseDifficultyCurves` / `serializeDifficultyCurves` /
+  `validateDifficultyCurveRow` codec (`src/core/csv.ts`).
+- **Toggle:** the opt-in `GameRules.sequencedWavesEnabled` scalar
+  (`src/core/rules.ts`, default `false`) in the `ai-hell-game-rules`
+  localStorage record. `PlayScene.create()` only overrides the campaign when it
+  is `true`; otherwise the static `LEVELS` campaign is used untouched.
+- **Fire rule:** derived from the 1-based level number — levels 1–3 do not fire,
+  levels 4+ do (GDD §2.4/§2.5) — and passed to `sequencer()` as
+  `defaultShootEnabled`.
+- **Determinism:** generation is a pure function of the config and the
+  candidate pool (no RNG, no clock, no I/O), so the same inputs yield identical
+  level/wave definitions.
+- **Fallback:** with no rows, an empty candidate pool, or a throw from the
+  sequencer, `buildSequencedLevels()` returns the static `LEVELS` campaign; a
+  missing/malformed curve CSV falls back to the computed default curve
+  (`defaultDifficultyCurves()`, seeded from the measured `LEVELS` scores); and
+  `PlayScene` catches any error and leaves the static campaign active. The run
+  is therefore never left unplayable.
+
+Related work: the sequencer primitive was delivered by `AH-0MUDIWETP003XC3X`;
+the wiring is `AH-0MUH6LEYY0054E63`; player-state adaptation, runtime curve
+editing (`AH-0MUGXDVPH005TIZL`) and per-level generated-vs-scripted mixing
+(`AH-0MUH7Q6HN0006QPD`) remain out of scope.
 
 ## Audio Best Practices
 

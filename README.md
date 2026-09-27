@@ -416,6 +416,35 @@ Enemy and ship tuning is held in committed CSV files — the **single, human-edi
 - **Dev-only write path:** the write endpoint exists **only** under `npm run dev`. Production/static builds read the CSV bundled at build time read-only; **Save / Save As** are disabled there and the panel shows a clear status message.
 - **Breaking change:** `localStorage` is **no longer** the source of truth for config values (the old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config` entries are ignored). Only leaderboard/settings still use `localStorage`.
 
+#### Sequenced Waves (opt-in)
+
+The campaign is scripted (`src/waves/Formations.ts` `LEVELS`) by default. An
+opt-in **runtime-sequenced campaign** generates each level's waves from a
+difficulty curve instead:
+
+- **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`
+  with columns `level`, `levelName`, `wave`, `targetDifficulty` (0–100). A
+  level's row count sets its wave count, and the level count/names are read from
+  the file. It loads through the same CSV/`configStore` pipeline as the
+  enemy/ship CSVs (editable in dev, bundled read-only in production).
+- **Toggle:** `sequencedWavesEnabled` in the `ai-hell-game-rules` localStorage
+  record, default **false**. Enable it in a dev run from the browser console:
+
+  ```js
+  const k = 'ai-hell-game-rules';
+  const r = JSON.parse(localStorage.getItem(k) ?? '{}');
+  localStorage.setItem(k, JSON.stringify({ ...r, sequencedWavesEnabled: true }));
+  // reload the page
+  ```
+
+- **Fire rule:** generated levels 1–3 do not fire; levels 4+ do (GDD §2.4/§2.5).
+- **Fallback:** with the toggle off (or when the curve config is empty, the
+  candidate pool is empty, or generation fails) the scripted `LEVELS` campaign
+  is used. See `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9.6.
+
+Module: `src/waves/sequencedLevels.ts` (`buildSequencedLevels`), built on the
+read-only sequencer `src/core/difficultySequencer.ts`.
+
 #### Adding a New Enemy (convention)
 
 Enemy archetypes are CSV rows, not new scene files (see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.1 / §8 for the full reference).

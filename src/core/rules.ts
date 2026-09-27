@@ -2,8 +2,10 @@
  * General game-rules configuration module (GDD §4.4, §6.3).
  *
  * Single source of truth for the tunable game rules that are shared
- * across scenes — currently the power-up spawn interval, the per-ID
- * power-up drop weights and the per-weapon drop weights. Values are
+ * across scenes — the power-up spawn interval, the per-ID power-up drop
+ * weights, the per-weapon drop weights, the mineral-hold tunables and the
+ * opt-in `sequencedWavesEnabled` toggle that switches the run to a
+ * data-driven sequenced campaign (AH-0MUH6LEYY0054E63). Values are
  * persisted as a JSON blob in the browser's localStorage (browser-native,
  * GDD §6.3 web distribution model), so changes made live (for example via
  * a combat-gym control) survive page reloads. Falls back to built-in
