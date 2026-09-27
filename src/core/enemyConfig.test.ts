@@ -171,3 +171,18 @@ describe('Store-backed loaders', () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe('Data-driven enemy health (F1)', () => {
+  it('every existing seed archetype carries health: 1', () => {
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(config.health).toBe(1);
+    }
+  });
+
+  it('health is a positive integer for every seed', () => {
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(Number.isInteger(config.health)).toBe(true);
+      expect(config.health).toBeGreaterThan(0);
+    }
+  });
+});

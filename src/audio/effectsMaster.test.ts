@@ -18,6 +18,10 @@ import {
   THRUSTER_HUM_MAX_VOLUME,
   _getThrusterHumStateForTests,
   _resetAudioContextForTests,
+  playMajorExplosionSound,
+  MAJOR_EXPLOSION_THUMP_VOLUME,
+  MAJOR_EXPLOSION_BODY_VOLUME,
+  MAJOR_EXPLOSION_TAIL_VOLUME,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -28,6 +32,10 @@ interface RecordedGain {
     value: number;
     time: number;
   }[];
+  /** The node object returned to callers (for identity/routing assertions). */
+  node?: unknown;
+  /** Objects passed to `connect()` on this gain node. */
+  connectTargets: unknown[];
 }
 
 class RecordingAudioContext {
@@ -38,6 +46,8 @@ class RecordingAudioContext {
 
   oscillators: Array<{ type: string }> = [];
   gains: RecordedGain[] = [];
+  /** Every `connect(target)` call made on this context's nodes. */
+  connections: unknown[] = [];
 
   constructor() {
     RecordingAudioContext.instances.push(this);
@@ -46,6 +56,7 @@ class RecordingAudioContext {
   createOscillator(): unknown {
     const rec: { type: string } = { type: 'sine' };
     this.oscillators.push(rec);
+    const self = this;
     return {
       get type(): string { return rec.type; },
       set type(v: string) { rec.type = v; },
@@ -55,17 +66,25 @@ class RecordingAudioContext {
         linearRampToValueAtTime: (_value: number, _time: number) => {},
       },
       detune: { setValueAtTime: () => {} },
-      connect: () => ({ connect: () => ({}) }),
+      connect: (target: unknown) => {
+        self.connections.push(target);
+        return {
+          connect: (next: unknown) => {
+            self.connections.push(next);
+            return {};
+          },
+        };
+      },
       start: (_t: number) => {},
       stop: (_t: number) => {},
     };
   }
 
   createGain(): unknown {
-    const rec: RecordedGain = { gainEvents: [] };
+    const rec: RecordedGain = { gainEvents: [], connectTargets: [] };
     const self = this;
     this.gains.push(rec);
-    return {
+    const node = {
       context: self,
       gain: {
         setValueAtTime: (value: number, time: number) => {
@@ -81,8 +100,14 @@ class RecordingAudioContext {
           rec.gainEvents.push({ method: 'setValueAtTime', value: -1, time });
         },
       },
-      connect: () => ({}),
+      connect: (target: unknown) => {
+        rec.connectTargets.push(target);
+        self.connections.push(target);
+        return {};
+      },
     };
+    rec.node = node;
+    return node;
   }
 
   createBuffer(_channels: number, length: number, _sampleRate: number): unknown {
@@ -93,16 +118,26 @@ class RecordingAudioContext {
 
   createBufferSource(): unknown {
     this.oscillators.push({ type: 'noise' });
+    const self = this;
     return {
       buffer: null,
       loop: false,
-      connect: () => ({ connect: () => ({}) }),
+      connect: (target: unknown) => {
+        self.connections.push(target);
+        return {
+          connect: (next: unknown) => {
+            self.connections.push(next);
+            return {};
+          },
+        };
+      },
       start: (_t: number) => {},
       stop: (_t: number) => {},
     };
   }
 
   createBiquadFilter(): unknown {
+    const self = this;
     return {
       type: 'lowpass' as const,
       frequency: {
@@ -111,7 +146,10 @@ class RecordingAudioContext {
         linearRampToValueAtTime: () => {},
       },
       Q: { setValueAtTime: () => {} },
-      connect: () => ({}),
+      connect: (target: unknown) => {
+        self.connections.push(target);
+        return {};
+      },
     };
   }
 }
@@ -232,5 +270,39 @@ describe('AC3 — live volume change', () => {
     // but routes through the master gain (0.4) in series.
     expect(hum!.currentGain).toBe(0.8 * THRUSTER_HUM_MAX_VOLUME);
     expect(lastGainValue(masterGain()!)).toBe(0.4);
+  });
+});
+// ── AC5 — major-explosion cue routes through the master SFX gain ────
+
+describe('AC5 — major-explosion cue routes through the master SFX gain', () => {
+  beforeEach(() => {
+    prime();
+  });
+
+  it('all three major-explosion layers connect to the master gain node', () => {
+    const mg = masterGain()!;
+    const before = RecordingAudioContext.instances[0].connections.length;
+    playMajorExplosionSound();
+    const newConnections =
+      RecordingAudioContext.instances[0].connections.slice(before);
+    // Impact thump + descending body + noise wash each terminate at master.
+    expect(newConnections.filter((c) => c === mg.node)).toHaveLength(3);
+  });
+
+  it('the layers use the exported MAJOR_EXPLOSION_* volumes', () => {
+    const before = RecordingAudioContext.instances[0].gains.length;
+    playMajorExplosionSound();
+    const layers = RecordingAudioContext.instances[0].gains.slice(before);
+    const values = layers.flatMap((g) => g.gainEvents.map((e) => e.value));
+    expect(values).toContain(MAJOR_EXPLOSION_THUMP_VOLUME);
+    expect(values).toContain(MAJOR_EXPLOSION_BODY_VOLUME);
+    expect(values).toContain(MAJOR_EXPLOSION_TAIL_VOLUME);
+  });
+
+  it('muted master yields a zero master gain and the cue still never throws', () => {
+    setSfxMuted(true);
+    expect(() => playMajorExplosionSound()).not.toThrow();
+    expect(lastGainValue(masterGain()!)).toBe(0);
+    setSfxMuted(false);
   });
 });

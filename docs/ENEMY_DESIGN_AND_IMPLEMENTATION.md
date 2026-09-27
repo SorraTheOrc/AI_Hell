@@ -808,8 +808,10 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
 - `src/data/enemy-configs.csv` — one row per enemy archetype.
 - `src/data/ship-config.csv` — the single player-ship row.
 - `src/data/difficulty-curves.csv` — one row per `(level, wave)` for the optional
-  runtime-sequenced campaign (AH-0MUH6LEYY0054E63): `level`, `levelName`,
-  `wave`, `targetDifficulty` (0–100). See §9.6.
+  runtime-sequenced campaign (AH-0MUH6LEYY0054E63; mixed sources
+  AH-0MUH7Q6HN0006QPD): `level`, `levelName`, `wave`, `targetDifficulty`
+  (0–100) and an optional `source` (`generated` | `scripted`, default
+  `generated`). See §9.6.
 - `enemy-configs.csv` starts with a `#` comment header listing every column,
   the enum values and how to add an entry. The header is optional and is **not**
   rewritten by the dev save path, so `ship-config.csv` is currently headerless.
@@ -1108,33 +1110,52 @@ the campaign fire rule.
 
 - **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`.
   Columns: `level` (1-based), `levelName`, `wave` (1-based), `targetDifficulty`
-  (0–100). The number of rows for a level sets its wave count; the level count
-  and names are therefore data-driven. The CSV is loaded through the same
+  (0–100) and an optional `source` (`generated` | `scripted`, default
+  `generated`). The number of rows for a level sets its wave count; the level
+  count and names are therefore data-driven. The CSV is loaded through the same
   `configStore` / `configCsvPlugin` pipeline as the enemy/ship CSVs (editable in
   dev via `/api/csv/...`, bundled read-only in production) with the
   `parseDifficultyCurves` / `serializeDifficultyCurves` /
-  `validateDifficultyCurveRow` codec (`src/core/csv.ts`).
+  `validateDifficultyCurveRow` codec (`src/core/csv.ts`). The legacy 4-column
+  form keeps working: an absent `source` defaults to `generated`, and the codec
+  always writes the column back.
+- **Per-level source (mixed campaigns, AH-0MUH7Q6HN0006QPD):** `source` is a
+  **per-level** selector — all rows of a level must agree, and a level whose
+  rows disagree is malformed (the whole file falls back to the computed default
+  curve). A `scripted` level is taken **byte-for-byte** from the static `LEVELS`
+  campaign (its own waves and `shootEnabled` flags) and is never passed to the
+  sequencer; its `targetDifficulty` is ignored. The merged campaign starts from
+  the static `LEVELS` skeleton, so levels 1–5 are always present unless a
+  `generated` level overrides one, and a `generated` level numbered beyond the
+  static five is appended (ordered ascending by `level`, because `WaveManager`
+  progresses by array index). This lets designers hand-tune onboarding and
+  set-piece levels while the sequencer ramps the rest.
 - **Toggle:** the opt-in `GameRules.sequencedWavesEnabled` scalar
   (`src/core/rules.ts`, default `false`) in the `ai-hell-game-rules`
   localStorage record. `PlayScene.create()` only overrides the campaign when it
   is `true`; otherwise the static `LEVELS` campaign is used untouched.
-- **Fire rule:** derived from the 1-based level number — levels 1–3 do not fire,
-  levels 4+ do (GDD §2.4/§2.5) — and passed to `sequencer()` as
-  `defaultShootEnabled`.
+- **Fire rule:** derived from the 1-based level number for **generated** levels
+  — levels 1–3 do not fire, levels 4+ do (GDD §2.4/§2.5) — and passed to
+  `sequencer()` as `defaultShootEnabled`; **scripted** levels keep their own
+  `LEVELS` flags.
 - **Determinism:** generation is a pure function of the config and the
   candidate pool (no RNG, no clock, no I/O), so the same inputs yield identical
-  level/wave definitions.
-- **Fallback:** with no rows, an empty candidate pool, or a throw from the
-  sequencer, `buildSequencedLevels()` returns the static `LEVELS` campaign; a
+  level/wave definitions; scripted levels are static data.
+- **Fallback:** per level — a `generated` level with an empty/malformed curve
+  (or a throw from the sequencer) keeps its static `LEVELS` definition when one
+  exists and is skipped when it has no static counterpart (a configured level
+  numbered beyond `LEVEL_COUNT`). The whole campaign falls back to static
+  `LEVELS` only when there are no rows, the candidate pool is empty, the merged
+  result would be empty, or a level declares conflicting sources. A
   missing/malformed curve CSV falls back to the computed default curve
-  (`defaultDifficultyCurves()`, seeded from the measured `LEVELS` scores); and
-  `PlayScene` catches any error and leaves the static campaign active. The run
-  is therefore never left unplayable.
+  (`defaultDifficultyCurves()`, seeded from the measured `LEVELS` scores, all
+  `generated`); and `PlayScene` catches any error and leaves the static campaign
+  active. The run is therefore never left unplayable.
 
 Related work: the sequencer primitive was delivered by `AH-0MUDIWETP003XC3X`;
-the wiring is `AH-0MUH6LEYY0054E63`; player-state adaptation, runtime curve
-editing (`AH-0MUGXDVPH005TIZL`) and per-level generated-vs-scripted mixing
-(`AH-0MUH7Q6HN0006QPD`) remain out of scope.
+the wiring is `AH-0MUH6LEYY0054E63`; per-level generated-vs-scripted mixing is
+`AH-0MUH7Q6HN0006QPD`; player-state adaptation and runtime curve editing
+(`AH-0MUGXDVPH005TIZL`) remain out of scope.
 
 ## Audio Best Practices
 

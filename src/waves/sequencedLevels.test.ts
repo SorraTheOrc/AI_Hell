@@ -12,10 +12,10 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import { buildSequencedLevels } from './sequencedLevels';
-import { LEVELS } from './Formations';
+import { LEVELS, LEVEL_COUNT } from './Formations';
 import { WaveManager } from './WaveManager';
 import { defaultCandidatePool } from '../core/difficultySequencer';
-import type { DifficultyCurveRow } from '../core/configTypes';
+import type { DifficultyCurveRow, DifficultySource } from '../core/configTypes';
 import {
   loadConfigs,
   resetConfigStore,
@@ -44,18 +44,22 @@ function firstPlan(levels: ReturnType<typeof buildSequencedLevels>) {
 }
 
 describe('buildSequencedLevels (AH-0MUITS0VD000DVSV)', () => {
-  it('builds one level per configured level, with the configured name and wave count', () => {
+  it('overrides configured levels on the full static skeleton, with configured names and wave counts', () => {
     const rows = [
       ...levelRows(1, 'Entry', [5, 10]),
       ...levelRows(2, 'Descent', [20, 25, 30]),
     ];
     const levels = buildSequencedLevels(rows);
 
-    expect(levels.map((l) => l.level)).toEqual([1, 2]);
+    // The static skeleton is always present; configured levels override it.
+    expect(levels.map((l) => l.level)).toEqual(LEVELS.map((l) => l.level));
     expect(levels[0].name).toBe('Entry');
     expect(levels[1].name).toBe('Descent');
     expect(levels[0].waves.length).toBe(2);
     expect(levels[1].waves.length).toBe(3);
+    // Unconfigured static levels remain verbatim.
+    expect(levels[2]).toEqual(LEVELS[2]);
+    expect(levels[4]).toEqual(LEVELS[4]);
   });
 
   it('produces exactly one wave per configured target (curve length ⇒ wave count)', () => {
@@ -241,9 +245,17 @@ describe('End-to-end acceptance — CSV to spawn plan (AH-0MUITRWLO001Y4Y5)', ()
 
     const levels = buildSequencedLevels();
 
-    expect(levels.map((l) => l.level)).toEqual([1, 4]);
+    // The static skeleton is present; levels 1 and 4 are overridden.
+    expect(levels.map((l) => l.level)).toEqual(LEVELS.map((l) => l.level));
     expect(levels[0].name).toBe('Acceptance Entry');
-    expect(levels.map((l) => l.waves.length)).toEqual([2, 1]);
+    expect(levels[3].name).toBe('Acceptance Firestorm');
+    expect(levels.map((l) => l.waves.length)).toEqual([
+      2,
+      LEVELS[1].waves.length,
+      LEVELS[2].waves.length,
+      1,
+      LEVELS[4].waves.length,
+    ]);
 
     const plan = firstPlan(levels);
     const firstWave = levels[0].waves[0];
@@ -326,5 +338,175 @@ describe('End-to-end acceptance — CSV to spawn plan (AH-0MUITRWLO001Y4Y5)', ()
     expect(buildSequencedLevels([])).toBe(LEVELS);
     const rows = levelRows(1, 'Entry', [10]);
     expect(buildSequencedLevels(rows, [])).toBe(LEVELS);
+  });
+});
+
+// ── Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD) ────
+
+/**
+ * The merged campaign must let a single config mix `generated` levels (from
+ * the sequencer) with `scripted` levels (verbatim static `LEVELS`), keep the
+ * static skeleton, and fall back safely per level. Every test asserts
+ * observable output through the public `buildSequencedLevels` API.
+ */
+describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
+  /** Curve rows for one level with an explicit source. */
+  function sourcedRows(
+    level: number,
+    levelName: string,
+    targets: number[],
+    source: DifficultySource,
+  ): DifficultyCurveRow[] {
+    return targets.map((targetDifficulty, i) => ({
+      level,
+      levelName,
+      wave: i + 1,
+      targetDifficulty,
+      source,
+    }));
+  }
+
+  it('merges a scripted level (verbatim static) with a generated level', () => {
+    const rows = [
+      ...sourcedRows(2, 'Descent', [10, 12, 14], 'scripted'),
+      ...sourcedRows(4, 'Firestorm', [20, 24, 28], 'generated'),
+    ];
+    const levels = buildSequencedLevels(rows);
+
+    // Scripted level deep-equals (and is) the matching static definition.
+    expect(levels.find((l) => l.level === 2)).toEqual(LEVELS[1]);
+    expect(levels.find((l) => l.level === 2)).toBe(LEVELS[1]);
+
+    // Generated level's waves come from the sequencer (not static LEVELS).
+    const generated = levels.find((l) => l.level === 4)!;
+    expect(generated.name).toBe('Firestorm');
+    expect(generated.waves.length).toBe(3);
+    expect(generated).not.toEqual(LEVELS[3]);
+  });
+
+  it('a scripted level ignores its curve targets and is never sequenced', () => {
+    const rows = sourcedRows(1, 'Entry', [99, 99, 99, 99, 99], 'scripted');
+    const levels = buildSequencedLevels(rows);
+    const levelOne = levels.find((l) => l.level === 1)!;
+    // Byte-for-byte static: same object, not a sequencer-produced copy.
+    expect(levelOne).toBe(LEVELS[0]);
+    expect(levelOne.waves).toEqual(LEVELS[0].waves);
+  });
+
+  it('keeps every static level and appends a generated level beyond LEVEL_COUNT, ascending', () => {
+    const rows = sourcedRows(LEVEL_COUNT + 2, 'Bonus', [30], 'generated');
+    const levels = buildSequencedLevels(rows);
+
+    expect(levels.map((l) => l.level)).toEqual([
+      1, 2, 3, 4, 5, LEVEL_COUNT + 2,
+    ]);
+    const appended = levels[levels.length - 1];
+    expect(appended.name).toBe('Bonus');
+    expect(appended.waves.length).toBe(1);
+  });
+
+  it('a generated level inside a mixed campaign equals the all-generated builder output', () => {
+    const generatedRows = sourcedRows(4, 'Firestorm', [18, 22, 26], 'generated');
+    const mixed = buildSequencedLevels([
+      ...sourcedRows(1, 'Entry', [5, 8], 'scripted'),
+      ...generatedRows,
+    ]);
+    const allGenerated = buildSequencedLevels(generatedRows);
+
+    expect(mixed.find((l) => l.level === 4)).toEqual(
+      allGenerated.find((l) => l.level === 4),
+    );
+  });
+
+  it('is deterministic for the same mixed config', () => {
+    const rows = [
+      ...sourcedRows(1, 'Entry', [5, 8], 'scripted'),
+      ...sourcedRows(4, 'Firestorm', [18, 22, 26], 'generated'),
+    ];
+    expect(buildSequencedLevels(rows)).toEqual(buildSequencedLevels(rows));
+  });
+
+  it('applies the fire rule per source (generated 1–3 off / 4+ on; scripted keeps LEVELS flags)', () => {
+    const rows = [
+      ...sourcedRows(1, 'Entry', [4], 'generated'),
+      ...sourcedRows(4, 'Firestorm', [20], 'generated'),
+      ...sourcedRows(5, 'Predictable Death', [30], 'scripted'),
+    ];
+    const levels = buildSequencedLevels(rows);
+
+    const generated1 = levels.find((l) => l.level === 1)!;
+    const generated4 = levels.find((l) => l.level === 4)!;
+    const scripted5 = levels.find((l) => l.level === 5)!;
+
+    expect(generated1.waves.every((w) => w.shootEnabled === false)).toBe(true);
+    expect(generated4.waves.every((w) => w.shootEnabled === true)).toBe(true);
+    // Scripted levels keep their own static flags, not the generated fire rule.
+    expect(scripted5).toBe(LEVELS[4]);
+    expect(scripted5.waves.every((w) => w.shootEnabled === true)).toBe(true);
+  });
+
+  it('falls back per level when one generated curve is malformed, preserving the rest', () => {
+    const rows: DifficultyCurveRow[] = [
+      ...sourcedRows(1, 'Entry', [5], 'scripted'),
+      ...sourcedRows(2, 'Descent', [10, 12], 'generated'),
+      {
+        level: 4,
+        levelName: 'Firestorm',
+        wave: 1,
+        targetDifficulty: Number.NaN,
+        source: 'generated',
+      },
+    ];
+    const levels = buildSequencedLevels(rows);
+
+    // Scripted level stays static; generated level 2 stays generated.
+    expect(levels.find((l) => l.level === 1)).toBe(LEVELS[0]);
+    const level2 = levels.find((l) => l.level === 2)!;
+    expect(level2.waves.length).toBe(2);
+    expect(level2).not.toEqual(LEVELS[1]);
+
+    // The malformed generated level 4 falls back to its static definition.
+    expect(levels.find((l) => l.level === 4)).toBe(LEVELS[3]);
+  });
+
+  it('skips a generated level beyond LEVEL_COUNT when its curve is malformed', () => {
+    const rows: DifficultyCurveRow[] = [
+      {
+        level: LEVEL_COUNT + 1,
+        levelName: 'Broken Bonus',
+        wave: 1,
+        targetDifficulty: Number.NaN,
+        source: 'generated',
+      },
+    ];
+    const levels = buildSequencedLevels(rows);
+
+    expect(levels.map((l) => l.level)).toEqual(LEVELS.map((l) => l.level));
+    expect(levels.some((l) => l.level === LEVEL_COUNT + 1)).toBe(false);
+  });
+
+  it('skips a scripted level that has no static counterpart', () => {
+    const rows = sourcedRows(LEVEL_COUNT + 1, 'Scripted Bonus', [10], 'scripted');
+    const levels = buildSequencedLevels(rows);
+
+    expect(levels.some((l) => l.level === LEVEL_COUNT + 1)).toBe(false);
+    expect(levels.map((l) => l.level)).toEqual(LEVELS.map((l) => l.level));
+  });
+
+  it('falls back to static LEVELS when a level declares conflicting sources', () => {
+    const rows: DifficultyCurveRow[] = [
+      { level: 2, levelName: 'Descent', wave: 1, targetDifficulty: 10, source: 'generated' },
+      { level: 2, levelName: 'Descent', wave: 2, targetDifficulty: 12, source: 'scripted' },
+    ];
+    expect(buildSequencedLevels(rows)).toBe(LEVELS);
+  });
+
+  it('does not mutate the static LEVELS campaign while merging', () => {
+    const before = JSON.stringify(LEVELS);
+    buildSequencedLevels([
+      ...sourcedRows(1, 'Entry', [5], 'scripted'),
+      ...sourcedRows(4, 'Firestorm', [20, 25], 'generated'),
+    ]);
+    expect(JSON.stringify(LEVELS)).toBe(before);
   });
 });

@@ -542,6 +542,7 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
       levelName: 'Entry',
       wave: 1,
       targetDifficulty: 42,
+      source: 'generated',
     });
     expect(curves.length).toBe(3);
   });
@@ -599,14 +600,45 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
   });
 
+  it('a level whose rows declare conflicting sources is malformed and falls back as a whole', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]:
+        'level,levelName,wave,targetDifficulty,source\n' +
+        '1,Entry,1,5,generated\n' +
+        '1,Entry,2,9,scripted\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+    expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
+  });
+
+  it('an explicit scripted source is preserved through the dev load', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]:
+        'level,levelName,wave,targetDifficulty,source\n' +
+        '3,The Core,1,,scripted\n' +
+        '4,Firestorm,1,20,generated\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+    const rows = loadDifficultyCurves();
+    expect(rows.map((r) => r.source)).toEqual(['scripted', 'generated']);
+  });
+
   it('saveDifficultyCurves PUTs the serialised curve and refreshes the registry', async () => {
     const server = defaultServer();
     vi.stubGlobal('fetch', server.fetchMock);
     await loadConfigs();
 
     const updated = [
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 55 },
-      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 77 },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 55, source: 'generated' as const },
+      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 77, source: 'generated' as const },
     ];
     const result = await saveDifficultyCurves(updated);
 

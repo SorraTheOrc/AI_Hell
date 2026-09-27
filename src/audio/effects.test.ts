@@ -40,6 +40,18 @@ import {
   PLAYER_DESTRUCTION_BODY_VOLUME,
   PLAYER_DESTRUCTION_TAIL_DURATION,
   PLAYER_DESTRUCTION_TAIL_VOLUME,
+  playMajorExplosionSound,
+  MAJOR_EXPLOSION_THUMP_START_HZ,
+  MAJOR_EXPLOSION_THUMP_END_HZ,
+  MAJOR_EXPLOSION_THUMP_DURATION,
+  MAJOR_EXPLOSION_THUMP_VOLUME,
+  MAJOR_EXPLOSION_BODY_START_HZ,
+  MAJOR_EXPLOSION_BODY_END_HZ,
+  MAJOR_EXPLOSION_BODY_DURATION,
+  MAJOR_EXPLOSION_BODY_VOLUME,
+  MAJOR_EXPLOSION_TAIL_DURATION,
+  MAJOR_EXPLOSION_TAIL_VOLUME,
+  MAJOR_EXPLOSION_MAX_VOICES,
   playTankDestructionSound,
   EXPLOSION_PITCH_JITTER,
   playDiverFireSound,
@@ -1375,6 +1387,124 @@ describe('player-destruction cue — layered hull breach (AH-0MUDY2ID7006VY3A)',
       playPlayerDestructionSound();
       const gains = newGains(snap);
       expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+    });
+  });
+});
+
+// ── Wave-timeout major-explosion cue (AH-0MUJ1YZJ9008O4RC) ──────────
+
+describe('major-explosion cue — layered wave-timeout blast (AH-0MUJ1YZJ9008O4RC)', () => {
+  beforeEach(() => {
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('is a safe no-op without an AudioContext (never throws)', () => {
+    expect(() => playMajorExplosionSound()).not.toThrow();
+  });
+
+  it('caps concurrent voices at 4 by default (GDD §7.3 ceiling)', () => {
+    expect(MAJOR_EXPLOSION_MAX_VOICES).toBe(4);
+    expect(MAJOR_EXPLOSION_MAX_VOICES).toBeLessThanOrEqual(4);
+  });
+
+  describe('with a recording context', () => {
+    beforeEach(() => {
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      _resetAudioContextForTests();
+      RecordingAudioContext.instances.length = 0;
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      playCannonFireSound(); // prime the module-scoped context
+    });
+
+    it('layers three oscillators (thump + body + noise tail)', () => {
+      const snap = snapshot();
+      playMajorExplosionSound();
+      const oscs = newOscillators(snap);
+      // Two tonal oscillators plus one noise buffer source.
+      expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+      expect(oscs.filter((o) => o.type === 'noise')).toHaveLength(1);
+    });
+
+    it('uses the exported constants for every layer frequency/duration/volume', () => {
+      const snap = snapshot();
+      playMajorExplosionSound();
+      const oscs = newOscillators(snap);
+      const gains = newGains(snap);
+
+      const thump = oscs.find(
+        (o) =>
+          o.type === 'sawtooth' &&
+          o.freqEvents[0]?.value === MAJOR_EXPLOSION_THUMP_START_HZ,
+      )!;
+      expect(thump).toBeDefined();
+      expect(thump.freqEvents[thump.freqEvents.length - 1].value).toBe(
+        MAJOR_EXPLOSION_THUMP_END_HZ,
+      );
+      expect(thump.stopTime! - thump.startTime!).toBeCloseTo(
+        MAJOR_EXPLOSION_THUMP_DURATION + 0.02,
+        5,
+      );
+
+      const body = oscs.find(
+        (o) =>
+          o.type === 'triangle' &&
+          o.freqEvents[0]?.value === MAJOR_EXPLOSION_BODY_START_HZ,
+      )!;
+      expect(body).toBeDefined();
+      expect(body.freqEvents[body.freqEvents.length - 1].value).toBe(
+        MAJOR_EXPLOSION_BODY_END_HZ,
+      );
+      expect(body.stopTime! - body.startTime!).toBeCloseTo(
+        MAJOR_EXPLOSION_BODY_DURATION + 0.02,
+        5,
+      );
+
+      // The noise tail runs for the exported tail duration.
+      const noise = oscs.find((o) => o.type === 'noise')!;
+      expect(noise).toBeDefined();
+      expect(noise.stopTime! - noise.startTime!).toBeCloseTo(
+        MAJOR_EXPLOSION_TAIL_DURATION + 0.02,
+        5,
+      );
+
+      // Layered amplitudes come from the exported constants.
+      const values = gains.flatMap((g) => g.gainEvents.map((e) => e.value));
+      expect(values).toContain(MAJOR_EXPLOSION_THUMP_VOLUME);
+      expect(values).toContain(MAJOR_EXPLOSION_BODY_VOLUME);
+      expect(values).toContain(MAJOR_EXPLOSION_TAIL_VOLUME);
+    });
+
+    it('is distinct from the generic and player-destruction cues', () => {
+      const genericSnap = snapshot();
+      playDestructionSound();
+      const genericOscs = newOscillators(genericSnap);
+
+      const playerSnap = snapshot();
+      playPlayerDestructionSound();
+      const playerOscs = newOscillators(playerSnap);
+
+      const majorSnap = snapshot();
+      playMajorExplosionSound();
+      const majorOscs = newOscillators(majorSnap);
+
+      // Generic cue is a single sawtooth; the major cue is layered.
+      expect(genericOscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+      expect(majorOscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+      // The major cue starts lower/heavier than the generic 440 Hz sweep.
+      const majorStart = majorOscs.find((o) => o.type !== 'noise')!.freqEvents[0].value;
+      expect(majorStart).toBeLessThan(440);
+      // Its frequency contour differs from the player cue's thump/body.
+      const playerThumpStart = playerOscs.find((o) => o.type !== 'noise')!.freqEvents[0].value;
+      expect(majorStart).not.toBe(playerThumpStart);
+    });
+
+    it('keeps every layer within the heavy-cue volume ceiling (≤ 0.3)', () => {
+      const snap = snapshot();
+      playMajorExplosionSound();
+      const gains = newGains(snap);
+      expect(peakGain(gains)).toBeLessThanOrEqual(0.3);
     });
   });
 });

@@ -910,30 +910,86 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
     return { level: '2', levelName: 'Descent', wave: '1', targetDifficulty: '8.88' };
   }
 
-  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER', async () => {
+  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER including source', async () => {
     const m = await loadCsvModule();
     expect(m.DIFFICULTY_CURVE_COLUMN_ORDER).toEqual([
-      'level', 'levelName', 'wave', 'targetDifficulty',
+      'level', 'levelName', 'wave', 'targetDifficulty', 'source',
     ]);
   });
 
-  it('parses typed rows from a CSV string', async () => {
+  it('parses typed rows from a CSV string, defaulting source to generated', async () => {
     const m = await loadCsvModule();
     const rows = m.parseDifficultyCurves(
       'level,levelName,wave,targetDifficulty\n3,The Core,2,13.75\n',
     );
     expect(rows).toEqual([
-      { level: 3, levelName: 'The Core', wave: 2, targetDifficulty: 13.75 },
+      {
+        level: 3,
+        levelName: 'The Core',
+        wave: 2,
+        targetDifficulty: 13.75,
+        source: 'generated',
+      },
     ]);
   });
 
-  it('round-trips rows through serialize → parse', async () => {
+  it('round-trips generated and scripted sources through serialize → parse', async () => {
     const m = await loadCsvModule();
     const rows = [
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49 },
-      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12 },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49, source: 'generated' as const },
+      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12, source: 'scripted' as const },
     ];
     expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(rows))).toEqual(rows);
+  });
+
+  it('the existing 4-column CSV still parses and round-trips (source defaults to generated)', async () => {
+    const m = await loadCsvModule();
+    const legacy = 'level,levelName,wave,targetDifficulty\n1,Entry,1,5\n';
+    const parsed = m.parseDifficultyCurves(legacy);
+    expect(parsed).toEqual([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, source: 'generated' },
+    ]);
+    // Serialising adds the source column; re-parsing is stable.
+    expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(parsed))).toEqual(parsed);
+  });
+
+  it('a scripted row may omit targetDifficulty (it is ignored)', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty,source\n' +
+        '3,The Core,1,,scripted\n',
+    );
+    expect(rows).toEqual([
+      { level: 3, levelName: 'The Core', wave: 1, targetDifficulty: 0, source: 'scripted' },
+    ]);
+  });
+
+  it('a generated row still requires targetDifficulty', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      level: '1', levelName: 'Entry', wave: '1', source: 'generated',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('targetdifficulty');
+  });
+
+  it('an unrecognised source is malformed', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      ...validRow(), source: 'hand-made',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('source');
+  });
+
+  it('a scripted row with a malformed target is still accepted (target ignored)', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty,source\n' +
+        '3,The Core,1,nope,scripted\n',
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].source).toBe('scripted');
   });
 
   it('validation passes for a valid row', async () => {
@@ -983,7 +1039,95 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
         'bad,Entry,3,9\n',
     );
     expect(rows).toEqual([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5 },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, source: 'generated' },
     ]);
+  });
+});
+
+// ── AC (F1): data-driven enemy health column ────────────────────────
+
+describe('Enemy health column (F1)', () => {
+  it('health is part of the stable enemy column order', async () => {
+    const m = await loadCsvModule();
+    expect(m.ENEMY_COLUMN_ORDER).toContain('health');
+  });
+
+  it('coerceEnemyConfig reads the health column as a number', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+      health: '5',
+    };
+    const config = m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(config.health).toBe(5);
+  });
+
+  it('a missing health column coerces to the documented default of 1', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'scout', displayName: 'Scout', formationKind: 'v',
+      count: '6', spacingX: '26', spacingY: '22', driftSpeed: '40',
+      startX: '240', startY: '270', size: '16',
+      color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+      shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '200',
+      bulletLifetime: '1.5', burstCount: '1', shotProbability: '1',
+    };
+    const config = m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(config.health).toBe(1);
+  });
+
+  it('health round-trips through serializeEnemyConfigs → parseCsvRows → coerceEnemyConfig', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.tank, health: 5 };
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([config]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.health).toBe(5);
+  });
+
+  it('every serialized archetype round-trips its health value', async () => {
+    const m = await loadCsvModule();
+    const configs = [
+      { ...DEFAULT_ENEMY_CONFIGS.scout, health: 1 },
+      { ...DEFAULT_ENEMY_CONFIGS.tank, health: 3 },
+    ];
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs(configs));
+    expect(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS).health).toBe(1);
+    expect(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS).health).toBe(3);
+  });
+
+  it('validateEnemyConfig rejects non-positive and non-integer health', async () => {
+    const m = await loadCsvModule();
+    const base: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+    };
+    expect(m.validateEnemyConfig({ ...base, health: '5' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
+    expect(m.validateEnemyConfig({ ...base, health: '0' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: '-2' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: '2.5' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: 'many' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+  });
+
+  it('a malformed health value coerces to 1 rather than 0', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+      health: 'not-a-number',
+    };
+    expect(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS).health).toBe(1);
   });
 });

@@ -19,6 +19,7 @@ import {
   type ShipConfig,
   type ControlScheme,
   type DifficultyCurveRow,
+  type DifficultySource,
 } from './configTypes';
 import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
 
@@ -36,6 +37,12 @@ const VALID_CONTROL_SCHEMES: ControlScheme[] = [
   'fourDirectional', 'asteroids',
 ];
 
+/** Valid per-level source selectors (AH-0MUH7Q6HN0006QPD). */
+const VALID_DIFFICULTY_SOURCES: DifficultySource[] = ['generated', 'scripted'];
+
+/** Default level source when the `source` column is absent (AH-0MUH7Q6HN0006QPD). */
+const DEFAULT_DIFFICULTY_SOURCE: DifficultySource = 'generated';
+
 // ── Enemy config column order (for serialization) ──────────────────
 
 /** Stable column order for the enemy-config CSV. Exported for plugin validation. */
@@ -43,8 +50,11 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'key', 'displayName', 'formationKind', 'count', 'spacingX', 'spacingY',
   'driftSpeed', 'startX', 'startY', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
-  'bulletLifetime', 'burstCount', 'shotProbability',
+  'bulletLifetime', 'burstCount', 'shotProbability', 'health',
 ];
+
+/** Documented default hit points for an enemy when the column is absent/invalid. */
+export const DEFAULT_ENEMY_HEALTH = 1;
 
 // ── Ship config column order (for serialization) ───────────────────
 
@@ -263,6 +273,14 @@ export function validateEnemyConfig(
     }
   }
 
+  // Validate health: optional, but when present must be a positive integer.
+  const health = row.health;
+  if (health != null && health.trim() !== '' && !isPositiveInteger(health)) {
+    errors.push(
+      `Invalid health: "${health}" — must be a positive integer`,
+    );
+  }
+
   // Validate hex colours.
   for (const field of ['color', 'bulletColor']) {
     const val = row[field];
@@ -370,6 +388,7 @@ export function coerceEnemyConfig(
   merged.bulletLifetime = coerceNumber(row.bulletLifetime, merged.bulletLifetime);
   merged.burstCount = coerceNumber(row.burstCount, merged.burstCount);
   merged.shotProbability = coerceNumber(row.shotProbability, merged.shotProbability);
+  merged.health = coerceHealth(row.health, merged.health ?? DEFAULT_ENEMY_HEALTH);
 
   return merged;
 }
@@ -403,7 +422,7 @@ export function coerceShipConfig(
 
 /** Stable column order for the difficulty-curve CSV. Exported for plugin validation. */
 export const DIFFICULTY_CURVE_COLUMN_ORDER: (keyof DifficultyCurveRow)[] = [
-  'level', 'levelName', 'wave', 'targetDifficulty',
+  'level', 'levelName', 'wave', 'targetDifficulty', 'source',
 ];
 
 /**
@@ -435,27 +454,66 @@ export function validateDifficultyCurveRow(
     errors.push('Missing required field: levelName');
   }
 
-  const target = row.targetDifficulty;
-  if (target == null || target.trim() === '') {
-    errors.push('Missing required field: targetDifficulty');
-  } else {
-    const n = Number(target);
-    if (Number.isNaN(n)) {
-      errors.push(`Malformed number for targetDifficulty: "${target}"`);
-    } else if (n < 0 || n > 100) {
-      errors.push(
-        `targetDifficulty out of range (0–100): "${target}"`,
-      );
+  // Per-level source selector: optional, defaults to `generated`. An
+  // explicit value must be one of the valid enums.
+  const source = normaliseDifficultySource(row.source);
+  if (source === null) {
+    errors.push(
+      `Invalid source: "${row.source}" — must be generated or scripted`,
+    );
+  }
+
+  // `targetDifficulty` is required for generated rows; for scripted rows it
+  // is ignored (the level's waves come from static `LEVELS`).
+  if (source !== 'scripted') {
+    const target = row.targetDifficulty;
+    if (target == null || target.trim() === '') {
+      errors.push('Missing required field: targetDifficulty');
+    } else {
+      const n = Number(target);
+      if (Number.isNaN(n)) {
+        errors.push(`Malformed number for targetDifficulty: "${target}"`);
+      } else if (n < 0 || n > 100) {
+        errors.push(
+          `targetDifficulty out of range (0–100): "${target}"`,
+        );
+      }
     }
   }
 
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Normalise a raw `source` cell. Returns the default `generated` when the
+ * cell is absent or blank, the parsed enum when valid, and `null` when the
+ * cell holds an unrecognised value (malformed).
+ */
+function normaliseDifficultySource(
+  value: string | undefined,
+): DifficultySource | null {
+  if (value == null || value.trim() === '') return DEFAULT_DIFFICULTY_SOURCE;
+  const trimmed = value.trim();
+  return VALID_DIFFICULTY_SOURCES.includes(trimmed as DifficultySource)
+    ? (trimmed as DifficultySource)
+    : null;
+}
+
 /** True when `value` is a string holding a positive integer (`1`, `2`, …). */
 function isPositiveInteger(value: string): boolean {
   if (!/^\d+$/.test(value.trim())) return false;
   return Number(value) >= 1;
+}
+
+/**
+ * Coerce an enemy `health` value. A missing/blank value falls back to the
+ * documented default (`1`); any other malformed value (non-numeric, zero,
+ * negative, fractional) also falls back to the default rather than to `0`, so
+ * an enemy can never be created with zero/negative hit points.
+ */
+function coerceHealth(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === '') return fallback;
+  return isPositiveInteger(value) ? Number(value) : fallback;
 }
 
 /**
@@ -467,11 +525,17 @@ export function coerceDifficultyCurveRow(
   row: Record<string, string>,
 ): DifficultyCurveRow | null {
   if (!validateDifficultyCurveRow(row).ok) return null;
+  const source = normaliseDifficultySource(row.source) ?? DEFAULT_DIFFICULTY_SOURCE;
+  // A scripted row's target is ignored, so an absent/blank value coerces to 0
+  // rather than NaN; a generated row's target is guaranteed present + numeric.
+  const rawTarget = row.targetDifficulty?.trim() ?? '';
+  const parsedTarget = rawTarget === '' ? 0 : Number(rawTarget);
   return {
     level: Number(row.level),
     levelName: row.levelName.trim(),
     wave: Number(row.wave),
-    targetDifficulty: Number(row.targetDifficulty),
+    targetDifficulty: Number.isFinite(parsedTarget) ? parsedTarget : 0,
+    source,
   };
 }
 
@@ -497,9 +561,14 @@ export function parseDifficultyCurves(csv: string): DifficultyCurveRow[] {
 export function serializeDifficultyCurves(rows: DifficultyCurveRow[]): string {
   const header = DIFFICULTY_CURVE_COLUMN_ORDER.join(',');
   const body = rows.map((row) =>
-    DIFFICULTY_CURVE_COLUMN_ORDER.map((col) =>
-      quoteCsvField(String(row[col] ?? '')),
-    ).join(','),
+    DIFFICULTY_CURVE_COLUMN_ORDER.map((col) => {
+      // `source` is always written explicitly, defaulting to `generated`, so
+      // the serialised file and its parsed form agree on the default.
+      const value = col === 'source'
+        ? (row.source ?? DEFAULT_DIFFICULTY_SOURCE)
+        : row[col];
+      return quoteCsvField(String(value ?? ''));
+    }).join(','),
   );
   return [header, ...body].join('\n');
 }
