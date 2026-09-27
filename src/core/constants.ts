@@ -189,6 +189,27 @@ export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 /** Blink half-period while invulnerable after a hit (seconds). */
 export const COMBAT_HIT_BLINK_INTERVAL = 0.1;
 
+// ── Danger detection (parent AH-0MUIYX1EE008FVS8) ─────────────────
+// Inputs to the automatic Phase Shift (P6) trigger. Danger is the
+// combined count of hostile bodies + hostile bullets whose centre lies
+// within DANGER_RADIUS of the ship; reaching DANGER_THREAT_THRESHOLD
+// makes the player "in danger". Producer decisions Q1 (combined count,
+// 40 px radius, threshold 3) and Q5 (all hostile archetypes count;
+// player bullets and minerals do not).
+
+/**
+ * Danger radius (px): hostile threats within this centre-to-centre
+ * distance of the ship count toward the danger threshold. 2 × SHIP_SIZE
+ * = 40 px.
+ */
+export const DANGER_RADIUS = 2 * SHIP_SIZE;
+
+/**
+ * Combined hostile-threat count at (or above) which an automatic Phase
+ * Shift triggers (Q1).
+ */
+export const DANGER_THREAT_THRESHOLD = 3;
+
 // ── Player hit VFX (AH-0MU3VQ0JR009CSIN) ──────────────────────────
 
 /** Peak scale factor for the player-hit scale pulse VFX (1.5× normal). */
