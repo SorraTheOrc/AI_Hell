@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.6 (2026-09-27)
+### Features
+- Gym practice now matches the real game exactly, so what you learn there always works in play. (AH-0MUII2FJ5007MDDA)
+- The power-up choice screen now fully blocks the game behind it for clearer focus. (AH-0MUDYSIRY0036EDC)
+- Releases now publish to the game site automatically. (AH-0MUFGUR9C003XD77)
+- Asteroids now drift in from offscreen in every wave, growing more frequent as you progress. (AH-0MUDYS2SZ004H123)
+- Press ? in the gyms to pause and see what every power-up and weapon does. (AH-0MUAYB67I002REOZ)
+- Enemy and ship tuning now lives in editable CSV files, so designers can tweak values without touching code. (AH-0MTZWZ9TE009CVUA)
+- Speed Boost now also makes you fire 50% faster, not just move faster. (AH-0MUAYB9JS0025YUB)
+- Your ship's destruction now hits hard with screen shake, a bright flash, debris, and a heavier boom. (AH-0MUAYB4R3002ZIZY)
+- Gym tuning panels can now be collapsed to see the full scene. (AH-0MUDYFMUX007Q0W3)
+- Training gyms now use the same combat code as the real game, so practice matches actual gameplay. (AH-0MUDCT7EU0061OSZ)
+- Your mineral hold now fills as a glowing bar, so you can see your progress at a glance. (AH-0MUDYTM7C00071Y1)
+- Waves now scale to your skill for a fairer, more exciting challenge. (AH-0MUDIWETP003XC3X)
+- See where your high score will rank as you type your initials. (AH-0MUE86S5F002VVQD)
+- Tune how long enemy bullets last and see it reflected in enemy difficulty. (AH-0MUDYTPMC002GLEJ)
+- Design and preview custom difficulty curves with a new wave table and column guide. (AH-0MUGXDVPH005TIZL)
+- The gym index can now be navigated and launched entirely with the keyboard. (AH-0MUDZFBYY008P7ZE)
+### Bug Fixes
+- Asteroids now drop minerals in gyms, matching the main game. (AH-0MUHMT5JC004WRSB)
+- Shield and phase shift power-ups now work correctly in the enemy gym. (AH-0MUHM66ES0027QQV)
+- New child tasks now start from the latest code, preventing missing files and build errors. (AH-0MUD8QNRG006MCKB)
+- Gym tuning panels no longer block your HUD, so you can see lives and power-ups while editing. (AH-0MUAYB7O4009LWBF)
+- Power-ups now collect the moment your ship touches their glowing bubble. (AH-0MTVYCM2N002NKE4)
+### Other
+- Thruster hum is quieter so it no longer drowns out other game sounds. (AH-0MUAYB8S50029QB8)
+- Gyms and the main game now stay in sync, so gameplay behaves the same everywhere. (AH-0MUGZDTFX004RBD1)
+
 ## v0.1.5 (2026-09-24)
 ### Features
 - Your ship now defaults to Asteroids-style controls. (AH-0MUFE1N36007X48T)
