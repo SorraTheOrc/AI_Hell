@@ -1359,6 +1359,7 @@ export class GymFormationScene<
     // Runs after the power-up layer so a drop collected this frame is
     // reflected immediately. Safe when no player is present.
     this._updateEffectVisuals();
+    this._updatePhaseShiftJuice(dt);
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);

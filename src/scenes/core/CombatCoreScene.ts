@@ -93,6 +93,7 @@ import {
   playDropPickupCue,
 } from './dropLayer';
 import type { BombNotice } from './BombNotice';
+import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -167,6 +168,14 @@ export class CombatCoreScene<
   protected playerDeathEffects: Phaser.GameObjects.GameObject[] = [];
   /** In-flight absorb animations for collected drops. */
   protected collectAnimations: CollectAnimationHandle[] = [];
+  /**
+   * Screen-wide Phase Shift juice overlays owned by the shared step
+   * (parent AH-0MUIYX1EE008FVS8). Cleared on restart/shutdown like the other
+   * shared effect registries.
+   */
+  protected phaseShiftEffects: Phaser.GameObjects.GameObject[] = [];
+  /** Lazily-created Phase Shift treatment controller. */
+  private phaseShiftJuice: PhaseShiftJuice | null = null;
 
   // Arrow-key (cursor) and WASD bindings for the player ship.
   protected cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
@@ -302,7 +311,25 @@ export class CombatCoreScene<
   }
 
   /**
-   * The shared player-control step (AH-0MUII39KX007YUQ0, AC1). Every
+   * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
+   *
+   * Lazily creates the treatment the first time a ship exists, then advances
+   * it for the current phased state: the overlays appear on the frame the
+   * phase activates and are destroyed on the frame it expires. A no-op when
+   * the scene has no player, so threat-free/non-combat frames stay clean.
+   *
+   * @param dt — frame delta (seconds).
+   */
+  protected _updatePhaseShiftJuice(dt: number): void {
+    if (!this.getPlayer()) return;
+    this.phaseShiftJuice ??= new PhaseShiftJuice(this, {
+      registry: this.phaseShiftEffects,
+    });
+    this.phaseShiftJuice.update(this.getEffectsRegistry().isPhased, dt);
+  }
+
+  /**
+   * Shared player-control step (AH-0MUII39KX007YUQ0, AC1). Every
    * scene advances the player identically, in the same order every frame:
    *
    * 1. advance timed-weapon countdowns,
@@ -560,6 +587,9 @@ export class CombatCoreScene<
     this.playerBullets = [];
     this.playerExplosions = [];
     this.playerDeathEffects = [];
+    this.phaseShiftJuice?.destroy();
+    this.phaseShiftJuice = null;
+    this.phaseShiftEffects = [];
     // In-flight absorb animations are owned by the animation registry
     // (their drops are no longer in the scene's drop list), so their
     // only teardown path is here.
@@ -581,6 +611,8 @@ export class CombatCoreScene<
     this.playerExplosions = [];
     for (const effect of this.playerDeathEffects) effect.destroy();
     this.playerDeathEffects = [];
+    for (const effect of this.phaseShiftEffects) effect.destroy();
+    this.phaseShiftEffects = [];
     for (const anim of this.collectAnimations) anim.destroy();
     this.collectAnimations = [];
     // Release every collected effect so a restarted scene starts clean

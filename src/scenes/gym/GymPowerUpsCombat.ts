@@ -364,6 +364,7 @@ export class GymPowerUpsCombat extends CombatScene<
 
     // ── Visuals (shield bubble + phase ghost + bomb notice) ─
     this._updateVisuals();
+    this._updatePhaseShiftJuice(dt);
 
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();

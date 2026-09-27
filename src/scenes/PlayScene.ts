@@ -599,6 +599,7 @@ export class PlayScene extends CombatScene<
     }
     this._updateInvulnerability(dt);
     this._updateVisuals();
+    this._updatePhaseShiftJuice(dt);
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
