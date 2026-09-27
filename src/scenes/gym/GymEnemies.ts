@@ -71,6 +71,9 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   fireInterval: { min: 100, max: 5000, step: 50 },
   shotProbability: { min: 0, max: 1, step: 0.05 },
   bulletSpeed: { min: 40, max: 600, step: 5 },
+  // Bullet TTL in seconds — matches FACTOR_RANGES.bulletLifetime so designers
+  // stay inside the difficulty model's normalised range (AH-0MUDYTPMC002GLEJ).
+  bulletLifetime: { min: 0.1, max: 5.0, step: 0.1 },
   burstCount: { min: 1, max: 24, step: 1 },
 };
 
@@ -430,6 +433,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       if ('_bulletColor' in e) (e as Record<string, unknown>)['_bulletColor'] = config.bulletColor;
       if ('_bulletSize' in e) (e as Record<string, unknown>)['_bulletSize'] = config.bulletSize;
       if ('_bulletSpeed' in e) (e as Record<string, unknown>)['_bulletSpeed'] = config.bulletSpeed;
+      if ('_bulletLifetime' in e) (e as Record<string, unknown>)['_bulletLifetime'] = config.bulletLifetime;
       if ('_fireInterval' in e) (e as Record<string, unknown>)['_fireInterval'] = config.fireInterval;
       if ('_burstCount' in e) (e as Record<string, unknown>)['_burstCount'] = config.burstCount;
       if ('_shotProbability' in e) (e as Record<string, unknown>)['_shotProbability'] = config.shotProbability;

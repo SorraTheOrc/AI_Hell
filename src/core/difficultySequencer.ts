@@ -134,13 +134,21 @@ const DEFAULT_MAX_ITERATIONS = 50;
  * a wider (or narrower) set of tuning options.
  */
 export function defaultCandidatePool(): CandidateGroup[] {
-  return Object.entries(DEFAULT_ENEMY_CONFIGS).map(([key, cfg]) => ({
-    enemyKey: key,
-    baseCount: cfg.count,
-    minCount: Math.max(1, Math.floor(cfg.count * 0.1)),
-    maxCount: Math.min(200, Math.ceil(cfg.count * 3)),
-    adjustableFields: ['count'],
-  }));
+  return Object.entries(DEFAULT_ENEMY_CONFIGS).map(([key, cfg]) => {
+    // `single`-formation archetypes (the roaming Asteroid) spawn exactly one
+    // entity per group regardless of `count` (`buildSingleOffset` ignores its
+    // argument), so exposing a count range would let the sequencer request a
+    // group whose spawns cannot satisfy its declared `waveEnemyCount`. Pin the
+    // range to the archetype's own count instead of scaling it.
+    const scalable = cfg.formationKind !== 'single';
+    return {
+      enemyKey: key,
+      baseCount: cfg.count,
+      minCount: scalable ? Math.max(1, Math.floor(cfg.count * 0.1)) : cfg.count,
+      maxCount: scalable ? Math.min(200, Math.ceil(cfg.count * 3)) : cfg.count,
+      adjustableFields: ['count'],
+    };
+  });
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────

@@ -44,6 +44,11 @@ export const FACTOR_WEIGHTS = {
   shotProbability: 5,
   /** Bullet velocity (`bulletSpeed`, px/s). */
   bulletSpeed: 5,
+  /**
+   * Bullet lifetime (`bulletLifetime`, seconds). Longer-lived bullets wrap
+   * the screen and stay lethal for longer, so a higher value is harder.
+   */
+  bulletLifetime: 6,
   /** Bullets emitted per volley / radial spokes (`burstCount`). */
   burstCount: 12,
   /** Formation-geometry complexity (`formationKind`). */
@@ -73,6 +78,7 @@ export const FACTOR_RANGES: Record<string, { min: number; max: number }> = {
   fireInterval: { min: 100, max: 5000 },
   shotProbability: { min: 0, max: 1 },
   bulletSpeed: { min: 40, max: 600 },
+  bulletLifetime: { min: 0.1, max: 5.0 },
   burstCount: { min: 1, max: 24 },
   formationKind: { min: 0, max: 5 },
   asteroidSplit: { min: 1, max: 7 },
@@ -171,7 +177,8 @@ export interface DifficultyBreakdown {
  * explainable.
  *
  * **Firing factors** (`fireInterval`, `shotProbability`, `bulletSpeed`,
- * `burstCount`) contribute zero whenever `shotPattern === 'none'`, or when the
+ * `bulletLifetime`, `burstCount`) contribute zero whenever
+ * `shotPattern === 'none'`, or when the
  * caller passes `suppressFiring: true` (used by `waveDifficulty` for waves
  * with `shootEnabled: false`, GDD §2.4 — Levels 1–3).
  *
@@ -210,6 +217,7 @@ export function enemyDifficulty(
     factors.fireInterval = 0;
     factors.shotProbability = 0;
     factors.bulletSpeed = 0;
+    factors.bulletLifetime = 0;
     factors.burstCount = 0;
   } else {
     // Invert the interval so a *shorter* interval (faster fire) maps to a
@@ -224,6 +232,11 @@ export function enemyDifficulty(
       FACTOR_RANGES.shotProbability,
     );
     factors.bulletSpeed = normaliseValue(config.bulletSpeed, FACTOR_RANGES.bulletSpeed);
+    // Lifetime is not inverted: a longer-lived bullet is harder to survive.
+    factors.bulletLifetime = normaliseValue(
+      config.bulletLifetime,
+      FACTOR_RANGES.bulletLifetime,
+    );
     factors.burstCount = normaliseValue(config.burstCount, FACTOR_RANGES.burstCount);
   }
 

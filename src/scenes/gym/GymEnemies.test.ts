@@ -445,6 +445,89 @@ describe('GymEnemies — single reusable enemy gym', () => {
     await vi.waitFor(() => expect(lec('prob-enemy').shotProbability).toBeCloseTo(0.45, 5));
   });
 
+  // ── bulletLifetime slider (AH-0MUDYTPMC002GLEJ, AC1/AC2) ────────
+
+  it('renders a bulletLifetime slider immediately after bulletSpeed with the documented 0.1–5.0 s range', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const slider = panel.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]');
+    expect(slider, 'bulletLifetime slider missing').not.toBeNull();
+    expect(Number(slider!.min)).toBe(0.1);
+    expect(Number(slider!.max)).toBe(5.0);
+    expect(Number(slider!.step)).toBe(0.1);
+
+    // DOM order: bulletSpeed then bulletLifetime then burstCount.
+    const configInputs = [...panel.querySelectorAll<HTMLInputElement>('input[data-config]')]
+      .map((el) => el.dataset['config']);
+    expect(configInputs.indexOf('bulletLifetime')).toBe(configInputs.indexOf('bulletSpeed') + 1);
+    expect(configInputs.indexOf('bulletLifetime')).toBe(configInputs.indexOf('burstCount') - 1);
+  });
+
+  it('seeds the bulletLifetime slider from the active config (scout 1.5, tank 2.0)', async () => {
+    await bootWithKey('tank');
+    const tankSlider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    expect(Number(tankSlider.value)).toBe(DEFAULT_ENEMY_CONFIGS.tank.bulletLifetime);
+
+    // Tear the tank boot down before booting the scout harness.
+    booted?.game.destroy(true);
+    booted = null;
+
+    const scene = await bootWithKey('scout');
+    expect(scene.currentConfig.bulletLifetime).toBe(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime);
+    const scoutSlider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    expect(Number(scoutSlider.value)).toBe(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime);
+  });
+
+  it('updates currentConfig and the live difficulty readout when bulletLifetime changes', async () => {
+    const scene = await bootWithKey('scout');
+    const el = document.getElementById(ENEMY_DIFFICULTY_ID)!;
+    const before = el.textContent ?? '';
+
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '5.0';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(scene.currentConfig.bulletLifetime).toBeCloseTo(5.0, 5);
+    const after = el.textContent ?? '';
+    // A longer TTL is a positive difficulty factor, so the readout must move
+    // and must still match the library score for the live config.
+    expect(after).not.toBe(before);
+    expect(after).toBe(`${enemyDifficulty(scene.currentConfig).score.toFixed(1)} / 100`);
+  });
+
+  it('live-applies bulletLifetime to the spawned entities without a respawn', async () => {
+    const scene = await bootWithKey('scout');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '4.5';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.bulletLifetime).toBeCloseTo(4.5, 5);
+    for (const e of scene.formationEntities) {
+      expect((e as unknown as { _bulletLifetime: number })._bulletLifetime).toBeCloseTo(4.5, 5);
+    }
+  });
+
+  it('Save round-trips bulletLifetime through the CSV store', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    const scene = await bootWithKey('tank');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '3.3';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
+    expect(scene.currentConfig.bulletLifetime).toBeCloseTo(3.3, 5);
+    await vi.waitFor(() => expect(lec('tank').bulletLifetime).toBeCloseTo(3.3, 5));
+  });
+
+  it('Save As round-trips bulletLifetime into the new custom enemy', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const slider = document.querySelector<HTMLInputElement>('input[data-config="bulletLifetime"]')!;
+    slider.value = '2.7';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-save-as-input') as HTMLInputElement).value = 'TTL Enemy';
+    (document.getElementById('enemy-gym-save-as') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(lec('ttl-enemy').bulletLifetime).toBeCloseTo(2.7, 5));
+  });
+
   it('Save overwrites the active config and round-trips via loadEnemyConfig', async () => {
     const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
     await bootWithKey('scout');

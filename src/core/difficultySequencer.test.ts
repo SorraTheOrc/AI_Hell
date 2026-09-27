@@ -317,6 +317,16 @@ describe('defaultCandidatePool', () => {
     expect(scout).toBeDefined();
     expect(scout!.adjustableFields).toContain('count');
   });
+
+  it('pins single-formation archetypes (Asteroid) to their seed count', () => {
+    // `buildSingleOffset` ignores count, so a scaled Asteroid group would
+    // declare more enemies than it spawns. The pool must not offer scaling
+    // for single-formation archetypes (AH-0MUDYTPMC002GLEJ regression).
+    const asteroid = defaultCandidatePool().find((c) => c.enemyKey === 'asteroid');
+    expect(asteroid).toBeDefined();
+    expect(asteroid!.minCount).toBe(asteroid!.baseCount);
+    expect(asteroid!.maxCount).toBe(asteroid!.baseCount);
+  });
 });
 
 // ── AdjustedGroup ────────────────────────────────────────────────────

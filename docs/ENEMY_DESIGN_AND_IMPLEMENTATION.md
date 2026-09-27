@@ -920,7 +920,7 @@ file.
 
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
-`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/burstCount`,
+`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
@@ -930,7 +930,9 @@ or a red **`Save failed — …`** status (`enemy-gym-save-status`). In producti
 builds writes are unavailable and the status reports it. After a successful
 write the scene re-reads the config from the store.
 Live `input`/`change` events patch `config.buildOffsets/spacing/drift/start/count`
-and best-effort mutate entity `_*` fields. Panel is removed on scene
+and best-effort mutate entity `_*` fields (including `_bulletLifetime`, so the
+`bulletLifetime` 0.1–5.0 s TTL slider live-applies to already-spawned entities).
+Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
 Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
@@ -1025,13 +1027,15 @@ constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
 | `fireInterval` | 12 | 100–5000 ms | **Inverted** (fire rate) — a shorter interval scores higher. |
 | `shotProbability` | 5 | 0–1 | Chance an enemy fires per cycle. |
 | `bulletSpeed` | 5 | 40–600 px/s | Bullet velocity. |
+| `bulletLifetime` | 6 | 0.1–5.0 s | Bullet TTL — **not** inverted: a longer-lived bullet wraps the screen and stays lethal, so a higher value scores higher. Matches the gym slider range. |
 | `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
 | `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
 | `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
 
-**Firing factors contribute zero** when `shotPattern === 'none'` (e.g. the
-Asteroid) or when `waveDifficulty` scores a wave with `shootEnabled: false`
-(GDD §2.4 — Levels 1–3).
+**Firing factors** (`fireInterval`, `shotProbability`, `bulletSpeed`,
+`bulletLifetime`, `burstCount`) **contribute zero** when
+`shotPattern === 'none'` (e.g. the Asteroid) or when `waveDifficulty` scores a
+wave with `shootEnabled: false` (GDD §2.4 — Levels 1–3).
 
 ### 9.3 Composition
 
@@ -1067,15 +1071,15 @@ ordering is **non-decreasing** and enforced by
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
-| 1 | Entry | 7.17 |
-| 2 | Descent | 12.70 |
-| 3 | The Core | 14.28 |
-| 4 | Firestorm | 23.14 |
-| 5 | Predictable Death | 31.92 |
+| 1 | Entry | 6.58 |
+| 2 | Descent | 11.98 |
+| 3 | The Core | 13.46 |
+| 4 | Firestorm | 23.61 |
+| 5 | Predictable Death | 32.02 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
-fires): Scout 14.03, Diver 23.18, Tank 29.09, Phaser 31.85, Swarm 20.17,
-Boss Swarm 22.50, Asteroid 10.00 (split chain only — it never fires).
+fires): Scout 14.86, Diver 23.49, Tank 29.64, Phaser 31.95, Swarm 20.65,
+Boss Swarm 23.42, Asteroid 9.43 (split chain only — it never fires).
 
 > **Tuning guidance.** The weights are subjective by nature; the index is a
 > relative, monotonic ordering, not an absolute truth. Tests pin *ordering*

@@ -14,16 +14,16 @@
 # (see `defaultDifficultyCurves()` in `src/core/configStore.ts`): each level's
 # measured difficulty is spread non-decreasingly across its waves.
 level,levelName,wave,targetDifficulty
-1,Entry,1,3.49
-1,Entry,2,6.97
-2,Descent,1,8.88
-2,Descent,2,10.79
-2,Descent,3,12.7
-3,The Core,1,13.23
-3,The Core,2,13.75
-3,The Core,3,14.28
-4,Firestorm,1,17.23
-4,Firestorm,2,20.19
-4,Firestorm,3,23.14
-5,Predictable Death,1,27.53
-5,Predictable Death,2,31.92
+1,Entry,1,3.29
+1,Entry,2,6.58
+2,Descent,1,8.38
+2,Descent,2,10.18
+2,Descent,3,11.98
+3,The Core,1,12.47
+3,The Core,2,12.97
+3,The Core,3,13.46
+4,Firestorm,1,16.84
+4,Firestorm,2,20.23
+4,Firestorm,3,23.61
+5,Predictable Death,1,27.82
+5,Predictable Death,2,32.02
