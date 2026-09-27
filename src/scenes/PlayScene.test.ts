@@ -106,6 +106,29 @@ function finishTransition(scene: PlayScene): void {
   if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
 }
 
+/**
+ * Deterministic regression guard (AH-0MUHA0MMP001DZ5C): asserts the
+ * wave-clear path actually started a transition. It drives the scene with
+ * bounded deterministic ticks and polls `isTransitioning()` instead of
+ * waiting on wall-clock time, and throws a descriptive error (naming the
+ * wave/accounting state) if the transition never starts — so a regression
+ * fails loudly here rather than as an unrelated later assertion.
+ */
+function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
+  for (let i = 0; i < maxTicks && !scene.isTransitioning(); i++) {
+    scene.tick(0.016);
+  }
+  if (!scene.isTransitioning()) {
+    const wm = scene.getWaveManager();
+    throw new Error(
+      'Expected a cleared wave to start a transition (isTransitioning() true), ' +
+        `but it stayed false after ${maxTicks} deterministic ticks. ` +
+        `aliveCount=${scene.getAliveCount()} enemiesAlive=${wm.enemiesAlive} ` +
+        `level=${wm.level} wave=${wm.waveNumber}`,
+    );
+  }
+}
+
 /** Walks the run to the boss encounter (Level 5 cleared). */
 function reachBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
@@ -150,7 +173,7 @@ async function bootSceneWithLevels(
   levels: LevelDefinition[],
   options: { asteroidSpawner?: boolean } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
-  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
+  const game = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
   if (options.asteroidSpawner === false) {
@@ -189,7 +212,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     // This suite predates the dynamic spawner and asserts deterministic
     // wave/banner/transition behaviour; isolate it from random asteroid
     // spawns (the spawner is covered by its own integration suites).
@@ -578,6 +601,21 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(wm.level).toBe(2);
     expect(wm.waveNumber).toBe(1);
     expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
+  });
+
+  it('AH-0MUHA0MMP001DZ5C — clearing a wave deterministically starts the transition (regression guard)', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    expect(wm.waveNumber).toBe(1);
+
+    killAllEnemies(scene);
+    expect(scene.getAliveCount()).toBe(0);
+
+    // Drives the real wave-clear -> `_startTransition()` path with bounded
+    // deterministic ticks and condition polling (no wall-clock waits), and
+    // fails loudly with the wave/accounting state if it regresses.
+    expectTransitionStarted(scene);
+    expect(scene.isTransitioning()).toBe(true);
   });
 
   // ── Transient transition banner (AH-0MU7JTEMC006QPSN) ─────────
@@ -1228,7 +1266,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
@@ -1403,7 +1441,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
@@ -2461,7 +2499,7 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
   const SEED = 20260925;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
@@ -2693,7 +2731,7 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   const SEED = 424242;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
@@ -2978,7 +3016,7 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
   });
 
   async function bootToggleScene(): Promise<PlayScene> {
-    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return toggleBooted.scene as PlayScene;
   }
 
