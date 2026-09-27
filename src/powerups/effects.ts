@@ -102,6 +102,11 @@ export interface ActiveEffect {
   remaining?: number;
   /** Stack count (stackable types, e.g. P9 magnet, P7 teleport). */
   stacks?: number;
+  /**
+   * True when the effect has unlimited uses for the run (e.g. the hold-full
+   * P6 reward). Rendered as an unlimited marker rather than a count.
+   */
+  permanent?: boolean;
 }
 
 /**
@@ -521,6 +526,22 @@ export class EffectsRegistry {
         id: 'P7' as PowerUpId,
         type: PowerUpType.TELEPORT,
         stacks: this._teleportStacks,
+      });
+    }
+    // P6 auto-activation charges (parent AH-0MUIYX1EE008FVS8): a finite
+    // stock-pile renders as a count, the hold-full reward as unlimited. A
+    // zero charge count is never surfaced (no misleading "x0").
+    if (this._phasePermanent) {
+      result.push({
+        id: 'P6' as PowerUpId,
+        type: PowerUpType.PHASE_SHIFT,
+        permanent: true,
+      });
+    } else if (this._phaseCharges > 0) {
+      result.push({
+        id: 'P6' as PowerUpId,
+        type: PowerUpType.PHASE_SHIFT,
+        stacks: this._phaseCharges,
       });
     }
     return result;

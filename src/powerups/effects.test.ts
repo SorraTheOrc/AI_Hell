@@ -412,6 +412,52 @@ describe('P6 Phase Shift (Q2/Q3/Q6): charge-based auto-trigger', () => {
   });
 });
 
+describe('P6 charge display model (parent AH-0MUIYX1EE008FVS8, C6)', () => {
+  it('surfaces a finite charge as a P6 stack entry', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    const p6 = reg.activeEffects().find((e) => e.id === 'P6')!;
+    expect(p6).toBeDefined();
+    expect(p6.stacks).toBe(1);
+    expect(p6.permanent).toBeUndefined();
+  });
+
+  it('accumulates repeated pickups into the displayed count', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.applyCollect('P6');
+    const p6 = reg.activeEffects().find((e) => e.id === 'P6')!;
+    expect(p6.stacks).toBe(2);
+  });
+
+  it('drops the charge entry once the charge is consumed', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.updateDanger(true, 0.016);
+
+    const chargeEntries = reg
+      .activeEffects()
+      .filter((e) => e.id === 'P6' && e.stacks !== undefined);
+    expect(chargeEntries).toHaveLength(0);
+    // The active phase timer entry is still present.
+    expect(reg.activeEffects().some((e) => e.id === 'P6')).toBe(true);
+  });
+
+  it('surfaces the permanent reward as unlimited (permanent flag)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6', true);
+    const p6 = reg.activeEffects().find((e) => e.id === 'P6')!;
+    expect(p6).toBeDefined();
+    expect(p6.permanent).toBe(true);
+    expect(p6.stacks).toBeUndefined();
+  });
+
+  it('does not surface a zero charge count', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.activeEffects().filter((e) => e.id === 'P6')).toHaveLength(0);
+  });
+});
+
 describe('P7 Teleport (AC7): FIFO stacks, consume, grants P6', () => {
   it('FIFO stacks grow on collect', () => {
     const reg = new EffectsRegistry();
