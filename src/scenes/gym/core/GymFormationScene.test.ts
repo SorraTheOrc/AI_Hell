@@ -24,6 +24,7 @@ import {
   FormationOffset,
   type FormationReanchorRequest,
 } from '../../../utils/formations';
+import { FORMATION_GLIDE_SECONDS } from '../../core/formationGlide';
 import {
   EnemyFormationConfig,
   FormationSceneBullet,
@@ -2670,11 +2671,10 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     expect(scene.formationX).toBeCloseTo(after + DRIFT_SPEED * 0.5, 5);
   });
 
-  it('AC3 — re-anchors so the requester slot lands on the attack end and every other unit shifts by the same delta', async () => {
+  it('AC3 — re-anchors so the requester slot lands on the attack end, then the whole unit eases to the new slots', async () => {
     const scene = await bootReanchorGym();
     const all = entities(scene);
     const requester = all[2];
-    const before = all.map((e) => ({ x: e.x, y: e.y }));
 
     const attackEnd = { x: 517, y: 121 };
     requester.requestReanchor({
@@ -2683,21 +2683,26 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: attackEnd.y,
     });
 
+    // The re-anchor frame: the origin re-bases so the requester's slot
+    // coincides with the attack end.
     scene.tick(0.25);
+    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(attackEnd.x, 5);
+    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(attackEnd.y, 5);
 
-    // The requester's slot lands exactly on the attack end.
-    expect(requester.x).toBeCloseTo(attackEnd.x, 5);
-    expect(requester.y).toBeCloseTo(attackEnd.y, 5);
+    // At 0.25 s (< glide duration) the rendered position is still gliding:
+    // it has not yet snapped to the re-anchored slot.
+    expect(requester.x).not.toBeCloseTo(
+      scene.formationX + requester.offset.col * SPACING_X,
+      5,
+    );
 
-    // Every other unit shifted by the same delta (the origin shift plus the
-    // uniform drift is identical for every unit).
-    const deltaX = requester.x - before[2].x;
-    const deltaY = requester.y - before[2].y;
-    all.forEach((entity, i) => {
-      if (i === 2) return;
-      expect(entity.x - before[i].x).toBeCloseTo(deltaX, 5);
-      expect(entity.y - before[i].y).toBeCloseTo(deltaY, 5);
-    });
+    // On completion every unit sits exactly on its (drifted) slot — the
+    // unit's relative offsets are preserved.
+    scene.tick(FORMATION_GLIDE_SECONDS);
+    for (const entity of all) {
+      expect(entity.x).toBeCloseTo(scene.formationX + entity.offset.col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(scene.formationY + entity.offset.row * SPACING_Y, 5);
+    }
   });
 
   it('AC3 — the re-anchor follows the requested position, not a fixed screen point', async () => {
@@ -2711,8 +2716,11 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: first.y,
     });
     scene.tick(0.25);
-    expect(requester.x).toBeCloseTo(first.x, 5);
-    expect(requester.y).toBeCloseTo(first.y, 5);
+    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(first.x, 5);
+    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(first.y, 5);
+    // Let the first glide finish before re-requesting, so the second request
+    // starts from a settled formation.
+    scene.tick(FORMATION_GLIDE_SECONDS);
 
     // A second request at a different position re-anchors there instead.
     const second = { x: 640, y: 90 };
@@ -2722,8 +2730,52 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: second.y,
     });
     scene.tick(0.25);
-    expect(requester.x).toBeCloseTo(second.x, 5);
-    expect(requester.y).toBeCloseTo(second.y, 5);
+    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(second.x, 5);
+    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(second.y, 5);
+  });
+
+  it('AC1 — the glide eases: the first frame is strictly between the pre-anchor position and the final slot', async () => {
+    const scene = await bootReanchorGym();
+    const [requester] = entities(scene);
+    const from = { x: requester.x, y: requester.y };
+
+    requester.requestReanchor({ offset: { ...requester.offset }, x: 500, y: 300 });
+
+    // First frame of the glide (dt < duration): the entity has moved toward
+    // the slot but has not reached it (strictly between old and new).
+    scene.tick(0.1);
+    const slotX = scene.formationX + requester.offset.col * SPACING_X;
+    const slotY = scene.formationY + requester.offset.row * SPACING_Y;
+    expect(requester.x).toBeGreaterThan(Math.min(from.x, slotX));
+    expect(requester.x).toBeLessThan(Math.max(from.x, slotX));
+    expect(requester.y).toBeGreaterThan(Math.min(from.y, slotY));
+    expect(requester.y).toBeLessThan(Math.max(from.y, slotY));
+    expect(requester.x).not.toBeCloseTo(slotX, 5);
+
+    // Completion: exactly on the live slot after the glide duration.
+    scene.tick(FORMATION_GLIDE_SECONDS);
+    expect(requester.x).toBeCloseTo(scene.formationX + requester.offset.col * SPACING_X, 5);
+    expect(requester.y).toBeCloseTo(scene.formationY + requester.offset.row * SPACING_Y, 5);
+  });
+
+  it('AC4 — the glide tracks the live (drifting) slot, not the re-anchor-time snapshot', async () => {
+    const scene = await bootReanchorGym();
+    const [requester] = entities(scene);
+
+    requester.requestReanchor({ offset: { ...requester.offset }, x: 500, y: 300 });
+
+    // First frame begins the glide; snapshot the re-anchor-time slot.
+    scene.tick(0.05);
+    const snapshotX = scene.formationX + requester.offset.col * SPACING_X;
+
+    // Finish the glide across several small frames while the base drifts.
+    for (let i = 0; i < 5; i++) scene.tick(0.1);
+
+    const driftedSlotX = scene.formationX + requester.offset.col * SPACING_X;
+    // The base drifted after the snapshot, so the landing follows the drifted
+    // slot rather than the stale snapshot.
+    expect(driftedSlotX).toBeGreaterThan(snapshotX);
+    expect(requester.x).toBeCloseTo(driftedSlotX, 5);
   });
 
   it('AC4 — a formation with no request drifts exactly as before', async () => {

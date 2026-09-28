@@ -794,7 +794,7 @@ advanced on the shared `tick(dt)` path via `onBossAdvanced()`, so the gym
 Boss and the shipped game's Boss run the same code
 (AH-0MUII3E5E006A93F, gap 6).
 
-### 7.6 Attack-end re-anchor when a Diver finishes its attack (AH-0MUAYB957002EMYV)
+### 7.6 Attack-end re-anchor when a Diver finishes its attack (AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB)
 
 A Diver leaves the formation for the whole `DIVING → PAUSING` attack window.
 There is **no return glide**: when the pause ends the Diver re-enters
@@ -816,14 +816,43 @@ request through the optional `consumeFormationReanchor?()` seam (on
   - `PlayScene._moveEnemies()` shifts a unit-level `formationAnchorX`/`Y`
     added to every formation group's origin.
 - The re-anchor is applied after the drift and before the positioning pass,
-  so every unit uses the new origin in the same frame and the Diver shows no
-  snap. The drift itself is never frozen — no entity can hold the cluster
-  (the interim formation-hold seam was removed).
+  so every unit uses the new origin in the same frame. The drift itself is
+  never frozen — no entity can hold the cluster (the interim formation-hold
+  seam was removed).
 - When Divers become desynchronised (destruction + later respawn) the most
   recent attack-end wins — a documented assumption, since the shared rule is
   a single translation and can satisfy only one requester's slot.
-- Non-Diver entities have no re-anchor request; they simply shift with the
-  unit origin and are otherwise unaffected.
+- Non-Diver entities have no re-anchor request; they ride the same unit
+  origin shift as every other formation member.
+
+#### 7.6.1 Animated re-anchor glide (AH-0MUL15N63003PUDB)
+
+The origin re-base is a whole-unit translation, so applying it directly made
+the entire unit **teleport** to its new slots in one frame. The transition is
+now animated by the shared `FormationGlide` helper
+(`src/scenes/core/formationGlide.ts`), consumed identically by
+`GymFormationScene` and `PlayScene` (gym↔game parity):
+
+- On the frame a re-anchor is applied, the scene calls `glide.begin(targets)`
+  with every **formation-driven** entity (roamers — asteroids, harvesters —
+  are excluded: their own motion must not be eased). `begin` captures each
+  entity's current position as the glide's `from` point.
+- After the normal `applyFormationPosition` positioning pass the scene calls
+  `glide.update(dt)` exactly once. For each tracked entity the helper reads
+  the **live** target already set by `applyFormationPosition` and renders
+  `target + (from − target₀) × (1 − smoothstep(elapsed / FORMATION_GLIDE_SECONDS))`.
+  Because the target is read live each frame, the glide tracks the drifting
+  slot and lands on the **current** slot, not a stale re-anchor-time snapshot.
+- `FORMATION_GLIDE_SECONDS` (`0.32 s`) is the single tunable duration,
+  exported from the helper.
+- When `elapsed ≥ FORMATION_GLIDE_SECONDS` the entity is left exactly on the
+  live slot (residual `0`) and its glide state is dropped — the unit's
+  relative offsets are preserved on completion.
+- The attacking Diver is tracked like every other formation member. Its
+  re-based slot coincides with its attack end, so its residual is only the
+  idle x-wiggle; it eases that out and keeps drifting with the unit.
+- `clear()` is called from each scene's `teardownRunState()` so a
+  stop/restart starts with no active glide.
 
 ---
 

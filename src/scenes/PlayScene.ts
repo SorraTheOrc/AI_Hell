@@ -61,6 +61,7 @@ import {
   computeFormationReanchorDelta,
   type FormationReanchorRequest,
 } from '../utils/formations';
+import { FormationGlide } from './core/formationGlide';
 import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
@@ -317,6 +318,9 @@ export class PlayScene extends CombatScene<
   private formationAnchorX = 0;
   private formationAnchorY = 0;
 
+  /** Glide manager: eases enemies to their re-anchored slots (AH-0MUL15N63003PUDB). */
+  private glide = new FormationGlide();
+
   private transitionTimer = 0;
 
   /**
@@ -563,6 +567,9 @@ export class PlayScene extends CombatScene<
     this.bannerText = null;
     this.waveTimerBar?.destroy();
     this.waveTimerBar = null;
+
+    // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
+    this.glide.clear();
   }
 
   // ── Frame loop ──────────────────────────────────────────────────
@@ -869,7 +876,7 @@ export class PlayScene extends CombatScene<
     // the whole unit so its slot lands on the attack end. Applied after the
     // drift and before positioning so every enemy uses the new origin in the
     // same frame.
-    this._applyFormationReanchor();
+    const reanchorApplied = this._applyFormationReanchor();
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
@@ -895,6 +902,13 @@ export class PlayScene extends CombatScene<
         s.spacingY,
       );
     }
+
+    // If a re-anchor fired (now or on an earlier frame), ease all living
+    // entities from their old positions to the live (drifting) slot
+    // (AH-0MUL15N63003PUDB). A no-op when no glide is active.
+    if (reanchorApplied || this.glide.active) {
+      this.glide.update(dt);
+    }
   }
 
   /**
@@ -903,14 +917,17 @@ export class PlayScene extends CombatScene<
    * unit shifted by the same delta (shared rule in
    * `computeFormationReanchorDelta`). The most recent request wins when Divers
    * are desynchronised (documented assumption).
+   *
+   * @returns `true` if a re-anchor was applied (and the glide was begun),
+   *   `false` otherwise.
    */
-  private _applyFormationReanchor(): void {
+  private _applyFormationReanchor(): boolean {
     let latest: { request: FormationReanchorRequest; spawn: SpawnedEnemy } | null = null;
     for (const spawn of this.spawned) {
       const request = spawn.entity.consumeFormationReanchor?.();
       if (request) latest = { request, spawn };
     }
-    if (!latest) return;
+    if (!latest) return false;
 
     const { request, spawn } = latest;
     const { dx, dy } = computeFormationReanchorDelta(
@@ -922,6 +939,21 @@ export class PlayScene extends CombatScene<
     );
     this.formationAnchorX += dx;
     this.formationAnchorY += dy;
+
+    // Begin the glide for every formation-driven entity so they ease to their
+    // new slots instead of snapping (AH-0MUL15N63003PUDB). Roaming enemies
+    // (asteroids, harvesters) position themselves through their own motion and
+    // must not have it eased by the formation glide.
+    const glideTargets = this.spawned
+      .filter(
+        (s) =>
+          s.entity.alive &&
+          s.enemyKey !== 'asteroid' &&
+          !s.entity.setSeekTargets,
+      )
+      .map((s) => s.entity);
+    this.glide.begin(glideTargets);
+    return true;
   }
 
   /**

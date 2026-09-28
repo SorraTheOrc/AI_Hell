@@ -51,6 +51,9 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
+  FormationGlide,
+} from '../../../scenes/core/formationGlide';
+import {
   applyPhaseGhost,
   drawShieldBubble,
 } from '../../core/CombatEffectVisuals';
@@ -134,6 +137,11 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
   readonly offset: FormationOffset;
   /** Destroys the entity: hides the body, plays the explosion animation. */
   destroySelf(): void;
+  /**
+   * Set the world-space position. All concrete entities extend
+   * `Phaser.GameObjects.Container` and inherit this method.
+   */
+  setPosition(x: number, y: number): void;
   /**
    * Applies the formation translation for this frame: base + offset
    * (+ any entity-specific animation, e.g. wiggle/dive).
@@ -448,6 +456,11 @@ export class GymFormationScene<
   /** Whether the shield bubble was drawn in the last visual update. */
   private shieldBubbleDrawn = false;
 
+  // ── Formation glide (AH-0MUL15N63003PUDB)
+
+  /** Glide manager: eases enemies from their old positions to the re-anchored slots. */
+  private glide = new FormationGlide();
+
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
   /** Live mineral collectables seeded across the play area. */
@@ -687,6 +700,9 @@ export class GymFormationScene<
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
+
+    // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
+    this.glide.clear();
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -1328,7 +1344,7 @@ export class GymFormationScene<
     // attack finished, re-base the whole formation origin so its slot
     // coincides with the attack end. Applied after the drift and before the
     // positioning pass so every unit uses the new origin in the same frame.
-    this._applyFormationReanchor();
+    const reanchorApplied = this._applyFormationReanchor();
 
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
@@ -1359,6 +1375,15 @@ export class GymFormationScene<
 
       // Collect any bullets the entity fired this frame (uses the fresh aim).
       this.bullets.push(...config.collectBullets(entity, this.time.now));
+    }
+
+    // If a re-anchor fired (now or on an earlier frame), ease every entity
+    // from its old position to the live (drifting) slot over a short glide
+    // (AH-0MUL15N63003PUDB). Applied once after the positioning pass so each
+    // entity's live target is read after `applyFormationPosition` set it for
+    // this frame. A no-op when no glide is active.
+    if (reanchorApplied || this.glide.active) {
+      this.glide.update(dt);
     }
 
     // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
@@ -1422,14 +1447,17 @@ export class GymFormationScene<
    * slot lands on its attack-end position. Every other entity shifts by the
    * same delta, preserving the grid's relative offsets. The most recent
    * request wins when Divers are desynchronised (documented assumption).
+   *
+   * @returns `true` if a re-anchor was applied (and the glide was begun),
+   *   `false` otherwise.
    */
-  private _applyFormationReanchor(): void {
+  private _applyFormationReanchor(): boolean {
     let latest: FormationReanchorRequest | null = null;
     for (const entity of this.entities) {
       const request = entity.consumeFormationReanchor?.();
       if (request) latest = request;
     }
-    if (!latest) return;
+    if (!latest) return false;
 
     const { dx, dy } = computeFormationReanchorDelta(
       latest,
@@ -1440,6 +1468,14 @@ export class GymFormationScene<
     );
     this.formationBaseX += dx;
     this.formationBaseY += dy;
+
+    // Begin the glide for every formation-driven entity so they ease to their
+    // new slots instead of snapping (AH-0MUL15N63003PUDB). Roaming enemies
+    // (asteroids, harvesters) position themselves through `updatePosition` and
+    // must not have their own motion eased by the formation glide.
+    const glideTargets = this.entities.filter((entity) => !entity.updatePosition);
+    this.glide.begin(glideTargets);
+    return true;
   }
 
   /**

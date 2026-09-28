@@ -2982,12 +2982,59 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     expect(diver.y).toBeCloseTo(attackEnd.y, 5);
     expect(Math.abs(diver.x - attackEnd.x)).toBeLessThanOrEqual(1.5 + 1e-6);
 
-    // The whole unit shifted by `delta`; with no prior re-anchor and no Y
-    // drift, delta.y = attackEnd.y - (startY + diverRow * spacingY). The Scout
-    // (same origin/spacing) must shift by exactly that delta on Y.
+    // The whole unit shifts by `delta`; with no prior re-anchor and no Y
+    // drift, delta.y = attackEnd.y - (startY + diverRow * spacingY).
     const expectedDeltaY =
       attackEnd.y - (START_Y + diver.offset.row * SPACING_Y);
-    expect(scout.y - scoutBefore.y).toBeCloseTo(expectedDeltaY, 5);
+
+    // At 0.25 s the Scout is gliding toward its re-anchored slot, not snapped:
+    // its directional shift is strictly between 0 and the full delta.
+    const shiftThisFrame = scout.y - scoutBefore.y;
+    expect(Math.sign(shiftThisFrame)).toBe(Math.sign(expectedDeltaY));
+    expect(Math.abs(shiftThisFrame)).toBeGreaterThan(0);
+    expect(Math.abs(shiftThisFrame)).toBeLessThan(Math.abs(expectedDeltaY));
+
+    // Once the glide completes the Scout sits exactly on its re-anchored slot
+    // (shifted by the full delta on Y).
+    tickUntil(
+      scene,
+      () => Math.abs((scout.y - scoutBefore.y) - expectedDeltaY) < 1e-3,
+      0.05,
+      40,
+    );
+    expect(scout.y - scoutBefore.y).toBeCloseTo(expectedDeltaY, 3);
+  });
+
+  it('AC1/AC4 — the glide eases the unit onto its drifted slot (onset and completion)', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
+    const scout = firstScout(scene);
+
+    tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
+    tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+    const scoutBefore = { x: scout.x, y: scout.y };
+
+    // First frame of the glide: the Scout has moved toward its re-anchored
+    // slot but is strictly between the old and new positions (it has not
+    // snapped to the final slot).
+    scene.tick(0.05);
+    const onsetShift = scout.y - scoutBefore.y;
+    expect(onsetShift).not.toBe(0);
+
+    // Finish the glide. Each small tick keeps the base drifting, so the entity
+    // lands on the live (drifted) slot, not the re-anchor-time snapshot.
+    for (let i = 0; i < 8; i++) scene.tick(0.05);
+    const settledY = scout.y;
+
+    // The unit kept drifting on X throughout the glide (no freeze).
+    const scoutXAtSettle = scout.x;
+    expect(scoutXAtSettle).not.toBeCloseTo(scoutBefore.x, 5);
+    expect(settledY).not.toBe(scoutBefore.y);
+
+    // After the glide the Scout has settled: one more tick barely changes Y
+    // (only the ±2 px x-wiggle continues; Y is wiggle-free).
+    scene.tick(0.05);
+    expect(scout.y).toBeCloseTo(settledY, 5);
   });
 });
 
