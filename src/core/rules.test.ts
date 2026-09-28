@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
+  DEFAULT_BEAT_BPM,
   DEFAULT_EXTRA_LIFE_WEIGHT,
   DEFAULT_MINERAL_COLLECT_AMOUNT,
   DEFAULT_MINERAL_HOLD_CAPACITY,
@@ -18,6 +19,7 @@ import {
   RULES_STORAGE_KEY,
   WEAPON_WEIGHT_IDS,
   defaultPowerUpWeights,
+  defaultWeaponSubdivisions,
   loadRules,
   saveRules,
   type GameRules,
@@ -72,6 +74,8 @@ describe('game rules configuration module', () => {
     it('round-trips a saved rules object exactly', () => {
       const custom: GameRules = {
         powerUpSpawnInterval: 5,
+        beatBpm: 120,
+        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8 },
         powerUpWeights: { P3: 10, P4: 9, P5: 8, P6: 7, P7: 6, P8: 1, P9: 5 },
         weaponWeights: {
           spread: 3,
@@ -92,6 +96,9 @@ describe('game rules configuration module', () => {
       expect(loaded).toEqual(custom);
       // Prove the values came from storage, not from the defaults.
       expect(loaded.powerUpSpawnInterval).toBe(5);
+      expect(loaded.beatBpm).toBe(120);
+      expect(loaded.weaponSubdivisions.cannon).toBe(4);
+      expect(loaded.weaponSubdivisions.spread).toBe(2);
       expect(loaded.powerUpWeights.P3).toBe(10);
       expect(loaded.weaponWeights.spread).toBe(3);
       expect(loaded.mineralCollectAmount).toBe(2);
@@ -172,6 +179,82 @@ describe('game rules configuration module', () => {
       const loaded = loadRules();
       expect(loaded.powerUpWeights.P3).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       expect(loaded.powerUpWeights.P8).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
+    });
+  });
+
+  // ── Beat grid config (AH-0MUAYB8EH005RJ8B AC1/AC2/AC5/AC6) ──────
+
+  describe('beat grid config', () => {
+    it('defaults to 80 BPM and the catalogue subdivisions', () => {
+      expect(DEFAULT_BEAT_BPM).toBe(80);
+      expect(DEFAULT_RULES.beatBpm).toBe(80);
+      expect(DEFAULT_RULES.weaponSubdivisions).toEqual({
+        cannon: 2,
+        spread: 1,
+        dual: 1,
+        rapid: 6,
+      });
+    });
+
+    it('returns a fresh subdivision table each call', () => {
+      const subdivisions = defaultWeaponSubdivisions();
+      subdivisions.cannon = 99;
+      expect(defaultWeaponSubdivisions().cannon).toBe(2);
+    });
+
+    it('loads a stored BPM and subdivision override', () => {
+      saveRules({
+        ...DEFAULT_RULES,
+        beatBpm: 160,
+        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8 },
+      });
+
+      const loaded = loadRules();
+      expect(loaded.beatBpm).toBe(160);
+      expect(loaded.weaponSubdivisions).toEqual({
+        cannon: 4,
+        spread: 2,
+        dual: 2,
+        rapid: 8,
+      });
+    });
+
+    it('merges a partial subdivision table over the defaults', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ weaponSubdivisions: { cannon: 4 } }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.weaponSubdivisions.cannon).toBe(4);
+      expect(loaded.weaponSubdivisions.spread).toBe(1);
+      expect(loaded.weaponSubdivisions.rapid).toBe(6);
+    });
+
+    it('falls back to the defaults for invalid BPM / non-integer subdivisions', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          beatBpm: 'fast',
+          weaponSubdivisions: { cannon: 1.5, spread: 0, dual: -3, rapid: 'lots' },
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.beatBpm).toBe(DEFAULT_BEAT_BPM);
+      expect(loaded.weaponSubdivisions).toEqual({
+        cannon: 2,
+        spread: 1,
+        dual: 1,
+        rapid: 6,
+      });
+    });
+
+    it('returns a fresh object so callers cannot mutate the default subdivisions', () => {
+      const first = loadRules();
+      first.weaponSubdivisions.cannon = 999;
+      expect(loadRules().weaponSubdivisions.cannon).toBe(2);
+      expect(DEFAULT_RULES.weaponSubdivisions.cannon).toBe(2);
     });
   });
 

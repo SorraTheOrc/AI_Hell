@@ -85,6 +85,7 @@ import {
 } from '../../vfx/explosionParticles';
 import type { DropId, PowerUpId } from '../../powerups/types';
 import type { PowerUpWeights, WeaponWeights } from '../../core/rules';
+import { loadRules } from '../../core/rules';
 import {
   advanceDropLifecycles,
   applyDropMagnet,
@@ -194,7 +195,9 @@ export class CombatCoreScene<
    * the player's `tryFire`), so a paused scene — whose `update` is not
    * called — pauses the clock with it.
    */
-  protected readonly beatClock: BeatClock = createBeatClock();
+  protected readonly beatClock: BeatClock = createBeatClock({
+    bpm: loadRules().beatBpm,
+  });
 
   /**
    * The scene's single shared beat clock (one instance per scene, never a

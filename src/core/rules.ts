@@ -25,6 +25,12 @@
  */
 
 import type { PowerUpId, WeaponDropId } from '../powerups/types';
+import {
+  DEFAULT_WEAPON_SUBDIVISIONS,
+  type WeaponId,
+  type WeaponSubdivisions,
+} from '../utils/weapons';
+import { DEFAULT_BPM } from '../utils/beat';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -38,6 +44,21 @@ export type WeaponWeights = Record<WeaponDropId, number>;
 export interface GameRules {
   /** Seconds between power-up spawns (one drop on screen at a time). */
   powerUpSpawnInterval: number;
+  /**
+   * Tempo in beats per minute for the shared player-fire beat grid
+   * (default 80, AH-0MUAYB8EH005RJ8B). Every player weapon fires on a
+   * subdivision of this beat; it is a **silent internal grid** (no audio
+   * or visual metronome, GDD §7.3).
+   */
+  beatBpm: number;
+  /**
+   * Shots per beat for each player weapon (defaults: cannon 2, spread 1,
+   * dual 1, rapid 6). A weapon's fire interval is
+   * `60000 / beatBpm / subdivision`, so every weapon stays on the beat
+   * grid by construction (AH-0MUAYB8EH005RJ8B). Values are positive
+   * integers.
+   */
+  weaponSubdivisions: WeaponSubdivisions;
   /**
    * Relative weight per power-up ID (P3–P9). Higher weight ⇒ more
    * likely. These are relative, not percentages — the spawner normalises
@@ -83,6 +104,17 @@ export interface GameRules {
 
 /** Default seconds between power-up spawns (GDD §4.4). */
 export const DEFAULT_POWER_UP_SPAWN_INTERVAL = 12.5;
+
+/** Default tempo for the shared player-fire beat grid (80 BPM → 750 ms/beat). */
+export const DEFAULT_BEAT_BPM = DEFAULT_BPM;
+
+/**
+ * Builds a fresh default per-weapon subdivision table (cannon 2, spread 1,
+ * dual 1, rapid 6).
+ */
+export function defaultWeaponSubdivisions(): WeaponSubdivisions {
+  return { ...DEFAULT_WEAPON_SUBDIVISIONS };
+}
 
 /** Default relative weight for standard-rarity power-ups (P3–P7, P9). */
 export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
@@ -170,6 +202,8 @@ export function defaultWeaponWeights(): WeaponWeights {
 /** Built-in defaults — the current hard-coded tuning values. */
 export const DEFAULT_RULES: GameRules = {
   powerUpSpawnInterval: DEFAULT_POWER_UP_SPAWN_INTERVAL,
+  beatBpm: DEFAULT_BEAT_BPM,
+  weaponSubdivisions: defaultWeaponSubdivisions(),
   powerUpWeights: defaultPowerUpWeights(),
   weaponWeights: defaultWeaponWeights(),
   mineralCollectAmount: DEFAULT_MINERAL_COLLECT_AMOUNT,
@@ -215,6 +249,8 @@ function storage(): Storage | null {
 function cloneDefaultRules(): GameRules {
   return {
     powerUpSpawnInterval: DEFAULT_RULES.powerUpSpawnInterval,
+    beatBpm: DEFAULT_RULES.beatBpm,
+    weaponSubdivisions: { ...DEFAULT_RULES.weaponSubdivisions },
     powerUpWeights: { ...DEFAULT_RULES.powerUpWeights },
     weaponWeights: { ...DEFAULT_RULES.weaponWeights },
     mineralCollectAmount: DEFAULT_RULES.mineralCollectAmount,
@@ -307,6 +343,28 @@ function mergeWeaponWeights(stored: unknown): WeaponWeights {
   return result;
 }
 
+/**
+ * Merges a stored (possibly partial/invalid) per-weapon subdivision table
+ * over the defaults. Only positive integers are accepted, so a corrupt
+ * entry falls back to that weapon's default and the on-grid invariant is
+ * preserved (AC6).
+ */
+function mergeWeaponSubdivisions(stored: unknown): WeaponSubdivisions {
+  const result = { ...DEFAULT_RULES.weaponSubdivisions };
+  if (stored && typeof stored === 'object') {
+    const source = stored as Record<string, unknown>;
+    for (const id of Object.keys(
+      DEFAULT_WEAPON_SUBDIVISIONS,
+    ) as WeaponId[]) {
+      const value = source[id];
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        result[id] = value;
+      }
+    }
+  }
+  return result;
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 /**
@@ -337,6 +395,10 @@ export function loadRules(): GameRules {
     const legacy = !isCurrentSchemaVersion(parsed.version);
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
+      beatBpm: coercePositiveNumber(parsed.beatBpm, DEFAULT_BEAT_BPM),
+      weaponSubdivisions: mergeWeaponSubdivisions(
+        parsed.weaponSubdivisions,
+      ),
       powerUpWeights: mergeWeights(parsed.powerUpWeights),
       weaponWeights: mergeWeaponWeights(parsed.weaponWeights),
       mineralCollectAmount: coercePositiveNumber(

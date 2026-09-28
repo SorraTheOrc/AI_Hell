@@ -60,13 +60,49 @@ export function isTimedWeapon(id: WeaponId): boolean {
  * Shots per beat for each weapon — the musical subdivision that defines
  * its fire rate. The cannon is double-time (2/beat, 160 BPM); spread and
  * dual are whole-time (1/beat, 80 BPM); rapid is six-per-beat (6/beat,
- * 480 BPM). Derived from these so every rate is an exact subdivision of
- * the beat period (AH-0MUAYB8EH005RJ8B).
+ * 480 BPM). These are the **defaults**; the live values are configurable
+ * through `core/rules.ts` (`weaponSubdivisions`), and every fire rate is
+ * derived from them so it is an exact subdivision of the beat period
+ * (AH-0MUAYB8EH005RJ8B).
  */
-export const WEAPON_CANNON_SUBDIVISION = 2;
-export const WEAPON_SPREAD_SUBDIVISION = 1;
-export const WEAPON_DUAL_SUBDIVISION = 1;
-export const WEAPON_RAPID_SUBDIVISION = 6;
+export type WeaponSubdivisions = Record<WeaponId, number>;
+
+/** Default shots-per-beat for each weapon (cannon 2, spread 1, dual 1, rapid 6). */
+export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+  cannon: 2,
+  spread: 1,
+  dual: 1,
+  rapid: 6,
+};
+
+/** Default cannon subdivision (2 shots per beat). */
+export const WEAPON_CANNON_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.cannon;
+/** Default spread subdivision (1 shot per beat). */
+export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
+/** Default dual subdivision (1 shot per beat). */
+export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
+/** Default rapid subdivision (6 shots per beat). */
+export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
+
+/**
+ * Derives a weapon's fire interval (ms) from a subdivision of the beat:
+ * `beatPeriodMs(bpm) / subdivisions`. Every rate is therefore an exact
+ * subdivision of the beat by construction, so the catalogue-wide on-grid
+ * invariant holds for any configured BPM/subdivisions (AH-0MUAYB8EH005RJ8B).
+ *
+ * @param weaponId - The weapon whose interval to derive.
+ * @param subdivisions - Shots per beat per weapon (defaults to the catalogue).
+ * @param bpm - Tempo in beats per minute (default 80).
+ */
+export function weaponFireRateMs(
+  weaponId: WeaponId,
+  subdivisions: WeaponSubdivisions = DEFAULT_WEAPON_SUBDIVISIONS,
+  bpm: number = DEFAULT_BPM,
+): number {
+  const count =
+    subdivisions[weaponId] ?? DEFAULT_WEAPON_SUBDIVISIONS[weaponId];
+  return beatSubdivisionMs(count, bpm);
+}
 
 /**
  * Fire rate interval for the cannon (ms between shots) — 2 shots per beat

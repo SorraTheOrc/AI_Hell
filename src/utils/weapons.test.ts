@@ -32,7 +32,10 @@ import {
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
   WEAPON_RAPID_SUBDIVISION,
+  DEFAULT_WEAPON_SUBDIVISIONS,
+  weaponFireRateMs,
   isOnBeatGrid,
+  type WeaponId,
   BULLET_SPEED,
   WEAPON_BULLET_LIFETIME,
   isTimedWeapon,
@@ -391,5 +394,50 @@ describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
     expect(isOnBeatGrid(0)).toBe(false);
     expect(isOnBeatGrid(-375)).toBe(false);
     expect(isOnBeatGrid(NaN)).toBe(false);
+  });
+});
+
+describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
+  const weaponIds = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
+
+  test('weaponFireRateMs derives the catalogue defaults with no override', () => {
+    for (const id of weaponIds) {
+      expect(weaponFireRateMs(id)).toBe(WEAPON_CATALOGUE[id].fireRateMs);
+    }
+  });
+
+  test('a subdivision override changes the derived fire rate (cadence)', () => {
+    // 750 ms beat / 4 = 187.5 ms (cannon fired twice as fast as default).
+    expect(
+      weaponFireRateMs('cannon', {
+        ...DEFAULT_WEAPON_SUBDIVISIONS,
+        cannon: 4,
+      }),
+    ).toBe(187.5);
+    // 750 ms beat / 2 = 375 ms (spread twice as fast as default).
+    expect(
+      weaponFireRateMs('spread', {
+        ...DEFAULT_WEAPON_SUBDIVISIONS,
+        spread: 2,
+      }),
+    ).toBe(375);
+  });
+
+  test('a BPM override changes the derived fire rate (cadence)', () => {
+    // 160 BPM → 375 ms beat; cannon 2/beat → 187.5 ms.
+    expect(weaponFireRateMs('cannon', DEFAULT_WEAPON_SUBDIVISIONS, 160)).toBe(
+      187.5,
+    );
+  });
+
+  test('the catalogue-wide on-grid invariant holds under a non-default config', () => {
+    const bpm = 120;
+    const subdivisions = { cannon: 4, spread: 3, dual: 2, rapid: 8 };
+    const period = beatPeriodMs(bpm);
+    for (const id of weaponIds) {
+      const rate = weaponFireRateMs(id, subdivisions, bpm);
+      expect(period % rate).toBeCloseTo(0, 6);
+      expect(isOnBeatGrid(rate, bpm)).toBe(true);
+    }
   });
 });

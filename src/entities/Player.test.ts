@@ -16,6 +16,7 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
@@ -1396,5 +1397,89 @@ describe('Player — Thruster hum wiring', () => {
     player.preUpdate(0, 16);
     player.physicsTick(1, 960, 540);
     expect(player.y).toBeCloseTo(y1, 5);
+  });
+});
+
+describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
+  let booted: BootedGame | null = null;
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    seedConfigStore([], { ...FOUR_DIR_CONFIG, controlScheme: 'fourDirectional' });
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.removeItem(RULES_STORAGE_KEY);
+    document.body.innerHTML = '';
+  });
+
+  async function bootGridPlayer(): Promise<Player> {
+    booted = await bootScene([GymPlayer]);
+    await tick();
+    const children = booted!.scene.sys.displayList.getChildren();
+    const player = children.find((c) => c instanceof Player) as Player | undefined;
+    expect(player).toBeDefined();
+    return player!;
+  }
+
+  it('derives the fire interval from the configured BPM', async () => {
+    saveRules({
+      ...DEFAULT_RULES,
+      beatBpm: 120,
+      // 120 BPM → 500 ms/beat; cannon 2/beat → 250 ms.
+      weaponSubdivisions: { cannon: 2, spread: 1, dual: 1, rapid: 6 },
+    });
+
+    const player = await bootGridPlayer();
+    expect(player.getFireInterval('cannon')).toBe(250);
+    expect(player.getFireInterval('spread')).toBe(500);
+    expect(player.getBeatClock().bpm).toBe(120);
+  });
+
+  it('changing a subdivision changes the firing cadence', async () => {
+    saveRules({
+      ...DEFAULT_RULES,
+      // 80 BPM → 750 ms/beat; cannon 1/beat → 750 ms (half the default rate).
+      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6 },
+    });
+
+    const player = await bootGridPlayer();
+    expect(player.getFireInterval('cannon')).toBe(750);
+  });
+
+  it('setRules hot-reloads the cadence and re-schedules active weapons', async () => {
+    const player = await bootGridPlayer();
+    expect(player.getFireInterval('cannon')).toBe(375); // default 2/beat
+
+    player.setRules({
+      ...DEFAULT_RULES,
+      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6 },
+    });
+
+    expect(player.getFireInterval('cannon')).toBe(750);
+    const next = player.getNextShotTime('cannon')!;
+    expect(isOnGrid(next, 750, player.getBeatClock().anchorMs)).toBe(true);
+  });
+
+  it('the configured cadence gates real shots on the beat grid', async () => {
+    saveRules({
+      ...DEFAULT_RULES,
+      weaponSubdivisions: { cannon: 3, spread: 1, dual: 1, rapid: 6 },
+    });
+
+    const player = await bootGridPlayer();
+    // 80 BPM → 750 ms/beat; cannon 3/beat → 250 ms.
+    expect(player.getFireInterval('cannon')).toBe(250);
+
+    // Reset the shared clock so the first tick is deterministic at t=0.
+    player.getBeatClock().reset();
+    player.setBeatClock(player.getBeatClock());
+    expect(player.tryFire(0.3)).toEqual(['cannon']);
+    expect(player.getLastShotTime('cannon')).toBe(250);
+    expect(isOnGrid(player.getLastShotTime('cannon')!, 250)).toBe(true);
   });
 });

@@ -86,8 +86,10 @@ import {
   getWeaponById,
   isTimedWeapon,
   computeHeading,
+  weaponFireRateMs,
 } from '../utils/weapons';
 import { BeatClock, createBeatClock } from '../utils/beat';
+import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 
 /** Floating-point slack (ms) when comparing the beat clock against a grid tick. */
@@ -203,8 +205,14 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _weaponNextShot: Map<WeaponId, number> = new Map();
   /** Beat-clock time (ms, a grid tick) of each active weapon's most recent shot. */
   private _weaponLastShot: Map<WeaponId, number> = new Map();
+  /**
+   * Live game rules — BPM and per-weapon beat subdivisions (defaults to the
+   * persisted rules). Fire intervals are derived from these, so a config
+   * change changes the cadence (AH-0MUAYB8EH005RJ8B).
+   */
+  private _rules: GameRules = loadRules();
   /** Shared beat clock driving phase-locked auto-fire (anchored at player start). */
-  private _beatClock: BeatClock = createBeatClock();
+  private _beatClock: BeatClock = createBeatClock({ bpm: this._rules.beatBpm });
   /** Most-recently collected weapon (primary view); falls back to cannon. */
   private _primaryWeapon: WeaponId = 'cannon';
   /** Most-recent heading in radians (fallback when stationary). */
@@ -537,6 +545,19 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Applies live game rules (BPM + per-weapon beat subdivisions) and
+   * re-schedules every active weapon on the new grid, so a config change
+   * immediately changes the firing cadence (AH-0MUAYB8EH005RJ8B). Mirrors
+   * the `setConfig` hot-reload pattern.
+   */
+  setRules(rules: GameRules): void {
+    this._rules = rules;
+    for (const weaponId of this.getActiveWeapons()) {
+      this._readyFire(weaponId);
+    }
+  }
+
+  /**
    * Current live fire-rate multiplier (1 = normal, 1.5 = P5 boosted).
    * Exposed so scenes and tests can verify the applied multiplier without
    * inferring it from fire timing.
@@ -713,13 +734,30 @@ export class Player extends Phaser.GameObjects.Graphics {
   // ── Auto-fire emission (AC1–AC3) ─────────────────────────────────
 
   /**
-   * Effective fire interval for a weapon in ms — its catalogue rate scaled
-   * by the live fire-rate multiplier (P5 Speed Boost: `/1.5` fires 50 %
-   * more often). At the default multiplier of 1 every interval is an exact
-   * subdivision of the beat period.
+   * Effective fire interval for a weapon in ms — its configured beat
+   * subdivision (`weaponSubdivisions` + `beatBpm` from the game rules),
+   * scaled by the live fire-rate multiplier (P5 Speed Boost: `/1.5` fires
+   * 50 % more often). At the default multiplier of 1 every interval is an
+   * exact subdivision of the beat period (AH-0MUAYB8EH005RJ8B).
    */
   private _effectiveInterval(weaponId: WeaponId): number {
-    return getWeaponById(weaponId).fireRateMs / this._fireRateMultiplier;
+    return (
+      weaponFireRateMs(
+        weaponId,
+        this._rules.weaponSubdivisions,
+        this._rules.beatBpm,
+      ) / this._fireRateMultiplier
+    );
+  }
+
+  /**
+   * The current effective fire interval (ms) for `weaponId`, derived from
+   * the configured BPM/subdivision and scaled by the live fire-rate
+   * multiplier. Exposed so tests and scenes can observe the configured
+   * cadence directly.
+   */
+  getFireInterval(weaponId: WeaponId): number {
+    return this._effectiveInterval(weaponId);
   }
 
   /**
