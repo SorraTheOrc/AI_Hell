@@ -427,7 +427,8 @@ load, which makes assertions taken right after boot flaky.
   calls (150 ms of simulated time, matching the legacy settle window), and the
   loop is then resumed so tests that `await` a scene transition (for example
   the game-over flow) still work. The PlayScene suites (`PlayScene.test.ts`,
-  `PlaySceneHUD.test.ts`, `PlayScenePause.test.ts`) opt in.
+  `PlaySceneHUD.test.ts`, `PlayScenePause.test.ts`) and `SceneNavigation.test.ts`
+  opt in.
 - **Drive behaviour with explicit `scene.tick(dt)`**, accumulating deterministic
   time and polling for the expected condition, rather than wall-clock waits.
   This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,
