@@ -48,7 +48,8 @@ const DEFAULT_DIFFICULTY_SOURCE: DifficultySource = 'generated';
 /** Stable column order for the enemy-config CSV. Exported for plugin validation. */
 export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'key', 'displayName', 'formationKind', 'count', 'spacingX', 'spacingY',
-  'driftSpeed', 'startX', 'startY', 'size', 'color', 'bulletColor',
+  'driftSpeed', 'startX', 'startY', 'startXMin', 'startXMax', 'startYMin',
+  'startYMax', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
   'bulletLifetime', 'burstCount', 'shotProbability', 'health',
 ];
@@ -263,6 +264,7 @@ export function validateEnemyConfig(
   // Validate malformed numbers.
   const numericFields = [
     'count', 'spacingX', 'spacingY', 'driftSpeed', 'startX', 'startY',
+    'startXMin', 'startXMax', 'startYMin', 'startYMax',
     'size', 'bulletSize', 'fireInterval', 'bulletSpeed', 'bulletLifetime',
     'burstCount', 'shotProbability',
   ];
@@ -377,6 +379,13 @@ export function coerceEnemyConfig(
   merged.driftSpeed = coerceNumber(row.driftSpeed, merged.driftSpeed);
   merged.startX = coerceNumber(row.startX, merged.startX);
   merged.startY = coerceNumber(row.startY, merged.startY);
+  // Spawn-position ranges (AH-0MUKCLXLW0032R67). Legacy CSVs omit these
+  // columns: absent cells fall back to the resolved scalar so the effective
+  // range is a single point (min = max = startX/startY), preserving behaviour.
+  merged.startXMin = coerceNumber(row.startXMin, merged.startX);
+  merged.startXMax = coerceNumber(row.startXMax, merged.startX);
+  merged.startYMin = coerceNumber(row.startYMin, merged.startY);
+  merged.startYMax = coerceNumber(row.startYMax, merged.startY);
   merged.size = coerceNumber(row.size, merged.size);
   merged.color = coerceHexColour(row.color, merged.color);
   merged.bulletColor = coerceHexColour(row.bulletColor, merged.bulletColor);

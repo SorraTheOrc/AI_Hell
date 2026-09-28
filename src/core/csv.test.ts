@@ -1131,3 +1131,68 @@ describe('Enemy health column (F1)', () => {
     expect(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS).health).toBe(1);
   });
 });
+
+// ── Spawn-position ranges (AH-0MUKCLXLW0032R67, AC2/AC6) ────────────
+
+describe('Enemy spawn-position ranges (AC2/AC6)', () => {
+  const baseRow: Record<string, string> = {
+    key: 'scout', displayName: 'Scout', formationKind: 'v',
+    count: '6', spacingX: '26', spacingY: '22', driftSpeed: '40',
+    startX: '240', startY: '270', size: '16',
+    color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+    shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '200',
+    bulletLifetime: '1.5', burstCount: '1', shotProbability: '1',
+  };
+
+  it('parses the four range columns when present', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig(
+      { ...baseRow, startXMin: '100', startXMax: '400', startYMin: '150', startYMax: '350' },
+      DEFAULT_ENEMY_CONFIGS,
+    );
+    expect(config.startXMin).toBe(100);
+    expect(config.startXMax).toBe(400);
+    expect(config.startYMin).toBe(150);
+    expect(config.startYMax).toBe(350);
+  });
+
+  it('legacy CSV without range columns defaults min = max = scalar startX/startY', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig({ ...baseRow, startX: '321', startY: '654' }, DEFAULT_ENEMY_CONFIGS);
+    expect(config.startXMin).toBe(321);
+    expect(config.startXMax).toBe(321);
+    expect(config.startYMin).toBe(654);
+    expect(config.startYMax).toBe(654);
+  });
+
+  it('serialises the range columns and round-trips them', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.scout, startXMin: 10, startXMax: 20, startYMin: 30, startYMax: 40 };
+    const csvString = m.serializeEnemyConfigs([config]);
+    expect(csvString).toContain('startXMin');
+    expect(csvString).toContain('startXMax');
+    expect(csvString).toContain('startYMin');
+    expect(csvString).toContain('startYMax');
+    const coerced = m.coerceEnemyConfig(m.parseCsvRows(csvString)[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.startXMin).toBe(10);
+    expect(coerced.startXMax).toBe(20);
+    expect(coerced.startYMin).toBe(30);
+    expect(coerced.startYMax).toBe(40);
+  });
+
+  it('validateEnemyConfig accepts valid range columns and rejects malformed ones', async () => {
+    const m = await loadCsvModule();
+    expect(m.validateEnemyConfig(
+      { ...baseRow, startXMin: '100', startXMax: '400', startYMin: '150', startYMax: '350' },
+      DEFAULT_ENEMY_CONFIGS,
+    ).ok).toBe(true);
+    const result = m.validateEnemyConfig({ ...baseRow, startXMin: 'wide' }, DEFAULT_ENEMY_CONFIGS);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ')).toContain('startXMin');
+  });
+
+  it('range columns are optional: omitting them never fails validation', async () => {
+    const m = await loadCsvModule();
+    expect(m.validateEnemyConfig(baseRow, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
+  });
+});
