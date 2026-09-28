@@ -138,6 +138,21 @@ export function resolveSpawnRange(
   return lo <= hi ? { min: lo, max: hi } : { min: hi, max: lo };
 }
 
+/**
+ * Picks a value inside a {@link SpawnRange} using the supplied RNG.
+ *
+ * A degenerate range (`min === max`) returns `min` verbatim so a zero-width
+ * band never advances the RNG stream — this keeps the legacy scalar path
+ * fully deterministic. The RNG is expected to return a value in `[0, 1)`.
+ *
+ * @param range — inclusive `[min, max]` band (already normalised).
+ * @param rng — RNG returning a fraction in `[0, 1)`.
+ */
+export function pickInRange(range: SpawnRange, rng: () => number): number {
+  if (range.max <= range.min) return range.min;
+  return range.min + rng() * (range.max - range.min);
+}
+
 // ── Difficulty-curve config ─────────────────────────────────────────
 
 /**

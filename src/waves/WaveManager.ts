@@ -24,6 +24,8 @@ import {
   getFormationBuilder,
 } from '../utils/formations';
 import type { EnemyFormationKind, FormationOffset } from '../utils/formations';
+import { pickInRange, resolveSpawnRange, type EnemyConfig, type SpawnRange } from '../core/configTypes';
+import { loadEnemyConfig } from '../core/enemyConfig';
 import {
   LEVELS,
   type LevelDefinition,
@@ -267,10 +269,10 @@ export class WaveManager {
    * empty array when there is no active wave (before `beginGame()` or
    * during the boss encounter).
    */
-  planSpawns(): EnemySpawn[] {
+  planSpawns(rng: () => number = Math.random): EnemySpawn[] {
     const wave = this.currentWave();
     if (!wave) return [];
-    return planGroupSpawns(wave.groups, wave.shootEnabled);
+    return planGroupSpawns(wave.groups, wave.shootEnabled, rng);
   }
 
   // ── Dynamic spawn registration (generic seam) ───────────────────
@@ -429,6 +431,35 @@ export function validateWaveGroups(groups: WaveGroup[]): WaveGroupValidationErro
 }
 
 /**
+ * Resolves the effective spawn range for one axis of a wave group.
+ *
+ * Precedence (AH-0MUKCLXLW0032R67, WG4): an explicit per-group range
+ * overrides the enemy archetype's configured range. A degenerate or absent
+ * archetype range (min === max, e.g. every legacy seed) leaves the group's
+ * scalar `start` untouched, so existing levels spawn at exactly the same
+ * point. Reversed bounds are normalised by {@link resolveSpawnRange}.
+ */
+function resolveGroupRange(
+  groupStart: number,
+  groupMin: number | undefined,
+  groupMax: number | undefined,
+  configMin: number | undefined,
+  configMax: number | undefined,
+): SpawnRange {
+  // Per-group override wins when either bound is present (WG4).
+  if (groupMin !== undefined || groupMax !== undefined) {
+    return resolveSpawnRange(groupStart, groupMin, groupMax);
+  }
+  // Otherwise use the archetype's range, but only when it is a genuine band:
+  // a degenerate (min === max) config is the legacy scalar and must not
+  // override the wave group's own start position.
+  if (configMin !== undefined && configMax !== undefined && configMin !== configMax) {
+    return resolveSpawnRange(configMin, configMin, configMax);
+  }
+  return { min: groupStart, max: groupStart };
+}
+
+/**
  * Computes the concrete spawn list for a list of wave groups: one
  * {@link EnemySpawn} per enemy, positioned by each group's formation
  * builder. The number of spawns always equals
@@ -436,18 +467,54 @@ export function validateWaveGroups(groups: WaveGroup[]): WaveGroupValidationErro
  * wave size and the plan in lockstep. Shared by
  * {@link WaveManager.planSpawns} and the boss minion planner
  * (`waves/BossMinions.ts`). Pure — no Phaser dependency.
+ *
+ * Spawn-position ranges (AH-0MUKCLXLW0032R67): each group selects a random
+ * base position within its effective range (per-group override, else the
+ * enemy archetype's configured range), then the formation offsets are added
+ * exactly as before. A zero-width range consumes no randomness, preserving
+ * deterministic legacy behaviour. `rng` is injectable for tests.
+ *
+ * @param groups — wave groups to position.
+ * @param shootEnabled — whether the spawned enemies may fire.
+ * @param rng — RNG returning a fraction in `[0, 1)`; defaults to
+ *   `Math.random`. The scene passes its own RNG for deterministic replays.
+ * @param configFor — archetype resolver; defaults to the config store
+ *   loader (injectable for tests without a seeded registry).
  */
 export function planGroupSpawns(
   groups: WaveGroup[],
   shootEnabled: boolean,
+  rng: () => number = Math.random,
+  configFor: (enemyKey: string) => EnemyConfig = loadEnemyConfig,
 ): EnemySpawn[] {
   const spawns: EnemySpawn[] = [];
   for (const groupDef of groups) {
+    const config = configFor(groupDef.enemyKey);
+    const baseX = pickInRange(
+      resolveGroupRange(
+        groupDef.startX,
+        groupDef.startXMin,
+        groupDef.startXMax,
+        config.startXMin,
+        config.startXMax,
+      ),
+      rng,
+    );
+    const baseY = pickInRange(
+      resolveGroupRange(
+        groupDef.startY,
+        groupDef.startYMin,
+        groupDef.startYMax,
+        config.startYMin,
+        config.startYMax,
+      ),
+      rng,
+    );
     const buildOffsets = getFormationBuilder(groupDef.formation);
     for (const offset of buildOffsets(groupDef.count)) {
       const { x, y } = computeFormationPosition(
-        groupDef.startX,
-        groupDef.startY,
+        baseX,
+        baseY,
         offset,
         groupDef.spacingX,
         groupDef.spacingY,
@@ -458,8 +525,8 @@ export function planGroupSpawns(
         x,
         y,
         shootEnabled,
-        startX: groupDef.startX,
-        startY: groupDef.startY,
+        startX: baseX,
+        startY: baseY,
         spacingX: groupDef.spacingX,
         spacingY: groupDef.spacingY,
       });

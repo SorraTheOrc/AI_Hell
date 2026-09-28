@@ -81,11 +81,18 @@ export function minionsForPhase(phase: number): BossMinionWave | null {
 /**
  * Plans the concrete minion spawns for a boss phase. Returns an empty
  * array for phases with no minions (or unknown phases).
+ *
+ * @param phase — boss phase number (1–4).
+ * @param rng — RNG for range-based positioning; defaults to `Math.random`.
+ *   The scene passes its own RNG so minion positions match the game stream.
  */
-export function planMinionSpawns(phase: number): EnemySpawn[] {
+export function planMinionSpawns(
+  phase: number,
+  rng: () => number = Math.random,
+): EnemySpawn[] {
   const wave = minionsForPhase(phase);
   if (!wave || wave.groups.length === 0) return [];
-  return planGroupSpawns(wave.groups, wave.shootEnabled);
+  return planGroupSpawns(wave.groups, wave.shootEnabled, rng);
 }
 
 /**

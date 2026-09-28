@@ -644,7 +644,7 @@ export class PlayScene extends CombatScene<
     this.planAsteroidSpawns();
     // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
     this.planHarvesterSpawns();
-    const spawns = this.waveManager.planSpawns();
+    const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       for (const spawn of spawns) this._spawnEnemy(spawn);
       playSpawnSound();
@@ -1032,7 +1032,7 @@ export class PlayScene extends CombatScene<
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
   private _spawnMinions(phase: number): void {
-    for (const spawn of planMinionSpawns(phase)) this._spawnEnemy(spawn);
+    for (const spawn of planMinionSpawns(phase, this.rng)) this._spawnEnemy(spawn);
   }
 
   /**

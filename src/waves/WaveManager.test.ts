@@ -7,9 +7,11 @@
  * on observable behaviour through the public API — no source inspection.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
+import type { EnemyConfig } from '../core/configTypes';
 import {
   LEVELS,
   LEVEL_COUNT,
@@ -17,9 +19,11 @@ import {
   getLevelDefinition,
   type LevelDefinition,
   type WaveDefinition,
+  type WaveGroup,
 } from './Formations';
 import {
   WaveManager,
+  planGroupSpawns,
   validateWaveGroups,
   wavePlannedSpawnCount,
   type WaveEvent,
@@ -566,5 +570,140 @@ describe('WaveManager — declared vs planned spawn count (AH-0MUJKJ8OO007TBSS)'
         expect(wavePlannedSpawnCount(w.groups)).toBe(declared);
       }
     }
+  });
+});
+
+// ── Range-based spawn positioning (AH-0MUKIBAY60075GH5) ─────────────
+
+describe('planGroupSpawns — range-based positioning (AH-0MUKIBAY60075GH5)', () => {
+  /** A wave group with explicit scalar base and optional range overrides. */
+  function rangedGroup(
+    overrides: Partial<{
+      enemyKey: string;
+      startX: number;
+      startY: number;
+      startXMin: number;
+      startXMax: number;
+      startYMin: number;
+      startYMax: number;
+    }> = {},
+  ): WaveGroup {
+    return {
+      enemyKey: 'scout',
+      formation: 'single',
+      count: 1,
+      spacingX: 20,
+      spacingY: 20,
+      startX: overrides.startX ?? 100,
+      startY: overrides.startY ?? 200,
+      startXMin: overrides.startXMin,
+      startXMax: overrides.startXMax,
+      startYMin: overrides.startYMin,
+      startYMax: overrides.startYMax,
+    };
+  }
+
+  /** Resolver that returns the scout seed with the supplied range fields. */
+  function configWith(
+    overrides: Partial<Pick<EnemyConfig, 'startX' | 'startY' | 'startXMin' | 'startXMax' | 'startYMin' | 'startYMax'>>,
+  ): (key: string) => EnemyConfig {
+    return () => ({ ...DEFAULT_ENEMY_CONFIGS.scout, ...overrides });
+  }
+
+  it('degenerate config range keeps the group scalar base (no randomness)', () => {
+    const rng = vi.fn(() => 0.5);
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 123, startY: 234 })],
+      false,
+      rng,
+      configWith({ startXMin: 240, startXMax: 240, startYMin: 270, startYMax: 270 }),
+    );
+    expect(spawns[0]).toMatchObject({ x: 123, y: 234, startX: 123, startY: 234 });
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it('picks a base within an archetype range using the injected RNG', () => {
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 0, startY: 0 })],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 100, startXMax: 300, startYMin: 200, startYMax: 400 }),
+    );
+    expect(spawns[0].startX).toBe(200);
+    expect(spawns[0].startY).toBe(300);
+    expect(spawns[0]).toMatchObject({ x: 200, y: 300 });
+  });
+
+  it('spans the full configured band across the RNG domain', () => {
+    const cfg = configWith({ startXMin: 100, startXMax: 300, startYMin: 200, startYMax: 400 });
+    for (const [r, expectedX, expectedY] of [
+      [0, 100, 200],
+      [1, 300, 400],
+      [0.25, 150, 250],
+      [0.75, 250, 350],
+    ] as const) {
+      const spawns = planGroupSpawns([rangedGroup({ startX: 0, startY: 0 })], false, () => r, cfg);
+      expect(spawns[0].startX).toBe(expectedX);
+      expect(spawns[0].startY).toBe(expectedY);
+    }
+  });
+
+  it('a per-group range overrides the archetype range (WG4)', () => {
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 0, startY: 0, startXMin: 10, startXMax: 30, startYMin: 40, startYMax: 60 })],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 100, startXMax: 300, startYMin: 200, startYMax: 400 }),
+    );
+    expect(spawns[0].startX).toBe(20);
+    expect(spawns[0].startY).toBe(50);
+  });
+
+  it('adds formation offsets on top of the resolved base', () => {
+    const group: WaveGroup = {
+      ...rangedGroup({ startX: 0, startY: 0 }),
+      formation: 'v',
+      count: 3,
+      spacingX: 10,
+      spacingY: 10,
+    };
+    const spawns = planGroupSpawns(
+      [group],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 0, startXMax: 100, startYMin: 0, startYMax: 100 }),
+    );
+    expect(spawns).toHaveLength(3);
+    // The apex sits on the resolved base, wings are offset from it.
+    expect(spawns[0]).toMatchObject({ x: 50, y: 50 });
+    expect(spawns.some((s) => s.x !== 50 || s.y !== 50)).toBe(true);
+  });
+
+  it('normalises a reversed archetype range (min > max)', () => {
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 0, startY: 0 })],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 300, startXMax: 100, startYMin: 400, startYMax: 200 }),
+    );
+    expect(spawns[0].startX).toBe(200);
+    expect(spawns[0].startY).toBe(300);
+  });
+
+  it('each group in a wave gets its own independent random base', () => {
+    // Two axes per group: group 1 draws 0, group 2 draws 1.
+    const draws = [0.0, 0.0, 1.0, 1.0];
+    let i = 0;
+    const spawns = planGroupSpawns(
+      [
+        rangedGroup({ startX: 0, startY: 0 }),
+        rangedGroup({ startX: 0, startY: 0 }),
+      ],
+      false,
+      () => draws[i++] ?? 0,
+      configWith({ startXMin: 0, startXMax: 100, startYMin: 0, startYMax: 100 }),
+    );
+    expect(spawns[0].startX).toBe(0);
+    expect(spawns[1].startX).toBe(100);
   });
 });
