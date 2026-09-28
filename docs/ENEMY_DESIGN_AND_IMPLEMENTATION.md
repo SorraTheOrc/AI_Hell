@@ -589,8 +589,11 @@ Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
 `asteroidSplit`), the shared dispatcher
-`src/entities/enemyFire.ts`, and the scheme→input helper
-`mapControlInput` in `src/utils/movementModel.ts`. The repo-wide
+`src/entities/enemyFire.ts`, the scheme→input helper
+`mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
+helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
+(consumed identically by `planGroupSpawns` in the game and
+`GymFormationScene` in the gyms). The repo-wide
 duplicate-body guard in `src/scenes/core/CombatScene.equivalence.test.ts`
 (`EPIC_SHARED_HELPERS` / `EPIC_SHARED_METHODS`) fails the suite if a
 production scene re-introduces a copy, and the cross-scene equivalence
@@ -830,7 +833,9 @@ The Diver reports this through the optional `requiresFormationHold?()` seam
 | `count` | `number` | Formation size. Must be `1` for the `single` formation (one entity); `validateWaveGroups` reports violations. |
 | `spacingX` / `spacingY` | `number` | Slot spacing (px). |
 | `driftSpeed` | `number` | Rightward drift (px/s). |
-| `startX` / `startY` | `number` | Base position (px). |
+| `startX` / `startY` | `number` | Legacy scalar base position (px); used verbatim when the range fields below are absent or degenerate. |
+| `startXMin` / `startXMax` | `number?` | Optional spawn-band X (px). When a genuine range (`min !== max`), each wave group / gym formation draws a random base X within it; when absent or `min === max`, the scalar `startX` is used (backward compatible). |
+| `startYMin` / `startYMax` | `number?` | Optional spawn-band Y (px); see `startXMin` / `startXMax`. |
 | `size` | `number` | Body radius/half-size (px). |
 | `health` | `number` | Hit points before destruction (positive integer, default **1**). Data-driven so multi-hit archetypes need no code branch; the Harvester (E7) is **5**. |
 | `color` | `number` | Body colour `0xRRGGBB`. |
@@ -864,6 +869,14 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
   rewritten by the dev save path, so `ship-config.csv` is currently headerless.
   Colours are `0xRRGGBB`; `formationKind` and
   `shotPattern` are the plain enum strings; numeric columns are plain numbers.
+- **Spawn-position ranges (AH-0MUKCLXLW0032R67):** `enemy-configs.csv` may carry
+  four optional columns — `startXMin`, `startXMax`, `startYMin`, `startYMax` —
+  emitted after `startY` in `ENEMY_COLUMN_ORDER`. A missing column falls back to
+  the scalar `startX`/`startY` (so legacy files without them load unchanged and
+  spawn at exactly the same point). A genuine band (`min !== max`) makes the
+  game's `planGroupSpawns` and the gym's `GymFormationScene` draw a random base
+  within it through the **shared** `resolveSpawnRange` / `pickInRange` helpers
+  in `src/core/configTypes.ts`; reversed bounds are normalised so `min ≤ max`.
 
 Supporting modules:
 
@@ -978,11 +991,16 @@ file.
 
 The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
-`count/spacingX/spacingY/driftSpeed/startX/startY/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
+`count/spacingX/spacingY/driftSpeed/startX/startY/startXMin/startXMax/startYMin/startYMax/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
 `listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).
+The four spawn-range sliders (`startXMin/startXMax/startYMin/startYMax`, bounds
+`0..GAME_WIDTH` / `0..GAME_HEIGHT`, step 1) are clamped to the canvas and
+auto-corrected so `min ≤ max` before the value is used or saved; editing the
+legacy scalar `startX`/`startY` collapses its range to that point so the scalar
+slider keeps moving the formation base.
 Both flows are async: the panel shows `Saving…`, then `Saved`/`Saved as <key>`
 or a red **`Save failed — …`** status (`enemy-gym-save-status`). In production
 builds writes are unavailable and the status reports it. After a successful
