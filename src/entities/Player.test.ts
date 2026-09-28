@@ -16,6 +16,7 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { createBeatClock, isOnGrid } from '../utils/beat';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
@@ -856,109 +857,164 @@ describe('Player ship entity', () => {
     expect(player!.getWeaponDef().id).toBe('rapid');
   });
 
-  it('tryFire fires every active weapon, each at its own independent rate (AC3)', async () => {
+  // ── Phase-locked beat-grid auto-fire (AH-0MUAYB8EH005RJ8B) ──────
+
+  /**
+   * Boots a player and resets its beat clock to a fresh, deterministic
+   * 80 BPM grid anchored at t=0. The live scene loop advances the clock
+   * during boot, so tests that assert exact shot times reset it first.
+   */
+  async function freshPlayer(): Promise<Player> {
     const scene = await bootPlayerScene();
     await tick();
-
     const player = playerOf(scene);
     expect(player).toBeDefined();
+    player!.setBeatClock(createBeatClock());
+    return player!;
+  }
 
-    // Freshly collected weapon fires immediately alongside the cannon.
-    player!.equipWeapon('rapid'); // rapid 125 ms, cannon 375 ms
-    expect(player!.tryFire(0.5)).toEqual(['cannon', 'rapid']);
+  it('tryFire fires active weapons on the shared beat grid, phase-locked (AC1/AC2)', async () => {
+    const player = await freshPlayer();
+    player.equipWeapon('rapid'); // rapid 125 ms (6/beat), cannon 375 ms (2/beat)
 
-    // +100 ms: below both rates → nothing fires.
-    expect(player!.tryFire(0.1)).toEqual([]);
+    // t = 500 ms: both weapons' grid ticks have elapsed.
+    expect(player.tryFire(0.5)).toEqual(['cannon', 'rapid']);
 
-    // +50 ms → 150 ms total ≥ 125 (rapid only, cannon at 250 < 400).
-    expect(player!.tryFire(0.05)).toEqual(['rapid']);
+    // t = 600 ms: nothing due (next cannon 750, next rapid 625).
+    expect(player.tryFire(0.1)).toEqual([]);
 
-    // +300 ms → cannon (450 ≥ 400) and rapid (both due) fire together.
-    expect(player!.tryFire(0.3)).toEqual(['cannon', 'rapid']);
+    // t = 650 ms: the rapid tick at 625 has now elapsed → rapid only.
+    expect(player.tryFire(0.05)).toEqual(['rapid']);
+
+    // t = 800 ms: cannon tick 750 and rapid tick 750 coincide.
+    expect(player.tryFire(0.15)).toEqual(['cannon', 'rapid']);
   });
 
-  it('tryFire with only the cannon fires at the 375 ms rate (AC3)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
+  it('tryFire with only the cannon fires on the 375 ms beat grid (AC1)', async () => {
+    const player = await freshPlayer();
 
-    const player = playerOf(scene);
-    expect(player).toBeDefined();
-
-    // First call: cannon is ready (cooldown 0).
-    expect(player!.tryFire(0.5)).toEqual(['cannon']); // 500 ms > 375 ms
-
-    // Second call immediately: cooldown not elapsed.
-    expect(player!.tryFire(0.1)).toEqual([]); // 100 ms < 375 ms → blocked
-
-    // After remaining cooldown: fires again (450 ms total ≥ 375 ms).
-    expect(player!.tryFire(0.35)).toEqual(['cannon']);
+    expect(player.tryFire(0.5)).toEqual(['cannon']); // tick 375 elapsed by t=500
+    expect(player.tryFire(0.1)).toEqual([]); // t=600 < next tick 750
+    expect(player.tryFire(0.2)).toEqual(['cannon']); // t=800 ≥ tick 750
   });
 
-  it('setFireRateMultiplier scales the effective cooldown (P5 AC1)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
+  it('every emitted shot time is an exact grid tick (AC5)', async () => {
+    const player = await freshPlayer();
+    player.equipWeapon('spread'); // 750 ms (1/beat)
+    player.equipWeapon('dual'); // 750 ms (1/beat)
+    player.equipWeapon('rapid'); // 125 ms (6/beat)
 
-    const player = playerOf(scene);
-    expect(player).toBeDefined();
+    for (let i = 0; i < 40; i++) player.tryFire(0.05); // 2 s of 50 ms frames
 
-    // Baseline: the cannon fires, then is blocked for a sub-375 ms interval.
-    player!.setFireRateMultiplier(1);
-    expect(player!.tryFire(0.5)).toEqual(['cannon']);
-    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 375 ms → blocked
-
-    // With a 1.5× multiplier the effective cooldown is 375 / 1.5 = 250 ms,
-    // so the same 300 ms gap now clears the cooldown.
-    player!.setFireRateMultiplier(1.5);
-    expect(player!.tryFire(0.3)).toEqual(['cannon']);
+    for (const id of player.getActiveWeapons()) {
+      const interval = player.getWeaponDef(id).fireRateMs;
+      const shot = player.getLastShotTime(id);
+      expect(shot).toBeDefined();
+      expect(isOnGrid(shot!, interval)).toBe(true);
+      // Anchored at 0, so the tick is an exact integer multiple.
+      expect(shot! % interval).toBe(0);
+    }
   });
 
-  it('effective fire interval is fireRateMs / multiplier (P5 AC1)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
+  it('multiple active weapons stay phase-locked on one shared grid (AC2)', async () => {
+    const player = await freshPlayer();
+    player.equipWeapon('rapid');
 
-    const player = playerOf(scene);
-    expect(player).toBeDefined();
+    const cannonShots: number[] = [];
+    const rapidShots: number[] = [];
+    for (let i = 0; i < 80; i++) {
+      const fired = player.tryFire(0.025); // 25 ms frames out to 2 s
+      for (const id of fired) {
+        const shot = player.getLastShotTime(id)!;
+        if (id === 'cannon') cannonShots.push(shot);
+        if (id === 'rapid') rapidShots.push(shot);
+      }
+    }
 
-    // At 1.5× a 375 ms cannon reloads in 250 ms. 240 ms must still be
-    // blocked, 260 ms must have elapsed — proving the interval was divided.
-    player!.setFireRateMultiplier(1.5);
-    expect(player!.tryFire(0.5)).toEqual(['cannon']);
-    expect(player!.tryFire(0.24)).toEqual([]); // 240 ms < 250 ms
-    expect(player!.tryFire(0.02)).toEqual(['cannon']); // 260 ms ≥ 250 ms
+    expect(cannonShots.length).toBeGreaterThan(0);
+    expect(rapidShots.length).toBeGreaterThan(0);
+    // Cannon (375 ms) is an exact multiple of rapid (125 ms), so every
+    // cannon shot coincides with a rapid shot — no independent drift.
+    for (const shot of cannonShots) {
+      expect(rapidShots).toContain(shot);
+      expect(shot % 125).toBe(0);
+    }
   });
 
-  it('fire-rate multiplier returns to 1 (normal) when reset (P5 AC2)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
+  it('a weapon collected mid-beat waits for the next grid tick (AC3)', async () => {
+    const player = await freshPlayer();
 
-    const player = playerOf(scene);
-    expect(player).toBeDefined();
+    player.tryFire(0.2); // advance to t=200 ms
+    player.equipWeapon('spread'); // 750 ms interval → next tick at 750
+    expect(player.getNextShotTime('spread')).toBe(750);
 
-    // Boosted: a 300 ms gap fires.
-    player!.setFireRateMultiplier(1.5);
-    expect(player!.tryFire(0.5)).toEqual(['cannon']);
-    expect(player!.tryFire(0.3)).toEqual(['cannon']);
+    // t=700: the spread's tick has not arrived.
+    expect(player.tryFire(0.5)).not.toContain('spread');
+    // t=800: the 750 tick has elapsed.
+    expect(player.tryFire(0.1)).toContain('spread');
+    expect(player.getLastShotTime('spread')).toBe(750);
+  });
 
-    // Back to normal: the next fire re-arms at the 375 ms cannon rate, so
-    // a subsequent 300 ms gap is below the cooldown and must be blocked.
-    player!.setFireRateMultiplier(1);
-    expect(player!.tryFire(0.3)).toEqual(['cannon']); // re-arm at 375 ms
-    expect(player!.tryFire(0.3)).toEqual([]); // 300 ms < 375 ms → blocked
+  it('shots never drift under variable frame deltas (AC5)', async () => {
+    const player = await freshPlayer();
+
+    const frameDeltasMs = [10, 33, 7, 50, 16, 42, 120];
+    const shots: number[] = [];
+    for (let frame = 0; frame < 240; frame++) {
+      const dtMs = frameDeltasMs[frame % frameDeltasMs.length];
+      const fired = player.tryFire(dtMs / 1000);
+      if (fired.includes('cannon')) {
+        shots.push(player.getLastShotTime('cannon')!);
+      }
+    }
+
+    expect(shots.length).toBeGreaterThan(1);
+    for (let i = 0; i < shots.length; i++) {
+      expect(shots[i] % 375).toBe(0); // exact 2/beat tick
+      if (i > 0) expect(shots[i]).toBe(shots[i - 1] + 375); // exact spacing
+    }
+  });
+
+  it('the fire-rate multiplier moves weapons onto the scaled interval grid (P5 AC1)', async () => {
+    const player = await freshPlayer();
+    player.setFireRateMultiplier(1.5); // cannon interval → 250 ms
+    player.setBeatClock(createBeatClock()); // deterministic anchor at t=0
+
+    const shots: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      const fired = player.tryFire(0.1);
+      if (fired.includes('cannon')) shots.push(player.getLastShotTime('cannon')!);
+    }
+
+    expect(shots.length).toBeGreaterThan(1);
+    for (let i = 0; i < shots.length; i++) {
+      expect(shots[i] % 250).toBe(0);
+      if (i > 0) expect(shots[i]).toBe(shots[i - 1] + 250);
+    }
+  });
+
+  it('resetting the multiplier re-schedules active weapons on the beat grid (P5 AC2)', async () => {
+    const player = await freshPlayer();
+    player.setFireRateMultiplier(1.5);
+    player.setBeatClock(createBeatClock());
+    player.tryFire(1.0); // fire on the boosted grid
+
+    player.setFireRateMultiplier(1);
+    const next = player.getNextShotTime('cannon')!;
+    // Back on the 375 ms grid, phase-locked, and still in the future.
+    expect(isOnGrid(next, 375)).toBe(true);
+    expect(next).toBeGreaterThan(player.getBeatClock().now());
   });
 
   it('a boosted ship keeps firing after respawn without re-setting (P5 AC2)', async () => {
-    const scene = await bootPlayerScene();
-    await tick();
+    const player = await freshPlayer();
+    player.setFireRateMultiplier(1.5);
+    player.setBeatClock(createBeatClock());
+    player.respawnInPlace();
 
-    const player = playerOf(scene);
-    expect(player).toBeDefined();
-
-    player!.setFireRateMultiplier(1.5);
-    player!.respawnInPlace();
-
-    // Multiplier persists across respawn (scene re-applies each frame).
-    expect(player!.tryFire(0.5)).toEqual(['cannon']);
-    expect(player!.tryFire(0.3)).toEqual(['cannon']);
+    // Multiplier and beat grid persist across respawn.
+    expect(player.tryFire(0.5)).toEqual(['cannon']);
+    expect(player.tryFire(0.3)).toEqual(['cannon']);
   });
 });
 

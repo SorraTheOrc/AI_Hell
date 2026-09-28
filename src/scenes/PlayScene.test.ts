@@ -34,6 +34,7 @@ import {
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
+import { createBeatClock } from '../utils/beat';
 import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
@@ -2059,11 +2060,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
     const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
     const scene = await bootPlay();
-    // Boot already fired an opening volley; clear so we assert only the
-    // shots fired below.
+    const player = scene.getPlayer()!;
+    // Reset the shared beat clock to a deterministic anchor so exactly one
+    // grid tick (375 ms) elapses in the window below.
+    player.setBeatClock(createBeatClock());
     vi.clearAllMocks();
 
-    scene.tick(0.5); // cannon cooldown (375 ms) elapsed → fires
+    scene.tick(0.5); // one 375 ms cannon grid tick elapses → fires once
 
     expect(cannonSound).toHaveBeenCalledTimes(1);
     // No other weapon's cue plays while the cannon is the only weapon.
@@ -2079,23 +2082,30 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     vi.clearAllMocks();
 
-    // Spread: equip and wait past its fire rate. The permanently-active
-    // cannon fires too (cumulative model), so both cues play per volley.
+    // A freshly collected weapon fires its first shot on the next beat grid
+    // tick. Reset the shared clock before each equip so that tick is t=0,
+    // then advance one short frame to deliver exactly one volley.
+
+    // Spread: the permanently-active cannon fires too (cumulative model),
+    // so both cues play per volley.
+    player.setBeatClock(createBeatClock());
     player.equipWeapon('spread');
-    scene.tick(0.7); // spread fires every 750 ms (1/beat)
+    scene.tick(0.05);
     expect(spreadSound).toHaveBeenCalledTimes(1);
     expect(cannonSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 
     // Dual.
+    player.setBeatClock(createBeatClock());
     player.equipWeapon('dual');
-    scene.tick(0.5); // dual fires every 750 ms (1/beat)
+    scene.tick(0.05);
     expect(dualSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 
     // Rapid.
+    player.setBeatClock(createBeatClock());
     player.equipWeapon('rapid');
-    scene.tick(0.2); // rapid fires every 125 ms
+    scene.tick(0.05);
     expect(rapidSound).toHaveBeenCalledTimes(1);
   });
 
