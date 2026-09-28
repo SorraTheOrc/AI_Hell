@@ -5,6 +5,11 @@
  * Exercises the pure parameter model and the edge-triggered controller using
  * the shared Phaser test harness (`VfxStubScene`), so headless tests do not
  * break.
+ *
+ * The camera-shake layer was deliberately removed after a producer review
+ * rejected the first cut because the shake made Phase Shift read like the
+ * player-death juice. The suite therefore includes an explicit regression
+ * test that the phase treatment never shakes the camera.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,11 +20,8 @@ import {
   PHASE_SHIFT_DIM_ALPHA,
   PHASE_SHIFT_DIM_COLOR,
   PHASE_SHIFT_ENABLE_DIM,
-  PHASE_SHIFT_ENABLE_SHAKE,
   PHASE_SHIFT_ENABLE_SPLIT,
   PHASE_SHIFT_OVERLAY_DEPTH,
-  PHASE_SHIFT_SHAKE_DURATION_MS,
-  PHASE_SHIFT_SHAKE_INTENSITY,
   PHASE_SHIFT_SPLIT_ALPHA,
   PHASE_SHIFT_SPLIT_COLOR_CYAN,
   PHASE_SHIFT_SPLIT_COLOR_RED,
@@ -48,19 +50,21 @@ describe('resolvePhaseShiftJuiceParams — pure parameter model', () => {
     expect(params.splitAlpha).toBe(PHASE_SHIFT_SPLIT_ALPHA);
     expect(params.splitOffset).toBe(PHASE_SHIFT_SPLIT_OFFSET);
     expect(params.splitEnabled).toBe(PHASE_SHIFT_ENABLE_SPLIT);
-    expect(params.shakeIntensity).toBe(PHASE_SHIFT_SHAKE_INTENSITY);
-    expect(params.shakeDurationMs).toBe(PHASE_SHIFT_SHAKE_DURATION_MS);
-    expect(params.shakeEnabled).toBe(PHASE_SHIFT_ENABLE_SHAKE);
   });
 
-  it('enables every layer by default', () => {
+  it('enables both visual layers by default', () => {
     expect(PHASE_SHIFT_ENABLE_DIM).toBe(true);
     expect(PHASE_SHIFT_ENABLE_SPLIT).toBe(true);
-    expect(PHASE_SHIFT_ENABLE_SHAKE).toBe(true);
     const params = resolvePhaseShiftJuiceParams();
     expect(params.dimEnabled).toBe(true);
     expect(params.splitEnabled).toBe(true);
-    expect(params.shakeEnabled).toBe(true);
+  });
+
+  it('exposes no camera-shake layer (keeps Phase Shift distinct from player death)', () => {
+    const params = resolvePhaseShiftJuiceParams() as unknown as Record<string, unknown>;
+    expect(Object.keys(params)).not.toContain('shakeEnabled');
+    expect(Object.keys(params)).not.toContain('shakeIntensity');
+    expect(Object.keys(params)).not.toContain('shakeDurationMs');
   });
 
   it('keeps magnitudes subtle but non-zero', () => {
@@ -69,14 +73,11 @@ describe('resolvePhaseShiftJuiceParams — pure parameter model', () => {
     expect(params.dimAlpha).toBeLessThanOrEqual(0.5);
     expect(params.splitAlpha).toBeGreaterThan(0);
     expect(params.splitAlpha).toBeLessThanOrEqual(0.5);
-    expect(params.shakeIntensity).toBeGreaterThan(0);
-    expect(params.shakeIntensity).toBeLessThanOrEqual(0.02);
-    expect(params.shakeDurationMs).toBeGreaterThan(0);
     expect(params.splitOffset).toBeGreaterThan(0);
   });
 });
 
-describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
+describe('PhaseShiftJuice — edge-triggered overlays', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -106,7 +107,7 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
     expect(registry).toHaveLength(0);
   });
 
-  it('applies dim + chromatic split overlays and one shake on activation', async () => {
+  it('applies dim + chromatic split overlays on activation without shaking the camera', async () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
@@ -118,11 +119,8 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
     // 1 dim + 2 split overlays.
     expect(juice.activeOverlays).toHaveLength(3);
     expect(registry).toHaveLength(3);
-    expect(shake).toHaveBeenCalledTimes(1);
-    expect(shake).toHaveBeenCalledWith(
-      params.shakeDurationMs,
-      params.shakeIntensity,
-    );
+    // Regression: Phase Shift must not shake the camera (player-death overlap).
+    expect(shake).not.toHaveBeenCalled();
 
     for (const overlay of juice.activeOverlays) {
       expect(overlay.depth).toBe(params.overlayDepth);
@@ -131,7 +129,7 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
     }
   });
 
-  it('does not re-create overlays or re-shake while the phase stays active', async () => {
+  it('does not re-create overlays while the phase stays active', async () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
@@ -144,7 +142,7 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
 
     expect(juice.activeOverlays).toHaveLength(3);
     expect(juice.activeOverlays).toEqual(first);
-    expect(shake).toHaveBeenCalledTimes(1);
+    expect(shake).not.toHaveBeenCalled();
   });
 
   it('clears every overlay and the registry on expiry', async () => {
@@ -163,7 +161,7 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
     for (const spy of destroySpies) expect(spy).toHaveBeenCalled();
   });
 
-  it('re-applies cleanly on a second phase episode', async () => {
+  it('re-applies cleanly on a second phase episode without ever shaking', async () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
@@ -174,7 +172,7 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
     expect(juice.update(true, 0.016)).toBe(true);
     expect(juice.activeOverlays).toHaveLength(3);
     expect(registry).toHaveLength(3);
-    expect(shake).toHaveBeenCalledTimes(2);
+    expect(shake).not.toHaveBeenCalled();
   });
 
   it('honours per-layer toggles', async () => {
@@ -184,7 +182,7 @@ describe('PhaseShiftJuice — edge-triggered overlays and shake', () => {
     const params = resolvePhaseShiftJuiceParams();
     const juice = new PhaseShiftJuice(scene, {
       registry,
-      params: { ...params, dimEnabled: false, splitEnabled: false, shakeEnabled: false },
+      params: { ...params, dimEnabled: false, splitEnabled: false },
     });
 
     juice.update(true, 0.016);

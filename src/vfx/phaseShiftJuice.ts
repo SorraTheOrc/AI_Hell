@@ -5,10 +5,15 @@
  * screen-wide read that it fired. Per producer answer Q4 this module owns the
  * single shared treatment:
  *
- *   - a subtle **desaturation/dim** overlay,
+ *   - a subtle **desaturation/dim** overlay, and
  *   - a **chromatic split-tint** (two colour-offset ADD overlays that fringe
- *     everything on screen — enemies, bullets and minerals alike), and
- *   - a light **camera shake** on activation.
+ *     everything on screen — enemies, bullets and minerals alike).
+ *
+ * Deliberately **no camera shake**: a producer review rejected the first cut
+ * of this feature because the shake made Phase Shift read like the
+ * player-death juice (`playerDeathJuice.ts`). Dropping the shake keeps the two
+ * events visually distinct while the chromatic split still sells the phase
+ * shift.
  *
  * The ship keeps its existing ghost alpha (`applyPhaseGhost` in
  * `scenes/core/CombatEffectVisuals.ts`) — this module never touches the ship.
@@ -24,7 +29,7 @@
  *     `playerDeathJuice`, so a layer can be dropped without code surgery.
  *   - `PhaseShiftJuice.update(active, dt)` is edge-triggered: the treatment is
  *     applied on the frame the phase activates and cleared the frame it
- *     expires, leaving no residual tint or shake.
+ *     expires, leaving no residual tint.
  *
  * @module vfx/phaseShiftJuice
  */
@@ -56,20 +61,11 @@ export const PHASE_SHIFT_SPLIT_ALPHA = 0.1;
 /** Horizontal offset (px) of the chromatic split overlays. */
 export const PHASE_SHIFT_SPLIT_OFFSET = 3;
 
-/** Scene-camera shake intensity on activation (light). */
-export const PHASE_SHIFT_SHAKE_INTENSITY = 0.006;
-
-/** Scene-camera shake duration on activation (ms). */
-export const PHASE_SHIFT_SHAKE_DURATION_MS = 180;
-
 /** Whether the desaturation/dim layer is enabled. */
 export const PHASE_SHIFT_ENABLE_DIM = true;
 
 /** Whether the chromatic split-tint layer is enabled. */
 export const PHASE_SHIFT_ENABLE_SPLIT = true;
-
-/** Whether the camera-shake layer is enabled. */
-export const PHASE_SHIFT_ENABLE_SHAKE = true;
 
 // ── Resolved parameter shape ───────────────────────────────────────
 
@@ -93,12 +89,6 @@ export interface PhaseShiftJuiceParams {
   splitOffset: number;
   /** Whether the chromatic split-tint layer is enabled. */
   splitEnabled: boolean;
-  /** Scene-camera shake intensity. */
-  shakeIntensity: number;
-  /** Scene-camera shake duration (ms). */
-  shakeDurationMs: number;
-  /** Whether the camera-shake layer is enabled. */
-  shakeEnabled: boolean;
 }
 
 /**
@@ -117,9 +107,6 @@ export function resolvePhaseShiftJuiceParams(): PhaseShiftJuiceParams {
     splitAlpha: PHASE_SHIFT_SPLIT_ALPHA,
     splitOffset: PHASE_SHIFT_SPLIT_OFFSET,
     splitEnabled: PHASE_SHIFT_ENABLE_SPLIT,
-    shakeIntensity: PHASE_SHIFT_SHAKE_INTENSITY,
-    shakeDurationMs: PHASE_SHIFT_SHAKE_DURATION_MS,
-    shakeEnabled: PHASE_SHIFT_ENABLE_SHAKE,
   };
 }
 
@@ -138,9 +125,9 @@ export interface PhaseShiftJuiceOptions {
  * Owns the screen-wide Phase Shift treatment for one scene.
  *
  * `update(active, dt)` is edge-triggered: when `active` rises, the overlays
- * are created and the shake fires once; while `active` stays true nothing is
- * re-created; when `active` falls, every overlay is destroyed and removed
- * from the registry. `destroy()` is an unconditional teardown for scene
+ * are created; while `active` stays true nothing is re-created; when `active`
+ * falls, every overlay is destroyed and removed from the registry.
+ * `destroy()` is an unconditional teardown for scene
  * shutdown.
  *
  * The controller is a safe no-op when the scene has no `add`/`scale`/`cameras`
@@ -218,9 +205,6 @@ export class PhaseShiftJuice {
         Phaser.BlendModes.ADD,
       );
     }
-    if (this.params.shakeEnabled) {
-      this._shake();
-    }
   }
 
   private _clear(): void {
@@ -262,11 +246,5 @@ export class PhaseShiftJuice {
     this.registry?.push(overlay);
     this.overlays.push(overlay);
     return overlay;
-  }
-
-  private _shake(): void {
-    const camera = this.scene?.cameras?.main;
-    if (!camera || typeof camera.shake !== 'function') return;
-    camera.shake(this.params.shakeDurationMs, this.params.shakeIntensity);
   }
 }
