@@ -112,6 +112,10 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     driftSpeed: cfg.driftSpeed,
     startX: cfg.startX,
     startY: cfg.startY,
+    startXMin: cfg.startXMin,
+    startXMax: cfg.startXMax,
+    startYMin: cfg.startYMin,
+    startYMax: cfg.startYMax,
     statusLabel: cfg.displayName.toLowerCase(),
     hintText: `${cfg.displayName} — ${cfg.formationKind} formation (config-driven)`,
     player: { ...PLAYER_SPAWN },
@@ -158,8 +162,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     this.activeConfig = loadEnemyConfig(key);
     const next = enemyConfigToFormationConfig(key);
     this.config = next;
-    this.formationBaseX = next.startX;
-    this.formationBaseY = next.startY;
+    this._resolveFormationBase();
   }
 
   override create(): void {
@@ -404,6 +407,10 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     this.config.driftSpeed = config.driftSpeed;
     this.config.startX = config.startX;
     this.config.startY = config.startY;
+    this.config.startXMin = config.startXMin;
+    this.config.startXMax = config.startXMax;
+    this.config.startYMin = config.startYMin;
+    this.config.startYMax = config.startYMax;
     this.config.count = config.count;
 
     // Re-derive shot dispatch if the active key's pattern changed — the
@@ -459,6 +466,10 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     this.config.driftSpeed = cfg.driftSpeed;
     this.config.startX = cfg.startX;
     this.config.startY = cfg.startY;
+    this.config.startXMin = cfg.startXMin;
+    this.config.startXMax = cfg.startXMax;
+    this.config.startYMin = cfg.startYMin;
+    this.config.startYMax = cfg.startYMax;
     this.config.createEntity = (scene, x, y, offset) =>
       createEnemyFromConfig(scene, cfg, x, y, offset);
 

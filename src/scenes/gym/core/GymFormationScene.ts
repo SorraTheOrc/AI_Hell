@@ -72,6 +72,7 @@ import {
   WasdKeysLike,
 } from '../../../utils/input';
 import { loadRules } from '../../../core/rules';
+import { pickInRange, resolveSpawnRange } from '../../../core/configTypes';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
@@ -295,6 +296,18 @@ export interface EnemyFormationConfig<
   startX: number;
   /** Initial formation base y. */
   startY: number;
+  /**
+   * Optional spawn-position ranges (AH-0MUKCLXLW0032R67). When a genuine
+   * band is configured on an axis the formation base is drawn randomly
+   * within it using the shared {@link resolveSpawnRange}/{@link pickInRange}
+   * helpers — the same code path as `planGroupSpawns` in the game, so gyms
+   * and `PlayScene` cannot diverge. Absent/degenerate ranges keep the
+   * scalar `startX`/`startY` base unchanged.
+   */
+  startXMin?: number;
+  startXMax?: number;
+  startYMin?: number;
+  startYMax?: number;
   /** Status-line label, e.g. `scouts`. */
   statusLabel: string;
   /** Bottom hint line, e.g. `E1 Scout gym — V-formation demo`. */
@@ -396,8 +409,8 @@ export class GymFormationScene<
   protected playerSpawnX: number | null = null;
   protected playerSpawnY: number | null = null;
 
-  protected formationBaseX: number;
-  protected formationBaseY: number;
+  protected formationBaseX!: number;
+  protected formationBaseY!: number;
   private shootEnabled = false;
 
   // Wipe → 3s countdown → respawn lifecycle (core-library owned, AH-0MTFXKA5Q003LBH5).
@@ -458,8 +471,25 @@ export class GymFormationScene<
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
     this.config = config;
-    this.formationBaseX = config.startX;
-    this.formationBaseY = config.startY;
+    this._resolveFormationBase();
+  }
+
+  /**
+   * Positions the formation base, applying any configured spawn range on
+   * each axis through the shared `resolveSpawnRange`/`pickInRange` helpers
+   * (AH-0MUKCLXLW0032R67). This is the same code path `planGroupSpawns`
+   * uses in the game, so gym and `PlayScene` range behaviour cannot diverge.
+   * A degenerate/absent range leaves the scalar `startX`/`startY` unchanged.
+   */
+  protected _resolveFormationBase(): void {
+    this.formationBaseX = pickInRange(
+      resolveSpawnRange(this.config.startX, this.config.startXMin, this.config.startXMax),
+      this._sceneRng,
+    );
+    this.formationBaseY = pickInRange(
+      resolveSpawnRange(this.config.startY, this.config.startYMin, this.config.startYMax),
+      this._sceneRng,
+    );
   }
 
   create(): void {
@@ -606,8 +636,7 @@ export class GymFormationScene<
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
-    this.formationBaseX = this.config.startX;
-    this.formationBaseY = this.config.startY;
+    this._resolveFormationBase();
   }
 
   /**
@@ -1537,8 +1566,7 @@ export class GymFormationScene<
     const wasShooting = this.shootEnabled;
     for (const entity of this.entities) entity.destroy();
     this.entities.length = 0;
-    this.formationBaseX = this.config.startX;
-    this.formationBaseY = this.config.startY;
+    this._resolveFormationBase();
     const offsets = this.config.buildOffsets(this.config.count);
     for (const offset of offsets) {
       const entity = this.config.createEntity(
