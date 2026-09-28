@@ -834,9 +834,14 @@ now animated by the shared `FormationGlide` helper
 `GymFormationScene` and `PlayScene` (gym↔game parity):
 
 - On the frame a re-anchor is applied, the scene calls `glide.begin(targets)`
-  with every **formation-driven** entity (roamers — asteroids, harvesters —
-  are excluded: their own motion must not be eased). `begin` captures each
-  entity's current position as the glide's `from` point.
+  with every **re-anchor-capable** entity — the Divers that expose the
+  `consumeFormationReanchor()` seam. Non-Diver formation members (Scouts,
+  Tanks, Phasers, Swarms) **snap directly** to their re-based slots; only the
+  Divers animate, so the re-anchor reads as a coordinated Diver regroup rather
+  than the whole wave sliding (AH-0MUL15N63003PUDB manual-review fix). Roamers
+  (asteroids, harvesters) are likewise excluded: their own motion must not be
+  eased. `begin` captures each entity's current position as the glide's `from`
+  point.
 - After the normal `applyFormationPosition` positioning pass the scene calls
   `glide.update(dt)` exactly once. For each tracked entity the helper reads
   the **live** target already set by `applyFormationPosition` and renders
@@ -848,9 +853,11 @@ now animated by the shared `FormationGlide` helper
 - When `elapsed ≥ FORMATION_GLIDE_SECONDS` the entity is left exactly on the
   live slot (residual `0`) and its glide state is dropped — the unit's
   relative offsets are preserved on completion.
-- The attacking Diver is tracked like every other formation member. Its
+- The attacking Diver is tracked (it is the re-anchor requester). Its
   re-based slot coincides with its attack end, so its residual is only the
-  idle x-wiggle; it eases that out and keeps drifting with the unit.
+  idle x-wiggle; it eases that out and keeps drifting with the unit. Passing
+  Divers in a multi-Diver unit are also tracked and glide to their shifted
+  slots.
 - `clear()` is called from each scene's `teardownRunState()` so a
   stop/restart starts with no active glide.
 

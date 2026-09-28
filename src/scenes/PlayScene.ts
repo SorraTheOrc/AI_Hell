@@ -959,15 +959,13 @@ export class PlayScene extends CombatScene<
     this.formationAnchorY += dy;
 
     // Begin the glide for every formation-driven entity so they ease to their
-    // new slots instead of snapping (AH-0MUL15N63003PUDB). Roaming enemies
-    // (asteroids, harvesters) position themselves through their own motion and
-    // must not have it eased by the formation glide.
+    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only Divers glide;
+    // all other enemies snap directly to their re-based slots.
     const glideTargets = this.spawned
       .filter(
         (s) =>
           s.entity.alive &&
-          s.enemyKey !== 'asteroid' &&
-          !s.entity.setSeekTargets,
+          s.enemyKey === 'diver',
       )
       .map((s) => s.entity);
     this.glide.begin(glideTargets);

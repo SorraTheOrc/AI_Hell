@@ -1470,10 +1470,12 @@ export class GymFormationScene<
     this.formationBaseY += dy;
 
     // Begin the glide for every formation-driven entity so they ease to their
-    // new slots instead of snapping (AH-0MUL15N63003PUDB). Roaming enemies
-    // (asteroids, harvesters) position themselves through `updatePosition` and
-    // must not have their own motion eased by the formation glide.
-    const glideTargets = this.entities.filter((entity) => !entity.updatePosition);
+    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only entities that
+    // expose the re-anchor seam (`consumeFormationReanchor`) — i.e. Divers —
+    // glide; all other enemies snap directly to their re-based slots.
+    const glideTargets = this.entities.filter(
+      (entity) => entity.consumeFormationReanchor != null,
+    );
     this.glide.begin(glideTargets);
     return true;
   }

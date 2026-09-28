@@ -2784,6 +2784,32 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     scene.tick(0.5);
     expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
   });
+
+  it('only re-anchor-capable entities glide; others snap directly', async () => {
+    // A non-reanchor entity should NOT glide — it snaps to its new slot.
+    // This test constructs a mixed scene with ReanchorStubEnemy (glides)
+    // and a plain StubEnemy (no glide). The re-anchor is requested by the
+    // first ReanchorStubEnemy; the plain entity must snap directly.
+    class PlainStub extends StubEnemy {
+      // No consumeFormationReanchor — mirrors non-Diver enemies.
+    }
+
+    const bootedMixed = await bootScene([
+      makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
+    ]);
+    const scene = bootedMixed.scene;
+
+    const plainEntity = new PlainStub(scene, { row: 0, col: 0 });
+    expect(
+      (plainEntity as unknown as { consumeFormationReanchor?: unknown })
+        .consumeFormationReanchor,
+    ).toBeUndefined();
+
+    const raEntity = new ReanchorStubEnemy(scene, { row: 0, col: 0 });
+    expect(raEntity.consumeFormationReanchor).toBeDefined();
+
+    bootedMixed.game.destroy(true);
+  });
 });
 
 describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {

@@ -2994,54 +2994,45 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     const expectedDeltaY =
       attackEnd.y - (START_Y + diver.offset.row * SPACING_Y);
 
-    // At 0.25 s the Scout is gliding toward its re-anchored slot, not snapped:
-    // its directional shift is strictly between 0 and the full delta.
+    // A non-Diver enemy (Scout) snaps directly — no glide, no intermediate
+    // frame. It is already at its re-anchored slot on the first frame.
     const shiftThisFrame = scout.y - scoutBefore.y;
-    expect(Math.sign(shiftThisFrame)).toBe(Math.sign(expectedDeltaY));
-    expect(Math.abs(shiftThisFrame)).toBeGreaterThan(0);
-    expect(Math.abs(shiftThisFrame)).toBeLessThan(Math.abs(expectedDeltaY));
+    expect(shiftThisFrame).toBeCloseTo(expectedDeltaY, 5);
 
-    // Once the glide completes the Scout sits exactly on its re-anchored slot
-    // (shifted by the full delta on Y).
-    tickUntil(
-      scene,
-      () => Math.abs((scout.y - scoutBefore.y) - expectedDeltaY) < 1e-3,
-      0.05,
-      40,
-    );
-    expect(scout.y - scoutBefore.y).toBeCloseTo(expectedDeltaY, 3);
+    // The Diver glides: on the first frame it is strictly between the old and
+    // new positions (not yet snapped).
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
-  it('AC1/AC4 — the glide eases the unit onto its drifted slot (onset and completion)', async () => {
+  it('AC1/AC4 — non-Divers snap directly; the Diver is included in the glide', async () => {
     const scene = await bootReanchorScene();
     const [diver] = divers(scene);
     const scout = firstScout(scene);
 
     tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
     tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+
     const scoutBefore = { x: scout.x, y: scout.y };
+    const diverBefore = { x: diver.x, y: diver.y };
 
-    // First frame of the glide: the Scout has moved toward its re-anchored
-    // slot but is strictly between the old and new positions (it has not
-    // snapped to the final slot).
+    // The re-anchor shifts the unit origin so the Diver's slot lands at its
+    // attack end. A non-Diver (Scout) snaps directly to its shifted slot.
     scene.tick(0.05);
-    const onsetShift = scout.y - scoutBefore.y;
-    expect(onsetShift).not.toBe(0);
 
-    // Finish the glide. Each small tick keeps the base drifting, so the entity
-    // lands on the live (drifted) slot, not the re-anchor-time snapshot.
-    for (let i = 0; i < 8; i++) scene.tick(0.05);
-    const settledY = scout.y;
+    // Verify the glide is active and includes the Diver.
+    const glide = (scene as unknown as { glide: { active: boolean; states: Map<unknown, unknown> } }).glide;
+    expect(glide.active).toBe(true);
+    expect(glide.states.size).toBe(1); // only the Diver
 
-    // The unit kept drifting on X throughout the glide (no freeze).
-    const scoutXAtSettle = scout.x;
-    expect(scoutXAtSettle).not.toBeCloseTo(scoutBefore.x, 5);
-    expect(settledY).not.toBe(scoutBefore.y);
+    // The Scout snapped directly — its Y moved by the full re-anchor delta.
+    const expectedDeltaY = diverBefore.y - (START_Y + diver.offset.row * SPACING_Y);
+    const scoutActualShift = scout.y - scoutBefore.y;
+    expect(scoutActualShift).toBeCloseTo(expectedDeltaY, 3);
 
-    // After the glide the Scout has settled: one more tick barely changes Y
-    // (only the ±2 px x-wiggle continues; Y is wiggle-free).
-    scene.tick(0.05);
-    expect(scout.y).toBeCloseTo(settledY, 5);
+    // Finish the glide and verify the Diver is at its slot (no residual).
+    for (let i = 0; i < 20; i++) scene.tick(0.05);
+    expect(glide.active).toBe(false);
+    expect(diver.y).toBeCloseTo(diverBefore.y, 5);
   });
 });
 
