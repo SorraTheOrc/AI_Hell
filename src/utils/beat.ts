@@ -221,6 +221,13 @@ export interface BeatClock {
   /** Elapsed game time in ms since the clock was created (starts at 0). */
   now(): number;
   /**
+   * Resets accumulated game time to the grid origin (elapsed 0), e.g. on a
+   * scene restart. Tempo and anchor are unchanged. Callers that cache grid
+   * ticks (e.g. the player's next-shot times) must re-schedule after a
+   * reset.
+   */
+  reset(): void;
+  /**
    * Advances the clock by `dtMs` milliseconds; a non-positive/non-finite
    * delta is ignored so time never runs backwards. Returns the new elapsed
    * time.
@@ -253,6 +260,9 @@ export function createBeatClock(config: BeatClockConfig = {}): BeatClock {
     anchorMs,
     periodMs: beatPeriodMs(bpm),
     now: () => elapsedMs,
+    reset(): void {
+      elapsedMs = 0;
+    },
     advance(dtMs: number): number {
       if (isUsableNumber(dtMs) && dtMs > 0) {
         elapsedMs += dtMs;

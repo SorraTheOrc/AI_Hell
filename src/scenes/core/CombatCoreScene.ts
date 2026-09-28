@@ -94,6 +94,7 @@ import {
 } from './dropLayer';
 import type { BombNotice } from './BombNotice';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
+import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -184,6 +185,25 @@ export class CombatCoreScene<
   protected phaseShiftEffects: Phaser.GameObjects.GameObject[] = [];
   /** Lazily-created Phase Shift treatment controller. */
   private phaseShiftJuice: PhaseShiftJuice | null = null;
+
+  /**
+   * The single shared beat clock driving phase-locked player auto-fire
+   * (AH-0MUAYB8EH005RJ8B). Created once per scene and anchored at scene
+   * start (t=0); it is shared with the player so every shot lands on one
+   * grid. It advances only through {@link CombatCoreScene._autoFire} (via
+   * the player's `tryFire`), so a paused scene — whose `update` is not
+   * called — pauses the clock with it.
+   */
+  protected readonly beatClock: BeatClock = createBeatClock();
+
+  /**
+   * The scene's single shared beat clock (one instance per scene, never a
+   * per-scene copy of the beat module). Exposed so scenes, gyms and tests
+   * can read/verify the grid driving player fire.
+   */
+  getBeatClock(): BeatClock {
+    return this.beatClock;
+  }
 
   // Arrow-key (cursor) and WASD bindings for the player ship.
   protected cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
@@ -376,6 +396,11 @@ export class CombatCoreScene<
   protected _autoFire(dt: number): void {
     const player = this.getPlayer();
     if (!player) return;
+    // Every scene shares its single beat clock with the player so player
+    // fire is phase-locked to the scene anchor (AH-0MUAYB8EH005RJ8B).
+    if (player.getBeatClock() !== this.beatClock) {
+      player.setBeatClock(this.beatClock);
+    }
     const fired = player.tryFire(dt);
     if (fired.length === 0) return;
     const headingDeg = (player.getHeading() * 180) / Math.PI;

@@ -27,6 +27,7 @@ import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
+import { isOnGrid } from '../../utils/beat';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 
@@ -128,6 +129,33 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     expect(bullets.length).toBeGreaterThan(0);
     // Cannon fires straight ahead → bullets fly rightward (positive vx).
     expect(bullets.every((b) => b.vx > 0)).toBe(true);
+  });
+
+  it('uses the single shared scene beat clock and fires on grid ticks (AC2/AC5)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.tick(0.5);
+
+    // The gym's player shares the one scene-owned clock (no duplicate).
+    expect(player.getBeatClock()).toBe(scene.getBeatClock());
+    const shot = player.getLastShotTime('cannon');
+    expect(shot).toBeDefined();
+    expect(isOnGrid(shot!, 375, scene.getBeatClock().anchorMs)).toBe(true);
+  });
+
+  it('the shared beat clock pauses with the gym (AC4)', async () => {
+    const scene = await bootWeapons();
+    scene.tick(0.5);
+    const before = scene.getBeatClock().now();
+    expect(before).toBeGreaterThan(0);
+
+    // A paused scene's update is not called, so the clock holds its phase
+    // while real animation frames elapse.
+    scene.scene.pause();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(scene.getBeatClock().now()).toBe(before);
   });
 
   it('rapid weapon on top of the cannon produces more bullets over equal time (AC3)', async () => {

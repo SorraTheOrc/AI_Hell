@@ -189,6 +189,19 @@ describe('createBeatClock — shared, configurable instance (AC2, AC3, AC4)', ()
     expect(clock.now()).toBe(150);
   });
 
+  test('reset returns the clock to the grid origin without changing tempo', () => {
+    const clock = createBeatClock();
+    clock.advance(1234);
+    clock.reset();
+    expect(clock.now()).toBe(0);
+    expect(clock.periodMs).toBe(750);
+    expect(clock.nextTick(375)).toBe(0);
+    // Still advances normally after a reset.
+    clock.advance(400);
+    expect(clock.now()).toBe(400);
+    expect(clock.nextTick(375)).toBe(750); // smallest tick at/after 400
+  });
+
   test('a BPM override changes the cadence (config override)', () => {
     const fast = createBeatClock({ bpm: 160 });
     expect(fast.periodMs).toBe(375);

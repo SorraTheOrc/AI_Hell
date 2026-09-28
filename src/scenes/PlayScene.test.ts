@@ -34,7 +34,6 @@ import {
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
-import { createBeatClock } from '../utils/beat';
 import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
@@ -2061,9 +2060,11 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    // Reset the shared beat clock to a deterministic anchor so exactly one
-    // grid tick (375 ms) elapses in the window below.
-    player.setBeatClock(createBeatClock());
+    // Reset the scene's shared beat clock to a deterministic anchor so
+    // exactly one grid tick (375 ms) elapses in the window below, and
+    // re-schedule the player's weapons on it.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     vi.clearAllMocks();
 
     scene.tick(0.5); // one 375 ms cannon grid tick elapses → fires once
@@ -2088,7 +2089,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     // Spread: the permanently-active cannon fires too (cumulative model),
     // so both cues play per volley.
-    player.setBeatClock(createBeatClock());
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('spread');
     scene.tick(0.05);
     expect(spreadSound).toHaveBeenCalledTimes(1);
@@ -2096,14 +2098,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     vi.clearAllMocks();
 
     // Dual.
-    player.setBeatClock(createBeatClock());
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('dual');
     scene.tick(0.05);
     expect(dualSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 
     // Rapid.
-    player.setBeatClock(createBeatClock());
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('rapid');
     scene.tick(0.05);
     expect(rapidSound).toHaveBeenCalledTimes(1);
