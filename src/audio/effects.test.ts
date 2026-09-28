@@ -90,11 +90,6 @@ import {
   PHASE_SHIFT_CHIRP_VOLUME,
   PHASE_SHIFT_WHOOSH_VOLUME,
   playVolumeFeedback,
-  volumeFeedbackFrequency,
-  VOLUME_FEEDBACK_MIN_HZ,
-  VOLUME_FEEDBACK_MAX_HZ,
-  VOLUME_FEEDBACK_DURATION,
-  VOLUME_FEEDBACK_VOLUME,
   setSfxMuted,
 } from './effects';
 
@@ -1704,16 +1699,14 @@ describe('Phase Shift activation cue — synthesis (AC5.1–AC5.3)', () => {
   });
 });
 
-// ── Volume-change feedback (AH-0MUADK77K008RBMB) ──────────────────
 
-/**
- * Tests for the volume-feedback helper added in AH-0MUADK77K008RBMB:
- * - AC1 — frequency maps to volume on keyboard nudge
- * - AC2 — single tone on drag release (no intermediate tones)
- * - AC3 — single short sine blip, exponential decay, routed through master SFX
- * - AC4 — safe no-op without AudioContext
- * - AC5 — tests for frequency mapping, single tone on release, mute, no-op
- */
+// ── Volume-change feedback (AH-0MUADK77K008RBMB) ──────────────────
+//
+// Revision (post-review operator feedback): the feedback is the existing
+// player-explosion cue (`playPlayerDestructionSound`) with its
+// pitch/synthesis unchanged — only the gain is scaled by the selected
+// volume. Tests below cover safe no-op, cue identity, pitch invariance,
+// volume scaling, clamping, routing through the master SFX gain, and mute.
 
 describe('volume-feedback — safe no-op without AudioContext (AC4)', () => {
   beforeEach(() => {
@@ -1735,35 +1728,7 @@ describe('volume-feedback — safe no-op without AudioContext (AC4)', () => {
   });
 });
 
-describe('volume-feedback — frequency mapping (AC1, AC5)', () => {
-  it('maps volume linearly to pitch: 220 Hz at 0.00, 550 Hz at 0.50, 880 Hz at 1.00', () => {
-    expect(volumeFeedbackFrequency(0)).toBe(220);
-    expect(volumeFeedbackFrequency(0.5)).toBe(550);
-    expect(volumeFeedbackFrequency(1)).toBe(880);
-    // Verify the constants match.
-    expect(volumeFeedbackFrequency(0)).toBe(VOLUME_FEEDBACK_MIN_HZ);
-    expect(volumeFeedbackFrequency(1)).toBe(VOLUME_FEEDBACK_MAX_HZ);
-  });
-
-  it('clamps out-of-range values', () => {
-    expect(volumeFeedbackFrequency(-1)).toBe(VOLUME_FEEDBACK_MIN_HZ);
-    expect(volumeFeedbackFrequency(2)).toBe(VOLUME_FEEDBACK_MAX_HZ);
-    expect(volumeFeedbackFrequency(-0.5)).toBe(VOLUME_FEEDBACK_MIN_HZ);
-    expect(volumeFeedbackFrequency(1.5)).toBe(VOLUME_FEEDBACK_MAX_HZ);
-  });
-
-  it('rises monotonically across the full volume range', () => {
-    for (let v = 0; v <= 1; v += 0.1) {
-      for (let u = v + 0.01; u <= 1; u += 0.1) {
-        expect(volumeFeedbackFrequency(u)).toBeGreaterThan(
-          volumeFeedbackFrequency(v),
-        );
-      }
-    }
-  });
-});
-
-describe('volume-feedback — synthesis (AC3, AC5)', () => {
+describe('volume-feedback — player-explosion cue, volume-scaled (AC1, AC3, AC5)', () => {
   beforeEach(() => {
     (window as unknown as { AudioContext: unknown }).AudioContext =
       RecordingAudioContext;
@@ -1774,45 +1739,92 @@ describe('volume-feedback — synthesis (AC3, AC5)', () => {
     playCannonFireSound(); // prime the module-scoped context + master gain
   });
 
-  it('plays a single short sine blip at the volume-mapped frequency', () => {
+  it('plays the layered player-explosion cue (2 tonal + 1 noise layer)', () => {
     const snap = snapshot();
-    playVolumeFeedback(0.25); // 220 + 0.25 * 660 = 385 Hz
+    playVolumeFeedback(1);
     const oscs = newOscillators(snap);
-    const gains = newGains(snap);
-
-    // Single oscillator layer.
-    expect(oscs).toHaveLength(1);
-    expect(oscs[0].type).toBe('sine');
-    // Frequency matches the volume-mapped value.
-    expect(oscs[0].freqEvents[0].value).toBe(385);
-    // Duration ≤ 60 ms (stop includes a 20 ms tail from blip).
-    const dur = oscs[0].stopTime! - oscs[0].startTime!;
-    expect(VOLUME_FEEDBACK_DURATION).toBeLessThanOrEqual(0.06);
-    expect(dur).toBeLessThanOrEqual(0.08);
-    // Low volume — not jarring (AC constraint ≤ 0.08).
-    expect(peakGain(gains)).toBeLessThanOrEqual(0.08);
-    expect(peakGain(gains)).toBeGreaterThan(0);
-    // Exponential decay to silence (AC3).
-    const decay = gains[0].gainEvents.find(
-      (e) => e.method === 'exponentialRampToValueAtTime',
-    );
-    expect(decay).toBeDefined();
-    expect(decay!.value).toBeGreaterThan(0);
-    expect(decay!.value).toBeLessThan(VOLUME_FEEDBACK_VOLUME);
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+    expect(oscs.filter((o) => o.type === 'noise')).toHaveLength(1);
   });
 
-  it('pitch tracks the requested volume: low at 0.0, high at 1.0', () => {
+  it('does NOT change the pitch — the frequency contour is the player-explosion cue at every volume', () => {
     const lowSnap = snapshot();
-    playVolumeFeedback(0);
-    const lowFreq = newOscillators(lowSnap)[0].freqEvents[0].value;
+    playVolumeFeedback(0.25);
+    const lowOscs = newOscillators(lowSnap);
+    const lowThump = lowOscs.find((o) => o.type === 'sawtooth')!;
+    const lowBody = lowOscs.find((o) => o.type === 'triangle')!;
 
     const highSnap = snapshot();
     playVolumeFeedback(1);
-    const highFreq = newOscillators(highSnap)[0].freqEvents[0].value;
+    const highOscs = newOscillators(highSnap);
+    const highThump = highOscs.find((o) => o.type === 'sawtooth')!;
+    const highBody = highOscs.find((o) => o.type === 'triangle')!;
 
-    expect(lowFreq).toBe(VOLUME_FEEDBACK_MIN_HZ);
-    expect(highFreq).toBe(VOLUME_FEEDBACK_MAX_HZ);
-    expect(highFreq).toBeGreaterThan(lowFreq);
+    // Identical starting/ending pitches regardless of volume.
+    expect(lowThump.freqEvents[0].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_START_HZ,
+    );
+    expect(highThump.freqEvents[0].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_START_HZ,
+    );
+    expect(lowThump.freqEvents[lowThump.freqEvents.length - 1].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_END_HZ,
+    );
+    expect(highThump.freqEvents[highThump.freqEvents.length - 1].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_END_HZ,
+    );
+    expect(lowBody.freqEvents[0].value).toBe(PLAYER_DESTRUCTION_BODY_START_HZ);
+    expect(highBody.freqEvents[0].value).toBe(PLAYER_DESTRUCTION_BODY_START_HZ);
+  });
+
+  it('scales every layer gain by the selected volume (volume is the only change)', () => {
+    const halfSnap = snapshot();
+    playVolumeFeedback(0.5);
+    const halfValues = newGains(halfSnap).flatMap((g) =>
+      g.gainEvents.map((e) => e.value),
+    );
+    expect(halfValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME * 0.5);
+    expect(halfValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME * 0.5);
+    expect(halfValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME * 0.5);
+
+    const fullSnap = snapshot();
+    playVolumeFeedback(1);
+    const fullValues = newGains(fullSnap).flatMap((g) =>
+      g.gainEvents.map((e) => e.value),
+    );
+    expect(fullValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+    expect(fullValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+    expect(fullValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
+  });
+
+  it('a higher volume is louder than a lower volume (monotonic gain scaling)', () => {
+    const quietSnap = snapshot();
+    playVolumeFeedback(0.2);
+    const quietPeak = peakGain(newGains(quietSnap));
+
+    const loudSnap = snapshot();
+    playVolumeFeedback(0.9);
+    const loudPeak = peakGain(newGains(loudSnap));
+
+    expect(loudPeak).toBeGreaterThan(quietPeak);
+  });
+
+  it('clamps out-of-range volumes to the player-explosion full gain', () => {
+    const overSnap = snapshot();
+    playVolumeFeedback(2);
+    const overValues = newGains(overSnap).flatMap((g) =>
+      g.gainEvents.map((e) => e.value),
+    );
+    expect(overValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+    expect(overValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+    expect(overValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
+  });
+
+  it('volume 0 plays nothing (no nodes created)', () => {
+    const snap = snapshot();
+    playVolumeFeedback(0);
+    expect(newOscillators(snap)).toHaveLength(0);
+    expect(newGains(snap)).toHaveLength(0);
   });
 
   it('routes through the shared master SFX gain (reuses it — no new master gain created)', () => {
@@ -1820,10 +1832,9 @@ describe('volume-feedback — synthesis (AC3, AC5)', () => {
     const gainsBefore = ctx.gains.length;
     const snap = snapshot();
     playVolumeFeedback(0.5);
-    // Exactly one new gain — the blip's own envelope. The master gain
-    // (created during priming) is reused, confirming the routing path.
-    expect(newGains(snap)).toHaveLength(1);
-    expect(ctx.gains.length).toBe(gainsBefore + 1);
+    // Three layer gains; the master gain (created during priming) is reused.
+    expect(newGains(snap)).toHaveLength(3);
+    expect(ctx.gains.length).toBe(gainsBefore + 3);
   });
 
   it('respects mute: the master gain is zeroed while muted so the feedback is silent', () => {
@@ -1835,11 +1846,11 @@ describe('volume-feedback — synthesis (AC3, AC5)', () => {
     const mutedValue =
       masterGain.gainEvents[masterGain.gainEvents.length - 1].value;
     expect(mutedValue).toBe(0);
-    // The feedback blip is still generated (oscillator + envelope created)
-    // — the silence comes from the master gain, not from skipping synthesis.
+    // The cue is still generated (tonal + noise layers created) — the
+    // silence comes from the master gain, not from skipping synthesis.
     const snap = snapshot();
     playVolumeFeedback(0.5);
-    expect(newOscillators(snap)).toHaveLength(1);
+    expect(newOscillators(snap).filter((o) => o.type !== 'noise')).toHaveLength(2);
     // Restore mute state for other suites.
     setSfxMuted(false);
   });

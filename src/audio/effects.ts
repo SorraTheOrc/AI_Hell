@@ -128,47 +128,24 @@ export function setSfxMuted(on: boolean): void {
 
 // ── Volume-change feedback (AH-0MUADK77K008RBMB) ───────────────────
 //
-// When the player adjusts the SFX volume slider, a short blip confirms
-// the new level. Pitch scales linearly with volume (220 Hz at 0.00 →
-// 880 Hz at 1.00), so a higher setting sounds higher. Like every other
-// cue the blip routes through the master SFX gain node, so it respects
-// the current mute state and volume: when muted (or at volume 0) the
-// master gain is 0 and this feedback is correctly silent. Safe no-op
-// without an AudioContext (headless tests / autoplay-blocked browsers).
-
-/** Lowest volume-feedback pitch (Hz) — at volume 0.00. */
-export const VOLUME_FEEDBACK_MIN_HZ = 220;
-/** Highest volume-feedback pitch (Hz) — at volume 1.00. */
-export const VOLUME_FEEDBACK_MAX_HZ = 880;
-/** Feedback blip duration (seconds) — short so it never masks gameplay SFX. */
-export const VOLUME_FEEDBACK_DURATION = 0.06;
-/** Feedback blip gain — low (≤ 0.08) so it is not jarring next to gameplay SFX. */
-export const VOLUME_FEEDBACK_VOLUME = 0.08;
+// When the player adjusts the SFX volume slider, the player-explosion cue
+// (`playPlayerDestructionSound`) plays back as confirmation. Its synthesis
+// and pitch are unchanged — only the gain is scaled by the selected volume
+// — so the player hears the same hull-breach boom at a loudness that
+// matches the setting. Like every other cue it routes through the master
+// SFX gain node, so it also respects the mute state (silent while muted).
+// Safe no-op without an AudioContext (headless tests / autoplay-blocked
+// browsers).
 
 /**
- * Maps a volume in [0, 1] to the volume-feedback blip's frequency
- * (220–880 Hz, linear). Values outside the range are clamped. Exported
- * for tests.
- */
-export function volumeFeedbackFrequency(volume: number): number {
-  const clamped = Math.max(0, Math.min(1, volume));
-  return (
-    VOLUME_FEEDBACK_MIN_HZ +
-    clamped * (VOLUME_FEEDBACK_MAX_HZ - VOLUME_FEEDBACK_MIN_HZ)
-  );
-}
-
-/**
- * Plays a short sine blip whose pitch reflects the current SFX volume —
- * audible feedback for every volume change (AH-0MUADK77K008RBMB).
- *
- * The blip is a single ≤ 60 ms sine with an exponential decay envelope
- * (the shared {@link blip} helper), routed through the master SFX gain so
+ * Plays the player-explosion cue as volume-change feedback
+ * (AH-0MUADK77K008RBMB): the pitch/synthesis is unchanged, and only the
+ * gain is scaled by `volume` in [0, 1]. Values outside the range are
+ * clamped; volume 0 plays nothing. Routed through the master SFX gain so
  * it respects mute/volume. Safe no-op without an AudioContext.
  */
 export function playVolumeFeedback(volume: number): void {
-  const freq = volumeFeedbackFrequency(volume);
-  blip(freq, freq, VOLUME_FEEDBACK_DURATION, 'sine', VOLUME_FEEDBACK_VOLUME);
+  playPlayerDestructionSound(volume);
 }
 
 interface ThrusterHumState {
@@ -576,10 +553,16 @@ export const PLAYER_DESTRUCTION_TAIL_FILTER_HZ = 1200;
  * literals), so the cue is fully tunable in one place. Scheduled at the
  * current time; called exactly once per player destruction. Safe no-op
  * without an AudioContext (never throws).
+ *
+ * An optional `volumeScale` (default 1) multiplies every layer's gain
+ * **without changing any pitch/synthesis** — used by `playVolumeFeedback`
+ * to play the cue at the selected SFX volume (AH-0MUADK77K008RBMB). A scale
+ * of 0 plays nothing.
  */
-export function playPlayerDestructionSound(): void {
+export function playPlayerDestructionSound(volumeScale = 1): void {
   const ctx = getAudioContext();
-  if (!ctx) return;
+  const scale = Math.max(0, Math.min(1, volumeScale));
+  if (!ctx || scale <= 0) return;
   const t = ctx.currentTime;
 
   // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
@@ -591,7 +574,7 @@ export function playPlayerDestructionSound(): void {
     PLAYER_DESTRUCTION_THUMP_END_HZ,
     t + PLAYER_DESTRUCTION_THUMP_DURATION,
   );
-  thumpGain.gain.setValueAtTime(PLAYER_DESTRUCTION_THUMP_VOLUME, t);
+  thumpGain.gain.setValueAtTime(PLAYER_DESTRUCTION_THUMP_VOLUME * scale, t);
   thumpGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + PLAYER_DESTRUCTION_THUMP_DURATION,
@@ -609,7 +592,7 @@ export function playPlayerDestructionSound(): void {
     PLAYER_DESTRUCTION_BODY_END_HZ,
     t + PLAYER_DESTRUCTION_BODY_DURATION,
   );
-  bodyGain.gain.setValueAtTime(PLAYER_DESTRUCTION_BODY_VOLUME, t);
+  bodyGain.gain.setValueAtTime(PLAYER_DESTRUCTION_BODY_VOLUME * scale, t);
   bodyGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + PLAYER_DESTRUCTION_BODY_DURATION,
@@ -638,7 +621,7 @@ export function playPlayerDestructionSound(): void {
   noiseFilter.Q.setValueAtTime(0.8, t);
 
   const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(PLAYER_DESTRUCTION_TAIL_VOLUME, t);
+  noiseGain.gain.setValueAtTime(PLAYER_DESTRUCTION_TAIL_VOLUME * scale, t);
   noiseGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + PLAYER_DESTRUCTION_TAIL_DURATION,
