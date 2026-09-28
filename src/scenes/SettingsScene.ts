@@ -32,7 +32,7 @@ import {
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
-import { setSfxMuted, setSfxVolume } from '../audio/effects';
+import { playVolumeFeedback, setSfxMuted, setSfxVolume } from '../audio/effects';
 
 /** Neon-cyan colour for the section heading (GDD §7.1). */
 const SETTINGS_TEXT_COLOR = '#00ffff';
@@ -222,7 +222,11 @@ export class SettingsScene extends Phaser.Scene {
       if (this.dragging) this._sliderFromPointer(pointer.x);
     });
     this.input.on('pointerup', () => {
+      // Play feedback only when a slider drag (or click) just ended — a
+      // stray pointer-up elsewhere must not emit a volume tone (AC2).
+      const wasDragging = this.dragging;
       this.dragging = false;
+      if (wasDragging) playVolumeFeedback(this.sfxVolume);
     });
 
     this.sliderHandle = this.add.rectangle(AUDIO_COL_X, trackY, 10, 22, 0x00ffff);
@@ -370,6 +374,9 @@ export class SettingsScene extends Phaser.Scene {
 
   private _nudgeVolume(delta: number): void {
     this.setVolume(this.sfxVolume + delta);
+    // Keyboard nudge — one feedback blip per step (AC1). The drag path
+    // plays a single blip on release instead (AC2).
+    playVolumeFeedback(this.sfxVolume);
   }
 
   private _toggleMute(): void {

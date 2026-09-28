@@ -89,6 +89,13 @@ import {
   PHASE_SHIFT_CHIRP_DURATION,
   PHASE_SHIFT_CHIRP_VOLUME,
   PHASE_SHIFT_WHOOSH_VOLUME,
+  playVolumeFeedback,
+  volumeFeedbackFrequency,
+  VOLUME_FEEDBACK_MIN_HZ,
+  VOLUME_FEEDBACK_MAX_HZ,
+  VOLUME_FEEDBACK_DURATION,
+  VOLUME_FEEDBACK_VOLUME,
+  setSfxMuted,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -202,6 +209,10 @@ class RecordingAudioContext {
         },
       },
       connect: () => ({}),
+      // Faithful to the real GainNode API: setSfxVolume/setSfxMuted read
+      // `masterSfxGain.context.currentTime`. Without this the mute/volume
+      // plumbing silently no-ops under the recording mock.
+      context: this,
     };
   }
 
@@ -1690,5 +1701,146 @@ describe('Phase Shift activation cue — synthesis (AC5.1–AC5.3)', () => {
     expect(PHASE_SHIFT_WHOOSH_VOLUME).toBeLessThanOrEqual(0.2);
     expect(PHASE_SHIFT_CHIRP_VOLUME).toBeGreaterThan(0);
     expect(PHASE_SHIFT_WHOOSH_VOLUME).toBeGreaterThan(0);
+  });
+});
+
+// ── Volume-change feedback (AH-0MUADK77K008RBMB) ──────────────────
+
+/**
+ * Tests for the volume-feedback helper added in AH-0MUADK77K008RBMB:
+ * - AC1 — frequency maps to volume on keyboard nudge
+ * - AC2 — single tone on drag release (no intermediate tones)
+ * - AC3 — single short sine blip, exponential decay, routed through master SFX
+ * - AC4 — safe no-op without AudioContext
+ * - AC5 — tests for frequency mapping, single tone on release, mute, no-op
+ */
+
+describe('volume-feedback — safe no-op without AudioContext (AC4)', () => {
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+    RecordingAudioContext.instances.length = 0;
+  });
+
+  it('playVolumeFeedback is a safe no-op — never throws without an AudioContext', () => {
+    expect(() => playVolumeFeedback(0)).not.toThrow();
+    expect(() => playVolumeFeedback(0.5)).not.toThrow();
+    expect(() => playVolumeFeedback(1)).not.toThrow();
+    // Boundary: clamping at extremes.
+    expect(() => playVolumeFeedback(-1)).not.toThrow();
+    expect(() => playVolumeFeedback(2)).not.toThrow();
+    // NaN clamped to 0.
+    expect(() => playVolumeFeedback(NaN)).not.toThrow();
+    expect(RecordingAudioContext.instances).toHaveLength(0);
+  });
+});
+
+describe('volume-feedback — frequency mapping (AC1, AC5)', () => {
+  it('maps volume linearly to pitch: 220 Hz at 0.00, 550 Hz at 0.50, 880 Hz at 1.00', () => {
+    expect(volumeFeedbackFrequency(0)).toBe(220);
+    expect(volumeFeedbackFrequency(0.5)).toBe(550);
+    expect(volumeFeedbackFrequency(1)).toBe(880);
+    // Verify the constants match.
+    expect(volumeFeedbackFrequency(0)).toBe(VOLUME_FEEDBACK_MIN_HZ);
+    expect(volumeFeedbackFrequency(1)).toBe(VOLUME_FEEDBACK_MAX_HZ);
+  });
+
+  it('clamps out-of-range values', () => {
+    expect(volumeFeedbackFrequency(-1)).toBe(VOLUME_FEEDBACK_MIN_HZ);
+    expect(volumeFeedbackFrequency(2)).toBe(VOLUME_FEEDBACK_MAX_HZ);
+    expect(volumeFeedbackFrequency(-0.5)).toBe(VOLUME_FEEDBACK_MIN_HZ);
+    expect(volumeFeedbackFrequency(1.5)).toBe(VOLUME_FEEDBACK_MAX_HZ);
+  });
+
+  it('rises monotonically across the full volume range', () => {
+    for (let v = 0; v <= 1; v += 0.1) {
+      for (let u = v + 0.01; u <= 1; u += 0.1) {
+        expect(volumeFeedbackFrequency(u)).toBeGreaterThan(
+          volumeFeedbackFrequency(v),
+        );
+      }
+    }
+  });
+});
+
+describe('volume-feedback — synthesis (AC3, AC5)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context + master gain
+  });
+
+  it('plays a single short sine blip at the volume-mapped frequency', () => {
+    const snap = snapshot();
+    playVolumeFeedback(0.25); // 220 + 0.25 * 660 = 385 Hz
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Single oscillator layer.
+    expect(oscs).toHaveLength(1);
+    expect(oscs[0].type).toBe('sine');
+    // Frequency matches the volume-mapped value.
+    expect(oscs[0].freqEvents[0].value).toBe(385);
+    // Duration ≤ 60 ms (stop includes a 20 ms tail from blip).
+    const dur = oscs[0].stopTime! - oscs[0].startTime!;
+    expect(VOLUME_FEEDBACK_DURATION).toBeLessThanOrEqual(0.06);
+    expect(dur).toBeLessThanOrEqual(0.08);
+    // Low volume — not jarring (AC constraint ≤ 0.08).
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.08);
+    expect(peakGain(gains)).toBeGreaterThan(0);
+    // Exponential decay to silence (AC3).
+    const decay = gains[0].gainEvents.find(
+      (e) => e.method === 'exponentialRampToValueAtTime',
+    );
+    expect(decay).toBeDefined();
+    expect(decay!.value).toBeGreaterThan(0);
+    expect(decay!.value).toBeLessThan(VOLUME_FEEDBACK_VOLUME);
+  });
+
+  it('pitch tracks the requested volume: low at 0.0, high at 1.0', () => {
+    const lowSnap = snapshot();
+    playVolumeFeedback(0);
+    const lowFreq = newOscillators(lowSnap)[0].freqEvents[0].value;
+
+    const highSnap = snapshot();
+    playVolumeFeedback(1);
+    const highFreq = newOscillators(highSnap)[0].freqEvents[0].value;
+
+    expect(lowFreq).toBe(VOLUME_FEEDBACK_MIN_HZ);
+    expect(highFreq).toBe(VOLUME_FEEDBACK_MAX_HZ);
+    expect(highFreq).toBeGreaterThan(lowFreq);
+  });
+
+  it('routes through the shared master SFX gain (reuses it — no new master gain created)', () => {
+    const ctx = mockCtx();
+    const gainsBefore = ctx.gains.length;
+    const snap = snapshot();
+    playVolumeFeedback(0.5);
+    // Exactly one new gain — the blip's own envelope. The master gain
+    // (created during priming) is reused, confirming the routing path.
+    expect(newGains(snap)).toHaveLength(1);
+    expect(ctx.gains.length).toBe(gainsBefore + 1);
+  });
+
+  it('respects mute: the master gain is zeroed while muted so the feedback is silent', () => {
+    const ctx = mockCtx();
+    // Master gain is gains[0], created during priming.
+    const masterGain = ctx.gains[0];
+    // Mute zeros the master gain.
+    setSfxMuted(true);
+    const mutedValue =
+      masterGain.gainEvents[masterGain.gainEvents.length - 1].value;
+    expect(mutedValue).toBe(0);
+    // The feedback blip is still generated (oscillator + envelope created)
+    // — the silence comes from the master gain, not from skipping synthesis.
+    const snap = snapshot();
+    playVolumeFeedback(0.5);
+    expect(newOscillators(snap)).toHaveLength(1);
+    // Restore mute state for other suites.
+    setSfxMuted(false);
   });
 });

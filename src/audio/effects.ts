@@ -126,6 +126,51 @@ export function setSfxMuted(on: boolean): void {
   } catch { /* dead context — no-op */ }
 }
 
+// ── Volume-change feedback (AH-0MUADK77K008RBMB) ───────────────────
+//
+// When the player adjusts the SFX volume slider, a short blip confirms
+// the new level. Pitch scales linearly with volume (220 Hz at 0.00 →
+// 880 Hz at 1.00), so a higher setting sounds higher. Like every other
+// cue the blip routes through the master SFX gain node, so it respects
+// the current mute state and volume: when muted (or at volume 0) the
+// master gain is 0 and this feedback is correctly silent. Safe no-op
+// without an AudioContext (headless tests / autoplay-blocked browsers).
+
+/** Lowest volume-feedback pitch (Hz) — at volume 0.00. */
+export const VOLUME_FEEDBACK_MIN_HZ = 220;
+/** Highest volume-feedback pitch (Hz) — at volume 1.00. */
+export const VOLUME_FEEDBACK_MAX_HZ = 880;
+/** Feedback blip duration (seconds) — short so it never masks gameplay SFX. */
+export const VOLUME_FEEDBACK_DURATION = 0.06;
+/** Feedback blip gain — low (≤ 0.08) so it is not jarring next to gameplay SFX. */
+export const VOLUME_FEEDBACK_VOLUME = 0.08;
+
+/**
+ * Maps a volume in [0, 1] to the volume-feedback blip's frequency
+ * (220–880 Hz, linear). Values outside the range are clamped. Exported
+ * for tests.
+ */
+export function volumeFeedbackFrequency(volume: number): number {
+  const clamped = Math.max(0, Math.min(1, volume));
+  return (
+    VOLUME_FEEDBACK_MIN_HZ +
+    clamped * (VOLUME_FEEDBACK_MAX_HZ - VOLUME_FEEDBACK_MIN_HZ)
+  );
+}
+
+/**
+ * Plays a short sine blip whose pitch reflects the current SFX volume —
+ * audible feedback for every volume change (AH-0MUADK77K008RBMB).
+ *
+ * The blip is a single ≤ 60 ms sine with an exponential decay envelope
+ * (the shared {@link blip} helper), routed through the master SFX gain so
+ * it respects mute/volume. Safe no-op without an AudioContext.
+ */
+export function playVolumeFeedback(volume: number): void {
+  const freq = volumeFeedbackFrequency(volume);
+  blip(freq, freq, VOLUME_FEEDBACK_DURATION, 'sine', VOLUME_FEEDBACK_VOLUME);
+}
+
 interface ThrusterHumState {
   ctx: AudioContext;
   osc: OscillatorNode;
