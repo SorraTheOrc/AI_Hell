@@ -66,6 +66,12 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   driftSpeed: { min: 0, max: 200, step: 1 },
   startX: { min: 0, max: GAME_WIDTH, step: 1 },
   startY: { min: 0, max: GAME_HEIGHT, step: 1 },
+  // Spawn-position ranges (AH-0MUKCLXLW0032R67): bound to the canvas so a
+  // designer cannot place a formation off-screen; validated min <= max.
+  startXMin: { min: 0, max: GAME_WIDTH, step: 1 },
+  startXMax: { min: 0, max: GAME_WIDTH, step: 1 },
+  startYMin: { min: 0, max: GAME_HEIGHT, step: 1 },
+  startYMax: { min: 0, max: GAME_HEIGHT, step: 1 },
   size: { min: 6, max: 80, step: 1 },
   bulletSize: { min: 1, max: 12, step: 1 },
   fireInterval: { min: 100, max: 5000, step: 50 },
@@ -78,6 +84,39 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
 };
 
 const VISUAL_COLOR_FIELDS = ['color', 'bulletColor'] as const;
+
+/** The four slider-backed spawn-range fields (AH-0MUKCLXLW0032R67). */
+export const SPAWN_RANGE_FIELDS = ['startXMin', 'startXMax', 'startYMin', 'startYMax'] as const;
+
+/** Clamp `value` into the inclusive `[lo, hi]` band. */
+function clamp(value: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+/**
+ * Clamp and order the spawn-range fields so the editor always exposes a
+ * valid band: each bound is clamped to the canvas and `min <= max` is
+ * enforced by swapping a reversed pair (AC3c/AC3d). Mutates and returns the
+ * supplied config. A missing/NaN bound falls back to the scalar start value.
+ */
+export function normaliseSpawnRanges(config: EnemyConfig): EnemyConfig {
+  const clampTo = (value: number | undefined, fallback: number, hi: number): number =>
+    clamp(Number.isFinite(value as number) ? (value as number) : fallback, 0, hi);
+
+  let xMin = clampTo(config.startXMin, config.startX, GAME_WIDTH);
+  let xMax = clampTo(config.startXMax, config.startX, GAME_WIDTH);
+  if (xMin > xMax) [xMin, xMax] = [xMax, xMin];
+
+  let yMin = clampTo(config.startYMin, config.startY, GAME_HEIGHT);
+  let yMax = clampTo(config.startYMax, config.startY, GAME_HEIGHT);
+  if (yMin > yMax) [yMin, yMax] = [yMax, yMin];
+
+  config.startXMin = xMin;
+  config.startXMax = xMax;
+  config.startYMin = yMin;
+  config.startYMax = yMax;
+  return config;
+}
 
 const FORMATION_KINDS = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single'] as const;
 const SHOT_PATTERNS = ['none', 'aimed', 'spread', 'radial', 'orbital', 'coordinated'] as const;
@@ -287,7 +326,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     input.min = String(range.min);
     input.max = String(range.max);
     input.step = String(range.step);
-    input.addEventListener('input', () => this._onConfigInput());
+    input.addEventListener('input', () => this._onConfigInput(field));
     const value = document.createElement('output');
     value.dataset['configValue'] = field;
     row.append(label, input, value);
@@ -303,7 +342,7 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     const input = document.createElement('input');
     input.type = 'color';
     input.dataset['config'] = field;
-    input.addEventListener('input', () => this._onConfigInput());
+    input.addEventListener('input', () => this._onConfigInput(field));
     row.append(label, input);
     return row;
   }
@@ -322,18 +361,28 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       o.textContent = opt;
       select.appendChild(o);
     }
-    select.addEventListener('change', () => this._onConfigInput());
+    select.addEventListener('change', () => this._onConfigInput(field));
     row.append(label, select);
     return row;
   }
 
   // ── Panel ↔ config sync ─────────────────────────────────────────
 
-  private _readPanelValues(): EnemyConfig {
+  private _readPanelValues(changedField?: string): EnemyConfig {
     const next: EnemyConfig = { ...this.activeConfig };
     for (const field of Object.keys(ENEMY_SLIDER_RANGES)) {
       const input = this.panel?.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
       if (input) (next as unknown as Record<string, unknown>)[field] = Number(input.value);
+    }
+    // The legacy scalar start sliders remain functional (AC3e): editing one
+    // collapses its range to that point so the base still follows the slider.
+    if (changedField === 'startX') {
+      next.startXMin = next.startX;
+      next.startXMax = next.startX;
+    }
+    if (changedField === 'startY') {
+      next.startYMin = next.startY;
+      next.startYMax = next.startY;
     }
     for (const field of VISUAL_COLOR_FIELDS) {
       const input = this.panel?.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
@@ -343,7 +392,8 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       const sel = this.panel?.querySelector<HTMLSelectElement>(`select[data-config="${field}"]`);
       if (sel) (next as unknown as Record<string, unknown>)[field] = sel.value;
     }
-    return next;
+    // Clamp to the canvas and enforce min <= max before the value is used.
+    return normaliseSpawnRanges(next);
   }
 
   private _applyPanelValues(config: EnemyConfig): void {
@@ -386,12 +436,23 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
   }
 
   /** Any control change updates in-memory config and live-applies to the scene/entities. */
-  private _onConfigInput(): void {
-    const next = this._readPanelValues();
+  private _onConfigInput(changedField?: string): void {
+    const next = this._readPanelValues(changedField);
     this.activeConfig = next;
     this._updateValueLabels(next);
     this._updateDifficulty(next);
     this._applyLive(next);
+    // Write normalised range bounds back so the sliders always show the
+    // clamped, ordered band the scene will actually use (AC3c/AC3d).
+    this._syncSpawnRangeInputs(next);
+  }
+
+  /** Mirrors the normalised spawn-range values back onto their sliders. */
+  private _syncSpawnRangeInputs(config: EnemyConfig): void {
+    for (const field of SPAWN_RANGE_FIELDS) {
+      const input = this.panel?.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
+      if (input) input.value = String((config as unknown as Record<string, unknown>)[field]);
+    }
   }
 
   // Live apply — where sensible, without full formation respawn.

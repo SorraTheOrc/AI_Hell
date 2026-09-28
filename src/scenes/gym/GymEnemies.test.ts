@@ -37,9 +37,9 @@ vi.mock('../../core/configStore', async (importOriginal) => {
     ),
   };
 });
-import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE } from '../../core/constants';
+import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
-import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID } from './GymEnemies';
+import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymEnemies';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
@@ -826,6 +826,65 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(countInput.min).toBe('1');
     expect(countInput.step).toBe('1');
   });
+
+  // ── Spawn-range sliders (AH-0MUKCLXLW0032R67, AC3) ──────────────
+
+  it('renders the four spawn-range sliders with canvas bounds and step 1 (AC3a/AC3b)', async () => {
+    await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const bounds: Array<[string, string]> = [
+      ['startXMin', String(GAME_WIDTH)],
+      ['startXMax', String(GAME_WIDTH)],
+      ['startYMin', String(GAME_HEIGHT)],
+      ['startYMax', String(GAME_HEIGHT)],
+    ];
+    for (const [field, max] of bounds) {
+      const slider = panel.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
+      expect(slider, `${field} slider missing`).not.toBeNull();
+      expect(slider!.min).toBe('0');
+      expect(slider!.max).toBe(max);
+      expect(Number(slider!.step)).toBe(1);
+    }
+    // AC3e — the legacy scalar sliders remain.
+    expect(panel.querySelector('input[data-config="startX"]')).not.toBeNull();
+    expect(panel.querySelector('input[data-config="startY"]')).not.toBeNull();
+  });
+
+  it('seeds the range sliders from the active config (min = max = scalar)', async () => {
+    await bootWithKey('scout');
+    const min = document.querySelector<HTMLInputElement>('input[data-config="startXMin"]')!;
+    const max = document.querySelector<HTMLInputElement>('input[data-config="startXMax"]')!;
+    expect(Number(min.value)).toBe(DEFAULT_ENEMY_CONFIGS.scout.startX);
+    expect(Number(max.value)).toBe(DEFAULT_ENEMY_CONFIGS.scout.startX);
+  });
+
+  it('enforces min <= max by reordering a reversed range (AC3c)', async () => {
+    const scene = await bootWithKey('scout');
+    const minInput = document.querySelector<HTMLInputElement>('input[data-config="startXMin"]')!;
+    const maxInput = document.querySelector<HTMLInputElement>('input[data-config="startXMax"]')!;
+    minInput.value = '500';
+    maxInput.value = '100';
+    minInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.startXMin).toBe(100);
+    expect(scene.currentConfig.startXMax).toBe(500);
+    // The panel mirrors the ordered band after normalisation.
+    expect(Number(minInput.value)).toBe(100);
+    expect(Number(maxInput.value)).toBe(500);
+  });
+
+  it('editing the scalar startX collapses the range to that point (AC3e)', async () => {
+    const scene = await bootWithKey('scout');
+    const startX = document.querySelector<HTMLInputElement>('input[data-config="startX"]')!;
+    startX.value = '300';
+    startX.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.startX).toBe(300);
+    expect(scene.currentConfig.startXMin).toBe(300);
+    expect(scene.currentConfig.startXMax).toBe(300);
+  });
+
+  it('range fields are part of the editable slider set', () => {
+    expect([...SPAWN_RANGE_FIELDS]).toEqual(['startXMin', 'startXMax', 'startYMin', 'startYMax']);
+  });
 });
 
 describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
@@ -1427,5 +1486,45 @@ describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
     expect(registry.magnetStacks()).toBe(0);
     expect(registry.isShielded).toBe(false);
     expect(() => restarted.tick(0.016)).not.toThrow();
+  });
+});
+
+describe('normaliseSpawnRanges (AH-0MUKCLXLW0032R67, AC3c/AC3d)', () => {
+  it('clamps out-of-bounds bounds to the canvas', () => {
+    const config = normaliseSpawnRanges({
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      startXMin: -50,
+      startXMax: 99999,
+      startYMin: -10,
+      startYMax: 99999,
+    });
+    expect(config.startXMin).toBe(0);
+    expect(config.startXMax).toBe(GAME_WIDTH);
+    expect(config.startYMin).toBe(0);
+    expect(config.startYMax).toBe(GAME_HEIGHT);
+  });
+
+  it('reorders a reversed range so min <= max', () => {
+    const config = normaliseSpawnRanges({
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      startXMin: 700,
+      startXMax: 200,
+      startYMin: 400,
+      startYMax: 100,
+    });
+    expect(config).toMatchObject({ startXMin: 200, startXMax: 700, startYMin: 100, startYMax: 400 });
+  });
+
+  it('falls back to the scalar start when a bound is absent or NaN', () => {
+    const config = normaliseSpawnRanges({
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      startX: 123,
+      startXMin: undefined,
+      startXMax: Number.NaN,
+      startY: 234,
+      startYMin: undefined,
+      startYMax: undefined,
+    });
+    expect(config).toMatchObject({ startXMin: 123, startXMax: 123, startYMin: 234, startYMax: 234 });
   });
 });
