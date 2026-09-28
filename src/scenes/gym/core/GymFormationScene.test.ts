@@ -20,7 +20,10 @@ import {
 import { Player } from '../../../entities/Player';
 import { BaseEnemy } from '../../../entities/BaseEnemy';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
-import { FormationOffset } from '../../../utils/formations';
+import {
+  FormationOffset,
+  type FormationReanchorRequest,
+} from '../../../utils/formations';
 import {
   EnemyFormationConfig,
   FormationSceneBullet,
@@ -119,15 +122,21 @@ class AimStubEnemy extends StubEnemy {
 }
 
 /**
- * Stub that implements the optional formation-hold seam. `requiresHold` is
- * deliberately independent of `alive` so the scene-level alive filter is
- * exercised (a dead holder must NOT freeze the formation).
+ * Stub that implements the optional re-anchor seam (mirrors the Diver). A
+ * test can post a request, which the scene consumes exactly once on the next
+ * `tick()`.
  */
-class HoldStubEnemy extends StubEnemy {
-  requiresHold = false;
+class ReanchorStubEnemy extends StubEnemy {
+  private pending: FormationReanchorRequest | null = null;
 
-  requiresFormationHold(): boolean {
-    return this.requiresHold;
+  requestReanchor(request: FormationReanchorRequest): void {
+    this.pending = request;
+  }
+
+  consumeFormationReanchor(): FormationReanchorRequest | null {
+    const request = this.pending;
+    this.pending = null;
+    return request;
   }
 }
 
@@ -2624,7 +2633,7 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
   });
 });
 
-describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () => {
+describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -2632,105 +2641,93 @@ describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () =
     booted = null;
   });
 
-  async function bootHoldGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
+  async function bootReanchorGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
     booted = await bootScene([
-      makeStubScene(() => [], undefined, undefined, HoldStubEnemy),
+      makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
     ]);
     return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
   }
 
-  /** The stub entities, typed with the formation-hold seam. */
-  function holders(
+  /** The stub entities, typed with the re-anchor seam. */
+  function entities(
     scene: GymFormationScene<StubEnemy, StubBullet>,
-  ): HoldStubEnemy[] {
-    return scene.formationEntities as HoldStubEnemy[];
+  ): ReanchorStubEnemy[] {
+    return scene.formationEntities as ReanchorStubEnemy[];
   }
 
-  it('AC1 — a holding entity freezes the formation base', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-    holder.requiresHold = true;
+  it('AC1 — the formation base advances unconditionally (a pending request never freezes the drift)', async () => {
+    const scene = await bootReanchorGym();
+    const [first] = entities(scene);
+    first.requestReanchor({ offset: { ...first.offset }, x: 500, y: 300 });
 
     const before = scene.formationX;
     scene.tick(0.5);
-    expect(scene.formationX).toBe(before);
+    const after = scene.formationX;
+    expect(after).not.toBe(before);
+
+    // The next tick keeps drifting at the configured rate — no lingering hold.
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(after + DRIFT_SPEED * 0.5, 5);
   });
 
-  it('AC1 — the gate ignores destroyed entities (a dead holder cannot freeze the formation)', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-    holder.requiresHold = true;
-    holder.destroySelf();
-    expect(holder.alive).toBe(false);
+  it('AC3 — re-anchors so the requester slot lands on the attack end and every other unit shifts by the same delta', async () => {
+    const scene = await bootReanchorGym();
+    const all = entities(scene);
+    const requester = all[2];
+    const before = all.map((e) => ({ x: e.x, y: e.y }));
 
-    const before = scene.formationX;
-    scene.tick(0.5);
-    expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
+    const attackEnd = { x: 517, y: 121 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: attackEnd.x,
+      y: attackEnd.y,
+    });
+
+    scene.tick(0.25);
+
+    // The requester's slot lands exactly on the attack end.
+    expect(requester.x).toBeCloseTo(attackEnd.x, 5);
+    expect(requester.y).toBeCloseTo(attackEnd.y, 5);
+
+    // Every other unit shifted by the same delta (the origin shift plus the
+    // uniform drift is identical for every unit).
+    const deltaX = requester.x - before[2].x;
+    const deltaY = requester.y - before[2].y;
+    all.forEach((entity, i) => {
+      if (i === 2) return;
+      expect(entity.x - before[i].x).toBeCloseTo(deltaX, 5);
+      expect(entity.y - before[i].y).toBeCloseTo(deltaY, 5);
+    });
   });
 
-  it('AC1/AC2 — while any one entity still holds the formation stays frozen; both rejoined resumes from the held position', async () => {
-    const scene = await bootHoldGym();
-    const [a, b] = holders(scene);
-    a.requiresHold = true;
-    b.requiresHold = true;
+  it('AC3 — the re-anchor follows the requested position, not a fixed screen point', async () => {
+    const scene = await bootReanchorGym();
+    const [requester] = entities(scene);
 
-    scene.tick(0.5);
-    const frozenAt = scene.formationX;
+    const first = { x: 300, y: 120 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: first.x,
+      y: first.y,
+    });
+    scene.tick(0.25);
+    expect(requester.x).toBeCloseTo(first.x, 5);
+    expect(requester.y).toBeCloseTo(first.y, 5);
 
-    // One diver rejoins; the other is still away — no drift.
-    a.requiresHold = false;
-    scene.tick(0.5);
-    expect(scene.formationX).toBe(frozenAt);
-
-    // Both rejoined → the formation resumes from exactly the held base.
-    b.requiresHold = false;
-    scene.tick(0.5);
-    expect(scene.formationX).toBeCloseTo(frozenAt + DRIFT_SPEED * 0.5, 5);
+    // A second request at a different position re-anchors there instead.
+    const second = { x: 640, y: 90 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: second.x,
+      y: second.y,
+    });
+    scene.tick(0.25);
+    expect(requester.x).toBeCloseTo(second.x, 5);
+    expect(requester.y).toBeCloseTo(second.y, 5);
   });
 
-  it('AC1 — a hold suppresses the right-edge wrap/respawn', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-
-    // Advance until the NEXT 1 s tick would cross the wrap threshold.
-    for (
-      let i = 0;
-      i < 100 && scene.formationX + DRIFT_SPEED <= GAME_WIDTH + 60;
-      i++
-    ) {
-      scene.tick(1.0);
-    }
-    expect(scene.formationX + DRIFT_SPEED).toBeGreaterThan(GAME_WIDTH + 60);
-
-    holder.requiresHold = true;
-    const heldX = scene.formationX;
-    // Without the hold this 1 s tick crosses the threshold and wraps.
-    scene.tick(1.0);
-    expect(scene.formationX).toBe(heldX);
-
-    // Releasing the hold lets the wrap happen again.
-    holder.requiresHold = false;
-    scene.tick(1.0);
-    expect(scene.formationX).toBeLessThan(0);
-  });
-
-  it('AC2 — the formation resumes from exactly the held position with no jump', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-    holder.requiresHold = true;
-    scene.tick(0.5);
-    const heldX = scene.formationX;
-    // A second held tick confirms the base really is pinned.
-    scene.tick(0.5);
-    expect(scene.formationX).toBe(heldX);
-
-    holder.requiresHold = false;
-    scene.tick(0.5);
-    expect(scene.formationX).toBeCloseTo(heldX + DRIFT_SPEED * 0.5, 5);
-  });
-
-  it('AC4 — a formation with no holder still drifts', async () => {
-    const scene = await bootHoldGym();
+  it('AC4 — a formation with no request drifts exactly as before', async () => {
+    const scene = await bootReanchorGym();
     const before = scene.formationX;
     scene.tick(0.5);
     expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);

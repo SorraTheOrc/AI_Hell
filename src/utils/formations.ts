@@ -201,6 +201,57 @@ export interface FormationPosition {
 }
 
 /**
+ * A request from a formation entity (the Diver, GDD §4.1 — E2) to re-anchor
+ * the whole unit so the requester's own slot coincides with the position
+ * where its attack finished.
+ *
+ * The requester carries its own `offset` and the world `(x, y)` at which the
+ * attack ended; the owning scene supplies its formation origin and spacing so
+ * the shared rule can compute the translation.
+ */
+export interface FormationReanchorRequest {
+  /** The requesting entity's own formation offset. */
+  offset: FormationOffset;
+  /** Attack-end world x. */
+  x: number;
+  /** Attack-end world y. */
+  y: number;
+}
+
+/** The `(dx, dy)` translation that re-anchors a formation origin. */
+export interface FormationReanchorDelta {
+  dx: number;
+  dy: number;
+}
+
+/**
+ * Computes the translation that moves a formation origin so the requesting
+ * entity's slot (`origin + offset * spacing`) lands exactly on its attack-end
+ * position.
+ *
+ * Applying the same `(dx, dy)` to the whole unit preserves every other unit's
+ * relative offset — the single shared re-anchor rule consumed by both
+ * `GymFormationScene` and `PlayScene`, so the gym and the game cannot diverge
+ * (gym↔game parity; AH-0MUAYB957002EMYV). Pure and side-effect free.
+ */
+export function computeFormationReanchorDelta(
+  request: FormationReanchorRequest,
+  originX: number,
+  originY: number,
+  spacingX: number,
+  spacingY: number,
+): FormationReanchorDelta {
+  const slot = computeFormationPosition(
+    originX,
+    originY,
+    request.offset,
+    spacingX,
+    spacingY,
+  );
+  return { dx: request.x - slot.x, dy: request.y - slot.y };
+}
+
+/**
  * Computes the base position of an enemy from its formation offset.
  *
  * This is the shared calculation: `x = baseX + offset.col * spacingX`

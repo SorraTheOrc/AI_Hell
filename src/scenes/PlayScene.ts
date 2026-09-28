@@ -57,6 +57,10 @@ import {
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import {
+  computeFormationReanchorDelta,
+  type FormationReanchorRequest,
+} from '../utils/formations';
 import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
@@ -304,6 +308,14 @@ export class PlayScene extends CombatScene<
 
   private driftX = 0;
   private driftDir = 1;
+  /**
+   * Unit-level re-anchor offset (px), added to every formation group's origin
+   * on top of the drift. A Diver's attack re-bases the whole unit by adding
+   * the shared delta here, so the Diver's slot lands on its attack end and
+   * every other unit keeps its relative offset (AH-0MUAYB957002EMYV).
+   */
+  private formationAnchorX = 0;
+  private formationAnchorY = 0;
 
   private transitionTimer = 0;
 
@@ -484,6 +496,8 @@ export class PlayScene extends CombatScene<
     this.boss = null;
     this.driftX = 0;
     this.driftDir = 1;
+    this.formationAnchorX = 0;
+    this.formationAnchorY = 0;
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
@@ -651,6 +665,8 @@ export class PlayScene extends CombatScene<
     }
     this.driftX = 0;
     this.driftDir = 1;
+    this.formationAnchorX = 0;
+    this.formationAnchorY = 0;
     this._startWaveTimer();
   }
 
@@ -838,24 +854,22 @@ export class PlayScene extends CombatScene<
 
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
-    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING enemy is away
-    // from its formation (`DIVING`/`PAUSING`/`RETURNING`), the cluster's
-    // ping-pong drift freezes in place — `driftX` and `driftDir` are left
-    // untouched — and resumes once every diver has rejoined. Destroyed
-    // enemies are ignored, so a mid-dive kill cannot freeze the cluster.
-    const holdFormation = this.spawned.some(
-      (s) => s.entity.alive && s.entity.requiresFormationHold?.() === true,
-    );
-    if (!holdFormation) {
-      this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
-      if (this.driftX > FORMATION_DRIFT_RANGE) {
-        this.driftX = FORMATION_DRIFT_RANGE;
-        this.driftDir = -1;
-      } else if (this.driftX < 0) {
-        this.driftX = 0;
-        this.driftDir = 1;
-      }
+    // Formation drift advances unconditionally — no entity can freeze it (the
+    // obsolete formation-hold seam was removed in AH-0MUAYB957002EMYV).
+    this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
+    if (this.driftX > FORMATION_DRIFT_RANGE) {
+      this.driftX = FORMATION_DRIFT_RANGE;
+      this.driftDir = -1;
+    } else if (this.driftX < 0) {
+      this.driftX = 0;
+      this.driftDir = 1;
     }
+
+    // Diver re-anchor (GDD §4.1 — E2): if a Diver's attack finished, re-base
+    // the whole unit so its slot lands on the attack end. Applied after the
+    // drift and before positioning so every enemy uses the new origin in the
+    // same frame.
+    this._applyFormationReanchor();
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
@@ -874,13 +888,40 @@ export class PlayScene extends CombatScene<
         continue;
       }
       s.entity.applyFormationPosition(
-        s.startX + this.driftX,
-        s.startY,
+        s.startX + this.driftX + this.formationAnchorX,
+        s.startY + this.formationAnchorY,
         dt,
         s.spacingX,
         s.spacingY,
       );
     }
+  }
+
+  /**
+   * Consumes any pending enemy re-anchor requests and shifts the unit anchor
+   * so the requesting Diver's slot lands on its attack end, with every other
+   * unit shifted by the same delta (shared rule in
+   * `computeFormationReanchorDelta`). The most recent request wins when Divers
+   * are desynchronised (documented assumption).
+   */
+  private _applyFormationReanchor(): void {
+    let latest: { request: FormationReanchorRequest; spawn: SpawnedEnemy } | null = null;
+    for (const spawn of this.spawned) {
+      const request = spawn.entity.consumeFormationReanchor?.();
+      if (request) latest = { request, spawn };
+    }
+    if (!latest) return;
+
+    const { request, spawn } = latest;
+    const { dx, dy } = computeFormationReanchorDelta(
+      request,
+      spawn.startX + this.driftX + this.formationAnchorX,
+      spawn.startY + this.formationAnchorY,
+      spawn.spacingX,
+      spawn.spacingY,
+    );
+    this.formationAnchorX += dx;
+    this.formationAnchorY += dy;
   }
 
   /**
@@ -1725,20 +1766,6 @@ export class PlayScene extends CombatScene<
   /** Live enemies (one per spawned entity, destroyed ones included). */
   getEnemies(): EnemyEntity[] {
     return this.spawned.map((s) => s.entity);
-  }
-
-  /**
-   * Current formation ping-pong drift offset (px), relative to each enemy
-   * group's `startX`. Frozen in place while a Diver is away from the
-   * formation (see `_moveEnemies`). Exposed for observability/tests.
-   */
-  getFormationDriftX(): number {
-    return this.driftX;
-  }
-
-  /** Current formation drift direction: `+1` right, `-1` left. */
-  getFormationDriftDir(): number {
-    return this.driftDir;
   }
 
   /** Number of live enemies. */

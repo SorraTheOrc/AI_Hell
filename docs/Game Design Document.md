@@ -211,7 +211,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Fires**: No (Levels 1–3); yes, aimed shot (Level 4+).
 
 #### E2 — Diver
-- **Behavior**: Dives diagonally toward the player's position snapshotted at dive start (a quadratic-bezier parabolic arc in which both x and y follow the curve — no x-lock; AH-0MTGBOKLC006N8UX), then returns to its current formation slot. While a Diver is away from the formation (diving, pausing or returning), the rest of its cluster holds position — the formation drift is frozen — and resumes once every Diver has rejoined.
+- **Behavior**: Dives diagonally toward the player's position snapshotted at dive start (a quadratic-bezier parabolic arc in which both x and y follow the curve — no x-lock; AH-0MTGBOKLC006N8UX), pauses for 500 ms at the attack end, then re-forms. There is **no return target**: when the pause ends the whole enemy unit re-anchors around the attack-end location (the player position snapshotted at dive start), with every other unit shifting by the same delta so the grid's relative offsets are preserved. The formation drift keeps advancing throughout the attack (AH-0MUAYB957002EMYV).
 - **Appearance**: Medium, dart-shaped neon entity.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.

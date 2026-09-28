@@ -65,7 +65,11 @@ import {
   playSpawnSound,
 } from '../../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
-import { FormationOffset } from '../../../utils/formations';
+import {
+  computeFormationReanchorDelta,
+  FormationOffset,
+  type FormationReanchorRequest,
+} from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
 import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
@@ -168,12 +172,13 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    */
   playDestructionAudio?(): void;
   /**
-   * Optional: reports that this entity is currently away from its formation
-   * and the scene must hold the cluster's drift in place (GDD §4.1 —
-   * E2 Diver). Only formation-holding archetypes implement it; other
-   * entities omit it and the base scene uses optional chaining.
+   * Optional: returns a pending re-anchor request when this entity's attack
+   * finished (GDD §4.1 — E2 Diver), so the base scene can re-base the whole
+   * formation origin and keep every unit's relative offset. The call clears
+   * the request (fires once). Other entities omit it and the base scene uses
+   * optional chaining.
    */
-  requiresFormationHold?(): boolean;
+  consumeFormationReanchor?(): FormationReanchorRequest | null;
   /**
    * Optional multi-hit damage seam (Harvester, GDD §4.1). When present,
    * player-bullet collisions delegate to this instead of `destroySelf()`
@@ -1310,22 +1315,20 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
-    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING entity is away
-    // from the formation (`DIVING`/`PAUSING`/`RETURNING`), the whole cluster
-    // holds its current position and the right-edge wrap/respawn is
-    // suppressed. Destroyed entities are ignored, so a mid-dive kill can
-    // never freeze the cluster forever.
-    const holdFormation = this.entities.some(
-      (entity) => entity.alive && entity.requiresFormationHold?.() === true,
-    );
-    if (!holdFormation) {
-      // Advance the formation base; when the whole formation has crossed
-      // the right edge, respawn it off the left edge so it flies again.
-      this.formationBaseX += config.driftSpeed * dt;
-      if (this.formationBaseX > GAME_WIDTH + 60) {
-        this.formationBaseX = this._respawnX();
-      }
+    // Advance the formation base unconditionally; when the whole formation
+    // has crossed the right edge, respawn it off the left edge so it flies
+    // again. No entity can freeze the drift (the obsolete formation-hold seam
+    // was removed in AH-0MUAYB957002EMYV).
+    this.formationBaseX += config.driftSpeed * dt;
+    if (this.formationBaseX > GAME_WIDTH + 60) {
+      this.formationBaseX = this._respawnX();
     }
+
+    // Diver re-anchor (GDD §4.1 — E2, AH-0MUAYB957002EMYV): if a Diver's
+    // attack finished, re-base the whole formation origin so its slot
+    // coincides with the attack end. Applied after the drift and before the
+    // positioning pass so every unit uses the new origin in the same frame.
+    this._applyFormationReanchor();
 
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
@@ -1411,6 +1414,32 @@ export class GymFormationScene<
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
+  }
+
+  /**
+   * Consumes any pending entity re-anchor requests (GDD §4.1 — E2, Diver)
+   * and re-bases `formationBaseX`/`formationBaseY` so the requesting entity's
+   * slot lands on its attack-end position. Every other entity shifts by the
+   * same delta, preserving the grid's relative offsets. The most recent
+   * request wins when Divers are desynchronised (documented assumption).
+   */
+  private _applyFormationReanchor(): void {
+    let latest: FormationReanchorRequest | null = null;
+    for (const entity of this.entities) {
+      const request = entity.consumeFormationReanchor?.();
+      if (request) latest = request;
+    }
+    if (!latest) return;
+
+    const { dx, dy } = computeFormationReanchorDelta(
+      latest,
+      this.formationBaseX,
+      this.formationBaseY,
+      this.config.spacingX,
+      this.config.spacingY,
+    );
+    this.formationBaseX += dx;
+    this.formationBaseY += dy;
   }
 
   /**

@@ -758,8 +758,8 @@ collecting bullets, so that frame's shots use the current position:
   The dive is a **diagonal parabolic arc** — both x and y follow the
   quadratic bezier from the formation slot to the snapshotted player
   position (`computeDivePoint`; AH-0MTGBOKLC006N8UX); there is no x-lock.
-  While a Diver is away from the formation (`DIVING`/`PAUSING`/`RETURNING`)
-  the cluster's drift is held — see §7.6.
+  When the attack ends (`DIVING`/`PAUSING`) the unit re-anchors to the
+  attack-end location — see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
   is untouched (no aim seam).
 
@@ -794,30 +794,36 @@ advanced on the shared `tick(dt)` path via `onBossAdvanced()`, so the gym
 Boss and the shipped game's Boss run the same code
 (AH-0MUII3E5E006A93F, gap 6).
 
-### 7.6 Formation hold while a Diver is away (AH-0MUAYB957002EMYV)
+### 7.6 Attack-end re-anchor when a Diver finishes its attack (AH-0MUAYB957002EMYV)
 
-A Diver leaves the formation for the whole `DIVING → PAUSING → RETURNING`
-attack window, and the cluster must not keep drifting out from under it.
-The Diver reports this through the optional `requiresFormationHold?()` seam
-(on `FormationSceneEntity` and the shared `EnemyEntity` type alongside
+A Diver leaves the formation for the whole `DIVING → PAUSING` attack window.
+There is **no return glide**: when the pause ends the Diver re-enters
+`FORMATION` and latches a re-anchor request at its attack-end position (the
+player position snapshotted at dive start). The owning scene consumes the
+request through the optional `consumeFormationReanchor?()` seam (on
+`FormationSceneEntity` and the shared `EnemyEntity` type alongside
 `DestructionAudioSeam`):
 
-- `Diver.requiresFormationHold()` returns `this.alive && this._state !==
-  DiverState.FORMATION` — true for `DIVING`/`PAUSING`/`RETURNING`, false in
-  `FORMATION`, and false once destroyed.
-- Both independent drift implementations consult the seam each frame and hold
-  the cluster's base while any **living** holder exists:
-  - `GymFormationScene.tick()` freezes `formationBaseX` and suppresses the
-    right-edge wrap/respawn.
-  - `PlayScene._moveEnemies()` freezes `driftX` and leaves `driftDir`
-    untouched, so ping-pong direction is preserved across the hold.
-- Destroyed entities are ignored by both gates, so a Diver killed mid-dive
-  cannot freeze the cluster forever.
-- Every entity's `applyFormationPosition` still runs each frame with the
-  unchanged base, so a returning Diver glides onto the slot evaluated live
-  from the (now stationary) base, and normal drift resumes on the first
-  frame after the last Diver re-enters `FORMATION`.
-- Non-Diver entities omit the seam and are unaffected.
+- `Diver.consumeFormationReanchor()` returns and clears the latched
+  `FormationReanchorRequest` (`{ offset, x, y }`); a destroyed Diver never
+  returns a request.
+- Both independent drift implementations apply the same shared rule,
+  `computeFormationReanchorDelta(request, originX, originY, spacingX,
+  spacingY)`, which returns the translation that makes the requester's slot
+  (`origin + offset * spacing`) coincide with its attack end. Applying that
+  `(dx, dy)` to the whole unit preserves every other unit's relative offset:
+  - `GymFormationScene.tick()` re-bases `formationBaseX`/`formationBaseY`.
+  - `PlayScene._moveEnemies()` shifts a unit-level `formationAnchorX`/`Y`
+    added to every formation group's origin.
+- The re-anchor is applied after the drift and before the positioning pass,
+  so every unit uses the new origin in the same frame and the Diver shows no
+  snap. The drift itself is never frozen — no entity can hold the cluster
+  (the interim formation-hold seam was removed).
+- When Divers become desynchronised (destruction + later respawn) the most
+  recent attack-end wins — a documented assumption, since the shared rule is
+  a single translation and can satisfy only one requester's slot.
+- Non-Diver entities have no re-anchor request; they simply shift with the
+  unit origin and are otherwise unaffected.
 
 ---
 

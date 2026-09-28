@@ -20,6 +20,7 @@ import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
+import { Scout } from '../entities/Scout';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -2855,7 +2856,7 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   });
 });
 
-describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
+describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -2864,22 +2865,40 @@ describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
     localStorage.clear();
   });
 
-  /** A deterministic level with two Divers in one formation group. */
-  const HOLD_LEVELS: LevelDefinition[] = [
+  const START_X = 200;
+  const START_Y = 220;
+  const SPACING_X = 30;
+  const SPACING_Y = 26;
+
+  /**
+   * A deterministic level with a Diver group and a non-Diver (Scout) group
+   * sharing the same origin and spacing, so the whole-unit re-anchor delta can
+   * be verified against the Scout.
+   */
+  const REANCHOR_LEVELS: LevelDefinition[] = [
     {
       level: 1,
-      name: 'Formation hold',
+      name: 'Diver re-anchor',
       waves: [
         {
           groups: [
             {
               enemyKey: 'diver',
               formation: 'diver',
-              count: 4,
-              spacingX: 30,
-              spacingY: 26,
-              startX: 200,
-              startY: 220,
+              count: 1,
+              spacingX: SPACING_X,
+              spacingY: SPACING_Y,
+              startX: START_X,
+              startY: START_Y,
+            },
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 3,
+              spacingX: SPACING_X,
+              spacingY: SPACING_Y,
+              startX: START_X,
+              startY: START_Y,
             },
           ],
           shootEnabled: false,
@@ -2888,74 +2907,87 @@ describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
     },
   ];
 
-  async function bootHoldScene(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(HOLD_LEVELS, {
+  async function bootReanchorScene(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(REANCHOR_LEVELS, {
       asteroidSpawner: false,
     });
     booted = game;
     return scene;
   }
 
-  /** Advances a Diver's own state machine to `target` (no scene tick). */
-  function driveDiverTo(diver: Diver, target: DiverState): void {
-    for (let i = 0; i < 100 && diver.behaviourState !== target; i++) {
-      diver.applyFormationPosition(200, 220, 0.5, 30, 26);
-    }
-    expect(diver.behaviourState).toBe(target);
-  }
-
   function divers(scene: PlayScene): Diver[] {
-    return scene
-      .getEnemies()
-      .filter((e): e is Diver => e instanceof Diver);
+    return scene.getEnemies().filter((e): e is Diver => e instanceof Diver);
   }
 
-  it('AC1/AC2 — freezes while a Diver is away, stays frozen while another is still away, and resumes from the held drift', async () => {
-    const scene = await bootHoldScene();
-    const [diverA, diverB] = divers(scene);
+  function firstScout(scene: PlayScene): Scout {
+    const scout = scene.getEnemies().find((e): e is Scout => e instanceof Scout);
+    expect(scout).toBeDefined();
+    return scout!;
+  }
 
-    driveDiverTo(diverA, DiverState.DIVING);
-    const heldX = scene.getFormationDriftX();
-    const heldDir = scene.getFormationDriftDir();
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBe(heldX);
-    expect(scene.getFormationDriftDir()).toBe(heldDir);
+  /** Ticks the scene until `predicate` holds (or gives up). */
+  function tickUntil(
+    scene: PlayScene,
+    predicate: () => boolean,
+    dt = 0.25,
+    maxTicks = 200,
+  ): void {
+    for (let i = 0; i < maxTicks && !predicate(); i++) scene.tick(dt);
+    expect(predicate()).toBe(true);
+  }
 
-    // A second Diver is now detached too — still frozen.
-    driveDiverTo(diverB, DiverState.DIVING);
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBe(heldX);
+  it('AC1/AC2 — the drift keeps advancing while a Diver is away (no formation freeze)', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
+    const scout = firstScout(scene);
 
-    // One rejoins, the other is still away — still frozen, direction intact.
-    driveDiverTo(diverA, DiverState.FORMATION);
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBe(heldX);
-    expect(scene.getFormationDriftDir()).toBe(heldDir);
+    tickUntil(scene, () => diver.behaviourState === DiverState.DIVING);
+    const scoutX = scout.x;
 
-    // Both rejoined → the drift resumes from exactly the held position.
-    driveDiverTo(diverB, DiverState.FORMATION);
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBeGreaterThan(heldX);
+    // Two ticks while the Diver dives: the Scout keeps drifting right at
+    // FORMATION_DRIFT_SPEED (28 px/s → ~14 px) plus a bounded ±2 px wiggle.
+    scene.tick(0.25);
+    scene.tick(0.25);
+    expect(diver.behaviourState).not.toBe(DiverState.FORMATION);
+    expect(scout.x).toBeGreaterThan(scoutX + 5);
   });
 
-  it('AC1 — a Diver destroyed mid-dive stops holding the formation', async () => {
-    const scene = await bootHoldScene();
-    const [diverA] = divers(scene);
+  it('AC2 — the Diver re-enters FORMATION with no RETURNING state', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
 
-    driveDiverTo(diverA, DiverState.DIVING);
-    diverA.destroySelf();
-    expect(diverA.alive).toBe(false);
-
-    const before = scene.getFormationDriftX();
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBeGreaterThan(before);
+    tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
+    tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+    expect((DiverState as unknown as Record<string, string>).RETURNING).toBeUndefined();
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
-  it('AC4 — a formation with no detached Diver still drifts', async () => {
-    const scene = await bootHoldScene();
-    const before = scene.getFormationDriftX();
-    scene.tick(0.5);
-    expect(scene.getFormationDriftX()).toBeGreaterThan(before);
+  it('AC3 — re-anchors the unit on the attack end on both axes, shifting a non-Diver unit by the same delta', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
+    const scout = firstScout(scene);
+
+    // Run one full attack: leave FORMATION, then return to it. On the
+    // transition frame the Diver holds its attack-end position and latches
+    // the re-anchor request (consumed on the next tick).
+    tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
+    tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+    const attackEnd = { x: diver.x, y: diver.y };
+    const scoutBefore = { x: scout.x, y: scout.y };
+
+    scene.tick(0.25);
+
+    // The Diver's slot lands on the attack end (Y is wiggle-free; X is within
+    // the ±1.5 px idle wiggle).
+    expect(diver.y).toBeCloseTo(attackEnd.y, 5);
+    expect(Math.abs(diver.x - attackEnd.x)).toBeLessThanOrEqual(1.5 + 1e-6);
+
+    // The whole unit shifted by `delta`; with no prior re-anchor and no Y
+    // drift, delta.y = attackEnd.y - (startY + diverRow * spacingY). The Scout
+    // (same origin/spacing) must shift by exactly that delta on Y.
+    const expectedDeltaY =
+      attackEnd.y - (START_Y + diver.offset.row * SPACING_Y);
+    expect(scout.y - scoutBefore.y).toBeCloseTo(expectedDeltaY, 5);
   });
 });
 

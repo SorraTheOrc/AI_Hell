@@ -15,7 +15,10 @@ import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
 import { Swarm } from './Swarm';
 import { Tank } from './Tank';
-import type { FormationOffset } from '../utils/formations';
+import type {
+  FormationOffset,
+  FormationReanchorRequest,
+} from '../utils/formations';
 import type { Mineral } from './Mineral';
 import type { EnemyConfig } from '../core/enemyConfig';
 import { SWARM_CLUSTER_COUNT } from './Swarm';
@@ -32,14 +35,14 @@ interface DestructionAudioSeam {
 }
 
 /**
- * Optional per-entity seam: reports that the entity is currently away from
- * its formation and the owning scene must hold the cluster's drift in place
- * (GDD §4.1 — E2 Diver). Only formation-holding archetypes (currently the
- * Diver) implement it; other entities omit it and the scenes use optional
+ * Optional per-entity seam: a formation entity (currently the Diver) returns
+ * a re-anchor request when its attack finishes, and the owning scene re-bases
+ * the whole unit so the entity's slot coincides with its attack-end position
+ * (GDD §4.1 — E2). Other entities omit it and the scenes use optional
  * chaining.
  */
-interface FormationHoldSeam {
-  requiresFormationHold?(): boolean;
+interface FormationReanchorSeam {
+  consumeFormationReanchor?(): FormationReanchorRequest | null;
 }
 
 /**
@@ -55,7 +58,7 @@ interface SeekSeam {
 
 export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester) &
   DestructionAudioSeam &
-  FormationHoldSeam &
+  FormationReanchorSeam &
   SeekSeam;
 
 /** Build one entity of the right type from the config key / formationKind. */

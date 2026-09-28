@@ -10,6 +10,7 @@ import {
   resolvePatterns,
   scaledCount,
 } from '../vfx/explosionParticles';
+import { computeFormationReanchorDelta } from '../utils/formations';
 import {
   DIVER_COLOR,
   DIVER_SIZE,
@@ -186,7 +187,7 @@ describe('Diver entity — dive SFX (AH-0MTVYC6E8005YN6F)', () => {
     expect(diver.behaviourState).toBe(DiverState.DIVING);
     expect(spy).toHaveBeenCalledTimes(1);
 
-    // Dive completes, returns through RETURNING to FORMATION (no extra cue).
+    // Dive completes, re-enters FORMATION after the pause (no extra cue).
     advanceToState(diver, baseX, baseY, DiverState.FORMATION);
     expect(diver.behaviourState).toBe(DiverState.FORMATION);
     expect(spy).toHaveBeenCalledTimes(1);
@@ -215,8 +216,7 @@ describe('Diver entity — dive SFX (AH-0MTVYC6E8005YN6F)', () => {
     expect(diver.behaviourState).toBe(DiverState.DIVING);
     expect(startSpy).toHaveBeenCalledTimes(1);
 
-    // Dive completes → RETURNING (stop called at DIVING→RETURNING)
-    // → FORMATION.
+    // Dive completes → PAUSING → FORMATION (stop called at the dive end).
     advanceToState(diver, baseX, baseY, DiverState.FORMATION);
     expect(diver.behaviourState).toBe(DiverState.FORMATION);
     expect(stopSpy).toHaveBeenCalledTimes(1);
@@ -546,7 +546,7 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
       );
     });
 
-    it('AC2 — rotation during return updates toward the player (not frozen)', async () => {
+    it('AC2 — rotation during the attack-end pause updates toward the player (not frozen)', async () => {
       booted = await bootScene([HarnessScene]);
       const baseX = 200;
       const baseY = 200;
@@ -560,32 +560,21 @@ describe('Diver — rotate to face player and diagonal dive (AH-0MTGBOKLC006N8UX
       }
       expect(diver.behaviourState).toBe(DiverState.DIVING);
 
-      // Advance the dive to completion (enters PAUSING), then advance
-      // past the pause to reach RETURNING.
+      // Advance the dive to completion (enters PAUSING).
       const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.05);
       for (let i = 0; i < diveTicks; i++) {
         diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
       }
       expect(diver.behaviourState).toBe(DiverState.PAUSING);
 
-      // Advance past the pause duration.
-      let pausingTicks = 0;
-      while (
-        diver.behaviourState === DiverState.PAUSING &&
-        pausingTicks < 20
-      ) {
-        diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
-        pausingTicks++;
-      }
-      expect(diver.behaviourState).toBe(DiverState.RETURNING);
-
-      // Reset rotation to 0 to verify return-phase rotation updates.
+      // Reset rotation to 0 to verify pause-phase rotation updates.
       diver.rotation = 0;
       const rotBefore = diver.rotation;
 
-      // Advance one return tick.
+      // Advance one pause tick (well short of the pause duration).
       diver.applyFormationPosition(baseX, baseY, 0.05, 26, 22);
-      // Rotation should have changed (not frozen during return).
+      expect(diver.behaviourState).toBe(DiverState.PAUSING);
+      // Rotation should have changed (not frozen during the pause).
       expect(diver.rotation).not.toBeCloseTo(rotBefore, 6);
 
       // The rotation should be moving toward the player direction.
@@ -693,7 +682,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     advanceToState(diver, baseX, baseY, DiverState.DIVING);
     expect(diver.behaviourState).toBe(DiverState.DIVING);
 
-    // Advance the dive to completion — diver should enter PAUSING, not RETURNING.
+    // Advance the dive to completion — diver should enter PAUSING.
     const diveTicks = Math.ceil(DIVER_DIVE_DURATION / 0.5);
     for (let i = 0; i < diveTicks; i++) {
       diver.applyFormationPosition(baseX, baseY, 0.5, 26, 22);
@@ -718,12 +707,12 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     const pauseStartX = diver.x;
     const pauseStartY = diver.y;
 
-    // Advance through the entire pause duration.
+    // Advance through the entire pause duration (re-enters FORMATION).
     advanceToState(
       diver,
       baseX,
       baseY,
-      DiverState.RETURNING,
+      DiverState.FORMATION,
       Math.ceil((DIVER_PAUSE_DURATION + 500) / 50),
     );
 
@@ -733,11 +722,14 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     expect(diver.y).toBeCloseTo(pauseStartY, 1);
   });
 
-  it('AC5d — diver transitions to RETURNING after pause elapses', async () => {
+  it('AC5d/AC2 — diver re-enters FORMATION after the pause (no RETURNING state)', async () => {
     booted = await bootScene([HarnessScene]);
     const baseX = 400;
     const baseY = 300;
     const diver = makeDiver(baseX, baseY, { row: 0, col: 0 });
+
+    // The obsolete RETURNING state no longer exists on the enum.
+    expect((DiverState as unknown as Record<string, string>).RETURNING).toBeUndefined();
 
     // Hold until dive starts.
     advanceToState(diver, baseX, baseY, DiverState.DIVING);
@@ -749,15 +741,15 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     }
     expect(diver.behaviourState).toBe(DiverState.PAUSING);
 
-    // Advance past pause duration — should transition to RETURNING.
+    // Advance past pause duration — should transition straight to FORMATION.
     advanceToState(
       diver,
       baseX,
       baseY,
-      DiverState.RETURNING,
+      DiverState.FORMATION,
       Math.ceil((DIVER_PAUSE_DURATION + 500) / 50),
     );
-    expect(diver.behaviourState).toBe(DiverState.RETURNING);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
   it('AC5b — pause duration defaults to 500 ms (DIVER_PAUSE_DURATION)', async () => {
@@ -790,7 +782,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     // Allow a small tolerance for tick timing.
     expect(pausingTicks).toBeGreaterThanOrEqual(4);
     expect(pausingTicks).toBeLessThanOrEqual(8);
-    expect(diver.behaviourState).toBe(DiverState.RETURNING);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
   it('AC5c — configurable pauseDuration overrides the default', async () => {
@@ -825,7 +817,7 @@ describe('Diver — PAUSING state (AH-0MU0EIDQQ003S1JT)', () => {
     // Custom pause of 1500ms → ~15 ticks of 100ms.
     expect(pausingTicks).toBeGreaterThanOrEqual(13);
     expect(pausingTicks).toBeLessThanOrEqual(18);
-    expect(diver.behaviourState).toBe(DiverState.RETURNING);
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 });
 
@@ -881,7 +873,7 @@ describe('Diver — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
   });
 });
 
-describe('Diver — formation hold seam (AH-0MUAYB957002EMYV)', () => {
+describe('Diver — attack-end re-anchor seam (AH-0MUAYB957002EMYV)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -911,56 +903,83 @@ describe('Diver — formation hold seam (AH-0MUAYB957002EMYV)', () => {
     expect(diver.behaviourState).toBe(target);
   }
 
-  it('AC1 — reports a hold in every detached state and releases in FORMATION', async () => {
+  it('AC2 — the RETURNING state no longer exists (FORMATION → DIVING → PAUSING → FORMATION)', async () => {
     booted = await bootScene([HarnessScene]);
-    const diver = makeDiver();
-
-    expect(typeof diver.requiresFormationHold).toBe('function');
-    expect(diver.requiresFormationHold()).toBe(false);
-
-    advanceToState(diver, DiverState.DIVING);
-    expect(diver.requiresFormationHold()).toBe(true);
-
-    advanceToState(diver, DiverState.PAUSING);
-    expect(diver.requiresFormationHold()).toBe(true);
-
-    advanceToState(diver, DiverState.RETURNING);
-    expect(diver.requiresFormationHold()).toBe(true);
-
-    advanceToState(diver, DiverState.FORMATION);
-    expect(diver.requiresFormationHold()).toBe(false);
+    expect((DiverState as unknown as Record<string, string>).RETURNING).toBeUndefined();
   });
 
-  it('AC1 — a destroyed Diver stops requiring a hold so a mid-dive kill cannot freeze the cluster', async () => {
+  it('AC3 — latches a re-anchor request at the attack end when the pause elapses, carrying its own offset', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = makeDiver({ row: 2, col: -1 });
+
+    // No request while in formation, diving or pausing.
+    expect(diver.consumeFormationReanchor()).toBeNull();
+    advanceToState(diver, DiverState.DIVING);
+    expect(diver.consumeFormationReanchor()).toBeNull();
+    advanceToState(diver, DiverState.PAUSING);
+    expect(diver.consumeFormationReanchor()).toBeNull();
+
+    // The tick the pause ends: the request is latched and the Diver holds the
+    // attack-end position on the transition frame.
+    advanceToState(diver, DiverState.FORMATION);
+    const request = diver.consumeFormationReanchor();
+    expect(request).not.toBeNull();
+    expect(request!.offset).toEqual({ row: 2, col: -1 });
+    expect(request!.x).toBeCloseTo(diver.x, 10);
+    expect(request!.y).toBeCloseTo(diver.y, 10);
+  });
+
+  it('AC3 — consuming the request clears it (fires exactly once)', async () => {
     booted = await bootScene([HarnessScene]);
     const diver = makeDiver();
-
     advanceToState(diver, DiverState.DIVING);
-    expect(diver.requiresFormationHold()).toBe(true);
+    advanceToState(diver, DiverState.FORMATION);
 
+    expect(diver.consumeFormationReanchor()).not.toBeNull();
+    expect(diver.consumeFormationReanchor()).toBeNull();
+  });
+
+  it('AC1 — a destroyed Diver never reports a re-anchor request (a mid-dive kill cannot shift the unit)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const diver = makeDiver();
+    advanceToState(diver, DiverState.DIVING);
     diver.destroySelf();
     expect(diver.alive).toBe(false);
-    expect(diver.requiresFormationHold()).toBe(false);
+    expect(diver.consumeFormationReanchor()).toBeNull();
   });
 
-  it('AC3 — the return re-evaluates the supplied base each frame (rejoins the live slot, never a stale dive-start point)', async () => {
+  it('AC2/AC3 — once the scene re-bases the origin the Diver holds its attack end (no return glide)', async () => {
     booted = await bootScene([HarnessScene]);
-    // Two identical divers; both dive to the same snapshotted target.
-    const diverRight = makeDiver({ row: 0, col: 1 });
-    const diverLeft = makeDiver({ row: 0, col: 1 });
+    const diver = makeDiver({ row: 1, col: 2 });
 
-    advanceToState(diverRight, DiverState.RETURNING);
-    advanceToState(diverLeft, DiverState.RETURNING);
+    advanceToState(diver, DiverState.DIVING);
+    advanceToState(diver, DiverState.FORMATION);
+    const attackEnd = { x: diver.x, y: diver.y };
+    const request = diver.consumeFormationReanchor();
+    expect(request).not.toBeNull();
 
-    const rightBefore = diverRight.x;
-    const leftBefore = diverLeft.x;
+    // Scene-side re-anchor: shift the origin by the shared rule's delta.
+    const { dx, dy } = computeFormationReanchorDelta(
+      request!,
+      BASE_X,
+      BASE_Y,
+      SPACING_X,
+      SPACING_Y,
+    );
 
-    // Same tick, different supplied formation base: the return slot is the
-    // base that is passed in THIS frame, not the base at dive start.
-    diverRight.applyFormationPosition(900, BASE_Y, 0.1, SPACING_X, SPACING_Y);
-    diverLeft.applyFormationPosition(-400, BASE_Y, 0.1, SPACING_X, SPACING_Y);
-
-    expect(diverRight.x).toBeGreaterThan(rightBefore);
-    expect(diverLeft.x).toBeLessThan(leftBefore);
+    // Subsequent FORMATION frames must never drift back toward the old slot:
+    // Y stays exactly on the attack end (wiggle-free) and X stays within the
+    // ±1.5 px idle wiggle.
+    for (let i = 0; i < 20; i++) {
+      diver.applyFormationPosition(
+        BASE_X + dx,
+        BASE_Y + dy,
+        0.05,
+        SPACING_X,
+        SPACING_Y,
+      );
+      expect(diver.y).toBeCloseTo(attackEnd.y, 5);
+      expect(Math.abs(diver.x - attackEnd.x)).toBeLessThanOrEqual(1.5 + 1e-6);
+    }
   });
 });
