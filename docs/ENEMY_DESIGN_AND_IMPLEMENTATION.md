@@ -1280,8 +1280,9 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   generation for that wave. The whole campaign falls back to static `LEVELS`
   only when there are no rows, the candidate pool is empty, or the merged result
   would be empty. A missing/malformed curve CSV falls back to the computed
-  default curve (`defaultDifficultyCurves()`, seeded from the measured `LEVELS`
-  scores, all `curve`); and `PlayScene` catches any error and leaves the static
+  default curve (`defaultDifficultyCurves()`: levels 1–3 `fixed` on the
+  measured `LEVELS` calibration, levels 4–5 `curve` on hand-tuned targets —
+  AH-0MUJSUTXI008NP8K); and `PlayScene` catches any error and leaves the static
   campaign active. The run is therefore never left unplayable.
 
 Related work: the sequencer primitive was delivered by `AH-0MUDIWETP003XC3X`;

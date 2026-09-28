@@ -23,8 +23,10 @@ import type {
 import {
   loadConfigs,
   resetConfigStore,
+  defaultDifficultyCurves,
   DIFFICULTY_CURVES_CSV_PATH,
 } from '../core/configStore';
+import { levelDifficulty } from '../core/enemyDifficulty';
 
 /** Build curve rows for one level from a list of per-wave targets. */
 function levelRows(
@@ -651,5 +653,104 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
       ...sourcedRows(4, 'Firestorm', [20, 25], 'generated'),
     ]);
     expect(JSON.stringify(LEVELS)).toBe(before);
+  });
+});
+
+// ── Retuned default campaign (AH-0MUJSUTXI008NP8K) ───────────────────
+
+/**
+ * Regression pin for the retuned default campaign. The baked-in default curve
+ * keeps levels 1–3 `fixed` (byte-for-byte static onboarding) and levels 4–5
+ * `curve` on hand-tuned targets, so the generated campaign is playable and
+ * ramps smoothly. These assertions fail if a future change silently
+ * reintroduces degenerate early waves or a difficulty reversal.
+ */
+describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
+  /** The default campaign, built with no explicit rows (the baked-in curve). */
+  function defaultCampaign() {
+    return buildSequencedLevels();
+  }
+
+  /** Waves flattened across the whole campaign (ascending level/wave). */
+  function allWaves() {
+    return defaultCampaign().flatMap((level) => level.waves);
+  }
+
+  it('contains no degenerate early waves (no asteroid-only, no 1-count) in levels 1–3', () => {
+    const early = defaultCampaign().filter((level) => level.level <= 3);
+    expect(early.length).toBe(3);
+    for (const level of early) {
+      for (const wave of level.waves) {
+        const total = wave.groups.reduce((sum, group) => sum + group.count, 0);
+        expect(total).toBeGreaterThan(1);
+        expect(
+          wave.groups.every((group) => group.enemyKey === 'asteroid'),
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('has non-decreasing default targets within and across levels, within 0–100', () => {
+    const rows = defaultDifficultyCurves();
+    let previousLevelLast = 0;
+    const byLevel = new Map<number, number[]>();
+    for (const row of rows) {
+      expect(row.targetDifficulty).toBeGreaterThanOrEqual(0);
+      expect(row.targetDifficulty).toBeLessThanOrEqual(100);
+      const list = byLevel.get(row.level) ?? [];
+      list.push(row.targetDifficulty);
+      byLevel.set(row.level, list);
+    }
+    for (const levelNumber of [...byLevel.keys()].sort((a, b) => a - b)) {
+      const targets = byLevel.get(levelNumber)!;
+      for (let i = 1; i < targets.length; i++) {
+        expect(targets[i]).toBeGreaterThanOrEqual(targets[i - 1]);
+      }
+      expect(targets[0]).toBeGreaterThanOrEqual(previousLevelLast);
+      previousLevelLast = targets[targets.length - 1];
+    }
+  });
+
+  it('yields every configured wave a non-empty composition and a rising aggregated difficulty', () => {
+    const configuredWaves = defaultDifficultyCurves().length;
+    expect(allWaves().length).toBe(configuredWaves);
+    for (const wave of allWaves()) {
+      expect(wave.groups.length).toBeGreaterThan(0);
+    }
+
+    const scores = defaultCampaign().map(
+      (level) => levelDifficulty(level.waves).score,
+    );
+    for (let i = 1; i < scores.length; i++) {
+      expect(scores[i]).toBeGreaterThan(scores[i - 1]);
+    }
+  });
+
+  it('holds the fire boundary: levels 1–3 off, levels 4+ on', () => {
+    for (const level of defaultCampaign()) {
+      const expected = level.level >= 4;
+      expect(level.waves.every((wave) => wave.shootEnabled === expected)).toBe(true);
+    }
+  });
+
+  it('pins the retuned curve-generated levels 4–5 compositions', () => {
+    const composition = (levelNumber: number) =>
+      defaultCampaign()
+        .find((level) => level.level === levelNumber)!
+        .waves.map(
+          (wave) =>
+            wave.groups
+              .map((group) => `${group.enemyKey}x${group.count}`)
+              .join('+') || 'none',
+        );
+    expect(composition(4)).toEqual([
+      'scoutx18',
+      'diverx18',
+      'tankx18',
+    ]);
+    expect(composition(5)).toEqual([
+      'phaserx12+scoutx18',
+      'phaserx12+phaserx12',
+    ]);
   });
 });

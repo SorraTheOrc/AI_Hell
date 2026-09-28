@@ -101,11 +101,36 @@ function round2(value: number): number {
 }
 
 /**
- * Compute the baked-in default difficulty curve from the current static
- * `LEVELS` calibration. Each level's measured difficulty
- * (`levelDifficulty(LEVELS[i].waves).score`) is spread non-decreasingly
- * across that level's waves, and each level is ramped from the previous
- * level's final target so the whole campaign never steps backwards.
+ * Default levels whose waves reuse the hand-authored static `LEVELS`
+ * composition (AH-0MUJSUTXI008NP8K). Levels 1–3 are the no-fire onboarding
+ * section: reusing the scripted waves keeps them legible and avoids the
+ * degenerate low-target curve output (asteroid-only and 1-count waves) the
+ * purely mechanical derivation produced.
+ */
+const DEFAULT_FIXED_LEVELS: ReadonlySet<number> = new Set([1, 2, 3]);
+
+/**
+ * Hand-tuned target overrides (one score per wave) for the curve-generated
+ * default levels (AH-0MUJSUTXI008NP8K). Chosen so each wave lands on a
+ * sensible, non-degenerate composition and the aggregated difficulty keeps
+ * rising across levels. A level without an override falls back to the
+ * measured calibration spread.
+ */
+const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
+  4: [16, 24, 28],
+  5: [45, 60],
+};
+
+/**
+ * Compute the baked-in default difficulty curve (AH-0MUITRZZE000OYQE;
+ * retuned for playability by AH-0MUJSUTXI008NP8K).
+ *
+ * Levels 1–3 are `fixed` (their waves reuse the hand-authored static `LEVELS`
+ * composition) and their stored targets are the measured calibration spread.
+ * Levels 4–5 are `curve` with hand-tuned targets in
+ * {@link DEFAULT_TARGET_OVERRIDES} that keep the generated compositions
+ * non-degenerate and the difficulty rising. Targets are non-decreasing within
+ * and across levels.
  *
  * Deterministic and pure: the same static campaign always yields the same
  * curve. Used as the fallback whenever the CSV config is missing or
@@ -123,20 +148,26 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
     // Never step below the previous level's final target.
     const goal = Math.max(previous, measured);
     const delta = goal - previous;
+    const fixed = DEFAULT_FIXED_LEVELS.has(level.level);
+    const override = DEFAULT_TARGET_OVERRIDES[level.level];
+    let last = previous;
 
     for (let wi = 0; wi < waveCount; wi++) {
       const fraction = (wi + 1) / waveCount;
+      const target = override?.[wi] ?? round2(previous + delta * fraction);
+      last = target;
       rows.push({
         level: level.level,
         levelName: level.name,
         wave: wi + 1,
-        targetDifficulty: round2(previous + delta * fraction),
-        // The computed default is always curve-generated (AH-0MUJSUQD8003FSUT).
-        generation: 'curve',
+        targetDifficulty: target,
+        // Onboarding levels reuse the static composition; the rest are
+        // curve-generated (AH-0MUJSUQD8003FSUT).
+        generation: fixed ? 'fixed' : 'curve',
       });
     }
 
-    previous = goal;
+    previous = last;
   }
 
   return rows;

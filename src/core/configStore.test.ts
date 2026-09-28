@@ -686,20 +686,20 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(loadDifficultyCurves()[0].targetDifficulty).not.toBe(-1);
   });
 
-  it('the computed defaults are all curve-generated', () => {
+  it('uses fixed onboarding levels 1–3 and curve-generated levels 4–5', () => {
     for (const row of defaultDifficultyCurves()) {
-      expect(row.generation).toBe('curve');
+      expect(row.generation).toBe(row.level <= 3 ? 'fixed' : 'curve');
     }
   });
 
-  it('the computed defaults are derived from the measured LEVELS scores', () => {
+  it('the onboarding (fixed) targets follow the measured LEVELS calibration', () => {
     const curves = defaultDifficultyCurves();
-    for (let i = 0; i < LEVELS.length; i++) {
+    for (const level of LEVELS.filter((l) => l.level <= 3)) {
       const levelRows = curves
-        .filter((row) => row.level === LEVELS[i].level)
+        .filter((row) => row.level === level.level)
         .sort((a, b) => a.wave - b.wave);
-      expect(levelRows.length).toBe(LEVELS[i].waves.length);
-      const expected = Math.round(levelDifficulty(LEVELS[i].waves).score * 100) / 100;
+      expect(levelRows.length).toBe(level.waves.length);
+      const expected = Math.round(levelDifficulty(level.waves).score * 100) / 100;
       expect(levelRows[levelRows.length - 1].targetDifficulty).toBe(expected);
     }
   });
