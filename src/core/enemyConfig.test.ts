@@ -90,6 +90,15 @@ describe('EnemyConfig schema', () => {
     const extended = { ...DEFAULT_ENEMY_CONFIGS.scout, wiggleAmplitude: 3 } as typeof DEFAULT_ENEMY_CONFIGS.scout & { wiggleAmplitude: number };
     expect((extended as Record<string, unknown>).wiggleAmplitude).toBe(3);
   });
+
+  it('every seed back-fills the new spawn ranges with min = max = scalar (AC1/AC6)', () => {
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(config.startXMin, config.key).toBe(config.startX);
+      expect(config.startXMax, config.key).toBe(config.startX);
+      expect(config.startYMin, config.key).toBe(config.startY);
+      expect(config.startYMax, config.key).toBe(config.startY);
+    }
+  });
 });
 
 describe('sanitizeEnemyKey / isValidEnemyKey', () => {

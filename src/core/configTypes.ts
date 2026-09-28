@@ -46,6 +46,28 @@ export interface EnemyConfig {
   /** Initial base position (px). */
   startX: number;
   startY: number;
+  /**
+   * Minimum spawn X (px) for this enemy archetype. When `startXMin` differs
+   * from `startXMax`, each wave group selects a random base X within
+   * `[startXMin, startXMax]`. When they are equal (or absent), the base
+   * equals `startX` — preserving the current single-point behaviour.
+   */
+  startXMin?: number;
+  /**
+   * Maximum spawn X (px) for this enemy archetype. See {@link startXMin}.
+   */
+  startXMax?: number;
+  /**
+   * Minimum spawn Y (px) for this enemy archetype. When `startYMin` differs
+   * from `startYMax`, each wave group selects a random base Y within
+   * `[startYMin, startYMax]`. When they are equal (or absent), the base
+   * equals `startY` — preserving the current single-point behaviour.
+   */
+  startYMin?: number;
+  /**
+   * Maximum spawn Y (px) for this enemy archetype. See {@link startYMin}.
+   */
+  startYMax?: number;
 
   // Entity health
   /**
@@ -82,6 +104,38 @@ export interface EnemyConfig {
    * breaking JSON compatibility. Unknown fields are preserved on merge.
    */
   [extra: string]: unknown;
+}
+
+/**
+ * Resolved inclusive spawn band for one axis. `min === max` denotes the
+ * legacy scalar behaviour (no randomness).
+ */
+export interface SpawnRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * Resolves an enemy archetype's effective spawn range on a single axis.
+ *
+ * Backward compatibility (AH-0MUKCLXLW0032R67): when the optional `min`/`max`
+ * bounds are absent, the scalar `start` value is used for that bound, so
+ * callers never need null checks and legacy configs keep spawning at exactly
+ * `start`. Reversed bounds (`min > max`) are normalised by swapping so the
+ * returned {@link SpawnRange} always satisfies `min <= max`.
+ *
+ * @param start — scalar legacy base position on this axis (px).
+ * @param min — optional configured minimum bound (px).
+ * @param max — optional configured maximum bound (px).
+ */
+export function resolveSpawnRange(
+  start: number,
+  min: number | undefined,
+  max: number | undefined,
+): SpawnRange {
+  const lo = min ?? start;
+  const hi = max ?? start;
+  return lo <= hi ? { min: lo, max: hi } : { min: hi, max: lo };
 }
 
 // ── Difficulty-curve config ─────────────────────────────────────────
