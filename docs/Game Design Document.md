@@ -123,28 +123,37 @@ builds the level list from `src/data/difficulty-curves.csv` through the runtime
 auto-sequencer (`src/core/difficultySequencer.ts`) via
 `buildSequencedLevels()` (`src/waves/sequencedLevels.ts`).
 
-Each level declares a per-level `source` column (`generated` | `scripted`,
-default `generated`; all rows of a level must agree):
+Each wave declares a `generation` mode (`curve` | `fixed` | `dynamic`,
+default `curve`) and the three modes may be mixed freely within one level
+(AH-0MUJSUQD8003FSUT):
 
-- **`generated`** — the level's waves come from the sequencer, one curve per
-  configured level, with the curve length setting that level's wave count and
-  the level name read from the config. The fire rule is derived from the
-  **1-based level number** — generated levels 1–3 do not fire and levels 4+ do
-  — so generated campaigns obey §2.4/§2.5.
-- **`scripted`** — the level is taken byte-for-byte from the static `LEVELS`
-  campaign (its own waves and fire flags) and is never passed to the sequencer,
-  so designers can hand-tune onboarding and set-piece levels while the
-  sequencer ramps the rest.
+- **`curve`** — the wave comes from the sequencer, one curve per configured
+  level, with the curve length setting that level's wave count and the level
+  name read from the config. The fire rule is derived from the **1-based level
+  number** — `curve` and `dynamic` levels 1–3 do not fire and levels 4+ do — so
+  generated campaigns obey §2.4/§2.5.
+- **`fixed`** — the wave uses the hand-authored static `LEVELS` wave at the
+  same `(level, wave)` verbatim (its own fire flag) and is never passed to the
+  sequencer, so designers can hand-tune onboarding and set-piece waves while
+  the sequencer ramps the rest. Its `targetDifficulty` is ignored; a `fixed`
+  wave with no static counterpart falls back to `curve` generation for that
+  wave.
+- **`dynamic`** — the wave is rebuilt from its curve at run start, seeded from
+  the run's seed, so successive runs differ while a given seed reproduces
+  exactly. The seed perturbs the wave's target before sequencing; the saved
+  curve is unchanged. A legacy per-level `source` column
+  (`generated` | `scripted`) is still read when `generation` is absent, mapping
+  `generated` → `curve` and `scripted` → `fixed`.
 
 The merged campaign always starts from the static `LEVELS` skeleton, so levels
-1–5 are present unless a `generated` level overrides one; a configured
-`generated` level numbered beyond the static five is appended, ascending.
-Fallback is **per level**: a `generated` level with an empty/malformed curve (or
-a sequencer failure) keeps its static `LEVELS` definition when one exists and is
-skipped otherwise; the whole campaign falls back to static `LEVELS` only when
-the curve config or candidate pool is empty, or the merged result would be
-empty. With the toggle off, the scripted `LEVELS` campaign ships unchanged. The
-boss still triggers after the final level.
+1–5 are present unless a configured level overrides one; a configured level
+numbered beyond the static five is appended, ascending. Fallback is **per
+level**: a level with an empty/malformed curve (or a sequencer failure) keeps
+its static `LEVELS` definition when one exists and is skipped otherwise; the
+whole campaign falls back to static `LEVELS` only when the curve config or
+candidate pool is empty, or the merged result would be empty. With the toggle
+off, the scripted `LEVELS` campaign ships unchanged. The boss still triggers
+after the final level.
 
 ---
 
@@ -187,13 +196,14 @@ The following rules govern how enemy entities interact with each other and with 
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
 
-> **Optional sequenced campaigns (AH-0MUH6LEYY0054E63; mixed sources
-> AH-0MUH7Q6HN0006QPD).** The table above describes the shipped scripted
+> **Optional sequenced campaigns (AH-0MUH6LEYY0054E63; per-wave modes
+> AH-0MUJSUQD8003FSUT).** The table above describes the shipped scripted
 > campaign. With the opt-in `sequencedWavesEnabled` game rule enabled (default
-> **off**), each level's waves are either generated from
-> `src/data/difficulty-curves.csv` or kept verbatim from `LEVELS`, selected by
-> the config's per-level `source` column (see §2.5.1). The static skeleton
-> (levels 1–5) is always present, so levels can be mixed freely; the scripted
+> **off**), each wave is either generated from
+> `src/data/difficulty-curves.csv` (`curve`), kept verbatim from `LEVELS`
+> (`fixed`) or rebuilt at run start from a seeded curve (`dynamic`), selected by
+> the config's per-wave `generation` column (see §2.5.1). The static skeleton
+> (levels 1–5) is always present, so modes can be mixed freely; the scripted
 > campaign remains the default and the fallback, and the boss still triggers
 > after the final level.
 

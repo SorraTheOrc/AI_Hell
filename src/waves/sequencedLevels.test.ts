@@ -14,8 +14,12 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { buildSequencedLevels } from './sequencedLevels';
 import { LEVELS, LEVEL_COUNT } from './Formations';
 import { WaveManager } from './WaveManager';
-import { defaultCandidatePool } from '../core/difficultySequencer';
-import type { DifficultyCurveRow, DifficultySource } from '../core/configTypes';
+import { defaultCandidatePool, sequencer } from '../core/difficultySequencer';
+import type {
+  DifficultyCurveRow,
+  DifficultyGeneration,
+  DifficultySource,
+} from '../core/configTypes';
 import {
   loadConfigs,
   resetConfigStore,
@@ -341,16 +345,36 @@ describe('End-to-end acceptance — CSV to spawn plan (AH-0MUITRWLO001Y4Y5)', ()
   });
 });
 
-// ── Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD) ────
+// ── Per-wave generation modes (AH-0MUJSUQD8003FSUT) ──────────────────
 
 /**
- * The merged campaign must let a single config mix `generated` levels (from
- * the sequencer) with `scripted` levels (verbatim static `LEVELS`), keep the
- * static skeleton, and fall back safely per level. Every test asserts
- * observable output through the public `buildSequencedLevels` API.
+ * The three generation modes let one campaign mix hand-authored set-pieces
+ * (`fixed`), curve-fixed waves (`curve`) and seeded runtime regeneration
+ * (`dynamic`). Every test asserts observable output through the public
+ * `buildSequencedLevels` API (and an injected sequencer spy where the "never
+ * sequenced" contract must be proven).
  */
-describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
-  /** Curve rows for one level with an explicit source. */
+describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
+  /** Curve rows for one level with an explicit per-wave mode. */
+  function modeRows(
+    level: number,
+    levelName: string,
+    specs: Array<{ target: number; generation?: DifficultyGeneration }>,
+  ): DifficultyCurveRow[] {
+    return specs.map((spec, i) => ({
+      level,
+      levelName,
+      wave: i + 1,
+      targetDifficulty: spec.target,
+      ...(spec.generation ? { generation: spec.generation } : {}),
+    }));
+  }
+
+  function levelOf(levels: ReturnType<typeof buildSequencedLevels>, level: number) {
+    return levels.find((l) => l.level === level)!;
+  }
+
+  /** Curve rows for one level with a legacy per-level `source`. */
   function sourcedRows(
     level: number,
     levelName: string,
@@ -366,6 +390,143 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
     }));
   }
 
+  it('reuses the static wave verbatim for a `fixed` wave and never sequences it', () => {
+    const spy = vi.fn(sequencer);
+    const rows = modeRows(2, 'Descent', [
+      { target: 10, generation: 'fixed' },
+      { target: 18, generation: 'curve' },
+    ]);
+
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
+    const level = levelOf(levels, 2);
+
+    // Wave 1 is the authored static wave (same objects), wave 2 is sequenced.
+    expect(level.waves[0]).toEqual(LEVELS[1].waves[0]);
+    expect(level.waves[1]).not.toEqual(LEVELS[1].waves[1]);
+    // The sequencer was called exactly once — for the `curve` wave only.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toEqual([18]);
+  });
+
+  it('mixes all three modes within one level', () => {
+    const spy = vi.fn(sequencer);
+    const rows = modeRows(1, 'Entry', [
+      { target: 6, generation: 'curve' },
+      { target: 10, generation: 'fixed' },
+      { target: 14, generation: 'dynamic' },
+    ]);
+
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy, seed: 7 });
+    const level = levelOf(levels, 1);
+
+    expect(level.waves.length).toBe(3);
+    // The fixed wave is the authored static wave; curve/dynamic are sequenced.
+    expect(level.waves[1]).toEqual(LEVELS[0].waves[1]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // Wave 1 is the curve target; wave 3 is the seeded dynamic target, which
+    // is shifted from the configured 14 by the run seed.
+    expect(spy.mock.calls[0][0]).toEqual([6]);
+    const dynamicCallTarget = (spy.mock.calls[1][0] as number[])[0];
+    expect(dynamicCallTarget).not.toBe(14);
+    expect(dynamicCallTarget).toBeGreaterThanOrEqual(0);
+    expect(dynamicCallTarget).toBeLessThanOrEqual(100);
+  });
+
+  it('produces different `dynamic` waves for different seeds and the same for the same seed', () => {
+    const rows = modeRows(1, 'Entry', [{ target: 30, generation: 'dynamic' }]);
+
+    const seedA = buildSequencedLevels(rows, undefined, { seed: 1 });
+    const seedARepeat = buildSequencedLevels(rows, undefined, { seed: 1 });
+    const seedB = buildSequencedLevels(rows, undefined, { seed: 2 });
+
+    expect(seedARepeat).toEqual(seedA);
+    expect(seedB).not.toEqual(seedA);
+  });
+
+  it('keeps `curve` and `fixed` waves identical regardless of seed', () => {
+    const rows = modeRows(1, 'Entry', [
+      { target: 8, generation: 'curve' },
+      { target: 12, generation: 'fixed' },
+    ]);
+
+    const seedA = buildSequencedLevels(rows, undefined, { seed: 1 });
+    const seedB = buildSequencedLevels(rows, undefined, { seed: 2 });
+
+    expect(seedA).toEqual(seedB);
+  });
+
+  it('falls back to `curve` for a `fixed` wave with no static counterpart, without crashing', () => {
+    const rows = modeRows(LEVEL_COUNT + 1, 'Bonus', [
+      { target: 24, generation: 'fixed' },
+    ]);
+    const levels = buildSequencedLevels(rows);
+    const bonus = levelOf(levels, LEVEL_COUNT + 1);
+    // No static wave exists beyond LEVEL_COUNT, so the wave is curve-generated.
+    expect(bonus.waves.length).toBe(1);
+    expect(bonus.waves[0].groups.length).toBeGreaterThan(0);
+  });
+
+  it('treats an unknown mode value as `curve`', () => {
+    const rows = modeRows(1, 'Entry', [{ target: 7 }]);
+    (rows[0] as { generation?: string }).generation = 'legacy-ish';
+    const levels = buildSequencedLevels(rows);
+    expect(firstPlan(levels).length).toBeGreaterThan(0);
+  });
+
+  it('maps the legacy per-level `source` column: scripted → fixed, generated → curve', () => {
+    const rows: DifficultyCurveRow[] = [
+      ...sourcedRows(1, 'Entry', [5, 9], 'scripted'),
+      ...sourcedRows(4, 'Firestorm', [20, 24, 28], 'generated'),
+    ];
+    const levels = buildSequencedLevels(rows);
+
+    // The all-`fixed` scripted level is the static definition verbatim.
+    expect(levelOf(levels, 1)).toBe(LEVELS[0]);
+    // The generated level is sequenced (not the static definition).
+    expect(levelOf(levels, 4)).not.toEqual(LEVELS[3]);
+  });
+
+  it('falls back to the static campaign when the sequencer throws', () => {
+    const rows = modeRows(4, 'Firestorm', [{ target: 20, generation: 'curve' }]);
+    const levels = buildSequencedLevels(rows, undefined, {
+      sequencer: () => {
+        throw new Error('sequencer exploded');
+      },
+    });
+    // The unusable level falls back to its static definition, so the whole
+    // campaign is the static one.
+    expect(levels).toEqual(LEVELS);
+  });
+});
+
+// ── Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD) ────
+
+/**
+ * The legacy per-level `source` selector is preserved for backward
+ * compatibility: a `scripted` level is an all-`fixed` level and a `generated`
+ * level is all-`curve` (AH-0MUJSUQD8003FSUT).
+ */
+describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
+  /** Curve rows for one level with an explicit legacy source. */
+  function sourcedRows(
+    level: number,
+    levelName: string,
+    targets: number[],
+    source: DifficultySource,
+  ): DifficultyCurveRow[] {
+    return targets.map((targetDifficulty, i) => ({
+      level,
+      levelName,
+      wave: i + 1,
+      targetDifficulty,
+      source,
+    }));
+  }
+
+  function levelOf(levels: ReturnType<typeof buildSequencedLevels>, level: number) {
+    return levels.find((l) => l.level === level)!;
+  }
+
   it('merges a scripted level (verbatim static) with a generated level', () => {
     const rows = [
       ...sourcedRows(2, 'Descent', [10, 12, 14], 'scripted'),
@@ -374,20 +535,20 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
     const levels = buildSequencedLevels(rows);
 
     // Scripted level deep-equals (and is) the matching static definition.
-    expect(levels.find((l) => l.level === 2)).toEqual(LEVELS[1]);
-    expect(levels.find((l) => l.level === 2)).toBe(LEVELS[1]);
+    expect(levelOf(levels, 2)).toEqual(LEVELS[1]);
+    expect(levelOf(levels, 2)).toBe(LEVELS[1]);
 
     // Generated level's waves come from the sequencer (not static LEVELS).
-    const generated = levels.find((l) => l.level === 4)!;
+    const generated = levelOf(levels, 4);
     expect(generated.name).toBe('Firestorm');
     expect(generated.waves.length).toBe(3);
     expect(generated).not.toEqual(LEVELS[3]);
   });
 
-  it('a scripted level ignores its curve targets and is never sequenced', () => {
-    const rows = sourcedRows(1, 'Entry', [99, 99, 99, 99, 99], 'scripted');
+  it('a scripted level is the static definition verbatim and is never sequenced', () => {
+    const rows = sourcedRows(1, 'Entry', [99, 99], 'scripted');
     const levels = buildSequencedLevels(rows);
-    const levelOne = levels.find((l) => l.level === 1)!;
+    const levelOne = levelOf(levels, 1);
     // Byte-for-byte static: same object, not a sequencer-produced copy.
     expect(levelOne).toBe(LEVELS[0]);
     expect(levelOne.waves).toEqual(LEVELS[0].waves);
@@ -413,9 +574,7 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
     ]);
     const allGenerated = buildSequencedLevels(generatedRows);
 
-    expect(mixed.find((l) => l.level === 4)).toEqual(
-      allGenerated.find((l) => l.level === 4),
-    );
+    expect(levelOf(mixed, 4)).toEqual(levelOf(allGenerated, 4));
   });
 
   it('is deterministic for the same mixed config', () => {
@@ -430,13 +589,13 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
     const rows = [
       ...sourcedRows(1, 'Entry', [4], 'generated'),
       ...sourcedRows(4, 'Firestorm', [20], 'generated'),
-      ...sourcedRows(5, 'Predictable Death', [30], 'scripted'),
+      ...sourcedRows(5, 'Predictable Death', [30, 34], 'scripted'),
     ];
     const levels = buildSequencedLevels(rows);
 
-    const generated1 = levels.find((l) => l.level === 1)!;
-    const generated4 = levels.find((l) => l.level === 4)!;
-    const scripted5 = levels.find((l) => l.level === 5)!;
+    const generated1 = levelOf(levels, 1);
+    const generated4 = levelOf(levels, 4);
+    const scripted5 = levelOf(levels, 5);
 
     expect(generated1.waves.every((w) => w.shootEnabled === false)).toBe(true);
     expect(generated4.waves.every((w) => w.shootEnabled === true)).toBe(true);
@@ -447,26 +606,26 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
 
   it('falls back per level when one generated curve is malformed, preserving the rest', () => {
     const rows: DifficultyCurveRow[] = [
-      ...sourcedRows(1, 'Entry', [5], 'scripted'),
+      ...sourcedRows(1, 'Entry', [5, 8], 'scripted'),
       ...sourcedRows(2, 'Descent', [10, 12], 'generated'),
       {
         level: 4,
         levelName: 'Firestorm',
         wave: 1,
         targetDifficulty: Number.NaN,
-        source: 'generated',
+        generation: 'curve',
       },
     ];
     const levels = buildSequencedLevels(rows);
 
     // Scripted level stays static; generated level 2 stays generated.
-    expect(levels.find((l) => l.level === 1)).toBe(LEVELS[0]);
-    const level2 = levels.find((l) => l.level === 2)!;
+    expect(levelOf(levels, 1)).toBe(LEVELS[0]);
+    const level2 = levelOf(levels, 2);
     expect(level2.waves.length).toBe(2);
     expect(level2).not.toEqual(LEVELS[1]);
 
     // The malformed generated level 4 falls back to its static definition.
-    expect(levels.find((l) => l.level === 4)).toBe(LEVELS[3]);
+    expect(levelOf(levels, 4)).toBe(LEVELS[3]);
   });
 
   it('skips a generated level beyond LEVEL_COUNT when its curve is malformed', () => {
@@ -476,29 +635,13 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
         levelName: 'Broken Bonus',
         wave: 1,
         targetDifficulty: Number.NaN,
-        source: 'generated',
+        generation: 'curve',
       },
     ];
     const levels = buildSequencedLevels(rows);
 
     expect(levels.map((l) => l.level)).toEqual(LEVELS.map((l) => l.level));
     expect(levels.some((l) => l.level === LEVEL_COUNT + 1)).toBe(false);
-  });
-
-  it('skips a scripted level that has no static counterpart', () => {
-    const rows = sourcedRows(LEVEL_COUNT + 1, 'Scripted Bonus', [10], 'scripted');
-    const levels = buildSequencedLevels(rows);
-
-    expect(levels.some((l) => l.level === LEVEL_COUNT + 1)).toBe(false);
-    expect(levels.map((l) => l.level)).toEqual(LEVELS.map((l) => l.level));
-  });
-
-  it('falls back to static LEVELS when a level declares conflicting sources', () => {
-    const rows: DifficultyCurveRow[] = [
-      { level: 2, levelName: 'Descent', wave: 1, targetDifficulty: 10, source: 'generated' },
-      { level: 2, levelName: 'Descent', wave: 2, targetDifficulty: 12, source: 'scripted' },
-    ];
-    expect(buildSequencedLevels(rows)).toBe(LEVELS);
   });
 
   it('does not mutate the static LEVELS campaign while merging', () => {

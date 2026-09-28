@@ -19,6 +19,7 @@ import {
   type ShipConfig,
   type ControlScheme,
   type DifficultyCurveRow,
+  type DifficultyGeneration,
   type DifficultySource,
 } from './configTypes';
 import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
@@ -37,11 +38,26 @@ const VALID_CONTROL_SCHEMES: ControlScheme[] = [
   'fourDirectional', 'asteroids',
 ];
 
-/** Valid per-level source selectors (AH-0MUH7Q6HN0006QPD). */
+/** Valid per-wave generation modes (AH-0MUJSUQD8003FSUT). */
+const VALID_DIFFICULTY_GENERATIONS: DifficultyGeneration[] = [
+  'curve', 'fixed', 'dynamic',
+];
+
+/** Default per-wave mode when the `generation` column is absent. */
+const DEFAULT_DIFFICULTY_GENERATION: DifficultyGeneration = 'curve';
+
+/** Valid legacy per-level source selectors (AH-0MUH7Q6HN0006QPD). */
 const VALID_DIFFICULTY_SOURCES: DifficultySource[] = ['generated', 'scripted'];
 
-/** Default level source when the `source` column is absent (AH-0MUH7Q6HN0006QPD). */
-const DEFAULT_DIFFICULTY_SOURCE: DifficultySource = 'generated';
+/**
+ * Legacy `source` → `generation` mapping (AH-0MUH7Q6HN0006QPD →
+ * AH-0MUJSUQD8003FSUT): a legacy `scripted` level is now a `fixed` wave and a
+ * legacy `generated` level is a `curve` wave.
+ */
+const LEGACY_SOURCE_TO_GENERATION: Record<DifficultySource, DifficultyGeneration> = {
+  generated: 'curve',
+  scripted: 'fixed',
+};
 
 // ── Enemy config column order (for serialization) ──────────────────
 
@@ -431,7 +447,7 @@ export function coerceShipConfig(
 
 /** Stable column order for the difficulty-curve CSV. Exported for plugin validation. */
 export const DIFFICULTY_CURVE_COLUMN_ORDER: (keyof DifficultyCurveRow)[] = [
-  'level', 'levelName', 'wave', 'targetDifficulty', 'source',
+  'level', 'levelName', 'wave', 'targetDifficulty', 'generation',
 ];
 
 /**
@@ -463,18 +479,19 @@ export function validateDifficultyCurveRow(
     errors.push('Missing required field: levelName');
   }
 
-  // Per-level source selector: optional, defaults to `generated`. An
-  // explicit value must be one of the valid enums.
-  const source = normaliseDifficultySource(row.source);
-  if (source === null) {
+  // Per-wave generation mode: optional, defaults to `curve`. An explicit
+  // value must be one of the valid enums; when absent, a legacy per-level
+  // `source` column is honoured instead.
+  const generation = normaliseDifficultyGeneration(row);
+  if (generation === null) {
     errors.push(
-      `Invalid source: "${row.source}" — must be generated or scripted`,
+      `Invalid generation: "${row.generation ?? row.source}" — must be curve, fixed or dynamic`,
     );
   }
 
-  // `targetDifficulty` is required for generated rows; for scripted rows it
-  // is ignored (the level's waves come from static `LEVELS`).
-  if (source !== 'scripted') {
+  // `targetDifficulty` is required for `curve` and `dynamic` waves; for
+  // `fixed` waves it is ignored (their composition comes from static `LEVELS`).
+  if (generation !== 'fixed') {
     const target = row.targetDifficulty;
     if (target == null || target.trim() === '') {
       errors.push('Missing required field: targetDifficulty');
@@ -494,18 +511,30 @@ export function validateDifficultyCurveRow(
 }
 
 /**
- * Normalise a raw `source` cell. Returns the default `generated` when the
- * cell is absent or blank, the parsed enum when valid, and `null` when the
- * cell holds an unrecognised value (malformed).
+ * Resolve a raw row's per-wave generation mode. `generation` (when present
+ * and valid) wins; otherwise a legacy `source` column is mapped
+ * (`scripted` → `fixed`, `generated` → `curve`); otherwise the default
+ * `curve` is returned. Returns `null` for an unrecognised value in either
+ * column (a malformed row).
  */
-function normaliseDifficultySource(
-  value: string | undefined,
-): DifficultySource | null {
-  if (value == null || value.trim() === '') return DEFAULT_DIFFICULTY_SOURCE;
-  const trimmed = value.trim();
-  return VALID_DIFFICULTY_SOURCES.includes(trimmed as DifficultySource)
-    ? (trimmed as DifficultySource)
-    : null;
+function normaliseDifficultyGeneration(
+  row: Record<string, string>,
+): DifficultyGeneration | null {
+  const rawGeneration = row.generation;
+  if (rawGeneration != null && rawGeneration.trim() !== '') {
+    const trimmed = rawGeneration.trim();
+    return VALID_DIFFICULTY_GENERATIONS.includes(trimmed as DifficultyGeneration)
+      ? (trimmed as DifficultyGeneration)
+      : null;
+  }
+  const rawSource = row.source;
+  if (rawSource != null && rawSource.trim() !== '') {
+    const trimmed = rawSource.trim();
+    return VALID_DIFFICULTY_SOURCES.includes(trimmed as DifficultySource)
+      ? LEGACY_SOURCE_TO_GENERATION[trimmed as DifficultySource]
+      : null;
+  }
+  return DEFAULT_DIFFICULTY_GENERATION;
 }
 
 /** True when `value` is a string holding a positive integer (`1`, `2`, …). */
@@ -534,9 +563,11 @@ export function coerceDifficultyCurveRow(
   row: Record<string, string>,
 ): DifficultyCurveRow | null {
   if (!validateDifficultyCurveRow(row).ok) return null;
-  const source = normaliseDifficultySource(row.source) ?? DEFAULT_DIFFICULTY_SOURCE;
-  // A scripted row's target is ignored, so an absent/blank value coerces to 0
-  // rather than NaN; a generated row's target is guaranteed present + numeric.
+  const generation =
+    normaliseDifficultyGeneration(row) ?? DEFAULT_DIFFICULTY_GENERATION;
+  // A `fixed` row's target is ignored, so an absent/blank value coerces to 0
+  // rather than NaN; a `curve`/`dynamic` row's target is guaranteed
+  // present + numeric by validation.
   const rawTarget = row.targetDifficulty?.trim() ?? '';
   const parsedTarget = rawTarget === '' ? 0 : Number(rawTarget);
   return {
@@ -544,7 +575,7 @@ export function coerceDifficultyCurveRow(
     levelName: row.levelName.trim(),
     wave: Number(row.wave),
     targetDifficulty: Number.isFinite(parsedTarget) ? parsedTarget : 0,
-    source,
+    generation,
   };
 }
 
@@ -571,15 +602,26 @@ export function serializeDifficultyCurves(rows: DifficultyCurveRow[]): string {
   const header = DIFFICULTY_CURVE_COLUMN_ORDER.join(',');
   const body = rows.map((row) =>
     DIFFICULTY_CURVE_COLUMN_ORDER.map((col) => {
-      // `source` is always written explicitly, defaulting to `generated`, so
-      // the serialised file and its parsed form agree on the default.
-      const value = col === 'source'
-        ? (row.source ?? DEFAULT_DIFFICULTY_SOURCE)
+      // `generation` is always written explicitly, defaulting to `curve`, so
+      // the serialised file and its parsed form agree on the default. A row
+      // carrying only the legacy `source` field is mapped to its mode.
+      const value = col === 'generation'
+        ? generationOf(row)
         : row[col];
       return quoteCsvField(String(value ?? ''));
     }).join(','),
   );
   return [header, ...body].join('\n');
+}
+
+/**
+ * The generation mode a typed row serialises to: its explicit `generation`, or
+ * the legacy `source` mapping, or the `curve` default.
+ */
+function generationOf(row: DifficultyCurveRow): DifficultyGeneration {
+  if (row.generation) return row.generation;
+  if (row.source) return LEGACY_SOURCE_TO_GENERATION[row.source];
+  return DEFAULT_DIFFICULTY_GENERATION;
 }
 
 // ── AC4: CSV serialization ──────────────────────────────────────────

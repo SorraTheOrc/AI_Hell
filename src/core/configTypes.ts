@@ -156,12 +156,29 @@ export function pickInRange(range: SpawnRange, rng: () => number): number {
 // ── Difficulty-curve config ─────────────────────────────────────────
 
 /**
- * Per-level source selector for a difficulty-curve level
- * (AH-0MUH7Q6HN0006QPD). `generated` levels come from the runtime
- * auto-sequencer; `scripted` levels are taken verbatim from the static
- * `LEVELS` campaign and are never passed to the sequencer.
+ * Legacy per-level source selector for a difficulty-curve level
+ * (AH-0MUH7Q6HN0006QPD). Superseded by the per-wave {@link DifficultyGeneration}
+ * column (AH-0MUJSUQD8003FSUT), but still honoured when `generation` is absent:
+ * `scripted` maps to `fixed` and `generated` maps to `curve`.
  */
 export type DifficultySource = 'generated' | 'scripted';
+
+/**
+ * Per-wave generation mode for a difficulty-curve wave
+ * (AH-0MUJSUQD8003FSUT). One campaign can mix the three modes:
+ *
+ * - **`curve`** (default) — the runtime auto-sequencer builds the wave from
+ *   its `targetDifficulty` once; the composition is then fixed for the run.
+ * - **`fixed`** — the wave uses the hand-authored static `LEVELS` composition
+ *   verbatim and is never passed to the sequencer.
+ * - **`dynamic`** — the wave is rebuilt by the sequencer from its curve at
+ *   run start, seeded from the run's seed, so successive runs differ while
+ *   remaining reproducible for a given seed.
+ *
+ * An absent value defaults to `curve`, so existing files (including the
+ * legacy 4-column form) keep working unchanged.
+ */
+export type DifficultyGeneration = 'curve' | 'fixed' | 'dynamic';
 
 /**
  * One (level, wave) row of the data-driven difficulty curve
@@ -180,10 +197,19 @@ export interface DifficultyCurveRow {
   /** Target difficulty score for this wave (0–100, same scale as the sequencer). */
   targetDifficulty: number;
   /**
-   * Per-level source selector (AH-0MUH7Q6HN0006QPD). Defaults to
-   * `generated` when absent. All rows of one level must agree; conflicting
-   * values make the level (and its file) malformed. Ignored for `scripted`
-   * rows, whose waves come from the static `LEVELS` definition instead.
+   * Per-wave generation mode (AH-0MUJSUQD8003FSUT). Defaults to `curve` when
+   * absent. A `fixed` wave ignores `targetDifficulty` (its composition comes
+   * from the static `LEVELS` definition); `curve` and `dynamic` waves both use
+   * it, with `dynamic` applying a seeded variation at run start.
+   */
+  generation?: DifficultyGeneration;
+  /**
+   * Legacy per-level source selector (AH-0MUH7Q6HN0006QPD), honoured only when
+   * `generation` is absent: `scripted` maps to `fixed`, `generated` to
+   * `curve`. Kept so older config files keep loading; new files should use the
+   * per-wave `generation` column instead.
+   *
+   * @deprecated Use {@link DifficultyCurveRow.generation} instead.
    */
   source?: DifficultySource;
 }

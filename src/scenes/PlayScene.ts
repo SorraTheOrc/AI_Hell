@@ -208,6 +208,10 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
  * nothing the static campaign is used instead, so the game always boots into
  * a playable campaign.
  *
+ * Pass a `build` that closes over the run seed (AH-0MUJSUQD8003FSUT) so
+ * `dynamic` waves are regenerated per run while staying reproducible for a
+ * given seed; the default build is seed-free.
+ *
  * Exported so the toggle/fallback decision can be unit-tested without
  * booting a Phaser scene; `PlayScene.create()` calls it with the live rules.
  */
@@ -353,6 +357,13 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
+   * Explicit run seed for `dynamic` wave regeneration (test seam). When null
+   * (the default) a seed is derived once per run from the scene RNG, so each
+   * run differs while remaining reproducible for a seeded RNG.
+   */
+  private runSeed: number | null = null;
+
+  /**
    * Asteroid spawn events planned for the active wave (empty outside a
    * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
    * scene rng stream is only advanced at wave boundaries.
@@ -438,9 +449,16 @@ export class PlayScene extends CombatScene<
     // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the
     // manager's levels when enabled so an injected campaign (tests, future
     // callers) is left untouched — preserving shipped behaviour. Never
-    // throws: `resolveCampaignLevels` falls back to `LEVELS`.
+    // throws: `resolveCampaignLevels` falls back to `LEVELS`. The run seed
+    // (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves regenerate per
+    // run while staying reproducible for a given seed.
     if (rules.sequencedWavesEnabled) {
-      this.waveManager.setLevels(resolveCampaignLevels(rules));
+      const seed = this._resolveRunSeed();
+      this.waveManager.setLevels(
+        resolveCampaignLevels(rules, () =>
+          buildSequencedLevels(undefined, undefined, { seed }),
+        ),
+      );
     }
     this.waveManager.beginGame();
     // The campaign labels need the started WaveManager (level/wave counts).
@@ -2082,6 +2100,26 @@ export class PlayScene extends CombatScene<
       rules.weaponWeights,
       rng,
     );
+  }
+
+  /**
+   * Injects the run seed used to regenerate `dynamic` waves (tests). The seed
+   * is read at `create()` time; when never injected a seed is derived from the
+   * scene RNG so production runs differ from one another.
+   */
+  setRunSeed(seed: number): void {
+    this.runSeed = seed;
+  }
+
+  /**
+   * The run seed for `dynamic` wave regeneration: an explicit
+   * {@link setRunSeed} value when present, otherwise a 32-bit seed derived
+   * once from the scene RNG. Deriving only happens when the sequenced-campaign
+   * toggle is on, so the static path consumes no RNG values.
+   */
+  private _resolveRunSeed(): number {
+    if (this.runSeed !== null) return this.runSeed;
+    return Math.floor(this.rng() * 0x100000000) >>> 0;
   }
 
   /**

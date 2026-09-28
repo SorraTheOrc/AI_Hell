@@ -3077,17 +3077,19 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
     ).toBe(CAMPAIGN_LEVELS);
   });
 
-  it('runs a mixed generated+scripted campaign when the toggle is on, static LEVELS when off', () => {
+  it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
     seedDifficultyCurves([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, source: 'scripted' },
-      { level: 2, levelName: 'Generated Descent', wave: 1, targetDifficulty: 20, source: 'generated' },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'fixed' },
+      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 9, generation: 'fixed' },
+      { level: 2, levelName: 'Generated Descent', wave: 1, targetDifficulty: 20, generation: 'curve' },
     ]);
 
     const mixed = resolveCampaignLevels(
       { sequencedWavesEnabled: true },
       () => buildSequencedLevels(),
     );
-    // Scripted level 1 is verbatim static; level 2 comes from the sequencer.
+    // An all-fixed level matching the static wave count is verbatim static;
+    // level 2 comes from the sequencer.
     expect(mixed.find((l) => l.level === 1)).toBe(CAMPAIGN_LEVELS[0]);
     expect(mixed.find((l) => l.level === 2)?.name).toBe('Generated Descent');
     // The toggle off path ignores the mixed config entirely.

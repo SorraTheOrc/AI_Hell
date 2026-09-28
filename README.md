@@ -457,13 +457,19 @@ difficulty curve instead:
 
 - **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`
   with columns `level`, `levelName`, `wave`, `targetDifficulty` (0–100) and an
-  optional `source` (`generated` | `scripted`, default `generated`). A level's
-  row count sets its wave count, and the level count/names are read from the
-  file. It loads through the same CSV/`configStore` pipeline as the
-  enemy/ship CSVs (editable in dev, bundled read-only in production). The
-  `source` column is **per level**: all rows of a level must agree, and a
-  `scripted` level's `targetDifficulty` is ignored (its waves come from the
-  static `LEVELS` campaign).
+  optional `generation` mode (`curve` | `fixed` | `dynamic`, default `curve`).
+  A level's row count sets its wave count, and the level count/names are read
+  from the file. It loads through the same CSV/`configStore` pipeline as the
+  enemy/ship CSVs (editable in dev, bundled read-only in production).
+- **Generation modes (per wave, AH-0MUJSUQD8003FSUT):** `curve` builds the
+  wave from its target once (fixed for the run); `fixed` uses the hand-authored
+  static `LEVELS` wave at the same `(level, wave)` verbatim and is never
+  passed to the sequencer (its `targetDifficulty` is ignored); `dynamic`
+  rebuilds the wave from its curve at run start using the run seed, so
+  successive runs differ while a given seed reproduces exactly. The modes can
+  be mixed freely within one level. The legacy per-level `source` column
+  (`generated` | `scripted`) is still read when `generation` is absent, mapping
+  `generated` → `curve` and `scripted` → `fixed`.
 - **Toggle:** `sequencedWavesEnabled` in the `ai-hell-game-rules` localStorage
   record, default **false**. Enable it in a dev run from the browser console:
 
@@ -474,20 +480,23 @@ difficulty curve instead:
   // reload the page
   ```
 
-- **Fire rule:** generated levels 1–3 do not fire; levels 4+ do (GDD §2.4/§2.5);
-  scripted levels keep `LEVELS`' own per-wave `shootEnabled` flags.
+- **Fire rule:** `curve`/`dynamic` levels 1–3 do not fire; levels 4+ do
+  (GDD §2.4/§2.5); `fixed` waves keep `LEVELS`' own per-wave `shootEnabled`
+  flags.
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
-  skeleton, so levels 1–5 are always present. A level marked `generated`
-  overrides its static counterpart (and a generated level numbered beyond the
-  static five is appended, ascending); a level marked `scripted` is taken
-  byte-for-byte from `LEVELS`. This lets a designer hand-tune onboarding and
-  set-piece levels while the sequencer ramps the rest
-  (AH-0MUH7Q6HN0006QPD).
-- **Fallback:** per level — a generated level with an empty/malformed curve (or
-  a sequencer error) keeps its static `LEVELS` definition when one exists and is
-  skipped otherwise. The whole campaign falls back to static `LEVELS` only when
-  the curve config or candidate pool is empty, or the result would be empty.
-  With the toggle off, static `LEVELS` is used unchanged. See
+  skeleton, so levels 1–5 are always present. A configured level overrides its
+  static counterpart (and a configured level numbered beyond the static five is
+  appended, ascending); an all-`fixed` level whose row count matches the static
+  level is taken byte-for-byte from `LEVELS`. This lets a designer hand-tune
+  onboarding and set-piece waves while the sequencer ramps the rest
+  (AH-0MUH7Q6HN0006QPD, AH-0MUJSUQD8003FSUT).
+- **Fallback:** per level — a level with an empty/malformed curve (or a
+  sequencer error) keeps its static `LEVELS` definition when one exists and is
+  skipped otherwise; a `fixed` wave with no static counterpart (a level beyond
+  the static five, or an out-of-range wave index) falls back to `curve`
+  generation for that wave. The whole campaign falls back to static `LEVELS`
+  only when the curve config or candidate pool is empty, or the result would be
+  empty. With the toggle off, static `LEVELS` is used unchanged. See
   `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9.
 
 Module: `src/waves/sequencedLevels.ts` (`buildSequencedLevels`), built on the

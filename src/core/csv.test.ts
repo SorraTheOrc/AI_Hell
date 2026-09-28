@@ -910,14 +910,14 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
     return { level: '2', levelName: 'Descent', wave: '1', targetDifficulty: '8.88' };
   }
 
-  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER including source', async () => {
+  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER including generation', async () => {
     const m = await loadCsvModule();
     expect(m.DIFFICULTY_CURVE_COLUMN_ORDER).toEqual([
-      'level', 'levelName', 'wave', 'targetDifficulty', 'source',
+      'level', 'levelName', 'wave', 'targetDifficulty', 'generation',
     ]);
   });
 
-  it('parses typed rows from a CSV string, defaulting source to generated', async () => {
+  it('parses typed rows from a CSV string, defaulting generation to curve', async () => {
     const m = await loadCsvModule();
     const rows = m.parseDifficultyCurves(
       'level,levelName,wave,targetDifficulty\n3,The Core,2,13.75\n',
@@ -928,68 +928,108 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
         levelName: 'The Core',
         wave: 2,
         targetDifficulty: 13.75,
-        source: 'generated',
+        generation: 'curve',
       },
     ]);
   });
 
-  it('round-trips generated and scripted sources through serialize → parse', async () => {
+  it('round-trips curve, fixed and dynamic modes through serialize → parse', async () => {
     const m = await loadCsvModule();
     const rows = [
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49, source: 'generated' as const },
-      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12, source: 'scripted' as const },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49, generation: 'curve' as const },
+      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12, generation: 'fixed' as const },
+      { level: 4, levelName: 'Firestorm', wave: 1, targetDifficulty: 22, generation: 'dynamic' as const },
     ];
     expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(rows))).toEqual(rows);
   });
 
-  it('the existing 4-column CSV still parses and round-trips (source defaults to generated)', async () => {
+  it('the existing 4-column CSV still parses and round-trips (generation defaults to curve)', async () => {
     const m = await loadCsvModule();
     const legacy = 'level,levelName,wave,targetDifficulty\n1,Entry,1,5\n';
     const parsed = m.parseDifficultyCurves(legacy);
     expect(parsed).toEqual([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, source: 'generated' },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'curve' },
     ]);
-    // Serialising adds the source column; re-parsing is stable.
+    // Serialising adds the generation column; re-parsing is stable.
     expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(parsed))).toEqual(parsed);
   });
 
-  it('a scripted row may omit targetDifficulty (it is ignored)', async () => {
+  it('maps the legacy per-level source column: scripted → fixed, generated → curve', async () => {
     const m = await loadCsvModule();
     const rows = m.parseDifficultyCurves(
       'level,levelName,wave,targetDifficulty,source\n' +
-        '3,The Core,1,,scripted\n',
+        '3,The Core,1,12,scripted\n' +
+        '4,Firestorm,1,20,generated\n',
     );
     expect(rows).toEqual([
-      { level: 3, levelName: 'The Core', wave: 1, targetDifficulty: 0, source: 'scripted' },
+      { level: 3, levelName: 'The Core', wave: 1, targetDifficulty: 12, generation: 'fixed' },
+      { level: 4, levelName: 'Firestorm', wave: 1, targetDifficulty: 20, generation: 'curve' },
     ]);
   });
 
-  it('a generated row still requires targetDifficulty', async () => {
+  it('a file with neither generation nor source defaults every wave to curve', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty\n2,Descent,1,9\n',
+    );
+    expect(rows[0].generation).toBe('curve');
+  });
+
+  it('a fixed row may omit targetDifficulty (it is ignored)', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty,generation\n' +
+        '3,The Core,1,,fixed\n',
+    );
+    expect(rows).toEqual([
+      { level: 3, levelName: 'The Core', wave: 1, targetDifficulty: 0, generation: 'fixed' },
+    ]);
+  });
+
+  it('a curve row still requires targetDifficulty', async () => {
     const m = await loadCsvModule();
     const result = m.validateDifficultyCurveRow({
-      level: '1', levelName: 'Entry', wave: '1', source: 'generated',
+      level: '1', levelName: 'Entry', wave: '1', generation: 'curve',
     });
     expect(result.ok).toBe(false);
     expect(result.errors.join(' ').toLowerCase()).toContain('targetdifficulty');
   });
 
-  it('an unrecognised source is malformed', async () => {
+  it('a dynamic row still requires targetDifficulty', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      level: '1', levelName: 'Entry', wave: '1', generation: 'dynamic',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('targetdifficulty');
+  });
+
+  it('an unrecognised generation is malformed', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      ...validRow(), generation: 'hand-made',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('generation');
+  });
+
+  it('an unrecognised legacy source is malformed', async () => {
     const m = await loadCsvModule();
     const result = m.validateDifficultyCurveRow({
       ...validRow(), source: 'hand-made',
     });
     expect(result.ok).toBe(false);
-    expect(result.errors.join(' ').toLowerCase()).toContain('source');
+    expect(result.errors.join(' ').toLowerCase()).toContain('generation');
   });
 
-  it('a scripted row with a malformed target is still accepted (target ignored)', async () => {
+  it('a fixed row with a malformed target is still accepted (target ignored)', async () => {
     const m = await loadCsvModule();
     const rows = m.parseDifficultyCurves(
-      'level,levelName,wave,targetDifficulty,source\n' +
-        '3,The Core,1,nope,scripted\n',
+      'level,levelName,wave,targetDifficulty,generation\n' +
+        '3,The Core,1,nope,fixed\n',
     );
     expect(rows.length).toBe(1);
-    expect(rows[0].source).toBe('scripted');
+    expect(rows[0].generation).toBe('fixed');
   });
 
   it('validation passes for a valid row', async () => {
@@ -1039,7 +1079,7 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
         'bad,Entry,3,9\n',
     );
     expect(rows).toEqual([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, source: 'generated' },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'curve' },
     ]);
   });
 });
