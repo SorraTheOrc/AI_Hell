@@ -43,6 +43,19 @@ export interface WaveGroup {
   startX: number;
   /** Formation base y at spawn (px). */
   startY: number;
+  /**
+   * Optional per-group spawn X range (px). When set, it overrides the
+   * enemy archetype's configured range for this group; when absent the
+   * group inherits the archetype's `startXMin`/`startXMax`
+   * (AH-0MUKCLXLW0032R67, WG4 priority).
+   */
+  startXMin?: number;
+  /** Optional per-group maximum spawn X (px). See {@link startXMin}. */
+  startXMax?: number;
+  /** Optional per-group spawn Y range (px). See {@link startXMin}. */
+  startYMin?: number;
+  /** Optional per-group maximum spawn Y (px). See {@link startXMin}. */
+  startYMax?: number;
 }
 
 /** A set of enemies that spawn together and are cleared when all die. */
@@ -90,7 +103,13 @@ function group(
   enemyKey: string,
   formation: EnemyFormationKind,
   count: number,
-  overrides: Partial<Pick<WaveGroup, 'spacingX' | 'spacingY' | 'startX' | 'startY'>> = {},
+  overrides: Partial<
+    Pick<
+      WaveGroup,
+      'spacingX' | 'spacingY' | 'startX' | 'startY' |
+      'startXMin' | 'startXMax' | 'startYMin' | 'startYMax'
+    >
+  > = {},
 ): WaveGroup {
   return {
     enemyKey,
@@ -100,6 +119,10 @@ function group(
     spacingY: overrides.spacingY ?? 26,
     startX: overrides.startX ?? START_X,
     startY: overrides.startY ?? START_Y,
+    startXMin: overrides.startXMin,
+    startXMax: overrides.startXMax,
+    startYMin: overrides.startYMin,
+    startYMax: overrides.startYMax,
   };
 }
 
