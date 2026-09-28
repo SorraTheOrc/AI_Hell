@@ -16,6 +16,11 @@ import {
 } from './CombatScene';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
+import { isOnGrid } from '../../utils/beat';
+import {
+  WEAPON_CATALOGUE,
+  type WeaponId,
+} from '../../utils/weapons';
 
 // These hook-contract tests exercise the fourDirectional input mapping; the
 // app default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -766,5 +771,102 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(scene.getPlayerHitCount()).toBe(before);
     expect(scene.bullets).toHaveLength(1);
+  });
+});
+
+// ── AH-0MUAYB8EH005RJ8B: real bullet spawns land on grid ticks ──────
+
+describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const COLOR_TO_WEAPON = new Map<number, WeaponId>(
+    (Object.keys(WEAPON_CATALOGUE) as WeaponId[]).map((id) => [
+      WEAPON_CATALOGUE[id].bulletColor,
+      id,
+    ]),
+  );
+
+  /**
+   * Boots a fresh scene, activates several weapons, then records the exact
+   * beat-grid tick of every **real** bullet spawned while stepping the
+   * supplied frame deltas. Returns the recorded ticks per weapon.
+   *
+   * The grid is reset to a deterministic t=0 anchor and shared with the
+   * player, so the recorded ticks are independent of boot timing.
+   */
+  async function collectSpawnTicks(
+    frameDeltasMs: number[],
+  ): Promise<Record<WeaponId, number[]>> {
+    booted = await bootScene([StubCombatScene]);
+    const scene = booted.scene as StubCombatScene;
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+    player.equipWeapon('rapid');
+
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+
+    const ticks: Record<WeaponId, number[]> = {
+      cannon: [],
+      spread: [],
+      dual: [],
+      rapid: [],
+    };
+    const original = scene.spawnPlayerBullet.bind(scene);
+    vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
+      (x, y, vx, vy, color, lifetime) => {
+        const weapon = COLOR_TO_WEAPON.get(color ?? 0);
+        // Attribute the real spawn to the grid tick the weapon fired on.
+        if (weapon) ticks[weapon].push(player.getLastShotTime(weapon)!);
+        return original(x, y, vx, vy, color, lifetime);
+      },
+    );
+
+    for (const dtMs of frameDeltasMs) {
+      scene.runAutoFire(dtMs / 1000);
+    }
+
+    vi.restoreAllMocks();
+    booted.game.destroy(true);
+    booted = null;
+    return ticks;
+  }
+
+  it('AC1/AC4 — every spawned bullet lands on its weapon grid tick; active weapons share the phase', async () => {
+    const ticks = await collectSpawnTicks(
+      Array.from({ length: 300 }, () => 10),
+    );
+
+    for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
+      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      expect(ticks[weapon].length).toBeGreaterThan(0);
+      for (const tick of ticks[weapon]) {
+        expect(isOnGrid(tick, interval, 0)).toBe(true);
+        expect(tick % interval).toBe(0); // exact tick, anchored at 0
+      }
+      // All default intervals are multiples of the finest (125 ms) grid, so
+      // simultaneously active weapons stay phase-locked.
+      for (const tick of ticks[weapon]) expect(tick % 125).toBe(0);
+    }
+  });
+
+  it('AC3 — the spawned-bullet grid is framerate-independent', async () => {
+    const at10ms = await collectSpawnTicks(
+      Array.from({ length: 300 }, () => 10), // 3000 ms at 10 ms/frame
+    );
+    const at25ms = await collectSpawnTicks(
+      Array.from({ length: 120 }, () => 25), // 3000 ms at 25 ms/frame
+    );
+
+    for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
+      expect(at10ms[weapon].length).toBeGreaterThan(0);
+      expect(at10ms[weapon]).toEqual(at25ms[weapon]);
+    }
   });
 });

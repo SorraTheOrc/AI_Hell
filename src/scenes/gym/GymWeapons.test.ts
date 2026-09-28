@@ -28,6 +28,10 @@ import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
 import { isOnGrid } from '../../utils/beat';
+import {
+  WEAPON_CATALOGUE,
+  type WeaponId,
+} from '../../utils/weapons';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 
@@ -156,6 +160,51 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     scene.scene.pause();
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(scene.getBeatClock().now()).toBe(before);
+  });
+
+  it('real bullet spawns across frames land on grid ticks with multiple active weapons (AC2)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('spread');
+    player.equipWeapon('rapid');
+
+    // Deterministic shared grid anchored at t=0.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+
+    const colorToWeapon = new Map<number, WeaponId>(
+      (Object.keys(WEAPON_CATALOGUE) as WeaponId[]).map((id) => [
+        WEAPON_CATALOGUE[id].bulletColor,
+        id,
+      ]),
+    );
+    const ticks: Record<WeaponId, number[]> = {
+      cannon: [],
+      spread: [],
+      dual: [],
+      rapid: [],
+    };
+    const original = scene.spawnPlayerBullet.bind(scene);
+    vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
+      (x, y, vx, vy, color, lifetime) => {
+        const weapon = colorToWeapon.get(color ?? 0);
+        if (weapon) ticks[weapon].push(player.getLastShotTime(weapon)!);
+        return original(x, y, vx, vy, color, lifetime);
+      },
+    );
+
+    for (let i = 0; i < 120; i++) scene.tick(0.025); // 3000 ms at 25 ms
+    vi.restoreAllMocks();
+
+    for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
+      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      expect(ticks[weapon].length).toBeGreaterThan(0);
+      for (const tick of ticks[weapon]) {
+        expect(isOnGrid(tick, interval, 0)).toBe(true);
+        expect(tick % interval).toBe(0);
+        expect(tick % 125).toBe(0); // all active weapons share the phase
+      }
+    }
   });
 
   it('rapid weapon on top of the cannon produces more bullets over equal time (AC3)', async () => {
