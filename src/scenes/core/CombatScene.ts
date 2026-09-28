@@ -38,7 +38,7 @@ import { playDestructionSound, playPhaseShiftSound } from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
-import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
+import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
@@ -252,6 +252,12 @@ export abstract class CombatScene<
    * multi-hit entities receive `takeDamage()`; single-hit entities are
    * destroyed with their destruction audio and `onEnemyDestroyed`.
    *
+   * A non-lethal multi-hit hit consumes the bullet and spawns the shared
+   * bullet-impact flash at the hit point, so a durable enemy (whose body does
+   * not explode) still gives immediate "that hit registered" feedback. The
+   * same shared path runs in the game and the gyms, so the feedback cannot
+   * diverge (parent AH-0MUI820PM0038HS2 — producer review).
+   *
    * @returns whether the bullet was consumed (stops the scan).
    */
   protected onPlayerBulletHitsEnemy(
@@ -262,9 +268,14 @@ export abstract class CombatScene<
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
-      // cleared `alive`). Non-lethal hits consume the bullet silently.
+      // cleared `alive`). A non-lethal hit consumes the bullet but flashes at
+      // the impact point so the player can read that the hit registered.
       if (!enemy.alive) {
         this.finaliseEnemyKill(enemy);
+      } else {
+        spawnBulletImpact(this, bullet.x, bullet.y, {
+          registry: this.bulletImpactEffects,
+        });
       }
     } else {
       enemy.destroySelf();

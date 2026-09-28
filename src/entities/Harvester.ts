@@ -111,7 +111,14 @@ export class Harvester extends BaseEnemy {
 
   // ── Drawing ──────────────────────────────────────────────────────
 
-  /** Draw a large, angular "collector" body (a hexagonal shell + core). */
+  /**
+   * Draw the body: a large angular "collector" shell with a glowing core.
+   *
+   * The original mineral-intake chevron was a pure-white inner accent; it was
+   * removed after producer review (parent AH-0MUI820PM0038HS2) because the
+   * white inner glyph read as a separate object and competed with the hit
+   * feedback. The body is now the colour-driven hexagonal shell plus core only.
+   */
   protected _drawBody(): void {
     const g = this.bodyGraphics;
     const r = this._size / 2;
@@ -127,16 +134,6 @@ export class Harvester extends BaseEnemy {
       if (i === 0) g.moveTo(px, py);
       else g.lineTo(px, py);
     }
-    g.closePath();
-    g.strokePath();
-
-    // Mineral-intake chevron pointing "forward" (toward the field).
-    g.lineStyle(3, 0xffffff, 0.9);
-    g.beginPath();
-    g.moveTo(0, -r * 0.55);
-    g.lineTo(-r * 0.4, r * 0.1);
-    g.lineTo(0, -r * 0.1);
-    g.lineTo(r * 0.4, r * 0.1);
     g.closePath();
     g.strokePath();
 

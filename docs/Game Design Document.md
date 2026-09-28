@@ -285,7 +285,10 @@ The following rules govern how enemy entities interact with each other and with 
   "collector" body — bigger than the Tank and easy to hit.
 - **Health**: **5 HP** — survives five player bullets; the fifth hit destroys it
   (destruction audio, ≈ 400 score, wave accounting and the 25–50 % mineral
-  re-drop all fire exactly once on the killing blow).
+  re-drop all fire exactly once on the killing blow). Each **non-lethal** hit
+  consumes the bullet and spawns the shared bullet-impact flash at the point of
+  contact, so the player can read that the hit registered even though the body
+  does not explode.
 - **Spawn**: a **rare roaming spawn** in later levels (Levels 4–5) only, via the
   pure planner `src/waves/HarvesterSpawner.ts`; at most one per qualifying wave.
   Every Harvester spawn is registered with the `WaveManager` so the wave neither

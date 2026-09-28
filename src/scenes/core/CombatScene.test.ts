@@ -635,6 +635,36 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(destroySound).not.toHaveBeenCalled();
   });
 
+  it('producer fix — a non-lethal multi-hit hit spawns the shared bullet-impact flash', async () => {
+    const scene = await boot();
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    // The hit registered (exactly one flash) while the enemy survived and
+    // no destruction finalisation ran.
+    expect(pb.active).toBe(false);
+    expect(enemy.alive).toBe(true);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+  });
+
+  it('producer fix — the lethal blow finalises without a stray impact flash', async () => {
+    const scene = await boot();
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    // The kill already carries its own explosion feedback — no extra flash.
+    expect(enemy.alive).toBe(false);
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');

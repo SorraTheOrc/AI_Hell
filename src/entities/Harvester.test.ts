@@ -74,6 +74,39 @@ describe('Harvester entity', () => {
     expect(h.formationKind).toBe('single');
   });
 
+  it('body graphic is the colour shell + core only — no inner white accent (producer review)', async () => {
+    const scene = await boot();
+    const h = makeHarvester(scene, 100, 100);
+
+    // Phaser Graphics command ids (src/gameobjects/graphics/Commands.js).
+    const LINE_STYLE = 6;
+    const FILL_STYLE = 7;
+
+    // The body is the container child whose buffer strokes the hexagon shell.
+    const children = (h as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+    const body = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics &&
+        c.commandBuffer.includes(LINE_STYLE),
+    );
+    expect(body, 'expected a body Graphics child with a stroked shell').toBeDefined();
+
+    const buf = body!.commandBuffer as number[];
+    // The purple hexagonal shell is still stroked...
+    expect(buf).toContain(HARVESTER_COLOR);
+
+    // ...and no stroke or fill uses pure white (the removed inner chevron).
+    for (let i = 0; i < buf.length; i += 1) {
+      if (buf[i] === LINE_STYLE) {
+        // Layout: [id, lineWidth, color, alpha].
+        expect(buf[i + 2]).not.toBe(0xffffff);
+      } else if (buf[i] === FILL_STYLE) {
+        // Layout: [id, color, alpha].
+        expect(buf[i + 1]).not.toBe(0xffffff);
+      }
+    }
+  });
+
   it('never fires — shootEnabled is a no-op and the effective pattern is none', async () => {
     const scene = await boot();
     const h = makeHarvester(scene, 100, 100);
