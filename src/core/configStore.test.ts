@@ -686,10 +686,20 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(loadDifficultyCurves()[0].targetDifficulty).not.toBe(-1);
   });
 
-  it('uses fixed onboarding levels 1–3 and curve-generated levels 4–5', () => {
+  it('ships a mixed-mode default: fixed onboarding, curve + dynamic later levels', () => {
+    const modes = new Set<string>();
     for (const row of defaultDifficultyCurves()) {
-      expect(row.generation).toBe(row.level <= 3 ? 'fixed' : 'curve');
+      const expected =
+        row.level <= 3
+          ? 'fixed'
+          : row.level === 5 && row.wave === 2
+            ? 'dynamic'
+            : 'curve';
+      expect(row.generation).toBe(expected);
+      modes.add(String(row.generation));
     }
+    // Out-of-the-box play exercises every generation mode (AH-0MUJSUTLA006Q8E1).
+    expect([...modes].sort()).toEqual(['curve', 'dynamic', 'fixed']);
   });
 
   it('the onboarding (fixed) targets follow the measured LEVELS calibration', () => {

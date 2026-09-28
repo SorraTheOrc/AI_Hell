@@ -18,10 +18,12 @@
 #                       given seed). An absent value (and the legacy per-level
 #                       `source` column, if used) defaults to `curve`.
 #
-# The shipped campaign keeps levels 1–3 (`fixed`) byte-for-byte identical to the
-# hand-authored static LEVELS onboarding waves; levels 4–5 are curve-generated
-# from the targets below. The targets are non-decreasing within and across
-# levels (see `defaultDifficultyCurves()` in `src/core/configStore.ts`).
+# The shipped campaign is mixed-mode: levels 1–3 (`fixed`) reuse the
+# hand-authored static LEVELS onboarding waves byte-for-byte; levels 4–5 are
+# curve-generated from the targets below, with level 5 wave 2 (`dynamic`)
+# regenerated per run from its curve and the run seed. The targets are
+# non-decreasing within and across levels (see `defaultDifficultyCurves()` in
+# `src/core/configStore.ts`).
 level,levelName,wave,targetDifficulty,generation
 1,Entry,1,3.01,fixed
 1,Entry,2,6.01,fixed
@@ -35,4 +37,4 @@ level,levelName,wave,targetDifficulty,generation
 4,Firestorm,2,24,curve
 4,Firestorm,3,28,curve
 5,Predictable Death,1,45,curve
-5,Predictable Death,2,60,curve
+5,Predictable Death,2,62,dynamic

@@ -392,10 +392,10 @@ describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
     window.localStorage.clear();
   });
 
-  it('defaults to disabled — shipped behaviour is unchanged', () => {
-    expect(DEFAULT_SEQUENCED_WAVES_ENABLED).toBe(false);
-    expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(false);
-    expect(loadRules().sequencedWavesEnabled).toBe(false);
+  it('defaults to enabled — the shipped campaign is sequenced (AH-0MUJSUTLA006Q8E1)', () => {
+    expect(DEFAULT_SEQUENCED_WAVES_ENABLED).toBe(true);
+    expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(true);
+    expect(loadRules().sequencedWavesEnabled).toBe(true);
   });
 
   it('loads a stored true value', () => {
@@ -414,12 +414,12 @@ describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
     expect(loadRules().sequencedWavesEnabled).toBe(false);
   });
 
-  it('coerces a non-boolean stored value to the disabled default', () => {
+  it('coerces a non-boolean stored value to the enabled default', () => {
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: 'true' }),
     );
-    expect(loadRules().sequencedWavesEnabled).toBe(false);
+    expect(loadRules().sequencedWavesEnabled).toBe(true);
   });
 
   it('round-trips the toggle through saveRules', () => {
@@ -429,8 +429,8 @@ describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
 
   it('returns a fresh copy so mutating it does not change the defaults', () => {
     const loaded = loadRules();
-    loaded.sequencedWavesEnabled = true;
-    expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(false);
-    expect(loadRules().sequencedWavesEnabled).toBe(false);
+    loaded.sequencedWavesEnabled = false;
+    expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(true);
+    expect(loadRules().sequencedWavesEnabled).toBe(true);
   });
 });

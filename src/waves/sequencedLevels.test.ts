@@ -750,7 +750,22 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     ]);
     expect(composition(5)).toEqual([
       'phaserx12+scoutx18',
-      'phaserx12+phaserx12',
+      'phaserx12+phaserx12+swarmx15',
     ]);
+  });
+
+  it('ships at least one wave of each generation mode and regenerates the dynamic wave per seed', () => {
+    const modes = defaultDifficultyCurves().map((row) => row.generation);
+    for (const mode of ['curve', 'fixed', 'dynamic'] as const) {
+      expect(modes).toContain(mode);
+    }
+
+    // The dynamic level-5 wave 2 is a pure function of (curve, pool, seed):
+    // the same seed reproduces it, a different seed changes it.
+    const seedA = buildSequencedLevels(undefined, undefined, { seed: 1 });
+    const seedARepeat = buildSequencedLevels(undefined, undefined, { seed: 1 });
+    const seedB = buildSequencedLevels(undefined, undefined, { seed: 2 });
+    expect(seedARepeat).toEqual(seedA);
+    expect(seedB).not.toEqual(seedA);
   });
 });

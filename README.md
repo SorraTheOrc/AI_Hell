@@ -449,11 +449,12 @@ Enemy and ship tuning is held in committed CSV files — the **single, human-edi
 - **Dev-only write path:** the write endpoint exists **only** under `npm run dev`. Production/static builds read the CSV bundled at build time read-only; **Save / Save As** are disabled there and the panel shows a clear status message.
 - **Breaking change:** `localStorage` is **no longer** the source of truth for config values (the old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config` entries are ignored). Only leaderboard/settings still use `localStorage`.
 
-#### Sequenced Waves (opt-in)
+#### Sequenced Waves (default-on)
 
-The campaign is scripted (`src/waves/Formations.ts` `LEVELS`) by default. An
-opt-in **runtime-sequenced campaign** generates each level's waves from a
-difficulty curve instead:
+The campaign ships as a **runtime-sequenced campaign** generated from a
+difficulty curve (`src/data/difficulty-curves.csv`). A designer can opt out and
+run the hand-authored static campaign (`src/waves/Formations.ts` `LEVELS`)
+instead.
 
 - **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`
   with columns `level`, `levelName`, `wave`, `targetDifficulty` (0–100) and an
@@ -471,14 +472,18 @@ difficulty curve instead:
   (`generated` | `scripted`) is still read when `generation` is absent, mapping
   `generated` → `curve` and `scripted` → `fixed`.
 - **Toggle:** `sequencedWavesEnabled` in the `ai-hell-game-rules` localStorage
-  record, default **false**. Enable it in a dev run from the browser console:
+  record, default **true** (AH-0MUJSUTLA006Q8E1). Opt out in a dev run from the
+  browser console:
 
   ```js
   const k = 'ai-hell-game-rules';
   const r = JSON.parse(localStorage.getItem(k) ?? '{}');
-  localStorage.setItem(k, JSON.stringify({ ...r, sequencedWavesEnabled: true }));
+  localStorage.setItem(k, JSON.stringify({ ...r, sequencedWavesEnabled: false }));
   // reload the page
   ```
+
+  A persisted `false` is honoured; a malformed/non-boolean value falls back to
+  the default (`true`).
 
 - **Fire rule:** `curve`/`dynamic` levels 1–3 do not fire; levels 4+ do
   (GDD §2.4/§2.5); `fixed` waves keep `LEVELS`' own per-wave `shootEnabled`

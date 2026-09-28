@@ -1258,10 +1258,12 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   level whose row count matches the static level is returned byte-for-byte.
   This lets designers hand-tune onboarding and set-piece waves while the
   sequencer ramps the rest.
-- **Toggle:** the opt-in `GameRules.sequencedWavesEnabled` scalar
-  (`src/core/rules.ts`, default `false`) in the `ai-hell-game-rules`
-  localStorage record. `PlayScene.create()` only overrides the campaign when it
-  is `true`; otherwise the static `LEVELS` campaign is used untouched.
+- **Toggle:** the `GameRules.sequencedWavesEnabled` scalar
+  (`src/core/rules.ts`, default **`true`** — AH-0MUJSUTLA006Q8E1) in the
+  `ai-hell-game-rules` localStorage record. `PlayScene.create()` overrides the
+  campaign with the sequenced one when it is `true`; persisting `false` opts
+  back into the static `LEVELS` campaign. A malformed/non-boolean value falls
+  back to the default.
 - **Fire rule:** derived from the 1-based level number for **`curve`/`dynamic`**
   waves — levels 1–3 do not fire, levels 4+ do (GDD §2.4/§2.5) — and passed to
   `sequencer()` as `defaultShootEnabled`; **`fixed`** waves keep their own
@@ -1281,9 +1283,10 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   only when there are no rows, the candidate pool is empty, or the merged result
   would be empty. A missing/malformed curve CSV falls back to the computed
   default curve (`defaultDifficultyCurves()`: levels 1–3 `fixed` on the
-  measured `LEVELS` calibration, levels 4–5 `curve` on hand-tuned targets —
-  AH-0MUJSUTXI008NP8K); and `PlayScene` catches any error and leaves the static
-  campaign active. The run is therefore never left unplayable.
+  measured `LEVELS` calibration, levels 4–5 `curve` on hand-tuned targets with
+  level 5 wave 2 `dynamic` — AH-0MUJSUTXI008NP8K / AH-0MUJSUTLA006Q8E1); and
+  `PlayScene` catches any error and leaves the static campaign active. The run
+  is therefore never left unplayable.
 
 Related work: the sequencer primitive was delivered by `AH-0MUDIWETP003XC3X`;
 the wiring is `AH-0MUH6LEYY0054E63`; per-level generated-vs-scripted mixing was

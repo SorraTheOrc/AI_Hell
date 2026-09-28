@@ -116,12 +116,13 @@ This creates a unique gameplay tension: the player must manage both their own sh
 
 #### 2.5.1 Optional sequenced (data-driven) campaigns
 
-The fire rules above describe the shipped campaign, but individual levels can
-optionally be **generated at runtime** from a target difficulty curve. When the
-opt-in `sequencedWavesEnabled` rule is enabled (default **off**), `PlayScene`
-builds the level list from `src/data/difficulty-curves.csv` through the runtime
-auto-sequencer (`src/core/difficultySequencer.ts`) via
-`buildSequencedLevels()` (`src/waves/sequencedLevels.ts`).
+The fire rules above describe the hand-authored campaign, but the shipped
+campaign is **generated at runtime** from a target difficulty curve. With the
+`sequencedWavesEnabled` rule on (default **on**, AH-0MUJSUTLA006Q8E1),
+`PlayScene` builds the level list from `src/data/difficulty-curves.csv` through
+the runtime auto-sequencer (`src/core/difficultySequencer.ts`) via
+`buildSequencedLevels()` (`src/waves/sequencedLevels.ts`). Persisting
+`sequencedWavesEnabled: false` opts back into the static `LEVELS` campaign.
 
 Each wave declares a `generation` mode (`curve` | `fixed` | `dynamic`,
 default `curve`) and the three modes may be mixed freely within one level
@@ -196,15 +197,16 @@ The following rules govern how enemy entities interact with each other and with 
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
 
-> **Optional sequenced campaigns (AH-0MUH6LEYY0054E63; per-wave modes
-> AH-0MUJSUQD8003FSUT).** The table above describes the shipped scripted
-> campaign. With the opt-in `sequencedWavesEnabled` game rule enabled (default
-> **off**), each wave is either generated from
-> `src/data/difficulty-curves.csv` (`curve`), kept verbatim from `LEVELS`
-> (`fixed`) or rebuilt at run start from a seeded curve (`dynamic`), selected by
-> the config's per-wave `generation` column (see §2.5.1). The static skeleton
-> (levels 1–5) is always present, so modes can be mixed freely; the scripted
-> campaign remains the default and the fallback, and the boss still triggers
+> **Default sequenced campaigns (AH-0MUH6LEYY0054E63; per-wave modes
+> AH-0MUJSUQD8003FSUT; default-on AH-0MUJSUTLA006Q8E1).** The table above
+> describes the hand-authored static campaign, which is now the opt-out. With
+> the `sequencedWavesEnabled` game rule on (default **on**), each wave is either
+> generated from `src/data/difficulty-curves.csv` (`curve`), kept verbatim from
+> `LEVELS` (`fixed`) or rebuilt at run start from a seeded curve (`dynamic`),
+> selected by the config's per-wave `generation` column (see §2.5.1). The
+> shipped default campaign mixes all three modes (levels 1–3 `fixed`, levels
+> 4–5 `curve` with a `dynamic` wave). The static skeleton (levels 1–5) is always
+> present; the static campaign is the fallback, and the boss still triggers
 > after the final level.
 
 ---

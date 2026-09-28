@@ -175,6 +175,13 @@ async function bootSceneWithLevels(
   levels: LevelDefinition[],
   options: { asteroidSpawner?: boolean } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
+  // The shipped default now sequences the campaign (AH-0MUJSUTLA006Q8E1),
+  // which would override these injected fixtures on `create()`. Opt out so
+  // the test's own levels are honoured.
+  localStorage.setItem(
+    RULES_STORAGE_KEY,
+    JSON.stringify({ sequencedWavesEnabled: false }),
+  );
   const game = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
@@ -3077,6 +3084,18 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
     ).toBe(CAMPAIGN_LEVELS);
   });
 
+  it('guarantees the static fallback under the default-on rule (AH-0MUJSUTLA006Q8E1)', () => {
+    localStorage.clear();
+    // No explicit rules: the default (on) applies; a failing/degenerate build
+    // must still leave the run playable via the static campaign.
+    expect(
+      resolveCampaignLevels(undefined, () => {
+        throw new Error('missing/malformed curve');
+      }),
+    ).toBe(CAMPAIGN_LEVELS);
+    expect(resolveCampaignLevels(undefined, () => [])).toBe(CAMPAIGN_LEVELS);
+  });
+
   it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
     seedDifficultyCurves([
       { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'fixed' },
@@ -3116,12 +3135,27 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     return toggleBooted.scene as PlayScene;
   }
 
-  it('runs the static campaign when the toggle is disabled (the default)', async () => {
+  it('runs the static campaign when the toggle is explicitly disabled', async () => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
     const scene = await bootToggleScene();
     const wm = scene.getWaveManager();
     expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
     expect(wm.currentLevel()?.name).toBe(CAMPAIGN_LEVELS[0].name);
     expect(wm.currentLevel()?.name).toBe('Entry');
+  });
+
+  it('runs the sequenced campaign by default (AH-0MUJSUTLA006Q8E1)', async () => {
+    const scene = await bootToggleScene();
+    const wm = scene.getWaveManager();
+    expect(wm.started).toBe(true);
+    // The shipped default campaign keeps the static skeleton, so the level
+    // count matches and level 1 is the fixed onboarding static wave.
+    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
+    expect(wm.currentLevel()?.name).toBe('Entry');
+    expect(wm.currentWave()!.groups.length).toBeGreaterThan(0);
   });
 
   it('runs the generated campaign when the toggle is enabled', async () => {
@@ -3184,6 +3218,12 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
         ],
       },
     ];
+    // Opt out of the now-default sequenced campaign so this injected fixture
+    // is honoured (AH-0MUJSUTLA006Q8E1).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);

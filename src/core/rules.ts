@@ -170,8 +170,13 @@ export const DEFAULT_MINERAL_REDROP_FRACTION_MIN = 0.25;
 /** Default maximum re-drop fraction of a destroyed enemy's minerals (50 %). */
 export const DEFAULT_MINERAL_REDROP_FRACTION_MAX = 0.5;
 
-/** Default for the opt-in sequenced-waves toggle — off, shipped behaviour. */
-export const DEFAULT_SEQUENCED_WAVES_ENABLED = false;
+/**
+ * Default for the sequenced-waves toggle — **on** (AH-0MUJSUTLA006Q8E1). The
+ * shipped campaign is generated from `src/data/difficulty-curves.csv` (a
+ * mixed `fixed`/`curve`/`dynamic` programme) unless a designer opts out by
+ * persisting `false`.
+ */
+export const DEFAULT_SEQUENCED_WAVES_ENABLED = true;
 
 /**
  * Builds a fresh default weight table: every standard ID carries

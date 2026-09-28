@@ -20,7 +20,12 @@
 
 import { GAME_WIDTH, GAME_HEIGHT } from './constants';
 import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from './configDefaults';
-import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from './configTypes';
+import type {
+  DifficultyCurveRow,
+  DifficultyGeneration,
+  EnemyConfig,
+  ShipConfig,
+} from './configTypes';
 import { levelDifficulty } from './enemyDifficulty';
 import { LEVELS } from '../waves/Formations';
 import {
@@ -118,7 +123,19 @@ const DEFAULT_FIXED_LEVELS: ReadonlySet<number> = new Set([1, 2, 3]);
  */
 const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
   4: [16, 24, 28],
-  5: [45, 60],
+  5: [45, 62],
+};
+
+/**
+ * Per-wave generation-mode overrides for the baked-in default curve
+ * (AH-0MUJSUTLA006Q8E1). Used to ship a mixed-mode programme (at least one
+ * `curve`, one `fixed` and one `dynamic` wave) so out-of-the-box play
+ * exercises the full capability. Keyed by level number then 1-based wave.
+ */
+const DEFAULT_MODE_OVERRIDES: Readonly<
+  Record<number, Readonly<Record<number, DifficultyGeneration>>>
+> = {
+  5: { 2: 'dynamic' },
 };
 
 /**
@@ -162,8 +179,11 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
         wave: wi + 1,
         targetDifficulty: target,
         // Onboarding levels reuse the static composition; the rest are
-        // curve-generated (AH-0MUJSUQD8003FSUT).
-        generation: fixed ? 'fixed' : 'curve',
+        // curve-generated unless an explicit per-wave override ships a mixed
+        // programme (AH-0MUJSUQD8003FSUT, AH-0MUJSUTLA006Q8E1).
+        generation:
+          DEFAULT_MODE_OVERRIDES[level.level]?.[wi + 1] ??
+          (fixed ? 'fixed' : 'curve'),
       });
     }
 
