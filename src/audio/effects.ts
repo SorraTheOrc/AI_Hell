@@ -1245,7 +1245,7 @@ export function playScoutAdvanceCue(): void {
  * Duration (seconds) of the sustained dive sound — matches `DIVER_DIVE_DURATION`.
  *
  * The dive sound plays from the FORMATION→DIVING transition until the
- * DIVING→RETURNING transition, so the envelope must cover the full
+ * end of the dive (DIVING→PAUSING), so the envelope must cover the full
  * ~2 s dive arc. Tied to `Diver.DIVER_DIVE_DURATION` in `Diver.ts`.
  */
 export const DIVER_DIVE_SOUND_DURATION = 2;
@@ -1314,7 +1314,7 @@ export function playDiverDiveStartSound(): void {
 // last active dive calls stopDiveSound(). This keeps entity wiring
 // simple (plain start/stop calls, no per-dive handles) while tolerating
 // overlapping dives. The sound is bounded: start at FORMATION→DIVING,
-// stop at DIVING→RETURNING, destroySelf(), or destroy(). No oscillator
+// stop at the end of the dive, destroySelf(), or destroy(). No oscillator
 // leak on destruction.
 
 interface DiverDiveSoundState {
@@ -1418,7 +1418,7 @@ export function playDiveSound(): void {
 /**
  * Releases one dive's hold on the sustained dive sound.
  *
- * Called when a dive ends (DIVING→RETURNING), when the diver is
+ * Called when a dive ends, when the diver is
  * destroyed mid-dive, or on scene teardown. The shared voice is torn
  * down only when the last active dive releases it, so overlapping
  * dives never cut each other off. Safe no-op if no sound is playing.

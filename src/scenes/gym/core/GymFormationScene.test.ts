@@ -2785,6 +2785,44 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
   });
 
+  it('AC6 — no-Diver control: a formation without the re-anchor seam drifts exactly as before', async () => {
+    // A true no-Diver control: none of the entities exposes the re-anchor
+    // seam, so there is nothing that could request a re-anchor. The drift
+    // must advance at exactly the configured rate and the vertical base must
+    // stay pinned — no re-anchor is applied anywhere.
+    booted = await bootScene([makeStubScene(() => [])]);
+    const scene = booted.scene as GymFormationScene<StubEnemy, StubBullet>;
+    const all = scene.formationEntities as StubEnemy[];
+    expect(all.length).toBeGreaterThan(0);
+    for (const entity of all) {
+      expect(
+        (entity as unknown as { consumeFormationReanchor?: unknown })
+          .consumeFormationReanchor,
+      ).toBeUndefined();
+    }
+
+    const beforeX = scene.formationX;
+    const beforeY = scene.formationY;
+    scene.tick(0.5);
+
+    // The base advances at exactly the configured drift rate; the vertical
+    // base is untouched by any re-anchor.
+    expect(scene.formationX).toBeCloseTo(beforeX + DRIFT_SPEED * 0.5, 5);
+    expect(scene.formationY).toBeCloseTo(beforeY, 5);
+
+    // Every unit sits on its drifted slot — no shift beyond the drift.
+    for (const entity of all) {
+      expect(entity.x).toBeCloseTo(
+        scene.formationX + entity.offset.col * SPACING_X,
+        5,
+      );
+      expect(entity.y).toBeCloseTo(
+        scene.formationY + entity.offset.row * SPACING_Y,
+        5,
+      );
+    }
+  });
+
   it('only re-anchor-capable entities glide; others snap directly', async () => {
     // A non-reanchor entity should NOT glide — it snaps to its new slot.
     // This test constructs a mixed scene with ReanchorStubEnemy (glides)
