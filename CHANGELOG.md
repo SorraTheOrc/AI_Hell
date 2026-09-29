@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.7 (2026-09-29)
+### Features
+- Gym practice now matches the real game exactly, so what you learn there always applies. (AH-0MUII2FJ5007MDDA)
+- Earn your first power-up after just 5 minerals, with each later hold needing double. (AH-0MUKC6IML0082ZR4)
+- Enemy and ship tuning now lives in easy-to-edit CSV files, so designers can tweak and save changes without touching code. (AH-0MTZWZ9TE009CVUA)
+- Your ship's shots now fire in a steady rhythm, so auto-fire feels deliberate and musical. (AH-0MUAYB8EH005RJ8B)
+- Enemy waves now ramp up smoothly with a difficulty curve instead of fixed counts. (AH-0MUH6LEYY0054E63)
+- Practice flying and shooting through obstacle courses in the Player gym. (AH-0MUAYB2XR007N10W)
+- Enemy waves now spawn in varied positions, making each encounter feel less repetitive. (AH-0MUKCLXLW0032R67)
+- Surviving enemies now explode with a big, satisfying boom when a level times out. (AH-0MUJ1YZJ9008O4RC)
+- Adjusting the volume now plays the explosion sound at that loudness, so you can hear exactly how loud your game will be. (AH-0MUADK77K008RBMB)
+- A tough new enemy hunts down minerals before you can grab them. (AH-0MUI820PM0038HS2)
+- Phase Shift now triggers automatically when enemies get too close, making escapes effortless. (AH-0MUIYX1EE008FVS8)
+- Hand-crafted levels stay hand-crafted while later levels ramp up difficulty. (AH-0MUH7Q6HN0006QPD)
+- Tougher enemies now correctly show as more dangerous in difficulty ratings. (AH-0MUJPTR7Q0070BDT)
+### Bug Fixes
+- Waves now end when all enemy ships are destroyed, and asteroids stay on the field between waves. (AH-0MUJM746P000QAEO)
+- Asteroids now drop minerals in the gyms, matching the main game. (AH-0MUHMT5JC004WRSB)
+- Wave transitions now trigger reliably, so gameplay stays consistent. (AH-0MUHA0MMP001DZ5C)
+- Waves now always spawn exactly as many enemies as they promise, so no more stalled or early-cleared waves. (AH-0MUJKJ8OO007TBSS)
+- Release-blocking messages now show the correct command to unblock a release. (AH-0MUFGUYFC001A2OB)
+### Other
+- Diver now dives diagonally toward where you were, not straight down. (AH-0MUEI8HSU000QLEA)
+- Easily find and play the Alpha release right from the README. (AH-0MUK3HYC3001YU05)
+
 ## v0.1.6 (2026-09-27)
 ### Features
 - Gym practice now matches the real game exactly, so what you learn there always works in play. (AH-0MUII2FJ5007MDDA)
