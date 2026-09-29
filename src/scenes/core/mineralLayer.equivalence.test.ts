@@ -99,6 +99,68 @@ describe('shared mineral layer — cross-scene overflow equivalence (AC2)', () =
   });
 });
 
+describe('shared mineral layer — capacity-progression parity (AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  it('the game and the gym both double the hold capacity: 5 → 10 → 20', async () => {
+    const openChoice = { choose: () => FIXED_OPTIONS };
+
+    // ── Game: resolve two holds through gameplay collection ──
+    booted = await bootScene([
+      PlayScene,
+      MineralChoiceScene,
+      GameOverScene,
+      MenuScene,
+    ]);
+    const play = booted.scene as PlayScene;
+    play.setMineralChoiceStrategy(openChoice);
+    const gameCapacities = [play.getGameState().mineralCapacity];
+    for (let hold = 0; hold < 2; hold += 1) {
+      const capacity = play.getGameState().mineralCapacity;
+      const player = play.getPlayer()!;
+      for (let i = 0; i < capacity; i += 1) {
+        play.spawnMineralAt(player.x, player.y);
+      }
+      play.tick(0.016);
+      expect(play.getGameState().isHoldFull()).toBe(true);
+      play.selectMineralChoice(0);
+      gameCapacities.push(play.getGameState().mineralCapacity);
+    }
+
+    // ── Gym: resolve two holds through gameplay collection ──
+    booted.game.destroy(true);
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    const gym = booted.scene as GymMinerals;
+    gym.setMineralChoiceStrategy(openChoice);
+    // Drop the seeded field and reset the hold so the fill is exact.
+    (gym as unknown as { minerals: unknown[] }).minerals.length = 0;
+    (gym as unknown as { mineralHoldModel: { reset(): void } }).mineralHoldModel.reset();
+    const gymCapacities = [gym.getMineralCapacity()];
+    for (let hold = 0; hold < 2; hold += 1) {
+      const capacity = gym.getMineralCapacity();
+      const player = gym.getPlayer()!;
+      (gym as unknown as { minerals: unknown[] }).minerals.length = 0;
+      const seeded = gym.seedMinerals(capacity);
+      for (const mineral of seeded) mineral.setPosition(player.x, player.y);
+      gym.tick(0.016);
+      expect(gym.isMineralChoiceOpen()).toBe(true);
+      gym.selectMineralChoice(0);
+      gymCapacities.push(gym.getMineralCapacity());
+    }
+
+    // Both scenes derive the same progression from the shared hold model.
+    expect(gameCapacities).toEqual([5, 10, 20]);
+    expect(gymCapacities).toEqual([5, 10, 20]);
+    expect(gymCapacities).toEqual(gameCapacities);
+  });
+});
+
 describe('shared mineral layer — single-definition guard (AC1/AC3)', () => {
   it('AC1 — collectMinerals is defined exactly once, in the shared module', () => {
     const definers = collectProductionSourceFiles('src/scenes').filter((file) =>

@@ -431,47 +431,50 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
     booted = null;
   });
 
-  it('collecting P6 grants intangibility', async () => {
+  it('collecting P6 stores one auto-activation charge (no immediate phase)', async () => {
     const scene = await bootCombat();
     collectCombatDrop(scene, 'P6');
 
     const registry = scene.getEffectsRegistry();
-    expect(registry.isPhased).toBe(true);
-    expect(registry.isHitImmune).toBe(true);
+    expect(registry.isPhased).toBe(false);
+    expect(registry.phaseCharges()).toBe(1);
   });
 
-  it('phase ghost visual is active during shift', async () => {
+  it('phase ghost visual is active during a direct shift', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P6');
+    scene.getEffectsRegistry().applyPhaseShift();
 
     expect(scene.isPhaseGhostActive()).toBe(true);
   });
 
-  it('phase expires after 3 s', async () => {
+  it('phase expires after 1.5 s', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P6');
     const registry = scene.getEffectsRegistry();
+    registry.applyPhaseShift();
 
-    registry.tick(2.9);
+    registry.tick(1.4);
     expect(registry.isPhased).toBe(true);
     registry.tick(0.2);
     expect(registry.isPhased).toBe(false);
   });
 
-  it('phase refreshes on re-collect (timer back to 3 s)', async () => {
+  it('a re-collected charge can auto-trigger a fresh 1.5 s phase', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P6');
     const registry = scene.getEffectsRegistry();
+    collectCombatDrop(scene, 'P6');
 
-    // Tick so the effect has clearly decayed but is still active.
-    registry.tick(2); // ~1 s remaining
+    // First danger episode consumes the stored charge.
+    expect(registry.updateDanger(true, 0.016)).toBe(true);
+    registry.tick(1.4);
     expect(registry.isPhased).toBe(true);
-    const before = registry.remaining('P6')!;
-    expect(before).toBeGreaterThan(0);
+    registry.tick(0.2);
+    expect(registry.isPhased).toBe(false);
+    expect(registry.phaseCharges()).toBe(0);
 
-    collectCombatDrop(scene, 'P6'); // re-collect refreshes to full 3 s
-    expect(registry.remaining('P6')).toBeGreaterThan(before); // refreshed
-    expect(registry.remaining('P6')).toBeGreaterThan(2.9); // ~3 s full
+    // Danger clears, the cooldown elapses, then a second pickup re-arms.
+    registry.updateDanger(false, 1);
+    collectCombatDrop(scene, 'P6');
+    expect(registry.updateDanger(true, 0.016)).toBe(true);
   });
 });
 

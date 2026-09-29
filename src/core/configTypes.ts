@@ -46,6 +46,36 @@ export interface EnemyConfig {
   /** Initial base position (px). */
   startX: number;
   startY: number;
+  /**
+   * Minimum spawn X (px) for this enemy archetype. When `startXMin` differs
+   * from `startXMax`, each wave group selects a random base X within
+   * `[startXMin, startXMax]`. When they are equal (or absent), the base
+   * equals `startX` — preserving the current single-point behaviour.
+   */
+  startXMin?: number;
+  /**
+   * Maximum spawn X (px) for this enemy archetype. See {@link startXMin}.
+   */
+  startXMax?: number;
+  /**
+   * Minimum spawn Y (px) for this enemy archetype. When `startYMin` differs
+   * from `startYMax`, each wave group selects a random base Y within
+   * `[startYMin, startYMax]`. When they are equal (or absent), the base
+   * equals `startY` — preserving the current single-point behaviour.
+   */
+  startYMin?: number;
+  /**
+   * Maximum spawn Y (px) for this enemy archetype. See {@link startYMin}.
+   */
+  startYMax?: number;
+
+  // Entity health
+  /**
+   * Hit points before the enemy is destroyed. Data-driven (AH-0MUI820PM0038HS2);
+   * defaults to `1` so every single-hit archetype is unchanged. Values must be
+   * positive integers — the CSV codec validates and coerces invalid input.
+   */
+  health: number;
 
   // Entity visuals / motion
   /** Body radius / half-size in px. */
@@ -76,7 +106,79 @@ export interface EnemyConfig {
   [extra: string]: unknown;
 }
 
+/**
+ * Resolved inclusive spawn band for one axis. `min === max` denotes the
+ * legacy scalar behaviour (no randomness).
+ */
+export interface SpawnRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * Resolves an enemy archetype's effective spawn range on a single axis.
+ *
+ * Backward compatibility (AH-0MUKCLXLW0032R67): when the optional `min`/`max`
+ * bounds are absent, the scalar `start` value is used for that bound, so
+ * callers never need null checks and legacy configs keep spawning at exactly
+ * `start`. Reversed bounds (`min > max`) are normalised by swapping so the
+ * returned {@link SpawnRange} always satisfies `min <= max`.
+ *
+ * @param start — scalar legacy base position on this axis (px).
+ * @param min — optional configured minimum bound (px).
+ * @param max — optional configured maximum bound (px).
+ */
+export function resolveSpawnRange(
+  start: number,
+  min: number | undefined,
+  max: number | undefined,
+): SpawnRange {
+  const lo = min ?? start;
+  const hi = max ?? start;
+  return lo <= hi ? { min: lo, max: hi } : { min: hi, max: lo };
+}
+
+/**
+ * Picks a value inside a {@link SpawnRange} using the supplied RNG.
+ *
+ * A degenerate range (`min === max`) returns `min` verbatim so a zero-width
+ * band never advances the RNG stream — this keeps the legacy scalar path
+ * fully deterministic. The RNG is expected to return a value in `[0, 1)`.
+ *
+ * @param range — inclusive `[min, max]` band (already normalised).
+ * @param rng — RNG returning a fraction in `[0, 1)`.
+ */
+export function pickInRange(range: SpawnRange, rng: () => number): number {
+  if (range.max <= range.min) return range.min;
+  return range.min + rng() * (range.max - range.min);
+}
+
 // ── Difficulty-curve config ─────────────────────────────────────────
+
+/**
+ * Legacy per-level source selector for a difficulty-curve level
+ * (AH-0MUH7Q6HN0006QPD). Superseded by the per-wave {@link DifficultyGeneration}
+ * column (AH-0MUJSUQD8003FSUT), but still honoured when `generation` is absent:
+ * `scripted` maps to `fixed` and `generated` maps to `curve`.
+ */
+export type DifficultySource = 'generated' | 'scripted';
+
+/**
+ * Per-wave generation mode for a difficulty-curve wave
+ * (AH-0MUJSUQD8003FSUT). One campaign can mix the three modes:
+ *
+ * - **`curve`** (default) — the runtime auto-sequencer builds the wave from
+ *   its `targetDifficulty` once; the composition is then fixed for the run.
+ * - **`fixed`** — the wave uses the hand-authored static `LEVELS` composition
+ *   verbatim and is never passed to the sequencer.
+ * - **`dynamic`** — the wave is rebuilt by the sequencer from its curve at
+ *   run start, seeded from the run's seed, so successive runs differ while
+ *   remaining reproducible for a given seed.
+ *
+ * An absent value defaults to `curve`, so existing files (including the
+ * legacy 4-column form) keep working unchanged.
+ */
+export type DifficultyGeneration = 'curve' | 'fixed' | 'dynamic';
 
 /**
  * One (level, wave) row of the data-driven difficulty curve
@@ -94,6 +196,22 @@ export interface DifficultyCurveRow {
   wave: number;
   /** Target difficulty score for this wave (0–100, same scale as the sequencer). */
   targetDifficulty: number;
+  /**
+   * Per-wave generation mode (AH-0MUJSUQD8003FSUT). Defaults to `curve` when
+   * absent. A `fixed` wave ignores `targetDifficulty` (its composition comes
+   * from the static `LEVELS` definition); `curve` and `dynamic` waves both use
+   * it, with `dynamic` applying a seeded variation at run start.
+   */
+  generation?: DifficultyGeneration;
+  /**
+   * Legacy per-level source selector (AH-0MUH7Q6HN0006QPD), honoured only when
+   * `generation` is absent: `scripted` maps to `fixed`, `generated` to
+   * `curve`. Kept so older config files keep loading; new files should use the
+   * per-wave `generation` column instead.
+   *
+   * @deprecated Use {@link DifficultyCurveRow.generation} instead.
+   */
+  source?: DifficultySource;
 }
 
 // ── Ship config ─────────────────────────────────────────────────────

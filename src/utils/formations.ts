@@ -149,7 +149,15 @@ export function buildOrbitalPhaseOffsets(count: number): FormationOffset[] {
   return offsets;
 }
 
-/** Single-entity formation for the Boss. */
+/**
+ * Single-entity formation for the Boss.
+ *
+ * Deliberately count-independent: `single` represents exactly **one**
+ * entity, so this always returns one centred offset regardless of the
+ * declared `count` (see {@link formationSpawnCount}). Wave/level authors
+ * must therefore declare `count: 1` for a `single` group — a larger value
+ * is a misconfiguration (reported by `validateWaveGroups`).
+ */
 export function buildSingleOffset(_count: number): FormationOffset[] {
   return [{ row: 0, col: 0 }];
 }
@@ -171,10 +179,76 @@ export function getFormationBuilder(kind: string): (count: number) => FormationO
   return buildVFormationOffsets;
 }
 
+/**
+ * Number of enemies a formation of `kind` actually spawns for a declared
+ * `count`: the length of the offsets returned by its builder.
+ *
+ * This is the single source of truth for "declared vs spawned" accounting.
+ * Most builders return exactly `count` offsets, but `single` is
+ * count-independent (it always represents one entity), so callers must use
+ * this helper — not the raw `count` field — when computing a group's
+ * contribution to a wave's enemy count. It keeps `waveEnemyCount()` and
+ * `planSpawns().length` equal for every wave.
+ */
+export function formationSpawnCount(kind: string, count: number): number {
+  return getFormationBuilder(kind)(count).length;
+}
+
 /** A 2D position produced by formation geometry helpers. */
 export interface FormationPosition {
   x: number;
   y: number;
+}
+
+/**
+ * A request from a formation entity (the Diver, GDD §4.1 — E2) to re-anchor
+ * the whole unit so the requester's own slot coincides with the position
+ * where its attack finished.
+ *
+ * The requester carries its own `offset` and the world `(x, y)` at which the
+ * attack ended; the owning scene supplies its formation origin and spacing so
+ * the shared rule can compute the translation.
+ */
+export interface FormationReanchorRequest {
+  /** The requesting entity's own formation offset. */
+  offset: FormationOffset;
+  /** Attack-end world x. */
+  x: number;
+  /** Attack-end world y. */
+  y: number;
+}
+
+/** The `(dx, dy)` translation that re-anchors a formation origin. */
+export interface FormationReanchorDelta {
+  dx: number;
+  dy: number;
+}
+
+/**
+ * Computes the translation that moves a formation origin so the requesting
+ * entity's slot (`origin + offset * spacing`) lands exactly on its attack-end
+ * position.
+ *
+ * Applying the same `(dx, dy)` to the whole unit preserves every other unit's
+ * relative offset — the single shared re-anchor rule consumed by both
+ * `GymFormationScene` and `PlayScene`, so the gym and the game cannot diverge
+ * (gym↔game parity; AH-0MUAYB957002EMYV). Pure and side-effect free.
+ */
+export function computeFormationReanchorDelta(
+  request: FormationReanchorRequest,
+  originX: number,
+  originY: number,
+  spacingX: number,
+  spacingY: number,
+): FormationReanchorDelta {
+  const slot = computeFormationPosition(
+    originX,
+    originY,
+    request.offset,
+    spacingX,
+    spacingY,
+  );
+  return { dx: request.x - slot.x, dy: request.y - slot.y };
 }
 
 /**

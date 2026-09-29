@@ -177,8 +177,19 @@ export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 /** P3 Shield duration in seconds (15 s, absorbs one hit). */
 export const COMBAT_SHIELD_DURATION = 15;
 
-/** P6 Phase Shift duration in seconds (3 s, pass-through). */
-export const COMBAT_PHASE_SHIFT_DURATION = 3;
+/**
+ * P6 Phase Shift duration in seconds (1.5 s, pass-through). Applied
+ * automatically when the player is in danger and a charge is available
+ * (parent AH-0MUIYX1EE008FVS8).
+ */
+export const PHASE_DURATION = 1.5;
+
+/**
+ * Cooldown (seconds) after a Phase Shift expires before it may auto-trigger
+ * again. Combined with the danger-cleared gate, this stops a permanent P6
+ * from becoming perpetual invincibility (Q2).
+ */
+export const PHASE_REARM_COOLDOWN = 0.5;
 
 /** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
 export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;
@@ -188,6 +199,27 @@ export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 
 /** Blink half-period while invulnerable after a hit (seconds). */
 export const COMBAT_HIT_BLINK_INTERVAL = 0.1;
+
+// ── Danger detection (parent AH-0MUIYX1EE008FVS8) ─────────────────
+// Inputs to the automatic Phase Shift (P6) trigger. Danger is the
+// combined count of hostile bodies + hostile bullets whose centre lies
+// within DANGER_RADIUS of the ship; reaching DANGER_THREAT_THRESHOLD
+// makes the player "in danger". Producer decisions Q1 (combined count,
+// 40 px radius, threshold 3) and Q5 (all hostile archetypes count;
+// player bullets and minerals do not).
+
+/**
+ * Danger radius (px): hostile threats within this centre-to-centre
+ * distance of the ship count toward the danger threshold. 2 × SHIP_SIZE
+ * = 40 px.
+ */
+export const DANGER_RADIUS = 2 * SHIP_SIZE;
+
+/**
+ * Combined hostile-threat count at (or above) which an automatic Phase
+ * Shift triggers (Q1).
+ */
+export const DANGER_THREAT_THRESHOLD = 3;
 
 // ── Player hit VFX (AH-0MU3VQ0JR009CSIN) ──────────────────────────
 

@@ -15,7 +15,7 @@
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import type { WaveGroup } from './Formations';
-import { planGroupSpawns, type EnemySpawn } from './WaveManager';
+import { planGroupSpawns, wavePlannedSpawnCount, type EnemySpawn } from './WaveManager';
 
 /** Minion groups that accompany one boss phase. */
 export interface BossMinionWave {
@@ -81,16 +81,27 @@ export function minionsForPhase(phase: number): BossMinionWave | null {
 /**
  * Plans the concrete minion spawns for a boss phase. Returns an empty
  * array for phases with no minions (or unknown phases).
+ *
+ * @param phase — boss phase number (1–4).
+ * @param rng — RNG for range-based positioning; defaults to `Math.random`.
+ *   The scene passes its own RNG so minion positions match the game stream.
  */
-export function planMinionSpawns(phase: number): EnemySpawn[] {
+export function planMinionSpawns(
+  phase: number,
+  rng: () => number = Math.random,
+): EnemySpawn[] {
   const wave = minionsForPhase(phase);
   if (!wave || wave.groups.length === 0) return [];
-  return planGroupSpawns(wave.groups, wave.shootEnabled);
+  return planGroupSpawns(wave.groups, wave.shootEnabled, rng);
 }
 
-/** Total number of minions spawned for a phase (0 when none). */
+/**
+ * Total number of minions spawned for a phase (0 when none). Derived from
+ * the formation builders (not the raw `count` field) so it always matches
+ * `planMinionSpawns(phase).length`.
+ */
 export function minionCountForPhase(phase: number): number {
   const wave = minionsForPhase(phase);
   if (!wave) return 0;
-  return wave.groups.reduce((sum, g) => sum + g.count, 0);
+  return wavePlannedSpawnCount(wave.groups);
 }

@@ -41,6 +41,7 @@ function makeConfig(overrides: Partial<EnemyConfig> = {}): EnemyConfig {
     bulletLifetime: overrides.bulletLifetime ?? 1.5,
     burstCount: overrides.burstCount ?? 1,
     shotProbability: overrides.shotProbability ?? 1.0,
+    health: overrides.health ?? 1,
   };
 }
 
@@ -326,6 +327,13 @@ describe('defaultCandidatePool', () => {
     expect(asteroid).toBeDefined();
     expect(asteroid!.minCount).toBe(asteroid!.baseCount);
     expect(asteroid!.maxCount).toBe(asteroid!.baseCount);
+  });
+
+  it('F6 — excludes the Harvester from the auto-sequencer candidate pool', () => {
+    // The Harvester is a rare later-level roaming spawn delivered by the
+    // dedicated HarvesterSpawner, never selected as a wave group.
+    const keys = defaultCandidatePool().map((c) => c.enemyKey);
+    expect(keys).not.toContain('harvester');
   });
 });
 

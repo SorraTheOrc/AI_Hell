@@ -20,7 +20,11 @@ import {
 import { Player } from '../../../entities/Player';
 import { BaseEnemy } from '../../../entities/BaseEnemy';
 import { BACK_TO_INDEX_LABEL } from '../../../utils/gymNavigation';
-import { FormationOffset } from '../../../utils/formations';
+import {
+  FormationOffset,
+  type FormationReanchorRequest,
+} from '../../../utils/formations';
+import { FORMATION_GLIDE_SECONDS } from '../../core/formationGlide';
 import {
   EnemyFormationConfig,
   FormationSceneBullet,
@@ -119,15 +123,47 @@ class AimStubEnemy extends StubEnemy {
 }
 
 /**
- * Stub that implements the optional formation-hold seam. `requiresHold` is
- * deliberately independent of `alive` so the scene-level alive filter is
- * exercised (a dead holder must NOT freeze the formation).
+ * Stub that implements the optional re-anchor seam (mirrors the Diver). A
+ * test can post a request, which the scene consumes exactly once on the next
+ * `tick()`.
  */
-class HoldStubEnemy extends StubEnemy {
-  requiresHold = false;
+class ReanchorStubEnemy extends StubEnemy {
+  private pending: FormationReanchorRequest | null = null;
 
-  requiresFormationHold(): boolean {
-    return this.requiresHold;
+  requestReanchor(request: FormationReanchorRequest): void {
+    this.pending = request;
+  }
+
+  consumeFormationReanchor(): FormationReanchorRequest | null {
+    const request = this.pending;
+    this.pending = null;
+    return request;
+  }
+}
+
+/** Multi-hit stub (mirrors the Harvester) for the shared finalise path (F2). */
+class ToughStubEnemy extends StubEnemy {
+  private _health: number;
+  damageCalls = 0;
+
+  constructor(scene: Phaser.Scene, offset: FormationOffset, hitRadius = 10, health = 3) {
+    super(scene, offset, hitRadius);
+    this._health = health;
+  }
+
+  takeDamage(): number {
+    if (!this.alive) return 0;
+    this.damageCalls += 1;
+    this._health -= 1;
+    if (this._health <= 0) {
+      this._health = 0;
+      this.destroySelf();
+    }
+    return this._health;
+  }
+
+  get health(): number {
+    return this._health;
   }
 }
 
@@ -2360,6 +2396,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     const player = scene.getPlayer()!;
 
     collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     expect(scene.getPlayerHitCount()).toBe(0);
 
@@ -2371,9 +2408,9 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     expect(scene.getPlayerHitCount()).toBe(0);
     expect(scene.isPlayerInvulnerable()).toBe(false);
 
-    // The parked bullet is long-lived and still live. Wait out the 3 s
+    // The parked bullet is long-lived and still live. Wait out the 1.5 s
     // phase window; the same bullet then lands normally.
-    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    for (let i = 0; i < 20; i += 1) scene.tick(0.1); // 2 s
     expect(scene.getEffectsRegistry().isPhased).toBe(false);
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
@@ -2382,6 +2419,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
     const { scene } = await bootGated('P6');
     collectOnShip(scene, 'P6');
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities[0];
@@ -2446,11 +2484,15 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     const player = scene.getPlayer()!;
 
     collectOnShip(scene, 'P6');
+    scene.getEffectsRegistry().updateDanger(true, 0.05);
+    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    // The shared visuals pass applies the ghost alpha on the next tick.
+    scene.tick(0.016);
     expect(scene.isPhaseGhostActive()).toBe(true);
     expect(player.alpha).toBeCloseTo(PHASE_GHOST_ALPHA);
 
-    // Expiry (3 s phase duration) restores full alpha.
-    for (let i = 0; i < 40; i += 1) scene.tick(0.1); // 4 s
+    // Expiry (1.5 s phase duration) restores full alpha.
+    for (let i = 0; i < 20; i += 1) scene.tick(0.1); // 2 s
     expect(scene.isPhaseGhostActive()).toBe(false);
     expect(player.alpha).toBe(1);
   });
@@ -2592,7 +2634,7 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
   });
 });
 
-describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () => {
+describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -2600,108 +2642,173 @@ describe('GymFormationScene — formation hold seam (AH-0MUAYB957002EMYV)', () =
     booted = null;
   });
 
-  async function bootHoldGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
+  async function bootReanchorGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
     booted = await bootScene([
-      makeStubScene(() => [], undefined, undefined, HoldStubEnemy),
+      makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
     ]);
     return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
   }
 
-  /** The stub entities, typed with the formation-hold seam. */
-  function holders(
+  /** The stub entities, typed with the re-anchor seam. */
+  function entities(
     scene: GymFormationScene<StubEnemy, StubBullet>,
-  ): HoldStubEnemy[] {
-    return scene.formationEntities as HoldStubEnemy[];
+  ): ReanchorStubEnemy[] {
+    return scene.formationEntities as ReanchorStubEnemy[];
   }
 
-  it('AC1 — a holding entity freezes the formation base', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-    holder.requiresHold = true;
+  it('AC1 — the formation base advances unconditionally (a pending request never freezes the drift)', async () => {
+    const scene = await bootReanchorGym();
+    const [first] = entities(scene);
+    first.requestReanchor({ offset: { ...first.offset }, x: 500, y: 300 });
 
     const before = scene.formationX;
     scene.tick(0.5);
-    expect(scene.formationX).toBe(before);
+    const after = scene.formationX;
+    expect(after).not.toBe(before);
+
+    // The next tick keeps drifting at the configured rate — no lingering hold.
+    scene.tick(0.5);
+    expect(scene.formationX).toBeCloseTo(after + DRIFT_SPEED * 0.5, 5);
   });
 
-  it('AC1 — the gate ignores destroyed entities (a dead holder cannot freeze the formation)', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-    holder.requiresHold = true;
-    holder.destroySelf();
-    expect(holder.alive).toBe(false);
+  it('AC3 — re-anchors so the requester slot lands on the attack end, then the whole unit eases to the new slots', async () => {
+    const scene = await bootReanchorGym();
+    const all = entities(scene);
+    const requester = all[2];
 
-    const before = scene.formationX;
-    scene.tick(0.5);
-    expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
-  });
+    const attackEnd = { x: 517, y: 121 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: attackEnd.x,
+      y: attackEnd.y,
+    });
 
-  it('AC1/AC2 — while any one entity still holds the formation stays frozen; both rejoined resumes from the held position', async () => {
-    const scene = await bootHoldGym();
-    const [a, b] = holders(scene);
-    a.requiresHold = true;
-    b.requiresHold = true;
+    // The re-anchor frame: the origin re-bases so the requester's slot
+    // coincides with the attack end.
+    scene.tick(0.25);
+    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(attackEnd.x, 5);
+    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(attackEnd.y, 5);
 
-    scene.tick(0.5);
-    const frozenAt = scene.formationX;
+    // At 0.25 s (< glide duration) the rendered position is still gliding:
+    // it has not yet snapped to the re-anchored slot.
+    expect(requester.x).not.toBeCloseTo(
+      scene.formationX + requester.offset.col * SPACING_X,
+      5,
+    );
 
-    // One diver rejoins; the other is still away — no drift.
-    a.requiresHold = false;
-    scene.tick(0.5);
-    expect(scene.formationX).toBe(frozenAt);
-
-    // Both rejoined → the formation resumes from exactly the held base.
-    b.requiresHold = false;
-    scene.tick(0.5);
-    expect(scene.formationX).toBeCloseTo(frozenAt + DRIFT_SPEED * 0.5, 5);
-  });
-
-  it('AC1 — a hold suppresses the right-edge wrap/respawn', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-
-    // Advance until the NEXT 1 s tick would cross the wrap threshold.
-    for (
-      let i = 0;
-      i < 100 && scene.formationX + DRIFT_SPEED <= GAME_WIDTH + 60;
-      i++
-    ) {
-      scene.tick(1.0);
+    // On completion every unit sits exactly on its (drifted) slot — the
+    // unit's relative offsets are preserved.
+    scene.tick(FORMATION_GLIDE_SECONDS);
+    for (const entity of all) {
+      expect(entity.x).toBeCloseTo(scene.formationX + entity.offset.col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(scene.formationY + entity.offset.row * SPACING_Y, 5);
     }
-    expect(scene.formationX + DRIFT_SPEED).toBeGreaterThan(GAME_WIDTH + 60);
-
-    holder.requiresHold = true;
-    const heldX = scene.formationX;
-    // Without the hold this 1 s tick crosses the threshold and wraps.
-    scene.tick(1.0);
-    expect(scene.formationX).toBe(heldX);
-
-    // Releasing the hold lets the wrap happen again.
-    holder.requiresHold = false;
-    scene.tick(1.0);
-    expect(scene.formationX).toBeLessThan(0);
   });
 
-  it('AC2 — the formation resumes from exactly the held position with no jump', async () => {
-    const scene = await bootHoldGym();
-    const [holder] = holders(scene);
-    holder.requiresHold = true;
-    scene.tick(0.5);
-    const heldX = scene.formationX;
-    // A second held tick confirms the base really is pinned.
-    scene.tick(0.5);
-    expect(scene.formationX).toBe(heldX);
+  it('AC3 — the re-anchor follows the requested position, not a fixed screen point', async () => {
+    const scene = await bootReanchorGym();
+    const [requester] = entities(scene);
 
-    holder.requiresHold = false;
-    scene.tick(0.5);
-    expect(scene.formationX).toBeCloseTo(heldX + DRIFT_SPEED * 0.5, 5);
+    const first = { x: 300, y: 120 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: first.x,
+      y: first.y,
+    });
+    scene.tick(0.25);
+    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(first.x, 5);
+    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(first.y, 5);
+    // Let the first glide finish before re-requesting, so the second request
+    // starts from a settled formation.
+    scene.tick(FORMATION_GLIDE_SECONDS);
+
+    // A second request at a different position re-anchors there instead.
+    const second = { x: 640, y: 90 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: second.x,
+      y: second.y,
+    });
+    scene.tick(0.25);
+    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(second.x, 5);
+    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(second.y, 5);
   });
 
-  it('AC4 — a formation with no holder still drifts', async () => {
-    const scene = await bootHoldGym();
+  it('AC1 — the glide eases: the first frame is strictly between the pre-anchor position and the final slot', async () => {
+    const scene = await bootReanchorGym();
+    const [requester] = entities(scene);
+    const from = { x: requester.x, y: requester.y };
+
+    requester.requestReanchor({ offset: { ...requester.offset }, x: 500, y: 300 });
+
+    // First frame of the glide (dt < duration): the entity has moved toward
+    // the slot but has not reached it (strictly between old and new).
+    scene.tick(0.1);
+    const slotX = scene.formationX + requester.offset.col * SPACING_X;
+    const slotY = scene.formationY + requester.offset.row * SPACING_Y;
+    expect(requester.x).toBeGreaterThan(Math.min(from.x, slotX));
+    expect(requester.x).toBeLessThan(Math.max(from.x, slotX));
+    expect(requester.y).toBeGreaterThan(Math.min(from.y, slotY));
+    expect(requester.y).toBeLessThan(Math.max(from.y, slotY));
+    expect(requester.x).not.toBeCloseTo(slotX, 5);
+
+    // Completion: exactly on the live slot after the glide duration.
+    scene.tick(FORMATION_GLIDE_SECONDS);
+    expect(requester.x).toBeCloseTo(scene.formationX + requester.offset.col * SPACING_X, 5);
+    expect(requester.y).toBeCloseTo(scene.formationY + requester.offset.row * SPACING_Y, 5);
+  });
+
+  it('AC4 — the glide tracks the live (drifting) slot, not the re-anchor-time snapshot', async () => {
+    const scene = await bootReanchorGym();
+    const [requester] = entities(scene);
+
+    requester.requestReanchor({ offset: { ...requester.offset }, x: 500, y: 300 });
+
+    // First frame begins the glide; snapshot the re-anchor-time slot.
+    scene.tick(0.05);
+    const snapshotX = scene.formationX + requester.offset.col * SPACING_X;
+
+    // Finish the glide across several small frames while the base drifts.
+    for (let i = 0; i < 5; i++) scene.tick(0.1);
+
+    const driftedSlotX = scene.formationX + requester.offset.col * SPACING_X;
+    // The base drifted after the snapshot, so the landing follows the drifted
+    // slot rather than the stale snapshot.
+    expect(driftedSlotX).toBeGreaterThan(snapshotX);
+    expect(requester.x).toBeCloseTo(driftedSlotX, 5);
+  });
+
+  it('AC4 — a formation with no request drifts exactly as before', async () => {
+    const scene = await bootReanchorGym();
     const before = scene.formationX;
     scene.tick(0.5);
     expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
+  });
+
+  it('only re-anchor-capable entities glide; others snap directly', async () => {
+    // A non-reanchor entity should NOT glide — it snaps to its new slot.
+    // This test constructs a mixed scene with ReanchorStubEnemy (glides)
+    // and a plain StubEnemy (no glide). The re-anchor is requested by the
+    // first ReanchorStubEnemy; the plain entity must snap directly.
+    class PlainStub extends StubEnemy {
+      // No consumeFormationReanchor — mirrors non-Diver enemies.
+    }
+
+    const bootedMixed = await bootScene([
+      makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
+    ]);
+    const scene = bootedMixed.scene;
+
+    const plainEntity = new PlainStub(scene, { row: 0, col: 0 });
+    expect(
+      (plainEntity as unknown as { consumeFormationReanchor?: unknown })
+        .consumeFormationReanchor,
+    ).toBeUndefined();
+
+    const raEntity = new ReanchorStubEnemy(scene, { row: 0, col: 0 });
+    expect(raEntity.consumeFormationReanchor).toBeDefined();
+
+    bootedMixed.game.destroy(true);
   });
 });
 
@@ -2819,5 +2926,64 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
     expect(scene.formationEntities).toHaveLength(FORMATION_COUNT);
     expect(scene.getPlayerBullets()).toHaveLength(0);
     expect(() => scene.tick(0.016)).not.toThrow();
+  });
+});
+
+describe('GymFormationScene — shared multi-hit kill finalisation (F2)', () => {
+  let booted: BootedGame | null = null;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootTough(): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], { x: 480, y: 270 }, undefined, ToughStubEnemy as typeof StubEnemy),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('F2 — a non-lethal hit leaves the entity alive with no destruction sound', async () => {
+    const scene = await bootTough();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    // This file accumulates module mocks across tests, so measure the delta.
+    const before = vi.mocked(destroySound).mock.calls.length;
+    const target = scene.formationEntities[0] as unknown as ToughStubEnemy;
+
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(true);
+    expect(target.health).toBe(2);
+    expect(target.damageCalls).toBe(1);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(before);
+  });
+
+  it('F2 — the killing blow finalises exactly once through the shared gym path', async () => {
+    const scene = await bootTough();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const before = vi.mocked(destroySound).mock.calls.length;
+    const target = scene.formationEntities[0] as unknown as ToughStubEnemy;
+
+    // Two non-lethal hits, then the lethal third.
+    for (let hit = 1; hit <= 2; hit++) {
+      scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+      scene.tick(0.05);
+      expect(target.alive).toBe(true);
+      expect(vi.mocked(destroySound).mock.calls.length).toBe(before);
+    }
+
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+
+    expect(target.alive).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT - 1);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(before + 1);
+
+    // A further bullet into the same (now dead) slot must not re-finalise.
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.05);
+    expect(vi.mocked(destroySound).mock.calls.length).toBe(before + 1);
   });
 });

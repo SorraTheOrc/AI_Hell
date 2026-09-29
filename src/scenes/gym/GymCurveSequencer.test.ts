@@ -18,13 +18,17 @@ import { GymIndex } from '../GymIndex';
 import { MenuScene } from '../MenuScene';
 import {
   CURVE_ADD_BUTTON_ID,
+  CURVE_DEFAULT_MODE,
   CURVE_HELP_BOX_TITLE,
+  CURVE_MODE_OPTIONS,
   CURVE_PANEL_ID,
   CURVE_PREVIEW_STALE_TEXT,
   CURVE_REGENERATE_BUTTON_ID,
   CURVE_TARGET_MAX,
   CURVE_TARGET_MIN,
   CURVE_TARGET_TOLERANCE,
+  CURVE_WAVE_DERIVED_ATTR,
+  CURVE_WAVE_MODE_ATTR,
   CURVE_WAVE_REMOVE_ATTR,
   CURVE_WAVE_SLIDER_ATTR,
   CURVE_WAVE_VALUE_ATTR,
@@ -122,10 +126,21 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
       `button[${CURVE_WAVE_REMOVE_ATTR}="${index}"]`,
     ) as HTMLButtonElement;
 
+  const modeControl = (index: number): HTMLSelectElement =>
+    panel()!.querySelector(
+      `select[${CURVE_WAVE_MODE_ATTR}="${index}"]`,
+    ) as HTMLSelectElement;
+
   const setSlider = (index: number, value: string): void => {
     const input = slider(index);
     input.value = value;
     input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  const setMode = (index: number, value: string): void => {
+    const select = modeControl(index);
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
   };
 
   // ── AC3 — curve editor ───────────────────────────────────────────
@@ -175,6 +190,97 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
     setSlider(0, '77');
     expect(scene.curveTargets[0]).toBe(77);
     expect(valueReadout(0).textContent).toBe('77');
+  });
+
+  // ── Generation-mode control (AH-0MUJSUT8P008UPQM) ──────────────
+
+  it('renders a labelled mode control with curve/fixed/dynamic, default curve', async () => {
+    const scene = await boot();
+    const controls = panel()!.querySelectorAll(
+      `select[${CURVE_WAVE_MODE_ATTR}]`,
+    );
+    expect(controls.length).toBe(DEFAULT_DIFFICULTY_CURVE.length);
+    expect(scene.waveModes).toEqual(
+      DEFAULT_DIFFICULTY_CURVE.map(() => CURVE_DEFAULT_MODE),
+    );
+
+    for (let i = 0; i < DEFAULT_DIFFICULTY_CURVE.length; i++) {
+      const control = modeControl(i);
+      expect(control.value).toBe('curve');
+      expect([...control.options].map((o) => o.value)).toEqual([
+        ...CURVE_MODE_OPTIONS,
+      ]);
+      // Labelled + keyboard reachable (native select, aria-label).
+      expect(control.getAttribute('aria-label')).toContain(String(i + 1));
+    }
+  });
+
+  it('choosing fixed disables the target slider and shows the derived difficulty', async () => {
+    const scene = await boot();
+    setMode(1, 'fixed');
+
+    expect(scene.waveModes[1]).toBe('fixed');
+    expect(slider(1).disabled).toBe(true);
+    // The readout is a derived (non-editable) value, not the raw target.
+    const derived = Number(valueReadout(1).textContent);
+    expect(Number.isFinite(derived)).toBe(true);
+    expect(valueReadout(1).getAttribute(CURVE_WAVE_DERIVED_ATTR)).toBe('true');
+    // The slider cannot change the value while disabled.
+    expect(slider(1).value).toBe(String(DEFAULT_DIFFICULTY_CURVE[1]));
+  });
+
+  it('choosing curve or dynamic re-enables the editable target slider', async () => {
+    const scene = await boot();
+    setMode(0, 'fixed');
+    expect(slider(0).disabled).toBe(true);
+
+    setMode(0, 'dynamic');
+    expect(scene.waveModes[0]).toBe('dynamic');
+    expect(slider(0).disabled).toBe(false);
+    expect(valueReadout(0).getAttribute(CURVE_WAVE_DERIVED_ATTR)).toBeNull();
+    expect(valueReadout(0).textContent).toBe(String(scene.curveTargets[0]));
+
+    setMode(0, 'curve');
+    expect(scene.waveModes[0]).toBe('curve');
+    expect(slider(0).disabled).toBe(false);
+    setSlider(0, '64');
+    expect(scene.curveTargets[0]).toBe(64);
+    expect(valueReadout(0).textContent).toBe('64');
+  });
+
+  it('changing a mode marks the preview stale and clears the wave list', async () => {
+    const scene = await boot();
+    expect(scene.isPreviewStale).toBe(false);
+
+    setMode(2, 'dynamic');
+
+    expect(scene.isPreviewStale).toBe(true);
+    expect(scene.wavePreview).toEqual([]);
+    expect(findText(scene, CURVE_PREVIEW_STALE_TEXT)).toBeDefined();
+    expect(findTableHeader(scene)).toBeUndefined();
+    expect(findWaveRows(scene)).toHaveLength(0);
+  });
+
+  it('regenerating reflects the mode: fixed previews derived difficulty, others sequenced', async () => {
+    const scene = await boot();
+    setMode(0, 'fixed');
+    setMode(1, 'dynamic');
+    (
+      panel()!.querySelector(`#${CURVE_REGENERATE_BUTTON_ID}`) as HTMLButtonElement
+    ).click();
+
+    const preview = scene.wavePreview;
+    expect(preview).toHaveLength(scene.curveTargets.length);
+    expect(preview[0].mode).toBe('fixed');
+    expect(typeof preview[0].derivedDifficulty).toBe('number');
+    expect(preview[0].composition.length).toBeGreaterThan(0);
+    expect(preview[1].mode).toBe('dynamic');
+    expect(preview[1].derivedDifficulty).toBeUndefined();
+    // The fixed wave's table row shows the derived difficulty, not the target.
+    const fixedRow = findWaveRows(scene).find((row) =>
+      row.text.includes(preview[0].composition),
+    );
+    expect(fixedRow!.text).toContain(String(preview[0].derivedDifficulty));
   });
 
   // ── AC5 — edit-to-clear behaviour ────────────────────────────────
@@ -329,6 +435,7 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
       actualDifficulty: 41.5,
       composition: 'scout ×12 + phaser ×4',
       shootEnabled: true,
+      mode: 'curve',
     };
 
     it('formats a header naming every column and a row with each cell', () => {

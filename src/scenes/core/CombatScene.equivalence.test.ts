@@ -34,6 +34,8 @@ import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { GymBoss } from '../gym/GymBoss';
+import { Harvester } from '../../entities/Harvester';
+import { Mineral } from '../../entities/Mineral';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
@@ -52,6 +54,7 @@ const SHARED_METHODS = [
   '_handleTeleport',
   '_readPlayerInput',
   '_tickPlayer',
+  '_updatePhaseShiftAutoTrigger',
 ] as const;
 
 /**
@@ -302,8 +305,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     }
   });
 
-  it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {
-    const { play, gym } = await bootBoth();
+  it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {    const { play, gym } = await bootBoth();
     play.getEffectsRegistry().applyCollect('P5');
     gym.getEffectsRegistry().applyCollect('P5');
 
@@ -1026,6 +1028,195 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
     expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
   });
+
+  it('danger auto-triggers Phase Shift identically in the game and both gyms (Q1/Q2/Q3)', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-play-host',
+    );
+    const combat = await bootScene(
+      [GymPowerUpsCombat],
+      'phase-combat-host',
+    );
+    const formation = await bootScene([EquivGymScene], 'phase-formation-host');
+    games.push(play, combat, formation);
+    const playScene = play.scene as PlayScene;
+    const combatScene = combat.scene as GymPowerUpsCombat;
+    const formationScene = formation.scene as EquivGymScene;
+    const scenes: Array<PlayScene | GymPowerUpsCombat | EquivGymScene> = [
+      playScene,
+      combatScene,
+      formationScene,
+    ];
+
+    // Same starting state in every scene: ship parked at a clear corner with
+    // one stored P6 auto-activation charge.
+    for (const scene of scenes) {
+      const player = scene.getPlayer()!;
+      player.setPosition(120, 120);
+      (
+        player as unknown as { _movementState: Record<string, unknown> }
+      )._movementState = {
+        ...player.getMovementState(),
+        x: 120,
+        y: 120,
+        vx: 0,
+        vy: 0,
+        facing: 0,
+      };
+      scene.getEffectsRegistry().applyCollect('P6');
+    }
+
+    // Three enemy bullets centred within DANGER_RADIUS (40 px) of the ship.
+    const threats: Array<[number, number]> = [
+      [130, 120],
+      [120, 130],
+      [120, 110],
+    ];
+    for (const [x, y] of threats) {
+      playScene.spawnEnemyBullet(x, y, 0, 0);
+      combatScene.spawnEnemyBullet(x, y, 0, 0);
+    }
+    const formationBullets = (
+      formationScene as unknown as { bullets: EquivBullet[] }
+    ).bullets;
+    for (const [x, y] of threats) {
+      const bullet = new EquivBullet(formationScene);
+      bullet.graphics.setPosition(x, y);
+      formationBullets.push(bullet);
+    }
+
+    for (const scene of scenes) scene.tick(0.016);
+
+    // Every scene auto-activated the phase and consumed the same charge.
+    for (const scene of scenes) {
+      expect(scene.getEffectsRegistry().isPhased).toBe(true);
+      expect(scene.getEffectsRegistry().phaseCharges()).toBe(0);
+    }
+  });
+
+  it('applies the shared Phase Shift juice overlays in every scene while phased', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-juice-play-host',
+    );
+    const combat = await bootScene(
+      [GymPowerUpsCombat],
+      'phase-juice-combat-host',
+    );
+    const formation = await bootScene(
+      [EquivGymScene],
+      'phase-juice-formation-host',
+    );
+    games.push(play, combat, formation);
+    const playScene = play.scene as PlayScene;
+    const combatScene = combat.scene as GymPowerUpsCombat;
+    const formationScene = formation.scene as EquivGymScene;
+    const scenes: Array<PlayScene | GymPowerUpsCombat | EquivGymScene> = [
+      playScene,
+      combatScene,
+      formationScene,
+    ];
+
+    for (const scene of scenes) {
+      const player = scene.getPlayer()!;
+      player.setPosition(120, 120);
+      (
+        player as unknown as { _movementState: Record<string, unknown> }
+      )._movementState = {
+        ...player.getMovementState(),
+        x: 120,
+        y: 120,
+        vx: 0,
+        vy: 0,
+        facing: 0,
+      };
+      scene.getEffectsRegistry().applyCollect('P6');
+    }
+
+    const threats: Array<[number, number]> = [
+      [130, 120],
+      [120, 130],
+      [120, 110],
+    ];
+    for (const [x, y] of threats) {
+      playScene.spawnEnemyBullet(x, y, 0, 0);
+      combatScene.spawnEnemyBullet(x, y, 0, 0);
+    }
+    const formationBullets = (
+      formationScene as unknown as { bullets: EquivBullet[] }
+    ).bullets;
+    for (const [x, y] of threats) {
+      const bullet = new EquivBullet(formationScene);
+      bullet.graphics.setPosition(x, y);
+      formationBullets.push(bullet);
+    }
+
+    for (const scene of scenes) scene.tick(0.016);
+
+    for (const scene of scenes) {
+      expect(scene.getEffectsRegistry().isPhased).toBe(true);
+      const overlays = scene.children.list.filter(
+        (obj) =>
+          (
+            obj as Phaser.GameObjects.GameObject & {
+              getData?: (key: string) => unknown;
+            }
+          ).getData?.('juiceLayer') === 'phaseShift',
+      );
+      expect(overlays.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('plays the Phase Shift cue exactly once when danger auto-triggers (parent AH-0MUIYX1EE008FVS8)', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-sfx-play-host',
+    );
+    games.push(play);
+    const playScene = play.scene as PlayScene;
+    const soundSpy = vi.spyOn(effectsModule, 'playPhaseShiftSound');
+
+    const player = playScene.getPlayer()!;
+    player.setPosition(120, 120);
+    (
+      player as unknown as { _movementState: Record<string, unknown> }
+    )._movementState = {
+      ...player.getMovementState(),
+      x: 120,
+      y: 120,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+    playScene.getEffectsRegistry().applyCollect('P6');
+    playScene.spawnEnemyBullet(130, 120, 0, 0);
+    playScene.spawnEnemyBullet(120, 130, 0, 0);
+    playScene.spawnEnemyBullet(120, 110, 0, 0);
+
+    playScene.tick(0.016);
+
+    expect(playScene.getEffectsRegistry().isPhased).toBe(true);
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    soundSpy.mockRestore();
+  });
+
+  it('plays the Phase Shift cue on a P7 teleport activation (parent AH-0MUIYX1EE008FVS8)', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'phase-teleport-sfx-host',
+    );
+    games.push(play);
+    const playScene = play.scene as PlayScene;
+    const soundSpy = vi.spyOn(effectsModule, 'playPhaseShiftSound');
+
+    playScene.getEffectsRegistry().applyCollect('P7');
+    expect(playScene.triggerTeleport()).toBe(true);
+
+    expect(playScene.getEffectsRegistry().isPhased).toBe(true);
+    expect(soundSpy).toHaveBeenCalledTimes(1);
+    soundSpy.mockRestore();
+  });
 });
 
 // ── Shared power-up drop layer (gap 4, AH-0MUII3CXX0023H24) ─────────
@@ -1365,12 +1556,17 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
     expect(definers).toEqual(['src/utils/movementModel.ts']);
   });
 
-  it('GymPlayer consumes the shared helper and no longer inlines the handlers', () => {
+  it('GymPlayer inherits the shared scheme→input path (no inlined handlers)', () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), 'src/scenes/gym/GymPlayer.ts'),
       'utf8',
     );
-    expect(source).toContain('mapControlInput(');
+    // Re-based onto the shared combat core: input is read by the inherited
+    // `CombatCoreScene._readPlayerInput` (which delegates to
+    // `mapControlInput`), so GymPlayer must not define its own copy nor
+    // inline the legacy handlers.
+    expect(definesMethod(source, '_readPlayerInput')).toBe(false);
+    expect(definesMethod(source, '_readInput')).toBe(false);
     expect(source).not.toContain('FourDirectionalInputHandler');
     expect(source).not.toContain('AsteroidsInputHandler');
   });
@@ -1524,6 +1720,10 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],
+  // F8 (Harvester, AH-0MUI820PM0038HS2): the shared multi-hit kill
+  // finalisation (destruction audio + `onEnemyDestroyed`) is defined once in
+  // the shared core; a scene must not re-implement it.
+  ['finaliseEnemyKill', 'src/scenes/core/CombatScene.ts'],
   ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
   ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
 ];
@@ -1681,5 +1881,129 @@ describe('shared enemy fire — cross-scene equivalence for every archetype (AC2
         expect(gymSpeed, `${key}[${i}] speed`).toBeCloseTo(gameSpeed, 3);
       }
     }
+  });
+});
+
+// ── Shared mineral-seek seam parity (F4, AH-0MUJRVZP2002G8GC) ────────
+
+describe('shared mineral-seek seam — game/gym parity for the Harvester (F4)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the Harvester seeks and absorbs identically in PlayScene and GymEnemies', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'seek-equiv-play-host',
+    );
+    const gym = await bootScene([GymEnemies], 'seek-equiv-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymEnemies;
+
+    // Place a deterministic mineral field and a Harvester in each scene.
+    // Start the Harvester within absorption reach of the nearest mineral so
+    // the same step exercises both seeking and absorption.
+    const playHarvester = new Harvester(playScene, {
+      x: 280,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+    });
+    playScene.registerEnemy(playHarvester as unknown as never, 'harvester');
+    playScene.spawnMineralAt(300, 100);
+    playScene.spawnMineralAt(500, 400);
+
+    // Clear the gym's pre-seeded random field, then mirror the game's two
+    // minerals exactly so the two scenes see an identical field.
+    for (const m of gymScene.getMinerals()) m.destroy();
+    const gymField = gymScene as unknown as { minerals: Mineral[] };
+    gymField.minerals = [
+      new Mineral(gymScene, { x: 300, y: 100 }),
+      new Mineral(gymScene, { x: 500, y: 400 }),
+    ];
+
+    const gymHarvester = new Harvester(gymScene, {
+      x: 280,
+      y: 100,
+      formationOffset: { row: 0, col: 0 },
+    });
+    gymScene.registerDynamicEntity(gymHarvester as never);
+
+    // Advance one deterministic step in each scene (the shared tick).
+    playScene.tick(1);
+    gymScene.tick(1);
+
+    // Identical seek: both steered to the nearest mineral and closed the
+    // same distance (parity of the shared seam from each scene's tick).
+    expect(playHarvester.seekTargetX).toBe(300);
+    expect(gymHarvester.seekTargetX).toBe(300);
+    expect(gymHarvester.seekTargetY).toBe(100);
+    expect(gymHarvester.x).toBeCloseTo(playHarvester.x, 5);
+    expect(gymHarvester.y).toBeCloseTo(playHarvester.y, 5);
+
+    // Identical absorption: both absorbed exactly one mineral through the
+    // shared `collectMinerals` rule, leaving one on each field.
+    expect(playHarvester.mineralCount).toBe(1);
+    expect(gymHarvester.mineralCount).toBe(1);
+    expect(playScene.getMinerals()).toHaveLength(1);
+    expect(gymScene.getMinerals()).toHaveLength(1);
+  });
+});
+
+// ── F8: Harvester health-finalise & mineral-seek seam guards ────────
+
+describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0MUJRW1720037VEX)', () => {
+  const PRODUCTION = (rel: string) =>
+    fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
+
+  it('defines the shared multi-hit kill finalisation exactly once (CombatScene)', () => {
+    const definers = relativeProductionDefiners((source) =>
+      definesMethod(source, 'finaliseEnemyKill'),
+    );
+    expect(definers).toEqual(['src/scenes/core/CombatScene.ts']);
+  });
+
+  it('defines the shared entity health/takeDamage in BaseEnemy only', () => {
+    const definers = relativeProductionDefiners((source) =>
+      definesMethod(source, 'takeDamage'),
+    );
+    // Boss intentionally owns its own phased takeDamage; BaseEnemy provides
+    // the shared regular-enemy implementation (Harvester inherits it).
+    expect(definers).toContain('src/entities/BaseEnemy.ts');
+    expect(definers).toContain('src/entities/Boss.ts');
+    expect(definers).not.toContain('src/entities/Harvester.ts');
+  });
+
+  it('defines the mineral-seek seam on the Harvester only (no per-scene copy)', () => {
+    const entityDefiners = relativeProductionDefiners((source) =>
+      definesMethod(source, 'setSeekTargets'),
+    );
+    // The entity implements the seam; no scene defines its own version.
+    expect(entityDefiners).toEqual(['src/entities/Harvester.ts']);
+  });
+
+  it('both PlayScene and the gym tick invoke the shared seek seam', () => {
+    // The seam is *called* by both scenes and never re-implemented, so the
+    // game and gyms cannot diverge on seeking. PlayScene guards with a truthy
+    // check; the gym uses optional chaining.
+    expect(PRODUCTION('src/scenes/PlayScene.ts')).toContain(
+      'setSeekTargets(this.minerals)',
+    );
+    expect(
+      PRODUCTION('src/scenes/gym/core/GymFormationScene.ts'),
+    ).toContain('setSeekTargets?.(this.minerals)');
+  });
+
+  it('the Harvester is the only production definer of the health/finalise consumer path', () => {
+    // Sanity: the Harvester extends BaseEnemy (inheriting health/takeDamage)
+    // rather than re-implementing health accounting.
+    expect(PRODUCTION('src/entities/Harvester.ts')).toContain(
+      'extends BaseEnemy',
+    );
+    expect(
+      definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
+    ).toBe(false);
   });
 });

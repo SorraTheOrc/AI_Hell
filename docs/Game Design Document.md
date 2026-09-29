@@ -91,13 +91,13 @@ the game-over screen (the in-game pause menu follows the same model).
 
 ### 2.3 Combat Mechanics
 
-- **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). The fire rate and shot pattern depend on the **active weapons** (§4.4): the permanent **Cannon** fires a single bullet straight ahead every ~400 ms; weapon power-ups (Spread/Dual/Rapid) are **cumulative and timed** — each collected power-up is **added** to the active set for **10 seconds** (independent countdown per weapon) and **all** active weapons fire simultaneously, each at its own rate, before the timed ones silently expire (Reset clears them instantly, leaving only the Cannon).
+- **Auto-fire**: The player ship fires continuously without any input (GDD §2.3; implemented in the GymWeapons gym, `src/scenes/gym/GymWeapons.ts`). Bullets fire in the direction of travel — the current velocity heading — falling back to the **most recent** non-zero heading when the ship is stationary (default before any movement: right / 0°). Fire is **globally quantised to a silent 80 BPM beat grid** (AH-0MUAYB8EH005RJ8B): every active weapon's shots land on an exact subdivision of the beat, all simultaneously active weapons are **phase-locked** to the same grid, and a weapon collected mid-beat fires its first shot on the next grid tick. The default subdivisions are **Cannon 2/beat (375 ms)**, **Spread 1/beat (750 ms)**, **Dual 1/beat (750 ms)** and **Rapid 6/beat (125 ms)**; the BPM and the per-weapon subdivisions are configurable through the game-rules config (`src/core/rules.ts`: `beatBpm`, `weaponSubdivisions`). Weapon power-ups (Spread/Dual/Rapid) are **cumulative and timed** — each collected power-up is **added** to the active set for **10 seconds** (independent countdown per weapon) and all active weapons fire on the shared grid before the timed ones silently expire (Reset clears them instantly, leaving only the Cannon).
 - **Bullet range and wrap-around**: Every bullet — player and enemy — **wraps across all four screen edges** using the same classic Asteroids model as the player ship and asteroids (leave left → reappear right, etc.). A bullet is **never** removed merely for leaving the screen. Instead, each bullet type has its own **lifetime in seconds** (effective range = `bulletSpeed × lifetime`, §4.4); a bullet is destroyed only once its lifetime elapses. Wrapping is **positional only** — like the ship and asteroids, bullets do not collide across the seam.
 - **Collision model**: The player loses **one life** when hit by **any** object — an enemy body or an enemy-fired bullet. Hits never deal partial damage; there is **no player health bar**. The player starts with 3 lives (§3.1); collecting **P8 – Extra Life** grants +1 life (up to a maximum of 5). A hit costs one life and the run continues until the lives run out.
   - **Early levels (1–3)**: Enemies are the primary collision threat. Flying into an enemy costs the player one life (same effect as being hit by a bullet). The enemies themselves **are** the bullets — their formation movements are the hazard.
   - **Later levels (4–5)**: Enemies additionally fire projectiles, adding a second layer of threat. Being hit by a projectile also costs one life. The enemies remain as collision threats as well.
   - **Boss level**: Boss fires complex bullet patterns; enemies may also fire. Bullet hits cost one life, exactly as on other levels.
-- **Enemy health**: All regular enemies (E1–E5) are destroyed by a single player bullet hit (1 HP). Only the Boss (§4.3) is multi-hit via its 4-phase health bar. This means P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
+- **Enemy health**: Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**). Enemies E1–E6 are 1 HP and are destroyed by a single player bullet hit; the **E7 Harvester** (§4.1) has **5 HP** and survives five hits. The Boss (§4.3) remains multi-hit via its 4-phase health bar. P4 Bomb (see §4.4) does not deal damage to enemies — it clears on-screen enemy bullets only.
 - **Power-ups**: Dropped by destroyed enemies and collected by flying over them (§4.4). Most provide **temporary** abilities; some are permanent or stored — **P7 Teleport** (stored, activated with S or ↓), **P8 Extra Life** (permanent +1 life), and **P9 Magnet** (permanent attraction). **S key or ↓** activates the teleport power-up while the player holds at least one Teleport power-up.
 - **Audio feedback**: All key game events produce immediate, distinct audio cues (see §7.3). This includes player fire, enemy destruction, power-up collection, player hits, and key events (boss entrance, wave spawns, phase transitions) which are announced by an advance audio cue with ≥ 500 ms lead time before the visual event.
 
@@ -116,19 +116,45 @@ This creates a unique gameplay tension: the player must manage both their own sh
 
 #### 2.5.1 Optional sequenced (data-driven) campaigns
 
-The fire rules above describe the shipped campaign, but the campaign can
-optionally be **generated at runtime** from a target difficulty curve. When the
-opt-in `sequencedWavesEnabled` rule is enabled (default **off**), `PlayScene`
-builds the level list from `src/data/difficulty-curves.csv` through the runtime
-auto-sequencer (`src/core/difficultySequencer.ts`) via
-`buildSequencedLevels()` (`src/waves/sequencedLevels.ts`): one curve per
-configured level, the curve length sets that level's wave count, and the level
-name comes from the config. The fire rule is derived from the **1-based level
-number** — configured levels 1–3 do not fire and levels 4+ do — so generated
-campaigns obey §2.4/§2.5. With the toggle off (or when the curve config is
-empty, the candidate pool is empty, or generation fails) the scripted `LEVELS`
-campaign ships unchanged. The boss still triggers after the final configured
-level.
+The fire rules above describe the hand-authored campaign, but the shipped
+campaign is **generated at runtime** from a target difficulty curve. With the
+`sequencedWavesEnabled` rule on (default **on**, AH-0MUJSUTLA006Q8E1),
+`PlayScene` builds the level list from `src/data/difficulty-curves.csv` through
+the runtime auto-sequencer (`src/core/difficultySequencer.ts`) via
+`buildSequencedLevels()` (`src/waves/sequencedLevels.ts`). Persisting
+`sequencedWavesEnabled: false` opts back into the static `LEVELS` campaign.
+
+Each wave declares a `generation` mode (`curve` | `fixed` | `dynamic`,
+default `curve`) and the three modes may be mixed freely within one level
+(AH-0MUJSUQD8003FSUT):
+
+- **`curve`** — the wave comes from the sequencer, one curve per configured
+  level, with the curve length setting that level's wave count and the level
+  name read from the config. The fire rule is derived from the **1-based level
+  number** — `curve` and `dynamic` levels 1–3 do not fire and levels 4+ do — so
+  generated campaigns obey §2.4/§2.5.
+- **`fixed`** — the wave uses the hand-authored static `LEVELS` wave at the
+  same `(level, wave)` verbatim (its own fire flag) and is never passed to the
+  sequencer, so designers can hand-tune onboarding and set-piece waves while
+  the sequencer ramps the rest. Its `targetDifficulty` is ignored; a `fixed`
+  wave with no static counterpart falls back to `curve` generation for that
+  wave.
+- **`dynamic`** — the wave is rebuilt from its curve at run start, seeded from
+  the run's seed, so successive runs differ while a given seed reproduces
+  exactly. The seed perturbs the wave's target before sequencing; the saved
+  curve is unchanged. A legacy per-level `source` column
+  (`generated` | `scripted`) is still read when `generation` is absent, mapping
+  `generated` → `curve` and `scripted` → `fixed`.
+
+The merged campaign always starts from the static `LEVELS` skeleton, so levels
+1–5 are present unless a configured level overrides one; a configured level
+numbered beyond the static five is appended, ascending. Fallback is **per
+level**: a level with an empty/malformed curve (or a sequencer failure) keeps
+its static `LEVELS` definition when one exists and is skipped otherwise; the
+whole campaign falls back to static `LEVELS` only when the curve config or
+candidate pool is empty, or the merged result would be empty. With the toggle
+off, the scripted `LEVELS` campaign ships unchanged. The boss still triggers
+after the final level.
 
 ---
 
@@ -136,9 +162,9 @@ level.
 
 The following rules govern how enemy entities interact with each other and with bullets. These rules are universal across all levels and enemy types.
 
-- **Enemy pass-through**: Enemies **do not collide with or block** other enemies at any time. All enemy types pass freely through one another regardless of formation, wave, or level. This applies to all enemy types (E1–E5) and all wave configurations (Line, V-Formation, Circle, Wall, Dive Bomb, Orbital). There is no special "shielding" or "blocking" behavior between enemy types.
+- **Enemy pass-through**: Enemies **do not collide with or block** other enemies at any time. All enemy types pass freely through one another regardless of formation, wave, or level. This applies to all enemy types (E1–E7) and all wave configurations (Line, V-Formation, Circle, Wall, Dive Bomb, Orbital). There is no special "shielding" or "blocking" behavior between enemy types.
 
-- **Bullet–enemy interaction**: A single player bullet is **consumed** (destroyed) when it hits and destroys an enemy. The first enemy hit by a bullet is destroyed; the bullet does not pass through. There is no multi-hit bullet, no shield layer, and no piercing behavior. Each enemy requires exactly one bullet to destroy (see also §4.1 for enemy health).
+- **Bullet–enemy interaction**: A player bullet is **consumed** (destroyed) when it hits an enemy. The first enemy hit by a bullet takes the hit; the bullet does not pass through. There is no multi-hit bullet, no shield layer, and no piercing behaviour. A 1-HP enemy is destroyed by the bullet; a multi-hit enemy (E7 Harvester) loses one hit point per bullet and the **fifth** hit destroys it (see also §4.1 for enemy health).
 
 - **The Wall wave (density challenge)**: Level 3's Wall wave is a **density challenge, not a blocking mechanic**. The Wall consists of a dense horizontal line of enemies that advances slowly. Enemies in the Wall pass through each other freely. To create a gap through which the player can advance or through which bullets can reach enemies behind the Wall, the player must destroy each Wall enemy individually — one bullet per enemy. There is no special "Wall shielding" that blocks bullets from reaching enemies behind the line; bullets simply pass through gaps created by destroyed enemies.
 
@@ -171,13 +197,17 @@ The following rules govern how enemy entities interact with each other and with 
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
 
-> **Optional sequenced campaigns (AH-0MUH6LEYY0054E63).** The table above
-describes the shipped scripted campaign. With the opt-in
-`sequencedWavesEnabled` game rule enabled (default **off**), the level count,
-level names and per-wave enemy composition are generated from
-`src/data/difficulty-curves.csv` instead (see §2.5.1); the scripted campaign
-remains the default and the fallback, and the boss still triggers after the
-final configured level.
+> **Default sequenced campaigns (AH-0MUH6LEYY0054E63; per-wave modes
+> AH-0MUJSUQD8003FSUT; default-on AH-0MUJSUTLA006Q8E1).** The table above
+> describes the hand-authored static campaign, which is now the opt-out. With
+> the `sequencedWavesEnabled` game rule on (default **on**), each wave is either
+> generated from `src/data/difficulty-curves.csv` (`curve`), kept verbatim from
+> `LEVELS` (`fixed`) or rebuilt at run start from a seeded curve (`dynamic`),
+> selected by the config's per-wave `generation` column (see §2.5.1). The
+> shipped default campaign mixes all three modes (levels 1–3 `fixed`, levels
+> 4–5 `curve` with a `dynamic` wave). The static skeleton (levels 1–5) is always
+> present; the static campaign is the fallback, and the boss still triggers
+> after the final level.
 
 ---
 
@@ -193,7 +223,7 @@ final configured level.
 - **Fires**: No (Levels 1–3); yes, aimed shot (Level 4+).
 
 #### E2 — Diver
-- **Behavior**: Dives straight down toward the player (x locked at its formation slot — a vertical trajectory), then returns to its current formation slot. While a Diver is away from the formation (diving, pausing or returning), the rest of its cluster holds position — the formation drift is frozen — and resumes once every Diver has rejoined.
+- **Behavior**: Dives diagonally toward the player's position snapshotted at dive start (a quadratic-bezier parabolic arc in which both x and y follow the curve — no x-lock; AH-0MTGBOKLC006N8UX), pauses for 500 ms at the attack end, then re-forms. There is **no return target**: when the pause ends the whole enemy unit re-anchors around the attack-end location (the player position snapshotted at dive start), with every other unit shifting by the same delta so the grid's relative offsets are preserved. The **Divers then glide** to their re-anchored slots over a short bounded duration (~0.32 s, `FORMATION_GLIDE_SECONDS`) — each Diver eases from its current position to the live (drifting) slot rather than teleporting, landing exactly on the slot when the glide completes. Non-Diver formation members (Scouts, Tanks, Phasers, Swarms) **snap directly** to their shifted slots, so only the Divers animate the regroup. The formation drift keeps advancing throughout the attack and the glide (AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB).
 - **Appearance**: Medium, dart-shaped neon entity.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.
@@ -232,9 +262,11 @@ final configured level.
 - **Splitting**: destroying a `large` asteroid spawns exactly **two** `medium`
   children at its position; a `medium` spawns two `small`; a `small` destroys
   cleanly. Children move in directions different from the parent and from each
-  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies,
-  and every spawned child counts toward the wave's alive target (dynamic
-  spawn registration in `WaveManager`).
+  other. The full chain from one large is 1 + 2 + 4 = **7** destroyed enemies.
+  Asteroids (including split children) are **not** registered with the
+  `WaveManager` and do **not** count toward a wave's alive target: a wave
+  clears once its **enemy ships** are destroyed, regardless of how many
+  asteroids remain (AH-0MUJM746P000QAEO).
 - **Wave placement — random offscreen spawner**: Asteroids are **not** a
   fixed formation group. Every **regular wave** (Levels 1–5) plans a set of
   asteroid spawns with the pure planner `src/waves/AsteroidSpawner.ts`
@@ -255,9 +287,39 @@ final configured level.
   enemy-body → lose-one-life model).
 - **Fires**: Never.
 
+#### E7 — Harvester
+- **Behavior**: A large, slow **mineral-denial roamer**. It always steers toward
+  the **nearest live mineral anywhere on the field** at its slow speed and
+  **absorbs** it on overlap through the shared enemy-absorption rule
+  (`collectMinerals`), incrementing its tracked mineral count. With no mineral
+  present it holds station. It can never take minerals from the player's hold.
+- **Appearance**: Large (≈ 44 px half-size), slow (≈ 24 px/s) violet hexagonal
+  "collector" body — bigger than the Tank and easy to hit.
+- **Health**: **5 HP** — survives five player bullets; the fifth hit destroys it
+  (destruction audio, ≈ 400 score, wave accounting and the 25–50 % mineral
+  re-drop all fire exactly once on the killing blow). Each **non-lethal** hit
+  consumes the bullet and spawns the shared bullet-impact flash at the point of
+  contact, so the player can read that the hit registered even though the body
+  does not explode.
+- **Spawn**: a **rare roaming spawn** in later levels (Levels 4–5) only, via the
+  pure planner `src/waves/HarvesterSpawner.ts`; at most one per qualifying wave.
+  Every Harvester spawn is registered with the `WaveManager` so the wave neither
+  clears early nor stalls. Levels 1–3 and the boss encounter never spawn one.
+  It is deliberately excluded from the difficulty auto-sequencer's candidate
+  pool (`defaultCandidatePool`).
+- **Threat level**: Medium–High (resource denial; durable, but never fires).
+- **Fires**: **Never** — `shootEnabled` is a no-op and its effective shot
+  pattern is `none`.
+
 ### 4.2 Wave / Formation Structures
 
-Each level consists of one or more **waves** of enemies. A wave is a set of enemies that spawn together, execute their pattern, and are cleared when all are destroyed.
+Each level consists of one or more **waves** of enemies. A wave is a set of
+enemy ships that spawn together and execute their pattern; the wave is
+**cleared when its enemy ships are destroyed**. Asteroids do **not** gate that
+clear: surviving asteroids persist in the field across wave and level
+transitions (still drifting, wrapping, rotating and shootable), as do minerals
+already on the field. Only the boss encounter removes carried-over asteroids,
+on entry (AH-0MUJM746P000QAEO).
 
 | Wave Type | Description | Levels |
 |-----------|-------------|--------|
@@ -272,8 +334,9 @@ Each level consists of one or more **waves** of enemies. A wave is a set of enem
 > **Asteroids are not a wave structure.** Since the random offscreen spawner
 > landed, no wave declares a fixed asteroid group: every regular wave
 > additionally spawns random offscreen asteroids (see §4.1 E6), while the boss
-> encounter spawns none. The rows above describe the **formation** enemies
-> only.
+> encounter spawns none. The rows above describe the **enemy ships** only.
+> Asteroids do not gate wave completion and survive wave/level transitions;
+> minerals already on the field persist across them too (AH-0MUJM746P000QAEO).
 
 ### 4.3 Boss Design
 
@@ -295,32 +358,34 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 | ID | Name | Effect | Icon Suggestion |
 |----|------|--------|-----------------|
 | P1 | **Spread Shot** | Fires a 3-bullet fan (-30°/0°/+30° relative to heading) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Triple-line neon arc |
-| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (~125 ms) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Stacked dots (stream of bullets) |
+| P2 | **Rapid Fire** | Fires single bullets at a markedly higher rate (**6/beat** ≈ 125 ms at 80 BPM) for **10 seconds** (timed, cumulative — added to the active set alongside other weapons) | Stacked dots (stream of bullets) |
 | P3 | **Shield** | Absorbs one hit; visible shield bubble for 15 seconds | Shield outline |
 | P4 | **Bomb** | Clears all on-screen enemy bullets (does not damage enemies — they are 1 HP) | Exploding circle |
 | P5 | **Speed Boost** | Increases movement speed and rate of fire by 50% for 10 seconds | Arrow with motion lines |
-| P6 | **Phase Shift** | Player becomes briefly intangible (passes through enemies and bullets) for 3 seconds | Ghostly outline |
-| P7 | **Teleport** *(collectable)* | Press S or ↓ to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (3-second intangibility) | Teleport symbol (portal/ripple) |
+| P6 | **Phase Shift** | **Automatic** defensive pass-through (parent AH-0MUIYX1EE008FVS8). Collecting P6 stores **one auto-activation charge** (the hold-full reward makes activations **unlimited**); when **3 or more hostile bodies/bullets** close within **40 px** (`2 × ship size`) of the ship, the ship phases out for **1.5 s** — passing through enemies and bullets and **unable to collect minerals** while phased (power-up/weapon drops remain collectable). After expiry the effect re-arms only once the danger has dropped below the threshold **and** a **~0.5 s re-arm cooldown** has elapsed, so a permanent P6 is powerful but not perpetual invincibility. | Ghostly outline |
+| P7 | **Teleport** *(collectable)* | Press S or ↓ to teleport the player in the direction of travel to the nearest safe spot (free of enemies and bullets, clamped to screen bounds); if no safe spot exists, teleport to nearest on-screen position; each collection grants one use (consumed on activation, stacks FIFO); on arrival, player gains P6 Phase Shift effect (1.5-second intangibility) | Teleport symbol (portal/ripple) |
 | P8 | **Extra Life** *(passive, rare)* | Collecting this power-up grants **+1 life** immediately (applied passively, no activation required). Lives are capped at **5 total** — excess pickups have no effect. Drops at **~5% chance per enemy** (significantly rarer than standard power-ups at ~15–20%). | Heart outline with neon glow |
 | P9 | **Magnet** *(permanent, passive)* | Collecting this power-up permanently attracts **all power-up drops on screen** — including rare types such as P8 Extra Life — toward the player ship, making pickups easier to grab during dense bullet patterns. It is a **permanent** effect for the rest of the run (no activation key required, nothing is consumed), unlike the timed P1–P6 effects. Collecting additional Magnets **stacks**, increasing the attraction radius by **+50% per stack**, starting from a **base radius of 2× the player ship size**, up to a **cap of 5 stacks**. The attraction speed is **slower than the ship's movement speed**, so the player must still move toward the power-up — or remain stationary for it to drift in — to collect it. | Horseshoe magnet with neon glow |
 
-> **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E5) are 1 HP and cannot be damaged by Bomb. It clears all on-screen enemy bullets only.
+> **P4 (Bomb)** is only available on levels with enemy-fired bullets (Levels 4–5 and Boss) since regular enemies (E1–E7) cannot be damaged by Bomb (E1–E6 are 1 HP, E7 is 5 HP). It clears all on-screen enemy bullets only.
 
-> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when S or ↓ is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (3-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot.
+> **P7 (Teleport)** is a collectable power-up like P1–P6, dropped by enemies at ~15–20% chance. Each collected Teleport grants one use, consumed when S or ↓ is pressed. Multiple Teleports stack (FIFO — earliest collected used first). Upon teleporting, the player gains the P6 Phase Shift effect (1.5-second intangibility, passing through enemies and bullets) to guarantee safety at the landing spot; this direct activation does **not** consume a P6 auto-activation charge (producer Q6).
 
 > **P9 (Magnet)** is a **permanent, passive** power-up dropped at the standard ~15–20% chance. It requires no activation key and is never consumed: each pickup permanently increases the attraction radius for the rest of the run (base radius **2× the player ship size**, **+50% per stack**, cap **5 stacks**). It attracts **all power-up drops on screen** (including P8 Extra Life) at a speed **slower than the ship's movement speed**, so the player still needs to move — or hold position — to collect drifted drops.
 
 > **P1 / P2 (Weapon Power-Ups) — Cumulative and timed (10 s):** Weapon power-ups (P1 Spread Shot, P2 Rapid Fire, plus Dual) are **cumulative and timed** — collecting one **adds** it to the ship's active set for **10 seconds**, with its own independent countdown from the moment of collection (re-collecting resets only that weapon's timer). All active weapons fire simultaneously, each at its own fire rate; the **Cannon** is permanent and never times out. A fourth power-up drop, **Reset**, clears **all** timed weapons, leaving only the Cannon.
 
+> **Beat-aligned fire grid (AH-0MUAYB8EH005RJ8B):** Player fire is globally quantised to a **silent internal 80 BPM beat** (no audible metronome and no background music — GDD §7.3 keeps music out of MVP scope). Every weapon's fire interval is an exact subdivision of the beat — Cannon **2/beat (375 ms)**, Spread **1/beat (750 ms)**, Dual **1/beat (750 ms)**, Rapid **6/beat (125 ms)** — so every shot lands on a grid tick (`beatPeriodMs % fireRateMs === 0`) and all simultaneously active weapons stay phase-locked. A weapon collected mid-beat fires its first shot on the next tick. The beat clock lives in the shared combat core (`CombatCoreScene.beatClock`, `src/utils/beat.ts`) and is anchored at scene/player start, advancing with game time (it pauses with the game). BPM and the per-weapon subdivisions are configurable through the game-rules config (`src/core/rules.ts`: `beatBpm` default **80**, `weaponSubdivisions` default `{cannon: 2, spread: 1, dual: 1, rapid: 6}`), persisted in localStorage like the other rules; each fire rate is derived as `60000 / beatBpm / subdivision`, so the catalogue-wide on-grid invariant holds for any configuration. Enemy fire timing is unchanged. Coverage: `src/utils/beat.test.ts`, `src/utils/weapons.test.ts` (catalogue invariant), `src/entities/Player.test.ts` and the scene-level grid tests.
+
 > **Bullet range — per-type lifetime + four-edge wrap:** All bullets (player and enemy) **wrap around all four screen edges** (the same classic Asteroids model as the player ship and asteroids) and are **never culled for leaving the screen**. Each bullet type is instead destroyed once its own **lifetime in seconds** elapses, so its **effective range is `bulletSpeed × lifetime`**. Player-weapon lifetimes live on `WeaponDefinition` (`src/utils/weapons.ts`): Cannon **1.5 s** (~525 px at 350 px/s), Spread **1.4 s** (~490 px), Dual **1.4 s** (~490 px), Rapid **0.75 s** (~262 px). Enemy bullet lifetimes live on `EnemyConfig` (`src/core/enemyConfig.ts`) and are overridable through the existing enemy-config / localStorage plumbing: Scout **1.5 s** (200 px/s ≈ 300 px), Diver **1.5 s** (220 px/s ≈ 330 px), Tank **2.0 s** (150 px/s ≈ 300 px), Phaser **1.75 s** (180 px/s ≈ 315 px), Swarm **1.5 s** (180 px/s ≈ 270 px), Boss Swarm **2.0 s** (160 px/s ≈ 320 px). The Central AI boss uses the same 2.0 s default. Because wrapping keeps more bullets alive, the lifetime caps on-screen density; the values above are the shipped tuning baseline (halved from the original proposal after review, AH-0MU960UTE001PTV0) and are safe to adjust without any architectural change. A bullet whose lifetime elapses is **destroyed and removed from the display list** — it never lingers on screen as a stationary projectile.
 
-> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), per-weapon fire cooldowns (`tryFire` returns every active weapon that fired this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, stacked dots for Rapid, return/undo arrow for Reset.
+> **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), and **phase-locked beat scheduling** (`getBeatClock`/`getLastShotTime`, `tryFire` returns every active weapon whose next beat tick has elapsed this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, stacked dots for Rapid, return/undo arrow for Reset.
 
-> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (3 s intangibility), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. P7 teleport runs through the single shared `CombatScene.triggerTeleport` path — the gym supplies only its enemy list and hit radii through the `getEnemyEntities`/`getTeleportEnemyHitRadius`/`getTeleportBulletHitRadius` hooks, so game and gym cannot diverge on the teleport safety rule (gap 7, AH-0MUII3EPU0039R5O). `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers and P7 stacks from the shared `EffectsRegistry`).
+> **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **P3 Shield (15 s, absorbs one hit), P4 Bomb (instant clear of enemy bullets, no enemy damage), P6 Phase Shift (charge-based, auto-triggered 1.5 s pass-through), and P7 Teleport (stored FIFO stacks, S/↓ → nearest safe spot in direction of travel + 1.5 s P6 on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **P3 → P4 → P6 → P7** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. S or ↓ consumes one P7 stack; hit response respects P6 pass-through > P3 shield pop > unshielded hit + brief invulnerability blink. P7 teleport runs through the single shared `CombatScene.triggerTeleport` path — the gym supplies only its enemy list and hit radii through the `getEnemyEntities`/`getTeleportEnemyHitRadius`/`getTeleportBulletHitRadius` hooks, so game and gym cannot diverge on the teleport safety rule (gap 7, AH-0MUII3EPU0039R5O). `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads P3/P6 timers, P6 auto-activation charges and P7 stacks from the shared `EffectsRegistry`).
 
 > **Implemented in the combat formation gyms (§6.4, `src/scenes/gym/GymEnemies.ts` / `src/scenes/gym/GymBoss.ts`, AH-0MU3VOQKH005YOBH):** From here the enemy-bearing formation gyms run a **shared opt-in power-up layer** in `GymFormationScene`: a `WeightedRandomSpawner` over **the full drop pool — P3–P9 power-ups plus the weapon drops (Spread → Dual, Rapid, Reset)** seeded from the game-rules config (`src/core/rules.ts`), a `RandomAvoidingPlacement` strategy (`src/powerups/placement.ts`) that avoids live enemy bodies and the player, **one drop on screen at a time** on the configured interval (default **12.5 s**), fly-over collection (≥ 3 % scale; the ship hull collects a drop on first contact with its visible bubble ring — `POWER_UP_DROP_SIZE × POWER_UP_BUBBLE_RADIUS_FACTOR × scale`, 32.4 px at full scale) applied through the shared `EffectsRegistry`, and the standalone HUD with the lives counter visible (one row per active effect, plus one row per equipped weapon). The §4.4 rarity guidance is encoded as **relative weights** — standard power-up IDs (P3–P7, P9) default to **4** and **P8 Extra Life** to **1**, while each weapon drop (spread/dual/rapid/reset) defaults to **2** so weapons appear alongside standard effects without dominating them; the existing `WeightedRandomSpawner` normalises them internally. Collecting a weapon drop equips it through the registry for 10 s (independent countdown per weapon); the **Reset** drop clears every active weapon. A **live spawn-interval slider** (`src/utils/gymPowerUpControl.ts`) tunes the cadence of the running scene and persists the value through the rules config, so the interval is no longer a compile-time constant.
 
-> **Shared P3/P6 hit-gating in the formation gyms (AH-0MUHM66ES0027QQV):** Collecting a dropped **P3 Shield** or **P6 Phase Shift** in a formation gym now has the **same defensive effect as in `PlayScene`**: the gating lives once in the shared `CombatScene` (`isPlayerPhased()` reads `getEffectsRegistry().isPhased`; `tryAbsorbPlayerHit()` consumes one shield, runs the `onShieldAbsorbed()` cue seam, starts the shared invulnerability window and reports the hit absorbed). `GymFormationScene` and its `GymEnemies`/`GymBoss`/`GymMinerals` subclasses inherit it — a gym scene must **not** re-implement the hooks. The P3 shield bubble and P6 phase ghost are drawn through the shared `CombatEffectVisuals` helper, so the enemy gym looks identical to the shipped game and the combat gym.
+> **Shared P3/P6 hit-gating in the formation gyms (AH-0MUHM66ES0027QQV):** Collecting a dropped **P3 Shield** or **P6 Phase Shift** in a formation gym has the **same defensive effect as in `PlayScene`**: the gating lives once in the shared `CombatScene` (`isPlayerPhased()` reads `getEffectsRegistry().isPhased`; `tryAbsorbPlayerHit()` consumes one shield, runs the `onShieldAbsorbed()` cue seam, starts the shared invulnerability window and reports the hit absorbed). Since the automatic Phase Shift change (parent AH-0MUIYX1EE008FVS8) a collected P6 stores an auto-activation charge and the shared per-frame danger feed (`CombatScene._updatePhaseShiftAutoTrigger`, wired into `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat` immediately before `_handleCollisions`) triggers the 1.5 s pass-through in every scene; the hit-gating hooks themselves are unchanged. `GymFormationScene` and its `GymEnemies`/`GymBoss`/`GymMinerals` subclasses inherit it — a gym scene must **not** re-implement the hooks. The P3 shield bubble and P6 phase ghost are drawn through the shared `CombatEffectVisuals` helper, and the Phase Shift screen-wide juice through `src/vfx/phaseShiftJuice.ts`, so the enemy gym looks identical to the shipped game and the combat gym.
 
 > **Collection feedback — pop SFX + absorb VFX (AH-0MUAYB3OU0087H9W):** Every collected drop — power-up or weapon — plays the generic percussive pop (`playPowerUpCollectPopSound()` in `src/audio/effects.ts`) alongside its existing per-type pickup cue, and is visibly "sucked into the ship" by a shared absorb animation (`src/powerups/collectAnimation.ts`): over ≤ 0.3 s the drop's position converges on the ship's world position, its scale shrinks to zero, and its shape shears/rotates toward the hull before its `Graphics` is destroyed. One generic treatment is used for all drop types; the VFX is cosmetic only and never delays the gameplay effect (registry/lives/weapon updates, P4 bullet clear), which fires immediately on overlap. Wired into `PlayScene`, the shared `GymFormationScene` (covering `GymEnemies`/`GymBoss`), and the legacy `GymPowerUpsUtility`/`GymPowerUpsCombat`/`GymWeapons` scenes so the game and gyms never diverge.
 
@@ -328,17 +393,17 @@ The player collects power-ups dropped by destroyed enemies (random chance, ~15�
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 
-Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through.
+Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral** — a small, stationary gold dot that persists until collected. Minerals are collected by flying the player ship over them, or absorbed by a **non-asteroid enemy** that overlaps them (asteroids are inert to minerals). Neither contact causes damage, and bullets pass straight through. The **E7 Harvester** (§4.1) is the one enemy that **actively seeks** the nearest live mineral rather than absorbing only what it happens to overlap; it steers toward it and absorbs it through the same shared rule, but it cannot take minerals from the player's hold.
 
 - **Dropping**: each destroyed small asteroid drops one mineral; large/medium asteroids drop none (their small split children do). An enemy that absorbed minerals **re-drops 25–50 %** (configurable) of its total as individual minerals scattered at its explosion site when destroyed, never exceeding the amount collected. The rule is implemented **once** in the shared helper `src/scenes/core/mineralKillDrops.ts` (`resolveMineralKillDrops`, plus the shared scatter maths in `src/entities/Mineral.ts`) and consumed by **both** `PlayScene` and `GymFormationScene`, so the game and every formation gym (`GymMinerals`, the `GymEnemies` asteroid row, …) drop identically and cannot drift apart.
 - **Collection**: the pickup/absorption pass (player collects, non-asteroid enemy absorbs, asteroids inert) is implemented **once** in `src/scenes/core/mineralLayer.ts` (`collectMinerals`) and called by `PlayScene` and `GymFormationScene`, so the two scenes can no longer run divergent collection loops.
-- **Ship's hold**: collected minerals fill a run-scoped hold modelled by the shared **`MineralHold`** (`src/core/mineralHold.ts`), capacity default **20** (configurable) and pick-up amount default **1**. `GameState` (game) and `GymFormationScene` (every formation gym) both hold this one model, so the gym adopts the game's **overflow-carry** semantics (resolving the hold restores `collected − capacity`, never 0 — the gym previously reset to 0). The hold is shown on the HUD as a fixed-length, hollow-outlined bar that fills proportionally from empty to full (`src/ui/HUD.ts`), resets on `GameState.startGame()`, and is never written to the leaderboard.
+- **Ship's hold**: collected minerals fill a run-scoped hold modelled by the shared **`MineralHold`** (`src/core/mineralHold.ts`). The **first** hold fills at **5** minerals (configurable) and each hold-full resolution **doubles** the next requirement — `capacity(n) = firstHoldCapacity × growthMultiplier^(n−1)` → **5, 10, 20, 40, …** — so early power-ups are earned quickly while later ones ramp up (growth is multiplicative, and unbounded by default). Pick-up amount defaults to **1**. `GameState` (game) and `GymFormationScene` (every formation gym) both hold this one model, so the gym adopts the game's **overflow-carry** semantics (resolving the hold restores `collected − capacity`, clamped to the new capacity, never 0 — the gym previously reset to 0) and the same progression. The hold is shown on the HUD as a bar that fills proportionally to the **current** capacity (`src/ui/HUD.ts`), resets to the first-hold capacity on `GameState.startGame()`, and is never written to the leaderboard.
 - **Hold full → power-up choice**: when the hold reaches capacity the game **pauses at the SceneManager level** and a modal overlay (`src/scenes/MineralChoiceScene.ts`) offers **three distinct** power-up options. The overlay knows nothing about its launcher: its only selection contract is an optional `onSelect(index, option)` callback, supplied by `PlayScene` and by every gym. The options come from a **pluggable strategy** (`src/powerups/choice.ts`); the default draws uniformly at random without replacement from the full drop pool (**P3–P9 plus Spread/Dual/Rapid**) and degrades gracefully when the pool has fewer than three entries, and the launcher always passes the exact options it will apply.
 - **Permanent pick**: the chosen option is applied to the player **permanently for the current run** via the shared `applyMineralChoiceReward` helper (also in `src/scenes/core/mineralLayer.ts`), so a choice grants the same effect in the game and in every gym — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). Permanence is scoped to the run and cleared on reset/restart.
-- **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (20), `mineralRedropFractionMin`/`Max` (0.25/0.5).
+- **Tunables** (`src/core/rules.ts`): `mineralCollectAmount` (default 1), `mineralHoldCapacity` (**first-hold** capacity, default 5), `mineralHoldGrowthMultiplier` (default 2), `mineralRedropFractionMin`/`Max` (0.25/0.5). Persisted rules are schema-versioned; version-1 configs (which stored a *fixed* capacity) migrate to the new first-hold defaults so the progression applies.
 - **Gym**: the asteroids-only `GymMinerals` gym (§6.4) demonstrates the whole loop; every formation gym also seeds 100 random minerals on create.
 
-> **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — every launcher (`PlayScene` and each formation gym) passes its stored `options` plus an `onSelect` callback to the single `MineralChoiceScene` contract. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting P6 on arrival), **P3 Shield** and **P6 Phase Shift** are honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and the effects registry ticks every frame (driving the HUD) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
+> **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — every launcher (`PlayScene` and each formation gym) passes its stored `options` plus an `onSelect` callback to the single `MineralChoiceScene` contract. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting a 1.5 s P6 on arrival), **P3 Shield** is honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and a permanent **P6 Phase Shift** grants unlimited automatic activations through the shared danger feed while the phase pass-through and mineral gate stay identical to the game. The effects registry ticks every frame (driving the HUD, including the finite/unlimited P6 charge readout) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
 
 ### 4.5 Scoring System
 
@@ -350,6 +415,7 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 | Destroy E4 Phaser | 250 |
 | Destroy E5 Swarm | 150 |
 | Destroy E6 Asteroid (small only) | 50 (large/medium award none) |
+| Destroy E7 Harvester | 400 |
 | Destroy Boss Phase 1 | 1000 |
 | Destroy Boss Phase 2 | 2000 |
 | Destroy Boss Phase 3 | 3000 |
@@ -477,10 +543,12 @@ src/
 │   ├── Game.ts          — Main game class, scene management
 │   ├── GameState.ts     — Game state (lives, score, level, ship's mineral hold)
 │   ├── mineralHold.ts   — Shared mineral hold model (implemented, AH-0MUII3DHM008L7JF,
-│   │                      gap 5): `MineralHold` owns the capacity, per-pickup collect amount
-│   │                      and overflow carry used by *both* `GameState` and `GymFormationScene`,
-│   │                      so the gym adopts the game's hold/overflow semantics (resolve carries
-│   │                      `collected − capacity`) instead of resetting to 0
+│   │                      gap 5; progression AH-0MUKC6IML0082ZR4): `MineralHold` owns the
+│   │                      first-hold capacity, growth multiplier, per-pickup collect amount and
+│   │                      overflow carry used by *both* `GameState` and `GymFormationScene`, so
+│   │                      the gym adopts the game's hold/overflow semantics (resolve grows the
+│   │                      capacity and carries `collected − capacity`, clamped to the new
+│   │                      capacity) instead of resetting to 0
 │   ├── Input.ts         — Input handling (keyboard, auto-fire)
 │   └── rules.ts         — General game-rules config (implemented): localStorage-backed
 │                          `loadRules()` / `saveRules()` holding the power-up spawn
@@ -651,9 +719,11 @@ src/
 │       │                   enemy absorption/re-drop, hold-full choice overlay (100 seeded minerals);
 │       │                   choice-granted P3/P6/P7 rewards are functional (S/↓ teleport,
 │       │                   shared shield/phase hit-gating, registry ticks independent of drop layer)
-│       ├── GymPlayer.ts — Player movement/tuning gym (key GymPlayer, label "Player");
-│       │                   consumes the shared `mapControlInput` scheme→input helper
-│       │                   (AH-0MUII39KX007YUQ0, gap 11)
+│       ├── GymPlayer.ts — Player thruster-navigation/tuning gym (key GymPlayer, label "Player");
+│       │                   extends the shared `scenes/core/CombatScene` (shared input,
+│       │                   auto-fire and collision/hit pass) and adds a deterministic,
+│       │                   indestructible obstacle course while keeping the ship-config panel
+│       │                   (AH-0MUAYB2XR007N10W)
 │       ├── GymPowerUpsUtility.ts — non-combat power-up gym (key GymPowerUpsUtility, label "PowerUpsUtility"):
 │       │                  extends the narrower shared `scenes/core/CombatCoreScene`;
 │       │                  round-robin P5/P8/P9 spawning, collection, standalone HUD
@@ -703,11 +773,11 @@ src/
 │   ├── teleport.ts      — Shared P7 safe-spot resolver (implemented):
 │   │                      findTeleportDestination reused by GymPowerUpsCombat and
 │   │                      the combat base (ray + grid candidates, clamped to screen)
-│   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase 3 s, P7 Teleport stored FIFO)
+│   ├── types.ts         — Power-up catalogue (P3–P9; P3 Shield 15 s, P4 Bomb instant, P6 Phase Shift charge-based 1.5 s auto, P7 Teleport stored FIFO)
 │   │                      with a one-line `description` per entry (gym help source of truth)
 │   ├── choice.ts        — Pluggable hold-full choice strategy (default: 3 distinct random
 │   │                      picks from P3–P9 + Spread/Dual/Rapid; graceful degradation)
-│   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase, P7 teleport stacks)
+│   ├── effects.ts       — Active-effects registry (timers, lives, P5 speed, P9 magnet, P3 shield absorb, P6 phase auto-trigger charges, P7 teleport stacks)
 │   └── icons.ts         — Code-drawn neon power-up icons (shield/bomb/phase/teleport/speed/life/magnet)
 ├── waves/
 │   ├── WaveManager.ts   — Wave spawning and management
@@ -772,12 +842,12 @@ interface PlayerEffect {
 ```typescript
 interface Enemy {
   id: string;
-  type: 'scout' | 'diver' | 'tank' | 'phaser' | 'swarm';
+  type: 'scout' | 'diver' | 'tank' | 'phaser' | 'swarm' | 'asteroid' | 'harvester';
   x: number;
   y: number;
   width: number;
   height: number;
-  health: number;       // All regular enemies: health = 1 (one-hit kill); Boss handled by phase system
+  health: number;       // Data-driven hit points (EnemyConfig.health, default 1). E1–E6 = 1 (one-hit kill); E7 Harvester = 5; Boss handled by the phase system
   scoreValue: number;
   behavior: FormationBehavior | DiveBehavior;
   canFire: boolean;
@@ -888,6 +958,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
   **Per-layer toggles:** each layer is individually switchable via a `PLAYER_DEATH_ENABLE_*` constant (shake, flash, particles, debris, shockwave, sound), and all intensities/counts/durations are exported constants in the same module — a designer can drop or retune any layer without code surgery. Every juice-owned display object is pushed to a caller-owned `playerDeathEffects` registry and removed on completion, and the scenes clear that registry on `SHUTDOWN`, so a stop/restart leaks nothing.
 
   The three player-hit paths all route through the helper: `PlayScene._loseLife` (real run — `'fatal'` at 0 lives, `'respawn'` otherwise), the shared `CombatScene.applyPlayerHit` used by the formation gyms (`GymEnemies` / `GymBoss` / `GymMinerals`), and `GymPowerUpsCombat` via the inherited hit lifecycle. The wave-timeout life penalty (`_loseLife(false)`) deliberately keeps the lighter generic cue and spawns no juice VFX, and shield absorption is unchanged in both the run and the combat gym.
+- **Phase Shift juice**: The automatic Phase Shift (P6) gets one shared, screen-wide treatment so the player can read the reactive activation (`src/vfx/phaseShiftJuice.ts`, advanced each frame by the shared `CombatCoreScene._updatePhaseShiftJuice` in `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat`). It composes two layers — a subtle dark-blue **desaturation/dim** overlay and a **chromatic split-tint** (cyan and red ADD overlays offset ±3 px that fringe enemies, bullets and minerals alike) — held for the duration of the 1.5 s effect and destroyed on expiry, while the ship keeps its existing phase ghost (`applyPhaseGhost`). **Camera shake is deliberately omitted:** the first cut of this feature used a light shake, but a producer review rejected it because it made Phase Shift read like the player-death juice above; the chromatic split alone sells the phase shift while keeping the two events visually distinct. Each layer has a `PHASE_SHIFT_ENABLE_*` toggle and every overlay is tracked in a `phaseShiftEffects` registry cleared on scene `SHUTDOWN`.
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
@@ -899,8 +970,10 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 |----------|-------|-----------------|--------|-----------|
 | **Interactions** | Power-up pickup | Short percussive pop + "sucked into ship" absorb VFX | Medium | Immediate |
 | **Interactions** | Teleport activate (S/↓) | Short whoosh + portal effect | Medium | Immediate |
+| **Interactions** | Phase Shift activates (automatic) | Rising sci-fi chirp + noise whoosh (`playPhaseShiftSound()`: triangle sweep 320 → 1560 Hz over ~0.28 s + bandpass noise sweep 600 → 3200 Hz) | Medium | Immediate |
 | **Impacts** | Player hit (life lost) | Low, heavy layered "hull breach" boom (`playPlayerDestructionSound()`: impact thump + descending body + shrapnel hiss); replaces the generic enemy cue on the player-death paths | High | Immediate |
 | **Impacts** | Enemy destroyed | Sharp pop / crack | Medium | Immediate |
+| **Impacts** | Wave timeout — surviving enemies detonate | Heavy layered "major explosion" boom (`playMajorExplosionSound()`: deep impact thump + descending body + low-pass rumble wash), one cue per detonating ship, voice-capped at `MAJOR_EXPLOSION_MAX_VOICES` (4) with excess triggers attenuated | High | Immediate |
 | **Impacts** | Boss phase damage | Deeper zap, slightly longer decay | High | Immediate |
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
 | **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
@@ -949,9 +1022,13 @@ enemies get:
 | P9 Magnet pickup | Low pulsing field hum | Square 180 → 90 → 180 Hz + sine undertone | ≤ 0.12 |
 | Thruster hum (held thrust) | Continuous jet-engine roar | Triangle 60 Hz + sine 35 Hz rumble + band-pass filtered white noise (700–1100 Hz) whoosh, thrust-scaled (≤ 0.075) | ≤ 0.075 |
 | Player death (hull breach) | Heavy layered boom — deep impact thump + slow descending body + brief shrapnel hiss | Sawtooth 120 → 32 Hz (~0.4 s) + triangle 260 → 42 Hz (~0.6 s) + high-pass filtered noise tail (~0.28 s) | ≤ 0.2 |
+| Volume-change feedback (Settings) | Player-explosion cue at the selected volume (pitch unchanged) | Same as player death — sawtooth 120 → 32 Hz + triangle 260 → 42 Hz + filtered noise tail; gain × volume | ≤ 0.2 |
 
 - **Thruster hum** — single ship-level continuous jet-engine roar (NOT per-engine flame port), synthesised as a soft triangle fundamental (60 Hz) with a sine undertone (35 Hz) for low rumble plus white noise through a band-pass filter (700–1100 Hz, Q 0.6–1.1) for jet-engine whoosh; filtered noise is the dominant texture, all through one reused gain node; gain follows `getEngineSoundLevel` level `min(1, thrustAcceleration / FLAME_REF_THRUST)` (GDD §2.2 `ShipConfig`), so the tuning slider is audible (half thrust → ~0.5 level). Contour: smooth fade-in ramping over `THRUSTER_HUM_GROWTH_TIME` (30 ms at reference thrust) and ~4× quicker decay when thrust stops (mirrors the flame growth/shrink timing), with no clicks on retrigger; volume ≤ 0.075 (halved from 0.15 to sit comfortably behind other cues, within the "≤ 0.2" ceiling for all player cues). Driven per-frame by `Player.preUpdate` → `getEngineSoundLevel(state, input, thrustAcceleration)` → `updateThrusterSound(level)` for both `fourDirectional` (any arrow/WASD) and `asteroids` (forward/turn) schemes; stops on release, respawn, player destroy, or scene shutdown so no audio nodes leak.
 - **Player destruction** — the dedicated `playPlayerDestructionSound()` in `src/audio/effects.ts` is a heavier, layered cue distinct from the generic enemy `playDestructionSound()` (440 → 60 Hz sawtooth): a sawtooth impact thump (120 → 32 Hz, ~0.4 s) plus a slower triangle body sliding 260 → 42 Hz (~0.6 s) and a short high-pass filtered noise tail (~0.28 s) for the shrapnel hiss. It is played **exactly once** per player destruction by the shared `spawnPlayerDeathJuice` helper (§7.2) and fully replaces the generic enemy cue on the player-death paths (`PlayScene._loseLife`, `CombatScene.applyPlayerHit`, and the inherited `GymPowerUpsCombat` hit lifecycle). Its amplitudes and lengths are exported `PLAYER_DESTRUCTION_*` constants, and every layer stays within the ≤ 0.2 player-cue volume ceiling. The wave-timeout life penalty and shield absorption keep the generic cue; the dedicated cue is a safe no-op without an `AudioContext`.
+- **Wave-timeout major explosion** — when the wave timer expires, every surviving non-asteroid enemy detonates at 10× scale and each one plays the dedicated `playMajorExplosionSound()` (AH-0MUJ1YZJ9008O4RC): a sawtooth impact thump (150 → 26 Hz, ~0.45 s) plus a triangle descending body (340 → 38 Hz, ~0.7 s) and a short low-pass filtered noise rumble wash (~0.35 s, distinct from the player cue's high-pass shrapnel hiss). A concurrency limiter caps **full-gain** voices at `MAJOR_EXPLOSION_MAX_VOICES` (4, aligned to the ≤ 3–4 concurrent-SFX guidance below); per-ship triggers beyond the cap still sound but are attenuated by `MAJOR_EXPLOSION_OVERFLOW_ATTENUATION` (0.35) so a large wipe does not stack at full gain. A voice holds its slot for `MAJOR_EXPLOSION_VOICE_DURATION` (the longest layer) and then expires, so a later timeout plays at full gain again rather than being silently dropped. The player's timeout life loss (via `_loseLife(false)`) keeps the lighter generic `playDestructionSound()` and never `playPlayerDestructionSound()`; asteroids survive the timeout and trigger no cue. Every `MAJOR_EXPLOSION_*` amplitude/duration/window/attenuation is exported for playtest tuning, and the cue is a safe no-op without an `AudioContext`.
+- **Phase Shift activation** — every automatic danger-triggered activation and every P7-teleport activation plays the dedicated `playPhaseShiftSound()` (parent AH-0MUIYX1EE008FVS8): a rising triangle chirp (320 → 1560 Hz, ~0.28 s) layered with a bandpass noise whoosh sweeping 600 → 3200 Hz (~0.24 s), so the cue reads as "phase engaged" and is distinct from the descending destruction cues. Every layer stays within the ≤ 0.2 player-cue ceiling, the cue is triggered from the single shared `CombatScene` activation sites (`_updatePhaseShiftAutoTrigger` and `triggerTeleport` — never per scene), and it is a safe no-op without an `AudioContext`.
+- **Volume-change feedback** — adjusting the SFX volume slider in `SettingsScene` plays the existing player-explosion cue via `playVolumeFeedback()` (AH-0MUADK77K008RBMB): its pitch/synthesis is unchanged and only the gain is scaled by the selected volume, so the player hears the hull-breach boom at a loudness matching the setting. The cue fires after each keyboard left/right nudge and exactly once on slider-drag release (never during the drag, so a drag does not emit a stream of overlapping booms). Like every other cue it routes through the master SFX gain node, so it respects the current mute state and volume (silent while muted). Mute-toggle feedback is intentionally out of scope. Safe no-op without an `AudioContext`.
 - **Shoot cues play once per shot** (not once per bullet), keyed off each
   firing weapon, so fast weapons (e.g. Rapid at 125 ms) stay legible.
 - **Pickup activation cues** are unique per pickup type and distinct from the
@@ -992,7 +1069,7 @@ AudioContext must be created and resumed only after a user gesture (e.g., clicki
 
 #### SFX Rate Limiting
 
-To prevent cacophony from high-frequency events, SFX instances are rate-limited (maximum 3–4 concurrent sounds). Auto-fire and rapid bullet hits use short, low-volume sounds to minimize overlap impact. See §6.7 (risk entry).
+To prevent cacophony from high-frequency events, SFX instances are rate-limited (maximum 3–4 concurrent sounds). Auto-fire and rapid bullet hits use short, low-volume sounds to minimize overlap impact. The wave-timeout major-explosion cue implements this cap directly: `playMajorExplosionSound()` sounds at most `MAJOR_EXPLOSION_MAX_VOICES` (4) full-gain voices concurrently and attenuates excess per-ship triggers within the active window (`MAJOR_EXPLOSION_OVERFLOW_ATTENUATION`). See §6.7 (risk entry).
 
 ---
 

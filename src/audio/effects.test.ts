@@ -40,6 +40,22 @@ import {
   PLAYER_DESTRUCTION_BODY_VOLUME,
   PLAYER_DESTRUCTION_TAIL_DURATION,
   PLAYER_DESTRUCTION_TAIL_VOLUME,
+  playMajorExplosionSound,
+  MAJOR_EXPLOSION_THUMP_START_HZ,
+  MAJOR_EXPLOSION_THUMP_END_HZ,
+  MAJOR_EXPLOSION_THUMP_DURATION,
+  MAJOR_EXPLOSION_THUMP_VOLUME,
+  MAJOR_EXPLOSION_BODY_START_HZ,
+  MAJOR_EXPLOSION_BODY_END_HZ,
+  MAJOR_EXPLOSION_BODY_DURATION,
+  MAJOR_EXPLOSION_BODY_VOLUME,
+  MAJOR_EXPLOSION_TAIL_DURATION,
+  MAJOR_EXPLOSION_TAIL_VOLUME,
+  MAJOR_EXPLOSION_MAX_VOICES,
+  MAJOR_EXPLOSION_OVERFLOW_ATTENUATION,
+  MAJOR_EXPLOSION_VOICE_DURATION,
+  _getMajorExplosionVoiceCountForTests,
+  _resetMajorExplosionLimiterForTests,
   playTankDestructionSound,
   EXPLOSION_PITCH_JITTER,
   playDiverFireSound,
@@ -67,6 +83,14 @@ import {
   playPhaserFireSound,
   PHASER_ADVANCE_CUE_DURATION,
   playBossFireSound,
+  playPhaseShiftSound,
+  PHASE_SHIFT_CHIRP_START_HZ,
+  PHASE_SHIFT_CHIRP_END_HZ,
+  PHASE_SHIFT_CHIRP_DURATION,
+  PHASE_SHIFT_CHIRP_VOLUME,
+  PHASE_SHIFT_WHOOSH_VOLUME,
+  playVolumeFeedback,
+  setSfxMuted,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -180,6 +204,10 @@ class RecordingAudioContext {
         },
       },
       connect: () => ({}),
+      // Faithful to the real GainNode API: setSfxVolume/setSfxMuted read
+      // `masterSfxGain.context.currentTime`. Without this the mute/volume
+      // plumbing silently no-ops under the recording mock.
+      context: this,
     };
   }
 
@@ -310,6 +338,7 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playPowerUpCollectSound,
       playPowerUpCollectPopSound,
       playBulletDestructionSound,
+      playPhaseShiftSound,
     ];
     for (const cue of cues) {
       expect(() => cue()).not.toThrow();
@@ -1376,5 +1405,453 @@ describe('player-destruction cue — layered hull breach (AH-0MUDY2ID7006VY3A)',
       const gains = newGains(snap);
       expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
     });
+  });
+});
+
+// ── Wave-timeout major-explosion cue (AH-0MUJ1YZJ9008O4RC) ──────────
+
+describe('major-explosion cue — layered wave-timeout blast (AH-0MUJ1YZJ9008O4RC)', () => {
+  beforeEach(() => {
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('is a safe no-op without an AudioContext (never throws)', () => {
+    expect(() => playMajorExplosionSound()).not.toThrow();
+  });
+
+  it('caps concurrent voices at 4 by default (GDD §7.3 ceiling)', () => {
+    expect(MAJOR_EXPLOSION_MAX_VOICES).toBe(4);
+    expect(MAJOR_EXPLOSION_MAX_VOICES).toBeLessThanOrEqual(4);
+  });
+
+  describe('with a recording context', () => {
+    beforeEach(() => {
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      _resetAudioContextForTests();
+      RecordingAudioContext.instances.length = 0;
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      playCannonFireSound(); // prime the module-scoped context
+    });
+
+    it('layers three oscillators (thump + body + noise tail)', () => {
+      const snap = snapshot();
+      playMajorExplosionSound();
+      const oscs = newOscillators(snap);
+      // Two tonal oscillators plus one noise buffer source.
+      expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+      expect(oscs.filter((o) => o.type === 'noise')).toHaveLength(1);
+    });
+
+    it('uses the exported constants for every layer frequency/duration/volume', () => {
+      const snap = snapshot();
+      playMajorExplosionSound();
+      const oscs = newOscillators(snap);
+      const gains = newGains(snap);
+
+      const thump = oscs.find(
+        (o) =>
+          o.type === 'sawtooth' &&
+          o.freqEvents[0]?.value === MAJOR_EXPLOSION_THUMP_START_HZ,
+      )!;
+      expect(thump).toBeDefined();
+      expect(thump.freqEvents[thump.freqEvents.length - 1].value).toBe(
+        MAJOR_EXPLOSION_THUMP_END_HZ,
+      );
+      expect(thump.stopTime! - thump.startTime!).toBeCloseTo(
+        MAJOR_EXPLOSION_THUMP_DURATION + 0.02,
+        5,
+      );
+
+      const body = oscs.find(
+        (o) =>
+          o.type === 'triangle' &&
+          o.freqEvents[0]?.value === MAJOR_EXPLOSION_BODY_START_HZ,
+      )!;
+      expect(body).toBeDefined();
+      expect(body.freqEvents[body.freqEvents.length - 1].value).toBe(
+        MAJOR_EXPLOSION_BODY_END_HZ,
+      );
+      expect(body.stopTime! - body.startTime!).toBeCloseTo(
+        MAJOR_EXPLOSION_BODY_DURATION + 0.02,
+        5,
+      );
+
+      // The noise tail runs for the exported tail duration.
+      const noise = oscs.find((o) => o.type === 'noise')!;
+      expect(noise).toBeDefined();
+      expect(noise.stopTime! - noise.startTime!).toBeCloseTo(
+        MAJOR_EXPLOSION_TAIL_DURATION + 0.02,
+        5,
+      );
+
+      // Layered amplitudes come from the exported constants.
+      const values = gains.flatMap((g) => g.gainEvents.map((e) => e.value));
+      expect(values).toContain(MAJOR_EXPLOSION_THUMP_VOLUME);
+      expect(values).toContain(MAJOR_EXPLOSION_BODY_VOLUME);
+      expect(values).toContain(MAJOR_EXPLOSION_TAIL_VOLUME);
+    });
+
+    it('is distinct from the generic and player-destruction cues', () => {
+      const genericSnap = snapshot();
+      playDestructionSound();
+      const genericOscs = newOscillators(genericSnap);
+
+      const playerSnap = snapshot();
+      playPlayerDestructionSound();
+      const playerOscs = newOscillators(playerSnap);
+
+      const majorSnap = snapshot();
+      playMajorExplosionSound();
+      const majorOscs = newOscillators(majorSnap);
+
+      // Generic cue is a single sawtooth; the major cue is layered.
+      expect(genericOscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+      expect(majorOscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+      // The major cue starts lower/heavier than the generic 440 Hz sweep.
+      const majorStart = majorOscs.find((o) => o.type !== 'noise')!.freqEvents[0].value;
+      expect(majorStart).toBeLessThan(440);
+      // Its frequency contour differs from the player cue's thump/body.
+      const playerThumpStart = playerOscs.find((o) => o.type !== 'noise')!.freqEvents[0].value;
+      expect(majorStart).not.toBe(playerThumpStart);
+    });
+
+    it('keeps every layer within the heavy-cue volume ceiling (≤ 0.3)', () => {
+      const snap = snapshot();
+      playMajorExplosionSound();
+      const gains = newGains(snap);
+      expect(peakGain(gains)).toBeLessThanOrEqual(0.3);
+    });
+  });
+});
+
+// ── Major-explosion voice limiter (AH-0MUJS85X0006EXGV) ─────────────
+
+describe('major-explosion voice limiter — concurrency cap (AH-0MUJS85X0006EXGV)', () => {
+  beforeEach(() => {
+    // Clear the cached AudioContext first (deleting the ctor alone leaves a
+    // module-scoped context cached), then remove the ctor so `getAudioContext`
+    // returns null.
+    _resetAudioContextForTests();
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it('is a safe no-op without an AudioContext and leaves no limiter state', () => {
+    _resetMajorExplosionLimiterForTests();
+    for (let i = 0; i < 10; i++) {
+      expect(() => playMajorExplosionSound()).not.toThrow();
+    }
+    expect(_getMajorExplosionVoiceCountForTests()).toBe(0);
+  });
+
+  describe('with a recording context', () => {
+    beforeEach(() => {
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      _resetAudioContextForTests();
+      RecordingAudioContext.instances.length = 0;
+      (window as unknown as { AudioContext: unknown }).AudioContext =
+        RecordingAudioContext;
+      playCannonFireSound(); // prime the module-scoped context
+    });
+
+    it('fires 10 simultaneous triggers but never exceeds the 4-voice cap', () => {
+      const before = mockCtx().gains.length;
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+
+      // Active (full-gain) voices are capped; the rest are attenuated.
+      expect(_getMajorExplosionVoiceCountForTests()).toBe(
+        MAJOR_EXPLOSION_MAX_VOICES,
+      );
+
+      // 10 cues × 3 layers each.
+      const layerGains = mockCtx().gains.slice(before);
+      expect(layerGains).toHaveLength(30);
+    });
+
+    it('keeps the total burst gain bounded (excess voices attenuated)', () => {
+      const before = mockCtx().gains.length;
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+      const layerGains = mockCtx().gains.slice(before);
+
+      // Each trigger creates thump, body, noise gains in that order, so
+      // the thump gains are indices 0, 3, 6, …
+      const thumpPeaks = layerGains
+        .filter((_, idx) => idx % 3 === 0)
+        .map((g) => g.gainEvents[0].value);
+
+      const full = MAJOR_EXPLOSION_THUMP_VOLUME;
+      const attenuated =
+        MAJOR_EXPLOSION_THUMP_VOLUME * MAJOR_EXPLOSION_OVERFLOW_ATTENUATION;
+
+      expect(thumpPeaks.slice(0, MAJOR_EXPLOSION_MAX_VOICES)).toEqual(
+        Array(MAJOR_EXPLOSION_MAX_VOICES).fill(full),
+      );
+      expect(
+        thumpPeaks.slice(MAJOR_EXPLOSION_MAX_VOICES),
+      ).toEqual(Array(10 - MAJOR_EXPLOSION_MAX_VOICES).fill(attenuated));
+
+      const total = thumpPeaks.reduce((sum, v) => sum + v, 0);
+      const uncapped = 10 * full;
+      expect(total).toBeLessThan(uncapped);
+      expect(total).toBeCloseTo(
+        MAJOR_EXPLOSION_MAX_VOICES * full +
+          (10 - MAJOR_EXPLOSION_MAX_VOICES) * attenuated,
+        6,
+      );
+    });
+
+    it('expires voices after the active window so later timeouts play at full gain', () => {
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+      expect(_getMajorExplosionVoiceCountForTests()).toBe(
+        MAJOR_EXPLOSION_MAX_VOICES,
+      );
+
+      // Advance past the voice-active window: all voices expire.
+      mockCtx().currentTime = MAJOR_EXPLOSION_VOICE_DURATION + 1;
+
+      const before = mockCtx().gains.length;
+      for (let i = 0; i < MAJOR_EXPLOSION_MAX_VOICES; i++) {
+        playMajorExplosionSound();
+      }
+      expect(_getMajorExplosionVoiceCountForTests()).toBe(
+        MAJOR_EXPLOSION_MAX_VOICES,
+      );
+
+      const layerGains = mockCtx().gains.slice(before);
+      const thumpPeaks = layerGains
+        .filter((_, idx) => idx % 3 === 0)
+        .map((g) => g.gainEvents[0].value);
+      // A fresh burst plays the full-gain cue again.
+      expect(thumpPeaks).toEqual(
+        Array(MAJOR_EXPLOSION_MAX_VOICES).fill(MAJOR_EXPLOSION_THUMP_VOLUME),
+      );
+    });
+
+    it('does not alter the generic or player-destruction cues', () => {
+      // Saturate the major-explosion limiter.
+      for (let i = 0; i < 10; i++) playMajorExplosionSound();
+
+      const genericSnap = snapshot();
+      playDestructionSound();
+      expect(newOscillators(genericSnap).filter((o) => o.type !== 'noise')).toHaveLength(1);
+
+      const playerSnap = snapshot();
+      playPlayerDestructionSound();
+      const playerGains = newGains(playerSnap);
+      const playerValues = playerGains.flatMap((g) =>
+        g.gainEvents.map((e) => e.value),
+      );
+      // Player cue still plays at its own full volumes.
+      expect(playerValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+      expect(playerValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+      expect(playerValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
+    });
+  });
+});
+
+// ── P6 Phase Shift activation cue (parent AH-0MUIYX1EE008FVS8) ─────────
+
+describe('Phase Shift activation cue — synthesis (AC5.1–AC5.3)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  it('plays a rising triangle chirp layered with a noise whoosh', () => {
+    const snap = snapshot();
+    playPhaseShiftSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Two layers: the tonal chirp oscillator + the noise buffer source.
+    expect(oscs).toHaveLength(2);
+    const chirp = oscs.find((o) => o.type === 'triangle')!;
+    expect(chirp).toBeDefined();
+    expect(chirp.freqEvents[0].value).toBe(PHASE_SHIFT_CHIRP_START_HZ);
+    const last = chirp.freqEvents[chirp.freqEvents.length - 1];
+    expect(last.value).toBe(PHASE_SHIFT_CHIRP_END_HZ);
+    // Distinctly rising.
+    expect(last.value).toBeGreaterThan(chirp.freqEvents[0].value);
+    const chirpDuration = chirp.stopTime! - chirp.startTime!;
+    expect(chirpDuration).toBeGreaterThanOrEqual(PHASE_SHIFT_CHIRP_DURATION);
+    expect(chirpDuration).toBeLessThanOrEqual(PHASE_SHIFT_CHIRP_DURATION + 0.05);
+
+    const whoosh = oscs.find((o) => o.type === 'noise')!;
+    expect(whoosh).toBeDefined();
+
+    // Every layer respects the ≤ 0.2 player-cue ceiling (GDD §7.3).
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeGreaterThan(0);
+  });
+
+  it('keeps both layer volumes within the ≤ 0.2 player-cue ceiling', () => {
+    expect(PHASE_SHIFT_CHIRP_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(PHASE_SHIFT_WHOOSH_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(PHASE_SHIFT_CHIRP_VOLUME).toBeGreaterThan(0);
+    expect(PHASE_SHIFT_WHOOSH_VOLUME).toBeGreaterThan(0);
+  });
+});
+
+
+// ── Volume-change feedback (AH-0MUADK77K008RBMB) ──────────────────
+//
+// Revision (post-review operator feedback): the feedback is the existing
+// player-explosion cue (`playPlayerDestructionSound`) with its
+// pitch/synthesis unchanged — only the gain is scaled by the selected
+// volume. Tests below cover safe no-op, cue identity, pitch invariance,
+// volume scaling, clamping, routing through the master SFX gain, and mute.
+
+describe('volume-feedback — safe no-op without AudioContext (AC4)', () => {
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+    RecordingAudioContext.instances.length = 0;
+  });
+
+  it('playVolumeFeedback is a safe no-op — never throws without an AudioContext', () => {
+    expect(() => playVolumeFeedback(0)).not.toThrow();
+    expect(() => playVolumeFeedback(0.5)).not.toThrow();
+    expect(() => playVolumeFeedback(1)).not.toThrow();
+    // Boundary: clamping at extremes.
+    expect(() => playVolumeFeedback(-1)).not.toThrow();
+    expect(() => playVolumeFeedback(2)).not.toThrow();
+    // NaN clamped to 0.
+    expect(() => playVolumeFeedback(NaN)).not.toThrow();
+    expect(RecordingAudioContext.instances).toHaveLength(0);
+  });
+});
+
+describe('volume-feedback — player-explosion cue, volume-scaled (AC1, AC3, AC5)', () => {
+  beforeEach(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context + master gain
+  });
+
+  it('plays the layered player-explosion cue (2 tonal + 1 noise layer)', () => {
+    const snap = snapshot();
+    playVolumeFeedback(1);
+    const oscs = newOscillators(snap);
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(2);
+    expect(oscs.filter((o) => o.type === 'noise')).toHaveLength(1);
+  });
+
+  it('does NOT change the pitch — the frequency contour is the player-explosion cue at every volume', () => {
+    const lowSnap = snapshot();
+    playVolumeFeedback(0.25);
+    const lowOscs = newOscillators(lowSnap);
+    const lowThump = lowOscs.find((o) => o.type === 'sawtooth')!;
+    const lowBody = lowOscs.find((o) => o.type === 'triangle')!;
+
+    const highSnap = snapshot();
+    playVolumeFeedback(1);
+    const highOscs = newOscillators(highSnap);
+    const highThump = highOscs.find((o) => o.type === 'sawtooth')!;
+    const highBody = highOscs.find((o) => o.type === 'triangle')!;
+
+    // Identical starting/ending pitches regardless of volume.
+    expect(lowThump.freqEvents[0].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_START_HZ,
+    );
+    expect(highThump.freqEvents[0].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_START_HZ,
+    );
+    expect(lowThump.freqEvents[lowThump.freqEvents.length - 1].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_END_HZ,
+    );
+    expect(highThump.freqEvents[highThump.freqEvents.length - 1].value).toBe(
+      PLAYER_DESTRUCTION_THUMP_END_HZ,
+    );
+    expect(lowBody.freqEvents[0].value).toBe(PLAYER_DESTRUCTION_BODY_START_HZ);
+    expect(highBody.freqEvents[0].value).toBe(PLAYER_DESTRUCTION_BODY_START_HZ);
+  });
+
+  it('scales every layer gain by the selected volume (volume is the only change)', () => {
+    const halfSnap = snapshot();
+    playVolumeFeedback(0.5);
+    const halfValues = newGains(halfSnap).flatMap((g) =>
+      g.gainEvents.map((e) => e.value),
+    );
+    expect(halfValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME * 0.5);
+    expect(halfValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME * 0.5);
+    expect(halfValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME * 0.5);
+
+    const fullSnap = snapshot();
+    playVolumeFeedback(1);
+    const fullValues = newGains(fullSnap).flatMap((g) =>
+      g.gainEvents.map((e) => e.value),
+    );
+    expect(fullValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+    expect(fullValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+    expect(fullValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
+  });
+
+  it('a higher volume is louder than a lower volume (monotonic gain scaling)', () => {
+    const quietSnap = snapshot();
+    playVolumeFeedback(0.2);
+    const quietPeak = peakGain(newGains(quietSnap));
+
+    const loudSnap = snapshot();
+    playVolumeFeedback(0.9);
+    const loudPeak = peakGain(newGains(loudSnap));
+
+    expect(loudPeak).toBeGreaterThan(quietPeak);
+  });
+
+  it('clamps out-of-range volumes to the player-explosion full gain', () => {
+    const overSnap = snapshot();
+    playVolumeFeedback(2);
+    const overValues = newGains(overSnap).flatMap((g) =>
+      g.gainEvents.map((e) => e.value),
+    );
+    expect(overValues).toContain(PLAYER_DESTRUCTION_THUMP_VOLUME);
+    expect(overValues).toContain(PLAYER_DESTRUCTION_BODY_VOLUME);
+    expect(overValues).toContain(PLAYER_DESTRUCTION_TAIL_VOLUME);
+  });
+
+  it('volume 0 plays nothing (no nodes created)', () => {
+    const snap = snapshot();
+    playVolumeFeedback(0);
+    expect(newOscillators(snap)).toHaveLength(0);
+    expect(newGains(snap)).toHaveLength(0);
+  });
+
+  it('routes through the shared master SFX gain (reuses it — no new master gain created)', () => {
+    const ctx = mockCtx();
+    const gainsBefore = ctx.gains.length;
+    const snap = snapshot();
+    playVolumeFeedback(0.5);
+    // Three layer gains; the master gain (created during priming) is reused.
+    expect(newGains(snap)).toHaveLength(3);
+    expect(ctx.gains.length).toBe(gainsBefore + 3);
+  });
+
+  it('respects mute: the master gain is zeroed while muted so the feedback is silent', () => {
+    const ctx = mockCtx();
+    // Master gain is gains[0], created during priming.
+    const masterGain = ctx.gains[0];
+    // Mute zeros the master gain.
+    setSfxMuted(true);
+    const mutedValue =
+      masterGain.gainEvents[masterGain.gainEvents.length - 1].value;
+    expect(mutedValue).toBe(0);
+    // The cue is still generated (tonal + noise layers created) — the
+    // silence comes from the master gain, not from skipping synthesis.
+    const snap = snapshot();
+    playVolumeFeedback(0.5);
+    expect(newOscillators(snap).filter((o) => o.type !== 'noise')).toHaveLength(2);
+    // Restore mute state for other suites.
+    setSfxMuted(false);
   });
 });

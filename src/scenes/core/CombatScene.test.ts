@@ -16,6 +16,11 @@ import {
 } from './CombatScene';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
+import { isOnGrid } from '../../utils/beat';
+import {
+  WEAPON_CATALOGUE,
+  type WeaponId,
+} from '../../utils/weapons';
 
 // These hook-contract tests exercise the fourDirectional input mapping; the
 // app default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -45,10 +50,36 @@ class StubEnemy extends Phaser.GameObjects.Container implements CombatEnemyEntit
   }
 }
 
-/** Multi-hit enemy (mirrors Boss) — `takeDamage()` instead of destruction. */
+/** Multi-hit enemy (mirrors the Harvester) — `takeDamage()` instead of destruction. */
 class ToughStubEnemy extends StubEnemy {
-  takeDamage(): number | void {
+  private _health: number;
+  destructionAudioCalls = 0;
+
+  constructor(scene: Phaser.Scene, x: number, y: number, hitRadius = 10, health = 3) {
+    super(scene, x, y, hitRadius);
+    this._health = health;
+  }
+
+  takeDamage(): number {
+    if (!this.alive) return 0;
     this.damageCalls += 1;
+    this._health -= 1;
+    if (this._health <= 0) {
+      this._health = 0;
+      this.destroySelf();
+    }
+    return this._health;
+  }
+
+  get health(): number {
+    return this._health;
+  }
+}
+
+/** Multi-hit enemy that also supplies the entity-specific destruction audio. */
+class AudibleToughStubEnemy extends ToughStubEnemy {
+  playDestructionAudio(): void {
+    this.destructionAudioCalls += 1;
   }
 }
 
@@ -588,6 +619,89 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(enemy.destroyed).toBe(false);
   });
 
+  it('F2 — a non-lethal multi-hit hit consumes the bullet with no destruction side effects', async () => {
+    const scene = await boot();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(true);
+    expect(enemy.health).toBe(2);
+    expect(pb.active).toBe(false);
+    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+    expect(destroySound).not.toHaveBeenCalled();
+  });
+
+  it('producer fix — a non-lethal multi-hit hit spawns the shared bullet-impact flash', async () => {
+    const scene = await boot();
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    // The hit registered (exactly one flash) while the enemy survived and
+    // no destruction finalisation ran.
+    expect(pb.active).toBe(false);
+    expect(enemy.alive).toBe(true);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+  });
+
+  it('producer fix — the lethal blow finalises without a stray impact flash', async () => {
+    const scene = await boot();
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    // The kill already carries its own explosion feedback — no extra flash.
+    expect(enemy.alive).toBe(false);
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
+  });
+
+  it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
+    const scene = await boot();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 2);
+    scene.entities.push(enemy);
+
+    // First hit: non-lethal — no finalisation yet.
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+    scene.runCollisions();
+    expect(enemy.alive).toBe(true);
+    expect(destroySound).not.toHaveBeenCalled();
+    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+
+    // Second hit: lethal — exactly one finalisation.
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    scene.runCollisions();
+    expect(enemy.alive).toBe(false);
+    expect(pb.active).toBe(false);
+    expect(destroySound).toHaveBeenCalledTimes(1);
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
+  });
+
+  it('F2 — a multi-hit enemy with its own destruction audio plays it once and skips the shared sound', async () => {
+    const scene = await boot();
+    const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
+    const enemy = new AudibleToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(enemy.destructionAudioCalls).toBe(1);
+    expect(destroySound).not.toHaveBeenCalled();
+    expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
+  });
+
   it('AC4 — no boss means the boss hooks are consulted but never consume', async () => {
     const scene = await boot();
     // No enemies and no boss: the bullet survives the enemy/boss scans.
@@ -687,5 +801,102 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(scene.getPlayerHitCount()).toBe(before);
     expect(scene.bullets).toHaveLength(1);
+  });
+});
+
+// ── AH-0MUAYB8EH005RJ8B: real bullet spawns land on grid ticks ──────
+
+describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  const COLOR_TO_WEAPON = new Map<number, WeaponId>(
+    (Object.keys(WEAPON_CATALOGUE) as WeaponId[]).map((id) => [
+      WEAPON_CATALOGUE[id].bulletColor,
+      id,
+    ]),
+  );
+
+  /**
+   * Boots a fresh scene, activates several weapons, then records the exact
+   * beat-grid tick of every **real** bullet spawned while stepping the
+   * supplied frame deltas. Returns the recorded ticks per weapon.
+   *
+   * The grid is reset to a deterministic t=0 anchor and shared with the
+   * player, so the recorded ticks are independent of boot timing.
+   */
+  async function collectSpawnTicks(
+    frameDeltasMs: number[],
+  ): Promise<Record<WeaponId, number[]>> {
+    booted = await bootScene([StubCombatScene]);
+    const scene = booted.scene as StubCombatScene;
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+    player.equipWeapon('rapid');
+
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+
+    const ticks: Record<WeaponId, number[]> = {
+      cannon: [],
+      spread: [],
+      dual: [],
+      rapid: [],
+    };
+    const original = scene.spawnPlayerBullet.bind(scene);
+    vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
+      (x, y, vx, vy, color, lifetime) => {
+        const weapon = COLOR_TO_WEAPON.get(color ?? 0);
+        // Attribute the real spawn to the grid tick the weapon fired on.
+        if (weapon) ticks[weapon].push(player.getLastShotTime(weapon)!);
+        return original(x, y, vx, vy, color, lifetime);
+      },
+    );
+
+    for (const dtMs of frameDeltasMs) {
+      scene.runAutoFire(dtMs / 1000);
+    }
+
+    vi.restoreAllMocks();
+    booted.game.destroy(true);
+    booted = null;
+    return ticks;
+  }
+
+  it('AC1/AC4 — every spawned bullet lands on its weapon grid tick; active weapons share the phase', async () => {
+    const ticks = await collectSpawnTicks(
+      Array.from({ length: 300 }, () => 10),
+    );
+
+    for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
+      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      expect(ticks[weapon].length).toBeGreaterThan(0);
+      for (const tick of ticks[weapon]) {
+        expect(isOnGrid(tick, interval, 0)).toBe(true);
+        expect(tick % interval).toBe(0); // exact tick, anchored at 0
+      }
+      // All default intervals are multiples of the finest (125 ms) grid, so
+      // simultaneously active weapons stay phase-locked.
+      for (const tick of ticks[weapon]) expect(tick % 125).toBe(0);
+    }
+  });
+
+  it('AC3 — the spawned-bullet grid is framerate-independent', async () => {
+    const at10ms = await collectSpawnTicks(
+      Array.from({ length: 300 }, () => 10), // 3000 ms at 10 ms/frame
+    );
+    const at25ms = await collectSpawnTicks(
+      Array.from({ length: 120 }, () => 25), // 3000 ms at 25 ms/frame
+    );
+
+    for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
+      expect(at10ms[weapon].length).toBeGreaterThan(0);
+      expect(at10ms[weapon]).toEqual(at25ms[weapon]);
+    }
   });
 });

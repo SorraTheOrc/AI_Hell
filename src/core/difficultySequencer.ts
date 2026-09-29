@@ -155,21 +155,27 @@ const COMPOSE_EPSILON = 1e-9;
  * a wider (or narrower) set of tuning options.
  */
 export function defaultCandidatePool(): CandidateGroup[] {
-  return Object.entries(DEFAULT_ENEMY_CONFIGS).map(([key, cfg]) => {
-    // `single`-formation archetypes (the roaming Asteroid) spawn exactly one
-    // entity per group regardless of `count` (`buildSingleOffset` ignores its
-    // argument), so exposing a count range would let the sequencer request a
-    // group whose spawns cannot satisfy its declared `waveEnemyCount`. Pin the
-    // range to the archetype's own count instead of scaling it.
-    const scalable = cfg.formationKind !== 'single';
-    return {
-      enemyKey: key,
-      baseCount: cfg.count,
-      minCount: scalable ? Math.max(1, Math.floor(cfg.count * 0.1)) : cfg.count,
-      maxCount: scalable ? Math.min(200, Math.ceil(cfg.count * 3)) : cfg.count,
-      adjustableFields: ['count'],
-    };
-  });
+  return Object.entries(DEFAULT_ENEMY_CONFIGS)
+    // The Harvester is integrated as a rare later-level roaming spawn (F6),
+    // deliberately outside the difficulty auto-sequencer: it is delivered by
+    // the dedicated HarvesterSpawner, never selected as a wave group.
+    .filter(([key]) => key !== 'harvester')
+    .map(([key, cfg]) => {
+      // `single`-formation archetypes (the roaming Asteroid) spawn exactly one
+      // entity per group regardless of `count` (`buildSingleOffset` ignores its
+      // argument). `waveEnemyCount` now derives from the planned spawns, so an
+      // over-declared `single` group can no longer inflate the alive count, but
+      // `count` must still be `1` for the group to pass `validateWaveGroups`.
+      // Pin the range to the archetype's own count instead of scaling it.
+      const scalable = cfg.formationKind !== 'single';
+      return {
+        enemyKey: key,
+        baseCount: cfg.count,
+        minCount: scalable ? Math.max(1, Math.floor(cfg.count * 0.1)) : cfg.count,
+        maxCount: scalable ? Math.min(200, Math.ceil(cfg.count * 3)) : cfg.count,
+        adjustableFields: ['count'],
+      };
+    });
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────
@@ -209,6 +215,7 @@ function resolveBaseConfig(candidate: CandidateGroup): EnemyConfig {
       bulletLifetime: 1.5,
       burstCount: 1,
       shotProbability: 1.0,
+      health: 1,
     };
   }
   // Merge the candidate's overrides onto the seed.

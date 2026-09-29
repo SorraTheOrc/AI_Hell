@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
-import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT } from './HUD';
+import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT, PERMANENT_VALUE, formatValue } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
 import { PowerUpType } from '../powerups/types';
 
@@ -128,6 +128,67 @@ describe('HUD AC2: stack counts for stackable types', () => {
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x3');
     destroy(game);
+  });
+});
+
+describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
+  it('shows a finite charge as xN and decrements live on trigger', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.applyCollect('P6'); // two pickups → x2
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hud.getRows().find((r) => r.id === 'P6')!.value).toBe('x2');
+
+    // Consume one charge (the phase is now active, so a timer row also
+    // appears; the charge row must read x1).
+    reg.updateDanger(true, 0.016);
+    hud.refresh();
+    const chargeRow = hud
+      .getRows()
+      .find((r) => r.id === 'P6' && r.value.startsWith('x'))!;
+    expect(chargeRow.value).toBe('x1');
+    destroy(game);
+  });
+
+  it('shows the permanent reward as unlimited instead of a number', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6', true);
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    const p6 = hud.getRows().find((r) => r.id === 'P6')!;
+    expect(p6.value).toBe(PERMANENT_VALUE);
+    expect(p6.value).not.toMatch(/^x/);
+    destroy(game);
+  });
+
+  it('does not show a misleading x0 when no charges remain', async () => {
+    const reg = new EffectsRegistry();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hud.getRows().filter((r) => r.id === 'P6')).toHaveLength(0);
+    destroy(game);
+  });
+
+  it('formats charges, unlimited and timers distinctly', () => {
+    expect(
+      formatValue({ id: 'P6', type: PowerUpType.PHASE_SHIFT, stacks: 1 }),
+    ).toBe('x1');
+    expect(
+      formatValue({
+        id: 'P6',
+        type: PowerUpType.PHASE_SHIFT,
+        permanent: true,
+      }),
+    ).toBe(PERMANENT_VALUE);
+    expect(
+      formatValue({
+        id: 'P5',
+        type: PowerUpType.SPEED_BOOST,
+        duration: 10,
+        remaining: 4.2,
+      }),
+    ).toBe('5s');
   });
 });
 

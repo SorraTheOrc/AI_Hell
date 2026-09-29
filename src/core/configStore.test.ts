@@ -542,6 +542,7 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
       levelName: 'Entry',
       wave: 1,
       targetDifficulty: 42,
+      generation: 'curve',
     });
     expect(curves.length).toBe(3);
   });
@@ -599,14 +600,48 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(loadDifficultyCurves()).toEqual(defaultDifficultyCurves());
   });
 
+  it('a level may mix per-wave generation modes (they are not malformed)', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]:
+        'level,levelName,wave,targetDifficulty,generation\n' +
+        '1,Entry,1,5,curve\n' +
+        '1,Entry,2,9,fixed\n' +
+        '1,Entry,3,14,dynamic\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+    expect(loadDifficultyCurves().map((r) => r.generation)).toEqual([
+      'curve', 'fixed', 'dynamic',
+    ]);
+  });
+
+  it('legacy source rows map to generation modes through the dev load', async () => {
+    const server = createServer({
+      [ENEMY_FILE]: enemyCsvFixture(),
+      [SHIP_FILE]: shipCsvFixture(),
+      [DIFFICULTY_FILE]:
+        'level,levelName,wave,targetDifficulty,source\n' +
+        '3,The Core,1,,scripted\n' +
+        '4,Firestorm,1,20,generated\n',
+    });
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+    const rows = loadDifficultyCurves();
+    expect(rows.map((r) => r.generation)).toEqual(['fixed', 'curve']);
+  });
+
   it('saveDifficultyCurves PUTs the serialised curve and refreshes the registry', async () => {
     const server = defaultServer();
     vi.stubGlobal('fetch', server.fetchMock);
     await loadConfigs();
 
     const updated = [
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 55 },
-      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 77 },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 55, generation: 'curve' as const },
+      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 77, generation: 'curve' as const },
     ];
     const result = await saveDifficultyCurves(updated);
 
@@ -651,14 +686,30 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(loadDifficultyCurves()[0].targetDifficulty).not.toBe(-1);
   });
 
-  it('the computed defaults are derived from the measured LEVELS scores', () => {
+  it('ships a mixed-mode default: fixed onboarding, curve + dynamic later levels', () => {
+    const modes = new Set<string>();
+    for (const row of defaultDifficultyCurves()) {
+      const expected =
+        row.level <= 3
+          ? 'fixed'
+          : row.level === 5 && row.wave === 2
+            ? 'dynamic'
+            : 'curve';
+      expect(row.generation).toBe(expected);
+      modes.add(String(row.generation));
+    }
+    // Out-of-the-box play exercises every generation mode (AH-0MUJSUTLA006Q8E1).
+    expect([...modes].sort()).toEqual(['curve', 'dynamic', 'fixed']);
+  });
+
+  it('the onboarding (fixed) targets follow the measured LEVELS calibration', () => {
     const curves = defaultDifficultyCurves();
-    for (let i = 0; i < LEVELS.length; i++) {
+    for (const level of LEVELS.filter((l) => l.level <= 3)) {
       const levelRows = curves
-        .filter((row) => row.level === LEVELS[i].level)
+        .filter((row) => row.level === level.level)
         .sort((a, b) => a.wave - b.wave);
-      expect(levelRows.length).toBe(LEVELS[i].waves.length);
-      const expected = Math.round(levelDifficulty(LEVELS[i].waves).score * 100) / 100;
+      expect(levelRows.length).toBe(level.waves.length);
+      const expected = Math.round(levelDifficulty(level.waves).score * 100) / 100;
       expect(levelRows[levelRows.length - 1].targetDifficulty).toBe(expected);
     }
   });

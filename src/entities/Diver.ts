@@ -4,19 +4,14 @@
  * Renders as a medium, dart-shaped neon-yellow entity. Periodically breaks
  * from formation and dives toward the player position along a parabolic
  * arc (diagonal — x and y follow the full quadratic bezier from the
- * formation slot to the player's position at dive start), then returns
- * smoothly to its current formation slot — ending exactly on the slot as
- * it exists when the return completes, so the diver rejoins the drifting
- * formation without a horizontal snap.
+ * formation slot to the player's position at dive start), pauses at the
+ * attack end, then re-forms. There is **no return glide**: when the pause
+ * elapses the Diver latches a re-anchor request through the shared
+ * `consumeFormationReanchor()` seam, and the owning scene re-bases the whole
+ * unit's origin so the Diver's slot coincides with its attack-end position
+ * while every other unit shifts by the same delta (GDD §4.1 — E2).
  *
- * While the diver is detached from the formation (`DIVING`, `PAUSING` or
- * `RETURNING`) it reports `requiresFormationHold() === true` through the
- * shared entity seam, so the owning scene holds the whole cluster in
- * place for the entire attack; normal drift resumes once every diver has
- * rejoined. A destroyed diver reports `false`, so a mid-dive kill can
- * never freeze the cluster forever (GDD §4.1 — E2).
- *
- * During the formation hold phase the diver smoothly rotates its container
+ * During the pause the diver smoothly rotates its container
  * to visually face the player (nose points toward the target). The dart
  * sprite is drawn with its nose pointing "up" (negative y) so that the
  * container rotation aligns the nose toward the player.
@@ -40,7 +35,10 @@ import {
   stopDiveSound,
   playDiverFireSound,
 } from '../audio/effects';
-import { FormationOffset } from '../utils/formations';
+import {
+  FormationOffset,
+  type FormationReanchorRequest,
+} from '../utils/formations';
 import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 export type { FormationOffset } from '../utils/formations';
@@ -85,7 +83,7 @@ export const DIVER_DIVE_APEX_FRACTION = 0.3;
 /** Formation drift speed — slightly faster than Tank. */
 export const DIVER_FORMATION_DRIFT_SPEED = 30;
 
-/** Duration (ms) the Diver pauses at the bottom of the dive arc before returning. */
+/** Duration (ms) the Diver pauses at the bottom of the dive arc before re-forming. */
 export const DIVER_PAUSE_DURATION = 500;
 
 
@@ -112,6 +110,11 @@ export interface DiverConfig {
    * dive state.
    */
   shotProbability?: number;
+  /**
+   * Hit points before the enemy is destroyed (data-driven;
+   * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
+   */
+  health?: number;
   /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -131,13 +134,14 @@ export interface DiverBullet {
 }
 
 /**
- * State machine for the Diver's behaviour.
+ * State machine for the Diver's behaviour: FORMATION → DIVING → PAUSING →
+ * FORMATION. The former RETURNING state (and its glide back to a formation
+ * slot) was removed — the unit re-anchors to the attack end instead.
  */
 export enum DiverState {
   FORMATION = 'formation',
   DIVING = 'diving',
   PAUSING = 'pausing',
-  RETURNING = 'returning',
 }
 
 export class Diver extends BaseEnemy {
@@ -153,9 +157,12 @@ export class Diver extends BaseEnemy {
   private _diveTargetY = 0;
   private _diveApexX = 0;
   private _diveApexY = 0;
-  private _diveCol = 0;
-  private _diveRow = 0;
-  private _returnProgress = 0;
+  /**
+   * Latched when the pause elapses: the owning scene consumes this to re-base
+   * the whole unit so this Diver's slot coincides with its attack end. While
+   * un-consumed the Diver holds itself at the attack-end position.
+   */
+  private _pendingReanchor: FormationReanchorRequest | null = null;
   /** Tracks whether a sustained dive sound is active (for no-leak on destroy). */
   private _diveSoundActive = false;
   /** Local phase accumulator for the idle wiggle (replaces `scene.time.now`.
@@ -182,6 +189,7 @@ export class Diver extends BaseEnemy {
       bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? DIVER_FIRE_INTERVAL,
       shotProbability: config.shotProbability,
+      health: config.health,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);
@@ -249,20 +257,27 @@ export class Diver extends BaseEnemy {
     if (!value) this._lastFireTime = 0;
   }
 
-  /** Current behaviour state (formation, diving, or returning). */
+  /** Current behaviour state (formation, diving or pausing). */
   get behaviourState(): DiverState {
     return this._state;
   }
 
   /**
    * Optional entity seam (shared by `FormationSceneEntity` / `EnemyEntity`):
-   * true while this diver is away from its formation and the owning scene
-   * must hold the cluster's drift. Every detached state
-   * (`DIVING`/`PAUSING`/`RETURNING`) holds; `FORMATION` does not. Destroyed
-   * divers report `false` so a mid-dive kill releases the hold immediately.
+   * the owning scene calls this each frame and, when it returns a request,
+   * re-bases the whole unit's origin so this Diver's formation slot coincides
+   * with its attack-end position (every other unit shifts by the same delta).
+   * Returns and clears the pending request, so it fires exactly once. A
+   * destroyed Diver never returns a request.
    */
-  requiresFormationHold(): boolean {
-    return this.alive && this._state !== DiverState.FORMATION;
+  consumeFormationReanchor(): FormationReanchorRequest | null {
+    if (!this.alive) {
+      this._pendingReanchor = null;
+      return null;
+    }
+    const request = this._pendingReanchor;
+    this._pendingReanchor = null;
+    return request;
   }
 
   /** The position aimed at when diving (defaults to the bottom-centre stand-in). */
@@ -412,9 +427,9 @@ export class Diver extends BaseEnemy {
 
   /**
    * Updates the diver's position based on its current state.
-   * Handles formation hold (with smooth rotation toward player), diving
-   * (diagonal parabolic arc toward the snapshotted player position), and
-   * returning (smooth re-entry onto the current formation slot).
+   * Handles formation positioning (with smooth rotation toward player),
+   * diving (diagonal parabolic arc toward the snapshotted player position),
+   * and the attack-end pause (which latches the unit re-anchor request).
    */
   applyFormationPosition(
     baseX: number,
@@ -444,10 +459,6 @@ export class Diver extends BaseEnemy {
 
       case DiverState.PAUSING:
         this._handlePause(dt);
-        break;
-
-      case DiverState.RETURNING:
-        this._handleReturn(baseX, baseY, spacingX, spacingY, dt);
         break;
     }
   }
@@ -492,7 +503,7 @@ export class Diver extends BaseEnemy {
       formationPos.y,
     );
 
-    // Always face the player during formation hold.
+    // Always face the player during formation positioning.
     this._updateFacingRotation(dt);
 
     // After hold timer reaches threshold, initiate a dive.
@@ -526,18 +537,13 @@ export class Diver extends BaseEnemy {
     // Apex: midway between start and target horizontally, high on screen.
     this._diveApexX = (this._diveStartX + this._diveTargetX) / 2;
     this._diveApexY = GAME_HEIGHT * DIVER_DIVE_APEX_FRACTION;
-
-    // Remember which formation slot we dove from. The return re-enters this
-    // slot at its CURRENT (drifted) position so there is no snap on re-entry.
-    this._diveCol = this.formationOffset.col;
-    this._diveRow = this.formationOffset.row;
   }
 
   private _handleDive(dt: number): void {
     this._divePhase += dt / DIVER_DIVE_DURATION;
     if (this._divePhase >= 1) {
       this._divePhase = 1;
-      // Move to PAUSING state, not directly to RETURNING.
+      // Hold position through the 500 ms pause before re-forming.
       this._state = DiverState.PAUSING;
       this._pauseTimer = 0;
       // Stop the sustained dive sound when the dive ends.
@@ -572,8 +578,12 @@ export class Diver extends BaseEnemy {
   }
 
   /**
-   * Handles the pause phase: holds position while facing the player,
-   * then transitions to RETURNING after the pause duration elapses.
+   * Handles the pause phase: holds position while facing the player, then —
+   * once the pause elapses — re-enters FORMATION and latches a re-anchor
+   * request at the current (attack-end) position, so the owning scene can
+   * re-base the whole unit. The Diver does not reposition on this frame, which
+   * keeps it exactly where the attack finished until the scene consumes the
+   * request on the next tick.
    */
   private _handlePause(dt: number): void {
     this._pauseTimer += dt;
@@ -581,51 +591,16 @@ export class Diver extends BaseEnemy {
     // Always face the player during the pause.
     this._updateFacingRotation(dt);
 
-    // If pause duration has elapsed, transition to RETURNING.
+    // If the pause has elapsed the attack is over: re-enter FORMATION and
+    // request a unit re-anchor at the attack-end position.
     if (this._pauseTimer >= this._pauseDuration) {
-      this._state = DiverState.RETURNING;
-      this._returnProgress = 0;
-      this._holdTimer = 0;
-    }
-  }
-
-  /**
-   * Returns the diver to its formation slot, ending exactly on the slot's
-   * CURRENT position (the formation kept drifting while the diver was away).
-   * Both x and y ease smoothly toward the current slot so the diver rejoins
-   * the formation without a horizontal snap when the return completes.
-   */
-  private _handleReturn(
-    baseX: number,
-    baseY: number,
-    spacingX: number,
-    spacingY: number,
-    dt: number,
-  ): void {
-    this._returnProgress += dt * 1.2; // slightly faster return
-    const t = Math.min(this._returnProgress, 1);
-
-    // The slot we must re-enter is its current position (base + offset).
-    const slotX = baseX + this._diveCol * spacingX;
-    const slotY = baseY + this._diveRow * spacingY;
-
-    // Glide from the dive-end position (snapshotted target) onto the current
-    // slot. Evaluating the slot each frame absorbs the formation drift, so at
-    // t=1 the diver lands exactly on the slot and the next formation update
-    // continues seamlessly.
-    this.setPosition(
-      this._diveTargetX + (slotX - this._diveTargetX) * t,
-      this._diveTargetY + (slotY - this._diveTargetY) * t,
-    );
-
-    // Always face the player during the return.
-    this._updateFacingRotation(dt);
-
-    if (this._returnProgress >= 1) {
-      this._returnProgress = 1;
       this._state = DiverState.FORMATION;
       this._holdTimer = 0;
-      this.setPosition(slotX, slotY);
+      this._pendingReanchor = {
+        offset: { ...this.formationOffset },
+        x: this.x,
+        y: this.y,
+      };
     }
   }
 

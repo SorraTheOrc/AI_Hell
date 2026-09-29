@@ -55,6 +55,13 @@ export const FACTOR_WEIGHTS = {
   formationKind: 8,
   /** Asteroid split chain (one large = 7 destroyed entities). */
   asteroidSplit: 10,
+  /**
+   * Enemy durability (`health`, hit points). A durable multi-hit archetype is
+   * harder to survive than a single-hit one, so a higher value is harder.
+   * Health is a **non-firing** axis: it contributes even when firing is
+   * suppressed (AH-0MUJPTR7Q0070BDT).
+   */
+  health: 10,
 } as const;
 
 /** Sum of all weights — used to normalise the weighted score. */
@@ -82,6 +89,8 @@ export const FACTOR_RANGES: Record<string, { min: number; max: number }> = {
   burstCount: { min: 1, max: 24 },
   formationKind: { min: 0, max: 5 },
   asteroidSplit: { min: 1, max: 7 },
+  // Hit points; 1 is the single-hit default, 5 is the Harvester (GDD §4.2).
+  health: { min: 1, max: 5 },
 };
 
 // ── Ordinal mappings for enum factors ────────────────────────────────
@@ -182,6 +191,9 @@ export interface DifficultyBreakdown {
  * caller passes `suppressFiring: true` (used by `waveDifficulty` for waves
  * with `shootEnabled: false`, GDD §2.4 — Levels 1–3).
  *
+ * **Health** (`health`) is a *non-firing* axis: it contributes regardless of
+ * the suppression rule, because durability is not an attack behaviour.
+ *
  * @param config — the enemy archetype configuration.
  * @param options — optional flags overriding the default suppression rule.
  * @returns the difficulty index with per-factor breakdown.
@@ -211,6 +223,9 @@ export function enemyDifficulty(
     asteroidChainSize(config),
     FACTOR_RANGES.asteroidSplit,
   );
+  // Health is a non-firing axis: durability is not an attack behaviour, so it
+  // contributes regardless of `shotPattern` / `suppressFiring`.
+  factors.health = normaliseValue(config.health, FACTOR_RANGES.health);
 
   // Firing axes — suppressed to zero when the archetype/wave does not fire.
   if (suppressFiring) {
@@ -286,6 +301,7 @@ function groupEnemyConfig(
     driftSpeed: 40,
     startX: group.startX,
     startY: group.startY,
+    health: 1,
     size: 16,
     color: 0x00ff00,
     bulletColor: 0xff4444,

@@ -33,6 +33,8 @@ import {
   sequencer,
   type CandidateGroup,
 } from '../../core/difficultySequencer';
+import { waveDifficulty } from '../../core/enemyDifficulty';
+import type { DifficultyGeneration } from '../../core/configTypes';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { makeCollapsible } from '../../utils/gymPanel';
 import {
@@ -54,8 +56,23 @@ export const CURVE_WAVE_SLIDER_ATTR = 'data-curve-wave';
 export const CURVE_WAVE_VALUE_ATTR = 'data-curve-wave-value';
 /** Data attribute (value = wave index) identifying a wave's Remove button. */
 export const CURVE_WAVE_REMOVE_ATTR = 'data-curve-remove';
+/** Data attribute (value = wave index) identifying a wave's generation-mode control. */
+export const CURVE_WAVE_MODE_ATTR = 'data-curve-mode';
+/** Data attribute set on a readout showing a `fixed` wave's derived difficulty. */
+export const CURVE_WAVE_DERIVED_ATTR = 'data-curve-derived';
 /** Class of a single curve-editor row. */
 export const CURVE_ROW_CLASS = 'gym-curve-row';
+
+/**
+ * Generation modes offered by a wave's mode control (AH-0MUJSUT8P008UPQM).
+ * Mirrors the engine's per-wave `generation` column; the editor default is
+ * `curve`.
+ */
+export const CURVE_MODE_OPTIONS: readonly DifficultyGeneration[] = [
+  'curve', 'fixed', 'dynamic',
+];
+/** Mode applied to a newly added wave row. */
+export const CURVE_DEFAULT_MODE: DifficultyGeneration = 'curve';
 
 // ── Preview text + curve defaults ────────────────────────────────────
 
@@ -104,6 +121,14 @@ export interface WavePreviewEntry {
   actualDifficulty: number;
   /** Whether the wave's enemies fire projectiles. */
   shootEnabled: boolean;
+  /** Per-wave generation mode used for this preview (AH-0MUJSUT8P008UPQM). */
+  mode: DifficultyGeneration;
+  /**
+   * For a `fixed` wave, the difficulty derived from its (read-only) authored
+   * composition. `undefined` for `curve`/`dynamic` waves, whose target is the
+   * editable value.
+   */
+  derivedDifficulty?: number;
 }
 
 /** One column of the wave-preview table (AC10) + its guide entry (AC11). */
@@ -129,8 +154,10 @@ export const WAVE_TABLE_COLUMNS: readonly WaveTableColumn[] = [
   },
   {
     heading: 'TARGET',
-    help: 'Design-time target difficulty',
-    value: (entry) => String(entry.targetDifficulty),
+    help: 'Target (or fixed derived) difficulty',
+    // A `fixed` wave's target is read-only, so its column shows the difficulty
+    // derived from the authored composition instead.
+    value: (entry) => String(entry.derivedDifficulty ?? entry.targetDifficulty),
   },
   {
     heading: 'COMPOSITION',
@@ -208,6 +235,10 @@ export function formatCurveHelpBox(): string {
 export class GymCurveSequencer extends Phaser.Scene {
   /** Editable target curve — one score per wave. */
   private curve: number[] = [...DEFAULT_DIFFICULTY_CURVE];
+  /** Per-wave generation mode (AH-0MUJSUT8P008UPQM), parallel to `curve`. */
+  private modes: DifficultyGeneration[] = DEFAULT_DIFFICULTY_CURVE.map(
+    () => CURVE_DEFAULT_MODE,
+  );
   /** Last regenerated preview (empty while stale). */
   private preview: WavePreviewEntry[] = [];
   /** True when the curve changed since the last regeneration. */
@@ -368,7 +399,10 @@ export class GymCurveSequencer extends Phaser.Scene {
     );
   }
 
-  /** Builds one curve row: label, 0–100 slider, value readout, Remove button. */
+  /**
+   * Builds one curve row: label, generation-mode control, 0–100 slider, value
+   * readout and Remove button (AH-0MUJSUT8P008UPQM).
+   */
   private _waveRow(index: number, target: number): HTMLElement {
     const row = document.createElement('div');
     row.className = CURVE_ROW_CLASS;
@@ -377,6 +411,20 @@ export class GymCurveSequencer extends Phaser.Scene {
     const label = document.createElement('span');
     label.className = 'gym-panel-label';
     label.textContent = `Wave ${index + 1}`;
+
+    // Native <select>: keyboard accessible out of the box and labelled via
+    // aria-label, so the mode is never reachable only through the slider.
+    const mode = document.createElement('select');
+    mode.setAttribute(CURVE_WAVE_MODE_ATTR, String(index));
+    mode.setAttribute('aria-label', `Generation mode for wave ${index + 1}`);
+    for (const option of CURVE_MODE_OPTIONS) {
+      const opt = document.createElement('option');
+      opt.value = option;
+      opt.textContent = option;
+      mode.appendChild(opt);
+    }
+    mode.value = this.modes[index] ?? CURVE_DEFAULT_MODE;
+    mode.addEventListener('change', () => this._onModeChanged(index, mode.value));
 
     const input = document.createElement('input');
     input.type = 'range';
@@ -389,7 +437,6 @@ export class GymCurveSequencer extends Phaser.Scene {
 
     const value = document.createElement('output');
     value.setAttribute(CURVE_WAVE_VALUE_ATTR, String(index));
-    value.textContent = String(target);
 
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -397,8 +444,55 @@ export class GymCurveSequencer extends Phaser.Scene {
     remove.setAttribute(CURVE_WAVE_REMOVE_ATTR, String(index));
     remove.addEventListener('click', () => this._onRemoveWave(index));
 
-    row.append(label, input, value, remove);
+    row.append(label, mode, input, value, remove);
+    this._syncRowMode(index, input, value);
     return row;
+  }
+
+  /**
+   * Applies a wave's generation mode to its row (AH-0MUJSUT8P008UPQM): a
+   * `fixed` wave disables the target slider and shows the difficulty derived
+   * from its authored composition; `curve`/`dynamic` waves keep the editable
+   * target slider and target readout.
+   */
+  private _syncRowMode(
+    index: number,
+    input: HTMLInputElement,
+    value: HTMLElement,
+  ): void {
+    const mode = this.modes[index] ?? CURVE_DEFAULT_MODE;
+    if (mode === 'fixed') {
+      input.disabled = true;
+      value.textContent = String(this._derivedDifficultyFor(index));
+      value.setAttribute(CURVE_WAVE_DERIVED_ATTR, 'true');
+      value.title = 'Fixed composition — derived difficulty (read-only)';
+    } else {
+      input.disabled = false;
+      value.textContent = String(this.curve[index]);
+      value.removeAttribute(CURVE_WAVE_DERIVED_ATTR);
+      value.removeAttribute('title');
+    }
+  }
+
+  /**
+   * Difficulty derived from a `fixed` wave's authored composition. The gym has
+   * no per-wave composition editor, so a `fixed` wave freezes the composition
+   * the sequencer produces for its (disabled) target and derives its
+   * difficulty from that composition via `waveDifficulty()` — the same scorer
+   * the runtime campaign uses.
+   */
+  private _derivedDifficultyFor(index: number): number {
+    const target = this.curve[index];
+    if (!Number.isFinite(target)) return 0;
+    const result = sequencer([target], this.candidates, {
+      tolerance: CURVE_TARGET_TOLERANCE,
+    });
+    const wave = result.waves[0];
+    if (!wave) return 0;
+    return waveDifficulty({
+      groups: wave.groups,
+      shootEnabled: wave.shootEnabled,
+    }).score;
   }
 
   /** Applies a slider change and marks the preview stale (AC3/AC5). */
@@ -413,9 +507,28 @@ export class GymCurveSequencer extends Phaser.Scene {
     this._markStale();
   }
 
+  /**
+   * Applies a mode change, re-enabling/disabling the slider as appropriate,
+   * and marks the preview stale (AH-0MUJSUT8P008UPQM).
+   */
+  private _onModeChanged(index: number, raw: string): void {
+    if (index < 0 || index >= this.curve.length) return;
+    if (!CURVE_MODE_OPTIONS.includes(raw as DifficultyGeneration)) return;
+    this.modes[index] = raw as DifficultyGeneration;
+    const input = this.rows?.querySelector<HTMLInputElement>(
+      `input[${CURVE_WAVE_SLIDER_ATTR}="${index}"]`,
+    );
+    const value = this.rows?.querySelector<HTMLElement>(
+      `[${CURVE_WAVE_VALUE_ATTR}="${index}"]`,
+    );
+    if (input && value) this._syncRowMode(index, input, value);
+    this._markStale();
+  }
+
   /** Appends a new wave row and marks the preview stale (AC3/AC5). */
   private _onAddWave(): void {
     this.curve.push(CURVE_NEW_WAVE_TARGET);
+    this.modes.push(CURVE_DEFAULT_MODE);
     this._renderCurveRows();
     this._markStale();
   }
@@ -424,6 +537,7 @@ export class GymCurveSequencer extends Phaser.Scene {
   private _onRemoveWave(index: number): void {
     if (index < 0 || index >= this.curve.length) return;
     this.curve.splice(index, 1);
+    this.modes.splice(index, 1);
     this._renderCurveRows();
     this._markStale();
   }
@@ -446,19 +560,34 @@ export class GymCurveSequencer extends Phaser.Scene {
     const result = sequencer(this.curve, this.candidates, {
       tolerance: CURVE_TARGET_TOLERANCE,
     });
-    this.preview = result.waves.map((wave, index) => ({
-      waveNumber: index + 1,
-      targetDifficulty: wave.targetDifficulty,
-      composition:
-        wave.groups
-          .map((group) => `${group.enemyKey} ×${group.count}`)
-          .join(' + ') || 'none',
-      actualDifficulty:
+    this.preview = result.waves.map((wave, index) => {
+      const mode = this.modes[index] ?? CURVE_DEFAULT_MODE;
+      const actualDifficulty =
         Math.round(
           wave.groups.reduce((sum, group) => sum + group.score, 0) * 100,
-        ) / 100,
-      shootEnabled: wave.shootEnabled,
-    }));
+        ) / 100;
+      // A `fixed` wave's composition is frozen (the sequencer output for its
+      // disabled target); its displayed difficulty is derived from it.
+      const derivedDifficulty =
+        mode === 'fixed'
+          ? waveDifficulty({
+              groups: wave.groups,
+              shootEnabled: wave.shootEnabled,
+            }).score
+          : undefined;
+      return {
+        waveNumber: index + 1,
+        targetDifficulty: wave.targetDifficulty,
+        composition:
+          wave.groups
+            .map((group) => `${group.enemyKey} ×${group.count}`)
+            .join(' + ') || 'none',
+        actualDifficulty,
+        shootEnabled: wave.shootEnabled,
+        mode,
+        ...(derivedDifficulty !== undefined ? { derivedDifficulty } : {}),
+      };
+    });
     this.previewStale = false;
     this._renderPreview();
   }
@@ -468,6 +597,11 @@ export class GymCurveSequencer extends Phaser.Scene {
   /** A copy of the current editable target curve. */
   get curveTargets(): number[] {
     return [...this.curve];
+  }
+
+  /** A copy of the current per-wave generation modes. */
+  get waveModes(): DifficultyGeneration[] {
+    return [...this.modes];
   }
 
   /** A copy of the last regenerated wave preview (empty while stale). */

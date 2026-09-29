@@ -21,7 +21,7 @@ import {
 } from './enemyConfig';
 import { resetConfigStore, seedConfigStore } from './configStore';
 
-const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid'];
+const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid', 'harvester'];
 
 describe('EnemyConfig schema', () => {
   it('DEFAULT_ENEMY_CONFIGS has one entry per seed archetype and the expected keys', () => {
@@ -89,6 +89,15 @@ describe('EnemyConfig schema', () => {
   it('extra/open passthrough: unknown fields are allowed (forward-compat)', () => {
     const extended = { ...DEFAULT_ENEMY_CONFIGS.scout, wiggleAmplitude: 3 } as typeof DEFAULT_ENEMY_CONFIGS.scout & { wiggleAmplitude: number };
     expect((extended as Record<string, unknown>).wiggleAmplitude).toBe(3);
+  });
+
+  it('every seed back-fills the new spawn ranges with min = max = scalar (AC1/AC6)', () => {
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(config.startXMin, config.key).toBe(config.startX);
+      expect(config.startXMax, config.key).toBe(config.startX);
+      expect(config.startYMin, config.key).toBe(config.startY);
+      expect(config.startYMax, config.key).toBe(config.startY);
+    }
   });
 });
 
@@ -169,5 +178,25 @@ describe('Store-backed loaders', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBeTruthy();
     vi.unstubAllEnvs();
+  });
+});
+
+describe('Data-driven enemy health (F1)', () => {
+  it('every single-hit seed archetype carries health: 1', () => {
+    for (const [key, config] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
+      if (key === 'harvester') continue; // the five-hit archetype (F5)
+      expect(config.health, key).toBe(1);
+    }
+  });
+
+  it('the Harvester seed carries health: 5 (the only multi-hit regular enemy)', () => {
+    expect(DEFAULT_ENEMY_CONFIGS.harvester.health).toBe(5);
+  });
+
+  it('health is a positive integer for every seed', () => {
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(Number.isInteger(config.health)).toBe(true);
+      expect(config.health).toBeGreaterThan(0);
+    }
   });
 });

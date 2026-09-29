@@ -10,7 +10,8 @@
  * - lives: 3 (up to 5 with P8 Extra Life power-up)
  * - score: 0 (increments on enemy/boss destruction)
  * - level: 1–5 (boss triggered after level 5)
- * - minerals: 0 (run-scoped ship's hold; capacity 20)
+ * - minerals: 0 (run-scoped ship's hold; first-hold capacity 5, doubling
+ *   each hold-full resolution)
  * - gameState: 'menu' | 'playing' | 'gameover'
  */
 
@@ -89,6 +90,7 @@ export class GameState {
     this._hold = new MineralHold({
       capacity: overrides?.mineralCapacity,
       store: overrides?.minerals,
+      growthMultiplier: overrides?.mineralHoldGrowthMultiplier,
     });
   }
 
@@ -110,6 +112,18 @@ export class GameState {
 
   set mineralCapacity(value: number) {
     this._hold.capacity = value;
+  }
+
+  /**
+   * Multiplier applied to {@link mineralCapacity} after each hold-full
+   * resolution (default 2; AH-0MUKC6IML0082ZR4).
+   */
+  get mineralHoldGrowthMultiplier(): number {
+    return this._hold.growthMultiplier;
+  }
+
+  set mineralHoldGrowthMultiplier(value: number) {
+    this._hold.growthMultiplier = value;
   }
 
   // ── Actions ─────────────────────────────────────────────────────
@@ -147,8 +161,9 @@ export class GameState {
   }
 
   /**
-   * Resolves the hold-full choice: resets the hold to 0 carrying any
-   * overflow (store = collected − capacity) recorded when it filled.
+   * Resolves the hold-full choice: grows the capacity for the next hold by
+   * the configured multiplier and carries any overflow
+   * (store = collected − capacity), clamped to the new capacity.
    */
   resolveHold(): void {
     this._hold.resolve();

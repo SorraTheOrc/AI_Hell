@@ -42,8 +42,17 @@
  * silently expires and stops firing. The heading + bullet-pattern math
  * lives in `utils/weapons.ts`; the Player exposes `getHeading()`,
  * `equipWeapon()` (adds), `resetWeapon()` (clears timed weapons),
- * `tickWeaponTimers()`, and per-weapon fire cooldowns the scene gates
- * bullet emission with.
+ * `tickWeaponTimers()`, and a shared **beat clock** that gates bullet
+ * emission.
+ *
+ * Fire timing is **globally quantised to an 80 BPM beat**
+ * (AH-0MUAYB8EH005RJ8B): every active weapon's shots land on a tick of one
+ * shared beat grid, phase-locked to the clock anchor, so simultaneously
+ * active weapons stay in phase and never drift relative to collection time
+ * or frame rate. A weapon collected mid-beat fires its first shot on the
+ * next grid tick (by design). The grid math is pure
+ * (`utils/beat.ts`); the clock advances with game time and pauses with the
+ * game.
  *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
@@ -77,8 +86,14 @@ import {
   getWeaponById,
   isTimedWeapon,
   computeHeading,
+  weaponFireRateMs,
 } from '../utils/weapons';
+import { BeatClock, createBeatClock } from '../utils/beat';
+import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
+
+/** Floating-point slack (ms) when comparing the beat clock against a grid tick. */
+const BEAT_EPSILON_MS = 1e-6;
 
 export interface PlayerConfig {
   x: number;
@@ -178,15 +193,26 @@ export class Player extends Phaser.GameObjects.Graphics {
   // ── Weapon system (AC1–AC4) ─────────────────────────────────────
   // Cumulative model: the permanent cannon plus any collected timed
   // weapons (Spread/Dual/Rapid), each with its own independent 10 s
-  // countdown from collection and its own per-weapon fire cooldown
-  // (GDD §4.4 revision).
+  // countdown from collection. Fire timing is phase-locked to a shared
+  // beat clock (AH-0MUAYB8EH005RJ8B) rather than per-weapon free-running
+  // cooldowns, so every active weapon fires on the same 80 BPM grid.
 
   /** Permanent weapons — always active, never expire (cannon + chosen permanents). */
   private readonly _permanentWeapons: Set<WeaponId> = new Set(['cannon']);
   /** Collected timed weapons → remaining lifetime in ms (10 s each, independent countdown). */
   private _weaponTimers: Map<WeaponId, number> = new Map();
-  /** Per-weapon fire cooldown in ms — each active weapon fires at its own rate (0 = ready). */
-  private _weaponCooldowns: Map<WeaponId, number> = new Map();
+  /** Absolute beat-clock time (ms, a grid tick) of each active weapon's next shot. */
+  private _weaponNextShot: Map<WeaponId, number> = new Map();
+  /** Beat-clock time (ms, a grid tick) of each active weapon's most recent shot. */
+  private _weaponLastShot: Map<WeaponId, number> = new Map();
+  /**
+   * Live game rules — BPM and per-weapon beat subdivisions (defaults to the
+   * persisted rules). Fire intervals are derived from these, so a config
+   * change changes the cadence (AH-0MUAYB8EH005RJ8B).
+   */
+  private _rules: GameRules = loadRules();
+  /** Shared beat clock driving phase-locked auto-fire (anchored at player start). */
+  private _beatClock: BeatClock = createBeatClock({ bpm: this._rules.beatBpm });
   /** Most-recently collected weapon (primary view); falls back to cannon. */
   private _primaryWeapon: WeaponId = 'cannon';
   /** Most-recent heading in radians (fallback when stationary). */
@@ -237,6 +263,9 @@ export class Player extends Phaser.GameObjects.Graphics {
         : { up: false, down: false, left: false, right: false };
     this._flameLens = {};
     for (const port of this._engines()) this._flameLens[port.port] = 0;
+
+    // Anchor the permanent cannon's first shot on the beat grid at t=0.
+    this._readyFire('cannon');
 
     this._redraw();
   }
@@ -499,11 +528,33 @@ export class Player extends Phaser.GameObjects.Graphics {
   /**
    * Applies a live fire-rate multiplier (P5 Speed Boost: +50% rate of fire).
    * The effective fire interval is divided by `multiplier`, so the ship fires
-   * `multiplier`× as often. 1 = normal fire rate. Applied per-frame to
-   * `tryFire`. Mirrors `setSpeedMultiplier` semantics.
+   * `multiplier`× as often — and every active weapon is re-scheduled on the
+   * new interval grid so shots stay phase-locked (no drift) after the
+   * change. 1 = normal fire rate.
    */
   setFireRateMultiplier(multiplier: number): void {
+    if (this._fireRateMultiplier === multiplier) return;
     this._fireRateMultiplier = multiplier;
+    const now = this._beatClock.now();
+    for (const weaponId of this.getActiveWeapons()) {
+      const interval = this._effectiveInterval(weaponId);
+      let scheduled = this._beatClock.nextTick(interval);
+      if (scheduled <= now + BEAT_EPSILON_MS) scheduled += interval;
+      this._weaponNextShot.set(weaponId, scheduled);
+    }
+  }
+
+  /**
+   * Applies live game rules (BPM + per-weapon beat subdivisions) and
+   * re-schedules every active weapon on the new grid, so a config change
+   * immediately changes the firing cadence (AH-0MUAYB8EH005RJ8B). Mirrors
+   * the `setConfig` hot-reload pattern.
+   */
+  setRules(rules: GameRules): void {
+    this._rules = rules;
+    for (const weaponId of this.getActiveWeapons()) {
+      this._readyFire(weaponId);
+    }
   }
 
   /**
@@ -602,7 +653,8 @@ export class Player extends Phaser.GameObjects.Graphics {
       // Permanent for the run: active forever, no countdown to tick down.
       this._permanentWeapons.add(weaponId);
       this._weaponTimers.delete(weaponId);
-      this._weaponCooldowns.delete(weaponId);
+      this._weaponNextShot.delete(weaponId);
+      this._weaponLastShot.delete(weaponId);
       this._primaryWeapon = weaponId;
       this._readyFire(weaponId);
       return;
@@ -623,7 +675,8 @@ export class Player extends Phaser.GameObjects.Graphics {
    */
   resetWeapon(): void {
     this._weaponTimers.clear();
-    this._weaponCooldowns.clear();
+    this._weaponNextShot.clear();
+    this._weaponLastShot.clear();
     this._permanentWeapons.clear();
     this._permanentWeapons.add('cannon');
     this._primaryWeapon = 'cannon';
@@ -663,7 +716,8 @@ export class Player extends Phaser.GameObjects.Graphics {
       const next = remaining - dtMs;
       if (next <= 0) {
         this._weaponTimers.delete(id);
-        this._weaponCooldowns.delete(id);
+        this._weaponNextShot.delete(id);
+        this._weaponLastShot.delete(id);
         if (this._primaryWeapon === id) {
           // Fall back to the most recently collected remaining weapon.
           const stillActive = [...this._weaponTimers.keys()];
@@ -677,43 +731,116 @@ export class Player extends Phaser.GameObjects.Graphics {
     }
   }
 
-  // ── Auto-fire emission (AC3) ────────────────────────────────────
+  // ── Auto-fire emission (AC1–AC3) ─────────────────────────────────
 
   /**
-   * Advances every active weapon's cooldown by `dt` seconds and returns
-   * the ids of the weapons whose cooldowns fully elapsed this call —
-   * each fires simultaneously, at its own independent fire rate (e.g.
-   * rapid every 125 ms, cannon every 400 ms, spread every 600 ms). A
-   * fired weapon's cooldown is re-armed to its own fire rate; an empty
-   * array means nothing fired this frame (the caller emits nothing).
+   * Effective fire interval for a weapon in ms — its configured beat
+   * subdivision (`weaponSubdivisions` + `beatBpm` from the game rules),
+   * scaled by the live fire-rate multiplier (P5 Speed Boost: `/1.5` fires
+   * 50 % more often). At the default multiplier of 1 every interval is an
+   * exact subdivision of the beat period (AH-0MUAYB8EH005RJ8B).
+   */
+  private _effectiveInterval(weaponId: WeaponId): number {
+    return (
+      weaponFireRateMs(
+        weaponId,
+        this._rules.weaponSubdivisions,
+        this._rules.beatBpm,
+      ) / this._fireRateMultiplier
+    );
+  }
+
+  /**
+   * The current effective fire interval (ms) for `weaponId`, derived from
+   * the configured BPM/subdivision and scaled by the live fire-rate
+   * multiplier. Exposed so tests and scenes can observe the configured
+   * cadence directly.
+   */
+  getFireInterval(weaponId: WeaponId): number {
+    return this._effectiveInterval(weaponId);
+  }
+
+  /**
+   * Advances the shared beat clock by `dt` seconds and returns the ids of
+   * the weapons that fired this frame — i.e. whose next scheduled grid tick
+   * has been reached (AC1).
    *
-   * The fire-rate multiplier (set via {@link setFireRateMultiplier},
-   * typically from P5 Speed Boost) scales the effective cooldown:
-   * `effectiveCooldown = cooldown / _fireRateMultiplier`, so a 1.5×
-   * multiplier fires 50% faster (AC1, AC2).
+   * Every active weapon's next shot is the smallest multiple of its
+   * (multiplier-scaled) interval at/after the current clock time, relative
+   * to the shared anchor, so all simultaneously active weapons are
+   * **phase-locked** to one grid and never drift (AC2). A weapon collected
+   * mid-beat therefore waits for the next grid tick to fire (AC3). The shot
+   * is attributed to the latest elapsed tick and the following tick is
+   * scheduled, so phase cannot drift even across dropped frames.
    *
    * @param dt — Delta time in seconds since the last call.
    * @returns The ids of the weapons that fired this frame.
    */
   tryFire(dt: number): WeaponId[] {
+    const now = this._beatClock.advance(dt * 1000);
     const fired: WeaponId[] = [];
     for (const weaponId of this.getActiveWeapons()) {
-      const fireRateMs = getWeaponById(weaponId).fireRateMs;
-      const effectiveCooldown = fireRateMs / this._fireRateMultiplier;
-      const cooldown = (this._weaponCooldowns.get(weaponId) ?? 0) - dt * 1000;
-      if (cooldown > 0) {
-        this._weaponCooldowns.set(weaponId, cooldown);
-      } else {
+      const interval = this._effectiveInterval(weaponId);
+      let next = this._weaponNextShot.get(weaponId);
+      if (next === undefined) {
+        next = this._beatClock.nextTick(interval);
+        this._weaponNextShot.set(weaponId, next);
+      }
+      if (next <= now + BEAT_EPSILON_MS) {
         fired.push(weaponId);
-        this._weaponCooldowns.set(weaponId, effectiveCooldown);
+        const shotTick = this._beatClock.shotTimeFor(interval);
+        this._weaponLastShot.set(weaponId, shotTick);
+        this._weaponNextShot.set(weaponId, shotTick + interval);
       }
     }
     return fired;
   }
 
-  /** Resets one weapon's fire cooldown to zero (fires immediately this/next cycle). */
+  /** Schedules one weapon's next shot on the shared beat grid (next tick at/after now). */
   private _readyFire(weaponId: WeaponId): void {
-    this._weaponCooldowns.set(weaponId, 0);
+    this._weaponNextShot.set(
+      weaponId,
+      this._beatClock.nextTick(this._effectiveInterval(weaponId)),
+    );
+  }
+
+  /**
+   * The shared beat clock driving phase-locked auto-fire
+   * (AH-0MUAYB8EH005RJ8B). Scenes read/share this single instance so player
+   * fire is anchored to one grid and the clock advances with game time.
+   */
+  getBeatClock(): BeatClock {
+    return this._beatClock;
+  }
+
+  /**
+   * Replaces the beat clock — e.g. with a scene-owned shared instance — and
+   * re-schedules every active weapon on the new grid so phase-locking is
+   * preserved.
+   */
+  setBeatClock(clock: BeatClock): void {
+    this._beatClock = clock;
+    this._weaponLastShot.clear();
+    for (const weaponId of this.getActiveWeapons()) {
+      this._readyFire(weaponId);
+    }
+  }
+
+  /**
+   * Beat-clock time (ms) of `weaponId`'s most recent shot — always an exact
+   * grid tick. Observable so tests and scene harnesses can verify every
+   * emitted shot lands on the beat without inferring it from bullet timing.
+   */
+  getLastShotTime(weaponId: WeaponId): number | undefined {
+    return this._weaponLastShot.get(weaponId);
+  }
+
+  /**
+   * Beat-clock time (ms) of `weaponId`'s next scheduled shot — always an
+   * exact grid tick. Observable for phase-locking tests.
+   */
+  getNextShotTime(weaponId: WeaponId): number | undefined {
+    return this._weaponNextShot.get(weaponId);
   }
 
   // ── Scene lifecycle ──────────────────────────────────────────────

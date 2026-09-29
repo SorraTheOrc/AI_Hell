@@ -69,6 +69,17 @@ function overlaps(
   return Math.hypot(ax - bx, ay - by) <= ar + br;
 }
 
+/** Options for {@link collectMinerals}. */
+export interface MineralCollectionOptions {
+  /**
+   * When true the player cannot collect minerals — the P6 Phase Shift
+   * pass-through also blocks mineral pickup while phased (Q7). Enemy
+   * absorption is unaffected. Collection resumes the moment the phase
+   * expires.
+   */
+  playerPhased?: boolean;
+}
+
 /**
  * Runs one mineral collection/absorption pass over `minerals`.
  *
@@ -82,12 +93,17 @@ function overlaps(
  * `enemies` must contain only mineral-absorbing archetypes: the caller
  * excludes asteroids (inert) and any entity without `collectMineral`.
  *
+ * When `options.playerPhased` is true the player collects nothing this pass
+ * (P6 pass-through gates mineral pickup — Q7); the minerals survive unless
+ * an enemy absorbs them.
+ *
  * @param minerals — the live mineral field (not mutated in place).
  * @param player — the collecting player, or null when absent.
  * @param enemies — eligible non-asteroid enemies.
  * @param onPlayerCollected — invoked once per player pickup with the
  *   mineral that was collected (the mineral's `player` overlap has already
  *   been recorded).
+ * @param options — optional collection gates (see {@link MineralCollectionOptions}).
  * @returns The surviving minerals (a new array).
  */
 export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
@@ -95,15 +111,18 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
   player: MineralCollectorPlayer | null,
   enemies: readonly TEnemy[],
   onPlayerCollected: (mineral: Mineral) => void,
+  options?: MineralCollectionOptions,
 ): Mineral[] {
   const kept: Mineral[] = [];
   const playerHull = SHIP_SIZE / 2;
+  const playerCanCollect = !(options?.playerPhased ?? false);
 
   for (const mineral of minerals) {
     if (!mineral.alive) continue;
 
     if (
       player &&
+      playerCanCollect &&
       overlaps(
         mineral.x,
         mineral.y,

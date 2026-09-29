@@ -18,6 +18,7 @@
  */
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { formationSpawnCount } from '../utils/formations';
 import type { EnemyFormationKind } from '../utils/formations';
 
 // ── Wave / level shapes ─────────────────────────────────────────────
@@ -28,7 +29,11 @@ export interface WaveGroup {
   enemyKey: string;
   /** Formation geometry builder kind (see `utils/formations.ts`). */
   formation: EnemyFormationKind;
-  /** Number of enemies in this group. */
+  /**
+   * Number of enemies in this group. Must be `1` for the `single`
+   * formation (it represents exactly one entity); see `validateWaveGroups`
+   * in `./WaveManager.ts`.
+   */
   count: number;
   /** Horizontal spacing between formation slots (px). */
   spacingX: number;
@@ -38,6 +43,19 @@ export interface WaveGroup {
   startX: number;
   /** Formation base y at spawn (px). */
   startY: number;
+  /**
+   * Optional per-group spawn X range (px). When set, it overrides the
+   * enemy archetype's configured range for this group; when absent the
+   * group inherits the archetype's `startXMin`/`startXMax`
+   * (AH-0MUKCLXLW0032R67, WG4 priority).
+   */
+  startXMin?: number;
+  /** Optional per-group maximum spawn X (px). See {@link startXMin}. */
+  startXMax?: number;
+  /** Optional per-group spawn Y range (px). See {@link startXMin}. */
+  startYMin?: number;
+  /** Optional per-group maximum spawn Y (px). See {@link startXMin}. */
+  startYMax?: number;
 }
 
 /** A set of enemies that spawn together and are cleared when all die. */
@@ -85,7 +103,13 @@ function group(
   enemyKey: string,
   formation: EnemyFormationKind,
   count: number,
-  overrides: Partial<Pick<WaveGroup, 'spacingX' | 'spacingY' | 'startX' | 'startY'>> = {},
+  overrides: Partial<
+    Pick<
+      WaveGroup,
+      'spacingX' | 'spacingY' | 'startX' | 'startY' |
+      'startXMin' | 'startXMax' | 'startYMin' | 'startYMax'
+    >
+  > = {},
 ): WaveGroup {
   return {
     enemyKey,
@@ -95,6 +119,10 @@ function group(
     spacingY: overrides.spacingY ?? 26,
     startX: overrides.startX ?? START_X,
     startY: overrides.startY ?? START_Y,
+    startXMin: overrides.startXMin,
+    startXMax: overrides.startXMax,
+    startYMin: overrides.startYMin,
+    startYMax: overrides.startYMax,
   };
 }
 
@@ -177,13 +205,19 @@ export function getLevelDefinition(level: number): LevelDefinition | null {
   return LEVELS[level - 1] ?? null;
 }
 
-/** Total number of enemies across every wave of a level. */
+/**
+ * Total number of enemies across every wave of a level.
+ *
+ * Derived from each group's formation builder (not the raw `count` field)
+ * so it matches what actually spawns — a `single` group always contributes
+ * one enemy even if its declared count is inconsistent.
+ */
 export function enemyCountForLevel(level: number): number {
   const def = getLevelDefinition(level);
   if (!def) return 0;
   return def.waves.reduce(
     (sum, wave) =>
-      sum + wave.groups.reduce((s, g) => s + g.count, 0),
+      sum + wave.groups.reduce((s, g) => s + formationSpawnCount(g.formation, g.count), 0),
     0,
   );
 }

@@ -27,6 +27,11 @@ import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
+import { isOnGrid } from '../../utils/beat';
+import {
+  WEAPON_CATALOGUE,
+  type WeaponId,
+} from '../../utils/weapons';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 
@@ -121,7 +126,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     player.setInput({ up: false, down: false, left: false, right: true });
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
 
-    // Advance past the cannon fire rate (400 ms).
+    // Advance past the cannon fire rate (375 ms — 2 shots per 80 BPM beat).
     scene.tick(0.5);
 
     const bullets = scene.getBullets();
@@ -130,9 +135,81 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     expect(bullets.every((b) => b.vx > 0)).toBe(true);
   });
 
+  it('uses the single shared scene beat clock and fires on grid ticks (AC2/AC5)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.tick(0.5);
+
+    // The gym's player shares the one scene-owned clock (no duplicate).
+    expect(player.getBeatClock()).toBe(scene.getBeatClock());
+    const shot = player.getLastShotTime('cannon');
+    expect(shot).toBeDefined();
+    expect(isOnGrid(shot!, 375, scene.getBeatClock().anchorMs)).toBe(true);
+  });
+
+  it('the shared beat clock pauses with the gym (AC4)', async () => {
+    const scene = await bootWeapons();
+    scene.tick(0.5);
+    const before = scene.getBeatClock().now();
+    expect(before).toBeGreaterThan(0);
+
+    // A paused scene's update is not called, so the clock holds its phase
+    // while real animation frames elapse.
+    scene.scene.pause();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(scene.getBeatClock().now()).toBe(before);
+  });
+
+  it('real bullet spawns across frames land on grid ticks with multiple active weapons (AC2)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('spread');
+    player.equipWeapon('rapid');
+
+    // Deterministic shared grid anchored at t=0.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+
+    const colorToWeapon = new Map<number, WeaponId>(
+      (Object.keys(WEAPON_CATALOGUE) as WeaponId[]).map((id) => [
+        WEAPON_CATALOGUE[id].bulletColor,
+        id,
+      ]),
+    );
+    const ticks: Record<WeaponId, number[]> = {
+      cannon: [],
+      spread: [],
+      dual: [],
+      rapid: [],
+    };
+    const original = scene.spawnPlayerBullet.bind(scene);
+    vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
+      (x, y, vx, vy, color, lifetime) => {
+        const weapon = colorToWeapon.get(color ?? 0);
+        if (weapon) ticks[weapon].push(player.getLastShotTime(weapon)!);
+        return original(x, y, vx, vy, color, lifetime);
+      },
+    );
+
+    for (let i = 0; i < 120; i++) scene.tick(0.025); // 3000 ms at 25 ms
+    vi.restoreAllMocks();
+
+    for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
+      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      expect(ticks[weapon].length).toBeGreaterThan(0);
+      for (const tick of ticks[weapon]) {
+        expect(isOnGrid(tick, interval, 0)).toBe(true);
+        expect(tick % interval).toBe(0);
+        expect(tick % 125).toBe(0); // all active weapons share the phase
+      }
+    }
+  });
+
   it('rapid weapon on top of the cannon produces more bullets over equal time (AC3)', async () => {
     // Rapid fires every 150 ms step (125 ms rate); cannon skips steps
-    // (400 ms rate). Over 0.9 s rapid fires ~6 volleys, cannon ~2. With
+    // (375 ms rate). Over 0.9 s rapid fires ~8 volleys, cannon ~3. With
     // the cumulative model the rapid scene fires cannon + rapid together,
     // so its bullet output is far higher than cannon alone.
     const scene = await bootWeapons();

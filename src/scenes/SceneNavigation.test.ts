@@ -5,47 +5,93 @@
  * the GymIndex dev access from the menu, score hand-off between scenes,
  * and memory hygiene across repeated play sessions (no stale enemies,
  * bullets, or canvases).
+ *
+ * Determinism: these suites boot through the shared `bootScene()` harness
+ * with `deterministicBoot` and then stop the live loop, so every scene
+ * transition is driven by an explicit fixed-delta `game.step` rather than
+ * wall-clock animation frames. See README "Testing conventions
+ * (deterministic scene boot)" — the previous real-time `sleep()` waits were
+ * load-sensitive and flaked under full-suite parallel execution
+ * (AH-0MUKMJRCI0002VBP).
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { bootScene } from '../test/gameHarness';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
-// These integration tests boot full Phaser games with real timers and
-// `sleep()` waits; under the full-suite parallel load the Vitest default
-// 5 s timeout is too tight and the heaviest walk-to-the-boss test reports
-// a spurious timeout (AH-0MUINWNPI000G6MU). Give the file headroom so a
-// slow parallel run does not fail on timing alone.
+// The heaviest walk-to-the-boss test boots a real Phaser game; keep a
+// generous timeout so a slow parallel run does not fail on timing alone
+// (AH-0MUINWNPI000G6MU). Deterministic stepping removes the wall-clock
+// flake, but booting still costs real time.
 vi.setConfig({ testTimeout: 20000 });
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Fixed simulation step (~60 fps) used for deterministic scene stepping. */
+const STEP_MS = 1000 / 60;
 
-/** Boots a game with all four scenes; MenuScene auto-starts. */
+/**
+ * Monotonic simulated clock for manual `game.step` calls. Kept separate
+ * from wall-clock so scene state is identical on every run.
+ */
+let simTime = 0;
+
+/**
+ * Boots the four-scene game with the shared deterministic harness and then
+ * stops the live loop, so no wall-clock animation frame can advance the
+ * scene mid-assertion. Callers drive transitions with {@link stepUntil}.
+ */
 async function bootAllGames(): Promise<Phaser.Game> {
-  if (document.body.querySelector('#game-container') === null) {
-    const div = document.createElement('div');
-    div.id = 'game-container';
-    document.body.appendChild(div);
-  }
-  const game = new Phaser.Game({
-    type: Phaser.AUTO,
-    width: GAME_WIDTH,
-    height: GAME_HEIGHT,
-    backgroundColor: '#000000',
-    parent: 'game-container',
-    scene: [MenuScene, PlayScene, GameOverScene, GymIndex],
-  });
-  await sleep(250);
-  return game;
+  simTime = 0;
+  const booted = await bootScene(
+    [MenuScene, PlayScene, GameOverScene, GymIndex],
+    { deterministicBoot: true },
+  );
+  // The harness resumes the live loop after boot; stop it so the state a
+  // test observes is driven only by explicit steps.
+  booted.game.loop.stop();
+  return booted.game;
 }
 
-/** Finds (and clicks) an on-screen text by exact label. */
+/**
+ * Drives fixed-delta `game.step` calls until `predicate` holds. Fails
+ * loudly with the active scene set if the budget is exhausted, so a
+ * genuine logic regression cannot masquerade as a silent timeout.
+ */
+function stepUntil(
+  game: Phaser.Game,
+  label: string,
+  predicate: () => boolean,
+  maxSteps = 600,
+): void {
+  for (let i = 0; i < maxSteps; i++) {
+    if (predicate()) return;
+    simTime += STEP_MS;
+    game.step(simTime, STEP_MS);
+  }
+  const active = game.scene.getScenes(true).map((s) => s.scene.key);
+  throw new Error(
+    `stepUntil(${label}): condition not met after ${maxSteps} steps; ` +
+      `active=[${active.join(', ')}]`,
+  );
+}
+
+/**
+ * Destroys a booted game. `game.destroy(true)` only flags `pendingDestroy`;
+ * Phaser performs the teardown on the next step, so run one explicitly
+ * (the live loop is stopped) to remove the canvas before the next test.
+ */
+function destroyGame(game: Phaser.Game | null): void {
+  if (!game) return;
+  game.destroy(true);
+  game.step(simTime, 0);
+}
+
+/** Clicks an on-screen text by exact label. */
 function clickText(scene: Phaser.Scene, label: string): void {
   const found = scene.children.list.find(
     (child): child is Phaser.GameObjects.Text =>
@@ -55,11 +101,35 @@ function clickText(scene: Phaser.Scene, label: string): void {
   found!.emit('pointerdown');
 }
 
+/** Transitions to `target` and steps the game until it is active. */
+function navigateTo(
+  game: Phaser.Game,
+  from: Phaser.Scene,
+  label: string,
+  target: string,
+): void {
+  clickText(from, label);
+  stepUntil(game, `${target} active`, () => game!.scene.isActive(target));
+}
+
+/** Kills the player in PlayScene, landing on GameOverScene. */
+function die(play: PlayScene, game: Phaser.Game): void {
+  const gs = play.getGameState();
+  gs.lives = 1;
+  const player = play.getPlayer()!;
+  play.spawnEnemyBullet(player.x, player.y, 0, 0);
+  play.tick(0.016);
+  stepUntil(game, 'GameOverScene active', () =>
+    game!.scene.isActive('GameOverScene'),
+  );
+  expect(game!.scene.isActive('GameOverScene')).toBe(true);
+}
+
 describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ001SQLA)', () => {
   let game: Phaser.Game | null = null;
 
   afterEach(() => {
-    game?.destroy(true);
+    destroyGame(game);
     game = null;
     localStorage.clear();
     document.getElementById('enemy-gym-panel')?.remove();
@@ -69,51 +139,41 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   it('AC1+AC2+AC3 — the full game loop round-trips through all scenes', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    expect(game.scene.isActive('MenuScene')).toBe(true);
+    expect(game!.scene.isActive('MenuScene')).toBe(true);
 
     // Menu → PlayScene (Level 1).
-    clickText(menu, '▶  Play Game');
-    await sleep(300);
-    expect(game.scene.isActive('PlayScene')).toBe(true);
-    expect(game.scene.isActive('MenuScene')).toBe(false);
+    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
+    expect(game!.scene.isActive('PlayScene')).toBe(true);
+    expect(game!.scene.isActive('MenuScene')).toBe(false);
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getWaveManager().level).toBe(1);
 
     // PlayScene → GameOverScene (lives exhausted).
-    const gs = play.getGameState();
-    gs.lives = 1;
-    const player = play.getPlayer()!;
-    play.spawnEnemyBullet(player.x, player.y, 0, 0);
-    play.tick(0.016);
-    await sleep(300);
-    expect(game.scene.isActive('GameOverScene')).toBe(true);
-    expect(game.scene.isActive('PlayScene')).toBe(false);
+    die(play, game);
+    expect(game!.scene.isActive('PlayScene')).toBe(false);
 
     // GameOverScene → MenuScene.
     const over = game.scene.getScene('GameOverScene') as GameOverScene;
-    clickText(over, '←  Return to Menu');
-    await sleep(300);
-    expect(game.scene.isActive('MenuScene')).toBe(true);
-    expect(game.scene.isActive('GameOverScene')).toBe(false);
+    navigateTo(game, over, '←  Return to Menu', 'MenuScene');
+    expect(game!.scene.isActive('MenuScene')).toBe(true);
+    expect(game!.scene.isActive('GameOverScene')).toBe(false);
   });
 
   it('AC5 — the Gym Scene Index dev button navigates to GymIndex', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
 
-    clickText(menu, '⚙  Gym Scene Index (dev)');
-    await sleep(300);
+    navigateTo(game, menu, '⚙  Gym Scene Index (dev)', 'GymIndex');
 
-    expect(game.scene.isActive('GymIndex')).toBe(true);
-    expect(game.scene.isActive('MenuScene')).toBe(false);
+    expect(game!.scene.isActive('GymIndex')).toBe(true);
+    expect(game!.scene.isActive('MenuScene')).toBe(false);
   });
 
   it('AC2 — PlayScene hands the final score to GameOverScene', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    clickText(menu, '▶  Play Game');
-    await sleep(300);
+    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     // Earn some score by destroying an enemy.
@@ -124,12 +184,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     expect(scoreAtDeath).toBeGreaterThan(0);
 
     // Die.
-    const gs = play.getGameState();
-    gs.lives = 1;
-    const player = play.getPlayer()!;
-    play.spawnEnemyBullet(player.x, player.y, 0, 0);
-    play.tick(0.016);
-    await sleep(300);
+    die(play, game);
 
     const over = game.scene.getScene('GameOverScene') as GameOverScene;
     expect(over.getFinalScore()).toBe(scoreAtDeath);
@@ -141,8 +196,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     // Run the loop twice.
     for (let i = 0; i < 2; i++) {
       const menu = game.scene.getScene('MenuScene');
-      clickText(menu, '▶  Play Game');
-      await sleep(300);
+      navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
       const play = game.scene.getScene('PlayScene') as PlayScene;
       // Kill every enemy, then die.
@@ -155,25 +209,17 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       // bullets so they cannot intercept the killing shot.
       if (play.isTransitioning()) play.tick(1.6);
       play.tick(3);
-      const gs = play.getGameState();
-      gs.lives = 1;
-      const player = play.getPlayer()!;
-      play.spawnEnemyBullet(player.x, player.y, 0, 0);
-      play.tick(0.016);
-      await sleep(300);
-      expect(game.scene.isActive('GameOverScene')).toBe(true);
+      die(play, game);
 
       const over = game.scene.getScene('GameOverScene') as GameOverScene;
-      clickText(over, '←  Return to Menu');
-      await sleep(300);
-      expect(game.scene.isActive('MenuScene')).toBe(true);
+      navigateTo(game, over, '←  Return to Menu', 'MenuScene');
+      expect(game!.scene.isActive('MenuScene')).toBe(true);
     }
 
     // Third session boots a clean PlayScene: exactly one wave of enemies,
     // no accumulated bullets/explosions, exactly one canvas.
     const menu = game.scene.getScene('MenuScene');
-    clickText(menu, '▶  Play Game');
-    await sleep(300);
+    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     // The wave's formation enemies are all present; the random asteroid
@@ -192,8 +238,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
   it('AC4 — a boss victory also returns to the menu from GameOverScene', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    clickText(menu, '▶  Play Game');
-    await sleep(300);
+    navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     const gs = play.getGameState();
@@ -214,21 +259,22 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       play.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);
       play.tick(0.016);
     }
-    await sleep(300);
-    expect(game.scene.isActive('GameOverScene')).toBe(true);
+    stepUntil(game, 'GameOverScene active', () =>
+      game!.scene.isActive('GameOverScene'),
+    );
+    expect(game!.scene.isActive('GameOverScene')).toBe(true);
 
     const over = game.scene.getScene('GameOverScene') as GameOverScene;
     expect(over.getWon()).toBe(true);
-    clickText(over, '←  Return to Menu');
-    await sleep(300);
-    expect(game.scene.isActive('MenuScene')).toBe(true);
+    navigateTo(game, over, '←  Return to Menu', 'MenuScene');
+    expect(game!.scene.isActive('MenuScene')).toBe(true);
   });
 });
 describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () => {
   let game: Phaser.Game | null = null;
 
   afterEach(() => {
-    game?.destroy(true);
+    destroyGame(game);
     game = null;
     localStorage.clear();
     document.getElementById('enemy-gym-panel')?.remove();
@@ -244,27 +290,15 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
     } as KeyboardEvent);
   }
 
-  /** Kills the player in PlayScene, landing on GameOverScene. */
-  async function die(play: PlayScene, gameInstance: Phaser.Game): Promise<void> {
-    const gs = play.getGameState();
-    gs.lives = 1;
-    const player = play.getPlayer()!;
-    play.spawnEnemyBullet(player.x, player.y, 0, 0);
-    play.tick(0.016);
-    await sleep(300);
-    expect(gameInstance.scene.isActive('GameOverScene')).toBe(true);
-  }
-
   it('AC1+AC2+AC3 — the full loop is drivable by keyboard (no pointer events)', async () => {
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
-    expect(game.scene.isActive('MenuScene')).toBe(true);
+    expect(game!.scene.isActive('MenuScene')).toBe(true);
 
     // Menu → PlayScene: Play Game is focused by default.
     pressKey(menu, { key: 'Enter' });
-    await sleep(300);
-    expect(game.scene.isActive('PlayScene')).toBe(true);
-    expect(game.scene.isActive('MenuScene')).toBe(false);
+    stepUntil(game, 'PlayScene active', () => game!.scene.isActive('PlayScene'));
+    expect(game!.scene.isActive('MenuScene')).toBe(false);
 
     // Earn a score, then die.
     const play = game.scene.getScene('PlayScene') as PlayScene;
@@ -273,7 +307,7 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
     play.tick(0.016);
     const scoreAtDeath = play.getGameState().score;
     expect(scoreAtDeath).toBeGreaterThan(0);
-    await die(play, game);
+    die(play, game);
 
     // GameOver: type initials by keyboard, Tab to the button, Enter to return.
     const over = game.scene.getScene('GameOverScene') as GameOverScene;
@@ -286,10 +320,9 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
     pressKey(over, { key: 'Tab' });
     expect(over.getFocusedIndex()).toBe(1);
     pressKey(over, { key: 'Enter' });
-    await sleep(300);
+    stepUntil(game, 'MenuScene active', () => game!.scene.isActive('MenuScene'));
 
-    expect(game.scene.isActive('MenuScene')).toBe(true);
-    expect(game.scene.isActive('GameOverScene')).toBe(false);
+    expect(game!.scene.isActive('GameOverScene')).toBe(false);
     expect(getEntries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ initials: 'ABC', score: scoreAtDeath }),
@@ -301,19 +334,18 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
     game = await bootAllGames();
     const menu = game.scene.getScene('MenuScene');
     pressKey(menu, { key: 'Enter' });
-    await sleep(300);
+    stepUntil(game, 'PlayScene active', () => game!.scene.isActive('PlayScene'));
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
-    await die(play, game);
+    die(play, game);
 
     const over = game.scene.getScene('GameOverScene') as GameOverScene;
     pressKey(over, { key: 'x' });
     pressKey(over, { key: 'y' });
     pressKey(over, { key: 'z' });
     pressKey(over, { key: 'Enter' });
-    await sleep(300);
+    stepUntil(game, 'MenuScene active', () => game!.scene.isActive('MenuScene'));
 
-    expect(game.scene.isActive('MenuScene')).toBe(true);
     expect(getEntries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ initials: 'XYZ', score: 0 }),
@@ -327,26 +359,26 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
     for (let i = 0; i < 2; i++) {
       const menu = game.scene.getScene('MenuScene');
       pressKey(menu, { key: 'Enter' });
-      await sleep(300);
+      stepUntil(game, 'PlayScene active', () => game!.scene.isActive('PlayScene'));
 
       const play = game.scene.getScene('PlayScene') as PlayScene;
       if (play.isTransitioning()) play.tick(1.6);
       play.tick(3);
-      await die(play, game);
+      die(play, game);
 
       const over = game.scene.getScene('GameOverScene') as GameOverScene;
       pressKey(over, { key: 'a' });
       pressKey(over, { key: 'b' });
       pressKey(over, { key: 'c' });
       pressKey(over, { key: 'Enter' });
-      await sleep(300);
-      expect(game.scene.isActive('MenuScene')).toBe(true);
+      stepUntil(game, 'MenuScene active', () => game!.scene.isActive('MenuScene'));
+      expect(game!.scene.isActive('MenuScene')).toBe(true);
     }
 
     // Third session boots a clean PlayScene.
     const menu = game.scene.getScene('MenuScene');
     pressKey(menu, { key: 'Enter' });
-    await sleep(300);
+    stepUntil(game, 'PlayScene active', () => game!.scene.isActive('PlayScene'));
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getEnemyBullets().length).toBe(0);

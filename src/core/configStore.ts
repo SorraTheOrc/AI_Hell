@@ -20,7 +20,12 @@
 
 import { GAME_WIDTH, GAME_HEIGHT } from './constants';
 import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from './configDefaults';
-import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from './configTypes';
+import type {
+  DifficultyCurveRow,
+  DifficultyGeneration,
+  EnemyConfig,
+  ShipConfig,
+} from './configTypes';
 import { levelDifficulty } from './enemyDifficulty';
 import { LEVELS } from '../waves/Formations';
 import {
@@ -101,11 +106,48 @@ function round2(value: number): number {
 }
 
 /**
- * Compute the baked-in default difficulty curve from the current static
- * `LEVELS` calibration. Each level's measured difficulty
- * (`levelDifficulty(LEVELS[i].waves).score`) is spread non-decreasingly
- * across that level's waves, and each level is ramped from the previous
- * level's final target so the whole campaign never steps backwards.
+ * Default levels whose waves reuse the hand-authored static `LEVELS`
+ * composition (AH-0MUJSUTXI008NP8K). Levels 1–3 are the no-fire onboarding
+ * section: reusing the scripted waves keeps them legible and avoids the
+ * degenerate low-target curve output (asteroid-only and 1-count waves) the
+ * purely mechanical derivation produced.
+ */
+const DEFAULT_FIXED_LEVELS: ReadonlySet<number> = new Set([1, 2, 3]);
+
+/**
+ * Hand-tuned target overrides (one score per wave) for the curve-generated
+ * default levels (AH-0MUJSUTXI008NP8K). Chosen so each wave lands on a
+ * sensible, non-degenerate composition and the aggregated difficulty keeps
+ * rising across levels. A level without an override falls back to the
+ * measured calibration spread.
+ */
+const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
+  4: [16, 24, 28],
+  5: [45, 62],
+};
+
+/**
+ * Per-wave generation-mode overrides for the baked-in default curve
+ * (AH-0MUJSUTLA006Q8E1). Used to ship a mixed-mode programme (at least one
+ * `curve`, one `fixed` and one `dynamic` wave) so out-of-the-box play
+ * exercises the full capability. Keyed by level number then 1-based wave.
+ */
+const DEFAULT_MODE_OVERRIDES: Readonly<
+  Record<number, Readonly<Record<number, DifficultyGeneration>>>
+> = {
+  5: { 2: 'dynamic' },
+};
+
+/**
+ * Compute the baked-in default difficulty curve (AH-0MUITRZZE000OYQE;
+ * retuned for playability by AH-0MUJSUTXI008NP8K).
+ *
+ * Levels 1–3 are `fixed` (their waves reuse the hand-authored static `LEVELS`
+ * composition) and their stored targets are the measured calibration spread.
+ * Levels 4–5 are `curve` with hand-tuned targets in
+ * {@link DEFAULT_TARGET_OVERRIDES} that keep the generated compositions
+ * non-degenerate and the difficulty rising. Targets are non-decreasing within
+ * and across levels.
  *
  * Deterministic and pure: the same static campaign always yields the same
  * curve. Used as the fallback whenever the CSV config is missing or
@@ -123,18 +165,29 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
     // Never step below the previous level's final target.
     const goal = Math.max(previous, measured);
     const delta = goal - previous;
+    const fixed = DEFAULT_FIXED_LEVELS.has(level.level);
+    const override = DEFAULT_TARGET_OVERRIDES[level.level];
+    let last = previous;
 
     for (let wi = 0; wi < waveCount; wi++) {
       const fraction = (wi + 1) / waveCount;
+      const target = override?.[wi] ?? round2(previous + delta * fraction);
+      last = target;
       rows.push({
         level: level.level,
         levelName: level.name,
         wave: wi + 1,
-        targetDifficulty: round2(previous + delta * fraction),
+        targetDifficulty: target,
+        // Onboarding levels reuse the static composition; the rest are
+        // curve-generated unless an explicit per-wave override ships a mixed
+        // programme (AH-0MUJSUQD8003FSUT, AH-0MUJSUTLA006Q8E1).
+        generation:
+          DEFAULT_MODE_OVERRIDES[level.level]?.[wi + 1] ??
+          (fixed ? 'fixed' : 'curve'),
       });
     }
 
-    previous = goal;
+    previous = last;
   }
 
   return rows;
@@ -144,7 +197,8 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
  * Resolve a difficulty-curve CSV into typed rows: valid rows are used, but a
  * file with no rows or any malformed row falls back to
  * {@link defaultDifficultyCurves} so a broken config can never produce an
- * unplayable campaign.
+ * unplayable campaign. Per-wave generation modes may be mixed freely within a
+ * level (AH-0MUJSUQD8003FSUT), so no consistency check is applied.
  */
 function resolveDifficultyCurves(csv: string): DifficultyCurveRow[] {
   let rawRows: Record<string, string>[];
@@ -188,6 +242,7 @@ function genericEnemyDefault(key: string): EnemyConfig {
     bulletLifetime: 1.5,
     burstCount: 1,
     shotProbability: 1.0,
+    health: 1,
   };
 }
 
@@ -438,7 +493,12 @@ export async function saveDifficultyCurves(
   const result = await putCsv(DIFFICULTY_CURVES_CSV_PATH, body);
   if (!result.ok) return result;
 
-  getRegistry().difficultyCurves = rows.map((row) => ({ ...row }));
+  // Normalise the stored copies so the registry matches what a re-read of the
+  // serialised file (which always writes an explicit `generation`) would yield.
+  getRegistry().difficultyCurves = rows.map((row) => ({
+    ...row,
+    generation: row.generation ?? (row.source === 'scripted' ? 'fixed' : 'curve'),
+  }));
   await reReadRegistry();
   return { ok: true };
 }

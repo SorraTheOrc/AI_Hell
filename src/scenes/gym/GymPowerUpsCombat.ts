@@ -8,10 +8,13 @@
  * - **P3 Shield** — 15 s bubble, absorbs one hit before popping.
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (does not damage
  *   1-HP scouts, GDD §4.4); no enemy damage.
- * - **P6 Phase Shift** — 3 s intangibility, pass-through enemies/bullets.
+ * - **P6 Phase Shift** — charge-based auto-trigger: collecting P6 stores one
+ *   use, and the shared danger feed activates a 1.5 s pass-through when three
+ *   or more hostile bodies/bullets close within 40 px (parent
+ *   AH-0MUIYX1EE008FVS8).
  * - **P7 Teleport** — stored FIFO stacks; S or ↓ teleports to the nearest
  *   safe spot free of enemies/bullets in the direction of travel,
- *   clamped to screen bounds; grants P6 (3 s) on arrival. If no safe
+ *   clamped to screen bounds; grants P6 (1.5 s) on arrival. If no safe
  *   spot exists, teleports to the nearest on-screen position along
  *   the heading ray.
  *
@@ -347,6 +350,9 @@ export class GymPowerUpsCombat extends CombatScene<
     //    lifecycle, overlap collection, absorb VFX ──
     this.drops = this._updateDropLayer(this.drops, dt);
 
+    // ── Automatic Phase Shift (P6): feed live danger before gating ──
+    this._updatePhaseShiftAutoTrigger(dt);
+
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleCollisions();
 
@@ -358,6 +364,7 @@ export class GymPowerUpsCombat extends CombatScene<
 
     // ── Visuals (shield bubble + phase ghost + bomb notice) ─
     this._updateVisuals();
+    this._updatePhaseShiftJuice(dt);
 
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();

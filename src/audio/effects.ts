@@ -126,6 +126,28 @@ export function setSfxMuted(on: boolean): void {
   } catch { /* dead context — no-op */ }
 }
 
+// ── Volume-change feedback (AH-0MUADK77K008RBMB) ───────────────────
+//
+// When the player adjusts the SFX volume slider, the player-explosion cue
+// (`playPlayerDestructionSound`) plays back as confirmation. Its synthesis
+// and pitch are unchanged — only the gain is scaled by the selected volume
+// — so the player hears the same hull-breach boom at a loudness that
+// matches the setting. Like every other cue it routes through the master
+// SFX gain node, so it also respects the mute state (silent while muted).
+// Safe no-op without an AudioContext (headless tests / autoplay-blocked
+// browsers).
+
+/**
+ * Plays the player-explosion cue as volume-change feedback
+ * (AH-0MUADK77K008RBMB): the pitch/synthesis is unchanged, and only the
+ * gain is scaled by `volume` in [0, 1]. Values outside the range are
+ * clamped; volume 0 plays nothing. Routed through the master SFX gain so
+ * it respects mute/volume. Safe no-op without an AudioContext.
+ */
+export function playVolumeFeedback(volume: number): void {
+  playPlayerDestructionSound(volume);
+}
+
 interface ThrusterHumState {
   ctx: AudioContext;
   osc: OscillatorNode;
@@ -356,6 +378,7 @@ export function _resetAudioContextForTests(): void {
   }
   diverDiveSound = null;
   diverDiveSoundRefCount = 0;
+  majorExplosionVoiceExpiries = [];
   audioCtx = null;
   masterSfxGain = null;
   sfxVolume = 1;
@@ -530,10 +553,16 @@ export const PLAYER_DESTRUCTION_TAIL_FILTER_HZ = 1200;
  * literals), so the cue is fully tunable in one place. Scheduled at the
  * current time; called exactly once per player destruction. Safe no-op
  * without an AudioContext (never throws).
+ *
+ * An optional `volumeScale` (default 1) multiplies every layer's gain
+ * **without changing any pitch/synthesis** — used by `playVolumeFeedback`
+ * to play the cue at the selected SFX volume (AH-0MUADK77K008RBMB). A scale
+ * of 0 plays nothing.
  */
-export function playPlayerDestructionSound(): void {
+export function playPlayerDestructionSound(volumeScale = 1): void {
   const ctx = getAudioContext();
-  if (!ctx) return;
+  const scale = Math.max(0, Math.min(1, volumeScale));
+  if (!ctx || scale <= 0) return;
   const t = ctx.currentTime;
 
   // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
@@ -545,7 +574,7 @@ export function playPlayerDestructionSound(): void {
     PLAYER_DESTRUCTION_THUMP_END_HZ,
     t + PLAYER_DESTRUCTION_THUMP_DURATION,
   );
-  thumpGain.gain.setValueAtTime(PLAYER_DESTRUCTION_THUMP_VOLUME, t);
+  thumpGain.gain.setValueAtTime(PLAYER_DESTRUCTION_THUMP_VOLUME * scale, t);
   thumpGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + PLAYER_DESTRUCTION_THUMP_DURATION,
@@ -563,7 +592,7 @@ export function playPlayerDestructionSound(): void {
     PLAYER_DESTRUCTION_BODY_END_HZ,
     t + PLAYER_DESTRUCTION_BODY_DURATION,
   );
-  bodyGain.gain.setValueAtTime(PLAYER_DESTRUCTION_BODY_VOLUME, t);
+  bodyGain.gain.setValueAtTime(PLAYER_DESTRUCTION_BODY_VOLUME * scale, t);
   bodyGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + PLAYER_DESTRUCTION_BODY_DURATION,
@@ -592,7 +621,7 @@ export function playPlayerDestructionSound(): void {
   noiseFilter.Q.setValueAtTime(0.8, t);
 
   const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(PLAYER_DESTRUCTION_TAIL_VOLUME, t);
+  noiseGain.gain.setValueAtTime(PLAYER_DESTRUCTION_TAIL_VOLUME * scale, t);
   noiseGain.gain.exponentialRampToValueAtTime(
     0.0001,
     t + PLAYER_DESTRUCTION_TAIL_DURATION,
@@ -603,6 +632,241 @@ export function playPlayerDestructionSound(): void {
   noiseGain.connect(ensureMasterGain(ctx));
   noise.start(t);
   noise.stop(t + PLAYER_DESTRUCTION_TAIL_DURATION + 0.02);
+}
+
+// ── Wave-timeout major-explosion cue (AH-0MUJ1YZJ9008O4RC) ─────────
+//
+// When the wave timer expires every surviving non-asteroid enemy detonates
+// at 10× scale. That wipe is the most dramatic event on the timeout path,
+// so it gets its own heavier "major explosion" cue rather than the generic
+// enemy pop. Same three-layer recipe as the player-destruction boom, but
+// deeper and longer.
+//
+// This cue deliberately does NOT reuse `playDestructionSound()` or
+// `playPlayerDestructionSound()` — the timeout path fires it once per
+// detonating ship, and the player's timeout life loss keeps the generic
+// cue, so the two never double-play (parent AH-0MUJ1YZJ9008O4RC AC1/AC3/AC4).
+
+/** Impact-thump start frequency (Hz) — deeper than the generic 440 Hz fall. */
+export const MAJOR_EXPLOSION_THUMP_START_HZ = 150;
+
+/** Impact-thump end frequency (Hz) — a hard fall to sub-bass. */
+export const MAJOR_EXPLOSION_THUMP_END_HZ = 26;
+
+/** Impact-thump duration (seconds). */
+export const MAJOR_EXPLOSION_THUMP_DURATION = 0.45;
+
+/** Impact-thump layer gain. */
+export const MAJOR_EXPLOSION_THUMP_VOLUME = 0.28;
+
+/** Descending-body start frequency (Hz). */
+export const MAJOR_EXPLOSION_BODY_START_HZ = 340;
+
+/** Descending-body end frequency (Hz) — the long, heavy slide. */
+export const MAJOR_EXPLOSION_BODY_END_HZ = 38;
+
+/** Descending-body duration (seconds) — the longest layer, the "tail". */
+export const MAJOR_EXPLOSION_BODY_DURATION = 0.7;
+
+/** Descending-body layer gain. */
+export const MAJOR_EXPLOSION_BODY_VOLUME = 0.22;
+
+/** Filtered-noise tail duration (seconds). */
+export const MAJOR_EXPLOSION_TAIL_DURATION = 0.35;
+
+/** Filtered-noise tail layer gain. */
+export const MAJOR_EXPLOSION_TAIL_VOLUME = 0.16;
+
+/** Low-pass centre (Hz) for the noise tail — a deep rumble wash. */
+export const MAJOR_EXPLOSION_TAIL_FILTER_HZ = 900;
+
+/** Low-pass filter resonance (Q) for the noise tail. */
+export const MAJOR_EXPLOSION_TAIL_FILTER_Q = 0.8;
+
+/**
+ * Maximum concurrent major-explosion voices (GDD §7.3 "avoid stacking more
+ * than 3–4 concurrent SFX instances"). A wave timeout fires one cue per
+ * detonating ship; the cap keeps a large wipe from stacking into clipping
+ * or mud. Playtest-tunable — enforced by the limiter in
+ * {@link playMajorExplosionSound}.
+ */
+export const MAJOR_EXPLOSION_MAX_VOICES = 4;
+
+/**
+ * Gain multiplier applied to major-explosion voices triggered while the
+ * {@link MAJOR_EXPLOSION_MAX_VOICES} cap is already saturated. Excess
+ * triggers from the same wave timeout are attenuated rather than stacked
+ * at full gain, keeping the burst from clipping or swamping other cues.
+ */
+export const MAJOR_EXPLOSION_OVERFLOW_ATTENUATION = 0.35;
+
+/**
+ * How long (seconds) a major-explosion voice counts against the concurrency
+ * cap — the cue's longest layer (the descending body,
+ * {@link MAJOR_EXPLOSION_BODY_DURATION}). Triggers that fall inside this
+ * window are treated as concurrent; once it elapses the voice expires, so a
+ * later timeout is never silently dropped.
+ */
+export const MAJOR_EXPLOSION_VOICE_DURATION = MAJOR_EXPLOSION_BODY_DURATION;
+
+/**
+ * Expiry timestamps (AudioContext time) of the currently-active
+ * major-explosion voices. A voice holds a slot for
+ * {@link MAJOR_EXPLOSION_VOICE_DURATION}; expired entries are pruned on each
+ * trigger. Kept module-scoped so the cap applies across the per-ship calls
+ * made by `PlayScene._timeoutWave()` in a single tick.
+ */
+let majorExplosionVoiceExpiries: number[] = [];
+
+/** Removes voices whose active window has already elapsed. */
+function pruneMajorExplosionVoices(now: number): void {
+  majorExplosionVoiceExpiries = majorExplosionVoiceExpiries.filter(
+    (expiry) => expiry > now,
+  );
+}
+
+/**
+ * Registers one major-explosion voice against the concurrency cap and
+ * returns the gain multiplier to apply to that voice.
+ *
+ * A voice below the {@link MAJOR_EXPLOSION_MAX_VOICES} cap holds a slot for
+ * {@link MAJOR_EXPLOSION_VOICE_DURATION} and plays at full gain (1). Once the
+ * cap is saturated the trigger still sounds — so the wipe stays audible — but
+ * at {@link MAJOR_EXPLOSION_OVERFLOW_ATTENUATION} so simultaneous detonations
+ * do not stack at full gain.
+ */
+function registerMajorExplosionVoice(now: number): number {
+  pruneMajorExplosionVoices(now);
+  if (majorExplosionVoiceExpiries.length >= MAJOR_EXPLOSION_MAX_VOICES) {
+    return MAJOR_EXPLOSION_OVERFLOW_ATTENUATION;
+  }
+  majorExplosionVoiceExpiries.push(now + MAJOR_EXPLOSION_VOICE_DURATION);
+  return 1;
+}
+
+/** For tests: number of active (full-gain) major-explosion voices. */
+export function _getMajorExplosionVoiceCountForTests(): number {
+  return majorExplosionVoiceExpiries.length;
+}
+
+/** For tests: clears the limiter state so suites stay isolated. */
+export function _resetMajorExplosionLimiterForTests(): void {
+  majorExplosionVoiceExpiries = [];
+}
+
+/**
+ * Heavier, layered wave-timeout explosion cue — "major blast"
+ * (AH-0MUJ1YZJ9008O4RC, parent AC1).
+ *
+ * Three layers played together so a timeout wipe reads unmistakably
+ * heavier than a single enemy kill:
+ *   1. **Impact thump** — a sawtooth falling
+ *      {@link MAJOR_EXPLOSION_THUMP_START_HZ} →
+ *      {@link MAJOR_EXPLOSION_THUMP_END_HZ} over
+ *      {@link MAJOR_EXPLOSION_THUMP_DURATION}.
+ *   2. **Descending body** — a triangle sliding
+ *      {@link MAJOR_EXPLOSION_BODY_START_HZ} →
+ *      {@link MAJOR_EXPLOSION_BODY_END_HZ} over
+ *      {@link MAJOR_EXPLOSION_BODY_DURATION}, giving the cue its heavier,
+ *      longer character.
+ *   3. **Noise tail** — a short low-pass filtered white-noise burst for
+ *      the deep rumble wash (distinct from the player cue's high-pass
+ *      shrapnel hiss).
+ *
+ * Every layer's amplitude and length is an exported constant (no inline
+ * tuning literals), so the cue is fully tunable in one place. All layers
+ * route through the master SFX gain, so volume/mute apply. Called once per
+ * detonating ship by `PlayScene._timeoutWave()`, under a concurrency cap:
+ * at most {@link MAJOR_EXPLOSION_MAX_VOICES} full-gain voices sound at once,
+ * with excess triggers attenuated by
+ * {@link MAJOR_EXPLOSION_OVERFLOW_ATTENUATION} (GDD §7.3). Safe no-op without
+ * an `AudioContext` (headless tests / autoplay-blocked browsers).
+ */
+export function playMajorExplosionSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Concurrency/rate limiter (GDD §7.3 ≤ 3–4 concurrent SFX). Excess
+  // triggers in the same burst sound at reduced gain instead of stacking.
+  const voiceGain = registerMajorExplosionVoice(t);
+
+  // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'sawtooth';
+  thump.frequency.setValueAtTime(MAJOR_EXPLOSION_THUMP_START_HZ, t);
+  thump.frequency.exponentialRampToValueAtTime(
+    MAJOR_EXPLOSION_THUMP_END_HZ,
+    t + MAJOR_EXPLOSION_THUMP_DURATION,
+  );
+  thumpGain.gain.setValueAtTime(
+    MAJOR_EXPLOSION_THUMP_VOLUME * voiceGain,
+    t,
+  );
+  thumpGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MAJOR_EXPLOSION_THUMP_DURATION,
+  );
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
+  thump.start(t);
+  thump.stop(t + MAJOR_EXPLOSION_THUMP_DURATION + 0.02);
+
+  // ── Layer 2: descending body (triangle slide) — the "tail". ───────
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = 'triangle';
+  body.frequency.setValueAtTime(MAJOR_EXPLOSION_BODY_START_HZ, t);
+  body.frequency.exponentialRampToValueAtTime(
+    MAJOR_EXPLOSION_BODY_END_HZ,
+    t + MAJOR_EXPLOSION_BODY_DURATION,
+  );
+  bodyGain.gain.setValueAtTime(
+    MAJOR_EXPLOSION_BODY_VOLUME * voiceGain,
+    t,
+  );
+  bodyGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MAJOR_EXPLOSION_BODY_DURATION,
+  );
+  body.connect(bodyGain).connect(ensureMasterGain(ctx));
+  body.start(t);
+  body.stop(t + MAJOR_EXPLOSION_BODY_DURATION + 0.02);
+
+  // ── Layer 3: rumble wash (low-pass filtered white noise). ─────────
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * MAJOR_EXPLOSION_TAIL_DURATION)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'lowpass';
+  noiseFilter.frequency.setValueAtTime(MAJOR_EXPLOSION_TAIL_FILTER_HZ, t);
+  noiseFilter.Q.setValueAtTime(MAJOR_EXPLOSION_TAIL_FILTER_Q, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(
+    MAJOR_EXPLOSION_TAIL_VOLUME * voiceGain,
+    t,
+  );
+  noiseGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MAJOR_EXPLOSION_TAIL_DURATION,
+  );
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + MAJOR_EXPLOSION_TAIL_DURATION + 0.02);
 }
 
 /**
@@ -1578,4 +1842,102 @@ export function playMagnetCollectSound(): void {
   body.connect(bodyGain).connect(ensureMasterGain(ctx));
   body.start(t);
   body.stop(t + 0.26);
+}
+
+// ── P6 Phase Shift activation cue (parent AH-0MUIYX1EE008FVS8) ──────
+//
+// Phase Shift is now triggered automatically when the player is surrounded,
+// so the cue must sell the activation instantly: a rising sci-fi chirp layered
+// with a bright noise whoosh. Volume stays within the GDD §7.3 player-cue
+// ceiling (≤ 0.2 per layer) and the whole cue is a safe no-op without an
+// AudioContext (headless tests / autoplay-blocked browsers).
+
+/** Rising chirp start frequency (Hz). */
+export const PHASE_SHIFT_CHIRP_START_HZ = 320;
+
+/** Rising chirp end frequency (Hz) — a bright upward sweep. */
+export const PHASE_SHIFT_CHIRP_END_HZ = 1560;
+
+/** Rising chirp duration (seconds). */
+export const PHASE_SHIFT_CHIRP_DURATION = 0.28;
+
+/** Rising chirp layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const PHASE_SHIFT_CHIRP_VOLUME = 0.16;
+
+/** Whoosh noise filter start centre frequency (Hz). */
+export const PHASE_SHIFT_WHOOSH_START_HZ = 600;
+
+/** Whoosh noise filter end centre frequency (Hz). */
+export const PHASE_SHIFT_WHOOSH_END_HZ = 3200;
+
+/** Whoosh layer duration (seconds). */
+export const PHASE_SHIFT_WHOOSH_DURATION = 0.24;
+
+/** Whoosh layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const PHASE_SHIFT_WHOOSH_VOLUME = 0.09;
+
+/**
+ * Plays the dedicated P6 Phase Shift activation cue: a rising triangle chirp
+ * (320 → 1560 Hz) layered with a bandpass noise whoosh that sweeps 600 →
+ * 3200 Hz. Distinctly rising so it reads as "phase engaged", unlike the
+ * descending destruction cues and the flat weapon pickups.
+ *
+ * Safe no-op without a working AudioContext — never throws.
+ */
+export function playPhaseShiftSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Layer 1: rising chirp — the tonal "engage" sweep.
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(PHASE_SHIFT_CHIRP_START_HZ, t);
+  osc.frequency.exponentialRampToValueAtTime(
+    PHASE_SHIFT_CHIRP_END_HZ,
+    t + PHASE_SHIFT_CHIRP_DURATION,
+  );
+  gain.gain.setValueAtTime(PHASE_SHIFT_CHIRP_VOLUME, t);
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + PHASE_SHIFT_CHIRP_DURATION,
+  );
+  osc.connect(gain).connect(ensureMasterGain(ctx));
+  osc.start(t);
+  osc.stop(t + PHASE_SHIFT_CHIRP_DURATION + 0.02);
+
+  // Layer 2: rising bandpass noise — the sci-fi whoosh texture.
+  const whooshDuration = PHASE_SHIFT_WHOOSH_DURATION;
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.floor(ctx.sampleRate * whooshDuration),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(PHASE_SHIFT_WHOOSH_START_HZ, t);
+  noiseFilter.frequency.exponentialRampToValueAtTime(
+    PHASE_SHIFT_WHOOSH_END_HZ,
+    t + whooshDuration,
+  );
+  noiseFilter.Q.setValueAtTime(0.8, t);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(PHASE_SHIFT_WHOOSH_VOLUME, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + whooshDuration);
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + whooshDuration + 0.02);
 }
