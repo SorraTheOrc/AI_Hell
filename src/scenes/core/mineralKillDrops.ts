@@ -10,8 +10,10 @@
  * Rule (GDD §4.4.1 / §4.5):
  * - small asteroid → exactly one mineral at the death site;
  * - large/medium asteroid → none (their small split children drop);
- * - non-asteroid enemy → the configured 25–50 % fraction of the minerals it
- *   absorbed, scattered at the death site;
+ * - non-asteroid enemy → its collected minerals plus a random additive bonus
+ *   in [`mineralRedropBonusMin`, `mineralRedropBonusMax`] (defaults
+ *   0.25–1.25), rounded to the nearest integer and scattered at the death
+ *   site (there is no upper cap);
  * - anything else → none.
  *
  * @module scenes/core/mineralKillDrops
@@ -62,7 +64,8 @@ export function resolveMineralKillDrops(
       : [];
   }
 
-  // Non-asteroid enemy: re-drop the configured fraction it absorbed.
+  // Non-asteroid enemy: re-drop its collected minerals plus a random
+  // additive bonus (no upper cap), scattered at the death site.
   if (typeof entity.mineralRedropCount === 'function') {
     return scatterMineralDrops(
       scene,

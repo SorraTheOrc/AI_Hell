@@ -2609,7 +2609,6 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     scene.setSceneRng(createSeededRng(5));
     const expected = enemy.mineralRedropCount(createSeededRng(5));
     expect(expected).toBeGreaterThan(0);
-    expect(expected).toBeLessThanOrEqual(collected);
 
     const ex = enemy.x;
     const ey = enemy.y;

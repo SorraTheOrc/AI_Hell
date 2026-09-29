@@ -88,10 +88,16 @@ export interface GameRules {
    * growth (every hold stays at the first-hold capacity).
    */
   mineralHoldGrowthMultiplier: number;
-  /** Minimum fraction of a destroyed enemy's minerals re-dropped (default 0.25). */
-  mineralRedropFractionMin: number;
-  /** Maximum fraction of a destroyed enemy's minerals re-dropped (default 0.5). */
-  mineralRedropFractionMax: number;
+  /**
+   * Minimum additive bonus (in minerals) added to a destroyed enemy's
+   * collected count before rounding to the nearest integer (default 0.25).
+   */
+  mineralRedropBonusMin: number;
+  /**
+   * Maximum additive bonus (in minerals) added to a destroyed enemy's
+   * collected count before rounding to the nearest integer (default 1.25).
+   */
+  mineralRedropBonusMax: number;
   /**
    * Opt-in switch for runtime-generated waves (AH-0MUH6LEYY0054E63).
    * When `true`, `PlayScene` builds the campaign from the difficulty-curve
@@ -164,11 +170,11 @@ export const DEFAULT_MINERAL_HOLD_CAPACITY = 5;
  */
 export const DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER = 2;
 
-/** Default minimum re-drop fraction of a destroyed enemy's minerals (25 %). */
-export const DEFAULT_MINERAL_REDROP_FRACTION_MIN = 0.25;
+/** Default minimum additive re-drop bonus in minerals (0.25). */
+export const DEFAULT_MINERAL_REDROP_BONUS_MIN = 0.25;
 
-/** Default maximum re-drop fraction of a destroyed enemy's minerals (50 %). */
-export const DEFAULT_MINERAL_REDROP_FRACTION_MAX = 0.5;
+/** Default maximum additive re-drop bonus in minerals (1.25). */
+export const DEFAULT_MINERAL_REDROP_BONUS_MAX = 1.25;
 
 /**
  * Default for the sequenced-waves toggle — **on** (AH-0MUJSUTLA006Q8E1). The
@@ -214,8 +220,8 @@ export const DEFAULT_RULES: GameRules = {
   mineralCollectAmount: DEFAULT_MINERAL_COLLECT_AMOUNT,
   mineralHoldCapacity: DEFAULT_MINERAL_HOLD_CAPACITY,
   mineralHoldGrowthMultiplier: DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
-  mineralRedropFractionMin: DEFAULT_MINERAL_REDROP_FRACTION_MIN,
-  mineralRedropFractionMax: DEFAULT_MINERAL_REDROP_FRACTION_MAX,
+  mineralRedropBonusMin: DEFAULT_MINERAL_REDROP_BONUS_MIN,
+  mineralRedropBonusMax: DEFAULT_MINERAL_REDROP_BONUS_MAX,
   sequencedWavesEnabled: DEFAULT_SEQUENCED_WAVES_ENABLED,
 };
 
@@ -231,8 +237,15 @@ export const RULES_STORAGE_KEY = 'ai-hell-game-rules';
  * fixed-capacity value that would defeat the new progression, so
  * {@link loadRules} migrates them by resetting the two mineral-hold
  * tunables to the new defaults while preserving every other rule.
+ *
+ * Version 3 replaced the multiplicative re-drop fractions
+ * (`mineralRedropFractionMin`/`Max`) with additive bonus tunables
+ * (`mineralRedropBonusMin`/`Max`). Versions 1 and 2 persisted fraction
+ * values that are meaningless under the new additive semantics, so
+ * {@link loadRules} resets the bonus tunables to the new defaults for any
+ * config older than version 3 rather than carrying the stale keys forward.
  */
-export const RULES_SCHEMA_VERSION = 2;
+export const RULES_SCHEMA_VERSION = 3;
 
 // ── Internals ───────────────────────────────────────────────────────
 
@@ -261,8 +274,8 @@ function cloneDefaultRules(): GameRules {
     mineralCollectAmount: DEFAULT_RULES.mineralCollectAmount,
     mineralHoldCapacity: DEFAULT_RULES.mineralHoldCapacity,
     mineralHoldGrowthMultiplier: DEFAULT_RULES.mineralHoldGrowthMultiplier,
-    mineralRedropFractionMin: DEFAULT_RULES.mineralRedropFractionMin,
-    mineralRedropFractionMax: DEFAULT_RULES.mineralRedropFractionMax,
+    mineralRedropBonusMin: DEFAULT_RULES.mineralRedropBonusMin,
+    mineralRedropBonusMax: DEFAULT_RULES.mineralRedropBonusMax,
     sequencedWavesEnabled: DEFAULT_RULES.sequencedWavesEnabled,
   };
 }
@@ -278,14 +291,13 @@ function coercePositiveNumber(value: unknown, fallback: number): number {
 }
 
 /**
- * Coerces a stored fraction to a value in [0, 1], falling back to
- * `fallback` otherwise.
+ * Coerces a stored value to a usable non-negative finite number, falling
+ * back to `fallback` otherwise. Used for the additive re-drop bonus
+ * tunables, whose defaults (0.25/1.25) can exceed 1 and are therefore not
+ * fractions.
  */
-function coerceFraction(value: unknown, fallback: number): number {
-  return typeof value === 'number' &&
-    Number.isFinite(value) &&
-    value >= 0 &&
-    value <= 1
+function coerceNonNegativeNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? value
     : fallback;
 }
@@ -394,10 +406,15 @@ export function loadRules(): GameRules {
       version?: number;
     };
     // Version 1 stored a *fixed* hold capacity; honouring it as the
-    // first-hold capacity would keep the old 20-mineral grind. Migrate
-    // legacy configs by resetting the mineral-hold tunables to the new
-    // defaults (the semantic changed), keeping every other rule.
-    const legacy = !isCurrentSchemaVersion(parsed.version);
+    // first-hold capacity would keep the old 20-mineral grind. Reset the
+    // mineral-hold tunables for pre-v2 configs only — version 2 uses the
+    // first-hold semantics, so its customised values must survive.
+    const legacyHold = !isVersionAtLeast(parsed.version, 2);
+    // Versions 1 and 2 persisted the re-drop rule as a fraction of the
+    // collected count; version 3 replaced it with an additive bonus. Reset
+    // the bonus tunables for any older config so a stale fraction value is
+    // never reinterpreted as a bonus.
+    const legacyRedrop = !isVersionAtLeast(parsed.version, 3);
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       beatBpm: coercePositiveNumber(parsed.beatBpm, DEFAULT_BEAT_BPM),
@@ -410,26 +427,30 @@ export function loadRules(): GameRules {
         parsed.mineralCollectAmount,
         DEFAULT_MINERAL_COLLECT_AMOUNT,
       ),
-      mineralHoldCapacity: legacy
+      mineralHoldCapacity: legacyHold
         ? DEFAULT_MINERAL_HOLD_CAPACITY
         : coercePositiveNumber(
             parsed.mineralHoldCapacity,
             DEFAULT_MINERAL_HOLD_CAPACITY,
           ),
-      mineralHoldGrowthMultiplier: legacy
+      mineralHoldGrowthMultiplier: legacyHold
         ? DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER
         : coercePositiveNumber(
             parsed.mineralHoldGrowthMultiplier,
             DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
           ),
-      mineralRedropFractionMin: coerceFraction(
-        parsed.mineralRedropFractionMin,
-        DEFAULT_MINERAL_REDROP_FRACTION_MIN,
-      ),
-      mineralRedropFractionMax: coerceFraction(
-        parsed.mineralRedropFractionMax,
-        DEFAULT_MINERAL_REDROP_FRACTION_MAX,
-      ),
+      mineralRedropBonusMin: legacyRedrop
+        ? DEFAULT_MINERAL_REDROP_BONUS_MIN
+        : coerceNonNegativeNumber(
+            parsed.mineralRedropBonusMin,
+            DEFAULT_MINERAL_REDROP_BONUS_MIN,
+          ),
+      mineralRedropBonusMax: legacyRedrop
+        ? DEFAULT_MINERAL_REDROP_BONUS_MAX
+        : coerceNonNegativeNumber(
+            parsed.mineralRedropBonusMax,
+            DEFAULT_MINERAL_REDROP_BONUS_MAX,
+          ),
       sequencedWavesEnabled: coerceBoolean(
         parsed.sequencedWavesEnabled,
         DEFAULT_SEQUENCED_WAVES_ENABLED,
@@ -441,12 +462,14 @@ export function loadRules(): GameRules {
 }
 
 /**
- * Whether a persisted schema version matches the current one. Anything
- * that is not the current version (including `undefined`, older numbers or
- * a corrupt value) is treated as legacy and migrated.
+ * Whether a persisted schema version is at least `minimum`. Anything that
+ * is not a finite number ≥ `minimum` (including `undefined`, older numbers
+ * or a corrupt value) is treated as legacy and migrated.
  */
-function isCurrentSchemaVersion(version: unknown): boolean {
-  return version === RULES_SCHEMA_VERSION;
+function isVersionAtLeast(version: unknown, minimum: number): boolean {
+  return (
+    typeof version === 'number' && Number.isFinite(version) && version >= minimum
+  );
 }
 
 /**
