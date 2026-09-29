@@ -18,7 +18,9 @@ import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
+import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
+import { Scout } from '../entities/Scout';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -28,6 +30,7 @@ import {
   LEVEL_TRANSITION_SECONDS,
   PlayScene,
   resolveCampaignLevels,
+  SCORE_VALUES,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -36,6 +39,7 @@ import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
 } from '../waves/Formations';
+import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns } from '../waves/AsteroidSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
@@ -83,9 +87,48 @@ function killAllEnemies(scene: PlayScene): void {
   }
 }
 
+/**
+ * Destroys every live non-asteroid enemy via player bullets (deterministic),
+ * leaving any live asteroids in the field. Used to assert that a wave clears
+ * with asteroids still alive (AH-0MUJM746P000QAEO).
+ */
+function killNonAsteroidEnemies(scene: PlayScene): void {
+  for (let guard = 0; guard < 500; guard++) {
+    const enemy = scene
+      .getEnemies()
+      .find((e) => e.alive && !(e instanceof Asteroid));
+    if (!enemy) return;
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+  }
+}
+
 /** Advances past the transition pause, spawning the next wave. */
 function finishTransition(scene: PlayScene): void {
   if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+}
+
+/**
+ * Deterministic regression guard (AH-0MUHA0MMP001DZ5C): asserts the
+ * wave-clear path actually started a transition. It drives the scene with
+ * bounded deterministic ticks and polls `isTransitioning()` instead of
+ * waiting on wall-clock time, and throws a descriptive error (naming the
+ * wave/accounting state) if the transition never starts — so a regression
+ * fails loudly here rather than as an unrelated later assertion.
+ */
+function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
+  for (let i = 0; i < maxTicks && !scene.isTransitioning(); i++) {
+    scene.tick(0.016);
+  }
+  if (!scene.isTransitioning()) {
+    const wm = scene.getWaveManager();
+    throw new Error(
+      'Expected a cleared wave to start a transition (isTransitioning() true), ' +
+        `but it stayed false after ${maxTicks} deterministic ticks. ` +
+        `aliveCount=${scene.getAliveCount()} enemiesAlive=${wm.enemiesAlive} ` +
+        `level=${wm.level} wave=${wm.waveNumber}`,
+    );
+  }
 }
 
 /** Walks the run to the boss encounter (Level 5 cleared). */
@@ -132,7 +175,14 @@ async function bootSceneWithLevels(
   levels: LevelDefinition[],
   options: { asteroidSpawner?: boolean } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
-  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
+  // The shipped default now sequences the campaign (AH-0MUJSUTLA006Q8E1),
+  // which would override these injected fixtures on `create()`. Opt out so
+  // the test's own levels are honoured.
+  localStorage.setItem(
+    RULES_STORAGE_KEY,
+    JSON.stringify({ sequencedWavesEnabled: false }),
+  );
+  const game = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
   if (options.asteroidSpawner === false) {
@@ -146,37 +196,19 @@ async function bootSceneWithLevels(
 }
 
 /**
- * Reconstructs the pre-spawner campaign fixture: the shipped five-level
- * campaign with the original fixed Asteroid group re-added to Level 1
- * Wave 1. The asteroid integration tests (`AH-0MU8BZ2ZM004J47F`,
- * `AH-0MU8TWF1H007OG2L`, `AH-0MUCG5SWH008104P`, `AH-0MUCG5TIU000VPVO`,
- * `AH-0MU7JTG9R002ZWA6`) were written against that fixed group; the shipped
- * campaign now relies on the dynamic spawner instead.
+ * A deep copy of the shipped campaign, without any fixed asteroid. The
+ * asteroid integration tests spawn their asteroid through the public
+ * `spawnAsteroidAt` seam instead, because asteroids are not wave-accounted
+ * (AH-0MUJM746P000QAEO) and must not be part of a wave definition.
  */
-function campaignWithFixedAsteroid(): LevelDefinition[] {
+function plainCampaign(): LevelDefinition[] {
   return CAMPAIGN_LEVELS.map((lvl) => ({
     ...lvl,
     waves: lvl.waves.map((w) => ({
       ...w,
       groups: w.groups.map((g) => ({ ...g })),
     })),
-  })).map((lvl) => {
-    if (lvl.level === 1) {
-      lvl.waves[0].groups = [
-        ...lvl.waves[0].groups,
-        {
-          enemyKey: 'asteroid',
-          formation: 'single' as const,
-          count: 1,
-          spacingX: 28,
-          spacingY: 22,
-          startX: GAME_WIDTH * 0.6,
-          startY: GAME_HEIGHT * 0.25,
-        },
-      ];
-    }
-    return lvl;
-  });
+  }));
 }
 
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
@@ -189,7 +221,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     // This suite predates the dynamic spawner and asserts deterministic
     // wave/banner/transition behaviour; isolate it from random asteroid
     // spawns (the spawner is covered by its own integration suites).
@@ -197,17 +229,25 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     return booted.scene as PlayScene;
   }
 
-  /** Boots with the fixed-asteroid campaign fixture (see
-   * `campaignWithFixedAsteroid`). */
+  it('F5 — the Harvester is worth ≈400 points (between Tank 300 and the boss phases)', () => {
+    expect(SCORE_VALUES.harvester).toBe(400);
+    expect(SCORE_VALUES.harvester).toBeGreaterThan(SCORE_VALUES.tank);
+    expect(SCORE_VALUES.harvester).toBeLessThan(BOSS_PHASE_SCORES[1]);
+  });
+
+  /** Boots with a deterministic large asteroid placed outside the wave
+   * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
-    // Isolate the fixed asteroid: disable the dynamic spawner from before
-    // the scene restarts so these legacy asteroid-behaviour tests are not
-    // perturbed by random spawns.
+    // Isolate the asteroid: disable the dynamic spawner from before the scene
+    // restarts so these asteroid-behaviour tests are not perturbed by random
+    // spawns, then place one deterministic large asteroid through the public
+    // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
     const { booted: game, scene } = await bootSceneWithLevels(
-      campaignWithFixedAsteroid(),
+      plainCampaign(),
       { asteroidSpawner: false },
     );
     booted = game;
+    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return scene;
   }
 
@@ -572,6 +612,21 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
   });
 
+  it('AH-0MUHA0MMP001DZ5C — clearing a wave deterministically starts the transition (regression guard)', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    expect(wm.waveNumber).toBe(1);
+
+    killAllEnemies(scene);
+    expect(scene.getAliveCount()).toBe(0);
+
+    // Drives the real wave-clear -> `_startTransition()` path with bounded
+    // deterministic ticks and condition polling (no wall-clock waits), and
+    // fails loudly with the wave/accounting state if it regresses.
+    expectTransitionStarted(scene);
+    expect(scene.isTransitioning()).toBe(true);
+  });
+
   // ── Transient transition banner (AH-0MU7JTEMC006QPSN) ─────────
 
   it('AH-0MU7JTEMC006QPSN AC1 — the level banner hides within ~2s while enemies remain alive', async () => {
@@ -860,11 +915,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
   });
 
-  it('AH-0MU8TWF1H007OG2L AC5 — carried-over asteroids are re-registered with WaveManager for the next wave', async () => {
+  it('AH-0MU8TWF1H007OG2L AC5 — surviving asteroids are NOT re-registered with WaveManager after timeout (AH-0MUJM746P000QAEO)', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
-    const asteroids = findAsteroids(scene);
-    expect(asteroids.length).toBeGreaterThan(0);
+    const asteroidsBefore = findAsteroids(scene);
+    expect(asteroidsBefore.length).toBeGreaterThan(0);
 
     // Time out the wave to trigger transition.
     scene.setWaveTimerRemaining(0.05);
@@ -872,11 +927,99 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // Finish the transition so the next wave is spawned.
     finishTransition(scene);
 
-    // The WaveManager should account for the carried-over asteroids.
-    // After timeout: enemiesAlive was decremented by _advanceAfterTimeout replay;
-    // re-registered asteroids add them back.
-    const aliveCount = scene.getAliveCount();
-    expect(wm.enemiesAlive).toBe(aliveCount);
+    // Asteroids survived the timeout and are still alive.
+    const asteroidsAfter = findAsteroids(scene);
+    expect(asteroidsAfter.length).toBeGreaterThan(0);
+
+    // enemiesAlive reflects ONLY the next wave's formation enemies.
+    expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
+  });
+
+  // ── Wave-timeout major-explosion SFX (AH-0MUJ1YZJ9008O4RC) ─────
+
+  it('AH-0MUJ1YZJ9008O4RC AC2 — timeout fires the major-explosion cue once per detonated survivor', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    expect(detonated).toBeGreaterThan(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(scene.getAliveCount()).toBe(findAsteroids(scene).length);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC2/AC4 — asteroids survive the timeout and do not trigger the cue', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlayWithAsteroid();
+    const asteroids = findAsteroids(scene);
+    expect(asteroids.length).toBeGreaterThan(0);
+    const detonated = scene.getAliveCount() - asteroids.length;
+    expect(detonated).toBeGreaterThan(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    for (const asteroid of asteroids) expect(asteroid.alive).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC4 — no survivors means no cue and the wave timer is hidden', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    scene.setAsteroidSpawnerEnabled(false);
+    for (const e of scene.getEnemies()) e.destroySelf();
+    expect(scene.getAliveCount()).toBe(0);
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).not.toHaveBeenCalled();
+    expect(scene.isWaveTimerActive()).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC4 — the timeout life loss keeps the generic cue and never the player cue', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlay();
+    const generic = vi.spyOn(effectsModule, 'playDestructionSound');
+    const playerCue = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(generic).toHaveBeenCalledTimes(1);
+    expect(playerCue).not.toHaveBeenCalled();
+    expect(majorCue).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('AH-0MUJ1YZJ9008O4RC AC2 — detonation scale, life penalty and wave advance are unchanged', async () => {
+    vi.restoreAllMocks();
+    const scene = await bootPlayWithAsteroid();
+    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    const livesBefore = scene.getGameState().lives;
+    const waveBefore = scene.getWaveManager().waveNumber;
+    waveVfx.scales.length = 0;
+    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+
+    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(
+      waveVfx.scales.filter((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE).length,
+    ).toBe(detonated);
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
+    vi.restoreAllMocks();
   });
 
   // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
@@ -970,6 +1113,119 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(findAsteroids(scene).length).toBe(asteroids.length);
   });
 
+  // ── Asteroid-independent wave completion + persistence (AH-0MUJM746P000QAEO) ──
+
+  it('AH-0MUJM746P000QAEO AC1 — a released offscreen asteroid does not increment enemiesAlive', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const before = new Set(findAsteroids(scene));
+    const aliveBefore = wm.enemiesAlive;
+
+    // Release one planned asteroid directly through the public spawn seam.
+    scene.spawnAsteroidAt(-20, GAME_HEIGHT / 2, 'large');
+
+    const spawned = findAsteroids(scene).filter((a) => !before.has(a));
+    expect(spawned).toHaveLength(1);
+    // The asteroid is not wave-accounted (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
+  });
+
+  it('AH-0MUJM746P000QAEO AC1 — a split child does not increment enemiesAlive', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+    const large = findAsteroids(scene)[0];
+    const aliveBefore = wm.enemiesAlive;
+
+    // Shoot the large asteroid: it splits into 2 medium children.
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(large.alive).toBe(false);
+    expect(findAsteroids(scene)).toHaveLength(2);
+
+    // The asteroid is not wave-accounted, so the split leaves enemiesAlive
+    // unchanged (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
+  });
+
+  it('AH-0MUJM746P000QAEO AC2 — a live asteroid persists across a wave transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+    const asteroid = findAsteroids(scene)[0];
+    expect(asteroid.alive).toBe(true);
+    const xBefore = asteroid.x;
+    const yBefore = asteroid.y;
+
+    // Clear only the wave-1 Scouts; the asteroid survives and the wave clears.
+    killNonAsteroidEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(asteroid.alive).toBe(true);
+
+    finishTransition(scene);
+    // Now on wave 2 with the asteroid still alive and still moving.
+    expect(wm.waveNumber).toBe(2);
+    expect(asteroid.alive).toBe(true);
+    scene.tick(0.5);
+    expect(
+      Math.abs(asteroid.x - xBefore) + Math.abs(asteroid.y - yBefore),
+    ).toBeGreaterThan(0);
+  });
+
+  it('AH-0MUJM746P000QAEO AC2 — a live asteroid persists across a level transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+    const asteroid = findAsteroids(scene)[0];
+
+    // Clear wave 1 and wave 2 of Level 1; the asteroid lives through both.
+    killNonAsteroidEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+    expect(wm.waveNumber).toBe(2);
+    expect(asteroid.alive).toBe(true);
+
+    killNonAsteroidEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+
+    // Now on Level 2 with the carried-over asteroid still alive.
+    expect(wm.level).toBe(2);
+    expect(asteroid.alive).toBe(true);
+    expect(findAsteroids(scene)).toContain(asteroid);
+  });
+
+  it('AH-0MUJM746P000QAEO AC2 — a live asteroid is shootable after a transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const asteroid = findAsteroids(scene)[0];
+
+    // Clear wave 1 and carry the asteroid into wave 2.
+    killNonAsteroidEnemies(scene);
+    finishTransition(scene);
+    expect(asteroid.alive).toBe(true);
+
+    // The persisted asteroid is still a valid bullet target and splits.
+    scene.spawnPlayerBullet(asteroid.x, asteroid.y, 0, 0);
+    scene.tick(0.016);
+    expect(asteroid.alive).toBe(false);
+    expect(findAsteroids(scene)).toHaveLength(2);
+  });
+
+  it('AH-0MUJM746P000QAEO AC5 — minerals persist across a wave transition', async () => {
+    const scene = await bootPlayWithAsteroid();
+    const wm = scene.getWaveManager();
+
+    // Place a mineral on the field through the public seam.
+    scene.spawnMineralAt(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    const mineralsBefore = scene.getMinerals();
+    expect(mineralsBefore.length).toBeGreaterThan(0);
+
+    // Clear wave 1 and complete the transition.
+    killNonAsteroidEnemies(scene);
+    expect(wm.waveNumber).toBe(2);
+    finishTransition(scene);
+
+    // The mineral is still on the field after the wave transition.
+    expect(scene.getMinerals().length).toBe(mineralsBefore.length);
+  });
+
   // ── Power-up drop separation (AH-0MU7JTFM5000R4ME) ─────────────
 
   it('AH-0MU7JTFM5000R4ME AC3 — drops spawned at the same position keep minimum separation', async () => {
@@ -1019,21 +1275,23 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
-  /** Boots with the fixed-asteroid campaign fixture (see
-   * `campaignWithFixedAsteroid`). */
+  /** Boots with a deterministic large asteroid placed outside the wave
+   * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
-    // Isolate the fixed asteroid: disable the dynamic spawner from before
-    // the scene restarts so these legacy asteroid-behaviour tests are not
-    // perturbed by random spawns.
+    // Isolate the asteroid: disable the dynamic spawner from before the scene
+    // restarts so these asteroid-behaviour tests are not perturbed by random
+    // spawns, then place one deterministic large asteroid through the public
+    // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
     const { booted: game, scene } = await bootSceneWithLevels(
-      campaignWithFixedAsteroid(),
+      plainCampaign(),
       { asteroidSpawner: false },
     );
     booted = game;
+    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return scene;
   }
 
@@ -1192,21 +1450,23 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
-  /** Boots with the fixed-asteroid campaign fixture (see
-   * `campaignWithFixedAsteroid`). */
+  /** Boots with a deterministic large asteroid placed outside the wave
+   * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
-    // Isolate the fixed asteroid: disable the dynamic spawner from before
-    // the scene restarts so these legacy asteroid-behaviour tests are not
-    // perturbed by random spawns.
+    // Isolate the asteroid: disable the dynamic spawner from before the scene
+    // restarts so these asteroid-behaviour tests are not perturbed by random
+    // spawns, then place one deterministic large asteroid through the public
+    // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
     const { booted: game, scene } = await bootSceneWithLevels(
-      campaignWithFixedAsteroid(),
+      plainCampaign(),
       { asteroidSpawner: false },
     );
     booted = game;
+    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return scene;
   }
 
@@ -1225,18 +1485,19 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(asteroids.length).toBe(1);
     expect(asteroids[0].getSizeTier()).toBe('large');
 
-    // Wave accounting includes the asteroid: 6 scouts + 1 asteroid.
+    // Wave accounting counts only the 6 Scouts: the asteroid is not
+    // wave-accounted (AH-0MUJM746P000QAEO).
     const waveDef = wm.currentWave()!;
     const total = waveDef.groups.reduce((sum, g) => sum + g.count, 0);
-    expect(total).toBe(7);
+    expect(total).toBe(6);
     expect(wm.enemiesAlive).toBe(total);
-    expect(scene.getAliveCount()).toBe(total);
+    expect(scene.getAliveCount()).toBe(total + 1); // 6 Scouts + 1 asteroid
   });
 
   it('AC3 — shooting the large asteroid spawns exactly 2 medium children in divergent directions', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
-    const aliveBefore = wm.enemiesAlive; // 7
+    const aliveBefore = wm.enemiesAlive; // 6 (Scouts only)
 
     const large = findAsteroids(scene)[0];
     const scoreBefore = scene.getGameState().score;
@@ -1253,8 +1514,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(children.length).toBe(2);
     expect(children.every((c) => c.getSizeTier() === 'medium')).toBe(true);
 
-    // Both children registered with the WaveManager: 7 - 1 parent + 2 = 8.
-    expect(wm.enemiesAlive).toBe(aliveBefore + 1);
+    // Split children are NOT registered with the WaveManager (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
 
     // Children move in directions different from each other (>= pi/3).
     const a1 = Math.atan2(children[0].vy, children[0].vx);
@@ -1325,25 +1586,37 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(findAsteroids(scene).filter((a) => a.getSizeTier() === 'small')).toHaveLength(3);
   });
 
-  it('AC6 — the wave clears only after ALL split children are destroyed (no stall, no early clear)', async () => {
+  it('AH-0MUJM746P000QAEO AC1 — the wave clears as soon as non-asteroid enemies are destroyed, even with live asteroids', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
 
-    // Destroy everything: 6 scouts + full asteroid chain
-    // (1 large -> 2 medium -> 4 small = 7 asteroid enemies, 13 total).
-    killAllEnemies(scene);
+    // The wave has 6 Scouts; the asteroid is not wave-accounted.
+    expect(wm.enemiesAlive).toBe(6);
 
-    // All enemies dead -> the wave wiped -> transition to Wave 2 loaded.
+    // Destroy the asteroid first — this spawns 2 medium children.
+    const large = findAsteroids(scene)[0];
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(large.alive).toBe(false);
+    expect(findAsteroids(scene)).toHaveLength(2);
+
+    // The split leaves enemiesAlive unchanged (asteroids are not counted).
+    expect(wm.enemiesAlive).toBe(6);
+
+    // Now destroy all Scouts. The wave should clear despite 2 medium asteroids alive.
+    killNonAsteroidEnemies(scene);
+
+    // The wave cleared and transition to Wave 2 began — the asteroids persist.
     expect(scene.isTransitioning()).toBe(true);
-    expect(scene.getAliveCount()).toBe(0);
-    // Wave 2 is now current: the manager pre-loads its 8 Scouts (they are
-    // not spawned on screen until the transition completes).
     expect(wm.waveNumber).toBe(2);
+    expect(findAsteroids(scene)).toHaveLength(2);
+    // Wave 2 pre-loads its 8 Scouts.
     expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
 
     finishTransition(scene);
     expect(wm.waveNumber).toBe(2);
-    expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
+    // The 8 Scouts are now spawned on screen alongside the 2 persisted asteroids.
+    expect(scene.getAliveCount()).toBe(wm.waveEnemyCount() + 2);
   });
 
   it('AC5 — asteroids move independently of formation drift (constant velocity + wrap + rotation)', async () => {
@@ -1679,11 +1952,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P6 phase shift.
-    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    // Directly activate the phase — the ghost visual is independent of how
+    // the phase was triggered (auto-trigger is covered in effects.test.ts).
+    registry.applyPhaseShift();
     expect(registry.isPhased).toBe(true);
 
     expect(scene.isPhaseGhostActive()).toBe(true);
@@ -1698,19 +1969,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P6 phase shift.
-    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    // Directly activate the phase (trigger-independent ghost visual).
+    registry.applyPhaseShift();
     expect(registry.isPhased).toBe(true);
 
     // Ghost alpha on the next tick.
     scene.tick(0.016);
     expect(player.alpha).toBeCloseTo(0.45);
 
-    // Advance past the 3 s duration.
-    for (let i = 0; i < 188; i++) scene.tick(0.016); // ~3 s
+    // Advance past the 1.5 s duration.
+    for (let i = 0; i < 100; i++) scene.tick(0.016); // ~1.6 s
     expect(registry.isPhased).toBe(false);
     scene.tick(0.016);
     expect(player.alpha).toBeCloseTo(1);
@@ -1721,11 +1989,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P6 phase shift (phased → ghosted).
-    const drop = scene.spawnPowerUpDrop('P6', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    // Directly activate the phase (phased → ghosted).
+    registry.applyPhaseShift();
     expect(registry.isPhased).toBe(true);
 
     // Apply the ghost alpha first (phased → 0.45).
@@ -1802,11 +2067,15 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
     const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
     const scene = await bootPlay();
-    // Boot already fired an opening volley; clear so we assert only the
-    // shots fired below.
+    const player = scene.getPlayer()!;
+    // Reset the scene's shared beat clock to a deterministic anchor so
+    // exactly one grid tick (375 ms) elapses in the window below, and
+    // re-schedule the player's weapons on it.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     vi.clearAllMocks();
 
-    scene.tick(0.5); // cannon cooldown (400 ms) elapsed → fires
+    scene.tick(0.5); // one 375 ms cannon grid tick elapses → fires once
 
     expect(cannonSound).toHaveBeenCalledTimes(1);
     // No other weapon's cue plays while the cannon is the only weapon.
@@ -1822,23 +2091,33 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     vi.clearAllMocks();
 
-    // Spread: equip and wait past its fire rate. The permanently-active
-    // cannon fires too (cumulative model), so both cues play per volley.
+    // A freshly collected weapon fires its first shot on the next beat grid
+    // tick. Reset the shared clock before each equip so that tick is t=0,
+    // then advance one short frame to deliver exactly one volley.
+
+    // Spread: the permanently-active cannon fires too (cumulative model),
+    // so both cues play per volley.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('spread');
-    scene.tick(0.7); // spread fires every 600 ms
+    scene.tick(0.05);
     expect(spreadSound).toHaveBeenCalledTimes(1);
     expect(cannonSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 
     // Dual.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('dual');
-    scene.tick(0.5); // dual fires every 300 ms
+    scene.tick(0.05);
     expect(dualSound).toHaveBeenCalledTimes(1);
     vi.clearAllMocks();
 
     // Rapid.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('rapid');
-    scene.tick(0.2); // rapid fires every 125 ms
+    scene.tick(0.05);
     expect(rapidSound).toHaveBeenCalledTimes(1);
   });
 
@@ -2067,7 +2346,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // Verify each category was active before the restart (AC1).
     expect(registry.isActive('P5')).toBe(true);
     expect(registry.isShielded).toBe(true);
-    expect(registry.isPhased).toBe(true);
+    expect(registry.phaseCharges()).toBe(1);
     expect(registry.lives()).toBe(4);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);
@@ -2091,6 +2370,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(restartedRegistry.activeEffects()).toHaveLength(0);
     expect(restartedRegistry.isShielded).toBe(false);
     expect(restartedRegistry.isPhased).toBe(false);
+    expect(restartedRegistry.phaseCharges()).toBe(0);
     expect(restartedRegistry.speedMultiplier()).toBe(1);
     expect(restartedRegistry.magnetStacks()).toBe(0);
     expect(restartedRegistry.hasTeleport()).toBe(false);
@@ -2242,7 +2522,7 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
   const SEED = 20260925;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
@@ -2345,8 +2625,8 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
     expect(spawned[0].getSizeTier()).toBe(plan[0].sizeTier);
     expect(spawned[0].x).toBeCloseTo(plan[0].x, 3);
     expect(spawned[0].y).toBeCloseTo(plan[0].y, 3);
-    // Registered as a dynamic spawn so wave-clear accounting includes it.
-    expect(wm.enemiesAlive).toBe(aliveBefore + 1);
+    // Released asteroids are NOT registered with the WaveManager (AH-0MUJM746P000QAEO).
+    expect(wm.enemiesAlive).toBe(aliveBefore);
   });
 
   it('AC2 — spawned asteroids appear offscreen and drift inward', async () => {
@@ -2474,7 +2754,7 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   const SEED = 424242;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as PlayScene;
   }
 
@@ -2583,7 +2863,7 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   });
 });
 
-describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
+describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -2592,22 +2872,40 @@ describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
     localStorage.clear();
   });
 
-  /** A deterministic level with two Divers in one formation group. */
-  const HOLD_LEVELS: LevelDefinition[] = [
+  const START_X = 200;
+  const START_Y = 220;
+  const SPACING_X = 30;
+  const SPACING_Y = 26;
+
+  /**
+   * A deterministic level with a Diver group and a non-Diver (Scout) group
+   * sharing the same origin and spacing, so the whole-unit re-anchor delta can
+   * be verified against the Scout.
+   */
+  const REANCHOR_LEVELS: LevelDefinition[] = [
     {
       level: 1,
-      name: 'Formation hold',
+      name: 'Diver re-anchor',
       waves: [
         {
           groups: [
             {
               enemyKey: 'diver',
               formation: 'diver',
-              count: 4,
-              spacingX: 30,
-              spacingY: 26,
-              startX: 200,
-              startY: 220,
+              count: 1,
+              spacingX: SPACING_X,
+              spacingY: SPACING_Y,
+              startX: START_X,
+              startY: START_Y,
+            },
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 3,
+              spacingX: SPACING_X,
+              spacingY: SPACING_Y,
+              startX: START_X,
+              startY: START_Y,
             },
           ],
           shootEnabled: false,
@@ -2616,74 +2914,125 @@ describe('PlayScene — Diver formation hold (AH-0MUAYB957002EMYV)', () => {
     },
   ];
 
-  async function bootHoldScene(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(HOLD_LEVELS, {
+  async function bootReanchorScene(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(REANCHOR_LEVELS, {
       asteroidSpawner: false,
     });
     booted = game;
     return scene;
   }
 
-  /** Advances a Diver's own state machine to `target` (no scene tick). */
-  function driveDiverTo(diver: Diver, target: DiverState): void {
-    for (let i = 0; i < 100 && diver.behaviourState !== target; i++) {
-      diver.applyFormationPosition(200, 220, 0.5, 30, 26);
-    }
-    expect(diver.behaviourState).toBe(target);
-  }
-
   function divers(scene: PlayScene): Diver[] {
-    return scene
-      .getEnemies()
-      .filter((e): e is Diver => e instanceof Diver);
+    return scene.getEnemies().filter((e): e is Diver => e instanceof Diver);
   }
 
-  it('AC1/AC2 — freezes while a Diver is away, stays frozen while another is still away, and resumes from the held drift', async () => {
-    const scene = await bootHoldScene();
-    const [diverA, diverB] = divers(scene);
+  function firstScout(scene: PlayScene): Scout {
+    const scout = scene.getEnemies().find((e): e is Scout => e instanceof Scout);
+    expect(scout).toBeDefined();
+    return scout!;
+  }
 
-    driveDiverTo(diverA, DiverState.DIVING);
-    const heldX = scene.getFormationDriftX();
-    const heldDir = scene.getFormationDriftDir();
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBe(heldX);
-    expect(scene.getFormationDriftDir()).toBe(heldDir);
+  /** Ticks the scene until `predicate` holds (or gives up). */
+  function tickUntil(
+    scene: PlayScene,
+    predicate: () => boolean,
+    dt = 0.25,
+    maxTicks = 200,
+  ): void {
+    for (let i = 0; i < maxTicks && !predicate(); i++) scene.tick(dt);
+    expect(predicate()).toBe(true);
+  }
 
-    // A second Diver is now detached too — still frozen.
-    driveDiverTo(diverB, DiverState.DIVING);
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBe(heldX);
+  it('AC1/AC2 — the drift keeps advancing while a Diver is away (no formation freeze)', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
+    const scout = firstScout(scene);
 
-    // One rejoins, the other is still away — still frozen, direction intact.
-    driveDiverTo(diverA, DiverState.FORMATION);
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBe(heldX);
-    expect(scene.getFormationDriftDir()).toBe(heldDir);
+    tickUntil(scene, () => diver.behaviourState === DiverState.DIVING);
+    const scoutX = scout.x;
 
-    // Both rejoined → the drift resumes from exactly the held position.
-    driveDiverTo(diverB, DiverState.FORMATION);
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBeGreaterThan(heldX);
+    // Two ticks while the Diver dives: the Scout keeps drifting right at
+    // FORMATION_DRIFT_SPEED (28 px/s → ~14 px) plus a bounded ±2 px wiggle.
+    scene.tick(0.25);
+    scene.tick(0.25);
+    expect(diver.behaviourState).not.toBe(DiverState.FORMATION);
+    expect(scout.x).toBeGreaterThan(scoutX + 5);
   });
 
-  it('AC1 — a Diver destroyed mid-dive stops holding the formation', async () => {
-    const scene = await bootHoldScene();
-    const [diverA] = divers(scene);
+  it('AC2 — the Diver re-enters FORMATION with no RETURNING state', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
 
-    driveDiverTo(diverA, DiverState.DIVING);
-    diverA.destroySelf();
-    expect(diverA.alive).toBe(false);
-
-    const before = scene.getFormationDriftX();
-    scene.tick(0.05);
-    expect(scene.getFormationDriftX()).toBeGreaterThan(before);
+    tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
+    tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+    expect((DiverState as unknown as Record<string, string>).RETURNING).toBeUndefined();
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
-  it('AC4 — a formation with no detached Diver still drifts', async () => {
-    const scene = await bootHoldScene();
-    const before = scene.getFormationDriftX();
-    scene.tick(0.5);
-    expect(scene.getFormationDriftX()).toBeGreaterThan(before);
+  it('AC3 — re-anchors the unit on the attack end on both axes, shifting a non-Diver unit by the same delta', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
+    const scout = firstScout(scene);
+
+    // Run one full attack: leave FORMATION, then return to it. On the
+    // transition frame the Diver holds its attack-end position and latches
+    // the re-anchor request (consumed on the next tick).
+    tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
+    tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+    const attackEnd = { x: diver.x, y: diver.y };
+    const scoutBefore = { x: scout.x, y: scout.y };
+
+    scene.tick(0.25);
+
+    // The Diver's slot lands on the attack end (Y is wiggle-free; X is within
+    // the ±1.5 px idle wiggle).
+    expect(diver.y).toBeCloseTo(attackEnd.y, 5);
+    expect(Math.abs(diver.x - attackEnd.x)).toBeLessThanOrEqual(1.5 + 1e-6);
+
+    // The whole unit shifts by `delta`; with no prior re-anchor and no Y
+    // drift, delta.y = attackEnd.y - (startY + diverRow * spacingY).
+    const expectedDeltaY =
+      attackEnd.y - (START_Y + diver.offset.row * SPACING_Y);
+
+    // A non-Diver enemy (Scout) snaps directly — no glide, no intermediate
+    // frame. It is already at its re-anchored slot on the first frame.
+    const shiftThisFrame = scout.y - scoutBefore.y;
+    expect(shiftThisFrame).toBeCloseTo(expectedDeltaY, 5);
+
+    // The Diver glides: on the first frame it is strictly between the old and
+    // new positions (not yet snapped).
+    expect(diver.behaviourState).toBe(DiverState.FORMATION);
+  });
+
+  it('AC1/AC4 — non-Divers snap directly; the Diver is included in the glide', async () => {
+    const scene = await bootReanchorScene();
+    const [diver] = divers(scene);
+    const scout = firstScout(scene);
+
+    tickUntil(scene, () => diver.behaviourState !== DiverState.FORMATION);
+    tickUntil(scene, () => diver.behaviourState === DiverState.FORMATION);
+
+    const scoutBefore = { x: scout.x, y: scout.y };
+    const diverBefore = { x: diver.x, y: diver.y };
+
+    // The re-anchor shifts the unit origin so the Diver's slot lands at its
+    // attack end. A non-Diver (Scout) snaps directly to its shifted slot.
+    scene.tick(0.05);
+
+    // Verify the glide is active and includes the Diver.
+    const glide = (scene as unknown as { glide: { active: boolean; states: Map<unknown, unknown> } }).glide;
+    expect(glide.active).toBe(true);
+    expect(glide.states.size).toBe(1); // only the Diver
+
+    // The Scout snapped directly — its Y moved by the full re-anchor delta.
+    const expectedDeltaY = diverBefore.y - (START_Y + diver.offset.row * SPACING_Y);
+    const scoutActualShift = scout.y - scoutBefore.y;
+    expect(scoutActualShift).toBeCloseTo(expectedDeltaY, 3);
+
+    // Finish the glide and verify the Diver is at its slot (no residual).
+    for (let i = 0; i < 20; i++) scene.tick(0.05);
+    expect(glide.active).toBe(false);
+    expect(diver.y).toBeCloseTo(diverBefore.y, 5);
   });
 });
 
@@ -2725,6 +3074,42 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
       resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
     ).toBe(CAMPAIGN_LEVELS);
   });
+
+  it('guarantees the static fallback under the default-on rule (AH-0MUJSUTLA006Q8E1)', () => {
+    localStorage.clear();
+    // No explicit rules: the default (on) applies; a failing/degenerate build
+    // must still leave the run playable via the static campaign.
+    expect(
+      resolveCampaignLevels(undefined, () => {
+        throw new Error('missing/malformed curve');
+      }),
+    ).toBe(CAMPAIGN_LEVELS);
+    expect(resolveCampaignLevels(undefined, () => [])).toBe(CAMPAIGN_LEVELS);
+  });
+
+  it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
+    seedDifficultyCurves([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'fixed' },
+      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 9, generation: 'fixed' },
+      { level: 2, levelName: 'Generated Descent', wave: 1, targetDifficulty: 20, generation: 'curve' },
+    ]);
+
+    const mixed = resolveCampaignLevels(
+      { sequencedWavesEnabled: true },
+      () => buildSequencedLevels(),
+    );
+    // An all-fixed level matching the static wave count is verbatim static;
+    // level 2 comes from the sequencer.
+    expect(mixed.find((l) => l.level === 1)).toBe(CAMPAIGN_LEVELS[0]);
+    expect(mixed.find((l) => l.level === 2)?.name).toBe('Generated Descent');
+    // The toggle off path ignores the mixed config entirely.
+    expect(
+      resolveCampaignLevels(
+        { sequencedWavesEnabled: false },
+        () => buildSequencedLevels(),
+      ),
+    ).toBe(CAMPAIGN_LEVELS);
+  });
 });
 
 describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', () => {
@@ -2737,16 +3122,31 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
   });
 
   async function bootToggleScene(): Promise<PlayScene> {
-    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return toggleBooted.scene as PlayScene;
   }
 
-  it('runs the static campaign when the toggle is disabled (the default)', async () => {
+  it('runs the static campaign when the toggle is explicitly disabled', async () => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
     const scene = await bootToggleScene();
     const wm = scene.getWaveManager();
     expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
     expect(wm.currentLevel()?.name).toBe(CAMPAIGN_LEVELS[0].name);
     expect(wm.currentLevel()?.name).toBe('Entry');
+  });
+
+  it('runs the sequenced campaign by default (AH-0MUJSUTLA006Q8E1)', async () => {
+    const scene = await bootToggleScene();
+    const wm = scene.getWaveManager();
+    expect(wm.started).toBe(true);
+    // The shipped default campaign keeps the static skeleton, so the level
+    // count matches and level 1 is the fixed onboarding static wave.
+    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
+    expect(wm.currentLevel()?.name).toBe('Entry');
+    expect(wm.currentWave()!.groups.length).toBeGreaterThan(0);
   });
 
   it('runs the generated campaign when the toggle is enabled', async () => {
@@ -2763,12 +3163,148 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     const wm = scene.getWaveManager();
 
     expect(wm.started).toBe(true);
-    expect(wm.levelCount).toBe(1);
+    // Mixed mode keeps the full static skeleton; level 1 is overridden by the
+    // seeded generated config and the unconfigured levels stay static.
+    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
     expect(wm.currentLevel()?.name).toBe('Generated Entry');
     expect(wm.waveCount).toBe(2);
     // The generated wave's groups are what the run spawns.
     const wave = wm.currentWave()!;
     expect(wave.groups.length).toBeGreaterThan(0);
     expect(scene.getAliveCount()).toBeGreaterThanOrEqual(wm.waveEnemyCount());
+  });
+});
+
+
+describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Boots the PlayScene with a campaign whose first level is `levelNumber`. */
+  async function bootAtLevel(levelNumber: number): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: levelNumber,
+        name: `Test Level ${levelNumber}`,
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 3,
+                spacingX: 30,
+                spacingY: 24,
+                startX: GAME_WIDTH * 0.2,
+                startY: GAME_HEIGHT * 0.4,
+              },
+            ],
+            shootEnabled: levelNumber >= 4,
+          },
+        ],
+      },
+    ];
+    // Opt out of the now-default sequenced campaign so this injected fixture
+    // is honoured (AH-0MUJSUTLA006Q8E1).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveHarvesters(scene: PlayScene): Harvester[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is Harvester => e instanceof Harvester && e.alive);
+  }
+
+  it('does not spawn a Harvester in Levels 1–3', async () => {
+    for (const level of [1, 2, 3]) {
+      const scene = await bootAtLevel(level);
+      scene.setRng(() => 0); // would pass the rarity roll if the level gate allowed
+      scene.getWaveManager().beginGame();
+      scene.spawnWave();
+      for (let i = 0; i < 200; i++) scene.tick(0.1);
+      expect(liveHarvesters(scene), `level ${level}`).toHaveLength(0);
+      booted?.game.destroy(true);
+      booted = null;
+    }
+  });
+
+  it('spawns a wave-accounted Harvester in Levels 4–5', async () => {
+    for (const level of [4, 5]) {
+      const scene = await bootAtLevel(level);
+      const wm = scene.getWaveManager();
+      scene.setRng(() => 0); // rarity roll passes; edge/time deterministic
+      wm.beginGame();
+      scene.spawnWave();
+
+      const waveSizeBefore = wm.enemiesAlive; // 3 Scouts
+      // Let the mid-wave spawn time elapse.
+      for (let i = 0; i < 200; i++) scene.tick(0.1);
+
+      const found = liveHarvesters(scene);
+      expect(found.length, `level ${level}`).toBe(1);
+      // Wave accounting includes the Harvester (it gates wave completion).
+      expect(wm.enemiesAlive).toBe(waveSizeBefore + 1);
+      // Placed inside the play area (reachable — never stalls offscreen).
+      expect(found[0].x).toBeGreaterThanOrEqual(0);
+      expect(found[0].x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(found[0].y).toBeGreaterThanOrEqual(0);
+      expect(found[0].y).toBeLessThanOrEqual(GAME_HEIGHT);
+
+      // Killing it (five player bullets through the shared collision path)
+      // advances wave accounting exactly once.
+      const aliveBeforeKill = wm.enemiesAlive;
+      for (let hit = 0; hit < 5; hit++) {
+        scene.spawnPlayerBullet(found[0].x, found[0].y, 0, 0);
+        scene.tick(0.016);
+      }
+      expect(found[0].alive).toBe(false);
+      expect(wm.enemiesAlive).toBe(aliveBeforeKill - 1);
+
+      booted?.game.destroy(true);
+      booted = null;
+    }
+  });
+
+  it('never spawns a Harvester in the boss encounter', async () => {
+    const scene = await bootAtLevel(4);
+    const wm = scene.getWaveManager();
+    scene.setRng(() => 0);
+    wm.beginGame();
+    scene.spawnWave();
+
+    // Wipe the level's only wave → the boss is due.
+    killAllEnemies(scene);
+    expect(wm.bossTriggered).toBe(true);
+
+    // From the boss encounter no Harvester plan exists.
+    scene.spawnWave();
+    for (let i = 0; i < 200; i++) scene.tick(0.1);
+    expect(liveHarvesters(scene)).toHaveLength(0);
+  });
+
+  it('the planner reads the campaign level regardless of source (static or sequenced)', async () => {
+    // Both campaigns flow through the same WaveManager/currentLevel().level
+    // seam, so a sequenced Level 4 exercises the identical planner path. Build
+    // a generated level 4 and inject it exactly as the sequenced campaign does.
+    const generated = buildSequencedLevels();
+    // The generated campaign has the same five-level skeleton; just assert the
+    // Level 4 definition carries `level: 4` so the planner gates correctly.
+    const level4 = generated.find((l) => l.level === 4);
+    expect(level4).toBeDefined();
+    expect(level4!.level).toBe(4);
   });
 });

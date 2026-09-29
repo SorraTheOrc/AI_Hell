@@ -73,6 +73,11 @@ export interface SwarmConfig {
    * behaviour). A failed roll consumes the cycle with no bullet.
    */
   shotProbability?: number;
+  /**
+   * Hit points before the enemy is destroyed (data-driven;
+   * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
+   */
+  health?: number;
   /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -128,6 +133,7 @@ export class Swarm extends BaseEnemy {
       bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval ?? SWARM_BURST_INTERVAL,
       shotProbability: config.shotProbability,
+      health: config.health,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

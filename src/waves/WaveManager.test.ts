@@ -7,9 +7,11 @@
  * on observable behaviour through the public API — no source inspection.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
+import type { EnemyConfig } from '../core/configTypes';
 import {
   LEVELS,
   LEVEL_COUNT,
@@ -17,8 +19,15 @@ import {
   getLevelDefinition,
   type LevelDefinition,
   type WaveDefinition,
+  type WaveGroup,
 } from './Formations';
-import { WaveManager, type WaveEvent } from './WaveManager';
+import {
+  WaveManager,
+  planGroupSpawns,
+  validateWaveGroups,
+  wavePlannedSpawnCount,
+  type WaveEvent,
+} from './WaveManager';
 
 /** Kills every enemy in the active wave; returns the final event. */
 function clearWave(wm: WaveManager): WaveEvent {
@@ -406,9 +415,13 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
   });
 });
 
-describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F)', () => {
+describe('WaveManager — dynamic spawn registration (generic seam)', () => {
+  // The dynamic-spawn seam is retained for any future dynamically spawned
+  // enemies. Asteroids are NOT registered through it (AH-0MUJM746P000QAEO):
+  // they do not gate wave completion. These tests exercise the seam itself.
   it('registerDynamicSpawn increments the alive count by the supplied amount', () => {
-    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
+    // A `single` group represents exactly one entity, so its count must be 1.
+    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 1)])]);
     wm.beginGame();
     const before = wm.enemiesAlive;
     wm.registerDynamicSpawn(2);
@@ -416,11 +429,12 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
   });
 
   it('unregisterDynamicSpawn decrements the alive count by the supplied amount', () => {
-    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 2)])]);
+    // A `single` group represents exactly one entity, so its count must be 1.
+    const wm = new WaveManager([level(1, 'Test', [wave('asteroid', 'single', 1)])]);
     wm.beginGame();
     wm.registerDynamicSpawn(2);
     wm.unregisterDynamicSpawn(1);
-    expect(wm.enemiesAlive).toBe(2 /* initial 2 */ + 2 - 1);
+    expect(wm.enemiesAlive).toBe(1 /* initial 1 */ + 2 - 1);
   });
 
   it('unregisterDynamicSpawn never drives the count below zero', () => {
@@ -437,12 +451,12 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
     expect(wm.enemiesAlive).toBe(0);
   });
 
-  it('a full split chain (1 large -> 2 medium -> 4 small = 7) keeps enemiesAlive correct and does not clear early', () => {
-    // Two waves so the split-chain wipe emits a 'waveCleared' boundary
+  it('a full registered-child chain keeps enemiesAlive correct and does not clear early', () => {
+    // Two waves so the chain wipe emits a 'waveCleared' boundary
     // instead of the final-level boss trigger.
     const defs = [
       level(1, 'Test', [
-        wave('asteroid', 'single', 1, false),
+        wave('scout', 'single', 1, false),
         wave('scout', 'v', 1, false),
       ]),
     ];
@@ -451,22 +465,22 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
     expect(wm.waveNumber).toBe(1);
     expect(wm.enemiesAlive).toBe(1);
 
-    // Destroy the large parent and register its 2 medium children.
+    // Destroy the original and register its 2 children.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(2);
 
-    // Destroy the first medium and register its 2 small children.
+    // Destroy the first child and register its 2 children.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(3);
 
-    // Destroy the second medium and register its 2 small children.
+    // Destroy the second child and register its 2 children.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(4);
 
-    // Destroy the 4 small asteroids one by one — each stays 'continue'
+    // Destroy the 4 children one by one — each stays 'continue'
     // while children remain alive (the wave does not clear early).
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(3);
@@ -482,11 +496,11 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
   });
 
   it('a registered child keeps the wave alive until every original AND child is destroyed', () => {
-    const defs = [level(1, 'Test', [wave('asteroid', 'single', 1, false)])];
+    const defs = [level(1, 'Test', [wave('scout', 'single', 1, false)])];
     const wm = new WaveManager(defs);
     wm.beginGame();
 
-    // Parent destroyed, but 2 registered children still alive.
+    // Original destroyed, but 2 registered children still alive.
     wm.registerDynamicSpawn(2);
     expect(wm.onEnemyDestroyed()).toBe('continue');
     expect(wm.enemiesAlive).toBe(2);
@@ -496,5 +510,200 @@ describe('WaveManager — dynamic spawn registration (asteroid splits, AH-0MU8BZ
 
     // Final child destroyed → the wave is finally wiped (final level -> boss).
     expect(wm.onEnemyDestroyed()).toBe('bossTriggered');
+  });
+});
+
+describe('WaveManager — declared vs planned spawn count (AH-0MUJKJ8OO007TBSS)', () => {
+  it('AC2 — a single-formation group with count > 1 declares exactly what it spawns', () => {
+    // Two waves so clearing the first emits `waveCleared` rather than the
+    // final-level boss trigger.
+    const defs = [
+      level(1, 'Test', [
+        wave('asteroid', 'single', 5, false),
+        wave('scout', 'v', 1, false),
+      ]),
+    ];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+
+    const spawns = wm.planSpawns();
+    expect(spawns).toHaveLength(1);
+    expect(wm.waveEnemyCount()).toBe(spawns.length);
+    expect(wm.enemiesAlive).toBe(spawns.length);
+  });
+
+  it('AC1 — an over-declared single group cannot stall or clear a wave early', () => {
+    const defs = [
+      level(1, 'Test', [
+        wave('asteroid', 'single', 5, false),
+        wave('scout', 'v', 1, false),
+      ]),
+    ];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+
+    // Exactly one enemy was spawned, so one destruction clears the wave.
+    expect(wm.onEnemyDestroyed()).toBe('waveCleared');
+    expect(wm.waveNumber).toBe(2);
+  });
+
+  it('AC2 — validateWaveGroups names the offending single group and its count', () => {
+    const groups = wave('asteroid', 'single', 5).groups;
+    const errors = validateWaveGroups(groups);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ index: 0, enemyKey: 'asteroid', count: 5 });
+    expect(errors[0].message).toContain('asteroid');
+    expect(errors[0].message).toContain('single');
+    expect(errors[0].message).toContain('5');
+  });
+
+  it('AC2 — validateWaveGroups accepts a single group with count 1', () => {
+    expect(validateWaveGroups(wave('boss', 'single', 1).groups)).toEqual([]);
+  });
+
+  it('AC3 — every built-in campaign wave is valid and declares its planned size', () => {
+    for (const levelDef of LEVELS) {
+      for (const w of levelDef.waves) {
+        expect(validateWaveGroups(w.groups)).toEqual([]);
+        const declared = w.groups.reduce((sum, g) => sum + g.count, 0);
+        expect(wavePlannedSpawnCount(w.groups)).toBe(declared);
+      }
+    }
+  });
+});
+
+// ── Range-based spawn positioning (AH-0MUKIBAY60075GH5) ─────────────
+
+describe('planGroupSpawns — range-based positioning (AH-0MUKIBAY60075GH5)', () => {
+  /** A wave group with explicit scalar base and optional range overrides. */
+  function rangedGroup(
+    overrides: Partial<{
+      enemyKey: string;
+      startX: number;
+      startY: number;
+      startXMin: number;
+      startXMax: number;
+      startYMin: number;
+      startYMax: number;
+    }> = {},
+  ): WaveGroup {
+    return {
+      enemyKey: 'scout',
+      formation: 'single',
+      count: 1,
+      spacingX: 20,
+      spacingY: 20,
+      startX: overrides.startX ?? 100,
+      startY: overrides.startY ?? 200,
+      startXMin: overrides.startXMin,
+      startXMax: overrides.startXMax,
+      startYMin: overrides.startYMin,
+      startYMax: overrides.startYMax,
+    };
+  }
+
+  /** Resolver that returns the scout seed with the supplied range fields. */
+  function configWith(
+    overrides: Partial<Pick<EnemyConfig, 'startX' | 'startY' | 'startXMin' | 'startXMax' | 'startYMin' | 'startYMax'>>,
+  ): (key: string) => EnemyConfig {
+    return () => ({ ...DEFAULT_ENEMY_CONFIGS.scout, ...overrides });
+  }
+
+  it('degenerate config range keeps the group scalar base (no randomness)', () => {
+    const rng = vi.fn(() => 0.5);
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 123, startY: 234 })],
+      false,
+      rng,
+      configWith({ startXMin: 240, startXMax: 240, startYMin: 270, startYMax: 270 }),
+    );
+    expect(spawns[0]).toMatchObject({ x: 123, y: 234, startX: 123, startY: 234 });
+    expect(rng).not.toHaveBeenCalled();
+  });
+
+  it('picks a base within an archetype range using the injected RNG', () => {
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 0, startY: 0 })],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 100, startXMax: 300, startYMin: 200, startYMax: 400 }),
+    );
+    expect(spawns[0].startX).toBe(200);
+    expect(spawns[0].startY).toBe(300);
+    expect(spawns[0]).toMatchObject({ x: 200, y: 300 });
+  });
+
+  it('spans the full configured band across the RNG domain', () => {
+    const cfg = configWith({ startXMin: 100, startXMax: 300, startYMin: 200, startYMax: 400 });
+    for (const [r, expectedX, expectedY] of [
+      [0, 100, 200],
+      [1, 300, 400],
+      [0.25, 150, 250],
+      [0.75, 250, 350],
+    ] as const) {
+      const spawns = planGroupSpawns([rangedGroup({ startX: 0, startY: 0 })], false, () => r, cfg);
+      expect(spawns[0].startX).toBe(expectedX);
+      expect(spawns[0].startY).toBe(expectedY);
+    }
+  });
+
+  it('a per-group range overrides the archetype range (WG4)', () => {
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 0, startY: 0, startXMin: 10, startXMax: 30, startYMin: 40, startYMax: 60 })],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 100, startXMax: 300, startYMin: 200, startYMax: 400 }),
+    );
+    expect(spawns[0].startX).toBe(20);
+    expect(spawns[0].startY).toBe(50);
+  });
+
+  it('adds formation offsets on top of the resolved base', () => {
+    const group: WaveGroup = {
+      ...rangedGroup({ startX: 0, startY: 0 }),
+      formation: 'v',
+      count: 3,
+      spacingX: 10,
+      spacingY: 10,
+    };
+    const spawns = planGroupSpawns(
+      [group],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 0, startXMax: 100, startYMin: 0, startYMax: 100 }),
+    );
+    expect(spawns).toHaveLength(3);
+    // The apex sits on the resolved base, wings are offset from it.
+    expect(spawns[0]).toMatchObject({ x: 50, y: 50 });
+    expect(spawns.some((s) => s.x !== 50 || s.y !== 50)).toBe(true);
+  });
+
+  it('normalises a reversed archetype range (min > max)', () => {
+    const spawns = planGroupSpawns(
+      [rangedGroup({ startX: 0, startY: 0 })],
+      false,
+      () => 0.5,
+      configWith({ startXMin: 300, startXMax: 100, startYMin: 400, startYMax: 200 }),
+    );
+    expect(spawns[0].startX).toBe(200);
+    expect(spawns[0].startY).toBe(300);
+  });
+
+  it('each group in a wave gets its own independent random base', () => {
+    // Two axes per group: group 1 draws 0, group 2 draws 1.
+    const draws = [0.0, 0.0, 1.0, 1.0];
+    let i = 0;
+    const spawns = planGroupSpawns(
+      [
+        rangedGroup({ startX: 0, startY: 0 }),
+        rangedGroup({ startX: 0, startY: 0 }),
+      ],
+      false,
+      () => draws[i++] ?? 0,
+      configWith({ startXMin: 0, startXMax: 100, startYMin: 0, startYMax: 100 }),
+    );
+    expect(spawns[0].startX).toBe(0);
+    expect(spawns[1].startX).toBe(100);
   });
 });

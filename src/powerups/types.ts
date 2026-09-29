@@ -6,8 +6,11 @@
  * - **P9 Magnet** — permanent stacking effect (cap 5)
  * - **P3 Shield** — 15 s bubble, absorbs one hit (timed)
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (no enemy damage)
- * - **P6 Phase Shift** — 3 s intangibility, pass-through enemies/bullets (timed)
- * - **P7 Teleport** — stored stacks (FIFO), Space to teleport to nearest safe spot, grants P6 on arrival
+ * - **P6 Phase Shift** — charge-based automatic pass-through (parent
+ *   AH-0MUIYX1EE008FVS8): collecting stores one auto-activation; the shared
+ *   danger feed triggers a 1.5 s pass-through when 3+ hostile bodies/bullets
+ *   close within 40 px; the hold-full reward makes activations unlimited.
+ * - **P7 Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s P6 on arrival
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -38,7 +41,7 @@ export enum PowerUpType {
   BOMB = 'bomb',
   /** +50% movement speed for 10 s (timed). */
   SPEED_BOOST = 'speed_boost',
-  /** 3 s intangibility, pass-through enemies/bullets (timed, P6). */
+  /** Charge-based automatic pass-through: 1.5 s when in danger (P6). */
   PHASE_SHIFT = 'phase_shift',
   /** Stored teleport stacks, Space to consume (stored, P7). */
   TELEPORT = 'teleport',
@@ -105,14 +108,16 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P6: {
     id: 'P6',
     name: 'Phase Shift',
-    description: '3 s of intangibility — pass through enemies and bullets.',
+    description:
+      'Stores one automatic phase; triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward makes it unlimited.',
     type: PowerUpType.PHASE_SHIFT,
-    duration: 3,
+    // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
+    duration: 1.5,
   },
   P7: {
     id: 'P7',
     name: 'Teleport',
-    description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain 3 s Phase Shift on arrival.',
+    description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
     type: PowerUpType.TELEPORT,
   },
   P8: {

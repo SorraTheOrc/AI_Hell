@@ -20,16 +20,26 @@
 import {
   DEFAULT_MINERAL_COLLECT_AMOUNT,
   DEFAULT_MINERAL_HOLD_CAPACITY,
+  DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
 } from './rules';
 
 /** Construction overrides for a {@link MineralHold}. */
 export interface MineralHoldOptions {
-  /** Hold capacity (defaults to {@link DEFAULT_MINERAL_HOLD_CAPACITY}). */
+  /**
+   * Capacity of the **first** hold (defaults to
+   * {@link DEFAULT_MINERAL_HOLD_CAPACITY}, 5). Each {@link MineralHold.resolve}
+   * multiplies it by {@link growthMultiplier}.
+   */
   capacity?: number;
   /** Minerals added per pickup (defaults to {@link DEFAULT_MINERAL_COLLECT_AMOUNT}). */
   collectAmount?: number;
   /** Initial store (defaults to 0; run-scoped). */
   store?: number;
+  /**
+   * Multiplier applied to the capacity after each {@link MineralHold.resolve}
+   * (defaults to {@link DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER}, 2).
+   */
+  growthMultiplier?: number;
 }
 
 /**
@@ -40,11 +50,35 @@ export interface MineralHoldOptions {
  * hold one while their scenes keep their own HUD wiring.
  */
 export class MineralHold {
-  /** Hold capacity before the hold-full choice is offered. */
-  capacity: number;
+  /**
+   * Current hold capacity before the hold-full choice is offered. It starts
+   * at the first-hold capacity and grows by {@link growthMultiplier} on each
+   * {@link resolve}. Assigning to it also resets the run-scoped baseline used
+   * by {@link reset}.
+   */
+  get capacity(): number {
+    return this._capacity;
+  }
+
+  set capacity(value: number) {
+    this._capacity = value;
+    this._initialCapacity = value;
+  }
 
   /** Minerals added by a single pickup. */
   collectAmount: number;
+
+  /**
+   * Multiplier applied to {@link capacity} after each {@link resolve}
+   * (default 2). A value of 1 keeps every hold at the same capacity.
+   */
+  growthMultiplier: number;
+
+  /** Capacity of the first hold, restored by {@link reset}. */
+  private _initialCapacity: number;
+
+  /** Current (possibly grown) capacity. */
+  private _capacity: number;
 
   private _store: number;
   /**
@@ -54,9 +88,13 @@ export class MineralHold {
   private _overflow = 0;
 
   constructor(options: MineralHoldOptions = {}) {
-    this.capacity = options.capacity ?? DEFAULT_MINERAL_HOLD_CAPACITY;
+    const initialCapacity = options.capacity ?? DEFAULT_MINERAL_HOLD_CAPACITY;
+    this._initialCapacity = initialCapacity;
+    this._capacity = initialCapacity;
     this.collectAmount =
       options.collectAmount ?? DEFAULT_MINERAL_COLLECT_AMOUNT;
+    this.growthMultiplier =
+      options.growthMultiplier ?? DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER;
     this._store = options.store ?? 0;
   }
 
@@ -101,17 +139,25 @@ export class MineralHold {
   }
 
   /**
-   * Resolves the hold-full choice: resets the store to 0 carrying any
-   * overflow (store = collected − capacity) recorded when it filled.
+   * Resolves the hold-full choice. The capacity for the next hold grows by
+   * {@link growthMultiplier} (`capacity(n) = firstHoldCapacity ×
+   * growthMultiplier^(n−1)`), then the store carries the recorded overflow
+   * (`store = collected − capacity`) clamped to the new capacity.
    */
   resolve(): void {
-    this._store = this._overflow;
+    this._capacity *= this.growthMultiplier;
+    const carried = this._overflow;
     this._overflow = 0;
+    this._store = Math.min(Math.max(0, carried), this._capacity);
   }
 
-  /** Empties the hold and clears the recorded overflow (fresh run). */
+  /**
+   * Empties the hold, clears the recorded overflow and restores the
+   * first-hold capacity (fresh run).
+   */
   reset(): void {
     this._store = 0;
     this._overflow = 0;
+    this._capacity = this._initialCapacity;
   }
 }

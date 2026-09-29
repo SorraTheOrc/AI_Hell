@@ -49,6 +49,7 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
+  playMajorExplosionSound,
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
@@ -56,6 +57,11 @@ import {
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
+import {
+  computeFormationReanchorDelta,
+  type FormationReanchorRequest,
+} from '../utils/formations';
+import { FormationGlide } from './core/formationGlide';
 import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
@@ -92,6 +98,10 @@ import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManag
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
+import {
+  computeHarvesterSpawns,
+  type HarvesterSpawnEvent,
+} from '../waves/HarvesterSpawner';
 import { Boss } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -125,6 +135,8 @@ export const SCORE_VALUES: Record<string, number> = {
   // Asteroids: only small asteroids award points (50); large/medium award
   // none (GDD §4.5, E6 Asteroid). The tier check happens in `_onEnemyKilled`.
   asteroid: 50,
+  // Harvester: a durable five-hit mineral-denial threat (GDD §4.5, E7).
+  harvester: 400,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
@@ -195,6 +207,10 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
  * generated from the difficulty-curve config; if generation throws or yields
  * nothing the static campaign is used instead, so the game always boots into
  * a playable campaign.
+ *
+ * Pass a `build` that closes over the run seed (AH-0MUJSUQD8003FSUT) so
+ * `dynamic` waves are regenerated per run while staying reproducible for a
+ * given seed; the default build is seed-free.
  *
  * Exported so the toggle/fallback decision can be unit-tested without
  * booting a Phaser scene; `PlayScene.create()` calls it with the live rules.
@@ -297,6 +313,17 @@ export class PlayScene extends CombatScene<
 
   private driftX = 0;
   private driftDir = 1;
+  /**
+   * Unit-level re-anchor offset (px), added to every formation group's origin
+   * on top of the drift. A Diver's attack re-bases the whole unit by adding
+   * the shared delta here, so the Diver's slot lands on its attack end and
+   * every other unit keeps its relative offset (AH-0MUAYB957002EMYV).
+   */
+  private formationAnchorX = 0;
+  private formationAnchorY = 0;
+
+  /** Glide manager: eases enemies to their re-anchored slots (AH-0MUL15N63003PUDB). */
+  private glide = new FormationGlide();
 
   private transitionTimer = 0;
 
@@ -330,11 +357,28 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
+   * Explicit run seed for `dynamic` wave regeneration (test seam). When null
+   * (the default) a seed is derived once per run from the scene RNG, so each
+   * run differs while remaining reproducible for a seeded RNG.
+   */
+  private runSeed: number | null = null;
+
+  /**
    * Asteroid spawn events planned for the active wave (empty outside a
    * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
    * scene rng stream is only advanced at wave boundaries.
    */
   private pendingAsteroidSpawns: SpawnEvent[] = [];
+
+  /**
+   * Planned Harvester spawns for the active regular wave (Levels 4–5 only),
+   * computed once per wave by `planHarvesterSpawns()`. Each released spawn is
+   * registered with the WaveManager (they gate wave completion — unlike
+   * asteroids).
+   */
+  private pendingHarvesterSpawns: HarvesterSpawnEvent[] = [];
+  /** Number of planned Harvester spawns already released this wave. */
+  private harvestersSpawnedThisWave = 0;
 
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
@@ -394,16 +438,27 @@ export class PlayScene extends CombatScene<
     // Start the run.
     this.gameState.startGame();
     this.effectsRegistry.setLives(this.gameState.lives);
-    // Hold capacity comes from the game-rules config (GDD §4.5).
-    this.gameState.mineralCapacity = loadRules().mineralHoldCapacity;
+    // Hold capacity (first hold) and its growth multiplier come from the
+    // game-rules config, so the game and every gym progress identically
+    // (GDD §4.5, AH-0MUKC6IML0082ZR4).
+    this.gameState.mineralCapacity = rules.mineralHoldCapacity;
+    this.gameState.mineralHoldGrowthMultiplier =
+      rules.mineralHoldGrowthMultiplier;
     this._syncMineralHud();
     // Campaign source: static `LEVELS` by default, generated when the
     // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the
     // manager's levels when enabled so an injected campaign (tests, future
     // callers) is left untouched — preserving shipped behaviour. Never
-    // throws: `resolveCampaignLevels` falls back to `LEVELS`.
+    // throws: `resolveCampaignLevels` falls back to `LEVELS`. The run seed
+    // (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves regenerate per
+    // run while staying reproducible for a given seed.
     if (rules.sequencedWavesEnabled) {
-      this.waveManager.setLevels(resolveCampaignLevels(rules));
+      const seed = this._resolveRunSeed();
+      this.waveManager.setLevels(
+        resolveCampaignLevels(rules, () =>
+          buildSequencedLevels(undefined, undefined, { seed }),
+        ),
+      );
     }
     this.waveManager.beginGame();
     // The campaign labels need the started WaveManager (level/wave counts).
@@ -463,12 +518,16 @@ export class PlayScene extends CombatScene<
     this.boss = null;
     this.driftX = 0;
     this.driftDir = 1;
+    this.formationAnchorX = 0;
+    this.formationAnchorY = 0;
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
     this.waveTimerActive = false;
     this.pendingAsteroidSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
+    this.pendingHarvesterSpawns = [];
+    this.harvestersSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this.paused = false;
   }
@@ -526,6 +585,9 @@ export class PlayScene extends CombatScene<
     this.bannerText = null;
     this.waveTimerBar?.destroy();
     this.waveTimerBar = null;
+
+    // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
+    this.glide.clear();
   }
 
   // ── Frame loop ──────────────────────────────────────────────────
@@ -588,14 +650,22 @@ export class PlayScene extends CombatScene<
 
     this._advanceBullets(dt);
     if (!transitioning) {
+      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
+      this._updatePhaseShiftAutoTrigger(dt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
       this._releaseDueAsteroidSpawns();
+      // Release any planned Harvester spawns (Levels 4–5 only) whose time
+      // has passed; each is registered with the WaveManager so wave-clear
+      // accounting stays correct (F6).
+      this._releaseDueHarvesterSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
     this._updateVisuals();
+    this._updatePhaseShiftJuice(dt);
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
@@ -611,13 +681,17 @@ export class PlayScene extends CombatScene<
     // Plan the random offscreen asteroid spawns for this wave. Empty during
     // the boss encounter (see `planAsteroidSpawns`).
     this.planAsteroidSpawns();
-    const spawns = this.waveManager.planSpawns();
+    // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
+    this.planHarvesterSpawns();
+    const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       for (const spawn of spawns) this._spawnEnemy(spawn);
       playSpawnSound();
     }
     this.driftX = 0;
     this.driftDir = 1;
+    this.formationAnchorX = 0;
+    this.formationAnchorY = 0;
     this._startWaveTimer();
   }
 
@@ -695,8 +769,9 @@ export class PlayScene extends CombatScene<
 
   /**
    * Spawns one planned asteroid at its offscreen position with the planned
-   * inward velocity, registering it with the WaveManager as a dynamic spawn
-   * so wave-clear accounting includes it.
+   * inward velocity. Asteroids are NOT registered with the WaveManager
+   * (AH-0MUJM746P000QAEO): they do not gate wave completion, and they persist
+   * in the field across wave and level transitions.
    */
   private _spawnScheduledAsteroid(event: SpawnEvent): void {
     const entity = new Asteroid(this, {
@@ -717,29 +792,109 @@ export class PlayScene extends CombatScene<
       spacingX: 0,
       spacingY: 0,
     });
+  }
+
+  /**
+   * Plans the rare Harvester spawns for the active regular wave. Only
+   * Levels 4–5 are eligible; Levels 1–3 and the boss encounter produce no
+   * plan. Called once per wave from `spawnWave()` so the scene rng stream
+   * advances only at wave boundaries (F6).
+   */
+  planHarvesterSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.asteroidSpawnerEnabled ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingHarvesterSpawns = [];
+      this.harvestersSpawnedThisWave = 0;
+      return;
+    }
+    this.pendingHarvesterSpawns = computeHarvesterSpawns(
+      wm.currentLevel()?.level ?? 0,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.harvestersSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned Harvester spawn whose scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition,
+   * pause or boss encounter) and stops at the first not-yet-due event — the
+   * plan is time-ordered.
+   */
+  private _releaseDueHarvesterSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.harvestersSpawnedThisWave < this.pendingHarvesterSpawns.length) {
+      const event = this.pendingHarvesterSpawns[this.harvestersSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledHarvester(event);
+      this.harvestersSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned Harvester at its position and registers it with the
+   * WaveManager so the wave's alive count tracks it. Unlike asteroids, a
+   * Harvester holds station when no mineral is present, so it must be
+   * wave-accounted (the wave neither clears early nor stalls) — hence the
+   * on-screen placement in the planner.
+   */
+  private _spawnScheduledHarvester(event: HarvesterSpawnEvent): void {
+    const cfg = loadEnemyConfig('harvester');
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      event.x,
+      event.y,
+      { row: 0, col: 0 },
+    );
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: 'harvester',
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
     this.waveManager.registerDynamicSpawn(1);
   }
 
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
-    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING enemy is away
-    // from its formation (`DIVING`/`PAUSING`/`RETURNING`), the cluster's
-    // ping-pong drift freezes in place — `driftX` and `driftDir` are left
-    // untouched — and resumes once every diver has rejoined. Destroyed
-    // enemies are ignored, so a mid-dive kill cannot freeze the cluster.
-    const holdFormation = this.spawned.some(
-      (s) => s.entity.alive && s.entity.requiresFormationHold?.() === true,
-    );
-    if (!holdFormation) {
-      this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
-      if (this.driftX > FORMATION_DRIFT_RANGE) {
-        this.driftX = FORMATION_DRIFT_RANGE;
-        this.driftDir = -1;
-      } else if (this.driftX < 0) {
-        this.driftX = 0;
-        this.driftDir = 1;
-      }
+    // Formation drift advances unconditionally — no entity can freeze it (the
+    // obsolete formation-hold seam was removed in AH-0MUAYB957002EMYV).
+    this.driftX += this.driftDir * FORMATION_DRIFT_SPEED * dt;
+    if (this.driftX > FORMATION_DRIFT_RANGE) {
+      this.driftX = FORMATION_DRIFT_RANGE;
+      this.driftDir = -1;
+    } else if (this.driftX < 0) {
+      this.driftX = 0;
+      this.driftDir = 1;
     }
+
+    // Diver re-anchor (GDD §4.1 — E2): if a Diver's attack finished, re-base
+    // the whole unit so its slot lands on the attack end. Applied after the
+    // drift and before positioning so every enemy uses the new origin in the
+    // same frame.
+    const reanchorApplied = this._applyFormationReanchor();
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
@@ -749,14 +904,72 @@ export class PlayScene extends CombatScene<
         (s.entity as Asteroid).updatePosition(dt);
         continue;
       }
+      // Live mineral-seek: push the scene's live mineral field so roaming
+      // seekers (Harvester) steer toward the nearest mineral, then advance
+      // their own motion. The gym's shared tick calls the same seam (F4).
+      if (s.entity.setSeekTargets) {
+        s.entity.setSeekTargets(this.minerals);
+        s.entity.updatePosition?.(dt);
+        continue;
+      }
       s.entity.applyFormationPosition(
-        s.startX + this.driftX,
-        s.startY,
+        s.startX + this.driftX + this.formationAnchorX,
+        s.startY + this.formationAnchorY,
         dt,
         s.spacingX,
         s.spacingY,
       );
     }
+
+    // If a re-anchor fired (now or on an earlier frame), ease all living
+    // entities from their old positions to the live (drifting) slot
+    // (AH-0MUL15N63003PUDB). A no-op when no glide is active.
+    if (reanchorApplied || this.glide.active) {
+      this.glide.update(dt);
+    }
+  }
+
+  /**
+   * Consumes any pending enemy re-anchor requests and shifts the unit anchor
+   * so the requesting Diver's slot lands on its attack end, with every other
+   * unit shifted by the same delta (shared rule in
+   * `computeFormationReanchorDelta`). The most recent request wins when Divers
+   * are desynchronised (documented assumption).
+   *
+   * @returns `true` if a re-anchor was applied (and the glide was begun),
+   *   `false` otherwise.
+   */
+  private _applyFormationReanchor(): boolean {
+    let latest: { request: FormationReanchorRequest; spawn: SpawnedEnemy } | null = null;
+    for (const spawn of this.spawned) {
+      const request = spawn.entity.consumeFormationReanchor?.();
+      if (request) latest = { request, spawn };
+    }
+    if (!latest) return false;
+
+    const { request, spawn } = latest;
+    const { dx, dy } = computeFormationReanchorDelta(
+      request,
+      spawn.startX + this.driftX + this.formationAnchorX,
+      spawn.startY + this.formationAnchorY,
+      spawn.spacingX,
+      spawn.spacingY,
+    );
+    this.formationAnchorX += dx;
+    this.formationAnchorY += dy;
+
+    // Begin the glide for every formation-driven entity so they ease to their
+    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only Divers glide;
+    // all other enemies snap directly to their re-based slots.
+    const glideTargets = this.spawned
+      .filter(
+        (s) =>
+          s.entity.alive &&
+          s.enemyKey === 'diver',
+      )
+      .map((s) => s.entity);
+    this.glide.begin(glideTargets);
+    return true;
   }
 
   /**
@@ -908,7 +1121,7 @@ export class PlayScene extends CombatScene<
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
   private _spawnMinions(phase: number): void {
-    for (const spawn of planMinionSpawns(phase)) this._spawnEnemy(spawn);
+    for (const spawn of planMinionSpawns(phase, this.rng)) this._spawnEnemy(spawn);
   }
 
   /**
@@ -1108,12 +1321,14 @@ export class PlayScene extends CombatScene<
       .filter((s) => s.enemyKey !== 'asteroid')
       .map((s) => s.entity);
     // Shared collection/absorption routine — the same code the gyms run
-    // (AH-0MUII3DHM008L7JF, gap 5).
+    // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
+    // (Q7); enemy absorption still runs.
     this.minerals = collectMinerals(
       this.minerals,
       this.player,
       absorbers,
       () => this._collectMineral(),
+      { playerPhased: this.isPlayerPhased() },
     );
   }
 
@@ -1144,20 +1359,23 @@ export class PlayScene extends CombatScene<
     this.minerals.push(
       ...resolveMineralKillDrops(this, s.entity, this.rng),
     );
-    this._advanceAfterKill();
+    // Asteroids are not wave-accounted (AH-0MUJM746P000QAEO): destroying one
+    // must not advance the wave. Only non-asteroid enemy ships drive
+    // wave/level/boss progression.
+    if (s.enemyKey !== 'asteroid') this._advanceAfterKill();
   }
 
   /**
    * Splits a destroyed large/medium asteroid into exactly two smaller
    * children moving in directions different from the parent and from each
-   * other. Children are registered with the WaveManager so the wave's
-   * alive count tracks them (the wave neither clears early nor stalls).
+   * other. Children are NOT registered with the WaveManager
+   * (AH-0MUJM746P000QAEO), so the split does not affect wave accounting; the
+   * children persist and remain shootable.
    */
   private _splitAsteroid(s: SpawnedEnemy): void {
     const parent = s.entity as Asteroid;
     // Shared asteroid-split helper (gap 8): the same spawn code the gyms
-    // consume. Children are registered with the WaveManager so the wave's
-    // alive count tracks them (the wave neither clears early nor stalls).
+    // consume. Split children are not wave-accounted (AH-0MUJM746P000QAEO).
     splitAsteroid({
       scene: this,
       parent,
@@ -1170,8 +1388,6 @@ export class PlayScene extends CombatScene<
           spacingX: 0,
           spacingY: 0,
         });
-        // Register the dynamic child so `enemiesAlive` stays correct.
-        this.waveManager.registerDynamicSpawn(1);
       },
     });
   }
@@ -1379,9 +1595,15 @@ export class PlayScene extends CombatScene<
    * Wave time-limit expired. If enemies remain, every non-asteroid survivor
    * detonates at 10x scale and the run loses exactly one life (running the
    * normal game-over flow at 0 lives), then the wave advances. Asteroids
-   * survive the timeout (they are not detonated) and are re-registered with
-   * the WaveManager so they gate the next wave's clear (AH-0MU8TWF1H007OG2L).
-   * If no enemies remain, nothing happens (AC3).
+   * survive the timeout (they are not detonated), are NOT re-registered with
+   * the WaveManager (they no longer gate the next wave), and persist in the
+   * field (AH-0MUJM746P000QAEO). If no enemies remain, nothing happens (AC3).
+   *
+   * Gym↔game parity: the game is the only scene with a wave timer/timeout,
+   * so this cue + limiter is the single implementation. If a gym ever gains
+   * a wave-timeout path it must call `playMajorExplosionSound()` (reusing
+   * the shared limiter) rather than duplicating the cue — see
+   * AH-0MUK5ONAA0007YEX and AH-0MUJ1YZJ9008O4RC.
    */
   private _timeoutWave(): void {
     const survivors = this.spawned.filter((s) => s.entity.alive);
@@ -1392,21 +1614,17 @@ export class PlayScene extends CombatScene<
     }
 
     // Asteroids survive the timeout — separate them from detonatable enemies.
-    const survivingAsteroids = survivors.filter((s) => s.enemyKey === 'asteroid');
     const detonateList = survivors.filter((s) => s.enemyKey !== 'asteroid');
 
-    // Detonate all non-asteroid survivors at 10x scale.
+    // Detonate all non-asteroid survivors at 10x scale, each with the
+    // dedicated major-explosion cue (AH-0MUJ1YZJ9008O4RC AC2). Asteroids
+    // are excluded above and carry over silently.
     for (const s of detonateList) {
+      playMajorExplosionSound();
       s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
     }
     this._loseLife(false);
     this._advanceAfterTimeout();
-
-    // Re-register surviving asteroids so the WaveManager tracks them
-    // for the next wave (prevents early wave-clear, AH-0MU8TWF1H007OG2L).
-    if (survivingAsteroids.length > 0) {
-      this.waveManager.registerDynamicSpawn(survivingAsteroids.length);
-    }
   }
 
   /**
@@ -1598,20 +1816,6 @@ export class PlayScene extends CombatScene<
     return this.spawned.map((s) => s.entity);
   }
 
-  /**
-   * Current formation ping-pong drift offset (px), relative to each enemy
-   * group's `startX`. Frozen in place while a Diver is away from the
-   * formation (see `_moveEnemies`). Exposed for observability/tests.
-   */
-  getFormationDriftX(): number {
-    return this.driftX;
-  }
-
-  /** Current formation drift direction: `+1` right, `-1` left. */
-  getFormationDriftDir(): number {
-    return this.driftDir;
-  }
-
   /** Number of live enemies. */
   getAliveCount(): number {
     return this.spawned.filter((s) => s.entity.alive).length;
@@ -1696,9 +1900,10 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Spawns an asteroid of the given size tier at (x, y) and registers it as
-   * a wave spawn. Public so tests and the mineral gym can place asteroids
-   * deterministically.
+   * Spawns an asteroid of the given size tier at (x, y). Asteroids are NOT
+   * registered with the WaveManager (AH-0MUJM746P000QAEO): they do not gate
+   * wave completion and persist in the field across wave/level transitions.
+   * Public so tests and the mineral gym can place asteroids deterministically.
    */
   spawnAsteroidAt(x: number, y: number, sizeTier: AsteroidSizeTier): Asteroid {
     const entity = new Asteroid(this, {
@@ -1716,8 +1921,24 @@ export class PlayScene extends CombatScene<
       spacingX: 0,
       spacingY: 0,
     });
-    this.waveManager.registerDynamicSpawn(1);
     return entity;
+  }
+
+  /**
+   * Registers an already-constructed enemy in the live simulation (public
+   * integration/test seam). Mirrors `GymFormationScene.registerDynamicEntity`
+   * so the game and gym can be driven identically by parity tests (F4).
+   */
+  registerEnemy(entity: EnemyEntity, enemyKey: string): void {
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey,
+      startX: entity.x,
+      startY: entity.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
   }
 
   /** Whether the hold-full choice overlay is currently open. */
@@ -1877,6 +2098,26 @@ export class PlayScene extends CombatScene<
       rules.weaponWeights,
       rng,
     );
+  }
+
+  /**
+   * Injects the run seed used to regenerate `dynamic` waves (tests). The seed
+   * is read at `create()` time; when never injected a seed is derived from the
+   * scene RNG so production runs differ from one another.
+   */
+  setRunSeed(seed: number): void {
+    this.runSeed = seed;
+  }
+
+  /**
+   * The run seed for `dynamic` wave regeneration: an explicit
+   * {@link setRunSeed} value when present, otherwise a 32-bit seed derived
+   * once from the scene RNG. Deriving only happens when the sequenced-campaign
+   * toggle is on, so the static path consumes no RNG values.
+   */
+  private _resolveRunSeed(): number {
+    if (this.runSeed !== null) return this.runSeed;
+    return Math.floor(this.rng() * 0x100000000) >>> 0;
   }
 
   /**

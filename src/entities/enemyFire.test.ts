@@ -17,6 +17,7 @@ import { createEnemyFromConfig } from './enemyFactory';
 import {
   DEFAULT_ENEMY_FIRE_METHOD,
   ENEMY_FIRE_METHODS,
+  enemyFireMethod,
   fireForEnemy,
 } from './enemyFire';
 
@@ -91,24 +92,37 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     expect(fireForEnemy(entity, 'scout', 1)).toHaveLength(1);
   });
 
-  it('covers every current archetype with an explicit mapping entry', () => {
-    // Guards against a silently-removed mapping: every mapped key must fire
-    // through the dispatcher (the map is the single seam a new archetype edits).
-    for (const key of Object.keys(ENEMY_FIRE_METHODS)) {
+  it('covers every firing archetype with an explicit mapping entry', () => {
+    // Guards against a silently-removed mapping: every firing archetype must
+    // dispatch through the shared seam (the map is the one place a new
+    // archetype edits). The Harvester is non-firing and is asserted
+    // separately below.
+    const firingKeys = Object.keys(ENEMY_FIRE_METHODS).filter(
+      (key) => key !== 'harvester',
+    );
+    for (const key of firingKeys) {
       const entity = makeFireSpy();
       fireForEnemy(entity, key, 999);
       expect(entity.calls, `${key} must dispatch`).toHaveLength(1);
     }
     expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual(
-      ['diver', 'phaser', 'scout', 'swarm', 'tank'],
+      ['diver', 'harvester', 'phaser', 'scout', 'swarm', 'tank'],
     );
+  });
+
+  it('resolves the Harvester to no fire (never the aimed-shot fallback)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('harvester')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'harvester', 42)).toEqual([]);
+    // The aimed fallback must not have run for the Harvester.
+    expect(entity.calls).toEqual([]);
   });
 });
 
 describe('shared enemy-fire dispatcher — fallback and safety (AC3)', () => {
   it('falls back to the aimed shot for an unknown/custom key', () => {
     const entity = makeFireSpy();
-    const result = fireForEnemy<{ tag: string }>(entity, 'harvester', 42);
+    const result = fireForEnemy<{ tag: string }>(entity, 'custom-enemy', 42);
     // The fallback resolves to the aimed-shot method ...
     expect(DEFAULT_ENEMY_FIRE_METHOD).toBe('tryFireAimedBullet');
     // ... and the spy records that the aimed method actually ran.

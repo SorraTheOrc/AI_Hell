@@ -85,6 +85,7 @@ import {
 } from '../../vfx/explosionParticles';
 import type { DropId, PowerUpId } from '../../powerups/types';
 import type { PowerUpWeights, WeaponWeights } from '../../core/rules';
+import { loadRules } from '../../core/rules';
 import {
   advanceDropLifecycles,
   applyDropMagnet,
@@ -93,6 +94,8 @@ import {
   playDropPickupCue,
 } from './dropLayer';
 import type { BombNotice } from './BombNotice';
+import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
+import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -110,10 +113,20 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
   /** Optional entity-specific destruction audio seam. */
   playDestructionAudio?(): void;
   /**
-   * Optional multi-hit seam (e.g. Boss). When present, a player bullet
-   * delegates to this instead of `destroySelf()`.
+   * Optional multi-hit seam (e.g. Harvester). When present, a player bullet
+   * delegates to this instead of `destroySelf()`. The entity clears its own
+   * `alive` flag on the lethal hit; the scene then finalises the kill exactly
+   * once (destruction audio + `onEnemyDestroyed`) by observing `alive`.
    */
   takeDamage?(): number | void;
+  /**
+   * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
+   * shared tick hands the scene's live mineral field to the entity so it can
+   * steer toward the nearest mineral. Defined once here and consumed by the
+   * game and the gyms so seeking is never re-implemented per scene
+   * (AH-0MUII2FJ5007MDDA gym-parity epic).
+   */
+  setSeekTargets?(minerals: readonly import('../../entities/Mineral').Mineral[]): void;
 }
 
 /** Structural contract an enemy bullet must satisfy. */
@@ -165,6 +178,35 @@ export class CombatCoreScene<
   protected playerDeathEffects: Phaser.GameObjects.GameObject[] = [];
   /** In-flight absorb animations for collected drops. */
   protected collectAnimations: CollectAnimationHandle[] = [];
+  /**
+   * Screen-wide Phase Shift juice overlays owned by the shared step
+   * (parent AH-0MUIYX1EE008FVS8). Cleared on restart/shutdown like the other
+   * shared effect registries.
+   */
+  protected phaseShiftEffects: Phaser.GameObjects.GameObject[] = [];
+  /** Lazily-created Phase Shift treatment controller. */
+  private phaseShiftJuice: PhaseShiftJuice | null = null;
+
+  /**
+   * The single shared beat clock driving phase-locked player auto-fire
+   * (AH-0MUAYB8EH005RJ8B). Created once per scene and anchored at scene
+   * start (t=0); it is shared with the player so every shot lands on one
+   * grid. It advances only through {@link CombatCoreScene._autoFire} (via
+   * the player's `tryFire`), so a paused scene — whose `update` is not
+   * called — pauses the clock with it.
+   */
+  protected readonly beatClock: BeatClock = createBeatClock({
+    bpm: loadRules().beatBpm,
+  });
+
+  /**
+   * The scene's single shared beat clock (one instance per scene, never a
+   * per-scene copy of the beat module). Exposed so scenes, gyms and tests
+   * can read/verify the grid driving player fire.
+   */
+  getBeatClock(): BeatClock {
+    return this.beatClock;
+  }
 
   // Arrow-key (cursor) and WASD bindings for the player ship.
   protected cursors: Phaser.Types.Input.Keyboard.CursorKeys | undefined;
@@ -300,7 +342,25 @@ export class CombatCoreScene<
   }
 
   /**
-   * The shared player-control step (AH-0MUII39KX007YUQ0, AC1). Every
+   * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
+   *
+   * Lazily creates the treatment the first time a ship exists, then advances
+   * it for the current phased state: the overlays appear on the frame the
+   * phase activates and are destroyed on the frame it expires. A no-op when
+   * the scene has no player, so threat-free/non-combat frames stay clean.
+   *
+   * @param dt — frame delta (seconds).
+   */
+  protected _updatePhaseShiftJuice(dt: number): void {
+    if (!this.getPlayer()) return;
+    this.phaseShiftJuice ??= new PhaseShiftJuice(this, {
+      registry: this.phaseShiftEffects,
+    });
+    this.phaseShiftJuice.update(this.getEffectsRegistry().isPhased, dt);
+  }
+
+  /**
+   * Shared player-control step (AH-0MUII39KX007YUQ0, AC1). Every
    * scene advances the player identically, in the same order every frame:
    *
    * 1. advance timed-weapon countdowns,
@@ -339,6 +399,11 @@ export class CombatCoreScene<
   protected _autoFire(dt: number): void {
     const player = this.getPlayer();
     if (!player) return;
+    // Every scene shares its single beat clock with the player so player
+    // fire is phase-locked to the scene anchor (AH-0MUAYB8EH005RJ8B).
+    if (player.getBeatClock() !== this.beatClock) {
+      player.setBeatClock(this.beatClock);
+    }
     const fired = player.tryFire(dt);
     if (fired.length === 0) return;
     const headingDeg = (player.getHeading() * 180) / Math.PI;
@@ -558,6 +623,9 @@ export class CombatCoreScene<
     this.playerBullets = [];
     this.playerExplosions = [];
     this.playerDeathEffects = [];
+    this.phaseShiftJuice?.destroy();
+    this.phaseShiftJuice = null;
+    this.phaseShiftEffects = [];
     // In-flight absorb animations are owned by the animation registry
     // (their drops are no longer in the scene's drop list), so their
     // only teardown path is here.
@@ -579,6 +647,8 @@ export class CombatCoreScene<
     this.playerExplosions = [];
     for (const effect of this.playerDeathEffects) effect.destroy();
     this.playerDeathEffects = [];
+    for (const effect of this.phaseShiftEffects) effect.destroy();
+    this.phaseShiftEffects = [];
     for (const anim of this.collectAnimations) anim.destroy();
     this.collectAnimations = [];
     // Release every collected effect so a restarted scene starts clean

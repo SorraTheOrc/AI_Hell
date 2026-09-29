@@ -51,6 +51,9 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
+  FormationGlide,
+} from '../../../scenes/core/formationGlide';
+import {
   applyPhaseGhost,
   drawShieldBubble,
 } from '../../core/CombatEffectVisuals';
@@ -65,13 +68,18 @@ import {
   playSpawnSound,
 } from '../../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
-import { FormationOffset } from '../../../utils/formations';
+import {
+  computeFormationReanchorDelta,
+  FormationOffset,
+  type FormationReanchorRequest,
+} from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
 import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
   WasdKeysLike,
 } from '../../../utils/input';
 import { loadRules } from '../../../core/rules';
+import { pickInRange, resolveSpawnRange } from '../../../core/configTypes';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
@@ -130,6 +138,11 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
   /** Destroys the entity: hides the body, plays the explosion animation. */
   destroySelf(): void;
   /**
+   * Set the world-space position. All concrete entities extend
+   * `Phaser.GameObjects.Container` and inherit this method.
+   */
+  setPosition(x: number, y: number): void;
+  /**
    * Applies the formation translation for this frame: base + offset
    * (+ any entity-specific animation, e.g. wiggle/dive).
    */
@@ -167,21 +180,31 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    */
   playDestructionAudio?(): void;
   /**
-   * Optional: reports that this entity is currently away from its formation
-   * and the scene must hold the cluster's drift in place (GDD §4.1 —
-   * E2 Diver). Only formation-holding archetypes implement it; other
-   * entities omit it and the base scene uses optional chaining.
+   * Optional: returns a pending re-anchor request when this entity's attack
+   * finished (GDD §4.1 — E2 Diver), so the base scene can re-base the whole
+   * formation origin and keep every unit's relative offset. The call clears
+   * the request (fires once). Other entities omit it and the base scene uses
+   * optional chaining.
    */
-  requiresFormationHold?(): boolean;
+  consumeFormationReanchor?(): FormationReanchorRequest | null;
   /**
-   * Optional multi-hit damage seam (Boss, GDD §4.3). When present,
+   * Optional multi-hit damage seam (Harvester, GDD §4.1). When present,
    * player-bullet collisions delegate to this instead of `destroySelf()`
-   * so the entity can decrement phased health and only self-destruct
-   * when depleted. The entity must handle its own SFX/visuals and
-   * `alive` flag; the base scene consumes the bullet and skips the
-   * generic destruction sound.
+   * so the entity can decrement health and only self-destruct when depleted.
+   * The entity clears its own `alive` flag on the lethal hit; the base scene
+   * then finalises the kill exactly once (destruction audio +
+   * `onEnemyDestroyed`) by observing `alive` after the call. Non-lethal hits
+   * consume the bullet with no destruction side effects.
    */
   takeDamage?(): number | void;
+  /**
+   * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
+   * base scene pushes its live mineral field to the entity each frame so a
+   * roaming enemy can steer toward the nearest mineral. Defined once on the
+   * shared contract and consumed by the game and the gyms; entities that do
+   * not seek simply omit it (optional chaining skips them).
+   */
+  setSeekTargets?(minerals: readonly Mineral[]): void;
   /**
    * Hit radius (px) used for circle-vs-circle collision checks.
    *
@@ -286,6 +309,18 @@ export interface EnemyFormationConfig<
   startX: number;
   /** Initial formation base y. */
   startY: number;
+  /**
+   * Optional spawn-position ranges (AH-0MUKCLXLW0032R67). When a genuine
+   * band is configured on an axis the formation base is drawn randomly
+   * within it using the shared {@link resolveSpawnRange}/{@link pickInRange}
+   * helpers — the same code path as `planGroupSpawns` in the game, so gyms
+   * and `PlayScene` cannot diverge. Absent/degenerate ranges keep the
+   * scalar `startX`/`startY` base unchanged.
+   */
+  startXMin?: number;
+  startXMax?: number;
+  startYMin?: number;
+  startYMax?: number;
   /** Status-line label, e.g. `scouts`. */
   statusLabel: string;
   /** Bottom hint line, e.g. `E1 Scout gym — V-formation demo`. */
@@ -387,8 +422,8 @@ export class GymFormationScene<
   protected playerSpawnX: number | null = null;
   protected playerSpawnY: number | null = null;
 
-  protected formationBaseX: number;
-  protected formationBaseY: number;
+  protected formationBaseX!: number;
+  protected formationBaseY!: number;
   private shootEnabled = false;
 
   // Wipe → 3s countdown → respawn lifecycle (core-library owned, AH-0MTFXKA5Q003LBH5).
@@ -421,6 +456,11 @@ export class GymFormationScene<
   /** Whether the shield bubble was drawn in the last visual update. */
   private shieldBubbleDrawn = false;
 
+  // ── Formation glide (AH-0MUL15N63003PUDB)
+
+  /** Glide manager: eases enemies from their old positions to the re-anchored slots. */
+  private glide = new FormationGlide();
+
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
   /** Live mineral collectables seeded across the play area. */
@@ -449,8 +489,25 @@ export class GymFormationScene<
   constructor(config: EnemyFormationConfig<TEntity, TBullet>) {
     super({ key: config.sceneKey });
     this.config = config;
-    this.formationBaseX = config.startX;
-    this.formationBaseY = config.startY;
+    this._resolveFormationBase();
+  }
+
+  /**
+   * Positions the formation base, applying any configured spawn range on
+   * each axis through the shared `resolveSpawnRange`/`pickInRange` helpers
+   * (AH-0MUKCLXLW0032R67). This is the same code path `planGroupSpawns`
+   * uses in the game, so gym and `PlayScene` range behaviour cannot diverge.
+   * A degenerate/absent range leaves the scalar `startX`/`startY` unchanged.
+   */
+  protected _resolveFormationBase(): void {
+    this.formationBaseX = pickInRange(
+      resolveSpawnRange(this.config.startX, this.config.startXMin, this.config.startXMax),
+      this._sceneRng,
+    );
+    this.formationBaseY = pickInRange(
+      resolveSpawnRange(this.config.startY, this.config.startYMin, this.config.startYMax),
+      this._sceneRng,
+    );
   }
 
   create(): void {
@@ -597,8 +654,7 @@ export class GymFormationScene<
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
-    this.formationBaseX = this.config.startX;
-    this.formationBaseY = this.config.startY;
+    this._resolveFormationBase();
   }
 
   /**
@@ -644,6 +700,9 @@ export class GymFormationScene<
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
+
+    // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
+    this.glide.clear();
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -1059,8 +1118,13 @@ export class GymFormationScene<
   /** Creates the mineral HUD and seeds the field; called from `create()`. */
   private _initMineralLayer(): void {
     const rules = loadRules();
+    // First-hold capacity and growth multiplier come from the shared rules,
+    // so the gym's hold progression matches the game exactly
+    // (AH-0MUKC6IML0082ZR4).
     this.mineralHoldModel.capacity = rules.mineralHoldCapacity;
     this.mineralHoldModel.collectAmount = rules.mineralCollectAmount;
+    this.mineralHoldModel.growthMultiplier =
+      rules.mineralHoldGrowthMultiplier;
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
@@ -1091,6 +1155,7 @@ export class GymFormationScene<
       this.player,
       absorbers,
       () => this._collectMineral(),
+      { playerPhased: this.isPlayerPhased() },
     );
   }
 
@@ -1266,25 +1331,29 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
-    // Formation hold (GDD §4.1 — E2 Diver): while any LIVING entity is away
-    // from the formation (`DIVING`/`PAUSING`/`RETURNING`), the whole cluster
-    // holds its current position and the right-edge wrap/respawn is
-    // suppressed. Destroyed entities are ignored, so a mid-dive kill can
-    // never freeze the cluster forever.
-    const holdFormation = this.entities.some(
-      (entity) => entity.alive && entity.requiresFormationHold?.() === true,
-    );
-    if (!holdFormation) {
-      // Advance the formation base; when the whole formation has crossed
-      // the right edge, respawn it off the left edge so it flies again.
-      this.formationBaseX += config.driftSpeed * dt;
-      if (this.formationBaseX > GAME_WIDTH + 60) {
-        this.formationBaseX = this._respawnX();
-      }
+    // Advance the formation base unconditionally; when the whole formation
+    // has crossed the right edge, respawn it off the left edge so it flies
+    // again. No entity can freeze the drift (the obsolete formation-hold seam
+    // was removed in AH-0MUAYB957002EMYV).
+    this.formationBaseX += config.driftSpeed * dt;
+    if (this.formationBaseX > GAME_WIDTH + 60) {
+      this.formationBaseX = this._respawnX();
     }
+
+    // Diver re-anchor (GDD §4.1 — E2, AH-0MUAYB957002EMYV): if a Diver's
+    // attack finished, re-base the whole formation origin so its slot
+    // coincides with the attack end. Applied after the drift and before the
+    // positioning pass so every unit uses the new origin in the same frame.
+    const reanchorApplied = this._applyFormationReanchor();
 
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
+      // Live mineral-seek: push the scene's live mineral field BEFORE the
+      // entity advances its own motion, so a roaming seeker (Harvester)
+      // steers on the same frame it receives a target — matching the game's
+      // `PlayScene._moveEnemies` ordering exactly (F4 parity).
+      entity.setSeekTargets?.(this.minerals);
+
       // Roaming enemies (e.g. Asteroid) advance their own straight-line
       // motion + wrap + rotation; a no-op for formation enemies.
       entity.updatePosition?.(dt);
@@ -1308,6 +1377,15 @@ export class GymFormationScene<
       this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 
+    // If a re-anchor fired (now or on an earlier frame), ease every entity
+    // from its old position to the live (drifting) slot over a short glide
+    // (AH-0MUL15N63003PUDB). Applied once after the positioning pass so each
+    // entity's live target is read after `applyFormationPosition` set it for
+    // this frame. A no-op when no glide is active.
+    if (reanchorApplied || this.glide.active) {
+      this.glide.update(dt);
+    }
+
     // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
     // are advanced by the shared bullet lifecycle below, matching the
     // PlayScene ordering relative to collisions. A no-op without a boss.
@@ -1325,6 +1403,10 @@ export class GymFormationScene<
       // (AH-0MUII39KX007YUQ0, AC1).
       this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
+
+      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
+      this._updatePhaseShiftAutoTrigger(dt);
 
       // Collisions + post-hit invulnerability blink (player component only).
       this._handleCollisions();
@@ -1353,9 +1435,49 @@ export class GymFormationScene<
     // Runs after the power-up layer so a drop collected this frame is
     // reflected immediately. Safe when no player is present.
     this._updateEffectVisuals();
+    this._updatePhaseShiftJuice(dt);
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
+  }
+
+  /**
+   * Consumes any pending entity re-anchor requests (GDD §4.1 — E2, Diver)
+   * and re-bases `formationBaseX`/`formationBaseY` so the requesting entity's
+   * slot lands on its attack-end position. Every other entity shifts by the
+   * same delta, preserving the grid's relative offsets. The most recent
+   * request wins when Divers are desynchronised (documented assumption).
+   *
+   * @returns `true` if a re-anchor was applied (and the glide was begun),
+   *   `false` otherwise.
+   */
+  private _applyFormationReanchor(): boolean {
+    let latest: FormationReanchorRequest | null = null;
+    for (const entity of this.entities) {
+      const request = entity.consumeFormationReanchor?.();
+      if (request) latest = request;
+    }
+    if (!latest) return false;
+
+    const { dx, dy } = computeFormationReanchorDelta(
+      latest,
+      this.formationBaseX,
+      this.formationBaseY,
+      this.config.spacingX,
+      this.config.spacingY,
+    );
+    this.formationBaseX += dx;
+    this.formationBaseY += dy;
+
+    // Begin the glide for every formation-driven entity so they ease to their
+    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only entities that
+    // expose the re-anchor seam (`consumeFormationReanchor`) — i.e. Divers —
+    // glide; all other enemies snap directly to their re-based slots.
+    const glideTargets = this.entities.filter(
+      (entity) => entity.consumeFormationReanchor != null,
+    );
+    this.glide.begin(glideTargets);
+    return true;
   }
 
   /**
@@ -1511,8 +1633,7 @@ export class GymFormationScene<
     const wasShooting = this.shootEnabled;
     for (const entity of this.entities) entity.destroy();
     this.entities.length = 0;
-    this.formationBaseX = this.config.startX;
-    this.formationBaseY = this.config.startY;
+    this._resolveFormationBase();
     const offsets = this.config.buildOffsets(this.config.count);
     for (const offset of offsets) {
       const entity = this.config.createEntity(

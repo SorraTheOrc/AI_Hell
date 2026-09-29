@@ -11,12 +11,14 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
 import { Asteroid, ASTEROID_LARGE_ROTATION_SPEED, ASTEROID_LARGE_SPEED } from './Asteroid';
+import { BaseEnemy } from './BaseEnemy';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
 import { Swarm } from './Swarm';
 import { Tank } from './Tank';
 import { createEnemyFromConfig } from './enemyFactory';
+import { Harvester } from './Harvester';
 
 class Harness extends Phaser.Scene {
   constructor() { super('Harness'); }
@@ -122,7 +124,7 @@ describe('Config-aware entity seam', () => {
   it('createEnemyFromConfig maps keys to the right entity class and threads opts', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
-    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid'] as const) {
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid', 'harvester'] as const) {
       const cfg = { ...DEFAULT_ENEMY_CONFIGS[key], color: 0xabcdef, size: 99 };
       const e = createEnemyFromConfig(scene, cfg as any, 10, 10, { row: 0, col: 0 });
       expect((e as any).effectiveColor).toBe(0xabcdef);
@@ -133,6 +135,7 @@ describe('Config-aware entity seam', () => {
       if (key === 'phaser') expect(e instanceof PhaserEntity).toBe(true);
       if (key === 'swarm') expect(e instanceof Swarm).toBe(true);
       if (key === 'asteroid') expect(e instanceof Asteroid).toBe(true);
+      if (key === 'harvester') expect(e instanceof Harvester).toBe(true);
       e.destroy(true);
     }
   });
@@ -156,6 +159,51 @@ describe('Config-aware entity seam', () => {
     expect(asteroid.shootEnabled).toBe(false);
     expect(asteroid.effectiveShotPattern).toBe('none');
     asteroid.destroy(true);
+  });
+
+  it('F2 — every existing archetype has 1 HP and is destroyed by a single hit', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid'] as const) {
+      const cfg = { ...DEFAULT_ENEMY_CONFIGS[key] };
+      const e = createEnemyFromConfig(scene, cfg, 10, 10, { row: 0, col: 0 }) as unknown as BaseEnemy;
+      expect(e.health).toBe(1);
+      expect(e.alive).toBe(true);
+      expect(e.takeDamage()).toBe(0);
+      expect(e.alive).toBe(false);
+      e.destroy(true);
+    }
+  });
+
+  it('F2 — health from config threads into the entity (multi-hit archetype)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const cfg = { ...DEFAULT_ENEMY_CONFIGS.tank, health: 5 };
+    const e = createEnemyFromConfig(scene, cfg, 10, 10, { row: 0, col: 0 }) as unknown as BaseEnemy;
+    expect(e.health).toBe(5);
+    expect(e.takeDamage()).toBe(4);
+    expect(e.alive).toBe(true);
+    expect(e.takeDamage()).toBe(3);
+    e.destroy(true);
+  });
+
+  it('F5 — harvester config is registered with health 5, single formation and no fire', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const cfg = DEFAULT_ENEMY_CONFIGS.harvester;
+    expect(cfg).toBeDefined();
+    expect(cfg.displayName).toBe('Harvester');
+    expect(cfg.health).toBe(5);
+    expect(cfg.formationKind).toBe('single');
+    expect(cfg.shotPattern).toBe('none');
+    expect(cfg.count).toBe(1);
+
+    const e = createEnemyFromConfig(scene, cfg, 100, 100, { row: 0, col: 0 }) as unknown as Harvester;
+    expect(e instanceof Harvester).toBe(true);
+    expect(e.health).toBe(5);
+    expect(e.effectiveShotPattern).toBe('none');
+    expect(e.shootEnabled).toBe(false);
+    e.destroy(true);
   });
 
   it('custom/unknown key falls back to Scout while preserving visuals', async () => {

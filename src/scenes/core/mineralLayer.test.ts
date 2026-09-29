@@ -111,6 +111,63 @@ describe('collectMinerals', () => {
     expect(onPlayerCollected).not.toHaveBeenCalled();
     expect(mineral.destroy).toHaveBeenCalledOnce();
   });
+
+  // ── P6 Phase Shift mineral gate (Q7, parent AH-0MUIYX1EE008FVS8) ──
+
+  it('blocks player collection while phased and keeps the mineral on the field', () => {
+    const mineral = fakeMineral(100, 100);
+    const onPlayerCollected = vi.fn();
+
+    const kept = collectMinerals(
+      asMinerals([mineral]),
+      { x: 100, y: 100 },
+      [fakeEnemy(900, 900)],
+      onPlayerCollected,
+      { playerPhased: true },
+    );
+
+    // The mineral survives (not collected, not destroyed) so it can be
+    // picked up the moment the phase expires.
+    expect(kept).toEqual(asMinerals([mineral]));
+    expect(onPlayerCollected).not.toHaveBeenCalled();
+    expect(mineral.handleOverlap).not.toHaveBeenCalled();
+    expect(mineral.destroy).not.toHaveBeenCalled();
+  });
+
+  it('resumes player collection once the phase expires', () => {
+    const mineral = fakeMineral(100, 100);
+    const onPlayerCollected = vi.fn();
+
+    const kept = collectMinerals(
+      asMinerals([mineral]),
+      { x: 100, y: 100 },
+      [],
+      onPlayerCollected,
+      { playerPhased: false },
+    );
+
+    expect(kept).toHaveLength(0);
+    expect(onPlayerCollected).toHaveBeenCalledOnce();
+    expect(mineral.handleOverlap).toHaveBeenCalledWith('player');
+  });
+
+  it('still lets enemies absorb minerals while the player is phased', () => {
+    const mineral = fakeMineral(100, 100);
+    const enemy = fakeEnemy(100, 100);
+    const onPlayerCollected = vi.fn();
+
+    const kept = collectMinerals(
+      asMinerals([mineral]),
+      { x: 100, y: 100 },
+      [enemy],
+      onPlayerCollected,
+      { playerPhased: true },
+    );
+
+    expect(kept).toHaveLength(0);
+    expect(enemy.collectMineral).toHaveBeenCalledOnce();
+    expect(onPlayerCollected).not.toHaveBeenCalled();
+  });
 });
 
 describe('applyMineralChoiceReward', () => {

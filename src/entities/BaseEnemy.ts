@@ -55,6 +55,11 @@ export interface BaseEnemyConfig {
   fireInterval?: number;
   /** Probability that a fire cycle produces a shot (0–1). */
   shotProbability?: number;
+  /**
+   * Hit points before the enemy is destroyed (data-driven; AH-0MUI820PM0038HS2).
+   * Defaults to `1` so every single-hit archetype is unchanged.
+   */
+  health?: number;
   /** Random-number generator (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -117,6 +122,12 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Probability that a fire cycle produces a shot (0–1). */
   protected readonly _shotProbability: number;
 
+  /**
+   * Remaining hit points before destruction (data-driven). Initialised from
+   * `config.health` and decremented by {@link takeDamage}; defaults to `1`.
+   */
+  protected _health: number;
+
   /** Random-number generator. */
   protected readonly _rng: () => number;
 
@@ -156,6 +167,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._bulletLifetime = config.bulletLifetime ?? 1.5;
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
+    this._health = config.health ?? 1;
     this._rng = config.rng ?? Math.random;
 
     // Shared graphics — created here but NOT added to the container.
@@ -233,6 +245,29 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
       { patterns: resolvePatterns(this.getExplosionPatternName()), scale },
     );
     if (handle) this.explosionHandles.push(handle);
+  }
+
+  /**
+   * Apply one hit of damage. Decrements the remaining health and calls
+   * {@link destroySelf} only when the last hit point is spent, so the shared
+   * player-bullet collision path can finalise the kill exactly once on the
+   * lethal blow. A hit against an already-destroyed enemy is a no-op.
+   *
+   * @returns the remaining hit points after this hit (`0` when destroyed).
+   */
+  takeDamage(): number {
+    if (!this._alive) return 0;
+    this._health -= 1;
+    if (this._health <= 0) {
+      this._health = 0;
+      this.destroySelf();
+    }
+    return this._health;
+  }
+
+  /** Remaining hit points before destruction. */
+  get health(): number {
+    return this._health;
   }
 
   /** Hit radius for collision detection. */

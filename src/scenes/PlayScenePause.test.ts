@@ -46,7 +46,7 @@ describe('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN)', () => {
   });
 
   async function bootPlay(): Promise<PausablePlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
     return booted.scene as unknown as PausablePlayScene;
   }
 

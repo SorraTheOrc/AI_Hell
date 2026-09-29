@@ -20,7 +20,7 @@ import {
 import { PauseScene } from './PauseScene';
 import { MenuScene } from './MenuScene';
 import { SettingsScene } from './SettingsScene';
-import { setSfxMuted, setSfxVolume } from '../audio/effects';
+import { playVolumeFeedback, setSfxMuted, setSfxVolume } from '../audio/effects';
 
 // Verify the scene actually drives the live master SFX plumbing.
 vi.mock('../audio/effects', async (importOriginal) => {
@@ -29,11 +29,13 @@ vi.mock('../audio/effects', async (importOriginal) => {
     ...actual,
     setSfxVolume: vi.fn(),
     setSfxMuted: vi.fn(),
+    playVolumeFeedback: vi.fn(),
   };
 });
 
 const setSfxVolumeMock = vi.mocked(setSfxVolume);
 const setSfxMutedMock = vi.mocked(setSfxMuted);
+const playVolumeFeedbackMock = vi.mocked(playVolumeFeedback);
 
 function customSettings(partial: Partial<SettingsRecord>): SettingsRecord {
   return {
@@ -339,5 +341,116 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
 
     expect(scene.isCapturing()).toBe('moveUp');
     expect(scene.getBinding('moveUp')).toBe('w');
+  });
+});
+
+// ── Volume-change feedback (AH-0MUADK77K008RBMB) ───────────────────
+//
+// AC1 — keyboard nudge plays one feedback blip per step
+// AC2 — drag release plays exactly one blip; never during the drag,
+//        and a stray pointer-up with no drag emits nothing
+
+describe('SettingsScene — volume-change feedback (AH-0MUADK77K008RBMB)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  async function bootSettings(): Promise<SettingsScene> {
+    booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
+    await new Promise((r) => setTimeout(r, 150));
+    return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+  }
+
+  /** The slider track rectangle, for driving pointer interaction. */
+  function sliderTrack(scene: SettingsScene): {
+    emit: (event: string, payload?: unknown) => void;
+  } {
+    return (
+      scene as unknown as {
+        sliderTrack: { emit: (event: string, payload?: unknown) => void };
+      }
+    ).sliderTrack;
+  }
+
+  // ── AC1 — keyboard nudge ────────────────────────────────────────
+
+  it('AC1 — each keyboard nudge plays feedback at the new volume', async () => {
+    const scene = await bootSettings();
+    expect(scene.getFocusedLabel()).toBe('volume');
+
+    // Phaser batches DOM keydown events per frame, so dispatch then settle
+    // before asserting (the established pattern in this suite).
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.95);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.9);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.95);
+
+    // One blip per nudge — three nudges, three feedback calls.
+    expect(playVolumeFeedbackMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('AC1 — setVolume() called directly (programmatic) does not emit feedback on its own', async () => {
+    const scene = await bootSettings();
+    scene.setVolume(0.4);
+    // Feedback is emitted by the interaction paths, not by setVolume itself
+    // (which also runs per pointer-move during a drag).
+    expect(playVolumeFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // ── AC2 — drag release ──────────────────────────────────────────
+
+  it('AC2 — a slider drag emits no feedback until release, then exactly one at the new volume', async () => {
+    const scene = await bootSettings();
+    const track = sliderTrack(scene);
+
+    // Press on the far-left of the track → volume 0.00.
+    track.emit('pointerdown', { x: 140 });
+    expect(playVolumeFeedbackMock).not.toHaveBeenCalled();
+
+    // Drag across the track — still no feedback.
+    track.emit('pointermove', { x: 200 });
+    track.emit('pointermove', { x: 250 });
+    expect(playVolumeFeedbackMock).not.toHaveBeenCalled();
+
+    // Release → exactly one blip for the final value (x=250 → 0.55).
+    scene.input.emit('pointerup');
+    expect(playVolumeFeedbackMock).toHaveBeenCalledTimes(1);
+    expect(scene.getSfxVolume()).toBeCloseTo(0.55, 5);
+    expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.55);
+  });
+
+  it('AC2 — a pointer-up that did not follow a drag emits no feedback', async () => {
+    const scene = await bootSettings();
+
+    // Stray pointer-up with no slider pointerdown.
+    scene.input.emit('pointerup');
+    scene.input.emit('pointerup');
+
+    expect(playVolumeFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  it('AC2 — a second pointer-up after release does not replay the feedback', async () => {
+    const scene = await bootSettings();
+    const track = sliderTrack(scene);
+
+    track.emit('pointerdown', { x: 200 });
+    scene.input.emit('pointerup');
+    expect(playVolumeFeedbackMock).toHaveBeenCalledTimes(1);
+
+    // A further pointer-up with no intervening drag adds nothing.
+    scene.input.emit('pointerup');
+    expect(playVolumeFeedbackMock).toHaveBeenCalledTimes(1);
   });
 });

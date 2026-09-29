@@ -9,21 +9,32 @@
 #   levelName         — Level theme name (shown in the HUD).
 #   wave              — 1-based wave number within the level.
 #   targetDifficulty  — Target difficulty score for that wave (0–100).
+#   generation        — Per-wave mode: `curve` (default), `fixed` or `dynamic`.
+#                       `curve` builds the wave from targetDifficulty once;
+#                       `fixed` uses the hand-authored static LEVELS wave for
+#                       the same (level, wave) and ignores targetDifficulty;
+#                       `dynamic` rebuilds the wave from its curve at run
+#                       start, seeded from the run seed (reproducible for a
+#                       given seed). An absent value (and the legacy per-level
+#                       `source` column, if used) defaults to `curve`.
 #
-# The seeded values below are derived from the static LEVELS calibration
-# (see `defaultDifficultyCurves()` in `src/core/configStore.ts`): each level's
-# measured difficulty is spread non-decreasingly across its waves.
-level,levelName,wave,targetDifficulty
-1,Entry,1,3.29
-1,Entry,2,6.58
-2,Descent,1,8.38
-2,Descent,2,10.18
-2,Descent,3,11.98
-3,The Core,1,12.47
-3,The Core,2,12.97
-3,The Core,3,13.46
-4,Firestorm,1,16.84
-4,Firestorm,2,20.23
-4,Firestorm,3,23.61
-5,Predictable Death,1,27.82
-5,Predictable Death,2,32.02
+# The shipped campaign is mixed-mode: levels 1–3 (`fixed`) reuse the
+# hand-authored static LEVELS onboarding waves byte-for-byte; levels 4–5 are
+# curve-generated from the targets below, with level 5 wave 2 (`dynamic`)
+# regenerated per run from its curve and the run seed. The targets are
+# non-decreasing within and across levels (see `defaultDifficultyCurves()` in
+# `src/core/configStore.ts`).
+level,levelName,wave,targetDifficulty,generation
+1,Entry,1,3.01,fixed
+1,Entry,2,6.01,fixed
+2,Descent,1,7.66,fixed
+2,Descent,2,9.3,fixed
+2,Descent,3,10.95,fixed
+3,The Core,1,11.4,fixed
+3,The Core,2,11.85,fixed
+3,The Core,3,12.3,fixed
+4,Firestorm,1,16,curve
+4,Firestorm,2,24,curve
+4,Firestorm,3,28,curve
+5,Predictable Death,1,45,curve
+5,Predictable Death,2,62,dynamic

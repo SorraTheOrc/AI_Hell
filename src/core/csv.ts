@@ -19,6 +19,8 @@ import {
   type ShipConfig,
   type ControlScheme,
   type DifficultyCurveRow,
+  type DifficultyGeneration,
+  type DifficultySource,
 } from './configTypes';
 import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
 
@@ -36,15 +38,40 @@ const VALID_CONTROL_SCHEMES: ControlScheme[] = [
   'fourDirectional', 'asteroids',
 ];
 
+/** Valid per-wave generation modes (AH-0MUJSUQD8003FSUT). */
+const VALID_DIFFICULTY_GENERATIONS: DifficultyGeneration[] = [
+  'curve', 'fixed', 'dynamic',
+];
+
+/** Default per-wave mode when the `generation` column is absent. */
+const DEFAULT_DIFFICULTY_GENERATION: DifficultyGeneration = 'curve';
+
+/** Valid legacy per-level source selectors (AH-0MUH7Q6HN0006QPD). */
+const VALID_DIFFICULTY_SOURCES: DifficultySource[] = ['generated', 'scripted'];
+
+/**
+ * Legacy `source` → `generation` mapping (AH-0MUH7Q6HN0006QPD →
+ * AH-0MUJSUQD8003FSUT): a legacy `scripted` level is now a `fixed` wave and a
+ * legacy `generated` level is a `curve` wave.
+ */
+const LEGACY_SOURCE_TO_GENERATION: Record<DifficultySource, DifficultyGeneration> = {
+  generated: 'curve',
+  scripted: 'fixed',
+};
+
 // ── Enemy config column order (for serialization) ──────────────────
 
 /** Stable column order for the enemy-config CSV. Exported for plugin validation. */
 export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'key', 'displayName', 'formationKind', 'count', 'spacingX', 'spacingY',
-  'driftSpeed', 'startX', 'startY', 'size', 'color', 'bulletColor',
+  'driftSpeed', 'startX', 'startY', 'startXMin', 'startXMax', 'startYMin',
+  'startYMax', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
-  'bulletLifetime', 'burstCount', 'shotProbability',
+  'bulletLifetime', 'burstCount', 'shotProbability', 'health',
 ];
+
+/** Documented default hit points for an enemy when the column is absent/invalid. */
+export const DEFAULT_ENEMY_HEALTH = 1;
 
 // ── Ship config column order (for serialization) ───────────────────
 
@@ -253,6 +280,7 @@ export function validateEnemyConfig(
   // Validate malformed numbers.
   const numericFields = [
     'count', 'spacingX', 'spacingY', 'driftSpeed', 'startX', 'startY',
+    'startXMin', 'startXMax', 'startYMin', 'startYMax',
     'size', 'bulletSize', 'fireInterval', 'bulletSpeed', 'bulletLifetime',
     'burstCount', 'shotProbability',
   ];
@@ -261,6 +289,14 @@ export function validateEnemyConfig(
     if (val != null && val.trim() !== '' && Number.isNaN(Number(val))) {
       errors.push(`Malformed number for ${field}: "${val}"`);
     }
+  }
+
+  // Validate health: optional, but when present must be a positive integer.
+  const health = row.health;
+  if (health != null && health.trim() !== '' && !isPositiveInteger(health)) {
+    errors.push(
+      `Invalid health: "${health}" — must be a positive integer`,
+    );
   }
 
   // Validate hex colours.
@@ -359,6 +395,13 @@ export function coerceEnemyConfig(
   merged.driftSpeed = coerceNumber(row.driftSpeed, merged.driftSpeed);
   merged.startX = coerceNumber(row.startX, merged.startX);
   merged.startY = coerceNumber(row.startY, merged.startY);
+  // Spawn-position ranges (AH-0MUKCLXLW0032R67). Legacy CSVs omit these
+  // columns: absent cells fall back to the resolved scalar so the effective
+  // range is a single point (min = max = startX/startY), preserving behaviour.
+  merged.startXMin = coerceNumber(row.startXMin, merged.startX);
+  merged.startXMax = coerceNumber(row.startXMax, merged.startX);
+  merged.startYMin = coerceNumber(row.startYMin, merged.startY);
+  merged.startYMax = coerceNumber(row.startYMax, merged.startY);
   merged.size = coerceNumber(row.size, merged.size);
   merged.color = coerceHexColour(row.color, merged.color);
   merged.bulletColor = coerceHexColour(row.bulletColor, merged.bulletColor);
@@ -370,6 +413,7 @@ export function coerceEnemyConfig(
   merged.bulletLifetime = coerceNumber(row.bulletLifetime, merged.bulletLifetime);
   merged.burstCount = coerceNumber(row.burstCount, merged.burstCount);
   merged.shotProbability = coerceNumber(row.shotProbability, merged.shotProbability);
+  merged.health = coerceHealth(row.health, merged.health ?? DEFAULT_ENEMY_HEALTH);
 
   return merged;
 }
@@ -403,7 +447,7 @@ export function coerceShipConfig(
 
 /** Stable column order for the difficulty-curve CSV. Exported for plugin validation. */
 export const DIFFICULTY_CURVE_COLUMN_ORDER: (keyof DifficultyCurveRow)[] = [
-  'level', 'levelName', 'wave', 'targetDifficulty',
+  'level', 'levelName', 'wave', 'targetDifficulty', 'generation',
 ];
 
 /**
@@ -435,27 +479,79 @@ export function validateDifficultyCurveRow(
     errors.push('Missing required field: levelName');
   }
 
-  const target = row.targetDifficulty;
-  if (target == null || target.trim() === '') {
-    errors.push('Missing required field: targetDifficulty');
-  } else {
-    const n = Number(target);
-    if (Number.isNaN(n)) {
-      errors.push(`Malformed number for targetDifficulty: "${target}"`);
-    } else if (n < 0 || n > 100) {
-      errors.push(
-        `targetDifficulty out of range (0–100): "${target}"`,
-      );
+  // Per-wave generation mode: optional, defaults to `curve`. An explicit
+  // value must be one of the valid enums; when absent, a legacy per-level
+  // `source` column is honoured instead.
+  const generation = normaliseDifficultyGeneration(row);
+  if (generation === null) {
+    errors.push(
+      `Invalid generation: "${row.generation ?? row.source}" — must be curve, fixed or dynamic`,
+    );
+  }
+
+  // `targetDifficulty` is required for `curve` and `dynamic` waves; for
+  // `fixed` waves it is ignored (their composition comes from static `LEVELS`).
+  if (generation !== 'fixed') {
+    const target = row.targetDifficulty;
+    if (target == null || target.trim() === '') {
+      errors.push('Missing required field: targetDifficulty');
+    } else {
+      const n = Number(target);
+      if (Number.isNaN(n)) {
+        errors.push(`Malformed number for targetDifficulty: "${target}"`);
+      } else if (n < 0 || n > 100) {
+        errors.push(
+          `targetDifficulty out of range (0–100): "${target}"`,
+        );
+      }
     }
   }
 
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Resolve a raw row's per-wave generation mode. `generation` (when present
+ * and valid) wins; otherwise a legacy `source` column is mapped
+ * (`scripted` → `fixed`, `generated` → `curve`); otherwise the default
+ * `curve` is returned. Returns `null` for an unrecognised value in either
+ * column (a malformed row).
+ */
+function normaliseDifficultyGeneration(
+  row: Record<string, string>,
+): DifficultyGeneration | null {
+  const rawGeneration = row.generation;
+  if (rawGeneration != null && rawGeneration.trim() !== '') {
+    const trimmed = rawGeneration.trim();
+    return VALID_DIFFICULTY_GENERATIONS.includes(trimmed as DifficultyGeneration)
+      ? (trimmed as DifficultyGeneration)
+      : null;
+  }
+  const rawSource = row.source;
+  if (rawSource != null && rawSource.trim() !== '') {
+    const trimmed = rawSource.trim();
+    return VALID_DIFFICULTY_SOURCES.includes(trimmed as DifficultySource)
+      ? LEGACY_SOURCE_TO_GENERATION[trimmed as DifficultySource]
+      : null;
+  }
+  return DEFAULT_DIFFICULTY_GENERATION;
+}
+
 /** True when `value` is a string holding a positive integer (`1`, `2`, …). */
 function isPositiveInteger(value: string): boolean {
   if (!/^\d+$/.test(value.trim())) return false;
   return Number(value) >= 1;
+}
+
+/**
+ * Coerce an enemy `health` value. A missing/blank value falls back to the
+ * documented default (`1`); any other malformed value (non-numeric, zero,
+ * negative, fractional) also falls back to the default rather than to `0`, so
+ * an enemy can never be created with zero/negative hit points.
+ */
+function coerceHealth(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === '') return fallback;
+  return isPositiveInteger(value) ? Number(value) : fallback;
 }
 
 /**
@@ -467,11 +563,19 @@ export function coerceDifficultyCurveRow(
   row: Record<string, string>,
 ): DifficultyCurveRow | null {
   if (!validateDifficultyCurveRow(row).ok) return null;
+  const generation =
+    normaliseDifficultyGeneration(row) ?? DEFAULT_DIFFICULTY_GENERATION;
+  // A `fixed` row's target is ignored, so an absent/blank value coerces to 0
+  // rather than NaN; a `curve`/`dynamic` row's target is guaranteed
+  // present + numeric by validation.
+  const rawTarget = row.targetDifficulty?.trim() ?? '';
+  const parsedTarget = rawTarget === '' ? 0 : Number(rawTarget);
   return {
     level: Number(row.level),
     levelName: row.levelName.trim(),
     wave: Number(row.wave),
-    targetDifficulty: Number(row.targetDifficulty),
+    targetDifficulty: Number.isFinite(parsedTarget) ? parsedTarget : 0,
+    generation,
   };
 }
 
@@ -497,11 +601,27 @@ export function parseDifficultyCurves(csv: string): DifficultyCurveRow[] {
 export function serializeDifficultyCurves(rows: DifficultyCurveRow[]): string {
   const header = DIFFICULTY_CURVE_COLUMN_ORDER.join(',');
   const body = rows.map((row) =>
-    DIFFICULTY_CURVE_COLUMN_ORDER.map((col) =>
-      quoteCsvField(String(row[col] ?? '')),
-    ).join(','),
+    DIFFICULTY_CURVE_COLUMN_ORDER.map((col) => {
+      // `generation` is always written explicitly, defaulting to `curve`, so
+      // the serialised file and its parsed form agree on the default. A row
+      // carrying only the legacy `source` field is mapped to its mode.
+      const value = col === 'generation'
+        ? generationOf(row)
+        : row[col];
+      return quoteCsvField(String(value ?? ''));
+    }).join(','),
   );
   return [header, ...body].join('\n');
+}
+
+/**
+ * The generation mode a typed row serialises to: its explicit `generation`, or
+ * the legacy `source` mapping, or the `curve` default.
+ */
+function generationOf(row: DifficultyCurveRow): DifficultyGeneration {
+  if (row.generation) return row.generation;
+  if (row.source) return LEGACY_SOURCE_TO_GENERATION[row.source];
+  return DEFAULT_DIFFICULTY_GENERATION;
 }
 
 // ── AC4: CSV serialization ──────────────────────────────────────────

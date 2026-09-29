@@ -34,13 +34,14 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import { playDestructionSound } from '../../audio/effects';
+import { playDestructionSound, playPhaseShiftSound } from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
-import { resolveBulletVsBulletImpact } from '../../vfx/bulletImpact';
+import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
+import { isInDanger } from '../../powerups/dangerDetection';
 import {
   findTeleportDestination,
   type TeleportBody,
@@ -95,6 +96,42 @@ export abstract class CombatScene<
   protected abstract setEnemyBullets(bullets: TBullet[]): void;
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
+
+  // ── Automatic Phase Shift (P6) danger feed ──────────────────────
+
+  /**
+   * Shared per-frame danger feed for the automatic Phase Shift (parent
+   * AH-0MUIYX1EE008FVS8, Q1/Q2/Q3).
+   *
+   * Counts the live hostile bodies and enemy bullets whose centre lies
+   * within `DANGER_RADIUS` of the ship (via the pure `isInDanger` helper)
+   * and hands the result to the effects registry, which auto-activates
+   * Phase Shift when a charge is available and the re-arm conditions are
+   * met. Every combat scene calls this once per frame immediately before
+   * `_handleCollisions`, so the game and the gyms share one implementation
+   * and one ordering and cannot diverge.
+   *
+   * @param dt — frame delta (seconds); advances the P6 re-arm cooldown.
+   */
+  protected _updatePhaseShiftAutoTrigger(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    const player = this.getPlayer();
+    if (!player) {
+      // No ship: no danger, but keep the re-arm state advancing.
+      registry.updateDanger(false, dt);
+      return;
+    }
+    const bodies = this.getEnemyEntities()
+      .filter((enemy) => enemy.alive)
+      .map((enemy) => ({ x: enemy.x, y: enemy.y }));
+    const bullets = this.getEnemyBullets().map((bullet) => ({
+      x: bullet.graphics.x,
+      y: bullet.graphics.y,
+    }));
+    const fired = registry.updateDanger(isInDanger(player, bodies, bullets), dt);
+    // Dedicated activation cue on every auto-trigger (parent AH-0MUIYX1EE008FVS8).
+    if (fired) playPhaseShiftSound();
+  }
 
   // ── Shared effect gating (P3 shield / P6 phase) ─────────────────
 
@@ -215,6 +252,12 @@ export abstract class CombatScene<
    * multi-hit entities receive `takeDamage()`; single-hit entities are
    * destroyed with their destruction audio and `onEnemyDestroyed`.
    *
+   * A non-lethal multi-hit hit consumes the bullet and spawns the shared
+   * bullet-impact flash at the hit point, so a durable enemy (whose body does
+   * not explode) still gives immediate "that hit registered" feedback. The
+   * same shared path runs in the game and the gyms, so the feedback cannot
+   * diverge (parent AH-0MUI820PM0038HS2 — producer review).
+   *
    * @returns whether the bullet was consumed (stops the scan).
    */
   protected onPlayerBulletHitsEnemy(
@@ -223,17 +266,38 @@ export abstract class CombatScene<
   ): boolean {
     if (enemy.takeDamage) {
       enemy.takeDamage();
+      // Multi-hit entity: finalise the kill exactly once on the lethal blow
+      // (the entity's `takeDamage()` has already run `destroySelf()` and
+      // cleared `alive`). A non-lethal hit consumes the bullet but flashes at
+      // the impact point so the player can read that the hit registered.
+      if (!enemy.alive) {
+        this.finaliseEnemyKill(enemy);
+      } else {
+        spawnBulletImpact(this, bullet.x, bullet.y, {
+          registry: this.bulletImpactEffects,
+        });
+      }
     } else {
       enemy.destroySelf();
-      if (enemy.playDestructionAudio) {
-        enemy.playDestructionAudio();
-      } else {
-        playDestructionSound();
-      }
-      this.onEnemyDestroyed(enemy);
+      this.finaliseEnemyKill(enemy);
     }
     bullet.destroy();
     return true;
+  }
+
+  /**
+   * Play the destruction audio and notify `onEnemyDestroyed` for a killed
+   * enemy — the shared single-finalisation seam used by the bullet and ram
+   * paths, so destruction audio and score/drop/wave accounting happen exactly
+   * once per kill.
+   */
+  private finaliseEnemyKill(enemy: TEnemy): void {
+    if (enemy.playDestructionAudio) {
+      enemy.playDestructionAudio();
+    } else {
+      playDestructionSound();
+    }
+    this.onEnemyDestroyed(enemy);
   }
 
   /**
@@ -259,10 +323,7 @@ export abstract class CombatScene<
    */
   protected onPlayerRamsEnemy(enemy: TEnemy): void {
     enemy.destroySelf();
-    if (enemy.playDestructionAudio) {
-      enemy.playDestructionAudio();
-    }
-    this.onEnemyDestroyed(enemy);
+    this.finaliseEnemyKill(enemy);
   }
 
   /**
@@ -385,7 +446,9 @@ export abstract class CombatScene<
     );
 
     // Consume one stack FIFO and grant P6 phase shift at the landing spot.
-    registry.consumeTeleport();
+    const phaseActivated = registry.consumeTeleport();
+    // Direct activation also plays the dedicated cue (Q6).
+    if (phaseActivated) playPhaseShiftSound();
     player.setPosition(dest.x, dest.y);
     // Keep the movement state's position in sync with the new position
     // (physicsTick uses the internal state as its base).

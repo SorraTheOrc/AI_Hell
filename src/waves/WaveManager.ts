@@ -18,8 +18,14 @@
  * GDD §2.4 — Levels 1–3 do not fire; GDD §2.5 — Levels 4–5 do.
  */
 
-import { computeFormationPosition, getFormationBuilder } from '../utils/formations';
-import type { FormationOffset } from '../utils/formations';
+import {
+  computeFormationPosition,
+  formationSpawnCount,
+  getFormationBuilder,
+} from '../utils/formations';
+import type { EnemyFormationKind, FormationOffset } from '../utils/formations';
+import { pickInRange, resolveSpawnRange, type EnemyConfig, type SpawnRange } from '../core/configTypes';
+import { loadEnemyConfig } from '../core/enemyConfig';
 import {
   LEVELS,
   type LevelDefinition,
@@ -236,13 +242,22 @@ export class WaveManager {
 
   // ── Spawn planning ──────────────────────────────────────────────
 
-  /** Total number of enemies in the supplied wave (0 when null). */
+  /**
+   * Total number of enemies the supplied wave will **actually** spawn
+   * (0 when null). Derived from each group's formation builder — not the
+   * raw `count` field — so the declared size always matches
+   * {@link planSpawns} (a count-independent formation such as `single`
+   * spawns one entity regardless of its declared `count`).
+   */
   private _waveSize(wave: WaveDefinition | null): number {
     if (!wave) return 0;
-    return wave.groups.reduce((sum, g) => sum + g.count, 0);
+    return wavePlannedSpawnCount(wave.groups);
   }
 
-  /** Total number of enemies in the active wave. */
+  /**
+   * Total number of enemies the active wave will actually spawn. Always
+   * equal to `planSpawns().length` — the declared-vs-planned invariant.
+   */
   waveEnemyCount(): number {
     return this._waveSize(this.currentWave());
   }
@@ -250,23 +265,29 @@ export class WaveManager {
   /**
    * Computes the concrete spawn list for the active wave: one
    * {@link EnemySpawn} per enemy, positioned by the group's formation
-   * builder. Returns an empty array when there is no active wave
-   * (before `beginGame()` or during the boss encounter).
+   * builder. Its length always equals {@link waveEnemyCount}. Returns an
+   * empty array when there is no active wave (before `beginGame()` or
+   * during the boss encounter).
    */
-  planSpawns(): EnemySpawn[] {
+  planSpawns(rng: () => number = Math.random): EnemySpawn[] {
     const wave = this.currentWave();
     if (!wave) return [];
-    return planGroupSpawns(wave.groups, wave.shootEnabled);
+    return planGroupSpawns(wave.groups, wave.shootEnabled, rng);
   }
 
-  // ── Dynamic spawn registration (asteroid splits, AH-0MU8BZ2ZM004J47F) ──
+  // ── Dynamic spawn registration (generic seam) ───────────────────
 
   /**
-   * Registers `count` dynamically spawned enemies (e.g. split asteroid
-   * children) so the wave's alive count tracks them and the wave does
-   * not clear early or stall. Must be called exactly once per spawned
-   * child before that child can be destroyed. Safe no-op when no regular
-   * wave is active (before `beginGame()`, boss due/active, run over).
+   * Registers `count` dynamically spawned enemies so the wave's alive count
+   * tracks them and the wave does not clear early or stall. Must be called
+   * exactly once per spawned child before that child can be destroyed. Safe
+   * no-op when no regular wave is active (before `beginGame()`, boss
+   * due/active, run over).
+   *
+   * Asteroids are NOT registered through this seam (AH-0MUJM746P000QAEO):
+   * they do not gate wave completion and persist across wave/level
+   * transitions. The seam is retained for any future dynamically spawned
+   * enemy that must be wave-accounted.
    */
   registerDynamicSpawn(count: number): void {
     if (!this._started || this._bossTriggered || this._bossActive || this._bossDefeated) {
@@ -351,22 +372,149 @@ export class WaveManager {
 // ── Spawn planning helper ───────────────────────────────────────────
 
 /**
+ * Total number of enemies a list of wave groups will actually spawn, derived
+ * from each group's formation builder (see `formationSpawnCount`). This is
+ * the spawn plan's source of truth: `waveEnemyCount()` and
+ * `planSpawns().length` both resolve to this value, so the declared size can
+ * never exceed what is spawned. Pure — no Phaser dependency.
+ */
+export function wavePlannedSpawnCount(groups: WaveGroup[]): number {
+  return groups.reduce((sum, g) => sum + formationSpawnCount(g.formation, g.count), 0);
+}
+
+/**
+ * One wave-group configuration problem, naming the offending group.
+ */
+export interface WaveGroupValidationError {
+  /** Index of the offending group in the supplied list. */
+  index: number;
+  /** Enemy config key of the offending group. */
+  enemyKey: string;
+  /** Formation kind of the offending group. */
+  formation: EnemyFormationKind;
+  /** Declared enemy count of the offending group. */
+  count: number;
+  /** Human-readable description naming the group and its count. */
+  message: string;
+}
+
+/**
+ * Validates a list of wave groups against the formation semantics and
+ * returns one error per misconfigured group (an empty array when all are
+ * valid).
+ *
+ * Currently the only rule is the `single` formation: it represents exactly
+ * one entity (`buildSingleOffset` always returns one centred offset), so its
+ * declared `count` must be `1`. This is an authoring-time check — it returns
+ * errors rather than throwing, so callers (level loaders, authoring tools,
+ * tests) can surface them without risking a runtime crash. Note that
+ * {@link wavePlannedSpawnCount} already keeps declared and planned counts
+ * equal even for an over-declared `single` group; this helper exists to flag
+ * the otherwise-silent misconfiguration. Pure — no Phaser dependency.
+ */
+export function validateWaveGroups(groups: WaveGroup[]): WaveGroupValidationError[] {
+  const errors: WaveGroupValidationError[] = [];
+  groups.forEach((group, index) => {
+    if (group.formation === 'single' && group.count !== 1) {
+      errors.push({
+        index,
+        enemyKey: group.enemyKey,
+        formation: group.formation,
+        count: group.count,
+        message:
+          `single-formation group ${index} ('${group.enemyKey}') declares count=${group.count}; ` +
+          `the 'single' formation spawns exactly one enemy, so count must be 1.`,
+      });
+    }
+  });
+  return errors;
+}
+
+/**
+ * Resolves the effective spawn range for one axis of a wave group.
+ *
+ * Precedence (AH-0MUKCLXLW0032R67, WG4): an explicit per-group range
+ * overrides the enemy archetype's configured range. A degenerate or absent
+ * archetype range (min === max, e.g. every legacy seed) leaves the group's
+ * scalar `start` untouched, so existing levels spawn at exactly the same
+ * point. Reversed bounds are normalised by {@link resolveSpawnRange}.
+ */
+function resolveGroupRange(
+  groupStart: number,
+  groupMin: number | undefined,
+  groupMax: number | undefined,
+  configMin: number | undefined,
+  configMax: number | undefined,
+): SpawnRange {
+  // Per-group override wins when either bound is present (WG4).
+  if (groupMin !== undefined || groupMax !== undefined) {
+    return resolveSpawnRange(groupStart, groupMin, groupMax);
+  }
+  // Otherwise use the archetype's range, but only when it is a genuine band:
+  // a degenerate (min === max) config is the legacy scalar and must not
+  // override the wave group's own start position.
+  if (configMin !== undefined && configMax !== undefined && configMin !== configMax) {
+    return resolveSpawnRange(configMin, configMin, configMax);
+  }
+  return { min: groupStart, max: groupStart };
+}
+
+/**
  * Computes the concrete spawn list for a list of wave groups: one
  * {@link EnemySpawn} per enemy, positioned by each group's formation
- * builder. Shared by {@link WaveManager.planSpawns} and the boss minion
- * planner (`waves/BossMinions.ts`). Pure — no Phaser dependency.
+ * builder. The number of spawns always equals
+ * {@link wavePlannedSpawnCount} for the same groups, keeping the declared
+ * wave size and the plan in lockstep. Shared by
+ * {@link WaveManager.planSpawns} and the boss minion planner
+ * (`waves/BossMinions.ts`). Pure — no Phaser dependency.
+ *
+ * Spawn-position ranges (AH-0MUKCLXLW0032R67): each group selects a random
+ * base position within its effective range (per-group override, else the
+ * enemy archetype's configured range), then the formation offsets are added
+ * exactly as before. A zero-width range consumes no randomness, preserving
+ * deterministic legacy behaviour. `rng` is injectable for tests.
+ *
+ * @param groups — wave groups to position.
+ * @param shootEnabled — whether the spawned enemies may fire.
+ * @param rng — RNG returning a fraction in `[0, 1)`; defaults to
+ *   `Math.random`. The scene passes its own RNG for deterministic replays.
+ * @param configFor — archetype resolver; defaults to the config store
+ *   loader (injectable for tests without a seeded registry).
  */
 export function planGroupSpawns(
   groups: WaveGroup[],
   shootEnabled: boolean,
+  rng: () => number = Math.random,
+  configFor: (enemyKey: string) => EnemyConfig = loadEnemyConfig,
 ): EnemySpawn[] {
   const spawns: EnemySpawn[] = [];
   for (const groupDef of groups) {
+    const config = configFor(groupDef.enemyKey);
+    const baseX = pickInRange(
+      resolveGroupRange(
+        groupDef.startX,
+        groupDef.startXMin,
+        groupDef.startXMax,
+        config.startXMin,
+        config.startXMax,
+      ),
+      rng,
+    );
+    const baseY = pickInRange(
+      resolveGroupRange(
+        groupDef.startY,
+        groupDef.startYMin,
+        groupDef.startYMax,
+        config.startYMin,
+        config.startYMax,
+      ),
+      rng,
+    );
     const buildOffsets = getFormationBuilder(groupDef.formation);
     for (const offset of buildOffsets(groupDef.count)) {
       const { x, y } = computeFormationPosition(
-        groupDef.startX,
-        groupDef.startY,
+        baseX,
+        baseY,
         offset,
         groupDef.spacingX,
         groupDef.spacingY,
@@ -377,8 +525,8 @@ export function planGroupSpawns(
         x,
         y,
         shootEnabled,
-        startX: groupDef.startX,
-        startY: groupDef.startY,
+        startX: baseX,
+        startY: baseY,
         spacingX: groupDef.spacingX,
         spacingY: groupDef.spacingY,
       });

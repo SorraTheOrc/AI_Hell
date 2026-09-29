@@ -140,6 +140,11 @@ export interface AsteroidConfig {
   bulletSpeed?: number;
   fireInterval?: number;
   shotProbability?: number;
+  /**
+   * Hit points before the enemy is destroyed (data-driven;
+   * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
+   */
+  health?: number;
   rng?: () => number;
   /** Size tier — overrides the default for this entity. */
   sizeTier?: AsteroidSizeTier;
@@ -202,6 +207,7 @@ export class Asteroid extends BaseEnemy {
       bulletSpeed: config.bulletSpeed,
       fireInterval: config.fireInterval,
       shotProbability: config.shotProbability,
+      health: config.health,
       rng: config.rng,
     };
 

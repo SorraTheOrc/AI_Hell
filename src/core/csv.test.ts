@@ -910,30 +910,126 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
     return { level: '2', levelName: 'Descent', wave: '1', targetDifficulty: '8.88' };
   }
 
-  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER', async () => {
+  it('exports a stable DIFFICULTY_CURVE_COLUMN_ORDER including generation', async () => {
     const m = await loadCsvModule();
     expect(m.DIFFICULTY_CURVE_COLUMN_ORDER).toEqual([
-      'level', 'levelName', 'wave', 'targetDifficulty',
+      'level', 'levelName', 'wave', 'targetDifficulty', 'generation',
     ]);
   });
 
-  it('parses typed rows from a CSV string', async () => {
+  it('parses typed rows from a CSV string, defaulting generation to curve', async () => {
     const m = await loadCsvModule();
     const rows = m.parseDifficultyCurves(
       'level,levelName,wave,targetDifficulty\n3,The Core,2,13.75\n',
     );
     expect(rows).toEqual([
-      { level: 3, levelName: 'The Core', wave: 2, targetDifficulty: 13.75 },
+      {
+        level: 3,
+        levelName: 'The Core',
+        wave: 2,
+        targetDifficulty: 13.75,
+        generation: 'curve',
+      },
     ]);
   });
 
-  it('round-trips rows through serialize → parse', async () => {
+  it('round-trips curve, fixed and dynamic modes through serialize → parse', async () => {
     const m = await loadCsvModule();
     const rows = [
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49 },
-      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12 },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 3.49, generation: 'curve' as const },
+      { level: 2, levelName: 'A, B', wave: 3, targetDifficulty: 12, generation: 'fixed' as const },
+      { level: 4, levelName: 'Firestorm', wave: 1, targetDifficulty: 22, generation: 'dynamic' as const },
     ];
     expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(rows))).toEqual(rows);
+  });
+
+  it('the existing 4-column CSV still parses and round-trips (generation defaults to curve)', async () => {
+    const m = await loadCsvModule();
+    const legacy = 'level,levelName,wave,targetDifficulty\n1,Entry,1,5\n';
+    const parsed = m.parseDifficultyCurves(legacy);
+    expect(parsed).toEqual([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'curve' },
+    ]);
+    // Serialising adds the generation column; re-parsing is stable.
+    expect(m.parseDifficultyCurves(m.serializeDifficultyCurves(parsed))).toEqual(parsed);
+  });
+
+  it('maps the legacy per-level source column: scripted → fixed, generated → curve', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty,source\n' +
+        '3,The Core,1,12,scripted\n' +
+        '4,Firestorm,1,20,generated\n',
+    );
+    expect(rows).toEqual([
+      { level: 3, levelName: 'The Core', wave: 1, targetDifficulty: 12, generation: 'fixed' },
+      { level: 4, levelName: 'Firestorm', wave: 1, targetDifficulty: 20, generation: 'curve' },
+    ]);
+  });
+
+  it('a file with neither generation nor source defaults every wave to curve', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty\n2,Descent,1,9\n',
+    );
+    expect(rows[0].generation).toBe('curve');
+  });
+
+  it('a fixed row may omit targetDifficulty (it is ignored)', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty,generation\n' +
+        '3,The Core,1,,fixed\n',
+    );
+    expect(rows).toEqual([
+      { level: 3, levelName: 'The Core', wave: 1, targetDifficulty: 0, generation: 'fixed' },
+    ]);
+  });
+
+  it('a curve row still requires targetDifficulty', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      level: '1', levelName: 'Entry', wave: '1', generation: 'curve',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('targetdifficulty');
+  });
+
+  it('a dynamic row still requires targetDifficulty', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      level: '1', levelName: 'Entry', wave: '1', generation: 'dynamic',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('targetdifficulty');
+  });
+
+  it('an unrecognised generation is malformed', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      ...validRow(), generation: 'hand-made',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('generation');
+  });
+
+  it('an unrecognised legacy source is malformed', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateDifficultyCurveRow({
+      ...validRow(), source: 'hand-made',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('generation');
+  });
+
+  it('a fixed row with a malformed target is still accepted (target ignored)', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseDifficultyCurves(
+      'level,levelName,wave,targetDifficulty,generation\n' +
+        '3,The Core,1,nope,fixed\n',
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].generation).toBe('fixed');
   });
 
   it('validation passes for a valid row', async () => {
@@ -983,7 +1079,160 @@ describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {
         'bad,Entry,3,9\n',
     );
     expect(rows).toEqual([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5 },
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'curve' },
     ]);
+  });
+});
+
+// ── AC (F1): data-driven enemy health column ────────────────────────
+
+describe('Enemy health column (F1)', () => {
+  it('health is part of the stable enemy column order', async () => {
+    const m = await loadCsvModule();
+    expect(m.ENEMY_COLUMN_ORDER).toContain('health');
+  });
+
+  it('coerceEnemyConfig reads the health column as a number', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+      health: '5',
+    };
+    const config = m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(config.health).toBe(5);
+  });
+
+  it('a missing health column coerces to the documented default of 1', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'scout', displayName: 'Scout', formationKind: 'v',
+      count: '6', spacingX: '26', spacingY: '22', driftSpeed: '40',
+      startX: '240', startY: '270', size: '16',
+      color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+      shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '200',
+      bulletLifetime: '1.5', burstCount: '1', shotProbability: '1',
+    };
+    const config = m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS);
+    expect(config.health).toBe(1);
+  });
+
+  it('health round-trips through serializeEnemyConfigs → parseCsvRows → coerceEnemyConfig', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.tank, health: 5 };
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([config]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.health).toBe(5);
+  });
+
+  it('every serialized archetype round-trips its health value', async () => {
+    const m = await loadCsvModule();
+    const configs = [
+      { ...DEFAULT_ENEMY_CONFIGS.scout, health: 1 },
+      { ...DEFAULT_ENEMY_CONFIGS.tank, health: 3 },
+    ];
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs(configs));
+    expect(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS).health).toBe(1);
+    expect(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS).health).toBe(3);
+  });
+
+  it('validateEnemyConfig rejects non-positive and non-integer health', async () => {
+    const m = await loadCsvModule();
+    const base: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+    };
+    expect(m.validateEnemyConfig({ ...base, health: '5' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
+    expect(m.validateEnemyConfig({ ...base, health: '0' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: '-2' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: '2.5' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+    expect(m.validateEnemyConfig({ ...base, health: 'many' }, DEFAULT_ENEMY_CONFIGS).ok).toBe(false);
+  });
+
+  it('a malformed health value coerces to 1 rather than 0', async () => {
+    const m = await loadCsvModule();
+    const row: Record<string, string> = {
+      key: 'tank', displayName: 'Tank', formationKind: 'rect',
+      count: '6', spacingX: '50', spacingY: '45', driftSpeed: '18',
+      startX: '240', startY: '270', size: '28',
+      color: '0xff6600', bulletColor: '0xffaa00', bulletSize: '4',
+      shotPattern: 'radial', fireInterval: '2400', bulletSpeed: '150',
+      bulletLifetime: '2', burstCount: '10', shotProbability: '1',
+      health: 'not-a-number',
+    };
+    expect(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS).health).toBe(1);
+  });
+});
+
+// ── Spawn-position ranges (AH-0MUKCLXLW0032R67, AC2/AC6) ────────────
+
+describe('Enemy spawn-position ranges (AC2/AC6)', () => {
+  const baseRow: Record<string, string> = {
+    key: 'scout', displayName: 'Scout', formationKind: 'v',
+    count: '6', spacingX: '26', spacingY: '22', driftSpeed: '40',
+    startX: '240', startY: '270', size: '16',
+    color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+    shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '200',
+    bulletLifetime: '1.5', burstCount: '1', shotProbability: '1',
+  };
+
+  it('parses the four range columns when present', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig(
+      { ...baseRow, startXMin: '100', startXMax: '400', startYMin: '150', startYMax: '350' },
+      DEFAULT_ENEMY_CONFIGS,
+    );
+    expect(config.startXMin).toBe(100);
+    expect(config.startXMax).toBe(400);
+    expect(config.startYMin).toBe(150);
+    expect(config.startYMax).toBe(350);
+  });
+
+  it('legacy CSV without range columns defaults min = max = scalar startX/startY', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig({ ...baseRow, startX: '321', startY: '654' }, DEFAULT_ENEMY_CONFIGS);
+    expect(config.startXMin).toBe(321);
+    expect(config.startXMax).toBe(321);
+    expect(config.startYMin).toBe(654);
+    expect(config.startYMax).toBe(654);
+  });
+
+  it('serialises the range columns and round-trips them', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.scout, startXMin: 10, startXMax: 20, startYMin: 30, startYMax: 40 };
+    const csvString = m.serializeEnemyConfigs([config]);
+    expect(csvString).toContain('startXMin');
+    expect(csvString).toContain('startXMax');
+    expect(csvString).toContain('startYMin');
+    expect(csvString).toContain('startYMax');
+    const coerced = m.coerceEnemyConfig(m.parseCsvRows(csvString)[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.startXMin).toBe(10);
+    expect(coerced.startXMax).toBe(20);
+    expect(coerced.startYMin).toBe(30);
+    expect(coerced.startYMax).toBe(40);
+  });
+
+  it('validateEnemyConfig accepts valid range columns and rejects malformed ones', async () => {
+    const m = await loadCsvModule();
+    expect(m.validateEnemyConfig(
+      { ...baseRow, startXMin: '100', startXMax: '400', startYMin: '150', startYMax: '350' },
+      DEFAULT_ENEMY_CONFIGS,
+    ).ok).toBe(true);
+    const result = m.validateEnemyConfig({ ...baseRow, startXMin: 'wide' }, DEFAULT_ENEMY_CONFIGS);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ')).toContain('startXMin');
+  });
+
+  it('range columns are optional: omitting them never fails validation', async () => {
+    const m = await loadCsvModule();
+    expect(m.validateEnemyConfig(baseRow, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
   });
 });

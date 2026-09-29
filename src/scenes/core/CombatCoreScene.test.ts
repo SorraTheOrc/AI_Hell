@@ -12,6 +12,7 @@ import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
+import { isOnGrid } from '../../utils/beat';
 import {
   CombatCoreScene,
   type CombatDrop,
@@ -276,6 +277,40 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getPlayerBullets()).toContain(bullet);
     expect(bullet.vx).toBe(1);
     expect(bullet.vy).toBe(2);
+  });
+
+  // ── Shared beat clock wiring (AH-0MUAYB8EH005RJ8B AC1/AC3/AC5) ──
+
+  it('AC1/AC5 — the scene owns one shared beat clock and injects it into the player', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+
+    // The player starts on its own clock; the shared auto-fire step adopts
+    // the scene's single instance so every shot uses one grid.
+    expect(scene.getBeatClock()).toBeDefined();
+    expect(player.getBeatClock()).not.toBe(scene.getBeatClock());
+
+    scene.runAutoFire(0.016);
+    expect(player.getBeatClock()).toBe(scene.getBeatClock());
+
+    // A separate scene gets its own instance — no module-level global.
+    const other = await boot<StubCoreScene>(StubCoreScene);
+    expect(other.getBeatClock()).not.toBe(scene.getBeatClock());
+  });
+
+  it('AC1/AC3 — auto-fire advances the shared clock with game time and fires on grid ticks', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+
+    expect(scene.getBeatClock().now()).toBe(0); // anchored at scene start
+    scene.runAutoFire(0.5);
+
+    expect(scene.getBeatClock().now()).toBeCloseTo(500, 5); // dt*1000
+    const cannonShot = player.getLastShotTime('cannon');
+    expect(cannonShot).toBeDefined();
+    expect(isOnGrid(cannonShot!, 375, scene.getBeatClock().anchorMs)).toBe(
+      true,
+    );
   });
 
   // ── AC1 — shared player-control step ─────────────────────────────

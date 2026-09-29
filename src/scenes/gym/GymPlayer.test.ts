@@ -25,7 +25,12 @@ vi.mock('../../core/configStore', async (importOriginal) => {
   };
 });
 import { Player } from '../../entities/Player';
-import { GymPlayer, SCHEME_TOGGLE_ID } from './GymPlayer';
+import {
+  GymPlayer,
+  OBSTACLE_LAYOUT,
+  SAVE_BUTTON_ID,
+  SCHEME_TOGGLE_ID,
+} from './GymPlayer';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 
 describe('GymPlayer ship config panel', () => {
@@ -418,5 +423,133 @@ describe('GymPlayer — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', 
     // A same-instance restart must rebuild a fresh ship.
     expect(() => scene.create()).not.toThrow();
     expect(internal.player).not.toBeNull();
+  });
+});
+describe('GymPlayer — obstacles & shooting (AH-0MUAYB2XR007N10W)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore([], DEFAULT_CONFIG);
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+  });
+
+  async function bootPlayerScene(): Promise<GymPlayer> {
+    booted = await bootScene([GymPlayer]);
+    return booted.scene as GymPlayer;
+  }
+
+  it('AC1 — auto-fires through the shared core and expires bullets by lifetime', async () => {
+    const scene = await bootPlayerScene();
+
+    // Advance enough frames for the cannon's cooldown to elapse: the shared
+    // `_tickPlayer` step must emit bullets into the inherited list.
+    for (let i = 0; i < 4; i++) scene.tick(0.5);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+
+    // A short-lived injected bullet expires through the shared lifecycle
+    // helper (destroyed + removed from the live list).
+    const bullet = scene.spawnPlayerBullet(100, 100, 0, 0, 0x00ffff, 0.2);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+    scene.tick(0.2);
+    expect(bullet.active).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+  });
+
+  it('AC2 — spawns the deterministic obstacle course (barriers + pillar variety)', async () => {
+    const scene = await bootPlayerScene();
+    const obstacles = scene.getObstacles();
+
+    expect(obstacles.length).toBe(OBSTACLE_LAYOUT.length);
+    obstacles.forEach((obstacle, index) => {
+      const spec = OBSTACLE_LAYOUT[index];
+      expect(obstacle.x).toBe(spec.x);
+      expect(obstacle.y).toBe(spec.y);
+      expect(obstacle.getHitRadius()).toBe(spec.radius);
+    });
+    expect(obstacles.some((o) => o.kind === 'barrier')).toBe(true);
+    expect(obstacles.some((o) => o.kind === 'pillar')).toBe(true);
+
+    // The course is reproducible across boots: a second instance matches.
+    const first = obstacles.map((o) => `${o.x},${o.y},${o.getHitRadius()}`);
+    const second = (await bootPlayerScene())
+      .getObstacles()
+      .map((o) => `${o.x},${o.y},${o.getHitRadius()}`);
+    expect(second).toEqual(first);
+  });
+
+  it('AC3 — player bullets are absorbed by an obstacle without destroying it', async () => {
+    const scene = await bootPlayerScene();
+    const obstacle = scene.getObstacles()[0];
+    const bullet = scene.spawnPlayerBullet(
+      obstacle.x,
+      obstacle.y,
+      0,
+      0,
+      0x00ffff,
+      5,
+    );
+
+    scene.tick(0);
+
+    expect(obstacle.alive).toBe(true);
+    expect(bullet.active).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+  });
+
+  it('AC4 — crashing into an obstacle destroys the player; invulnerable contact does not double-hit', async () => {
+    const scene = await bootPlayerScene();
+    const obstacle = scene.getObstacles()[0];
+    const player = scene.getPlayer()!;
+
+    // Move the ship onto the obstacle (physics integrates the internal
+    // movement state, so keep both in sync).
+    player.setPosition(obstacle.x, obstacle.y);
+    (
+      player as unknown as { _movementState: Record<string, unknown> }
+    )._movementState = {
+      ...player.getMovementState(),
+      x: obstacle.x,
+      y: obstacle.y,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+
+    expect(scene.getPlayerHitCount()).toBe(0);
+
+    scene.tick(0.016);
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.isPlayerInvulnerable()).toBe(true);
+    // The obstacle survives the crash.
+    expect(obstacle.alive).toBe(true);
+
+    // Repeated contact while invulnerable must not register a second hit.
+    scene.tick(0.016);
+    expect(scene.getPlayerHitCount()).toBe(1);
+  });
+
+  it('AC5 — the tuning panel coexists with obstacles and shooting', async () => {
+    const scene = await bootPlayerScene();
+
+    expect(scene.getObstacles().length).toBeGreaterThan(0);
+
+    const panel = document.querySelector('#gym-config-panel') as HTMLDivElement | null;
+    expect(panel).not.toBeNull();
+    expect(panel!.querySelector(`#${SAVE_BUTTON_ID}`)).not.toBeNull();
+    expect(
+      panel!.querySelectorAll('input[type="range"][data-config]').length,
+    ).toBe(6);
+
+    // Shooting still works alongside the panel and obstacles.
+    for (let i = 0; i < 4; i++) scene.tick(0.5);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
   });
 });

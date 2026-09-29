@@ -23,7 +23,19 @@
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
  * `angleToVelocity`) accept heading in **degrees** for readability.
+ *
+ * Fire rates are **beat subdivisions** (AH-0MUAYB8EH005RJ8B): each weapon's
+ * interval is an exact fraction of the shared 80 BPM beat period, derived
+ * from the pure beat-clock module (`utils/beat.ts`) rather than hard-coded.
+ * This keeps every current and future weapon on-grid by construction, and
+ * `isOnBeatGrid` is the catalogue-wide invariant that guards it.
  */
+
+import {
+  DEFAULT_BPM,
+  beatPeriodMs,
+  beatSubdivisionMs,
+} from './beat';
 
 // ── Weapon IDs ───────────────────────────────────────────────────────
 
@@ -44,17 +56,75 @@ export function isTimedWeapon(id: WeaponId): boolean {
 
 // ── Tunable weapon constants (fire rates, bullet tuning) ────────────
 
-/** Fire rate interval for the cannon (ms between shots). */
-export const WEAPON_CANNON_FIRE_RATE = 400;
+/**
+ * Shots per beat for each weapon — the musical subdivision that defines
+ * its fire rate. The cannon is double-time (2/beat, 160 BPM); spread and
+ * dual are whole-time (1/beat, 80 BPM); rapid is six-per-beat (6/beat,
+ * 480 BPM). These are the **defaults**; the live values are configurable
+ * through `core/rules.ts` (`weaponSubdivisions`), and every fire rate is
+ * derived from them so it is an exact subdivision of the beat period
+ * (AH-0MUAYB8EH005RJ8B).
+ */
+export type WeaponSubdivisions = Record<WeaponId, number>;
 
-/** Fire rate interval for the spread weapon (ms). */
-export const WEAPON_SPREAD_FIRE_RATE = 600;
+/** Default shots-per-beat for each weapon (cannon 2, spread 1, dual 1, rapid 6). */
+export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
+  cannon: 2,
+  spread: 1,
+  dual: 1,
+  rapid: 6,
+};
 
-/** Fire rate interval for the dual weapon (ms). */
-export const WEAPON_DUAL_FIRE_RATE = 500;
+/** Default cannon subdivision (2 shots per beat). */
+export const WEAPON_CANNON_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.cannon;
+/** Default spread subdivision (1 shot per beat). */
+export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
+/** Default dual subdivision (1 shot per beat). */
+export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
+/** Default rapid subdivision (6 shots per beat). */
+export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
 
-/** Fire rate interval for the rapid weapon (ms) — markedly faster. */
-export const WEAPON_RAPID_FIRE_RATE = 125;
+/**
+ * Derives a weapon's fire interval (ms) from a subdivision of the beat:
+ * `beatPeriodMs(bpm) / subdivisions`. Every rate is therefore an exact
+ * subdivision of the beat by construction, so the catalogue-wide on-grid
+ * invariant holds for any configured BPM/subdivisions (AH-0MUAYB8EH005RJ8B).
+ *
+ * @param weaponId - The weapon whose interval to derive.
+ * @param subdivisions - Shots per beat per weapon (defaults to the catalogue).
+ * @param bpm - Tempo in beats per minute (default 80).
+ */
+export function weaponFireRateMs(
+  weaponId: WeaponId,
+  subdivisions: WeaponSubdivisions = DEFAULT_WEAPON_SUBDIVISIONS,
+  bpm: number = DEFAULT_BPM,
+): number {
+  const count =
+    subdivisions[weaponId] ?? DEFAULT_WEAPON_SUBDIVISIONS[weaponId];
+  return beatSubdivisionMs(count, bpm);
+}
+
+/**
+ * Fire rate interval for the cannon (ms between shots) — 2 shots per beat
+ * of the default 80 BPM grid (375 ms).
+ */
+export const WEAPON_CANNON_FIRE_RATE = beatSubdivisionMs(WEAPON_CANNON_SUBDIVISION);
+
+/**
+ * Fire rate interval for the spread weapon (ms) — 1 shot per beat (750 ms).
+ */
+export const WEAPON_SPREAD_FIRE_RATE = beatSubdivisionMs(WEAPON_SPREAD_SUBDIVISION);
+
+/**
+ * Fire rate interval for the dual weapon (ms) — 1 shot per beat (750 ms).
+ */
+export const WEAPON_DUAL_FIRE_RATE = beatSubdivisionMs(WEAPON_DUAL_SUBDIVISION);
+
+/**
+ * Fire rate interval for the rapid weapon (ms) — 6 shots per beat (125 ms),
+ * the fastest weapon on the grid.
+ */
+export const WEAPON_RAPID_FIRE_RATE = beatSubdivisionMs(WEAPON_RAPID_SUBDIVISION);
 
 /** Bullet speed in pixels per second (used by all weapons). */
 export const BULLET_SPEED = 350;
@@ -234,6 +304,31 @@ export function getWeaponById(id: WeaponId): WeaponDefinition {
     throw new Error(`Unknown weapon: ${id}`);
   }
   return def;
+}
+
+// ── Beat-grid invariant ─────────────────────────────────────────────
+
+/**
+ * Returns true when `fireRateMs` is an exact subdivision of the beat period
+ * for `bpm`: `beatPeriodMs(bpm) % fireRateMs === 0`. This is the
+ * catalogue-wide invariant (AH-0MUAYB8EH005RJ8B): every weapon must fire on
+ * the shared beat grid, so a future 20 BPM quarter-time weapon (or any other
+ * addition) is on-grid by construction and an off-grid rate is rejected.
+ *
+ * @param fireRateMs - Fire interval in milliseconds.
+ * @param bpm - Tempo in beats per minute (default 80).
+ * @returns True when the interval divides the beat period exactly.
+ */
+export function isOnBeatGrid(
+  fireRateMs: number,
+  bpm: number = DEFAULT_BPM,
+): boolean {
+  if (typeof fireRateMs !== 'number' || !Number.isFinite(fireRateMs) || fireRateMs <= 0) {
+    return false;
+  }
+  const period = beatPeriodMs(bpm);
+  // Use a small tolerance for float-safety when BPM is overridden.
+  return Math.abs(period % fireRateMs) < 1e-9 * Math.max(1, period);
 }
 
 // ── Round-robin drop order ──────────────────────────────────────────

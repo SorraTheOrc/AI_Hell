@@ -77,6 +77,13 @@ function mineralBarInnerWidth(): number {
 /** Label prefix for weapon rows in the HUD. */
 const WEAPON_ROW_PREFIX = 'Weapon: ';
 
+/**
+ * Value shown for an effect with unlimited uses (e.g. the hold-full P6
+ * Phase Shift reward) — the infinity glyph reads as "no count" rather than a
+ * misleading number.
+ */
+export const PERMANENT_VALUE = '∞';
+
 /** One display row in the HUD model. */
 export interface HUDEntry {
   /** Power-up ID (e.g. "P5"). */
@@ -381,8 +388,11 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 }
 
-/** Formats an effect's value: "Ns" (remaining) or "xN" (stacks). */
+/** Formats an effect's value: "Ns" (remaining), "xN" (stacks) or unlimited. */
 export function formatValue(effect: ActiveEffect): string {
+  if (effect.permanent) {
+    return PERMANENT_VALUE;
+  }
   if (effect.stacks !== undefined) {
     return `x${effect.stacks}`;
   }

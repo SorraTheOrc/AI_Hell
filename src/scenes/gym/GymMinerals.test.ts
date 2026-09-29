@@ -16,6 +16,7 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
+import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
 
 /** Live asteroid entities of the given tier in a mineral gym. */
 function liveAsteroids(scene: GymMinerals): Asteroid[] {
@@ -52,7 +53,8 @@ describe('GymMinerals', () => {
     // running demo loop before the assertion).
     expect(scene.getMinerals().length).toBeGreaterThan(80);
     expect(scene.getMineralHold()).toBeGreaterThanOrEqual(0);
-    expect(scene.getMineralCapacity()).toBe(20);
+    expect(scene.getMineralCapacity()).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    expect(scene.getMineralCapacity()).toBe(5);
   });
 
   it('shows the mineral hold bar on the HUD', async () => {
@@ -80,6 +82,27 @@ describe('GymMinerals', () => {
     scene.tick(0.016);
 
     expect(scene.getMineralHold()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('P6 phase blocks mineral collection and resumes on expiry (Q7)', async () => {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    const scene = booted.scene as GymMinerals;
+    const player = scene.getPlayer()!;
+    const mineral = scene.getMinerals()[0];
+
+    // Park the mineral on the ship and phase the player.
+    mineral.setPosition(player.x, player.y);
+    const holdBefore = scene.getMineralHold();
+    scene.getEffectsRegistry().applyPhaseShift();
+    scene.tick(0.016);
+
+    // While phased the mineral is not collected and stays on the field.
+    expect(scene.getMineralHold()).toBe(holdBefore);
+    expect(scene.getMinerals()).toContain(mineral);
+
+    // Advance past the 1.5 s phase: collection resumes immediately.
+    for (let i = 0; i < 100; i += 1) scene.tick(0.016);
+    expect(scene.getMineralHold()).toBeGreaterThan(holdBefore);
   });
 
   it('is discovered by the gym index as "Minerals"', () => {
@@ -249,6 +272,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
+    expect(registry.updateDanger(true, 0.016)).toBe(true);
     expect(registry.isPhased).toBe(true);
 
     placeEnemyBulletOnPlayer(scene);
@@ -261,6 +285,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   it('AC3 — P6 phase also passes the player through enemy bodies', async () => {
     const scene = await bootMinerals();
     grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.016)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities.find((e) => e.alive)!;

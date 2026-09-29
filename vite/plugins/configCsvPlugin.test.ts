@@ -274,6 +274,43 @@ describe('PUT endpoint — upsert (AC2)', () => {
     expect(persisted).toContain('1,Entry,2,24');
   });
 
+  it('accepts valid per-wave generation modes and writes them', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await fetch(`${url}${CSV_API_PREFIX}${DIFFICULTY_REL}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body:
+        'level,levelName,wave,targetDifficulty,generation\n' +
+        '1,Entry,1,12,curve\n' +
+        '1,Entry,2,,fixed\n' +
+        '1,Entry,3,24,dynamic\n',
+    });
+
+    expect(res.status).toBe(200);
+    const persisted = readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8');
+    expect(persisted).toContain('1,Entry,1,12,curve');
+    expect(persisted).toContain('1,Entry,3,24,dynamic');
+  });
+
+  it('rejects an invalid generation mode with 400 and does not modify the file', async () => {
+    const { url } = await startServer(tempRoot);
+    const before = readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8');
+
+    const res = await fetch(`${url}${CSV_API_PREFIX}${DIFFICULTY_REL}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/csv' },
+      body:
+        'level,levelName,wave,targetDifficulty,generation\n' +
+        '1,Entry,1,12,hand-made\n',
+    });
+
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as { ok: boolean; errors: string[] };
+    expect(payload.ok).toBe(false);
+    expect(payload.errors.join(' ').toLowerCase()).toContain('generation');
+    expect(readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8')).toBe(before);
+  });
+
   it('rejects malformed difficulty-curve rows with 400 and does not modify the file', async () => {
     const { url } = await startServer(tempRoot);
     const before = readFileSync(join(tempRoot, DIFFICULTY_REL), 'utf8');
