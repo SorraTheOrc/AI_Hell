@@ -314,13 +314,14 @@ export class PlayScene extends CombatScene<
   private driftX = 0;
   private driftDir = 1;
   /**
-   * Unit-level re-anchor offset (px), added to every formation group's origin
-   * on top of the drift. A Diver's attack re-bases the whole unit by adding
-   * the shared delta here, so the Diver's slot lands on its attack end and
-   * every other unit keeps its relative offset (AH-0MUAYB957002EMYV).
+   * Diver-group re-anchor offset (px), added only to Diver spawns' origin on
+   * top of the drift. A Diver's attack re-anchors the Diver group by adding
+   * the shared delta here, so the Diver's slot lands on its attack end while
+   * every other enemy stays where it is (producer review,
+   * AH-0MUL15N63003PUDB).
    */
-  private formationAnchorX = 0;
-  private formationAnchorY = 0;
+  private diverAnchorX = 0;
+  private diverAnchorY = 0;
 
   /** Glide manager: eases enemies to their re-anchored slots (AH-0MUL15N63003PUDB). */
   private glide = new FormationGlide();
@@ -518,8 +519,8 @@ export class PlayScene extends CombatScene<
     this.boss = null;
     this.driftX = 0;
     this.driftDir = 1;
-    this.formationAnchorX = 0;
-    this.formationAnchorY = 0;
+    this.diverAnchorX = 0;
+    this.diverAnchorY = 0;
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
@@ -690,8 +691,8 @@ export class PlayScene extends CombatScene<
     }
     this.driftX = 0;
     this.driftDir = 1;
-    this.formationAnchorX = 0;
-    this.formationAnchorY = 0;
+    this.diverAnchorX = 0;
+    this.diverAnchorY = 0;
     this._startWaveTimer();
   }
 
@@ -912,9 +913,13 @@ export class PlayScene extends CombatScene<
         s.entity.updatePosition?.(dt);
         continue;
       }
+      // Only Divers ride the Diver re-anchor offset; every other enemy uses
+      // the drift alone and therefore stays where it is when a Diver
+      // re-anchors (AC5, AH-0MUL15N63003PUDB).
+      const isDiver = s.entity.consumeFormationReanchor != null;
       s.entity.applyFormationPosition(
-        s.startX + this.driftX + this.formationAnchorX,
-        s.startY + this.formationAnchorY,
+        s.startX + this.driftX + (isDiver ? this.diverAnchorX : 0),
+        s.startY + (isDiver ? this.diverAnchorY : 0),
         dt,
         s.spacingX,
         s.spacingY,
@@ -930,11 +935,12 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Consumes any pending enemy re-anchor requests and shifts the unit anchor
-   * so the requesting Diver's slot lands on its attack end, with every other
-   * unit shifted by the same delta (shared rule in
-   * `computeFormationReanchorDelta`). The most recent request wins when Divers
-   * are desynchronised (documented assumption).
+   * Consumes any pending enemy re-anchor requests and shifts the Diver-group
+   * anchor so the requesting Diver's slot lands on its attack end (shared rule
+   * in `computeFormationReanchorDelta`). The most recent request wins when
+   * Divers are desynchronised (documented assumption). Only the Divers move:
+   * every other enemy stays where it is (producer review,
+   * AH-0MUL15N63003PUDB).
    *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
@@ -948,24 +954,24 @@ export class PlayScene extends CombatScene<
     if (!latest) return false;
 
     const { request, spawn } = latest;
+    // Re-anchor the Diver group only: the delta moves the Diver origin so the
+    // requester's slot lands on the attack end. Every other enemy is left
+    // exactly where it is (producer review, AH-0MUL15N63003PUDB).
     const { dx, dy } = computeFormationReanchorDelta(
       request,
-      spawn.startX + this.driftX + this.formationAnchorX,
-      spawn.startY + this.formationAnchorY,
+      spawn.startX + this.driftX + this.diverAnchorX,
+      spawn.startY + this.diverAnchorY,
       spawn.spacingX,
       spawn.spacingY,
     );
-    this.formationAnchorX += dx;
-    this.formationAnchorY += dy;
+    this.diverAnchorX += dx;
+    this.diverAnchorY += dy;
 
-    // Begin the glide for every formation-driven entity so they ease to their
-    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only Divers glide;
-    // all other enemies snap directly to their re-based slots.
+    // Only the Divers glide to their new slots; non-Divers did not move this
+    // frame, so they are not tracked by the glide.
     const glideTargets = this.spawned
       .filter(
-        (s) =>
-          s.entity.alive &&
-          s.enemyKey === 'diver',
+        (s) => s.entity.alive && s.entity.consumeFormationReanchor != null,
       )
       .map((s) => s.entity);
     this.glide.begin(glideTargets);

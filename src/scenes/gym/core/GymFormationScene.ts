@@ -461,6 +461,15 @@ export class GymFormationScene<
   /** Glide manager: eases enemies from their old positions to the re-anchored slots. */
   private glide = new FormationGlide();
 
+  /**
+   * Diver-group re-anchor offset (px). Only entities that expose the
+   * `consumeFormationReanchor` seam (Divers) have this offset added to their
+   * origin, so a Diver's attack re-anchors the Diver group alone and every
+   * other enemy stays where it is (producer review, AH-0MUL15N63003PUDB).
+   */
+  private diverAnchorX = 0;
+  private diverAnchorY = 0;
+
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
   /** Live mineral collectables seeded across the play area. */
@@ -508,6 +517,10 @@ export class GymFormationScene<
       resolveSpawnRange(this.config.startY, this.config.startYMin, this.config.startYMax),
       this._sceneRng,
     );
+    // A fresh base (initial create or respawn) starts with no Diver re-anchor
+    // offset, so the Diver group is back on the shared formation base.
+    this.diverAnchorX = 0;
+    this.diverAnchorY = 0;
   }
 
   create(): void {
@@ -1003,6 +1016,20 @@ export class GymFormationScene<
     return this.formationBaseY;
   }
 
+  /**
+   * Current origin for the re-anchor-capable (Diver) group: the shared
+   * formation base plus the Diver-only re-anchor offset. Non-Diver entities
+   * sit on {@link formationX}/{@link formationY} alone.
+   */
+  get diverFormationX(): number {
+    return this.formationBaseX + this.diverAnchorX;
+  }
+
+  /** Current origin y for the re-anchor-capable (Diver) group. */
+  get diverFormationY(): number {
+    return this.formationBaseY + this.diverAnchorY;
+  }
+
   /** The player ship (null when the config omitted `player`). */
   getPlayer(): Player | null {
     return this.player;
@@ -1341,9 +1368,10 @@ export class GymFormationScene<
     }
 
     // Diver re-anchor (GDD §4.1 — E2, AH-0MUAYB957002EMYV): if a Diver's
-    // attack finished, re-base the whole formation origin so its slot
-    // coincides with the attack end. Applied after the drift and before the
-    // positioning pass so every unit uses the new origin in the same frame.
+    // attack finished, re-base the Diver-group origin so its slot coincides
+    // with the attack end. Applied after the drift and before the positioning
+    // pass so the Divers use the new origin in the same frame; every other
+    // enemy is unaffected (AH-0MUL15N63003PUDB).
     const reanchorApplied = this._applyFormationReanchor();
 
     // Position each enemy from the formation base + its own offset.
@@ -1358,9 +1386,13 @@ export class GymFormationScene<
       // motion + wrap + rotation; a no-op for formation enemies.
       entity.updatePosition?.(dt);
 
+      // Only re-anchor-capable entities (Divers) ride the Diver re-anchor
+      // offset; every other enemy uses the shared base alone and therefore
+      // stays where it is when a Diver re-anchors (AC5).
+      const isDiver = entity.consumeFormationReanchor != null;
       entity.applyFormationPosition(
-        this.formationBaseX,
-        this.formationBaseY,
+        this.formationBaseX + (isDiver ? this.diverAnchorX : 0),
+        this.formationBaseY + (isDiver ? this.diverAnchorY : 0),
         dt,
         config.spacingX,
         config.spacingY,
@@ -1459,20 +1491,22 @@ export class GymFormationScene<
     }
     if (!latest) return false;
 
+    // Re-anchor the Diver group only: the delta moves the Diver origin so the
+    // requester's slot lands on the attack end. Every other enemy is left
+    // exactly where it is (producer review, AH-0MUL15N63003PUDB) — the shared
+    // formation base is untouched.
     const { dx, dy } = computeFormationReanchorDelta(
       latest,
-      this.formationBaseX,
-      this.formationBaseY,
+      this.formationBaseX + this.diverAnchorX,
+      this.formationBaseY + this.diverAnchorY,
       this.config.spacingX,
       this.config.spacingY,
     );
-    this.formationBaseX += dx;
-    this.formationBaseY += dy;
+    this.diverAnchorX += dx;
+    this.diverAnchorY += dy;
 
-    // Begin the glide for every formation-driven entity so they ease to their
-    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only entities that
-    // expose the re-anchor seam (`consumeFormationReanchor`) — i.e. Divers —
-    // glide; all other enemies snap directly to their re-based slots.
+    // Only the re-anchor-capable (Diver) entities glide to their new slots;
+    // non-Divers did not move this frame, so they are not tracked.
     const glideTargets = this.entities.filter(
       (entity) => entity.consumeFormationReanchor != null,
     );
@@ -1627,6 +1661,10 @@ export class GymFormationScene<
     // after the respawn. Player bullets are intentionally kept.
     for (const bullet of this.bullets) bullet.graphics.destroy();
     this.bullets.length = 0;
+
+    // Drop any in-flight glide: its tracked entities are about to be
+    // destroyed and recreated at the initial geometry (AH-0MUL15N63003PUDB).
+    this.glide.clear();
 
     // Tear down the old (dead) entities and recreate the formation at its
     // initial geometry, matching the initial create() path.

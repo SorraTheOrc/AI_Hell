@@ -1,9 +1,12 @@
 /**
  * Shared formation glide helper (AH-0MUL15N63003PUDB).
  *
- * When a Diver's attack ends and the unit re-anchors, every enemy must ease
- * from its current position to its new formation slot rather than snapping
- * (GDD §4.1 E2). This module provides a scene-agnostic glide manager that:
+ * When a Diver's attack ends the Diver group re-anchors, and each Diver must
+ * ease from its current position to its new formation slot rather than
+ * snapping (GDD §4.1 E2). Only the Divers move: non-Diver enemies stay where
+ * they are (producer review, AH-0MUL15N63003PUDB), so both scenes begin the
+ * glide with the Diver entities only. This module provides a scene-agnostic
+ * glide manager that:
  *
  * - Captures each entity's current position when the re-anchor triggers.
  * - Each frame, after `applyFormationPosition` sets the live target, overrides

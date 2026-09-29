@@ -2879,8 +2879,8 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
 
   /**
    * A deterministic level with a Diver group and a non-Diver (Scout) group
-   * sharing the same origin and spacing, so the whole-unit re-anchor delta can
-   * be verified against the Scout.
+   * sharing the same origin and spacing, so the Diver-only re-anchor can be
+   * verified against the Scout (which must stay put).
    */
   const REANCHOR_LEVELS: LevelDefinition[] = [
     {
@@ -2969,7 +2969,7 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
-  it('AC3 — re-anchors the unit on the attack end on both axes, shifting a non-Diver unit by the same delta', async () => {
+  it('AC3/AC5 — re-anchors only the Diver group on the attack end; a non-Diver unit stays put', async () => {
     const scene = await bootReanchorScene();
     const [diver] = divers(scene);
     const scout = firstScout(scene);
@@ -2989,22 +2989,16 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     expect(diver.y).toBeCloseTo(attackEnd.y, 5);
     expect(Math.abs(diver.x - attackEnd.x)).toBeLessThanOrEqual(1.5 + 1e-6);
 
-    // The whole unit shifts by `delta`; with no prior re-anchor and no Y
-    // drift, delta.y = attackEnd.y - (startY + diverRow * spacingY).
-    const expectedDeltaY =
-      attackEnd.y - (START_Y + diver.offset.row * SPACING_Y);
+    // A non-Diver enemy (Scout) is not part of the Diver group, so it keeps
+    // exactly its own Y — the re-anchor delta does not touch it (producer
+    // review: "Only the divers should move").
+    expect(scout.y).toBeCloseTo(scoutBefore.y, 5);
 
-    // A non-Diver enemy (Scout) snaps directly — no glide, no intermediate
-    // frame. It is already at its re-anchored slot on the first frame.
-    const shiftThisFrame = scout.y - scoutBefore.y;
-    expect(shiftThisFrame).toBeCloseTo(expectedDeltaY, 5);
-
-    // The Diver glides: on the first frame it is strictly between the old and
-    // new positions (not yet snapped).
+    // The Diver glides: it is in FORMATION and easing onto its slot.
     expect(diver.behaviourState).toBe(DiverState.FORMATION);
   });
 
-  it('AC1/AC4 — non-Divers snap directly; the Diver is included in the glide', async () => {
+  it('AC1/AC5 — non-Divers stay put; the Diver is included in the glide', async () => {
     const scene = await bootReanchorScene();
     const [diver] = divers(scene);
     const scout = firstScout(scene);
@@ -3015,19 +3009,17 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     const scoutBefore = { x: scout.x, y: scout.y };
     const diverBefore = { x: diver.x, y: diver.y };
 
-    // The re-anchor shifts the unit origin so the Diver's slot lands at its
-    // attack end. A non-Diver (Scout) snaps directly to its shifted slot.
+    // The re-anchor shifts only the Diver group's origin so the Diver's slot
+    // lands at its attack end. A non-Diver (Scout) is not part of that group.
     scene.tick(0.05);
 
-    // Verify the glide is active and includes the Diver.
+    // Verify the glide is active and includes only the Diver.
     const glide = (scene as unknown as { glide: { active: boolean; states: Map<unknown, unknown> } }).glide;
     expect(glide.active).toBe(true);
     expect(glide.states.size).toBe(1); // only the Diver
 
-    // The Scout snapped directly — its Y moved by the full re-anchor delta.
-    const expectedDeltaY = diverBefore.y - (START_Y + diver.offset.row * SPACING_Y);
-    const scoutActualShift = scout.y - scoutBefore.y;
-    expect(scoutActualShift).toBeCloseTo(expectedDeltaY, 3);
+    // The Scout stayed where it was (no vertical shift).
+    expect(scout.y).toBeCloseTo(scoutBefore.y, 5);
 
     // Finish the glide and verify the Diver is at its slot (no residual).
     for (let i = 0; i < 20; i++) scene.tick(0.05);

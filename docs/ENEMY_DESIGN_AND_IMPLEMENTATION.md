@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|-----|-----------|------------|---------------------|
 | E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the unit re-forms around the attack end: when the pause ends the unit origin re-bases so the Diver's slot coincides with its attack end and every other unit shifts by the same delta (no return glide, no formation hold; AH-0MUAYB957002EMYV) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -758,8 +758,8 @@ collecting bullets, so that frame's shots use the current position:
   The dive is a **diagonal parabolic arc** — both x and y follow the
   quadratic bezier from the formation slot to the snapshotted player
   position (`computeDivePoint`; AH-0MTGBOKLC006N8UX); there is no x-lock.
-  When the attack ends (`DIVING`/`PAUSING`) the unit re-anchors to the
-  attack-end location — see §7.6.
+  When the attack ends (`DIVING`/`PAUSING`) the Diver group re-anchors to the
+  attack-end location (non-Divers do not move) — see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
   is untouched (no aim seam).
 
@@ -810,38 +810,44 @@ request through the optional `consumeFormationReanchor?()` seam (on
 - Both independent drift implementations apply the same shared rule,
   `computeFormationReanchorDelta(request, originX, originY, spacingX,
   spacingY)`, which returns the translation that makes the requester's slot
-  (`origin + offset * spacing`) coincide with its attack end. Applying that
-  `(dx, dy)` to the whole unit preserves every other unit's relative offset:
-  - `GymFormationScene.tick()` re-bases `formationBaseX`/`formationBaseY`.
-  - `PlayScene._moveEnemies()` shifts a unit-level `formationAnchorX`/`Y`
-    added to every formation group's origin.
+  (`origin + offset * spacing`) coincide with its attack end.
+- **Only the Diver group moves.** The `(dx, dy)` translation is applied to a
+  **Diver-only offset**, not to the shared formation base, so non-Diver
+  enemies keep their own positions (producer review: *"Only the divers should
+  move"* / *"they should stay where they are"*):
+  - `GymFormationScene.tick()` adds `diverAnchorX`/`Y` to
+    `formationBaseX`/`formationBaseY` for entities that expose the seam; the
+    shared base — and therefore every non-Diver — is untouched. The
+    `diverFormationX`/`Y` getters expose the Diver-group origin.
+  - `PlayScene._moveEnemies()` adds a `diverAnchorX`/`Y` offset only to Diver
+    spawns; every other spawn uses `startX + driftX` / `startY` alone.
 - The re-anchor is applied after the drift and before the positioning pass,
-  so every unit uses the new origin in the same frame. The drift itself is
+  so the Divers use the new origin in the same frame. The drift itself is
   never frozen — no entity can hold the cluster (the interim formation-hold
   seam was removed).
 - When Divers become desynchronised (destruction + later respawn) the most
   recent attack-end wins — a documented assumption, since the shared rule is
   a single translation and can satisfy only one requester's slot.
-- Non-Diver entities have no re-anchor request; they ride the same unit
-  origin shift as every other formation member.
+- Non-Diver entities have no re-anchor request and are not part of the Diver
+  group, so a Diver's attack does not move them at all.
 
 #### 7.6.1 Animated re-anchor glide (AH-0MUL15N63003PUDB)
 
-The origin re-base is a whole-unit translation, so applying it directly made
-the entire unit **teleport** to its new slots in one frame. The transition is
-now animated by the shared `FormationGlide` helper
+The Diver-group origin re-base is a translation, so applying it directly made
+the Divers **teleport** to their new slots in one frame. The transition is now
+animated by the shared `FormationGlide` helper
 (`src/scenes/core/formationGlide.ts`), consumed identically by
 `GymFormationScene` and `PlayScene` (gym↔game parity):
 
 - On the frame a re-anchor is applied, the scene calls `glide.begin(targets)`
   with every **re-anchor-capable** entity — the Divers that expose the
   `consumeFormationReanchor()` seam. Non-Diver formation members (Scouts,
-  Tanks, Phasers, Swarms) **snap directly** to their re-based slots; only the
-  Divers animate, so the re-anchor reads as a coordinated Diver regroup rather
-  than the whole wave sliding (AH-0MUL15N63003PUDB manual-review fix). Roamers
-  (asteroids, harvesters) are likewise excluded: their own motion must not be
-  eased. `begin` captures each entity's current position as the glide's `from`
-  point.
+  Tanks, Phasers, Swarms) are **not part of the Diver group and stay exactly
+  where they are** — they are not tracked by the glide and receive no
+  re-anchor delta (producer review: *"they should stay where they are"*).
+  Roamers (asteroids, harvesters) are likewise excluded: their own motion must
+  not be eased. `begin` captures each entity's current position as the glide's
+  `from` point.
 - After the normal `applyFormationPosition` positioning pass the scene calls
   `glide.update(dt)` exactly once. For each tracked entity the helper reads
   the **live** target already set by `applyFormationPosition` and renders
@@ -851,15 +857,16 @@ now animated by the shared `FormationGlide` helper
 - `FORMATION_GLIDE_SECONDS` (`0.32 s`) is the single tunable duration,
   exported from the helper.
 - When `elapsed ≥ FORMATION_GLIDE_SECONDS` the entity is left exactly on the
-  live slot (residual `0`) and its glide state is dropped — the unit's
+  live slot (residual `0`) and its glide state is dropped — the Diver group's
   relative offsets are preserved on completion.
 - The attacking Diver is tracked (it is the re-anchor requester). Its
   re-based slot coincides with its attack end, so its residual is only the
-  idle x-wiggle; it eases that out and keeps drifting with the unit. Passing
-  Divers in a multi-Diver unit are also tracked and glide to their shifted
-  slots.
-- `clear()` is called from each scene's `teardownRunState()` so a
-  stop/restart starts with no active glide.
+  idle x-wiggle; it eases that out and keeps drifting with the Diver group.
+  Passing Divers in a multi-Diver group are also tracked and glide to their
+  shifted slots.
+- `clear()` is called from each scene's `teardownRunState()` and from
+  `GymFormationScene.respawnFormation()` so a stop/restart or a formation
+  respawn starts with no active glide.
 
 ---
 

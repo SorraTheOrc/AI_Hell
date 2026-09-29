@@ -2671,7 +2671,7 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     expect(scene.formationX).toBeCloseTo(after + DRIFT_SPEED * 0.5, 5);
   });
 
-  it('AC3 — re-anchors so the requester slot lands on the attack end, then the whole unit eases to the new slots', async () => {
+  it('AC1/AC2/AC3 — re-anchors the Diver group so the requester lands on the attack end, then every Diver eases to its new slot', async () => {
     const scene = await bootReanchorGym();
     const all = entities(scene);
     const requester = all[2];
@@ -2683,25 +2683,25 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: attackEnd.y,
     });
 
-    // The re-anchor frame: the origin re-bases so the requester's slot
-    // coincides with the attack end.
+    // The re-anchor frame: the Diver-group origin re-bases so the requester's
+    // slot coincides with the attack end.
     scene.tick(0.25);
-    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(attackEnd.x, 5);
-    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(attackEnd.y, 5);
+    expect(scene.diverFormationX + requester.offset.col * SPACING_X).toBeCloseTo(attackEnd.x, 5);
+    expect(scene.diverFormationY + requester.offset.row * SPACING_Y).toBeCloseTo(attackEnd.y, 5);
 
     // At 0.25 s (< glide duration) the rendered position is still gliding:
     // it has not yet snapped to the re-anchored slot.
     expect(requester.x).not.toBeCloseTo(
-      scene.formationX + requester.offset.col * SPACING_X,
+      scene.diverFormationX + requester.offset.col * SPACING_X,
       5,
     );
 
-    // On completion every unit sits exactly on its (drifted) slot — the
-    // unit's relative offsets are preserved.
+    // On completion every Diver sits exactly on its live (drifted) slot — the
+    // Diver group's relative offsets are preserved.
     scene.tick(FORMATION_GLIDE_SECONDS);
     for (const entity of all) {
-      expect(entity.x).toBeCloseTo(scene.formationX + entity.offset.col * SPACING_X, 5);
-      expect(entity.y).toBeCloseTo(scene.formationY + entity.offset.row * SPACING_Y, 5);
+      expect(entity.x).toBeCloseTo(scene.diverFormationX + entity.offset.col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(scene.diverFormationY + entity.offset.row * SPACING_Y, 5);
     }
   });
 
@@ -2716,8 +2716,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: first.y,
     });
     scene.tick(0.25);
-    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(first.x, 5);
-    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(first.y, 5);
+    expect(scene.diverFormationX + requester.offset.col * SPACING_X).toBeCloseTo(first.x, 5);
+    expect(scene.diverFormationY + requester.offset.row * SPACING_Y).toBeCloseTo(first.y, 5);
     // Let the first glide finish before re-requesting, so the second request
     // starts from a settled formation.
     scene.tick(FORMATION_GLIDE_SECONDS);
@@ -2730,8 +2730,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: second.y,
     });
     scene.tick(0.25);
-    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(second.x, 5);
-    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(second.y, 5);
+    expect(scene.diverFormationX + requester.offset.col * SPACING_X).toBeCloseTo(second.x, 5);
+    expect(scene.diverFormationY + requester.offset.row * SPACING_Y).toBeCloseTo(second.y, 5);
   });
 
   it('AC1 — the glide eases: the first frame is strictly between the pre-anchor position and the final slot', async () => {
@@ -2744,8 +2744,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     // First frame of the glide (dt < duration): the entity has moved toward
     // the slot but has not reached it (strictly between old and new).
     scene.tick(0.1);
-    const slotX = scene.formationX + requester.offset.col * SPACING_X;
-    const slotY = scene.formationY + requester.offset.row * SPACING_Y;
+    const slotX = scene.diverFormationX + requester.offset.col * SPACING_X;
+    const slotY = scene.diverFormationY + requester.offset.row * SPACING_Y;
     expect(requester.x).toBeGreaterThan(Math.min(from.x, slotX));
     expect(requester.x).toBeLessThan(Math.max(from.x, slotX));
     expect(requester.y).toBeGreaterThan(Math.min(from.y, slotY));
@@ -2754,8 +2754,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
 
     // Completion: exactly on the live slot after the glide duration.
     scene.tick(FORMATION_GLIDE_SECONDS);
-    expect(requester.x).toBeCloseTo(scene.formationX + requester.offset.col * SPACING_X, 5);
-    expect(requester.y).toBeCloseTo(scene.formationY + requester.offset.row * SPACING_Y, 5);
+    expect(requester.x).toBeCloseTo(scene.diverFormationX + requester.offset.col * SPACING_X, 5);
+    expect(requester.y).toBeCloseTo(scene.diverFormationY + requester.offset.row * SPACING_Y, 5);
   });
 
   it('AC4 — the glide tracks the live (drifting) slot, not the re-anchor-time snapshot', async () => {
@@ -2766,12 +2766,12 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
 
     // First frame begins the glide; snapshot the re-anchor-time slot.
     scene.tick(0.05);
-    const snapshotX = scene.formationX + requester.offset.col * SPACING_X;
+    const snapshotX = scene.diverFormationX + requester.offset.col * SPACING_X;
 
     // Finish the glide across several small frames while the base drifts.
     for (let i = 0; i < 5; i++) scene.tick(0.1);
 
-    const driftedSlotX = scene.formationX + requester.offset.col * SPACING_X;
+    const driftedSlotX = scene.diverFormationX + requester.offset.col * SPACING_X;
     // The base drifted after the snapshot, so the landing follows the drifted
     // slot rather than the stale snapshot.
     expect(driftedSlotX).toBeGreaterThan(snapshotX);
@@ -2823,30 +2823,86 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     }
   });
 
-  it('only re-anchor-capable entities glide; others snap directly', async () => {
-    // A non-reanchor entity should NOT glide — it snaps to its new slot.
-    // This test constructs a mixed scene with ReanchorStubEnemy (glides)
-    // and a plain StubEnemy (no glide). The re-anchor is requested by the
-    // first ReanchorStubEnemy; the plain entity must snap directly.
-    class PlainStub extends StubEnemy {
-      // No consumeFormationReanchor — mirrors non-Diver enemies.
+  async function bootMixedReanchorGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
+    // A mixed formation: only the first slot exposes the re-anchor seam
+    // (mirrors a Diver among non-Diver enemies).
+    const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
+      sceneKey: 'MixedReanchorStubFormation',
+      count: FORMATION_COUNT,
+      spacingX: SPACING_X,
+      spacingY: SPACING_Y,
+      driftSpeed: DRIFT_SPEED,
+      startX: START_X,
+      startY: START_Y,
+      statusLabel: 'mixed',
+      hintText: 'mixed stub gym',
+      buildOffsets: vOffsets,
+      createEntity: (scene, x, y, offset) => {
+        const enemy =
+          offset.row === 0 && offset.col === 0
+            ? new ReanchorStubEnemy(scene, offset)
+            : new StubEnemy(scene, offset);
+        enemy.setPosition(x, y);
+        return enemy;
+      },
+      collectBullets: () => [],
+    };
+    const Mixed = class extends GymFormationScene<StubEnemy, StubBullet> {
+      constructor() {
+        super(config);
+      }
+    };
+    booted = await bootScene([Mixed]);
+    return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
+  }
+
+  it('AC5 — only re-anchor-capable (Diver) entities move; all other enemies stay put', async () => {
+    const scene = await bootMixedReanchorGym();
+    const all = scene.formationEntities as StubEnemy[];
+    const requester = all[0] as ReanchorStubEnemy;
+
+    const before = all.map((e) => ({ x: e.x, y: e.y }));
+    const attackEnd = { x: requester.x + 180, y: requester.y + 90 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: attackEnd.x,
+      y: attackEnd.y,
+    });
+
+    scene.tick(0.1);
+
+    // Non-Divers are untouched by the re-anchor: on the first frame they only
+    // keep drifting on X at the configured rate, and their Y is unchanged.
+    const driftDx = DRIFT_SPEED * 0.1;
+    for (let i = 1; i < all.length; i++) {
+      expect(all[i].x).toBeCloseTo(before[i].x + driftDx, 5);
+      expect(all[i].y).toBeCloseTo(before[i].y, 5);
     }
 
-    const bootedMixed = await bootScene([
-      makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
-    ]);
-    const scene = bootedMixed.scene;
+    // The requester glides: at 0.1 s (< glide duration) it is strictly between
+    // its pre-anchor position and the attack end on both axes.
+    expect(requester.x).toBeGreaterThan(Math.min(before[0].x, attackEnd.x));
+    expect(requester.x).toBeLessThan(Math.max(before[0].x, attackEnd.x));
+    expect(requester.y).toBeGreaterThan(Math.min(before[0].y, attackEnd.y));
+    expect(requester.y).toBeLessThan(Math.max(before[0].y, attackEnd.y));
 
-    const plainEntity = new PlainStub(scene, { row: 0, col: 0 });
-    expect(
-      (plainEntity as unknown as { consumeFormationReanchor?: unknown })
-        .consumeFormationReanchor,
-    ).toBeUndefined();
+    // On completion the requester is exactly on its re-anchored slot...
+    scene.tick(FORMATION_GLIDE_SECONDS);
+    expect(requester.x).toBeCloseTo(
+      scene.diverFormationX + requester.offset.col * SPACING_X,
+      5,
+    );
+    expect(requester.y).toBeCloseTo(
+      scene.diverFormationY + requester.offset.row * SPACING_Y,
+      5,
+    );
 
-    const raEntity = new ReanchorStubEnemy(scene, { row: 0, col: 0 });
-    expect(raEntity.consumeFormationReanchor).toBeDefined();
-
-    bootedMixed.game.destroy(true);
+    // ...and the non-Divers keep only their own drift — never the Diver delta.
+    const totalDriftDx = DRIFT_SPEED * (0.1 + FORMATION_GLIDE_SECONDS);
+    for (let i = 1; i < all.length; i++) {
+      expect(all[i].x).toBeCloseTo(before[i].x + totalDriftDx, 4);
+      expect(all[i].y).toBeCloseTo(before[i].y, 5);
+    }
   });
 });
 
