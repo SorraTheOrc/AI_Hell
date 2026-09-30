@@ -496,6 +496,35 @@ for reference implementations (the base class drives them).
 - **Tear-down:** `SHUTDOWN` cancels the countdown and hides the overlay
   so a scene restart never double-fires or leaks.
 
+### 2.6 Wave-timeout in the enemy gyms (AH-0MUNR5LM1004B223, AH-0MUK5ONAA0007YEX)
+
+The shipped game's wave time-limit is now mirrored by the enemy gyms as a
+single shared implementation so the two cannot diverge:
+
+- **Shared helper.** `detonateWaveTimeoutSurvivors` and the
+  `WAVE_TIME_LIMIT_SECONDS` / `WAVE_TIMEOUT_EXPLOSION_SCALE` / bar-geometry
+  constants live in `src/scenes/core/waveTimeout.ts`. `PlayScene._timeoutWave`
+  and `GymFormationScene._onWaveTimeout` both call the helper, so the
+  major-explosion cue, its `MAJOR_EXPLOSION_*` concurrency limiter and the 10×
+  detonation scale are the *same code*.
+- **Opt-in.** `EnemyFormationConfig.timeoutDuration` (seconds) enables it per
+  scene. `GymEnemies` sets it to `WAVE_TIME_LIMIT_SECONDS` for every non-boss
+  `enemyKey`; the boss (`GymEnemies` with the `boss` config) leaves it unset,
+  and `GymBoss`, `GymMinerals`, `GymPlayer`, `GymWeapons`,
+  `GymPowerUpsUtility` and `GymPowerUpsCombat` opt out (no enemies, persistent
+  demo threats, or already excluded).
+- **Expiry flow.** On expiry every surviving non-asteroid enemy detonates at
+  `WAVE_TIMEOUT_EXPLOSION_SCALE` (asteroids survive silently, matching the
+  game), the bar hides, and the existing 3 s wipe→respawn countdown starts —
+  so a gym (which has no lives) simply refreshes its formation. The timeout
+  pauses while a countdown is active and restarts on every respawn.
+- **UI.** A depleting top-of-screen bar mirrors `PlayScene._drawWaveTimer()`
+  and shares its geometry constants.
+- **Tests.** `src/scenes/core/waveTimeout.test.ts` covers the helper;
+  `GymFormationScene.test.ts` covers the opt-in/expiry/respawn behaviour and
+  `GymEnemies.test.ts` asserts every non-boss key enables it while the boss
+  does not.
+
 ### 3.2 Existing scenes (reference implementations)
 
 | Scene | Entity | Formation | Fire pattern | Audio |

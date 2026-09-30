@@ -49,7 +49,6 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
-  playMajorExplosionSound,
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
@@ -121,6 +120,21 @@ import {
   applyPhaseGhost,
   drawShieldBubble,
 } from './core/CombatEffectVisuals';
+import {
+  detonateWaveTimeoutSurvivors,
+  WAVE_TIME_LIMIT_SECONDS,
+  WAVE_TIMER_BAR_HEIGHT,
+  WAVE_TIMER_BAR_WIDTH,
+  WAVE_TIMER_BAR_X,
+  WAVE_TIMER_BAR_Y,
+} from './core/waveTimeout';
+
+// Re-exported for existing importers (tests, HUD); the single source of
+// truth now lives in `core/waveTimeout.ts`, shared with the gyms.
+export {
+  WAVE_TIME_LIMIT_SECONDS,
+  WAVE_TIMEOUT_EXPLOSION_SCALE,
+} from './core/waveTimeout';
 
 // ── Scoring (GDD §4.5) ──────────────────────────────────────────────
 
@@ -161,22 +175,6 @@ export const LEVEL_TRANSITION_SECONDS = 1.5;
  * the ~1.5–2 s window required by AH-0MU7JTEMC006QPSN.
  */
 export const BANNER_DURATION_SECONDS = 1.5;
-
-/**
- * Seconds a regular wave may run before the time-limit penalty triggers
- * (per-wave, resets each wave; tunable — default 30 s per
- * AH-0MU7JTG9R002ZWA6 assumptions).
- */
-export const WAVE_TIME_LIMIT_SECONDS = 30;
-
-/** Detonation scale factor applied to survivors on wave-timeout (10x). */
-export const WAVE_TIMEOUT_EXPLOSION_SCALE = 10;
-
-/** Wave time-limit bar geometry (top-centre, above the level readout). */
-const WAVE_TIMER_BAR_X = GAME_WIDTH * 0.25;
-const WAVE_TIMER_BAR_Y = 2;
-const WAVE_TIMER_BAR_WIDTH = GAME_WIDTH * 0.5;
-const WAVE_TIMER_BAR_HEIGHT = 6;
 
 /** Rightward formation drift speed (px/s). */
 const FORMATION_DRIFT_SPEED = 28;
@@ -1605,11 +1603,10 @@ export class PlayScene extends CombatScene<
    * the WaveManager (they no longer gate the next wave), and persist in the
    * field (AH-0MUJM746P000QAEO). If no enemies remain, nothing happens (AC3).
    *
-   * Gym↔game parity: the game is the only scene with a wave timer/timeout,
-   * so this cue + limiter is the single implementation. If a gym ever gains
-   * a wave-timeout path it must call `playMajorExplosionSound()` (reusing
-   * the shared limiter) rather than duplicating the cue — see
-   * AH-0MUK5ONAA0007YEX and AH-0MUJ1YZJ9008O4RC.
+   * Gym↔game parity: the cue + 10x detonation is the shared
+   * `detonateWaveTimeoutSurvivors` helper (`core/waveTimeout.ts`), which the
+   * enemy gyms run too via `GymFormationScene` — so the game and the gyms
+   * cannot diverge (AH-0MUK5ONAA0007YEX, AH-0MUNR5LM1004B223).
    */
   private _timeoutWave(): void {
     const survivors = this.spawned.filter((s) => s.entity.alive);
@@ -1624,11 +1621,12 @@ export class PlayScene extends CombatScene<
 
     // Detonate all non-asteroid survivors at 10x scale, each with the
     // dedicated major-explosion cue (AH-0MUJ1YZJ9008O4RC AC2). Asteroids
-    // are excluded above and carry over silently.
-    for (const s of detonateList) {
-      playMajorExplosionSound();
-      s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
-    }
+    // are excluded above and carry over silently. The detonation + cue is
+    // the shared `detonateWaveTimeoutSurvivors` helper the gyms also run
+    // (AH-0MUK5ONAA0007YEX).
+    detonateWaveTimeoutSurvivors(
+      detonateList.map((s) => s.entity),
+    );
     this._loseLife(false);
     this._advanceAfterTimeout();
   }

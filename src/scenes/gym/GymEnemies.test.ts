@@ -39,7 +39,8 @@ vi.mock('../../core/configStore', async (importOriginal) => {
 });
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
-import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, ENEMY_DIFFICULTY_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymEnemies';
+import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, GYM_ENEMIES_BOSS_KEY, ENEMY_DIFFICULTY_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymEnemies';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
@@ -309,6 +310,26 @@ describe('GymEnemies — single reusable enemy gym', () => {
       expect(scene.formationEntities.every((e) => e.alive)).toBe(true);
       expect(scene.getRespawnCountdownText()!.visible).toBe(false);
       expect(spawnSound.mock.calls.length).toBeGreaterThan(callsBefore);
+    },
+  );
+
+  // ── Wave-timeout: every enemy key except the boss (AH-0MUNR5LM1004B223) ─
+  it.each(Object.keys(DEFAULT_ENEMY_CONFIGS))(
+    'wave-timeout is active for enemy key "%s" except the boss',
+    async (key) => {
+      const scene = await bootWithKey(key);
+      if (key === GYM_ENEMIES_BOSS_KEY) {
+        expect(scene.isWaveTimeoutActive()).toBe(false);
+        expect(scene.getWaveTimeoutRemaining()).toBe(0);
+      } else {
+        expect(scene.isWaveTimeoutActive()).toBe(true);
+        // Boot consumes a few real-time frames, so assert the window
+        // rather than an exact remainder.
+        expect(scene.getWaveTimeoutRemaining()).toBeGreaterThan(0);
+        expect(scene.getWaveTimeoutRemaining()).toBeLessThanOrEqual(
+          WAVE_TIME_LIMIT_SECONDS,
+        );
+      }
     },
   );
 

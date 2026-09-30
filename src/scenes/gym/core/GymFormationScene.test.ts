@@ -51,6 +51,7 @@ import {
 import { DEFAULT_CONFIG } from '../../../core/config';
 import { seedConfigStore } from '../../../core/configStore';
 import { PHASE_GHOST_ALPHA } from '../../core/CombatEffectVisuals';
+import { WAVE_TIMEOUT_EXPLOSION_SCALE } from '../../core/waveTimeout';
 
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -63,6 +64,8 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
   alive = true;
   shootEnabled = false;
   readonly offset: FormationOffset;
+  /** Explosion scale recorded on the last `destroySelf()` (timeout tests). */
+  lastDestroyScale: number | null = null;
   private readonly _hitRadius: number;
 
   constructor(
@@ -75,8 +78,9 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
     this._hitRadius = hitRadius;
   }
 
-  destroySelf(): void {
+  destroySelf(scale = 1): void {
     this.alive = false;
+    this.lastDestroyScale = scale;
   }
 
   getHitRadius(): number {
@@ -198,6 +202,7 @@ function makeStubScene(
   collision?: { entityHitRadius?: number; bulletHitRadius?: number },
   entityType: typeof StubEnemy = StubEnemy,
   powerUps?: PowerUpLayerConfig,
+  timeoutDuration?: number,
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
     sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
@@ -213,6 +218,7 @@ function makeStubScene(
     entityHitRadius: collision?.entityHitRadius,
     bulletHitRadius: collision?.bulletHitRadius,
     powerUps,
+    timeoutDuration,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
       const hitRadius = collision?.entityHitRadius ?? 10;
@@ -1403,6 +1409,119 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
     scene.tick(1.0);
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
     expect(scene.isRespawnCountdownActive()).toBe(false);
+  });
+});
+
+describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWithTimeout(duration: number): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], undefined, undefined, StubEnemy, undefined, duration),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC1 — an enabled timeout starts active and counts down from the configured duration', async () => {
+    const scene = await bootWithTimeout(5);
+
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+    expect(scene.getWaveTimeoutRemaining()).toBeGreaterThan(0);
+    expect(scene.getWaveTimeoutRemaining()).toBeLessThanOrEqual(5);
+
+    // Deterministic remainder, then an explicit tick.
+    scene.setWaveTimeoutRemaining(5);
+    scene.tick(2);
+    expect(scene.getWaveTimeoutRemaining()).toBeCloseTo(3, 5);
+  });
+
+  it('AC1 — a missing duration leaves the timeout inactive (boss/non-enemy gyms opt out)', async () => {
+    booted = await bootScene([makeStubScene(() => [])]);
+    const scene = booted!.scene as BootedScene;
+
+    expect(scene.isWaveTimeoutActive()).toBe(false);
+    expect(scene.getWaveTimeoutRemaining()).toBe(0);
+    // Opt-out scenes never allocate the bar.
+    expect(scene.getWaveTimeoutBar()).toBeNull();
+  });
+
+  it('AC2/AC4 — expiry detonates every survivor at 10x via the shared cue, then starts the respawn countdown', async () => {
+    const cue = vi
+      .spyOn(effectsModule, 'playMajorExplosionSound')
+      .mockImplementation(() => undefined);
+    const scene = await bootWithTimeout(1);
+    const survivors = scene.formationEntities;
+
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1);
+
+    // Every survivor detonated at the shared 10x scale, cue played once each.
+    expect(scene.aliveCount).toBe(0);
+    expect(cue).toHaveBeenCalledTimes(FORMATION_COUNT);
+    for (const entity of survivors) {
+      expect(entity.lastDestroyScale).toBe(WAVE_TIMEOUT_EXPLOSION_SCALE);
+    }
+
+    // The timeout is spent and the shared wipe→respawn countdown began.
+    expect(scene.isWaveTimeoutActive()).toBe(false);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+  });
+
+  it('AC2 — the formation respawns after the timeout countdown and the timer restarts', async () => {
+    const scene = await bootWithTimeout(1);
+
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1); // timeout → 3 s countdown
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0); // countdown → respawn
+
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+    expect(scene.getWaveTimeoutRemaining()).toBeCloseTo(1, 5);
+  });
+
+  it('AC2 — the timeout is paused while the wipe→respawn countdown is active', async () => {
+    const scene = await bootWithTimeout(1);
+
+    // Wipe manually before the timeout window elapses.
+    for (const entity of scene.formationEntities) entity.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // Ticking far past the timeout window must not detonate again.
+    scene.tick(2);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.aliveCount).toBe(0);
+  });
+
+  it('AC2 — a visible timer bar shows while the timeout counts down', async () => {
+    const scene = await bootWithTimeout(3);
+    scene.tick(0.016);
+
+    expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
+  });
+
+  it('AC4 — a disabled timeout never detonates the formation', async () => {
+    const cue = vi
+      .spyOn(effectsModule, 'playMajorExplosionSound')
+      .mockImplementation(() => undefined);
+    booted = await bootScene([makeStubScene(() => [])]);
+    const scene = booted!.scene as BootedScene;
+
+    scene.tick(120);
+
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(cue).not.toHaveBeenCalled();
   });
 });
 
