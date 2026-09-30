@@ -50,8 +50,15 @@ describe('game rules configuration module', () => {
         if (id === 'P8') continue;
         expect(weights[id]).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       }
-      expect(weights.P8).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
+      // AH-0MUNS3VAQ0023L1J: P8 raised from 1 to 3 (≈3× by weight) so Extra
+      // Life spawns more often; it remains rarer than a standard drop (4).
+      expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
+      expect(weights.P8).toBe(3);
+      expect(defaultPowerUpWeights().P8).toBe(3);
       expect(weights.P8).toBeLessThan(weights.P3);
+      // The standard and weapon weights are untouched by the P8 change.
+      expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
+      expect(DEFAULT_WEAPON_WEIGHT).toBe(2);
     });
 
     it('contains weights for every weapon drop (spread/dual/rapid/reset)', () => {

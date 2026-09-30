@@ -74,6 +74,43 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
     // Deterministic rng 0 selects the first pool entry.
     expect(spawner.next()).toBe('P3');
   });
+
+  it('gives P8 Extra Life a ≈ 3/27 share of power-up draws (≈2.8× its former 1/25)', () => {
+    // Deterministic sweep RNG: sample evenly across [0, 1) so each id's count
+    // is exactly proportional to its weight — no statistical noise and no seed
+    // dependence. 70 000 = 2 000 × the combined pool weight (35), so every band
+    // boundary lands on an exact sample point.
+    const SAMPLE_COUNT = 70_000;
+    let cursor = 0;
+    const sweepRng = () => cursor++ / SAMPLE_COUNT;
+    const spawner = buildDefaultDropSpawner(
+      DEFAULT_RULES.powerUpWeights,
+      DEFAULT_RULES.weaponWeights,
+      sweepRng,
+    );
+
+    const WEAPON_IDS: DropId[] = ['spread', 'dual', 'rapid', 'reset'];
+    let powerUps = 0;
+    let extraLives = 0;
+    for (let n = 0; n < SAMPLE_COUNT; n++) {
+      const id = spawner.next();
+      if (WEAPON_IDS.includes(id)) continue;
+      powerUps += 1;
+      if (id === 'P8') extraLives += 1;
+    }
+
+    // P8 weight 3 of the 27 total power-up weight → exactly 3/27 = 1/9.
+    const p8Share = extraLives / powerUps;
+    expect(p8Share).toBeCloseTo(3 / 27, 3);
+    // Tied to the shipped weight table (not a hard-coded expectation).
+    const weightTotal = Object.values(DEFAULT_RULES.powerUpWeights).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.P8 / weightTotal, 3);
+    // Relative weight tripled (1 → 3): ≈ 2.8× the former 1/25 normalised share.
+    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 27) / (1 / 25), 2);
+  });
 });
 
 describe('dropLayer — advanceDropLifecycles (AC1)', () => {

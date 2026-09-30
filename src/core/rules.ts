@@ -127,10 +127,12 @@ export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
 
 /**
  * Default relative weight for P8 Extra Life — rarer than standard drops
- * per GDD §4.4 (a 4:1 ratio approximates the ~15–20 % standard vs ~5 %
- * Extra Life guidance).
+ * per GDD §4.4. Raised from `1` to `3` (AH-0MUNS3VAQ0023L1J) so Extra Life
+ * appears roughly three times as often **by weight** (≈ 2.8× normalised
+ * share), giving players a meaningful recovery loop while keeping P8 rarer
+ * than the standard drops (a 4:3 ratio rather than the former 4:1).
  */
-export const DEFAULT_EXTRA_LIFE_WEIGHT = 1;
+export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
 
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
