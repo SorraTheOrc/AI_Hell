@@ -2744,7 +2744,18 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
 
   it('drops nothing when a non-asteroid enemy absorbed nothing (AC2)', async () => {
     const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
     clearField(scene);
+    // The ~150 ms boot loop can let the lone enemy absorb a seeded mineral
+    // before `clearField` runs. `clearField` only collects the remaining
+    // field, so the enemy could still hold 1–2 minerals; the shared additive
+    // re-drop rule then returns ≥ 1 and this "absorbed nothing" case failed
+    // intermittently (AH-0MUNVTUJ2002E62V). Zero the tally so the
+    // precondition is explicit and deterministic.
+    (
+      enemy as unknown as { _mineralCount: number }
+    )._mineralCount = 0;
+    expect(enemy.mineralCount).toBe(0);
 
     scene.explodeRandom();
 
