@@ -1010,13 +1010,23 @@ export class PlayScene extends CombatScene<
 
   /**
    * The shared level/wave progress label used by both the persistent HUD
-   * readout and the transition banner, e.g. `Level 1 of 5, Wave 1 of 2`.
-   * During the boss encounter it collapses to just `Boss` (no numeric
-   * level/wave), per AH-0MU7JTEY3004EXR2.
+   * readout and the transition banner, e.g. `Level 1: Entry, Wave: 1 of 2`
+   * (AH-0MUMMBRCC0093MGV). During the boss encounter it collapses to just
+   * `Boss` (no numeric level and no name), per AH-0MU7JTEY3004EXR2.
+   *
+   * With sequenced levels active the name comes from the CSV
+   * (`WaveManager.levelName` → `LevelDefinition.name`); with static
+   * `LEVELS` it is the `LevelDefinition.name` property. When the name is
+   * empty the label falls back to a name-free numeric form
+   * (`Level N of 5, Wave M of K`) so no blank label or crash occurs.
    */
   private _progressLabel(): string {
     const wm = this.waveManager;
     if (wm.bossTriggered || wm.bossActive || wm.bossDefeated) return 'Boss';
+    const name = wm.levelName?.trim();
+    if (name) {
+      return `Level ${wm.level}: ${name}, Wave: ${wm.waveNumber} of ${wm.waveCount}`;
+    }
     return `Level ${wm.level} of ${wm.levelCount}, Wave ${wm.waveNumber} of ${wm.waveCount}`;
   }
 

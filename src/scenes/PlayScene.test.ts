@@ -26,6 +26,7 @@ import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
 import {
+  BANNER_DURATION_SECONDS,
   BOSS_PHASE_SCORES,
   LEVEL_TRANSITION_SECONDS,
   PlayScene,
@@ -664,13 +665,107 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   // ── Level/wave progress labels (AH-0MU7JTEY3004EXR2) ───────────
 
-  it('AH-0MU7JTEY3004EXR2 AC1/AC2 — level start shows the same progress label in the HUD and banner', async () => {
+  // ── Level name in progress label (AH-0MUMMBRCC0093MGV) ─────────
+
+  it('AH-0MUMMBRCC0093MGV AC1 — level name appears in the progress label', async () => {
     const scene = await bootPlay();
     const wm = scene.getWaveManager();
-    const expected = `Level 1 of 5, Wave 1 of ${wm.waveCount}`;
+    const expected = `Level 1: Entry, Wave: 1 of ${wm.waveCount}`;
 
     expect(scene.getLevelText()).toBe(expected);
     expect(scene.getBannerText()).toBe(expected);
+  });
+
+  it('AH-0MUMMBRCC0093MGV AC2 — level name is shown on every wave and in the HUD', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+    const baseLabel = `Level 1: Entry, Wave: 1 of ${wm.waveCount}`;
+
+    expect(scene.getLevelText()).toBe(baseLabel);
+    expect(scene.getBannerText()).toBe(baseLabel);
+
+    // Advance to wave 2 and verify the name persists.
+    killAllEnemies(scene);
+    finishTransition(scene);
+    const wave2Label = `Level 1: Entry, Wave: 2 of ${wm.waveCount}`;
+    expect(wm.waveNumber).toBe(2);
+    expect(scene.getLevelText()).toBe(wave2Label);
+    expect(scene.getBannerText()).toBe(wave2Label);
+  });
+
+  it('AH-0MUMMBRCC0093MGV AC3 — CSV-backed name is displayed with sequenced levels', async () => {
+    const scene = await bootPlay();
+    const wm = scene.getWaveManager();
+
+    // The campaign levels have names; the label should include them.
+    expect(wm.levelName).toBeTruthy();
+    expect(scene.getLevelText()).toContain(wm.levelName!);
+  });
+
+  it('AH-0MUMMBRCC0093MGV AC3 — static LEVELS name is displayed when sequencing is off', async () => {
+    // `bootSceneWithLevels` forces sequencedWavesEnabled=false and injects
+    // the static LEVELS, exercising the non-CSV source-of-truth path.
+    const { booted, scene } = await bootSceneWithLevels(plainCampaign());
+    scene.setAsteroidSpawnerEnabled(false);
+
+    const wm = scene.getWaveManager();
+    const expected = `Level 1: Entry, Wave: 1 of ${wm.waveCount}`;
+    expect(wm.levelName).toBe('Entry');
+    expect(scene.getLevelText()).toBe(expected);
+    expect(scene.getBannerText()).toBe(expected);
+
+    booted?.game.destroy(true);
+  });
+
+  it('AH-0MUMMBRCC0093MGV AC6 — the level-name banner remains transient', async () => {
+    const scene = await bootPlay();
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+    expect(scene.isBannerVisible()).toBe(true);
+
+    // Well inside the BANNER_DURATION_SECONDS window the banner is still up…
+    scene.tick(1.0);
+    expect(scene.isBannerVisible()).toBe(true);
+
+    // …and it clears within the bounded window while enemies remain alive.
+    scene.tick(BANNER_DURATION_SECONDS);
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+    expect(scene.isBannerVisible()).toBe(false);
+  });
+
+  it('AH-0MUMMBRCC0093MGV AC5 — empty level name falls back to numeric label', async () => {
+    const { booted, scene } = await bootSceneWithLevels(
+      CAMPAIGN_LEVELS.map((lvl) => ({ ...lvl, name: '' })),
+    );
+    scene.setAsteroidSpawnerEnabled(false);
+
+    const wm = scene.getWaveManager();
+    const expected = `Level 1 of 5, Wave 1 of ${wm.waveCount}`;
+    expect(wm.levelName).toBe('');
+    expect(scene.getLevelText()).toBe(expected);
+    expect(scene.getBannerText()).toBe(expected);
+
+    booted?.game.destroy(true);
+  });
+
+  // ── Boss label unchanged (AH-0MU7JTEY3004EXR2 AC3 / AH-0MUMMBRCC0093MGV AC4) ──
+
+  it('AH-0MU7JTEY3004EXR2 AC3 — the boss encounter shows "Boss" instead of a numeric level', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+
+    expect(scene.getWaveManager().bossActive).toBe(true);
+    expect(scene.getLevelText()).toBe('Boss');
+    expect(scene.getBannerText()).toBe('Boss');
+  });
+
+  it('AH-0MUMMBRCC0093MGV AC4 — the boss encounter still shows "Boss" (no level name)', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+
+    expect(scene.getLevelText()).toBe('Boss');
+    expect(scene.getBannerText()).toBe('Boss');
+    // The boss label must not include a level name.
+    expect(scene.getLevelText()).not.toContain(':');
   });
 
   it('AH-0MU7JTEY3004EXR2 AC4 — the label advances on a wave change', async () => {
@@ -680,19 +775,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     killAllEnemies(scene);
     finishTransition(scene);
 
-    const expected = `Level 1 of 5, Wave 2 of ${wm.waveCount}`;
+    const expected = `Level 1: Entry, Wave: 2 of ${wm.waveCount}`;
     expect(wm.waveNumber).toBe(2);
     expect(scene.getLevelText()).toBe(expected);
     expect(scene.getBannerText()).toBe(expected);
-  });
-
-  it('AH-0MU7JTEY3004EXR2 AC3 — the boss encounter shows "Boss" instead of a numeric level', async () => {
-    const scene = await bootPlay();
-    reachBoss(scene);
-
-    expect(scene.getWaveManager().bossActive).toBe(true);
-    expect(scene.getLevelText()).toBe('Boss');
-    expect(scene.getBannerText()).toBe('Boss');
   });
 
   // ── Player control during transitions (AH-0MU7JTF9W008B8HW) ────

@@ -209,6 +209,20 @@ The following rules govern how enemy entities interact with each other and with 
 > present; the static campaign is the fallback, and the boss still triggers
 > after the final level.
 
+> **Level-name progress label (AH-0MUMMBRCC0093MGV).** The shared
+> level/wave progress label shown in both the persistent HUD readout and the
+> centred transition/level-start banner includes the active level's theme name
+> from the table above — e.g. `Level 1: Entry, Wave: 1 of 2`
+> (`Level <N>: <Name>, Wave: <M> of <K>`). The name is sourced from the same
+> data that defines the level: the `levelName` column in
+> `src/data/difficulty-curves.csv` when sequenced waves are enabled, or
+> `LevelDefinition.name` in the static `LEVELS` when the
+> `sequencedWavesEnabled` rule is off. The name is shown on **every** wave of
+> the level, not just the first, and the label falls back to the name-free
+> numeric form (`Level N of 5, Wave M of K`) when a level has no name. The
+> boss encounter keeps its literal `Boss` label. Both surfaces read the single
+> `PlayScene._progressLabel()` helper so they cannot diverge.
+
 ---
 
 ## 4. Content Catalogs
