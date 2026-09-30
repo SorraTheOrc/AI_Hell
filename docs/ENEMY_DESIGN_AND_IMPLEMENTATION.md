@@ -1112,6 +1112,19 @@ focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
 and Enter/Space launch the focused row through the same path as a pointer
 click (AH-0MUDZFBYY008P7ZE).
 
+**Level Gym (`GymLevel`, AH-0MUNU6MGM007CI45).** The left column also lists
+`GymLevel` (label **Level**). It is a parameterised level-playback gym that
+takes a `LevelDefinition` (`{ level, name, waves }`) and plays the waves
+sequentially through the shared `CombatScene` core (input, auto-fire,
+collision/hit lifecycle and formation drift are the same code as the game and
+the other gyms). It shows the level name plus `Wave n/N` in the HUD, starts
+the ship with the **spread** and **dual** weapons equipped, and offers the
+standard "← INDEX"/ESC navigation. It is the launch target of the
+difficulty-curve editor's **Launch Level** / **Launch Wave N** buttons: the
+editor folds its generated waves into level groups of `CURVE_WAVES_PER_LEVEL`
+(3) and offers one **Launch Level** button per group (full level) plus one
+**Launch Wave** button per row (single wave).
+
 ### 8.6 Adding a new enemy (convention)
 
 1. **Tune in the gym.** Run `npm run dev`, open the **Gym Index → any
