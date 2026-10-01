@@ -28,6 +28,7 @@ import {
   type EnemyFormationConfig,
   type FormationSceneBullet,
 } from './core/GymFormationScene';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
 /** Hint line shown at the bottom of the gym. */
 export const GYM_MINERALS_HINT =
@@ -54,6 +55,11 @@ function asteroidFormationConfig(): EnemyFormationConfig<EnemyEntity, FormationS
     statusLabel: 'asteroids',
     hintText: GYM_MINERALS_HINT,
     player: { ...PLAYER_SPAWN },
+    // Same wave-timeout behaviour as the shipped game (operator decision):
+    // this is an asteroids-only field, so on expiry every asteroid survives
+    // silently and the formation refreshes through the shared 3 s
+    // wipe→respawn countdown (AH-0MUNR5LM1004B223).
+    timeoutDuration: WAVE_TIME_LIMIT_SECONDS,
     createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>
       new Asteroid(scene, { x, y, formationOffset: offset, sizeTier: 'large' }),
     collectBullets: () => [],

@@ -498,32 +498,46 @@ for reference implementations (the base class drives them).
 
 ### 2.6 Wave-timeout in the enemy gyms (AH-0MUNR5LM1004B223, AH-0MUK5ONAA0007YEX)
 
-The shipped game's wave time-limit is now mirrored by the enemy gyms as a
+The shipped game's wave time-limit is mirrored by the enemy gyms as a
 single shared implementation so the two cannot diverge:
 
+- **Shared state machine.** The timer, the depleting bar and the
+  wipe→3 s countdown→respawn lifecycle live once in the shared
+  `CombatScene` core (`startWaveTimeout` / `_advanceWaveTimeout` /
+  `_onWaveTimeout` / `_drawWaveTimeoutBar` and the shared respawn countdown),
+  so every combat gym opts in through the same hooks — a single kind of
+  scene. `GymFormationScene` (and every `GymEnemies` / `GymBoss` /
+  `GymMinerals` subclass) and `GymPowerUpsCombat` all consume it.
 - **Shared helper.** `detonateWaveTimeoutSurvivors` and the
   `WAVE_TIME_LIMIT_SECONDS` / `WAVE_TIMEOUT_EXPLOSION_SCALE` / bar-geometry
   constants live in `src/scenes/core/waveTimeout.ts`. `PlayScene._timeoutWave`
-  and `GymFormationScene._onWaveTimeout` both call the helper, so the
+  and the shared `CombatScene._onWaveTimeout` both call the helper, so the
   major-explosion cue, its `MAJOR_EXPLOSION_*` concurrency limiter and the 10×
   detonation scale are the *same code*.
-- **Opt-in.** `EnemyFormationConfig.timeoutDuration` (seconds) enables it per
-  scene. `GymEnemies` sets it to `WAVE_TIME_LIMIT_SECONDS` for every non-boss
-  `enemyKey`; the boss (`GymEnemies` with the `boss` config) leaves it unset,
-  and `GymBoss`, `GymMinerals`, `GymPlayer`, `GymWeapons`,
-  `GymPowerUpsUtility` and `GymPowerUpsCombat` opt out (no enemies, persistent
-  demo threats, or already excluded).
+- **Opt-in.** `GymFormationScene` subclasses enable it through
+  `EnemyFormationConfig.timeoutDuration` (seconds); `GymPowerUpsCombat` opts in
+  by overriding `getWaveTimeoutDuration()`. `GymEnemies` sets it to
+  `WAVE_TIME_LIMIT_SECONDS` for every non-boss `enemyKey`, `GymMinerals`
+  enables it for its asteroids-only field, and `GymPowerUpsCombat` enables it
+  for its scout wave. The boss (`GymEnemies` with the `boss` config) and
+  `GymBoss` leave it unset, as do the enemy-free `GymPlayer`, `GymWeapons`
+  and `GymPowerUpsUtility`.
 - **Expiry flow.** On expiry every surviving non-asteroid enemy detonates at
   `WAVE_TIMEOUT_EXPLOSION_SCALE` (asteroids survive silently, matching the
-  game), the bar hides, and the existing 3 s wipe→respawn countdown starts —
+  game), the bar hides, and the shared 3 s wipe→respawn countdown starts —
   so a gym (which has no lives) simply refreshes its formation. The timeout
   pauses while a countdown is active and restarts on every respawn.
 - **UI.** A depleting top-of-screen bar mirrors `PlayScene._drawWaveTimer()`
-  and shares its geometry constants.
+  and shares its geometry constants and drawing code.
+- **Parity guard.** `CombatScene.equivalence.test.ts` asserts the shared
+  wave-timeout / countdown methods are defined exactly once (in the shared
+  core) and that both gym bases resolve them to the same function objects, so
+  a divergent copy cannot be re-introduced.
 - **Tests.** `src/scenes/core/waveTimeout.test.ts` covers the helper;
-  `GymFormationScene.test.ts` covers the opt-in/expiry/respawn behaviour and
+  `GymFormationScene.test.ts` covers the opt-in/expiry/respawn behaviour,
   `GymEnemies.test.ts` asserts every non-boss key enables it while the boss
-  does not.
+  does not, and `GymMinerals.test.ts` / `GymPowerUpsCombat.test.ts` cover the
+  newly-enabled gyms.
 
 ### 3.2 Existing scenes (reference implementations)
 

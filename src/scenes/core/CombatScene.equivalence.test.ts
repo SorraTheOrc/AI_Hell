@@ -2007,3 +2007,62 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
     ).toBe(false);
   });
 });
+
+// ── Shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223) ─
+
+/**
+ * The wave-timeout state machine and the wipe→3 s countdown→respawn
+ * lifecycle live once in the shared `CombatScene` core. The formation gyms
+ * (GymFormationScene subclasses) and the combat gym (GymPowerUpsCombat) all
+ * opt in through hooks, so they run the *same code* — a single kind of
+ * scene — and cannot diverge.
+ */
+describe('shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223)', () => {
+  const SHARED_WAVE_METHODS = [
+    'startWaveTimeout',
+    'hideWaveTimeout',
+    '_advanceWaveTimeout',
+    '_onWaveTimeout',
+    '_drawWaveTimeoutBar',
+    '_startRespawnCountdown',
+    '_cancelRespawnCountdown',
+    '_tickRespawnCountdown',
+    'isWaveTimeoutActive',
+    'getWaveTimeoutRemaining',
+    'setWaveTimeoutRemaining',
+    'getWaveTimeoutBar',
+    'isRespawnCountdownActive',
+    'getRespawnCountdownRemaining',
+    'getRespawnCountdownText',
+  ] as const;
+  const WAVE_CORE = 'src/scenes/core/CombatScene.ts';
+  const GYM_PROTOTYPES: Array<[string, object]> = [
+    ['GymFormationScene', GymFormationScene.prototype],
+    ['GymPowerUpsCombat', GymPowerUpsCombat.prototype],
+  ];
+
+  it('defines each shared method exactly once, in the shared combat core', () => {
+    for (const method of SHARED_WAVE_METHODS) {
+      const definers = relativeProductionDefiners((source) =>
+        definesMethod(source, method),
+      );
+      expect(definers, method).toEqual([WAVE_CORE]);
+    }
+  });
+
+  it('both gyms resolve the shared methods to the same core function objects', () => {
+    const core = CombatScene.prototype as unknown as Record<string, unknown>;
+    for (const [name, prototype] of GYM_PROTOTYPES) {
+      for (const method of SHARED_WAVE_METHODS) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared hook`,
+        ).toBe(core[method]);
+      }
+    }
+  });
+});

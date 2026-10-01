@@ -28,6 +28,7 @@ import { CombatScene } from '../core/CombatScene';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import * as effectsModule from '../../audio/effects';
 import * as explosionModule from '../../vfx/explosionParticles';
 import * as playerDeathJuiceModule from '../../vfx/playerDeathJuice';
@@ -942,5 +943,65 @@ describe('GymPowerUpsCombat — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
     expect(() => scene.create()).not.toThrow();
     expect(scene.getPlayer()).not.toBeNull();
     expect(scene.getScouts().length).toBeGreaterThan(0);
+  });
+});
+
+describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<GymPowerUpsCombat> {
+    booted = await bootScene([GymPowerUpsCombat]);
+    return booted.scene as GymPowerUpsCombat;
+  }
+
+  it('AC1 — the combat gym arms the shared wave-timeout on create', async () => {
+    const scene = await boot();
+
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+    expect(scene.getWaveTimeoutRemaining()).toBeGreaterThan(0);
+    expect(scene.getWaveTimeoutRemaining()).toBeLessThanOrEqual(
+      WAVE_TIME_LIMIT_SECONDS,
+    );
+  });
+
+  it('AC2 — expiry detonates every scout via the shared cue, then refreshes the wave after the countdown', async () => {
+    const cue = vi
+      .spyOn(effectsModule, 'playMajorExplosionSound')
+      .mockImplementation(() => undefined);
+    const scene = await boot();
+    const scouts = scene.getScouts();
+    expect(scouts.length).toBeGreaterThan(0);
+
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1);
+
+    // Every scout detonated through the shared major-explosion cue.
+    expect(scouts.every((scout) => !scout.alive)).toBe(true);
+    expect(cue).toHaveBeenCalledTimes(scouts.length);
+    expect(scene.isWaveTimeoutActive()).toBe(false);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // The shared 3 s countdown refreshes the wave and restarts the window.
+    scene.tick(1);
+    scene.tick(1);
+    scene.tick(1);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    const refreshed = scene.getScouts();
+    expect(refreshed).toHaveLength(scouts.length);
+    expect(refreshed.every((scout) => scout.alive)).toBe(true);
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+  });
+
+  it('AC2 — a visible timer bar shows while the timeout counts down', async () => {
+    const scene = await boot();
+    scene.tick(0.016);
+
+    expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
   });
 });

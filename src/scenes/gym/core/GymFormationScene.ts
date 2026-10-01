@@ -51,13 +51,6 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
-  detonateWaveTimeoutSurvivors,
-  WAVE_TIMER_BAR_HEIGHT,
-  WAVE_TIMER_BAR_WIDTH,
-  WAVE_TIMER_BAR_X,
-  WAVE_TIMER_BAR_Y,
-} from '../../../scenes/core/waveTimeout';
-import {
   FormationGlide,
 } from '../../../scenes/core/formationGlide';
 import {
@@ -408,18 +401,6 @@ const DEFAULT_POWER_UP_PLACEMENT_MARGIN = 24;
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 
-/** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
-const RESPAWN_COUNTDOWN_SECONDS = 3;
-
-/** Style for the centred respawn countdown overlay. */
-const COUNTDOWN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontFamily: 'monospace',
-  fontSize: '24px',
-  color: '#ffffff',
-  backgroundColor: '#000000',
-  padding: { x: 12, y: 8 },
-};
-
 /**
  * Generic formation gym scene. Parameterised by entity + bullet types so
  * concrete scenes keep fully-typed accessors (`formationScouts` etc.).
@@ -448,17 +429,9 @@ export class GymFormationScene<
   protected formationBaseY!: number;
   private shootEnabled = false;
 
-  // Wipe → 3s countdown → respawn lifecycle (core-library owned, AH-0MTFXKA5Q003LBH5).
-  private respawnCountdown = 0;
-  private respawnCountdownActive = false;
-  private countdownText: Phaser.GameObjects.Text | null = null;
-
-  // Wave-timeout (opt-in via `config.timeoutDuration`, AH-0MUNR5LM1004B223).
-  // Mirrors `PlayScene`: the shared major-explosion cue detonates surviving
-  // non-asteroid enemies at 10x scale, then the formation respawns.
-  private timeoutTimer = 0;
-  private timeoutActive = false;
-  private timeoutBar: Phaser.GameObjects.Graphics | null = null;
+  // Wipe → 3s countdown → respawn and the opt-in wave-timeout lifecycle now
+  // live in the shared `CombatScene` core (AH-0MUNR5LM1004B223) so every
+  // combat scene runs one implementation.
 
   // UI toggles
   protected shootButton!: Phaser.GameObjects.Text;
@@ -658,7 +631,7 @@ export class GymFormationScene<
     this._cancelRespawnCountdown();
 
     // Start the opt-in wave-timeout for this run (AH-0MUNR5LM1004B223).
-    this._startWaveTimeout();
+    this.startWaveTimeout();
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
@@ -680,12 +653,6 @@ export class GymFormationScene<
     this.playerSpawnX = null;
     this.playerSpawnY = null;
     this.shootEnabled = false;
-    this.respawnCountdown = 0;
-    this.respawnCountdownActive = false;
-    this.countdownText = null;
-    this.timeoutTimer = 0;
-    this.timeoutActive = false;
-    this.timeoutBar = null;
     this.powerUpsEnabled = false;
     this.powerUpDrops = [];
     this.powerUpSpawner = null;
@@ -716,13 +683,6 @@ export class GymFormationScene<
     // DisplayList shutdown; drop the reference so a restart's respawn
     // creates a fresh overlay on the new display list.
     this.countdownText = null;
-
-    // Drop the timeout bar reference (destroyed with the display list) and
-    // deactivate the timeout so a restart starts clean.
-    this.timeoutBar?.destroy();
-    this.timeoutBar = null;
-    this.timeoutActive = false;
-    this.timeoutTimer = 0;
 
     for (const entity of this.entities) entity.destroy(true);
     this.entities = [];
@@ -1028,20 +988,9 @@ export class GymFormationScene<
     return this.shootEnabled;
   }
 
-  /** True while the wipe → respawn countdown is active. */
-  isRespawnCountdownActive(): boolean {
-    return this.respawnCountdownActive;
-  }
-
-  /** Seconds remaining on the respawn countdown (0 when inactive). */
-  getRespawnCountdownRemaining(): number {
-    return this.respawnCountdownActive ? Math.max(0, this.respawnCountdown) : 0;
-  }
-
-  /** The centred countdown overlay text (null when not active / not yet created). */
-  getRespawnCountdownText(): Phaser.GameObjects.Text | null {
-    return this.countdownText;
-  }
+  // `isRespawnCountdownActive` / `getRespawnCountdownRemaining` /
+  // `getRespawnCountdownText` are inherited from the shared `CombatScene`
+  // core (AH-0MUNR5LM1004B223).
 
   /** Bullets currently in flight. */
   get activeBullets(): TBullet[] {
@@ -1636,185 +1585,39 @@ export class GymFormationScene<
     );
   }
 
-  // ── Wipe → 3s countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5) ─
+  // ── Shared wipe → countdown → respawn + wave-timeout hooks ──────
+  // The wipe→3 s countdown→respawn lifecycle and the wave-timeout state
+  // machine live in the shared `CombatScene` core (AH-0MUNR5LM1004B223);
+  // this scene supplies only its config-driven specifics through the hooks
+  // below so every combat scene runs one implementation.
 
-  private _startRespawnCountdown(): void {
-    this.respawnCountdownActive = true;
-    this.respawnCountdown = RESPAWN_COUNTDOWN_SECONDS;
-    if (!this.countdownText) {
-      this.countdownText = this.add
-        .text(
-          GAME_WIDTH / 2,
-          GAME_HEIGHT / 2,
-          this._countdownLabel(),
-          COUNTDOWN_STYLE,
-        )
-        .setOrigin(0.5)
-        .setDepth(100);
-    } else {
-      this.countdownText.setVisible(true);
-    }
-    this.countdownText.setText(this._countdownLabel());
-  }
-
-  private _countdownLabel(): string {
-    const n = Math.max(1, Math.ceil(this.respawnCountdown));
-    return `Respawning in ${n}...`;
-  }
-
-  private _cancelRespawnCountdown(): void {
-    this.respawnCountdownActive = false;
-    this.respawnCountdown = 0;
-    if (this.countdownText) {
-      this.countdownText.setVisible(false);
-    }
-  }
-
-  private _tickRespawnCountdown(dt: number): void {
-    // No formation → nothing to wipe.
-    if (this.entities.length === 0) return;
-
-    if (this.respawnCountdownActive) {
-      this.respawnCountdown = Math.max(0, this.respawnCountdown - dt);
-      if (this.countdownText) {
-        this.countdownText.setText(
-          this.respawnCountdown <= 0 ? 'Respawning...' : this._countdownLabel(),
-        );
-      }
-      if (this.respawnCountdown <= 0) {
-        this.respawnFormation();
-      }
-      return;
-    }
-
-    // Wipe signal: every entity is no longer alive (mid-explosion counts
-    // as killed, per `alive === false` after `destroySelf()`).
-    if (this.aliveCount === 0) {
-      this._startRespawnCountdown();
-    }
-  }
-
-  // ── Opt-in wave-timeout (AH-0MUNR5LM1004B223) ─────────────────
-
-  /**
-   * Starts (or disables) the wave-timeout from `config.timeoutDuration`.
-   * Called on create and on every formation respawn so each run gets a
-   * fresh window. A missing/zero/negative duration disables the feature —
-   * the boss and non-enemy gyms leave it unset.
-   */
-  private _startWaveTimeout(): void {
-    const duration = this.config.timeoutDuration ?? 0;
-    if (!Number.isFinite(duration) || duration <= 0) {
-      this._hideWaveTimeout();
-      return;
-    }
-    this.timeoutTimer = duration;
-    this.timeoutActive = true;
-  }
-
-  /** Stops the wave-timeout and hides its bar. */
-  private _hideWaveTimeout(): void {
-    this.timeoutActive = false;
-    this.timeoutTimer = 0;
+  /** Opt-in timeout duration from the scene config (0 disables). */
+  protected override getWaveTimeoutDuration(): number {
+    return this.config.timeoutDuration ?? 0;
   }
 
   /**
-   * Counts the wave-timeout down and fires the penalty on expiry. Paused
-   * while the wipe→respawn countdown is active so the two lifecycles never
-   * overlap.
+   * Pause the timeout while the wipe→respawn countdown is active so the two
+   * lifecycles never overlap.
    */
-  private _advanceWaveTimeout(dt: number): void {
-    if (!this.timeoutActive) return;
-    if (this.respawnCountdownActive) return;
-    this.timeoutTimer = Math.max(0, this.timeoutTimer - dt);
-    if (this.timeoutTimer <= 0) this._onWaveTimeout();
+  protected override isWaveTimeoutPaused(): boolean {
+    return this.respawnCountdownActive;
   }
 
   /**
-   * Wave-timeout expiry. Detonates every surviving non-asteroid enemy at
-   * `WAVE_TIMEOUT_EXPLOSION_SCALE` through the shared
-   * `detonateWaveTimeoutSurvivors` helper — the same cue + concurrency
-   * limiter the shipped game runs (AH-0MUK5ONAA0007YEX). Asteroids survive
-   * silently (game parity, AH-0MUJM746P000QAEO). The timeout always resets
-   * the gym through the existing 3 s wipe→respawn countdown, so an
-   * asteroid-only formation still refreshes.
+   * On timeout expiry the shared base already detonated every surviving
+   * non-asteroid enemy via `detonateWaveTimeoutSurvivors` (asteroids survive
+   * silently, game parity AH-0MUJM746P000QAEO); refresh the gym through the
+   * existing 3 s wipe→respawn countdown so an asteroid-only formation still
+   * refreshes.
    */
-  private _onWaveTimeout(): void {
-    this._hideWaveTimeout();
-    const survivors = this.entities.filter((e) => e.alive);
-    detonateWaveTimeoutSurvivors(
-      survivors,
-      (entity) => entity instanceof Asteroid,
-    );
+  protected override onWaveTimeoutExpired(): void {
     this._startRespawnCountdown();
   }
 
-  /**
-   * Redraws the horizontal wave-timeout bar (hidden when inactive or while
-   * the respawn countdown is showing). Mirrors `PlayScene._drawWaveTimer`
-   * and shares its geometry constants so the two bars cannot drift.
-   */
-  private _drawWaveTimeoutBar(): void {
-    const duration = this.config.timeoutDuration ?? 0;
-    // Opt-out scenes never allocate the bar (keeps the boss/non-enemy gyms'
-    // display lists unchanged).
-    if (duration <= 0) return;
-    if (!this.timeoutBar) {
-      this.timeoutBar = this.add.graphics();
-      this.timeoutBar.setDepth(400);
-    }
-    const g = this.timeoutBar;
-    g.clear();
-    if (!this.timeoutActive) {
-      g.setVisible(false);
-      return;
-    }
-    g.setVisible(true);
-    // Background track.
-    g.fillStyle(0x111111, 0.85);
-    g.fillRect(
-      WAVE_TIMER_BAR_X,
-      WAVE_TIMER_BAR_Y,
-      WAVE_TIMER_BAR_WIDTH,
-      WAVE_TIMER_BAR_HEIGHT,
-    );
-    // Depleting fill.
-    const ratio = Math.max(0, Math.min(1, this.timeoutTimer / duration));
-    g.fillStyle(0x00ffff, 1);
-    g.fillRect(
-      WAVE_TIMER_BAR_X,
-      WAVE_TIMER_BAR_Y,
-      WAVE_TIMER_BAR_WIDTH * ratio,
-      WAVE_TIMER_BAR_HEIGHT,
-    );
-  }
-
-  /** Whether the wave-timeout is currently counting down (test seam). */
-  isWaveTimeoutActive(): boolean {
-    return this.timeoutActive;
-  }
-
-  /** Seconds remaining on the wave-timeout (0 when inactive; test seam). */
-  getWaveTimeoutRemaining(): number {
-    return this.timeoutActive ? Math.max(0, this.timeoutTimer) : 0;
-  }
-
-  /**
-   * Sets the remaining wave-timeout seconds and makes it active (test seam,
-   * mirrors `PlayScene.setWaveTimerRemaining`). Ignored when the scene has no
-   * timeout configured so a test cannot arm a disabled gym.
-   */
-  setWaveTimeoutRemaining(seconds: number): void {
-    if (!Number.isFinite(seconds)) return;
-    const duration = this.config.timeoutDuration ?? 0;
-    if (duration <= 0) return;
-    this.timeoutTimer = Math.max(0, seconds);
-    this.timeoutActive = true;
-  }
-
-  /** The wave-timeout bar graphic (null before create/teardown; test seam). */
-  getWaveTimeoutBar(): Phaser.GameObjects.Graphics | null {
-    return this.timeoutBar;
+  /** Rebuild the formation when the shared countdown elapses. */
+  protected override respawnWave(): void {
+    this.respawnFormation();
   }
 
   /**
@@ -1864,7 +1667,7 @@ export class GymFormationScene<
     );
     // A fresh formation restarts the opt-in wave-timeout
     // (AH-0MUNR5LM1004B223).
-    this._startWaveTimeout();
+    this.startWaveTimeout();
     playSpawnSound();
   }
 
