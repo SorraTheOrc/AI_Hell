@@ -75,8 +75,8 @@ function enemyCsvFixture(scoutCount = 99): string {
 /** Build a valid ship CSV. */
 function shipCsvFixture(maxSpeed = 321): string {
   return (
-    'thrustAcceleration,maxSpeed,shipSize,thrustFlameLength,shipColor,thrustFlameColor,thrustFlameInnerColor,frictionDeceleration,controlScheme,asteroidsRotationSpeed\n' +
-    `300,${maxSpeed},20,0.75,0x00ffff,0xff8c00,0xffff00,100,fourDirectional,3\n`
+    'thrustAcceleration,maxSpeed,shipSize,thrustFlameLength,shipColor,thrustFlameColor,thrustFlameInnerColor,frictionDeceleration,controlScheme,asteroidsRotationSpeed,asteroidsRotationAcceleration,asteroidsRotationDeceleration\n' +
+    `300,${maxSpeed},20,0.75,0x00ffff,0xff8c00,0xffff00,100,fourDirectional,3,12,60\n`
   );
 }
 

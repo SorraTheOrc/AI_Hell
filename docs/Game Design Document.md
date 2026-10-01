@@ -38,7 +38,12 @@
 > describes the **4-directional scheme (default)**. Under the **Asteroids
 > scheme** the movement keys are re-mapped: `W`/Arrow Up = **forward thrust**
 > (in the current facing direction), `A`/Arrow Left = **turn left**, `D`/Arrow
-> Right = **turn right** (rotation 3 rad/s) — never 4-directional movement.
+> Right = **turn right** — never 4-directional movement. Turning uses a
+> constant-angular-acceleration ramp (default: spin up to a **3 rad/s** top
+> speed at **12 rad/s²** while a key is held, spin down at **60 rad/s²** on
+> release), so a short tap nudges the heading a few degrees while a sustained
+> hold still reaches the full, responsive rotation speed. See §2.2 for the
+> ramp details and tuning.
 > Note: turn right is bound to **D** (not S); S remains the 4-directional
 > backward thrust binding only.
 
@@ -79,6 +84,7 @@ the game-over screen (the in-game pause menu follows the same model).
 - **Deceleration on release:** Releasing all direction keys applies **linear deceleration (friction)** at a tunable rate in px/s², slowing the ship to a full stop. The velocity decays evenly (direction preserved) and clamps at exactly zero — no overshoot, no residual drift. Stopping or reversing faster can be achieved by thrusting in the opposite direction.
 - **Tunable deceleration rate:** The deceleration rate is configurable from **0 to 400 px/s²** (default **100 px/s²**) via the Gym scene ship-tuning sliders, and persists with the rest of the ship configuration. A value of **0 restores the original zero-friction drift** (velocity preserved when no key is held) for experimentation. As a reference point, the default 100 px/s² brings the ship from max speed (~175 px/s) to rest in roughly 1.75 s.
 - **Deceleration applies only when no direction key is held** — while thrusting, the deceleration rate has no effect and thrust behaviour is unchanged.
+- **Asteroids turning (angular ramp):** under the Asteroids control scheme the ship's turn rate ramps toward the configured `asteroidsRotationSpeed` (default **3 rad/s**) instead of jumping straight to it. Holding a turn key spins the angular velocity up at `asteroidsRotationAcceleration` (default **12 rad/s²**); releasing it — or holding both turn keys together, which cancels to a zero target — ramps the rate back to zero at `asteroidsRotationDeceleration` (default **60 rad/s²**), so the ship stops crisply with minimal glide (under 5° of post-release rotation at the defaults). A short tap therefore rotates only a few degrees (~3–4° for a 100 ms tap at the defaults, versus ~17° under the old instantaneous model), while a sustained hold still reaches the full, snappy top speed. Both rates are configurable from the Gym ship-tuning sliders — acceleration **2–60 rad/s²** (step 2) and deceleration **12–300 rad/s²** (step 12) — and are persisted with the rest of the ship config (`asteroidsRotationAcceleration` / `asteroidsRotationDeceleration`). The ramp is a pure, closed-form, framerate-independent integration in the shared `AsteroidsModel` (`src/utils/movementModel.ts`), so the shipped game and every gym behave identically (gym↔game parity).
 - **Maximum speed cap:** Velocity is clamped to a maximum speed to prevent unbounded acceleration. Tunable constants (thrust acceleration, deceleration, max speed) live in a single configuration module so the feel can be adjusted without digging through scene code.
 - **Responsive feel:** Tuning targets are designed so the ship reaches meaningful speed quickly and decelerates/reverses within a "short moment" of holding the opposite key — the ship should feel agile but never sluggish.
 - **Screen-edge wrap-around:** The ship wraps across all four screen edges (leaves left → reappears right, etc.), matching the classic Asteroids model. No hard walls or clamping.

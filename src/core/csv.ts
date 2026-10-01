@@ -80,6 +80,7 @@ export const SHIP_COLUMN_ORDER: (keyof ShipConfig)[] = [
   'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
   'shipColor', 'thrustFlameColor', 'thrustFlameInnerColor',
   'frictionDeceleration', 'controlScheme', 'asteroidsRotationSpeed',
+  'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
 ];
 
 // ── Helper: hex colour coercion ─────────────────────────────────────
@@ -323,6 +324,7 @@ export function validateShipConfig(
     'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
     'shipColor', 'thrustFlameColor', 'thrustFlameInnerColor',
     'frictionDeceleration', 'controlScheme', 'asteroidsRotationSpeed',
+    'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
   ];
 
   for (const field of requiredFields) {
@@ -341,6 +343,7 @@ export function validateShipConfig(
   const numericFields: (keyof ShipConfig)[] = [
     'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
     'frictionDeceleration', 'asteroidsRotationSpeed',
+    'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -439,6 +442,14 @@ export function coerceShipConfig(
   result.frictionDeceleration = coerceNumber(row.frictionDeceleration, result.frictionDeceleration);
   result.controlScheme = coerceEnum(row.controlScheme, VALID_CONTROL_SCHEMES, result.controlScheme);
   result.asteroidsRotationSpeed = coerceNumber(row.asteroidsRotationSpeed, result.asteroidsRotationSpeed);
+  result.asteroidsRotationAcceleration = coerceNumber(
+    row.asteroidsRotationAcceleration,
+    result.asteroidsRotationAcceleration,
+  );
+  result.asteroidsRotationDeceleration = coerceNumber(
+    row.asteroidsRotationDeceleration,
+    result.asteroidsRotationDeceleration,
+  );
 
   return result;
 }

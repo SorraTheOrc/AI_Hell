@@ -591,18 +591,20 @@ describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)'
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: A → turnLeft. 3 rad/s × 0.25 s = 0.75 rad CCW (wraps to 2π−0.75).
+    // WASD path: A → turnLeft. With the spin-up ramp (12 rad/s² to a 3 rad/s
+    // cap) the angular velocity reaches 3 rad/s at t=0.25s, so a 0.25s turn
+    // rotates 0.375 rad CCW (wraps to 2π−0.375).
     scene.getWasd()!.A.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.A.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
 
     // Arrow path: Left → turnLeft as well.
     resetToAsteroids(player);
     scene.getCursors()!.left.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.left.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
   });
 
   it('asteroids: D/Right = turnRight — the ship rotates clockwise (AH-0MTFORPJ2003RWWQ)', async () => {
@@ -611,18 +613,18 @@ describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)'
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: D → turnRight (+0.75 rad).
+    // WASD path: D → turnRight (+0.375 rad after the 0.25s ramp).
     scene.getWasd()!.D.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.D.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
 
     // Arrow path: Right → turnRight as well.
     resetToAsteroids(player);
     scene.getCursors()!.right.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.right.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
   });
 
   it('routes input by the player scheme at read time — the same held Up arrow maps differently per scheme (AC2/AC3)', async () => {

@@ -592,30 +592,32 @@ describe('GymWeapons — scheme-aware input routing (parent AC1/AC2/AC3)', () =>
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: A → turnLeft (CCW, wraps to 2π−0.75); D → turnRight (+0.75).
+    // WASD path: A → turnLeft (CCW, wraps to 2π−0.375); D → turnRight (+0.375).
+    // The spin-up ramp reaches the 3 rad/s cap at t=0.25s, so a 0.25s turn
+    // rotates 0.375 rad (AH-0MUNS42NA000N41U).
     scene.getWasd()!.A.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.A.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
 
     resetToAsteroids(player);
     scene.getWasd()!.D.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.D.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
 
     // Arrow path: Left → turnLeft; Right → turnRight.
     resetToAsteroids(player);
     scene.getCursors()!.left.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.left.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
 
     resetToAsteroids(player);
     scene.getCursors()!.right.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.right.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
   });
 
   it('routes input by the player scheme at read time — the same held Up arrow maps differently per scheme (AC2/AC3)', async () => {

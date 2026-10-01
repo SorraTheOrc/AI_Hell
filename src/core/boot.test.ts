@@ -43,8 +43,8 @@ function enemyCsvFixture(): string {
 
 function shipCsvFixture(controlScheme: string): string {
   return (
-    'thrustAcceleration,maxSpeed,shipSize,thrustFlameLength,shipColor,thrustFlameColor,thrustFlameInnerColor,frictionDeceleration,controlScheme,asteroidsRotationSpeed\n' +
-    `300,175,20,0.75,0x00ffff,0xff8c00,0xffff00,100,${controlScheme},3\n`
+    'thrustAcceleration,maxSpeed,shipSize,thrustFlameLength,shipColor,thrustFlameColor,thrustFlameInnerColor,frictionDeceleration,controlScheme,asteroidsRotationSpeed,asteroidsRotationAcceleration,asteroidsRotationDeceleration\n' +
+    `300,175,20,0.75,0x00ffff,0xff8c00,0xffff00,100,${controlScheme},3,12,60\n`
   );
 }
 

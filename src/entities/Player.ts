@@ -151,7 +151,11 @@ const ASTEROIDS_ENGINES: ReadonlyArray<EnginePortDef> = [
 ];
 
 /** Effective movement config: shared physics + scheme-specific rotation. */
-type PlayerMovementConfig = MovementConfig & { rotationSpeed: number };
+type PlayerMovementConfig = MovementConfig & {
+  rotationSpeed: number;
+  rotationAcceleration: number;
+  rotationDeceleration: number;
+};
 
 /**
  * The player ship renders as a cyan hexagon (flat top/bottom, centred
@@ -163,7 +167,7 @@ type PlayerMovementConfig = MovementConfig & { rotationSpeed: number };
  * engine positions make the rotation visible (AC2).
  */
 export class Player extends Phaser.GameObjects.Graphics {
-  private _movementState: MovementState & { facing?: number };
+  private _movementState: MovementState & { facing?: number; angularVelocity?: number };
   private _input: ControlInput;
   /** The active pluggable movement model for the current scheme (AC5). */
   private _model!: MovementModel;
@@ -230,7 +234,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   constructor(scene: Phaser.Scene, config: PlayerConfig) {
     super(scene, { x: config.x, y: config.y });
 
-    this._movementState = { x: config.x, y: config.y, vx: 0, vy: 0, facing: 0 };
+    this._movementState = { x: config.x, y: config.y, vx: 0, vy: 0, facing: 0, angularVelocity: 0 };
     this._input = { up: false, down: false, left: false, right: false };
 
     // Use the injected config, else fall back to the saved config
@@ -247,6 +251,8 @@ export class Player extends Phaser.GameObjects.Graphics {
       maxSpeed: ship.maxSpeed,
       friction: ship.frictionDeceleration,
       rotationSpeed: ship.asteroidsRotationSpeed,
+      rotationAcceleration: ship.asteroidsRotationAcceleration,
+      rotationDeceleration: ship.asteroidsRotationDeceleration,
     };
     this._config = { ...this._baseConfig };
 
@@ -441,7 +447,7 @@ export class Player extends Phaser.GameObjects.Graphics {
    * plus facing when the active scheme tracks one). Exposed for tests
    * and the scene's magnet/speed integrations.
    */
-  getMovementState(): MovementState & { facing?: number } {
+  getMovementState(): MovementState & { facing?: number; angularVelocity?: number } {
     return { ...this._movementState };
   }
 
@@ -475,8 +481,9 @@ export class Player extends Phaser.GameObjects.Graphics {
       : { up: false, down: false, left: false, right: false };
     this._componentThrust = null;
     // Facing state: keep any existing velocity/position, reset facing
-    // to 0 so the ship starts pointing right in Asteroids mode.
-    this._movementState = { ...this._movementState, facing: 0 };
+    // to 0 so the ship starts pointing right in Asteroids mode (and
+    // zero the angular velocity so no residual spin carries over).
+    this._movementState = { ...this._movementState, facing: 0, angularVelocity: 0 };
     // Reset flame animation for the current engine layout.
     this._flameLens = {};
     for (const port of this._engines()) this._flameLens[port.port] = 0;
@@ -502,6 +509,8 @@ export class Player extends Phaser.GameObjects.Graphics {
       maxSpeed: config.maxSpeed,
       friction: config.frictionDeceleration,
       rotationSpeed: config.asteroidsRotationSpeed,
+      rotationAcceleration: config.asteroidsRotationAcceleration,
+      rotationDeceleration: config.asteroidsRotationDeceleration,
     };
     this._applySpeedMultiplier();
     // Loading a saved config restores its control scheme (AC4). If the
@@ -581,6 +590,8 @@ export class Player extends Phaser.GameObjects.Graphics {
       maxSpeed: this._baseConfig.maxSpeed * this._speedMultiplier,
       friction: this._baseConfig.friction,
       rotationSpeed: this._baseConfig.rotationSpeed,
+      rotationAcceleration: this._baseConfig.rotationAcceleration,
+      rotationDeceleration: this._baseConfig.rotationDeceleration,
     };
   }
 
@@ -968,7 +979,7 @@ export class Player extends Phaser.GameObjects.Graphics {
    * destroy/respawn or scene switch).
    */
   respawn(x: number, y: number): void {
-    this._movementState = { x, y, vx: 0, vy: 0, facing: 0 };
+    this._movementState = { x, y, vx: 0, vy: 0, facing: 0, angularVelocity: 0 };
     this.setRotation(0);
     this.setPosition(x, y);
     for (const port of this._engines()) this._flameLens[port.port] = 0;
@@ -989,6 +1000,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       vx: 0,
       vy: 0,
       facing,
+      angularVelocity: 0,
     };
     this.setRotation(facing);
     this.setPosition(this._movementState.x, this._movementState.y);
