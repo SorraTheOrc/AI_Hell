@@ -2087,3 +2087,61 @@ describe('shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223)',
     }
   });
 });
+
+// ── Shared AOE dispatch/effect (parent AH-0MUOOB3OR001V8CD, F6 AC1/AC2) ──
+//
+// The AOE dispatch, effect resolution and VFX live once in the shared core
+// (`CombatScene`); the game and the gyms inherit the same function objects,
+// so an AOE behaviour fix reaches every scene at once.
+
+/** The shared AOE dispatch/effect/VFX hooks. */
+const SHARED_AOE_METHODS = [
+  'onAoeFired',
+  'applyAoeEffect',
+  'detonateAoeProjectile',
+  'spawnAoeEffectVfx',
+  'spawnArcChainVfx',
+  'onAoeProjectileSpawned',
+] as const;
+
+/** The scenes that must inherit the shared AOE hooks unchanged. */
+const AOE_SCENE_PROTOTYPES: Array<[string, object]> = [
+  ['PlayScene', PlayScene.prototype],
+  ['GymFormationScene', GymFormationScene.prototype],
+  ['GymWeapons', GymWeapons.prototype],
+];
+
+describe('CombatScene — shared AOE dispatch/effect is defined once (F6 AC1)', () => {
+  it('each AOE hook is defined only in the shared core (default + override)', () => {
+    const files = productionSceneFiles();
+    for (const method of SHARED_AOE_METHODS) {
+      const definers = files
+        .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), method))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      // At least one definition (base default + shared override where the
+      // hook is a no-op default), and no production scene redefines it.
+      expect(definers.length, method).toBeGreaterThanOrEqual(1);
+      for (const definer of definers) {
+        expect(SHARED_CORE_FILES, method).toContain(definer);
+      }
+    }
+  });
+
+  it('the game and every AOE-exercising gym resolve the same AOE hook functions', () => {
+    for (const [name, prototype] of AOE_SCENE_PROTOTYPES) {
+      for (const method of SHARED_AOE_METHODS) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared CombatScene hook`,
+        ).toBe(
+          (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+        );
+      }
+    }
+  });
+});
