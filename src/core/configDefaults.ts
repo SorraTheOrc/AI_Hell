@@ -249,4 +249,6 @@ export const DEFAULT_CONFIG: ShipConfig = {
   frictionDeceleration: FRICTION_DECELERATION,
   controlScheme: 'asteroids',
   asteroidsRotationSpeed: 3,
+  asteroidsRotationAcceleration: 12,
+  asteroidsRotationDeceleration: 60,
 };

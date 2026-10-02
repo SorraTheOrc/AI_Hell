@@ -30,10 +30,10 @@ import { GAME_WIDTH } from '../core/constants';
 import { BACK_TO_INDEX_LABEL } from './gymNavigation';
 import {
   POWER_UP_CATALOGUE,
-  isWeaponDrop,
   type DropId,
+  type PowerUpId,
 } from '../powerups/types';
-import { RESET_DROP, WEAPON_CATALOGUE } from './weapons';
+import { RESET_DROP, WEAPON_CATALOGUE, type WeaponId } from './weapons';
 import { drawPowerUpIcon, drawWeaponIcon } from '../powerups/icons';
 
 /** Scene key of the shared help overlay (registered in `gameConfig.ts`). */
@@ -47,9 +47,10 @@ export const HELP_BUTTON_GAP = 12;
 
 /**
  * Every drop the help overlay can describe: the field drops (`DropId`,
- * i.e. P3–P9 plus spread/dual/rapid/reset) and the permanent cannon.
+ * i.e. P3–P9 plus spread/dual/rapid/reset), the permanent cannon and the
+ * AOE weapon family (nova/mortar/arc).
  */
-export type HelpDropId = DropId | 'cannon';
+export type HelpDropId = DropId | WeaponId;
 
 /** Resolved help row: display name, one-line description and icon drawer. */
 export interface HelpEntry {
@@ -80,28 +81,30 @@ export interface HelpEntry {
  * @throws Error if the id is not present in any catalogue.
  */
 export function getHelpEntry(id: HelpDropId): HelpEntry {
-  if (id === 'cannon' || isWeaponDrop(id)) {
-    if (id === 'reset') {
-      return {
-        id,
-        name: RESET_DROP.name,
-        description: RESET_DROP.description,
-        drawIcon: (graphics, x, y, size) =>
-          drawWeaponIcon(graphics, 'reset', x, y, size),
-      };
-    }
-    const weapon = WEAPON_CATALOGUE[id];
-    if (!weapon) throw new Error(`Unknown weapon drop for help: ${id}`);
+  if (id === 'reset') {
+    return {
+      id,
+      name: RESET_DROP.name,
+      description: RESET_DROP.description,
+      drawIcon: (graphics, x, y, size) =>
+        drawWeaponIcon(graphics, 'reset', x, y, size),
+    };
+  }
+
+  // Every weapon id (cannon, spread, dual, rapid, nova, mortar, arc) comes
+  // from the shared weapon catalogue — including the AOE family.
+  const weapon = WEAPON_CATALOGUE[id as WeaponId];
+  if (weapon) {
     return {
       id,
       name: weapon.name,
       description: weapon.description,
       drawIcon: (graphics, x, y, size) =>
-        drawWeaponIcon(graphics, id, x, y, size),
+        drawWeaponIcon(graphics, id as WeaponId, x, y, size),
     };
   }
 
-  const powerUp = POWER_UP_CATALOGUE[id];
+  const powerUp = POWER_UP_CATALOGUE[id as PowerUpId];
   if (!powerUp) throw new Error(`Unknown power-up for help: ${id}`);
   return {
     id,

@@ -140,6 +140,8 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
     let absorbed = false;
     for (const enemy of enemies) {
       if (!enemy.alive) continue;
+      // Spawning enemies are still growing — they do not absorb minerals.
+      if ((enemy as { isSpawning?: boolean }).isSpawning) continue;
       if (
         overlaps(
           mineral.x,

@@ -6,6 +6,7 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { PLAYER_BULLET_SPEED } from '../../core/constants';
+import { RULES_STORAGE_KEY } from '../../core/rules';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
@@ -1590,7 +1591,9 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
  */
 function reachPlayBoss(play: PlayScene): void {
   play.getGameState().lives = 99;
-  for (let guard = 0; guard < 300 && !play.getBoss(); guard++) {
+  for (let guard = 0; guard < 300; guard++) {
+    const wm = play.getWaveManager();
+    if (wm.bossTriggered || wm.bossActive) break;
     for (let inner = 0; inner < 500 && play.getAliveCount() > 0; inner++) {
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
@@ -1598,6 +1601,16 @@ function reachPlayBoss(play: PlayScene): void {
       play.tick(0.016);
     }
     if (play.isTransitioning()) play.tick(3.0);
+  }
+  // The boss entity only exists once the transition completes.
+  if (play.isTransitioning()) play.tick(3.0);
+  if (!play.getBoss()) {
+    const wm = play.getWaveManager();
+    throw new Error(
+      `reachPlayBoss failed: bossTriggered=${wm.bossTriggered} ` +
+        `bossActive=${wm.bossActive} level=${wm.level} wave=${wm.waveNumber} ` +
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${play.getAliveCount()}`,
+    );
   }
 }
 
@@ -1626,6 +1639,14 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
   });
 
   it('a single tick(dt) advances the boss in PlayScene and GymBoss alike', async () => {
+    // Deterministic static campaign: the default sequenced campaign is
+    // generated from a `Math.random()` seed and can stall the walk-to-boss
+    // loop on an un-accounted asteroid group (AH-0MUNVVWWC0015JTM; game bug
+    // tracked by AH-0MUR1HZLQ001ELX9).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'boss-equiv-play-host',
@@ -2005,5 +2026,122 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
     expect(
       definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
     ).toBe(false);
+  });
+});
+
+// ── Shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223) ─
+
+/**
+ * The wave-timeout state machine and the wipe→3 s countdown→respawn
+ * lifecycle live once in the shared `CombatScene` core. The formation gyms
+ * (GymFormationScene subclasses) and the combat gym (GymPowerUpsCombat) all
+ * opt in through hooks, so they run the *same code* — a single kind of
+ * scene — and cannot diverge.
+ */
+describe('shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223)', () => {
+  const SHARED_WAVE_METHODS = [
+    'startWaveTimeout',
+    'hideWaveTimeout',
+    '_advanceWaveTimeout',
+    '_onWaveTimeout',
+    '_drawWaveTimeoutBar',
+    '_startRespawnCountdown',
+    '_cancelRespawnCountdown',
+    '_tickRespawnCountdown',
+    'isWaveTimeoutActive',
+    'getWaveTimeoutRemaining',
+    'setWaveTimeoutRemaining',
+    'getWaveTimeoutBar',
+    'isRespawnCountdownActive',
+    'getRespawnCountdownRemaining',
+    'getRespawnCountdownText',
+  ] as const;
+  const WAVE_CORE = 'src/scenes/core/CombatScene.ts';
+  const GYM_PROTOTYPES: Array<[string, object]> = [
+    ['GymFormationScene', GymFormationScene.prototype],
+    ['GymPowerUpsCombat', GymPowerUpsCombat.prototype],
+  ];
+
+  it('defines each shared method exactly once, in the shared combat core', () => {
+    for (const method of SHARED_WAVE_METHODS) {
+      const definers = relativeProductionDefiners((source) =>
+        definesMethod(source, method),
+      );
+      expect(definers, method).toEqual([WAVE_CORE]);
+    }
+  });
+
+  it('both gyms resolve the shared methods to the same core function objects', () => {
+    const core = CombatScene.prototype as unknown as Record<string, unknown>;
+    for (const [name, prototype] of GYM_PROTOTYPES) {
+      for (const method of SHARED_WAVE_METHODS) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared hook`,
+        ).toBe(core[method]);
+      }
+    }
+  });
+});
+
+// ── Shared AOE dispatch/effect (parent AH-0MUOOB3OR001V8CD, F6 AC1/AC2) ──
+//
+// The AOE dispatch, effect resolution and VFX live once in the shared core
+// (`CombatScene`); the game and the gyms inherit the same function objects,
+// so an AOE behaviour fix reaches every scene at once.
+
+/** The shared AOE dispatch/effect/VFX hooks. */
+const SHARED_AOE_METHODS = [
+  'onAoeFired',
+  'applyAoeEffect',
+  'detonateAoeProjectile',
+  'spawnAoeEffectVfx',
+  'spawnArcChainVfx',
+  'onAoeProjectileSpawned',
+] as const;
+
+/** The scenes that must inherit the shared AOE hooks unchanged. */
+const AOE_SCENE_PROTOTYPES: Array<[string, object]> = [
+  ['PlayScene', PlayScene.prototype],
+  ['GymFormationScene', GymFormationScene.prototype],
+  ['GymWeapons', GymWeapons.prototype],
+];
+
+describe('CombatScene — shared AOE dispatch/effect is defined once (F6 AC1)', () => {
+  it('each AOE hook is defined only in the shared core (default + override)', () => {
+    const files = productionSceneFiles();
+    for (const method of SHARED_AOE_METHODS) {
+      const definers = files
+        .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), method))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      // At least one definition (base default + shared override where the
+      // hook is a no-op default), and no production scene redefines it.
+      expect(definers.length, method).toBeGreaterThanOrEqual(1);
+      for (const definer of definers) {
+        expect(SHARED_CORE_FILES, method).toContain(definer);
+      }
+    }
+  });
+
+  it('the game and every AOE-exercising gym resolve the same AOE hook functions', () => {
+    for (const [name, prototype] of AOE_SCENE_PROTOTYPES) {
+      for (const method of SHARED_AOE_METHODS) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared CombatScene hook`,
+        ).toBe(
+          (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+        );
+      }
+    }
   });
 });

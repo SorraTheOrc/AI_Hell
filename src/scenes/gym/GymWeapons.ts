@@ -47,7 +47,11 @@
 
 import Phaser from 'phaser';
 
-import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
+import {
+  type CombatEnemyBullet,
+  type CombatEnemyEntity,
+} from '../core/CombatCoreScene';
+import { CombatScene } from '../core/CombatScene';
 import { Player } from '../../entities/Player';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
 import { PlayerBullet } from '../../entities/PlayerBullet';
@@ -62,6 +66,9 @@ import {
   playSpreadFireSound,
   playDualFireSound,
   playRapidFireSound,
+  playNovaFireSound,
+  playMortarFireSound,
+  playArcFireSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
@@ -76,11 +83,43 @@ import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 
-/** A weapon-drop type: one of the three weapons, or 'reset'. */
+/** A weapon-drop type: one of the weapons, or 'reset'. */
 type DropType = WeaponId | 'reset';
 
-/** Round-robin spawn order (AC3): Spread → Dual → Rapid → Reset. */
-const ROUND_ROBIN_ORDER: readonly DropType[] = ['spread', 'dual', 'rapid', 'reset'];
+/**
+ * Round-robin spawn order (AC3, parent AH-0MQUYHY0000MZ2F): the three
+ * conventional weapons, the three AOE weapons, then Reset. Interleaving the
+ * AOE family means the weapon gym demonstrates every fire mode.
+ */
+const ROUND_ROBIN_ORDER: readonly DropType[] = [
+  'spread',
+  'dual',
+  'rapid',
+  'nova',
+  'mortar',
+  'arc',
+  'reset',
+];
+
+/**
+ * Practice-target layout offsets (px, relative to the arena centre). The
+ * centre target sits nearest the ship so Nova catches it; the two upper
+ * targets sit within the Arc chain reach of the centre and of each other
+ * (so the chain visits all three) while staying outside the Nova ring.
+ *
+ * Intentional divergence (F6 AC5): the game has no static targets.
+ */
+const PRACTICE_TARGET_OFFSETS: readonly { x: number; y: number }[] = [
+  { x: 0, y: -60 },
+  { x: -60, y: -120 },
+  { x: 60, y: -120 },
+];
+
+/** Hit radius (px) of a practice target. */
+const PRACTICE_TARGET_RADIUS = 14;
+
+/** Delay (s) after the last target dies before the tripod respawns. */
+const PRACTICE_TARGET_RESPAWN_DELAY = 2.0;
 
 /** Deterministic spawn position — always the same spot for predictability. */
 const SPAWN_POSITION = { x: GAME_WIDTH / 2, y: 100 };
@@ -108,18 +147,57 @@ interface ActiveDrop {
 }
 
 /**
- * Weapon power-ups gym. Extends the narrower shared
- * {@link CombatCoreScene} so auto-fire and drop collection flow through
- * the one shared implementation (the gym is threat-free, so it does not
- * need the combat-only collision/teleport surface).
+ * An inert practice target for the weapon gym: a static neon ring that AOE
+ * weapons can damage/destroy so their area effects (Nova ring damage, Mortar
+ * blast, Arc chain) are visible. It never moves and never fires, so the gym
+ * stays threat-free.
+ *
+ * Intentional divergence (F6 AC5): the game has no such static targets —
+ * they exist only to make the weapon gallery legible. They are included in
+ * `getEnemyEntities()` so the shared AOE resolution reaches them exactly as
+ * it would reach a real enemy.
  */
-export class GymWeapons extends CombatCoreScene<
+class TrainingTarget
+  extends Phaser.GameObjects.Graphics
+  implements CombatEnemyEntity
+{
+  alive = true;
+
+  constructor(scene: Phaser.Scene, x: number, y: number) {
+    super(scene, { x, y });
+    this.lineStyle(2, 0x44ff88, 1);
+    this.strokeCircle(0, 0, PRACTICE_TARGET_RADIUS);
+    this.strokeCircle(0, 0, PRACTICE_TARGET_RADIUS * 0.5);
+  }
+
+  getHitRadius(): number {
+    return PRACTICE_TARGET_RADIUS;
+  }
+
+  destroySelf(): void {
+    this.alive = false;
+    this.destroy();
+  }
+}
+
+/**
+ * Weapon power-ups gym. Extends the shared {@link CombatScene} core so
+ * auto-fire, drop collection **and the shared AOE dispatch/VFX** flow through
+ * the one implementation (parent AH-0MQUYHY0000MZ2F AC1/AC3). It remains
+ * threat-free: the only entities are inert {@link TrainingTarget}s that exist
+ * solely so the AOE area effects are visible.
+ */
+export class GymWeapons extends CombatScene<
   CombatEnemyEntity,
   CombatEnemyBullet,
   ActiveDrop
 > {
   private player: Player | null = null;
   private drops: ActiveDrop[] = [];
+  /** Inert AOE practice targets (see {@link TrainingTarget}). */
+  private targets: TrainingTarget[] = [];
+  /** Seconds elapsed since every practice target was destroyed. */
+  private targetRespawnTimer = 0;
   /** Shared registry for the collect path (AC3). */
   private effectsRegistry = new EffectsRegistry();
   /** Per-scene round-robin spawner (fresh index per scene instance). */
@@ -146,8 +224,8 @@ export class GymWeapons extends CombatCoreScene<
     // Shared "← INDEX" button (reused by every gym).
     addBackToIndexButton(this);
     // Shared "Help (?)" button + overlay: lists every drop this gym can
-    // spawn (cannon + Spread/Dual/Rapid/Reset), sourced from the shared
-    // catalogues (AH-0MUAYB67I002REOZ).
+    // spawn (cannon + the conventional and AOE weapon drops + Reset),
+    // sourced from the shared catalogues (AH-0MUAYB67I002REOZ).
     this.helpHandle = addHelpButton(this, {
       gymKey: 'GymWeapons',
       drops: ['cannon', ...ROUND_ROBIN_ORDER],
@@ -164,6 +242,9 @@ export class GymWeapons extends CombatCoreScene<
     this._spawnRoundRobin();
     this.spawnTimer = WEAPON_DROP_LIFETIME;
 
+    // Inert practice targets so the AOE area effects are visible (F6 AC3).
+    this._spawnPracticeTargets();
+
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
@@ -178,6 +259,8 @@ export class GymWeapons extends CombatCoreScene<
     super.resetRunState();
     this.player = null;
     this.drops = [];
+    this.targets = [];
+    this.targetRespawnTimer = 0;
     this.spawnTimer = 0;
     this.helpHandle = null;
   }
@@ -190,6 +273,8 @@ export class GymWeapons extends CombatCoreScene<
     super.teardownRunState();
     for (const drop of this.drops) drop.graphics.destroy();
     this.drops = [];
+    for (const target of this.targets) target.destroy();
+    this.targets = [];
     this.player?.destroy();
     this.player = null;
     this.helpHandle = null;
@@ -233,6 +318,11 @@ export class GymWeapons extends CombatCoreScene<
     this.collectOverlapping();
     // Advance the absorb VFX for collected drops (cosmetic only).
     this._updateCollectAnimations(dt);
+
+    // Respawn the practice targets a short delay after the AOE weapons
+    // have cleared them, so every AOE weapon can be demonstrated again
+    // (F6 AC3).
+    this._advanceTargetRespawn(dt);
   }
 
   // ── Auto-fire cue (AC1, AC3) ─────────────────────────────────────
@@ -265,6 +355,15 @@ export class GymWeapons extends CombatCoreScene<
         break;
       case 'rapid':
         playRapidFireSound();
+        break;
+      case 'nova':
+        playNovaFireSound();
+        break;
+      case 'mortar':
+        playMortarFireSound();
+        break;
+      case 'arc':
+        playArcFireSound();
         break;
     }
   }
@@ -363,6 +462,70 @@ export class GymWeapons extends CombatCoreScene<
 
   getPlayer(): Player | null {
     return this.player;
+  }
+
+  // ── Shared-combat participant contract (AOE demonstration) ──────
+
+  /**
+   * The gym's only entities: inert {@link TrainingTarget}s (F6 AC3). They are
+   * exposed through the shared participant contract so the shared AOE
+   * resolution reaches them exactly as it reaches a real enemy. There are no
+   * enemy bullets in this threat-free gym.
+   */
+  protected override getEnemyEntities(): readonly CombatEnemyEntity[] {
+    return this.targets;
+  }
+
+  /** No enemy bullets exist in the threat-free weapon gym. */
+  protected override getEnemyBullets(): readonly CombatEnemyBullet[] {
+    return [];
+  }
+
+  /** No enemy bullets exist, so this is a no-op. */
+  protected override setEnemyBullets(
+    _bullets: CombatEnemyBullet[],
+  ): void {}
+
+  /** Live practice targets (test seam). */
+  getTargets(): readonly TrainingTarget[] {
+    return this.targets;
+  }
+
+  /** Live AOE effect graphics (test seam, F6 AC3). */
+  getAoeEffects(): Phaser.GameObjects.Graphics[] {
+    return this.aoeEffects;
+  }
+
+  /** Spawns the inert AOE practice-target tripod (F6 AC3). */
+  private _spawnPracticeTargets(): void {
+    for (const offset of PRACTICE_TARGET_OFFSETS) {
+      const target = new TrainingTarget(
+        this,
+        GAME_WIDTH / 2 + offset.x,
+        GAME_HEIGHT / 2 + offset.y,
+      );
+      this.add.existing(target);
+      this.targets.push(target);
+    }
+  }
+
+  /**
+   * Respawns the practice targets after a short delay once every one has
+   * been destroyed, so the AOE weapons can be demonstrated repeatedly. A
+   * no-op while any target is still alive, and the delay lets the player
+   * (and tests) observe the cleared state.
+   */
+  private _advanceTargetRespawn(dt: number): void {
+    if (this.targets.length === 0) return;
+    if (!this.targets.every((target) => !target.alive)) {
+      this.targetRespawnTimer = 0;
+      return;
+    }
+    this.targetRespawnTimer += dt;
+    if (this.targetRespawnTimer < PRACTICE_TARGET_RESPAWN_DELAY) return;
+    this.targetRespawnTimer = 0;
+    this.targets = [];
+    this._spawnPracticeTargets();
   }
 
   /** Arrow-key bindings for the player (undefined when no keyboard). */

@@ -21,10 +21,17 @@ export type PowerUpId = 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
- * (spread, dual, rapid) plus the reset drop. The permanent cannon is
- * never spawned as a drop.
+ * (spread, dual, rapid) plus the reset drop and the AOE family
+ * (nova, mortar, arc). The permanent cannon is never spawned as a drop.
  */
-export type WeaponDropId = 'spread' | 'dual' | 'rapid' | 'reset';
+export type WeaponDropId =
+  | 'spread'
+  | 'dual'
+  | 'rapid'
+  | 'reset'
+  | 'nova'
+  | 'mortar'
+  | 'arc';
 
 /**
  * Every drop the combat gyms can spawn: power-up IDs (P3–P9) plus the
@@ -148,6 +155,9 @@ export const WEAPON_DROP_IDS: readonly WeaponDropId[] = [
   'spread',
   'dual',
   'rapid',
+  'nova',
+  'mortar',
+  'arc',
   'reset',
 ] as const;
 

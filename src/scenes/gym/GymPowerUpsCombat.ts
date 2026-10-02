@@ -62,6 +62,7 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
 import { advanceWrappingBullets } from '../core/bulletLifecycle';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import {
   applyPhaseGhost,
   drawShieldBubble,
@@ -213,19 +214,14 @@ export class GymPowerUpsCombat extends CombatScene<
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
 
     // Spawn the small scout formation.
-    const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
-    for (const offset of offsets) {
-      const scout = new Scout(this, {
-        x: this.formationBaseX + offset.col * COMBAT_SPACING_X,
-        y: this.formationBaseY + offset.row * COMBAT_SPACING_Y,
-        formationOffset: offset,
-      });
-      this.add.existing(scout);
-      scout.shootEnabled = true;
-      this.scouts.push(scout);
-    }
+    this._spawnScoutFormation();
     playSpawnSound();
     this.shootEnabled = true;
+
+    // Small threats = a wave: arm the shared wave-timeout so survivors
+    // detonate and the formation refreshes, mirroring the shipped game
+    // (AH-0MUNR5LM1004B223).
+    this.startWaveTimeout();
 
     // SHOOT toggle (mirrors GymFormationScene)
     this.shootButton = this.add.text(10, 10, 'SHOOT: ON', {
@@ -366,8 +362,83 @@ export class GymPowerUpsCombat extends CombatScene<
     this._updateVisuals();
     this._updatePhaseShiftJuice(dt);
 
+    // ── Shared wave-timeout: detonate survivors, then refresh ──────
+    // Runs before wipe/countdown tick so a timeout wipe is observed by
+    // the shared lifecycle (AH-0MUNR5LM1004B223).
+    this._advanceWaveTimeout(dt);
+    this._drawWaveTimeoutBar();
+    this._tickRespawnCountdown(dt);
+
     // ── HUD ─────────────────────────────────────────────────────
     this.hud?.refresh();
+  }
+
+  // ── Scout formation lifecycle (AH-0MUNR5LM1004B223) ─────────────
+
+  /**
+   * Spawns the small V-formation of scouts at the current formation base.
+   * Called on create and after a wave-timeout refresh.
+   */
+  private _spawnScoutFormation(): void {
+    const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
+    for (const offset of offsets) {
+      const scout = new Scout(this, {
+        x: this.formationBaseX + offset.col * COMBAT_SPACING_X,
+        y: this.formationBaseY + offset.row * COMBAT_SPACING_Y,
+        formationOffset: offset,
+      });
+      this.add.existing(scout);
+      scout.shootEnabled = this.shootEnabled;
+      this.scouts.push(scout);
+    }
+  }
+
+  /**
+   * Opt the combat gym into the shared wave-timeout (AH-0MUNR5LM1004B223).
+   * The scouts are a wave of threats, so the same 30 s window the game and
+   * the enemy gyms run applies here.
+   */
+  protected override getWaveTimeoutDuration(): number {
+    return WAVE_TIME_LIMIT_SECONDS;
+  }
+
+  /**
+   * Wave-timeout expiry: survivors are **kept** (the shared helper is a no-op;
+   * carry-over parity with `PlayScene`, AH-0MUNS3ZQ1002DJ9S) and the wave
+   * refreshes through the shared 3 s countdown.
+   */
+  protected override onWaveTimeoutExpired(): void {
+    this._startRespawnCountdown();
+  }
+
+  /**
+   * Refreshes the scout wave after the shared countdown elapses: clears stale
+   * bullets, keeps the live scouts in place, spawns a fresh V-formation
+   * alongside them, then restarts the shared wave-timeout (carry-over parity,
+   * AH-0MUNS3ZQ1002DJ9S). A full wipe (no survivors) resets the base, matching
+   * the previous clean-slate behaviour.
+   */
+  protected override respawnWave(): void {
+    for (const bullet of this.scoutBullets) bullet.graphics.destroy();
+    this.scoutBullets = [];
+
+    // Keep live scouts; drop only the dead ones.
+    const survivors = this.scouts.filter((scout) => scout.alive);
+    for (const scout of this.scouts) {
+      if (!scout.alive) scout.destroy();
+    }
+    this.scouts = survivors;
+
+    // A clean-slate respawn (ordinary wipe) resets the base; a carry-over
+    // refresh keeps the current base so survivors do not jump.
+    if (survivors.length === 0) {
+      this.formationBaseX = COMBAT_START_X;
+      this.formationBaseY = COMBAT_START_Y;
+    }
+
+    this._spawnScoutFormation();
+    playSpawnSound();
+    this.startWaveTimeout();
   }
 
   // ── Visuals ──────────────────────────────────────────────────────

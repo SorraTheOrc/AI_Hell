@@ -1245,7 +1245,7 @@ export function playScoutAdvanceCue(): void {
  * Duration (seconds) of the sustained dive sound — matches `DIVER_DIVE_DURATION`.
  *
  * The dive sound plays from the FORMATION→DIVING transition until the
- * DIVING→RETURNING transition, so the envelope must cover the full
+ * end of the dive (DIVING→PAUSING), so the envelope must cover the full
  * ~2 s dive arc. Tied to `Diver.DIVER_DIVE_DURATION` in `Diver.ts`.
  */
 export const DIVER_DIVE_SOUND_DURATION = 2;
@@ -1314,7 +1314,7 @@ export function playDiverDiveStartSound(): void {
 // last active dive calls stopDiveSound(). This keeps entity wiring
 // simple (plain start/stop calls, no per-dive handles) while tolerating
 // overlapping dives. The sound is bounded: start at FORMATION→DIVING,
-// stop at DIVING→RETURNING, destroySelf(), or destroy(). No oscillator
+// stop at the end of the dive, destroySelf(), or destroy(). No oscillator
 // leak on destruction.
 
 interface DiverDiveSoundState {
@@ -1418,7 +1418,7 @@ export function playDiveSound(): void {
 /**
  * Releases one dive's hold on the sustained dive sound.
  *
- * Called when a dive ends (DIVING→RETURNING), when the diver is
+ * Called when a dive ends, when the diver is
  * destroyed mid-dive, or on scene teardown. The shared voice is torn
  * down only when the last active dive releases it, so overlapping
  * dives never cut each other off. Safe no-op if no sound is playing.
@@ -1673,6 +1673,316 @@ export function playDualFireSound(): void {
  */
 export function playRapidFireSound(): void {
   blip(500, 900, 0.05, 'triangle', 0.12);
+}
+
+// ── AOE weapon fire cues (parent AH-0MUOOB3OR001V8CD) ─────────────
+//
+// The AOE family needs fire cues that read as "an area opened up", not as
+// another bullet leaving the barrel. Nova is a low expanding thump layered
+// with a rising ring sweep — unmistakable next to the short cannon/spread/
+// dual/rapid blips and the rising P6 phase chirp. Every layer stays within
+// the GDD §7.3 player-cue ceiling (≤ 0.2) and the whole cue is a safe no-op
+// without an AudioContext (headless tests / autoplay-blocked browsers).
+
+/** Nova thump start frequency (Hz) — a deep sub-bass drop. */
+export const NOVA_FIRE_THUMP_START_HZ = 160;
+
+/** Nova thump end frequency (Hz). */
+export const NOVA_FIRE_THUMP_END_HZ = 40;
+
+/** Nova thump layer duration (seconds). */
+export const NOVA_FIRE_THUMP_DURATION = 0.35;
+
+/** Nova thump layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const NOVA_FIRE_THUMP_VOLUME = 0.18;
+
+/** Nova rising-ring sweep start frequency (Hz). */
+export const NOVA_FIRE_RING_START_HZ = 300;
+
+/** Nova rising-ring sweep end frequency (Hz) — the outward "expansion". */
+export const NOVA_FIRE_RING_END_HZ = 1800;
+
+/** Nova rising-ring layer duration (seconds). */
+export const NOVA_FIRE_RING_DURATION = 0.25;
+
+/** Nova rising-ring layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const NOVA_FIRE_RING_VOLUME = 0.12;
+
+/**
+ * Minimum interval (seconds) between Nova fire cues — rate limiting so a
+ * burst of background/simultaneous frames cannot stack identical cues on
+ * top of each other (GDD §7.3). The 3 s beat cadence means this is rarely
+ * reached in normal play.
+ */
+export const NOVA_FIRE_MIN_INTERVAL = 0.05;
+
+/** Module-scoped timestamp of the last Nova cue (rate limiter state). */
+let lastNovaFireAt = Number.NEGATIVE_INFINITY;
+
+/** Resets the Nova fire-cue rate limiter (test seam). */
+export function _resetNovaFireLimiterForTests(): void {
+  lastNovaFireAt = Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Plays the dedicated Nova fire cue: a deep expanding thump (sawtooth
+ * falling 160 → 40 Hz) layered with a rising triangle ring sweep (300 →
+ * 1800 Hz). Distinct from every other weapon cue by both its low-end body
+ * and its rising contour. Rate-limited by {@link NOVA_FIRE_MIN_INTERVAL}
+ * and routed through the master SFX gain. Safe no-op without an
+ * AudioContext.
+ */
+export function playNovaFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  if (now - lastNovaFireAt < NOVA_FIRE_MIN_INTERVAL) return;
+  lastNovaFireAt = now;
+  const t = now;
+
+  // Layer 1: deep expanding thump — the "pulse" body.
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'sawtooth';
+  thump.frequency.setValueAtTime(NOVA_FIRE_THUMP_START_HZ, t);
+  thump.frequency.exponentialRampToValueAtTime(
+    NOVA_FIRE_THUMP_END_HZ,
+    t + NOVA_FIRE_THUMP_DURATION,
+  );
+  thumpGain.gain.setValueAtTime(NOVA_FIRE_THUMP_VOLUME, t);
+  thumpGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + NOVA_FIRE_THUMP_DURATION,
+  );
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
+  thump.start(t);
+  thump.stop(t + NOVA_FIRE_THUMP_DURATION + 0.02);
+
+  // Layer 2: rising ring sweep — the outward "expansion" texture.
+  const ring = ctx.createOscillator();
+  const ringGain = ctx.createGain();
+  ring.type = 'triangle';
+  ring.frequency.setValueAtTime(NOVA_FIRE_RING_START_HZ, t);
+  ring.frequency.exponentialRampToValueAtTime(
+    NOVA_FIRE_RING_END_HZ,
+    t + NOVA_FIRE_RING_DURATION,
+  );
+  ringGain.gain.setValueAtTime(NOVA_FIRE_RING_VOLUME, t);
+  ringGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + NOVA_FIRE_RING_DURATION,
+  );
+  ring.connect(ringGain).connect(ensureMasterGain(ctx));
+  ring.start(t);
+  ring.stop(t + NOVA_FIRE_RING_DURATION + 0.02);
+}
+
+// ── Mortar AOE fire + detonation cues (F3, parent AH-0MUOOB3OR001V8CD) ─
+//
+// The Mortar has two distinct moments: the muffled launch of the shell and
+// the much heavier blast when it detonates. Both are deliberately lower and
+// rounder than the short conventional shoot blips so the pair reads as
+// "lobbed then exploded".
+
+/** Mortar launch pitch start (Hz) — a muffled, low launch pop. */
+export const MORTAR_FIRE_START_HZ = 220;
+
+/** Mortar launch pitch end (Hz). */
+export const MORTAR_FIRE_END_HZ = 90;
+
+/** Mortar launch cue duration (seconds). */
+export const MORTAR_FIRE_DURATION = 0.18;
+
+/** Mortar launch cue gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const MORTAR_FIRE_VOLUME = 0.15;
+
+/** Mortar detonation pitch start (Hz) — the blast body. */
+export const MORTAR_DETONATION_START_HZ = 180;
+
+/** Mortar detonation pitch end (Hz). */
+export const MORTAR_DETONATION_END_HZ = 40;
+
+/** Mortar detonation cue duration (seconds). */
+export const MORTAR_DETONATION_DURATION = 0.32;
+
+/** Mortar detonation cue gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const MORTAR_DETONATION_VOLUME = 0.19;
+
+/**
+ * Plays the Mortar launch cue: a muffled triangle thump falling 220 → 90 Hz
+ * with a short high tick for the shell leaving the barrel. Distinct from the
+ * Nova thump (which is longer, deeper and paired with a rising ring). Safe
+ * no-op without an AudioContext.
+ */
+export function playMortarFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'triangle';
+  thump.frequency.setValueAtTime(MORTAR_FIRE_START_HZ, t);
+  thump.frequency.exponentialRampToValueAtTime(
+    MORTAR_FIRE_END_HZ,
+    t + MORTAR_FIRE_DURATION,
+  );
+  thumpGain.gain.setValueAtTime(MORTAR_FIRE_VOLUME, t);
+  thumpGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MORTAR_FIRE_DURATION,
+  );
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
+  thump.start(t);
+  thump.stop(t + MORTAR_FIRE_DURATION + 0.02);
+
+  // A brief high tick as the shell leaves the barrel.
+  const tick = ctx.createOscillator();
+  const tickGain = ctx.createGain();
+  tick.type = 'square';
+  tick.frequency.setValueAtTime(900, t);
+  tick.frequency.exponentialRampToValueAtTime(600, t + 0.04);
+  tickGain.gain.setValueAtTime(0.06, t);
+  tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+  tick.connect(tickGain).connect(ensureMasterGain(ctx));
+  tick.start(t);
+  tick.stop(t + 0.06);
+}
+
+/**
+ * Plays the Mortar detonation cue: a heavy sawtooth blast (180 → 40 Hz) with
+ * a low-passed noise wash for the explosion tail. Distinct from every fire cue
+ * (much heavier and longer) and from the Major explosion (shorter, single
+ * layer). The 1.5 s beat cadence means detonations cannot stack, so no
+ * explicit rate limiter is needed. Safe no-op without an AudioContext.
+ */
+export function playMortarDetonationSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Layer 1: the blast body.
+  const blast = ctx.createOscillator();
+  const blastGain = ctx.createGain();
+  blast.type = 'sawtooth';
+  blast.frequency.setValueAtTime(MORTAR_DETONATION_START_HZ, t);
+  blast.frequency.exponentialRampToValueAtTime(
+    MORTAR_DETONATION_END_HZ,
+    t + MORTAR_DETONATION_DURATION,
+  );
+  blastGain.gain.setValueAtTime(MORTAR_DETONATION_VOLUME, t);
+  blastGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MORTAR_DETONATION_DURATION,
+  );
+  blast.connect(blastGain).connect(ensureMasterGain(ctx));
+  blast.start(t);
+  blast.stop(t + MORTAR_DETONATION_DURATION + 0.02);
+
+  // Layer 2: low-passed noise wash for the debris tail.
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * MORTAR_DETONATION_DURATION)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'lowpass';
+  noiseFilter.frequency.setValueAtTime(800, t);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.08, t);
+  noiseGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MORTAR_DETONATION_DURATION,
+  );
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + MORTAR_DETONATION_DURATION + 0.02);
+}
+
+// ── Arc AOE fire cue (F4, parent AH-0MUOOB3OR001V8CD) ───────────────
+
+/** Arc zap pitch start (Hz) — a bright electric strike. */
+export const ARC_FIRE_ZAP_START_HZ = 1400;
+
+/** Arc zap pitch end (Hz). */
+export const ARC_FIRE_ZAP_END_HZ = 500;
+
+/** Arc zap layer duration (seconds). */
+export const ARC_FIRE_ZAP_DURATION = 0.12;
+
+/** Arc zap layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const ARC_FIRE_ZAP_VOLUME = 0.13;
+
+/** Arc crackle noise layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const ARC_FIRE_CRACKLE_VOLUME = 0.08;
+
+/**
+ * Plays the dedicated Arc fire cue: a bright square zap (1400 → 500 → 1120
+ * Hz) layered with a high-passed noise crackle, reading as a chaining
+ * electric strike. Distinct from every other weapon cue by its high, buzzy
+ * texture. Safe no-op without an AudioContext.
+ */
+export function playArcFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Layer 1: the bright electric zap.
+  const zap = ctx.createOscillator();
+  const zapGain = ctx.createGain();
+  zap.type = 'square';
+  zap.frequency.setValueAtTime(ARC_FIRE_ZAP_START_HZ, t);
+  zap.frequency.exponentialRampToValueAtTime(
+    ARC_FIRE_ZAP_END_HZ,
+    t + 0.06,
+  );
+  zap.frequency.exponentialRampToValueAtTime(
+    ARC_FIRE_ZAP_START_HZ * 0.8,
+    t + 0.1,
+  );
+  zapGain.gain.setValueAtTime(ARC_FIRE_ZAP_VOLUME, t);
+  zapGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + ARC_FIRE_ZAP_DURATION,
+  );
+  zap.connect(zapGain).connect(ensureMasterGain(ctx));
+  zap.start(t);
+  zap.stop(t + ARC_FIRE_ZAP_DURATION + 0.02);
+
+  // Layer 2: high-passed noise crackle — the electrical texture.
+  const crackleDuration = 0.08;
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * crackleDuration)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'highpass';
+  noiseFilter.frequency.setValueAtTime(2000, t);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(ARC_FIRE_CRACKLE_VOLUME, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + crackleDuration);
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + crackleDuration + 0.02);
 }
 
 // ── Player weapon pickup activation cues (GDD §4.4, §7.3) ──────────

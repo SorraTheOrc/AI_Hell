@@ -39,8 +39,16 @@ import { fireForEnemy } from '../../entities/enemyFire';
 import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
 export const GYM_ENEMIES_DEFAULT_KEY = 'scout';
+
+/**
+ * Enemy-config key of the boss archetype. The boss is deliberately excluded
+ * from the gym wave-timeout — the operator asked for a timeout on every
+ * enemy gym *except* the boss (AH-0MUNR5LM1004B223).
+ */
+export const GYM_ENEMIES_BOSS_KEY = 'boss';
 
 /**
  * Panel DOM ids — stable selectors for tests. The panel is a plain-DOM
@@ -158,6 +166,10 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     statusLabel: cfg.displayName.toLowerCase(),
     hintText: `${cfg.displayName} — ${cfg.formationKind} formation (config-driven)`,
     player: { ...PLAYER_SPAWN },
+    // Every enemy gym gets the shared wave-timeout except the boss
+    // (AH-0MUNR5LM1004B223). The base class runs the shared
+    // major-explosion cue + limiter on expiry.
+    timeoutDuration: key === GYM_ENEMIES_BOSS_KEY ? undefined : WAVE_TIME_LIMIT_SECONDS,
     // Opt-in power-up layer: one drop at a time on the rules interval,
     // weighted-random ID (P3–P9 plus weapon drops) and
     // enemy/player-avoiding placement.

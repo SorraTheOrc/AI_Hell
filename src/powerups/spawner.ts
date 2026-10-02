@@ -5,11 +5,12 @@
  * module so that gym scenes keep deterministic round-robin while the
  * main game can use a weighted-random approach.
  *
- * GDD §4.4 drop-rate guidance (encoded as data, not code initially):
- *   - Standard power-ups: ~15–20 % per enemy
- *   - P8 Extra Life: ~5 %
+ * GDD §4.4 drop rarity is encoded as data, not hard-coded: the shipped
+ * defaults are **relative weights** — standard power-ups (P3–P7, P9) at 4,
+ * P8 Extra Life at 3, and each weapon drop at 2 — normalised internally by
+ * `WeightedRandomSpawner` (P8 therefore takes ≈ 11.1 % of power-up draws).
  *
- * These weights are **not** hard-coded; they are configured at runtime
+ * These weights are **not** hard-coded here; they are configured at runtime
  * via `WeightedRandomSpawner.setWeight()` when needed (AC4).
  *
  * Gym scenes: import `RoundRobinSpawner` and create an instance with

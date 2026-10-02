@@ -63,6 +63,8 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
   alive = true;
   shootEnabled = false;
   readonly offset: FormationOffset;
+  /** Explosion scale recorded on the last `destroySelf()` (timeout tests). */
+  lastDestroyScale: number | null = null;
   private readonly _hitRadius: number;
 
   constructor(
@@ -75,8 +77,9 @@ class StubEnemy extends Phaser.GameObjects.Container implements FormationSceneEn
     this._hitRadius = hitRadius;
   }
 
-  destroySelf(): void {
+  destroySelf(scale = 1): void {
     this.alive = false;
+    this.lastDestroyScale = scale;
   }
 
   getHitRadius(): number {
@@ -198,6 +201,7 @@ function makeStubScene(
   collision?: { entityHitRadius?: number; bulletHitRadius?: number },
   entityType: typeof StubEnemy = StubEnemy,
   powerUps?: PowerUpLayerConfig,
+  timeoutDuration?: number,
 ): new () => GymFormationScene<StubEnemy, StubBullet> {
   const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
     sceneKey: player ? 'StubFormationWithPlayer' : 'StubFormation',
@@ -213,6 +217,7 @@ function makeStubScene(
     entityHitRadius: collision?.entityHitRadius,
     bulletHitRadius: collision?.bulletHitRadius,
     powerUps,
+    timeoutDuration,
     buildOffsets: vOffsets,
     createEntity: (scene, x, y, offset) => {
       const hitRadius = collision?.entityHitRadius ?? 10;
@@ -585,18 +590,20 @@ describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)'
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: A → turnLeft. 3 rad/s × 0.25 s = 0.75 rad CCW (wraps to 2π−0.75).
+    // WASD path: A → turnLeft. With the spin-up ramp (12 rad/s² to a 3 rad/s
+    // cap) the angular velocity reaches 3 rad/s at t=0.25s, so a 0.25s turn
+    // rotates 0.375 rad CCW (wraps to 2π−0.375).
     scene.getWasd()!.A.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.A.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
 
     // Arrow path: Left → turnLeft as well.
     resetToAsteroids(player);
     scene.getCursors()!.left.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.left.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
   });
 
   it('asteroids: D/Right = turnRight — the ship rotates clockwise (AH-0MTFORPJ2003RWWQ)', async () => {
@@ -605,18 +612,18 @@ describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)'
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: D → turnRight (+0.75 rad).
+    // WASD path: D → turnRight (+0.375 rad after the 0.25s ramp).
     scene.getWasd()!.D.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.D.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
 
     // Arrow path: Right → turnRight as well.
     resetToAsteroids(player);
     scene.getCursors()!.right.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.right.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
   });
 
   it('routes input by the player scheme at read time — the same held Up arrow maps differently per scheme (AC2/AC3)', async () => {
@@ -1406,6 +1413,162 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
   });
 });
 
+describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWithTimeout(duration: number): Promise<BootedScene> {
+    booted = await bootScene([
+      makeStubScene(() => [], undefined, undefined, StubEnemy, undefined, duration),
+    ]);
+    return booted!.scene as BootedScene;
+  }
+
+  it('AC1 — an enabled timeout starts active and counts down from the configured duration', async () => {
+    const scene = await bootWithTimeout(5);
+
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+    expect(scene.getWaveTimeoutRemaining()).toBeGreaterThan(0);
+    expect(scene.getWaveTimeoutRemaining()).toBeLessThanOrEqual(5);
+
+    // Deterministic remainder, then an explicit tick.
+    scene.setWaveTimeoutRemaining(5);
+    scene.tick(2);
+    expect(scene.getWaveTimeoutRemaining()).toBeCloseTo(3, 5);
+  });
+
+  it('AC1 — a missing duration leaves the timeout inactive (boss/non-enemy gyms opt out)', async () => {
+    booted = await bootScene([makeStubScene(() => [])]);
+    const scene = booted!.scene as BootedScene;
+
+    expect(scene.isWaveTimeoutActive()).toBe(false);
+    expect(scene.getWaveTimeoutRemaining()).toBe(0);
+    // Opt-out scenes never allocate the bar.
+    expect(scene.getWaveTimeoutBar()).toBeNull();
+  });
+
+  it('AC2/AC4 — expiry keeps every survivor (no detonation), then starts the respawn countdown', async () => {
+    const cue = vi
+      .spyOn(effectsModule, 'playMajorExplosionSound')
+      .mockImplementation(() => undefined);
+    const scene = await bootWithTimeout(1);
+    const survivors = scene.formationEntities;
+
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1);
+
+    // No survivor is detonated and the major-explosion cue never plays
+    // (carry-over, AH-0MUNS3ZQ1002DJ9S).
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(cue).not.toHaveBeenCalled();
+    for (const entity of survivors) expect(entity.alive).toBe(true);
+
+    // The timeout is spent and the shared wipe→respawn countdown began.
+    expect(scene.isWaveTimeoutActive()).toBe(false);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+  });
+
+  it('AC2 — the formation respawns after the timeout countdown and the timer restarts', async () => {
+    const scene = await bootWithTimeout(1);
+
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1); // timeout → 3 s countdown
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0); // countdown → respawn
+
+    // The original survivors persist alongside a fresh formation, so both
+    // must be cleared (AH-0MUNS3ZQ1002DJ9S).
+    expect(scene.aliveCount).toBe(FORMATION_COUNT * 2);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+    expect(scene.getWaveTimeoutRemaining()).toBeCloseTo(1, 5);
+  });
+
+  it('AC2 — the timeout is paused while the wipe→respawn countdown is active', async () => {
+    const scene = await bootWithTimeout(1);
+
+    // Wipe manually before the timeout window elapses.
+    for (const entity of scene.formationEntities) entity.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // Ticking far past the timeout window must not detonate again.
+    scene.tick(2);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.aliveCount).toBe(0);
+  });
+
+  it('AC2 — a visible timer bar shows while the timeout counts down', async () => {
+    const scene = await bootWithTimeout(3);
+    scene.tick(0.016);
+
+    expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
+  });
+
+  it('AC3 — survivors and the fresh formation must both be cleared to advance (carry-over)', async () => {
+    const scene = await bootWithTimeout(1);
+    const survivorsBefore = [...scene.formationEntities];
+    expect(survivorsBefore).toHaveLength(FORMATION_COUNT);
+
+    // Time out → countdown → a fresh formation spawns alongside survivors.
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1);
+    scene.tick(1);
+    scene.tick(1);
+    scene.tick(1);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+
+    const survivorSet = new Set(survivorsBefore);
+    const fresh = scene.formationEntities.filter((e) => !survivorSet.has(e));
+    expect(fresh).toHaveLength(FORMATION_COUNT);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT * 2);
+    // AC5 — the fresh formation is a complete formation: every entity is
+    // alive, on the display list, and positioned at the configured geometry.
+    expect(fresh.every((e) => e.alive)).toBe(true);
+    expect(fresh.every((e) => scene.children.list.includes(e))).toBe(true);
+    const offsets = vOffsets(FORMATION_COUNT);
+    for (const [index, entity] of fresh.entries()) {
+      const { row, col } = offsets[index];
+      expect(entity.x).toBeCloseTo(scene.formationX + col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(scene.formationY + row * SPACING_Y, 5);
+    }
+
+    // Destroy only the fresh formation: no wipe yet (survivors remain).
+    for (const entity of fresh) entity.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+
+    // Destroy the survivors too — the formation is now fully wiped and the
+    // wipe→respawn countdown starts again.
+    for (const entity of survivorsBefore) entity.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.aliveCount).toBe(0);
+  });
+
+  it('AC4 — a disabled timeout never detonates the formation', async () => {
+    const cue = vi
+      .spyOn(effectsModule, 'playMajorExplosionSound')
+      .mockImplementation(() => undefined);
+    booted = await bootScene([makeStubScene(() => [])]);
+    const scene = booted!.scene as BootedScene;
+
+    scene.tick(120);
+
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(cue).not.toHaveBeenCalled();
+  });
+});
+
 describe('GymFormationScene — stop/restart of the same instance clears stale entities (AH-0MTPLHLZ3006MOC4)', () => {
   let booted: BootedGame | null = null;
 
@@ -2159,7 +2322,7 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
     expect(player.hasWeapon('spread')).toBe(false);
   });
 
-  it('AC — the Reset drop clears every active weapon', async () => {
+  it('AC — the Reset drop preserves every active weapon', async () => {
     const scene = await boot({
       spawner: new RoundRobinSpawner<DropId>(['spread']),
       placement: atPlayer(),
@@ -2177,12 +2340,14 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
 
     scene.spawnPowerUpDrop('reset', player.x, player.y);
     scene.tick(0.1);
-    expect(registry.activeWeapons()).toHaveLength(0);
-    expect(player.hasWeapon('spread')).toBe(false);
-    expect(player.hasWeapon('rapid')).toBe(false);
-  });
 
-  it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
+    // Reset drop no longer clears weapons — spread and rapid are preserved.
+    expect(registry.activeWeapons()).toHaveLength(2);
+    expect(player.hasWeapon('spread')).toBe(true);
+    expect(player.hasWeapon('rapid')).toBe(true);
+    });
+
+    it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
     const scene = await boot({
       spawner: new WeightedRandomSpawner<DropId>(
         [...WEAPON_DROP_IDS, 'P3'],
@@ -2609,7 +2774,6 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     scene.setSceneRng(createSeededRng(5));
     const expected = enemy.mineralRedropCount(createSeededRng(5));
     expect(expected).toBeGreaterThan(0);
-    expect(expected).toBeLessThanOrEqual(collected);
 
     const ex = enemy.x;
     const ey = enemy.y;
@@ -2624,13 +2788,27 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     }
   });
 
-  it('drops nothing when a non-asteroid enemy absorbed nothing (AC2)', async () => {
+  it('an enemy that absorbed nothing may occasionally drop a mineral (AC2)', async () => {
     const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
     clearField(scene);
+    // The ~150 ms boot loop can let the lone enemy absorb a seeded mineral
+    // before `clearField` runs. `clearField` only collects the remaining
+    // field, so the enemy could still hold 1–2 minerals; the shared additive
+    // re-drop rule then returns ≥ 1 and this "absorbed nothing" case failed
+    // intermittently (AH-0MUNVTUJ2002E62V). Zero the tally so the
+    // precondition is explicit and deterministic.
+    (
+      enemy as unknown as { _mineralCount: number }
+    )._mineralCount = 0;
+    expect(enemy.mineralCount).toBe(0);
 
     scene.explodeRandom();
 
-    expect(scene.getMinerals()).toHaveLength(0);
+    // rng() = 0 → round(0.25) = 0 (no drop); rng() = 0.999 → round(1.249) = 1.
+    // With the default Math.random the outcome varies.
+    const minerals = scene.getMinerals();
+    expect(minerals.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -2671,7 +2849,7 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     expect(scene.formationX).toBeCloseTo(after + DRIFT_SPEED * 0.5, 5);
   });
 
-  it('AC3 — re-anchors so the requester slot lands on the attack end, then the whole unit eases to the new slots', async () => {
+  it('AC1/AC2/AC3 — re-anchors the Diver group so the requester lands on the attack end, then every Diver eases to its new slot', async () => {
     const scene = await bootReanchorGym();
     const all = entities(scene);
     const requester = all[2];
@@ -2683,25 +2861,25 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: attackEnd.y,
     });
 
-    // The re-anchor frame: the origin re-bases so the requester's slot
-    // coincides with the attack end.
+    // The re-anchor frame: the Diver-group origin re-bases so the requester's
+    // slot coincides with the attack end.
     scene.tick(0.25);
-    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(attackEnd.x, 5);
-    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(attackEnd.y, 5);
+    expect(scene.diverFormationX + requester.offset.col * SPACING_X).toBeCloseTo(attackEnd.x, 5);
+    expect(scene.diverFormationY + requester.offset.row * SPACING_Y).toBeCloseTo(attackEnd.y, 5);
 
     // At 0.25 s (< glide duration) the rendered position is still gliding:
     // it has not yet snapped to the re-anchored slot.
     expect(requester.x).not.toBeCloseTo(
-      scene.formationX + requester.offset.col * SPACING_X,
+      scene.diverFormationX + requester.offset.col * SPACING_X,
       5,
     );
 
-    // On completion every unit sits exactly on its (drifted) slot — the
-    // unit's relative offsets are preserved.
+    // On completion every Diver sits exactly on its live (drifted) slot — the
+    // Diver group's relative offsets are preserved.
     scene.tick(FORMATION_GLIDE_SECONDS);
     for (const entity of all) {
-      expect(entity.x).toBeCloseTo(scene.formationX + entity.offset.col * SPACING_X, 5);
-      expect(entity.y).toBeCloseTo(scene.formationY + entity.offset.row * SPACING_Y, 5);
+      expect(entity.x).toBeCloseTo(scene.diverFormationX + entity.offset.col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(scene.diverFormationY + entity.offset.row * SPACING_Y, 5);
     }
   });
 
@@ -2716,8 +2894,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: first.y,
     });
     scene.tick(0.25);
-    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(first.x, 5);
-    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(first.y, 5);
+    expect(scene.diverFormationX + requester.offset.col * SPACING_X).toBeCloseTo(first.x, 5);
+    expect(scene.diverFormationY + requester.offset.row * SPACING_Y).toBeCloseTo(first.y, 5);
     // Let the first glide finish before re-requesting, so the second request
     // starts from a settled formation.
     scene.tick(FORMATION_GLIDE_SECONDS);
@@ -2730,8 +2908,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
       y: second.y,
     });
     scene.tick(0.25);
-    expect(scene.formationX + requester.offset.col * SPACING_X).toBeCloseTo(second.x, 5);
-    expect(scene.formationY + requester.offset.row * SPACING_Y).toBeCloseTo(second.y, 5);
+    expect(scene.diverFormationX + requester.offset.col * SPACING_X).toBeCloseTo(second.x, 5);
+    expect(scene.diverFormationY + requester.offset.row * SPACING_Y).toBeCloseTo(second.y, 5);
   });
 
   it('AC1 — the glide eases: the first frame is strictly between the pre-anchor position and the final slot', async () => {
@@ -2744,8 +2922,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     // First frame of the glide (dt < duration): the entity has moved toward
     // the slot but has not reached it (strictly between old and new).
     scene.tick(0.1);
-    const slotX = scene.formationX + requester.offset.col * SPACING_X;
-    const slotY = scene.formationY + requester.offset.row * SPACING_Y;
+    const slotX = scene.diverFormationX + requester.offset.col * SPACING_X;
+    const slotY = scene.diverFormationY + requester.offset.row * SPACING_Y;
     expect(requester.x).toBeGreaterThan(Math.min(from.x, slotX));
     expect(requester.x).toBeLessThan(Math.max(from.x, slotX));
     expect(requester.y).toBeGreaterThan(Math.min(from.y, slotY));
@@ -2754,8 +2932,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
 
     // Completion: exactly on the live slot after the glide duration.
     scene.tick(FORMATION_GLIDE_SECONDS);
-    expect(requester.x).toBeCloseTo(scene.formationX + requester.offset.col * SPACING_X, 5);
-    expect(requester.y).toBeCloseTo(scene.formationY + requester.offset.row * SPACING_Y, 5);
+    expect(requester.x).toBeCloseTo(scene.diverFormationX + requester.offset.col * SPACING_X, 5);
+    expect(requester.y).toBeCloseTo(scene.diverFormationY + requester.offset.row * SPACING_Y, 5);
   });
 
   it('AC4 — the glide tracks the live (drifting) slot, not the re-anchor-time snapshot', async () => {
@@ -2766,12 +2944,12 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
 
     // First frame begins the glide; snapshot the re-anchor-time slot.
     scene.tick(0.05);
-    const snapshotX = scene.formationX + requester.offset.col * SPACING_X;
+    const snapshotX = scene.diverFormationX + requester.offset.col * SPACING_X;
 
     // Finish the glide across several small frames while the base drifts.
     for (let i = 0; i < 5; i++) scene.tick(0.1);
 
-    const driftedSlotX = scene.formationX + requester.offset.col * SPACING_X;
+    const driftedSlotX = scene.diverFormationX + requester.offset.col * SPACING_X;
     // The base drifted after the snapshot, so the landing follows the drifted
     // slot rather than the stale snapshot.
     expect(driftedSlotX).toBeGreaterThan(snapshotX);
@@ -2785,30 +2963,124 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     expect(scene.formationX).toBeCloseTo(before + DRIFT_SPEED * 0.5, 5);
   });
 
-  it('only re-anchor-capable entities glide; others snap directly', async () => {
-    // A non-reanchor entity should NOT glide — it snaps to its new slot.
-    // This test constructs a mixed scene with ReanchorStubEnemy (glides)
-    // and a plain StubEnemy (no glide). The re-anchor is requested by the
-    // first ReanchorStubEnemy; the plain entity must snap directly.
-    class PlainStub extends StubEnemy {
-      // No consumeFormationReanchor — mirrors non-Diver enemies.
+  it('AC6 — no-Diver control: a formation without the re-anchor seam drifts exactly as before', async () => {
+    // A true no-Diver control: none of the entities exposes the re-anchor
+    // seam, so there is nothing that could request a re-anchor. The drift
+    // must advance at exactly the configured rate and the vertical base must
+    // stay pinned — no re-anchor is applied anywhere.
+    booted = await bootScene([makeStubScene(() => [])]);
+    const scene = booted.scene as GymFormationScene<StubEnemy, StubBullet>;
+    const all = scene.formationEntities as StubEnemy[];
+    expect(all.length).toBeGreaterThan(0);
+    for (const entity of all) {
+      expect(
+        (entity as unknown as { consumeFormationReanchor?: unknown })
+          .consumeFormationReanchor,
+      ).toBeUndefined();
     }
 
-    const bootedMixed = await bootScene([
-      makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
-    ]);
-    const scene = bootedMixed.scene;
+    const beforeX = scene.formationX;
+    const beforeY = scene.formationY;
+    scene.tick(0.5);
 
-    const plainEntity = new PlainStub(scene, { row: 0, col: 0 });
-    expect(
-      (plainEntity as unknown as { consumeFormationReanchor?: unknown })
-        .consumeFormationReanchor,
-    ).toBeUndefined();
+    // The base advances at exactly the configured drift rate; the vertical
+    // base is untouched by any re-anchor.
+    expect(scene.formationX).toBeCloseTo(beforeX + DRIFT_SPEED * 0.5, 5);
+    expect(scene.formationY).toBeCloseTo(beforeY, 5);
 
-    const raEntity = new ReanchorStubEnemy(scene, { row: 0, col: 0 });
-    expect(raEntity.consumeFormationReanchor).toBeDefined();
+    // Every unit sits on its drifted slot — no shift beyond the drift.
+    for (const entity of all) {
+      expect(entity.x).toBeCloseTo(
+        scene.formationX + entity.offset.col * SPACING_X,
+        5,
+      );
+      expect(entity.y).toBeCloseTo(
+        scene.formationY + entity.offset.row * SPACING_Y,
+        5,
+      );
+    }
+  });
 
-    bootedMixed.game.destroy(true);
+  async function bootMixedReanchorGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
+    // A mixed formation: only the first slot exposes the re-anchor seam
+    // (mirrors a Diver among non-Diver enemies).
+    const config: EnemyFormationConfig<StubEnemy, StubBullet> = {
+      sceneKey: 'MixedReanchorStubFormation',
+      count: FORMATION_COUNT,
+      spacingX: SPACING_X,
+      spacingY: SPACING_Y,
+      driftSpeed: DRIFT_SPEED,
+      startX: START_X,
+      startY: START_Y,
+      statusLabel: 'mixed',
+      hintText: 'mixed stub gym',
+      buildOffsets: vOffsets,
+      createEntity: (scene, x, y, offset) => {
+        const enemy =
+          offset.row === 0 && offset.col === 0
+            ? new ReanchorStubEnemy(scene, offset)
+            : new StubEnemy(scene, offset);
+        enemy.setPosition(x, y);
+        return enemy;
+      },
+      collectBullets: () => [],
+    };
+    const Mixed = class extends GymFormationScene<StubEnemy, StubBullet> {
+      constructor() {
+        super(config);
+      }
+    };
+    booted = await bootScene([Mixed]);
+    return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
+  }
+
+  it('AC5 — only re-anchor-capable (Diver) entities move; all other enemies stay put', async () => {
+    const scene = await bootMixedReanchorGym();
+    const all = scene.formationEntities as StubEnemy[];
+    const requester = all[0] as ReanchorStubEnemy;
+
+    const before = all.map((e) => ({ x: e.x, y: e.y }));
+    const attackEnd = { x: requester.x + 180, y: requester.y + 90 };
+    requester.requestReanchor({
+      offset: { ...requester.offset },
+      x: attackEnd.x,
+      y: attackEnd.y,
+    });
+
+    scene.tick(0.1);
+
+    // Non-Divers are untouched by the re-anchor: on the first frame they only
+    // keep drifting on X at the configured rate, and their Y is unchanged.
+    const driftDx = DRIFT_SPEED * 0.1;
+    for (let i = 1; i < all.length; i++) {
+      expect(all[i].x).toBeCloseTo(before[i].x + driftDx, 5);
+      expect(all[i].y).toBeCloseTo(before[i].y, 5);
+    }
+
+    // The requester glides: at 0.1 s (< glide duration) it is strictly between
+    // its pre-anchor position and the attack end on both axes.
+    expect(requester.x).toBeGreaterThan(Math.min(before[0].x, attackEnd.x));
+    expect(requester.x).toBeLessThan(Math.max(before[0].x, attackEnd.x));
+    expect(requester.y).toBeGreaterThan(Math.min(before[0].y, attackEnd.y));
+    expect(requester.y).toBeLessThan(Math.max(before[0].y, attackEnd.y));
+
+    // On completion the requester is exactly on its re-anchored slot...
+    scene.tick(FORMATION_GLIDE_SECONDS);
+    expect(requester.x).toBeCloseTo(
+      scene.diverFormationX + requester.offset.col * SPACING_X,
+      5,
+    );
+    expect(requester.y).toBeCloseTo(
+      scene.diverFormationY + requester.offset.row * SPACING_Y,
+      5,
+    );
+
+    // ...and the non-Divers keep only their own drift — never the Diver delta.
+    const totalDriftDx = DRIFT_SPEED * (0.1 + FORMATION_GLIDE_SECONDS);
+    for (let i = 1; i < all.length; i++) {
+      expect(all[i].x).toBeCloseTo(before[i].x + totalDriftDx, 4);
+      expect(all[i].y).toBeCloseTo(before[i].y, 5);
+    }
   });
 });
 

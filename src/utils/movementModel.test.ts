@@ -9,6 +9,8 @@ import {
   AsteroidsInput,
   FourDirectionalInput,
   RotatingMovementState,
+  DEFAULT_ROTATION_ACCELERATION,
+  DEFAULT_ROTATION_DECELERATION,
 } from './movementModel';
 
 const WIDTH = 960;
@@ -87,10 +89,12 @@ describe('AsteroidsModel', () => {
       x: 480, y: 270, vx: 0, vy: 0, facing: 0,
     };
     const result = model.tick(state, asteroidsInput(false, true, false), 1, WIDTH, HEIGHT, baseConfig);
-    // Turn left decreases facing; normalised to [0, 2π) → close to 2π
+    // Turn left decreases facing; with the spin-up ramp (accel 12 rad/s²,
+    // top speed 3 rad/s) a full 1 s step rotates 2.625 rad, normalised to
+    // the positive equivalent 2π − 2.625 (AH-0MUNS42NA000N41U).
     const r = result as unknown as RotatingMovementState;
     expect(r.facing).toBeGreaterThan(0);
-    expect(r.facing).toBeCloseTo(2 * Math.PI - 3);
+    expect(r.facing).toBeCloseTo(2 * Math.PI - 2.625, 5);
   });
 
   it('turns right when turnRight is pressed', () => {
@@ -171,6 +175,126 @@ describe('AsteroidsModel', () => {
     };
     const result = model.tick(state, asteroidsInput(), 1, WIDTH, HEIGHT, baseConfig);
     expect(result.x).toBeCloseTo(WIDTH - 10);
+  });
+});
+
+// ── Asteroids turn ramp (AH-0MUNS42NA000N41U) ───────────────────────
+
+describe('AsteroidsModel turn ramp (AH-0MUNS42NA000N41U)', () => {
+  const model = new AsteroidsModel();
+  const cfg: AsteroidsConfig = {
+    thrust: 300,
+    maxSpeed: 175,
+    friction: 100,
+    rotationSpeed: 3,
+  };
+  const idle = (): RotatingMovementState => ({
+    x: 480, y: 270, vx: 0, vy: 0, facing: 0, angularVelocity: 0,
+  });
+  const turnRightInput = asteroidsInput(false, false, true);
+  const idleInput = asteroidsInput();
+
+  /** Run `seconds` of `input` in fixed `dt` steps, returning the final state. */
+  function simulate(
+    input: AsteroidsInput,
+    dt: number,
+    seconds: number,
+    start?: RotatingMovementState,
+  ): RotatingMovementState {
+    let s = start ?? idle();
+    const ticks = Math.max(1, Math.round(seconds / dt));
+    for (let i = 0; i < ticks; i++) {
+      s = model.tick(s, input, dt, WIDTH, HEIGHT, cfg) as unknown as RotatingMovementState;
+    }
+    return s;
+  }
+
+  it('AC1 — a ~100ms tap rotates the ship ≤ ~4° (previously ~17°)', () => {
+    const tapped = simulate(turnRightInput, 1 / 240, 0.1);
+    const degrees = (tapped.facing * 180) / Math.PI;
+    expect(tapped.angularVelocity).toBeCloseTo(1.2, 6); // 12 rad/s² × 0.1 s
+    expect(degrees).toBeLessThanOrEqual(4);
+    expect(degrees).toBeGreaterThan(2);
+  });
+
+  it('AC1 — holding ≥ 0.25s reaches and sustains the full rotation speed', () => {
+    const full = simulate(turnRightInput, 1 / 240, 0.25);
+    expect(full.angularVelocity).toBeCloseTo(cfg.rotationSpeed, 6);
+
+    // A further 0.1s at full speed advances by exactly speed × dt.
+    const later = simulate(turnRightInput, 1 / 240, 0.1, full);
+    expect(later.angularVelocity).toBeCloseTo(cfg.rotationSpeed, 6);
+    expect(later.facing - full.facing).toBeCloseTo(cfg.rotationSpeed * 0.1, 6);
+  });
+
+  it('AC2 — releasing ramps the velocity to zero with <5° of glide', () => {
+    const full = simulate(turnRightInput, 1 / 240, 0.3);
+    const released = simulate(idleInput, 1 / 240, 0.05, full);
+    expect(released.angularVelocity).toBeCloseTo(0, 6);
+    const glideDegrees = ((released.facing - full.facing) * 180) / Math.PI;
+    expect(glideDegrees).toBeGreaterThan(0);
+    expect(glideDegrees).toBeLessThan(5);
+  });
+
+  it('AC2 — holding both turn keys cancels the spin back to zero', () => {
+    const full = simulate(turnRightInput, 1 / 240, 0.3);
+    const stopped = simulate(asteroidsInput(false, true, true), 1 / 240, 0.05, full);
+    expect(stopped.angularVelocity).toBeCloseTo(0, 6);
+
+    // With both keys still held there is no residual rotation.
+    const later = simulate(asteroidsInput(false, true, true), 1 / 240, 0.1, stopped);
+    expect(later.facing).toBeCloseTo(stopped.facing, 6);
+  });
+
+  it('AC3 — spin-up is framerate-independent across 1/30, 1/60 and 1/120', () => {
+    const at30 = simulate(turnRightInput, 1 / 30, 0.3).facing;
+    const at60 = simulate(turnRightInput, 1 / 60, 0.3).facing;
+    const at120 = simulate(turnRightInput, 1 / 120, 0.3).facing;
+    expect(at60).toBeCloseTo(at30, 9);
+    expect(at120).toBeCloseTo(at30, 9);
+  });
+
+  it('AC3 — spin-down is framerate-independent across 1/30, 1/60 and 1/120', () => {
+    const run = (dt: number) => {
+      const held = simulate(turnRightInput, dt, 0.3);
+      return simulate(idleInput, dt, 0.1, held).facing;
+    };
+    const at30 = run(1 / 30);
+    const at60 = run(1 / 60);
+    const at120 = run(1 / 120);
+    expect(at60).toBeCloseTo(at30, 9);
+    expect(at120).toBeCloseTo(at30, 9);
+  });
+
+  it('AC4 — defaults the ramp rates when the config omits them', () => {
+    const withDefaults = new AsteroidsModel().tick(
+      idle(), turnRightInput, 0.1, WIDTH, HEIGHT, cfg,
+    ) as unknown as RotatingMovementState;
+    const explicitCfg: AsteroidsConfig = {
+      ...cfg,
+      rotationAcceleration: DEFAULT_ROTATION_ACCELERATION,
+      rotationDeceleration: DEFAULT_ROTATION_DECELERATION,
+    };
+    const explicit = new AsteroidsModel().tick(
+      idle(), turnRightInput, 0.1, WIDTH, HEIGHT, explicitCfg,
+    ) as unknown as RotatingMovementState;
+    expect(withDefaults.facing).toBeCloseTo(explicit.facing, 12);
+    expect(withDefaults.angularVelocity).toBeCloseTo(explicit.angularVelocity!, 12);
+  });
+
+  it('AC4 — uses a custom acceleration while keeping the top-speed cap', () => {
+    const fastCfg: AsteroidsConfig = { ...cfg, rotationAcceleration: 24 };
+    const fast = new AsteroidsModel().tick(
+      idle(), turnRightInput, 0.1, WIDTH, HEIGHT, fastCfg,
+    ) as unknown as RotatingMovementState;
+    // 24 rad/s² × 0.1 s = 2.4 rad/s (below the 3 rad/s cap).
+    expect(fast.angularVelocity).toBeCloseTo(2.4, 6);
+  });
+
+  it('returns the live angular velocity in the state', () => {
+    const s = simulate(turnRightInput, 1 / 60, 0.1);
+    expect(s.angularVelocity).toBeTruthy();
+    expect(s.angularVelocity).toBeGreaterThan(0);
   });
 });
 

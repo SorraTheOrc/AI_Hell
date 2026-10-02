@@ -28,6 +28,9 @@ import {
   WEAPON_SPREAD_FIRE_RATE,
   WEAPON_DUAL_FIRE_RATE,
   WEAPON_RAPID_FIRE_RATE,
+  WEAPON_NOVA_FIRE_RATE,
+  WEAPON_MORTAR_FIRE_RATE,
+  WEAPON_ARC_FIRE_RATE,
   WEAPON_CANNON_SUBDIVISION,
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
@@ -35,6 +38,10 @@ import {
   DEFAULT_WEAPON_SUBDIVISIONS,
   weaponFireRateMs,
   isOnBeatGrid,
+  isAoeWeapon,
+  AOE_WEAPON_IDS,
+  AOE_RADII,
+  AOE_PROJECTILE_SPEEDS,
   type WeaponId,
   BULLET_SPEED,
   WEAPON_BULLET_LIFETIME,
@@ -43,12 +50,15 @@ import {
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
-  test('contains exactly four weapons', () => {
-    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(4);
+  test('contains the four conventional weapons plus the three AOE weapons', () => {
+    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(7);
     expect(WEAPON_CATALOGUE.cannon).toBeDefined();
     expect(WEAPON_CATALOGUE.spread).toBeDefined();
     expect(WEAPON_CATALOGUE.dual).toBeDefined();
     expect(WEAPON_CATALOGUE.rapid).toBeDefined();
+    expect(WEAPON_CATALOGUE.nova).toBeDefined();
+    expect(WEAPON_CATALOGUE.mortar).toBeDefined();
+    expect(WEAPON_CATALOGUE.arc).toBeDefined();
   });
 
   test('cannon fires single bullet (pattern length 1)', () => {
@@ -124,6 +134,84 @@ describe('isTimedWeapon (GDD §4.4 — cumulative + timed model)', () => {
     expect(isTimedWeapon('spread')).toBe(true);
     expect(isTimedWeapon('dual')).toBe(true);
     expect(isTimedWeapon('rapid')).toBe(true);
+  });
+});
+
+describe('AOE weapons (parent AH-0MUOOB3OR001V8CD AC1)', () => {
+  test('there are three mechanically distinct AOE weapons', () => {
+    expect(AOE_WEAPON_IDS).toEqual(['nova', 'mortar', 'arc']);
+    for (const id of AOE_WEAPON_IDS) {
+      expect(isAoeWeapon(id)).toBe(true);
+      expect(WEAPON_CATALOGUE[id].aoe).toBeDefined();
+      // AOE weapons are collected timed drops, like spread/dual/rapid.
+      expect(isTimedWeapon(id)).toBe(true);
+    }
+  });
+
+  test('conventional weapons carry no AOE descriptor', () => {
+    for (const id of ['cannon', 'spread', 'dual', 'rapid'] as WeaponId[]) {
+      expect(isAoeWeapon(id)).toBe(false);
+      expect(WEAPON_CATALOGUE[id].aoe).toBeUndefined();
+    }
+  });
+
+  test('Nova resolves an onFire ring at the ship', () => {
+    const aoe = WEAPON_CATALOGUE.nova.aoe!;
+    expect(aoe.trigger).toBe('onFire');
+    expect(aoe.radius).toBe(AOE_RADII.nova);
+    expect(aoe.damagesEnemies).toBe(true);
+    expect(aoe.clearsEnemyBullets).toBe(true);
+  });
+
+  test('Mortar resolves an onImpact detonation', () => {
+    const aoe = WEAPON_CATALOGUE.mortar.aoe!;
+    expect(aoe.trigger).toBe('onImpact');
+    expect(aoe.radius).toBe(AOE_RADII.mortar);
+    expect(aoe.damagesEnemies).toBe(true);
+    expect(aoe.clearsEnemyBullets).toBe(true);
+    // The mortar shell travels slower than a conventional bullet so its
+    // detonation point is legible.
+    expect(aoe.projectileSpeed).toBe(AOE_PROJECTILE_SPEEDS.mortar);
+    expect(aoe.projectileSpeed!).toBeLessThan(BULLET_SPEED);
+    // The mortar shell lives long enough to reach a target and detonate.
+    expect(WEAPON_CATALOGUE.mortar.bulletLifetime).toBeGreaterThan(0);
+  });
+
+  test('Arc resolves an onFire chain to nearby targets', () => {
+    const aoe = WEAPON_CATALOGUE.arc.aoe!;
+    expect(aoe.trigger).toBe('onFire');
+    expect(aoe.radius).toBe(AOE_RADII.arc);
+    expect(aoe.damagesEnemies).toBe(true);
+    expect(aoe.clearsEnemyBullets).toBe(true);
+    expect(aoe.chains).toBeGreaterThanOrEqual(2);
+  });
+
+  test('every AOE weapon has a name and a player-facing description', () => {
+    for (const id of AOE_WEAPON_IDS) {
+      const def = WEAPON_CATALOGUE[id];
+      expect(def.name.length).toBeGreaterThan(0);
+      expect(def.description.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('AOE fire rates on the beat grid (parent AH-0MUOOB3OR001V8CD AC7)', () => {
+  test('Nova fires once every 4 beats (3000 ms at 80 BPM)', () => {
+    expect(WEAPON_NOVA_FIRE_RATE).toBe(3000);
+    expect(WEAPON_CATALOGUE.nova.fireRateMs).toBe(3000);
+    expect(isOnBeatGrid(WEAPON_NOVA_FIRE_RATE)).toBe(true);
+  });
+
+  test('Mortar fires once every 2 beats (1500 ms at 80 BPM)', () => {
+    expect(WEAPON_MORTAR_FIRE_RATE).toBe(1500);
+    expect(WEAPON_CATALOGUE.mortar.fireRateMs).toBe(1500);
+    expect(isOnBeatGrid(WEAPON_MORTAR_FIRE_RATE)).toBe(true);
+  });
+
+  test('Arc fires once per beat (750 ms at 80 BPM)', () => {
+    expect(WEAPON_ARC_FIRE_RATE).toBe(750);
+    expect(WEAPON_CATALOGUE.arc.fireRateMs).toBe(750);
+    expect(isOnBeatGrid(WEAPON_ARC_FIRE_RATE)).toBe(true);
   });
 });
 
@@ -354,11 +442,17 @@ describe('fire rate ordering', () => {
 });
 
 describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
-  test('every fire rate is an exact subdivision of the beat period', () => {
+  test('every fire rate is on the shared beat grid', () => {
     const period = beatPeriodMs();
     for (const weapon of Object.values(WEAPON_CATALOGUE)) {
-      expect(period % weapon.fireRateMs).toBe(0);
+      // Conventional weapons subdivide the beat; the AOE family spans whole
+      // beats. `isOnBeatGrid` accepts both, and rejects off-grid rates.
       expect(isOnBeatGrid(weapon.fireRateMs)).toBe(true);
+      if (weapon.fireRateMs <= period) {
+        expect(period % weapon.fireRateMs).toBe(0);
+      } else {
+        expect(weapon.fireRateMs % period).toBe(0);
+      }
     }
   });
 
@@ -388,6 +482,17 @@ describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
     expect(beatPeriodMs() % 200).not.toBe(0);
     // The future 20 BPM quarter-time weapon (4/beat = 187.5 ms) stays on-grid.
     expect(isOnBeatGrid(beatSubdivisionMs(4))).toBe(true);
+  });
+
+  test('the invariant accepts slow rates that span whole beats (AOE family)', () => {
+    // A slow weapon fires once every N beats: the rate is an exact multiple
+    // of the beat period (e.g. Nova 4 beats = 3000 ms, Mortar 2 = 1500 ms).
+    expect(isOnBeatGrid(1500)).toBe(true);
+    expect(isOnBeatGrid(3000)).toBe(true);
+    expect(isOnBeatGrid(750 * 8)).toBe(true);
+    // A rate that is neither a subdivision nor a whole-beat multiple is
+    // rejected (1000 ms = 1⅓ beats — no integer relationship).
+    expect(isOnBeatGrid(1000)).toBe(false);
   });
 
   test('an invalid fire rate is never on the beat grid', () => {
@@ -432,11 +537,19 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
 
   test('the catalogue-wide on-grid invariant holds under a non-default config', () => {
     const bpm = 120;
-    const subdivisions = { cannon: 4, spread: 3, dual: 2, rapid: 8 };
-    const period = beatPeriodMs(bpm);
+    const subdivisions = {
+      cannon: 4,
+      spread: 3,
+      dual: 2,
+      rapid: 8,
+      nova: 0.25,
+      mortar: 0.5,
+      arc: 1,
+    };
     for (const id of weaponIds) {
       const rate = weaponFireRateMs(id, subdivisions, bpm);
-      expect(period % rate).toBeCloseTo(0, 6);
+      // On-grid covers both fast subdivisions (rate divides the period) and
+      // slow AOE cadences (rate is an integer multiple of the period).
       expect(isOnBeatGrid(rate, bpm)).toBe(true);
     }
   });

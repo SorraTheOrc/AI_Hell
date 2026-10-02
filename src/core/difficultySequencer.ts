@@ -148,20 +148,34 @@ const DEFAULT_MAX_GROUPS_PER_WAVE = 5;
 const COMPOSE_EPSILON = 1e-9;
 
 /**
- * The default candidate pool — one entry per seed archetype with sensible
- * count ranges and count as the only adjustable field.
+ * The default candidate pool — one entry per seed archetype the sequencer may
+ * select as a wave group, with sensible count ranges and count as the only
+ * adjustable field.
+ *
+ * Two archetypes are deliberately excluded because they are delivered by
+ * their own spawners:
+ *
+ * - the **Harvester** (F6) is a rare later-level roaming spawn delivered by
+ *   the dedicated `HarvesterSpawner`;
+ * - the **Asteroid** is delivered by the dedicated random offscreen spawner
+ *   (`AsteroidSpawner`) and is explicitly **not wave-accounted** by the game:
+ *   `PlayScene._onEnemyKilled()` never advances wave progression for an
+ *   asteroid kill (AH-0MUJM746P000QAEO). A sequenced wave group containing an
+ *   asteroid would be counted by `WaveManager.waveEnemyCount()` but never
+ *   un-counted, so the wave would never clear, soft-locking the run and making
+ *   the boss unreachable (AH-0MUR1HZLQ001ELX9). Excluding it keeps the
+ *   "asteroids are not wave-accounted" contract intact.
  *
  * These defaults can be customised by the caller to give the sequencer
  * a wider (or narrower) set of tuning options.
  */
 export function defaultCandidatePool(): CandidateGroup[] {
   return Object.entries(DEFAULT_ENEMY_CONFIGS)
-    // The Harvester is integrated as a rare later-level roaming spawn (F6),
-    // deliberately outside the difficulty auto-sequencer: it is delivered by
-    // the dedicated HarvesterSpawner, never selected as a wave group.
-    .filter(([key]) => key !== 'harvester')
+    // See the JSDoc above: both archetypes are delivered by their own
+    // spawners and must never be selected as a wave group.
+    .filter(([key]) => key !== 'harvester' && key !== 'asteroid')
     .map(([key, cfg]) => {
-      // `single`-formation archetypes (the roaming Asteroid) spawn exactly one
+      // `single`-formation archetypes (e.g. the Boss Swarm) spawn exactly one
       // entity per group regardless of `count` (`buildSingleOffset` ignores its
       // argument). `waveEnemyCount` now derives from the planned spawns, so an
       // over-declared `single` group can no longer inflate the alive count, but
@@ -239,9 +253,15 @@ export function adjustGroupForTarget(
   target: number,
   tolerance: number,
   _maxIterations: number = DEFAULT_MAX_ITERATIONS,
+  suppressFiring = false,
 ): AdjustedGroup {
   const countMin = clamp(candidate.minCount, 1, 200);
   const countMax = clamp(candidate.maxCount, 1, 200);
+
+  // Only pass `suppressFiring` when set: omitting it keeps the archetype's own
+  // auto-suppression rule (e.g. the non-firing Asteroid), which passing an
+  // explicit `false` would override.
+  const scoreOptions = suppressFiring ? { suppressFiring: true } : undefined;
 
   let lo = countMin;
   let hi = countMax;
@@ -249,7 +269,7 @@ export function adjustGroupForTarget(
 
   // Evaluate the base count first (caller's starting point).
   const baseConfigForCount = { ...baseConfig, count: candidate.baseCount };
-  const baseResult = enemyDifficulty(baseConfigForCount);
+  const baseResult = enemyDifficulty(baseConfigForCount, scoreOptions);
   best = {
     enemyKey: candidate.enemyKey,
     formation: baseConfig.formationKind,
@@ -264,7 +284,7 @@ export function adjustGroupForTarget(
   // Evaluate endpoints.
   for (const count of [countMin, countMax]) {
     const config = { ...baseConfig, count };
-    const result = enemyDifficulty(config);
+    const result = enemyDifficulty(config, scoreOptions);
     const adjusted: AdjustedGroup = {
       enemyKey: candidate.enemyKey,
       formation: config.formationKind,
@@ -284,7 +304,7 @@ export function adjustGroupForTarget(
   while (lo <= hi && Math.abs((best?.score ?? 0) - target) > tolerance) {
     const mid = Math.round((lo + hi) / 2);
     const config = { ...baseConfig, count: mid };
-    const result = enemyDifficulty(config);
+    const result = enemyDifficulty(config, scoreOptions);
     const adjusted: AdjustedGroup = {
       enemyKey: candidate.enemyKey,
       formation: config.formationKind,
@@ -321,9 +341,17 @@ function evaluateCandidate(
   target: number,
   tolerance: number,
   maxIterations: number,
+  suppressFiring = false,
 ): { adjusted: AdjustedGroup; error: number } {
   const baseConfig = resolveBaseConfig(candidate);
-  const adjusted = adjustGroupForTarget(candidate, baseConfig, target, tolerance, maxIterations);
+  const adjusted = adjustGroupForTarget(
+    candidate,
+    baseConfig,
+    target,
+    tolerance,
+    maxIterations,
+    suppressFiring,
+  );
   const error = Math.abs(adjusted.score - target);
   return { adjusted, error };
 }
@@ -361,6 +389,7 @@ function composeWaveGroups(
   tolerance: number,
   maxIterations: number,
   maxGroups: number,
+  suppressFiring = false,
 ): { groups: AdjustedGroup[]; total: number } {
   const groups: AdjustedGroup[] = [initial];
   let total = initial.score;
@@ -383,6 +412,7 @@ function composeWaveGroups(
         residual,
         tolerance,
         maxIterations,
+        suppressFiring,
       );
       if (adjusted.score <= 0) continue;
 
@@ -437,6 +467,11 @@ export function sequencer(
 ): SequencerResult {
   const tolerance = options.tolerance ?? DEFAULT_TOLERANCE;
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  // A wave that does not fire must be scored without firing factors, so the
+  // sequencer selects a composition that is genuinely appropriate for a
+  // non-firing wave (AH-0MUOCJM0N000RW2B). When the caller does not declare
+  // the fire rule, keep the archetype-level default (no forced suppression).
+  const suppressFiring = options.defaultShootEnabled === false;
 
   // Validate candidates.
   for (const c of candidates) {
@@ -455,7 +490,13 @@ export function sequencer(
     let bestResult: { adjusted: AdjustedGroup; error: number } | null = null;
 
     for (const candidate of candidates) {
-      const result = evaluateCandidate(candidate, target, tolerance, maxIterations);
+      const result = evaluateCandidate(
+        candidate,
+        target,
+        tolerance,
+        maxIterations,
+        suppressFiring,
+      );
       if (!bestResult || result.error < bestResult.error) {
         bestResult = result;
       }
@@ -486,6 +527,7 @@ export function sequencer(
             tolerance,
             maxIterations,
             options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE,
+            suppressFiring,
           );
 
     const shootEnabled =

@@ -123,6 +123,14 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
+import {
+  spawnWormholeOpen,
+  spawnWormholeClose,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  type SpawnAnimatable,
+  type WormholeHandle,
+} from '../../../vfx/wormholeSpawn';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -135,8 +143,12 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
   shootEnabled: boolean;
   /** The entity's slot within the formation. */
   readonly offset: FormationOffset;
-  /** Destroys the entity: hides the body, plays the explosion animation. */
-  destroySelf(): void;
+  /**
+   * Destroys the entity: hides the body, plays the explosion animation.
+   * `scale` enlarges the explosion geometry (the wave-timeout penalty uses
+   * `WAVE_TIMEOUT_EXPLOSION_SCALE`, 10x). Defaults to 1.
+   */
+  destroySelf(scale?: number): void;
   /**
    * Set the world-space position. All concrete entities extend
    * `Phaser.GameObjects.Container` and inherit this method.
@@ -205,6 +217,19 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * not seek simply omit it (optional chaining skips them).
    */
   setSeekTargets?(minerals: readonly Mineral[]): void;
+  /**
+   * Optional: whether the entity is in its wormhole spawn animation.
+   * While spawning the entity is protected from collisions and cannot
+   * fire. Entities that omit the seam are treated as fully spawned.
+   */
+  readonly isSpawning?: boolean;
+  /**
+   * Optional: sets the wormhole spawn-animation state.  Called by the
+   * scene when the growth animation starts and finishes.
+   */
+  setSpawning?(value: boolean): void;
+  /** Current horizontal scale (drives the growth animation). */
+  readonly scaleX: number;
   /**
    * Hit radius (px) used for circle-vs-circle collision checks.
    *
@@ -364,6 +389,16 @@ export interface EnemyFormationConfig<
    * (e.g. Asteroid split children, GDD §4.1 — E6 Asteroid).
    */
   onEntityDestroyed?(entity: TEntity): void;
+  /**
+   * Optional wave-timeout duration (seconds). When set and > 0 the scene runs
+   * the shared game wave-timeout: on expiry survivors are **kept** (no
+   * detonation — the shared helper is now a no-op, AH-0MUNS3ZQ1002DJ9S) and
+   * the formation refreshes through the existing wipe→countdown lifecycle,
+   * spawning a fresh formation alongside the survivors. Omit (or 0) to
+   * disable — used by the boss and by gyms whose entities must not be
+   * destroyed (AH-0MUNR5LM1004B223).
+   */
+  timeoutDuration?: number;
 }
 
 /** Monospace neon HUD button style (matches the existing gym HUD). */
@@ -385,18 +420,6 @@ const DEFAULT_BULLET_HIT_RADIUS = 6;
 const DEFAULT_POWER_UP_PLACEMENT_MARGIN = 24;
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
-
-/** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
-const RESPAWN_COUNTDOWN_SECONDS = 3;
-
-/** Style for the centred respawn countdown overlay. */
-const COUNTDOWN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontFamily: 'monospace',
-  fontSize: '24px',
-  color: '#ffffff',
-  backgroundColor: '#000000',
-  padding: { x: 12, y: 8 },
-};
 
 /**
  * Generic formation gym scene. Parameterised by entity + bullet types so
@@ -426,10 +449,12 @@ export class GymFormationScene<
   protected formationBaseY!: number;
   private shootEnabled = false;
 
-  // Wipe → 3s countdown → respawn lifecycle (core-library owned, AH-0MTFXKA5Q003LBH5).
-  private respawnCountdown = 0;
-  private respawnCountdownActive = false;
-  private countdownText: Phaser.GameObjects.Text | null = null;
+  /** Live wormhole handle for the current formation spawn, or null. */
+  private _spawnWormhole: WormholeHandle | null = null;
+
+  // Wipe → 3s countdown → respawn and the opt-in wave-timeout lifecycle now
+  // live in the shared `CombatScene` core (AH-0MUNR5LM1004B223) so every
+  // combat scene runs one implementation.
 
   // UI toggles
   protected shootButton!: Phaser.GameObjects.Text;
@@ -460,6 +485,15 @@ export class GymFormationScene<
 
   /** Glide manager: eases enemies from their old positions to the re-anchored slots. */
   private glide = new FormationGlide();
+
+  /**
+   * Diver-group re-anchor offset (px). Only entities that expose the
+   * `consumeFormationReanchor` seam (Divers) have this offset added to their
+   * origin, so a Diver's attack re-anchors the Diver group alone and every
+   * other enemy stays where it is (producer review, AH-0MUL15N63003PUDB).
+   */
+  private diverAnchorX = 0;
+  private diverAnchorY = 0;
 
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
@@ -508,6 +542,10 @@ export class GymFormationScene<
       resolveSpawnRange(this.config.startY, this.config.startYMin, this.config.startYMax),
       this._sceneRng,
     );
+    // A fresh base (initial create or respawn) starts with no Diver re-anchor
+    // offset, so the Diver group is back on the shared formation base.
+    this.diverAnchorX = 0;
+    this.diverAnchorY = 0;
   }
 
   create(): void {
@@ -518,6 +556,8 @@ export class GymFormationScene<
 
     // ── Spawn the formation ─────────────────────────────────────────
     const offsets = config.buildOffsets(config.count);
+    // Wormhole opens at the formation origin; every entity grows from
+    // 1 px to its full size while protected (AC1–AC4, gym parity).
     for (const offset of offsets) {
       const entity = config.createEntity(
         this,
@@ -528,7 +568,16 @@ export class GymFormationScene<
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
+      startSpawnAnimation(entity as unknown as SpawnAnimatable, entity.scaleX);
+      entity.setSpawning?.(true);
       this.entities.push(entity);
+    }
+    if (offsets.length > 0) {
+      this._spawnWormhole = spawnWormholeOpen(
+        this,
+        this.formationBaseX,
+        this.formationBaseY,
+      );
     }
     playSpawnSound();
 
@@ -615,6 +664,9 @@ export class GymFormationScene<
     // fresh scene never starts mid-countdown.
     this._cancelRespawnCountdown();
 
+    // Start the opt-in wave-timeout for this run (AH-0MUNR5LM1004B223).
+    this.startWaveTimeout();
+
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
@@ -635,9 +687,6 @@ export class GymFormationScene<
     this.playerSpawnX = null;
     this.playerSpawnY = null;
     this.shootEnabled = false;
-    this.respawnCountdown = 0;
-    this.respawnCountdownActive = false;
-    this.countdownText = null;
     this.powerUpsEnabled = false;
     this.powerUpDrops = [];
     this.powerUpSpawner = null;
@@ -654,6 +703,7 @@ export class GymFormationScene<
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
+    this._spawnWormhole = null;
     this._resolveFormationBase();
   }
 
@@ -973,20 +1023,9 @@ export class GymFormationScene<
     return this.shootEnabled;
   }
 
-  /** True while the wipe → respawn countdown is active. */
-  isRespawnCountdownActive(): boolean {
-    return this.respawnCountdownActive;
-  }
-
-  /** Seconds remaining on the respawn countdown (0 when inactive). */
-  getRespawnCountdownRemaining(): number {
-    return this.respawnCountdownActive ? Math.max(0, this.respawnCountdown) : 0;
-  }
-
-  /** The centred countdown overlay text (null when not active / not yet created). */
-  getRespawnCountdownText(): Phaser.GameObjects.Text | null {
-    return this.countdownText;
-  }
+  // `isRespawnCountdownActive` / `getRespawnCountdownRemaining` /
+  // `getRespawnCountdownText` are inherited from the shared `CombatScene`
+  // core (AH-0MUNR5LM1004B223).
 
   /** Bullets currently in flight. */
   get activeBullets(): TBullet[] {
@@ -1001,6 +1040,20 @@ export class GymFormationScene<
   /** Current formation base y. */
   get formationY(): number {
     return this.formationBaseY;
+  }
+
+  /**
+   * Current origin for the re-anchor-capable (Diver) group: the shared
+   * formation base plus the Diver-only re-anchor offset. Non-Diver entities
+   * sit on {@link formationX}/{@link formationY} alone.
+   */
+  get diverFormationX(): number {
+    return this.formationBaseX + this.diverAnchorX;
+  }
+
+  /** Current origin y for the re-anchor-capable (Diver) group. */
+  get diverFormationY(): number {
+    return this.formationBaseY + this.diverAnchorY;
   }
 
   /** The player ship (null when the config omitted `player`). */
@@ -1341,9 +1394,10 @@ export class GymFormationScene<
     }
 
     // Diver re-anchor (GDD §4.1 — E2, AH-0MUAYB957002EMYV): if a Diver's
-    // attack finished, re-base the whole formation origin so its slot
-    // coincides with the attack end. Applied after the drift and before the
-    // positioning pass so every unit uses the new origin in the same frame.
+    // attack finished, re-base the Diver-group origin so its slot coincides
+    // with the attack end. Applied after the drift and before the positioning
+    // pass so the Divers use the new origin in the same frame; every other
+    // enemy is unaffected (AH-0MUL15N63003PUDB).
     const reanchorApplied = this._applyFormationReanchor();
 
     // Position each enemy from the formation base + its own offset.
@@ -1358,9 +1412,13 @@ export class GymFormationScene<
       // motion + wrap + rotation; a no-op for formation enemies.
       entity.updatePosition?.(dt);
 
+      // Only re-anchor-capable entities (Divers) ride the Diver re-anchor
+      // offset; every other enemy uses the shared base alone and therefore
+      // stays where it is when a Diver re-anchors (AC5).
+      const isDiver = entity.consumeFormationReanchor != null;
       entity.applyFormationPosition(
-        this.formationBaseX,
-        this.formationBaseY,
+        this.formationBaseX + (isDiver ? this.diverAnchorX : 0),
+        this.formationBaseY + (isDiver ? this.diverAnchorY : 0),
         dt,
         config.spacingX,
         config.spacingY,
@@ -1385,6 +1443,10 @@ export class GymFormationScene<
     if (reanchorApplied || this.glide.active) {
       this.glide.update(dt);
     }
+
+    // Advance the wormhole spawn animation (AC1–AC4): grown enemies are
+    // marked spawned and the wormhole closes once every entity has finished.
+    this._updateSpawnAnimations(dt);
 
     // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
     // are advanced by the shared bullet lifecycle below, matching the
@@ -1437,8 +1499,53 @@ export class GymFormationScene<
     this._updateEffectVisuals();
     this._updatePhaseShiftJuice(dt);
 
+    // ── Opt-in wave-timeout: detonate survivors before wipe detection ──
+    // Runs first so a timeout that wipes the wave is observed by the
+    // countdown tick below (AH-0MUNR5LM1004B223).
+    this._advanceWaveTimeout(dt);
+    this._drawWaveTimeoutBar();
+
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
+  }
+
+  /**
+   * Advances the wormhole spawn animation for every spawning entity.
+   * Once all entities have finished growing the wormhole closes and
+   * every entity is marked fully spawned (AC1–AC4, gym parity).
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    let anySpawning = false;
+    for (const entity of this.entities) {
+      if (!entity.isSpawning) continue;
+      const stillGrowing = updateSpawnAnimation(entity as unknown as SpawnAnimatable, dt);
+      if (stillGrowing) {
+        anySpawning = true;
+      } else {
+        entity.setSpawning?.(false);
+      }
+    }
+    if (!anySpawning && this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole);
+      this._spawnWormhole = null;
+    }
+  }
+
+  /**
+   * Test seam: immediately completes any in-progress wormhole spawn
+   * animations without ticking the whole scene (AH-0MURBER4L00821RR).
+   * Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const entity of this.entities) {
+      if (!entity.isSpawning) continue;
+      updateSpawnAnimation(entity as unknown as SpawnAnimatable, 10);
+      entity.setSpawning?.(false);
+    }
+    if (this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole);
+      this._spawnWormhole = null;
+    }
   }
 
   /**
@@ -1459,20 +1566,22 @@ export class GymFormationScene<
     }
     if (!latest) return false;
 
+    // Re-anchor the Diver group only: the delta moves the Diver origin so the
+    // requester's slot lands on the attack end. Every other enemy is left
+    // exactly where it is (producer review, AH-0MUL15N63003PUDB) — the shared
+    // formation base is untouched.
     const { dx, dy } = computeFormationReanchorDelta(
       latest,
-      this.formationBaseX,
-      this.formationBaseY,
+      this.formationBaseX + this.diverAnchorX,
+      this.formationBaseY + this.diverAnchorY,
       this.config.spacingX,
       this.config.spacingY,
     );
-    this.formationBaseX += dx;
-    this.formationBaseY += dy;
+    this.diverAnchorX += dx;
+    this.diverAnchorY += dy;
 
-    // Begin the glide for every formation-driven entity so they ease to their
-    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only entities that
-    // expose the re-anchor seam (`consumeFormationReanchor`) — i.e. Divers —
-    // glide; all other enemies snap directly to their re-based slots.
+    // Only the re-anchor-capable (Diver) entities glide to their new slots;
+    // non-Divers did not move this frame, so they are not tracked.
     const glideTargets = this.entities.filter(
       (entity) => entity.consumeFormationReanchor != null,
     );
@@ -1554,62 +1663,109 @@ export class GymFormationScene<
     );
   }
 
-  // ── Wipe → 3s countdown → respawn lifecycle (AH-0MTFXKA5Q003LBH5) ─
+  // ── Shared wipe → countdown → respawn + wave-timeout hooks ──────
+  // The wipe→3 s countdown→respawn lifecycle and the wave-timeout state
+  // machine live in the shared `CombatScene` core (AH-0MUNR5LM1004B223);
+  // this scene supplies only its config-driven specifics through the hooks
+  // below so every combat scene runs one implementation.
 
-  private _startRespawnCountdown(): void {
-    this.respawnCountdownActive = true;
-    this.respawnCountdown = RESPAWN_COUNTDOWN_SECONDS;
-    if (!this.countdownText) {
-      this.countdownText = this.add
-        .text(
-          GAME_WIDTH / 2,
-          GAME_HEIGHT / 2,
-          this._countdownLabel(),
-          COUNTDOWN_STYLE,
-        )
-        .setOrigin(0.5)
-        .setDepth(100);
-    } else {
-      this.countdownText.setVisible(true);
-    }
-    this.countdownText.setText(this._countdownLabel());
+  /** Opt-in timeout duration from the scene config (0 disables). */
+  protected override getWaveTimeoutDuration(): number {
+    return this.config.timeoutDuration ?? 0;
   }
 
-  private _countdownLabel(): string {
-    const n = Math.max(1, Math.ceil(this.respawnCountdown));
-    return `Respawning in ${n}...`;
+  /**
+   * Pause the timeout while the wipe→respawn countdown is active so the two
+   * lifecycles never overlap.
+   */
+  protected override isWaveTimeoutPaused(): boolean {
+    return this.respawnCountdownActive;
   }
 
-  private _cancelRespawnCountdown(): void {
-    this.respawnCountdownActive = false;
-    this.respawnCountdown = 0;
-    if (this.countdownText) {
-      this.countdownText.setVisible(false);
-    }
+  /**
+   * On timeout expiry survivors are **kept** (the shared base no longer
+   * detonates them — AH-0MUNS3ZQ1002DJ9S) and the gym refreshes through the
+   * existing 3 s wipe→respawn countdown. At the countdown's end a fresh
+   * formation is spawned alongside the surviving enemies so both must be
+   * cleared (game parity).
+   */
+  protected override onWaveTimeoutExpired(): void {
+    this._startRespawnCountdown();
   }
 
-  private _tickRespawnCountdown(dt: number): void {
-    // No formation → nothing to wipe.
-    if (this.entities.length === 0) return;
+  /**
+   * Rebuild the formation when the shared countdown elapses, preserving any
+   * live survivors so a fresh formation spawns alongside them (carry-over
+   * parity with `PlayScene._timeoutWave`, AH-0MUNS3ZQ1002DJ9S).
+   */
+  protected override respawnWave(): void {
+    this.respawnWithCarriedSurvivors();
+  }
 
-    if (this.respawnCountdownActive) {
-      this.respawnCountdown = Math.max(0, this.respawnCountdown - dt);
-      if (this.countdownText) {
-        this.countdownText.setText(
-          this.respawnCountdown <= 0 ? 'Respawning...' : this._countdownLabel(),
-        );
-      }
-      if (this.respawnCountdown <= 0) {
-        this.respawnFormation();
-      }
+  /**
+   * Carry-over respawn (AH-0MUNS3ZQ1002DJ9S): keep every live entity where
+   * it is, drop only the dead ones, and add a fresh formation alongside the
+   * survivors. Both the survivors and the fresh formation must be destroyed
+   * before the wipe→respawn countdown can trigger again.
+   *
+   * Distinct from {@link respawnFormation}, which is a clean slate (used by
+   * the manual Respawn button). During the countdown the survivors remain in
+   * `entities`, so they keep moving and firing; they are re-anchored to the
+   * same formation base as the fresh formation on the next tick.
+   */
+  protected respawnWithCarriedSurvivors(): void {
+    const survivors = this.entities.filter((entity) => entity.alive);
+
+    // No survivors to carry (an ordinary full wipe): a clean-slate respawn is
+    // the correct behaviour, including re-resolving the formation base.
+    if (survivors.length === 0) {
+      this.respawnFormation();
       return;
     }
 
-    // Wipe signal: every entity is no longer alive (mid-explosion counts
-    // as killed, per `alive === false` after `destroySelf()`).
-    if (this.aliveCount === 0) {
-      this._startRespawnCountdown();
+    // Clear enemy bullets so a stale shot does not instantly hit the player
+    // after the respawn. Player bullets are intentionally kept (parity with
+    // `respawnFormation`).
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets.length = 0;
+
+    // Drop the glide for dead entities; survivors keep their live positions.
+    this.glide.clear();
+
+    // Keep live survivors in place; tear down only the dead entities.
+    for (const entity of this.entities) {
+      if (!entity.alive) entity.destroy();
     }
+    this.entities = survivors;
+
+    // Rebuild a fresh formation alongside the survivors at the current base
+    // (no resample, so the survivors do not jump when the formation base is
+    // regenerated). The fresh formation is a complete formation for the
+    // configured geometry.
+    const wasShooting = this.shootEnabled;
+    const offsets = this.config.buildOffsets(this.config.count);
+    for (const offset of offsets) {
+      const entity = this.config.createEntity(
+        this,
+        this.formationBaseX + offset.col * this.config.spacingX,
+        this.formationBaseY + offset.row * this.config.spacingY,
+        offset,
+      );
+      this.add.existing(entity);
+      this.entities.push(entity);
+    }
+    // Preserve SHOOT toggle across the respawn (no surprise toggle).
+    for (const entity of this.entities) entity.shootEnabled = wasShooting;
+
+    this._cancelRespawnCountdown();
+    if (this.countdownText) this.countdownText.setVisible(false);
+    this.statusText?.setText(
+      `SCORE: n/a — ${this.config.statusLabel}: ${this.entities.length}`,
+    );
+    // A fresh formation restarts the opt-in wave-timeout
+    // (AH-0MUNR5LM1004B223).
+    this.startWaveTimeout();
+    playSpawnSound();
   }
 
   /**
@@ -1627,6 +1783,10 @@ export class GymFormationScene<
     // after the respawn. Player bullets are intentionally kept.
     for (const bullet of this.bullets) bullet.graphics.destroy();
     this.bullets.length = 0;
+
+    // Drop any in-flight glide: its tracked entities are about to be
+    // destroyed and recreated at the initial geometry (AH-0MUL15N63003PUDB).
+    this.glide.clear();
 
     // Tear down the old (dead) entities and recreate the formation at its
     // initial geometry, matching the initial create() path.
@@ -1653,6 +1813,9 @@ export class GymFormationScene<
     this.statusText?.setText(
       `SCORE: n/a — ${this.config.statusLabel}: ${this.entities.length}`,
     );
+    // A fresh formation restarts the opt-in wave-timeout
+    // (AH-0MUNR5LM1004B223).
+    this.startWaveTimeout();
     playSpawnSound();
   }
 

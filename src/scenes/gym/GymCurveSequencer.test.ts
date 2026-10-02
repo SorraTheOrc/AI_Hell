@@ -20,6 +20,9 @@ import {
   CURVE_ADD_BUTTON_ID,
   CURVE_DEFAULT_MODE,
   CURVE_HELP_BOX_TITLE,
+  CURVE_LAUNCH_LEVEL_LABEL,
+  CURVE_LAUNCH_WAVE_LABEL_PREFIX,
+  CURVE_LEVEL_HEADING_PREFIX,
   CURVE_MODE_OPTIONS,
   CURVE_PANEL_ID,
   CURVE_PREVIEW_STALE_TEXT,
@@ -32,15 +35,21 @@ import {
   CURVE_WAVE_REMOVE_ATTR,
   CURVE_WAVE_SLIDER_ATTR,
   CURVE_WAVE_VALUE_ATTR,
+  CURVE_WAVES_PER_LEVEL,
   DEFAULT_DIFFICULTY_CURVE,
   GymCurveSequencer,
   WAVE_TABLE_COLUMNS,
+  buildCurveLevels,
   formatCurveHelpBox,
   formatWaveTableHeader,
   formatWaveTableRow,
+  groupWavesByLevel,
+  toWaveDefinition,
   waveTableColumnWidths,
   type WavePreviewEntry,
 } from './GymCurveSequencer';
+import { GymLevel } from './GymLevel';
+import type { ShootableWave } from '../../core/difficultySequencer';
 
 /** Waits for Phaser scene transitions to settle. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -85,6 +94,25 @@ function findHelpBox(
     (child): child is Phaser.GameObjects.Text =>
       child instanceof Phaser.GameObjects.Text &&
       child.text.startsWith(CURVE_HELP_BOX_TITLE),
+  );
+}
+
+/**
+ * Preview launch buttons of one kind (`level` or `wave`), in render order.
+ * Level buttons carry {@link CURVE_LAUNCH_LEVEL_LABEL}; wave buttons start
+ * with {@link CURVE_LAUNCH_WAVE_LABEL_PREFIX}.
+ */
+function findLaunchButtons(
+  scene: Phaser.Scene,
+  kind: 'level' | 'wave',
+): Phaser.GameObjects.Text[] {
+  return scene.children.list.filter(
+    (child): child is Phaser.GameObjects.Text =>
+      child instanceof Phaser.GameObjects.Text &&
+      child.getData('curveLaunch') === true &&
+      (kind === 'level'
+        ? child.text === CURVE_LAUNCH_LEVEL_LABEL
+        : child.text.startsWith(CURVE_LAUNCH_WAVE_LABEL_PREFIX)),
   );
 }
 
@@ -470,6 +498,164 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
         expect(help).toContain(column.heading);
         expect(help).toContain(column.help);
       }
+    });
+  });
+
+  // ── Level grouping + launch buttons (AH-0MUNU6MGM007CI45) ──────
+
+  describe('level grouping (AC1/AC2, AH-0MUNU6MGM007CI45)', () => {
+    /** A minimal sequencer wave with one scout group. */
+    function wave(count: number): ShootableWave {
+      return {
+        groups: [
+          {
+            enemyKey: 'scout',
+            formation: 'v',
+            count,
+            spacingX: 30,
+            spacingY: 26,
+            startX: 200,
+            startY: 150,
+            score: 5,
+          },
+        ],
+        shootEnabled: false,
+        targetDifficulty: 10,
+      };
+    }
+
+    it('groupWavesByLevel partitions in order, last group short', () => {
+      expect(groupWavesByLevel([1, 2, 3, 4, 5], 2)).toEqual([
+        [1, 2],
+        [3, 4],
+        [5],
+      ]);
+      expect(groupWavesByLevel([1, 2, 3], 3)).toEqual([[1, 2, 3]]);
+    });
+
+    it('groupWavesByLevel handles empty and non-positive group sizes', () => {
+      expect(groupWavesByLevel([], 3)).toEqual([]);
+      expect(groupWavesByLevel([1, 2], 0)).toEqual([[1, 2]]);
+      expect(groupWavesByLevel([1, 2], -1)).toEqual([[1, 2]]);
+    });
+
+    it('toWaveDefinition drops the sequencer-only score and keeps the shape', () => {
+      const def = toWaveDefinition(wave(7));
+      expect(def.shootEnabled).toBe(false);
+      expect(def.groups).toHaveLength(1);
+      expect(def.groups[0]).toEqual({
+        enemyKey: 'scout',
+        formation: 'v',
+        count: 7,
+        spacingX: 30,
+        spacingY: 26,
+        startX: 200,
+        startY: 150,
+      });
+      expect('score' in def.groups[0]).toBe(false);
+    });
+
+    it('buildCurveLevels folds waves into level definitions', () => {
+      const levels = buildCurveLevels([wave(1), wave(2), wave(3), wave(4)], 3);
+      expect(levels).toHaveLength(2);
+      expect(levels[0].level).toBe(1);
+      expect(levels[0].waves).toHaveLength(3);
+      expect(levels[1].level).toBe(2);
+      expect(levels[1].waves).toHaveLength(1);
+      expect(levels[0].waves[1].groups[0].count).toBe(2);
+    });
+
+    it('exposes curveLevels and a level group per chunk after Regenerate', async () => {
+      booted = await bootScene([GymCurveSequencer]);
+      const scene = booted.scene as GymCurveSequencer;
+      const expectedGroups = Math.ceil(
+        DEFAULT_DIFFICULTY_CURVE.length / CURVE_WAVES_PER_LEVEL,
+      );
+      expect(scene.wavesPerLevel).toBe(CURVE_WAVES_PER_LEVEL);
+      expect(scene.curveLevels).toHaveLength(expectedGroups);
+      const totalWaves = scene.curveLevels.reduce(
+        (sum, level) => sum + level.waves.length,
+        0,
+      );
+      expect(totalWaves).toBe(DEFAULT_DIFFICULTY_CURVE.length);
+    });
+
+    it('AC1 — renders a level heading + Launch Level button per group', async () => {
+      booted = await bootScene([GymCurveSequencer]);
+      const scene = booted.scene as GymCurveSequencer;
+      const groups = scene.curveLevels.length;
+
+      for (let i = 0; i < groups; i++) {
+        expect(
+          findText(scene, `${CURVE_LEVEL_HEADING_PREFIX} ${i + 1}`),
+          `level heading ${i + 1} missing`,
+        ).toBeDefined();
+      }
+      const levelButtons = findLaunchButtons(scene, 'level');
+      expect(levelButtons).toHaveLength(groups);
+    });
+
+    it('AC1 — clicking Launch Level boots GymLevel with the level waves', async () => {
+      booted = await bootScene([GymCurveSequencer, GymLevel]);
+      const scene = booted.scene as GymCurveSequencer;
+      const expected = scene.curveLevels[0];
+
+      findLaunchButtons(scene, 'level')[0].emit('pointerdown');
+      await tick();
+
+      const launched = booted.game.scene.getScene('GymLevel') as GymLevel;
+      expect(booted.game.scene.isActive('GymLevel')).toBe(true);
+      expect(launched.getLabel()).toBe(expected.name);
+      expect(launched.getWavesToPlayCount()).toBe(expected.waves.length);
+      // The launched level's first wave matches the generated composition.
+      expect(launched.getCurrentWave()?.groups[0].enemyKey).toBe(
+        expected.waves[0].groups[0].enemyKey,
+      );
+    });
+
+    it('AC2 — renders one Launch Wave button per wave row', async () => {
+      booted = await bootScene([GymCurveSequencer]);
+      const scene = booted.scene as GymCurveSequencer;
+      const waveButtons = findLaunchButtons(scene, 'wave');
+      expect(waveButtons).toHaveLength(scene.wavePreview.length);
+      waveButtons.forEach((button, index) => {
+        expect(button.text).toBe(
+          `${CURVE_LAUNCH_WAVE_LABEL_PREFIX} ${index + 1}`,
+        );
+      });
+    });
+
+    it('AC2 — clicking Launch Wave boots GymLevel with only that wave', async () => {
+      booted = await bootScene([GymCurveSequencer, GymLevel]);
+      const scene = booted.scene as GymCurveSequencer;
+
+      findLaunchButtons(scene, 'wave')[1].emit('pointerdown');
+      await tick();
+
+      const launched = booted.game.scene.getScene('GymLevel') as GymLevel;
+      expect(booted.game.scene.isActive('GymLevel')).toBe(true);
+      expect(launched.getWavesToPlayCount()).toBe(1);
+      expect(launched.getLabel()).toBe('Wave 2');
+      expect(launched.getCurrentWave()?.groups[0].enemyKey).toBe(
+        scene.curveLevels[0].waves[1].groups[0].enemyKey,
+      );
+    });
+
+    it('editing the curve removes the launch buttons until Regenerate', async () => {
+      booted = await bootScene([GymCurveSequencer]);
+      const scene = booted.scene as GymCurveSequencer;
+      expect(findLaunchButtons(scene, 'level').length).toBeGreaterThan(0);
+
+      setSlider(0, '55');
+      expect(findLaunchButtons(scene, 'level')).toHaveLength(0);
+      expect(findLaunchButtons(scene, 'wave')).toHaveLength(0);
+
+      (
+        panel()!.querySelector(
+          `#${CURVE_REGENERATE_BUTTON_ID}`,
+        ) as HTMLButtonElement
+      ).click();
+      expect(findLaunchButtons(scene, 'level').length).toBeGreaterThan(0);
     });
   });
 

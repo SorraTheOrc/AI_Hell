@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|-----|-----------|------------|---------------------|
 | E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), returns to current formation slot. The whole cluster holds its drift while a living Diver is away (`DIVING`/`PAUSING`/`RETURNING`) and resumes once every Diver has rejoined | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -98,7 +98,10 @@ one on schedule during `tick(dt)`:
   so they do not gate wave completion and persist across wave/level
   transitions. (The generic `registerDynamicSpawn` / `unregisterDynamicSpawn`
   seam remains on `WaveManager` for any future dynamically spawned enemy that
-  must be wave-accounted.)
+  must be wave-accounted.) The asteroid is therefore **excluded from the
+  difficulty auto-sequencer's candidate pool** (`defaultCandidatePool()`) — a
+  sequenced asteroid group would be counted as a wave enemy but never un-counted
+  (AH-0MUR1HZLQ001ELX9).
 
 The **boss encounter spawns no asteroids**: `planAsteroidSpawns()` clears the
 plan outside a regular wave and the release loop is guarded on boss state.
@@ -496,12 +499,116 @@ for reference implementations (the base class drives them).
 - **Tear-down:** `SHUTDOWN` cancels the countdown and hides the overlay
   so a scene restart never double-fires or leaks.
 
+### 2.6 Wave-timeout carry-over in the enemy gyms (AH-0MUNS3ZQ1002DJ9S, AH-0MUNR5LM1004B223, AH-0MUK5ONAA0007YEX)
+
+The shipped game's wave time-limit is mirrored by the enemy gyms as a
+single shared implementation so the two cannot diverge. On timeout the
+survivors are **kept** and carry over — there is no detonation and no
+life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
+
+- **Shared state machine.** The timer, the depleting bar and the
+  wipe→3 s countdown→respawn lifecycle live once in the shared
+  `CombatScene` core (`startWaveTimeout` / `_advanceWaveTimeout` /
+  `_onWaveTimeout` / `_drawWaveTimeoutBar` and the shared respawn countdown),
+  so every combat gym opts in through the same hooks — a single kind of
+  scene. `GymFormationScene` (and every `GymEnemies` / `GymBoss` /
+  `GymMinerals` subclass) and `GymPowerUpsCombat` all consume it.
+- **Shared helper is a no-op.** `detonateWaveTimeoutSurvivors` in
+  `src/scenes/core/waveTimeout.ts` is retained as a stable API but returns 0
+  and destroys nothing; `WAVE_TIME_LIMIT_SECONDS` and the bar-geometry
+  constants live there too. `PlayScene._timeoutWave` and the shared
+  `CombatScene._onWaveTimeout` both call it, so the game and the gyms cannot
+  diverge on the (now absent) penalty.
+- **Opt-in.** `GymFormationScene` subclasses enable it through
+  `EnemyFormationConfig.timeoutDuration` (seconds); `GymPowerUpsCombat` opts in
+  by overriding `getWaveTimeoutDuration()`. `GymEnemies` sets it to
+  `WAVE_TIME_LIMIT_SECONDS` for every non-boss `enemyKey`, `GymMinerals`
+  enables it for its asteroids-only field, and `GymPowerUpsCombat` enables it
+  for its scout wave. The boss (`GymEnemies` with the `boss` config) and
+  `GymBoss` leave it unset, as do the enemy-free `GymPlayer`, `GymWeapons`
+  and `GymPowerUpsUtility`.
+- **Expiry flow.** On expiry survivors persist, the bar hides, and the shared
+  3 s wipe→respawn countdown starts. At the countdown's end a **fresh
+  formation spawns alongside the survivors** (`GymFormationScene`'s
+  `respawnWithCarriedSurvivors`, or `GymPowerUpsCombat.respawnWave`), so both
+  the survivors and the fresh formation must be cleared before the wipe is
+  complete. A full wipe with no survivors falls back to a clean-slate
+  `respawnFormation`/base reset. The timeout pauses while a countdown is
+  active and restarts on every respawn.
+- **UI.** A depleting top-of-screen bar mirrors `PlayScene._drawWaveTimer()`
+  and shares its geometry constants and drawing code.
+- **Parity guard.** `CombatScene.equivalence.test.ts` asserts the shared
+  wave-timeout / countdown methods are defined exactly once (in the shared
+  core) and that both gym bases resolve them to the same function objects, so
+  a divergent copy cannot be re-introduced.
+- **Tests.** `src/scenes/core/waveTimeout.test.ts` covers the no-op helper;
+  `GymFormationScene.test.ts` covers the opt-in/expiry/carry-over-respawn
+  behaviour (survivors + fresh formation must both be cleared),
+  `GymEnemies.test.ts` asserts every non-boss key enables it while the boss
+  does not, and `GymMinerals.test.ts` / `GymPowerUpsCombat.test.ts` cover the
+  newly-enabled gyms.
+
+### 2.7 Wormhole spawn animation (AH-0MURBER4L00821RR)
+
+When a wave (or formation gym) spawns enemies, each enemy enters through a
+wormhole and grows from **1 pixel to its full size** instead of appearing
+fully formed. The same code runs in `PlayScene` and every formation gym, per
+the gym-parity convention (§5.1).
+
+**Timeline** (scene-tick seconds, not wall-clock — so deterministic
+`scene.tick(dt)` tests drive it identically to a live run):
+
+| Phase | Duration | Behaviour |
+|-------|----------|-----------|
+| Wormhole opens | 1 s | The wormhole VFX scales from 0.01 to full at the spawn position. |
+| Enemy grows | 1.5 s | Each enemy eases from 0.01 scale to its full scale (ease-out cubic). |
+| Wormhole closes | 0.5 s | The wormhole scales to zero and fades out. |
+
+Total spawn-protection window = **3 s**. During that window the spawning
+enemy is protected (AC4):
+
+- **Player bullets pass through** — `CombatScene.onPlayerBulletHitsEnemy`
+  returns `false` for a spawning enemy, so the bullet is not consumed and no
+  damage is applied.
+- **No body collision** — the player-body-vs-enemy pass in
+  `CombatScene._handleCollisions` skips spawning enemies.
+- **No shooting** — `fireForEnemy` returns `[]` for a spawning enemy, so
+  firing is suppressed regardless of `shootEnabled`.
+- **No mineral absorption** — the enemy-absorption loop in
+  `collectMinerals` (`src/scenes/core/mineralLayer.ts`) skips spawning
+  enemies.
+
+**Implementation.**
+
+- `src/vfx/wormholeSpawn.ts` owns the wormhole VFX (`spawnWormholeOpen` /
+  `spawnWormholeClose`) and the dt-driven growth helpers
+  (`startSpawnAnimation`, `updateSpawnAnimation`, `isEnemySpawning`). The
+  spawn state is stored as entity data, so any `Container`-based entity works.
+- `BaseEnemy` exposes `isSpawning` / `setSpawning()` — the single flag every
+  shared collision/fire/absorption gate reads.
+- `PlayScene._spawnEnemy` starts the animation; `PlayScene._updateSpawnAnimations`
+  advances it before collisions so an enemy that finishes growing this frame
+  is collidable on the same frame; the wormhole closes once every wave enemy
+  has finished.
+- `GymFormationScene.create` starts the animation for each formation entity
+  and `_updateSpawnAnimations` advances/closes it, so `GymEnemies` and the
+  other formation gyms are in lock-step with the game.
+- Both scenes expose a `finishSpawnAnimations()` test seam that completes the
+  animation without advancing wave timers/asteroid spawns, so collision tests
+  can observe fully-spawned enemies deterministically.
+
+**Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters and
+  the dt-driven growth curve; `PlayScene.test.ts` (describe
+  “wormhole spawn animation”) and `GymEnemies.test.ts` (describe
+  “wormhole spawn animation parity”) cover the spawn-protection gates in both
+  scenes.
+
 ### 3.2 Existing scenes (reference implementations)
 
 | Scene | Entity | Formation | Fire pattern | Audio |
 |-------|--------|-----------|--------------|-------+-------|
 | `GymScout` | `Scout` | V (offset columns +2/row) | aimed shot (single) | advance cue (≥ 500 ms) + fire sound scheduled at cue end (entity-level, per aimed shot, no gap between cue and fire sound) |
-| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); dive-phase sounds — `playDiverDiveStartSound()` once at the FORMATION→DIVING transition plus a refcounted shared sustained dive voice (`playDiveSound()`/`stopDiveSound()`, ~2 s, stopped at DIVING→RETURNING / destroy); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
+| `GymDiver` | `Diver` | diamond/chevron | spread burst (array) | `playDiverFireSound()` once per spread burst (entity-level, no advance cue); dive-phase sounds — `playDiverDiveStartSound()` once at the FORMATION→DIVING transition plus a refcounted shared sustained dive voice (`playDiveSound()`/`stopDiveSound()`, ~2 s, stopped at the end of the dive / destroy); distinct `playDiverDestructionSound()` via the optional `playDestructionAudio?()` seam (once per destruction) |
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
@@ -612,6 +719,18 @@ handling all run through the shared core (`_tickPlayer`, `_autoFire`,
 `_handleCollisions`) — the gym overrides only the two destruction hooks
 (`onPlayerBulletHitsEnemy` absorbs the bullet; `onPlayerRamsEnemy` leaves the
 obstacle alive), so no collision loop is copied (AH-0MUAYB2XR007N10W).
+
+**Documented divergence — the weapon gym's AOE practice targets.**
+`GymWeapons` spawns three inert, static `TrainingTarget`s that the shipped
+`PlayScene` has no counterpart for. They exist solely so the inherited AOE
+dispatch/VFX (`CombatScene.onAoeFired` → `applyAoeEffect` / `applyArcChainEffect`)
+can visibly demonstrate the Nova ring, Mortar blast and Arc chain in a
+theatre that otherwise has no enemies; they never move and never fire, so the
+gym stays threat-free. The AOE resolution itself is **not** duplicated — the
+gym exposes the targets through the shared `getEnemyEntities()` participant
+contract and inherits every AOE hook from the shared core, so the game and the
+gym resolve the same effect from one implementation (parent
+AH-0MQUYHY0000MZ2F, F6 AC3/AC5).
 ---
 
 ## 6. Testing strategy
@@ -758,8 +877,8 @@ collecting bullets, so that frame's shots use the current position:
   The dive is a **diagonal parabolic arc** — both x and y follow the
   quadratic bezier from the formation slot to the snapshotted player
   position (`computeDivePoint`; AH-0MTGBOKLC006N8UX); there is no x-lock.
-  When the attack ends (`DIVING`/`PAUSING`) the unit re-anchors to the
-  attack-end location — see §7.6.
+  When the attack ends (`DIVING`/`PAUSING`) the Diver group re-anchors to the
+  attack-end location (non-Divers do not move) — see §7.6.
 - **Tank** — deliberately **direction-agnostic**: its 10-spoke radial burst
   is untouched (no aim seam).
 
@@ -810,38 +929,44 @@ request through the optional `consumeFormationReanchor?()` seam (on
 - Both independent drift implementations apply the same shared rule,
   `computeFormationReanchorDelta(request, originX, originY, spacingX,
   spacingY)`, which returns the translation that makes the requester's slot
-  (`origin + offset * spacing`) coincide with its attack end. Applying that
-  `(dx, dy)` to the whole unit preserves every other unit's relative offset:
-  - `GymFormationScene.tick()` re-bases `formationBaseX`/`formationBaseY`.
-  - `PlayScene._moveEnemies()` shifts a unit-level `formationAnchorX`/`Y`
-    added to every formation group's origin.
+  (`origin + offset * spacing`) coincide with its attack end.
+- **Only the Diver group moves.** The `(dx, dy)` translation is applied to a
+  **Diver-only offset**, not to the shared formation base, so non-Diver
+  enemies keep their own positions (producer review: *"Only the divers should
+  move"* / *"they should stay where they are"*):
+  - `GymFormationScene.tick()` adds `diverAnchorX`/`Y` to
+    `formationBaseX`/`formationBaseY` for entities that expose the seam; the
+    shared base — and therefore every non-Diver — is untouched. The
+    `diverFormationX`/`Y` getters expose the Diver-group origin.
+  - `PlayScene._moveEnemies()` adds a `diverAnchorX`/`Y` offset only to Diver
+    spawns; every other spawn uses `startX + driftX` / `startY` alone.
 - The re-anchor is applied after the drift and before the positioning pass,
-  so every unit uses the new origin in the same frame. The drift itself is
+  so the Divers use the new origin in the same frame. The drift itself is
   never frozen — no entity can hold the cluster (the interim formation-hold
   seam was removed).
 - When Divers become desynchronised (destruction + later respawn) the most
   recent attack-end wins — a documented assumption, since the shared rule is
   a single translation and can satisfy only one requester's slot.
-- Non-Diver entities have no re-anchor request; they ride the same unit
-  origin shift as every other formation member.
+- Non-Diver entities have no re-anchor request and are not part of the Diver
+  group, so a Diver's attack does not move them at all.
 
 #### 7.6.1 Animated re-anchor glide (AH-0MUL15N63003PUDB)
 
-The origin re-base is a whole-unit translation, so applying it directly made
-the entire unit **teleport** to its new slots in one frame. The transition is
-now animated by the shared `FormationGlide` helper
+The Diver-group origin re-base is a translation, so applying it directly made
+the Divers **teleport** to their new slots in one frame. The transition is now
+animated by the shared `FormationGlide` helper
 (`src/scenes/core/formationGlide.ts`), consumed identically by
 `GymFormationScene` and `PlayScene` (gym↔game parity):
 
 - On the frame a re-anchor is applied, the scene calls `glide.begin(targets)`
   with every **re-anchor-capable** entity — the Divers that expose the
   `consumeFormationReanchor()` seam. Non-Diver formation members (Scouts,
-  Tanks, Phasers, Swarms) **snap directly** to their re-based slots; only the
-  Divers animate, so the re-anchor reads as a coordinated Diver regroup rather
-  than the whole wave sliding (AH-0MUL15N63003PUDB manual-review fix). Roamers
-  (asteroids, harvesters) are likewise excluded: their own motion must not be
-  eased. `begin` captures each entity's current position as the glide's `from`
-  point.
+  Tanks, Phasers, Swarms) are **not part of the Diver group and stay exactly
+  where they are** — they are not tracked by the glide and receive no
+  re-anchor delta (producer review: *"they should stay where they are"*).
+  Roamers (asteroids, harvesters) are likewise excluded: their own motion must
+  not be eased. `begin` captures each entity's current position as the glide's
+  `from` point.
 - After the normal `applyFormationPosition` positioning pass the scene calls
   `glide.update(dt)` exactly once. For each tracked entity the helper reads
   the **live** target already set by `applyFormationPosition` and renders
@@ -851,15 +976,16 @@ now animated by the shared `FormationGlide` helper
 - `FORMATION_GLIDE_SECONDS` (`0.32 s`) is the single tunable duration,
   exported from the helper.
 - When `elapsed ≥ FORMATION_GLIDE_SECONDS` the entity is left exactly on the
-  live slot (residual `0`) and its glide state is dropped — the unit's
+  live slot (residual `0`) and its glide state is dropped — the Diver group's
   relative offsets are preserved on completion.
 - The attacking Diver is tracked (it is the re-anchor requester). Its
   re-based slot coincides with its attack end, so its residual is only the
-  idle x-wiggle; it eases that out and keeps drifting with the unit. Passing
-  Divers in a multi-Diver unit are also tracked and glide to their shifted
-  slots.
-- `clear()` is called from each scene's `teardownRunState()` so a
-  stop/restart starts with no active glide.
+  idle x-wiggle; it eases that out and keeps drifting with the Diver group.
+  Passing Divers in a multi-Diver group are also tracked and glide to their
+  shifted slots.
+- `clear()` is called from each scene's `teardownRunState()` and from
+  `GymFormationScene.respawnFormation()` so a stop/restart or a formation
+  respawn starts with no active glide.
 
 ---
 
@@ -1076,6 +1202,23 @@ focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
 and Enter/Space launch the focused row through the same path as a pointer
 click (AH-0MUDZFBYY008P7ZE).
 
+**Level Gym (`GymLevel`, AH-0MUNU6MGM007CI45).** The left column also lists
+`GymLevel` (label **Level**). It is a parameterised level-playback gym that
+takes a `LevelDefinition` (`{ level, name, waves }`) and plays the waves
+sequentially through the shared `CombatScene` core (input, auto-fire,
+collision/hit lifecycle and formation drift are the same code as the game and
+the other gyms). It shows the level name plus `Wave n/N` in the HUD, starts
+the ship with the **spread** and **dual** weapons equipped, and offers the
+standard "← INDEX"/ESC navigation. Like every player-bearing gym it binds the
+arrow/WASD keys for the shared `_tickPlayer` control step and plays the shared
+spawn cue (`playSpawnSound`) as each wave spawns, so the launched level is
+fully playable and audible (parity with the game and the other gyms). It is
+the launch target of the
+difficulty-curve editor's **Launch Level** / **Launch Wave N** buttons: the
+editor folds its generated waves into level groups of `CURVE_WAVES_PER_LEVEL`
+(3) and offers one **Launch Level** button per group (full level) plus one
+**Launch Wave** button per row (single wave).
+
 ### 8.6 Adding a new enemy (convention)
 
 1. **Tune in the gym.** Run `npm run dev`, open the **Gym Index → any
@@ -1246,6 +1389,17 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   `validateDifficultyCurveRow` codec (`src/core/csv.ts`). The legacy 4-column
   form keeps working: an absent `generation` defaults to `curve`, and the codec
   always writes the column back.
+- **Candidate pool (AH-0MUR1HZLQ001ELX9):** the default pool
+  (`defaultCandidatePool()`) deliberately excludes two archetypes that are
+  delivered by their own spawners: the **Harvester** (rare later-level roaming
+  spawn, `HarvesterSpawner`) and the **Asteroid** (random offscreen spawner,
+  `AsteroidSpawner`). The asteroid is explicitly **not wave-accounted**
+  (AH-0MUJM746P000QAEO), so a sequenced wave group containing one would be
+  counted by `WaveManager.waveEnemyCount()` but never un-counted — the wave
+  would never clear, soft-locking the run and making the boss unreachable.
+  Excluding it keeps every sequenced group wave-accounted and preserves the
+  "asteroids are not wave-accounted" contract for the random spawner and split
+  children.
 - **Per-wave generation modes (AH-0MUJSUQD8003FSUT):** `generation` is a
   **per-wave** selector and the three modes may be mixed freely within a level:
   `curve` builds the wave from its target once (fixed for the run); `fixed`
@@ -1255,7 +1409,11 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   run start, seeded from the run seed, so successive runs differ while a given
   seed reproduces exactly. The `dynamic` seed shifts the wave's target by up to
   ±`DYNAMIC_TARGET_JITTER` points before sequencing (the saved curve is never
-  mutated). A missing/unknown mode falls back to `curve`. The legacy per-level
+  mutated); the no-fire opening waves (levels 1–3) instead use the tight
+  ±`EARLY_DYNAMIC_TARGET_JITTER` (2) and a **curated** candidate pool with a
+  minimum count of 4, so the opening (L1W1, L1W2, L2W1, L2W2) stays varied and
+  never degenerate (AH-0MUOCJM0N000RW2B). A missing/unknown mode falls back to
+  `curve`. The legacy per-level
   `source` column (`generated` | `scripted`, AH-0MUH7Q6HN0006QPD) is still read
   when `generation` is absent: `scripted` → `fixed`, `generated` → `curve`. The
   merged campaign starts from the static `LEVELS` skeleton, so levels 1–5 are
@@ -1289,9 +1447,11 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   generation for that wave. The whole campaign falls back to static `LEVELS`
   only when there are no rows, the candidate pool is empty, or the merged result
   would be empty. A missing/malformed curve CSV falls back to the computed
-  default curve (`defaultDifficultyCurves()`: levels 1–3 `fixed` on the
+  default curve (`defaultDifficultyCurves()`: the first four campaign waves
+  `dynamic` on a curated opening, the remaining levels 1–3 waves `fixed` on the
   measured `LEVELS` calibration, levels 4–5 `curve` on hand-tuned targets with
-  level 5 wave 2 `dynamic` — AH-0MUJSUTXI008NP8K / AH-0MUJSUTLA006Q8E1); and
+  level 5 wave 2 `dynamic` — AH-0MUOCJM0N000RW2B / AH-0MUJSUTXI008NP8K /
+  AH-0MUJSUTLA006Q8E1); and
   `PlayScene` catches any error and leaves the static campaign active. The run
   is therefore never left unplayable.
 
@@ -1325,7 +1485,7 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 | Enemy | Advance cue | Fire sound | Scope & timing |
 |-------|-------------|------------|----------------|
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
-| E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at DIVING→RETURNING, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
+| E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at the end of the dive, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
 | E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **entity-level**, one cue+thump pair per radial burst inside `tryFireRadialBurst()` — the cue flows with **no gap** into the thump |
 | E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
 | E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **entity-level** volley burst, once per volley inside `tryFireBurstBullet()` |

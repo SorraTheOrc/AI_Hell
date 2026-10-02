@@ -42,8 +42,71 @@ import {
 /**
  * Unique weapon identifiers. `'cannon'` is the starting weapon; the
  * `'reset'` drop type returns the ship to it (not a weapon itself).
+ *
+ * The `'nova' | 'mortar' | 'arc'` ids are the **area-of-effect (AOE)**
+ * family (parent AH-0MUOOB3OR001V8CD): each carries an {@link AoEDescriptor}
+ * that the shared combat core reads to resolve its area effect.
  */
-export type WeaponId = 'cannon' | 'spread' | 'dual' | 'rapid';
+export type WeaponId =
+  | 'cannon'
+  | 'spread'
+  | 'dual'
+  | 'rapid'
+  | 'nova'
+  | 'mortar'
+  | 'arc';
+
+// ── AOE descriptors ─────────────────────────────────────────────────
+
+/**
+ * When an area-of-effect weapon resolves its effect:
+ * - `'onFire'` — the area resolves at the ship the instant the weapon fires
+ *   (e.g. an expanding nova ring or a chaining arc — no travelling shot).
+ * - `'onImpact'` — the weapon launches a projectile whose area resolves when
+ *   it hits an enemy/bullet or expires (e.g. a mortar shell).
+ */
+export type AoETrigger = 'onFire' | 'onImpact';
+
+/**
+ * Declarative area-of-effect descriptor attached to an AOE weapon
+ * (parent AH-0MUOOB3OR001V8CD). The shared combat core reads it once and
+ * resolves the effect identically in the game and every gym — the descriptor
+ * carries only data, never behaviour.
+ */
+export interface AoEDescriptor {
+  /** When the area effect resolves (see {@link AoETrigger}). */
+  trigger: AoETrigger;
+  /** Effect radius in pixels, measured from the effect origin. */
+  radius: number;
+  /** Whether the effect damages enemies inside the radius. */
+  damagesEnemies: boolean;
+  /** Whether the effect clears enemy bullets inside the radius. */
+  clearsEnemyBullets: boolean;
+  /**
+   * Maximum number of additional targets an `'onFire'` effect may chain to
+   * after the primary target (0/undefined = no chaining). Reserved for the
+   * Arc weapon's chain mechanic.
+   */
+  chains?: number;
+  /**
+   * Projectile speed (px/s) for an `'onImpact'` weapon. The shared auto-fire
+   * loop launches the projectile at this speed; when omitted it falls back to
+   * the shared `BULLET_SPEED`. An `'onFire'` descriptor never launches a
+   * projectile, so the field is ignored for it.
+   */
+  projectileSpeed?: number;
+}
+
+/**
+ * The AOE weapon ids, in catalogue order. Exposed so dispatch and tests can
+ * iterate the family without hard-coding the membership list.
+ */
+export const AOE_WEAPON_IDS: readonly WeaponId[] = ['nova', 'mortar', 'arc'];
+
+/** Returns true when `id` is an AOE weapon (carries an {@link AoEDescriptor}). */
+export function isAoeWeapon(id: WeaponId): boolean {
+  return AOE_WEAPON_IDS.includes(id);
+}
 
 /**
  * Returns true when the weapon is a timed power-up (Spread, Dual, Rapid)
@@ -67,12 +130,23 @@ export function isTimedWeapon(id: WeaponId): boolean {
  */
 export type WeaponSubdivisions = Record<WeaponId, number>;
 
-/** Default shots-per-beat for each weapon (cannon 2, spread 1, dual 1, rapid 6). */
+/**
+ * Default shots-per-beat for each weapon. The four conventional weapons are
+ * integer subdivisions (cannon 2, spread 1, dual 1, rapid 6). The AOE family
+ * fires **slower than the beat**, so its entries are fractional subdivisions:
+ * Nova fires once every 4 beats (`0.25`), Mortar once every 2 beats (`0.5`)
+ * and Arc once per beat (`1`). `beatSubdivisionMs` accepts any positive
+ * number, and every derived rate stays an exact subdivision/multiple of the
+ * beat, so the on-grid invariant holds for the whole catalogue.
+ */
 export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   cannon: 2,
   spread: 1,
   dual: 1,
   rapid: 6,
+  nova: 0.25,
+  mortar: 0.5,
+  arc: 1,
 };
 
 /** Default cannon subdivision (2 shots per beat). */
@@ -83,6 +157,12 @@ export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
 export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
 /** Default rapid subdivision (6 shots per beat). */
 export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
+/** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
+export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
+/** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+export const WEAPON_MORTAR_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.mortar;
+/** Default Arc subdivision (once per beat → 750 ms at 80 BPM). */
+export const WEAPON_ARC_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.arc;
 
 /**
  * Derives a weapon's fire interval (ms) from a subdivision of the beat:
@@ -126,6 +206,26 @@ export const WEAPON_DUAL_FIRE_RATE = beatSubdivisionMs(WEAPON_DUAL_SUBDIVISION);
  */
 export const WEAPON_RAPID_FIRE_RATE = beatSubdivisionMs(WEAPON_RAPID_SUBDIVISION);
 
+/**
+ * Fire rate interval for the Nova AOE weapon (ms) — 1 shot every 4 beats
+ * (3000 ms at the default 80 BPM). Slow and defensive: a sparse pulse that
+ * clears the ship's immediate surroundings.
+ */
+export const WEAPON_NOVA_FIRE_RATE = beatSubdivisionMs(WEAPON_NOVA_SUBDIVISION);
+
+/**
+ * Fire rate interval for the Mortar AOE weapon (ms) — 1 shot every 2 beats
+ * (1500 ms at the default 80 BPM). The launched shell detonates on impact or
+ * expiry.
+ */
+export const WEAPON_MORTAR_FIRE_RATE = beatSubdivisionMs(WEAPON_MORTAR_SUBDIVISION);
+
+/**
+ * Fire rate interval for the Arc AOE weapon (ms) — 1 shot per beat (750 ms at
+ * the default 80 BPM), the fastest AOE cadence.
+ */
+export const WEAPON_ARC_FIRE_RATE = beatSubdivisionMs(WEAPON_ARC_SUBDIVISION);
+
 /** Bullet speed in pixels per second (used by all weapons). */
 export const BULLET_SPEED = 350;
 
@@ -147,6 +247,12 @@ export const WEAPON_BULLET_LIFETIME = {
   dual: 1.4,
   /** Rapid — short reach balanced by its high fire rate (~262 px). */
   rapid: 0.75,
+  /** Nova — the ring resolves instantly; no travelling bullet. */
+  nova: 0.5,
+  /** Mortar — the shell lives ~2 s (its detonation window), wrapping meanwhile. */
+  mortar: 2.0,
+  /** Arc — the bolt resolves instantly; no travelling bullet. */
+  arc: 0.5,
 } as const;
 
 // ── Bullet visual definitions ───────────────────────────────────────
@@ -161,7 +267,36 @@ export const BULLET_COLORS = {
   dual: 0xff00ff,
   /** Rapid weapon bullet — electric yellow. */
   rapid: 0xffff00,
+  /** Nova ring / projectile — pale cyan. */
+  nova: 0x66ffff,
+  /** Mortar shell / blast — deep orange. */
+  mortar: 0xff6600,
+  /** Arc chaining bolt — electric purple. */
+  arc: 0xcc66ff,
 };
+
+/**
+ * AOE effect radii (px) — the single source of truth read by the catalogue
+ * descriptors and (later) the distinctive VFX helpers.
+ */
+export const AOE_RADII = {
+  /** Nova ring radius — a defensive pulse around the ship. */
+  nova: 90,
+  /** Mortar blast radius — a focused detonation at the impact point. */
+  mortar: 70,
+  /** Arc chaining reach — the longest AOE, spanning nearby targets. */
+  arc: 120,
+} as const;
+
+/**
+ * AOE `'onImpact'` projectile speeds (px/s). Slower than the standard
+ * `BULLET_SPEED` (350), so the Mortar shell visibly arcs across the screen
+ * and its detonation point stays legible.
+ */
+export const AOE_PROJECTILE_SPEEDS = {
+  /** Mortar shell — deliberately slow, giving the blast a readable travel. */
+  mortar: 180,
+} as const;
 
 /**
  * Bullet shape type — determines how the bullet is drawn.
@@ -210,6 +345,13 @@ export interface WeaponDefinition {
    * `BULLET_SPEED × bulletLifetime` (AH-0MU960UTE001PTV0).
    */
   bulletLifetime: number;
+  /**
+   * Area-of-effect descriptor (absent for conventional weapons). When
+   * present the shared combat core dispatches the area effect through the
+   * AOE seam rather than treating the shot as an ordinary bullet
+   * (parent AH-0MUOOB3OR001V8CD).
+   */
+  aoe?: AoEDescriptor;
 }
 
 // ── Weapon catalogue ────────────────────────────────────────────────
@@ -270,6 +412,64 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
   },
+  nova: {
+    id: 'nova',
+    name: 'Nova',
+    description:
+      'AOE: an expanding ring around the ship damages every enemy and clears bullets within its radius.',
+    // The onFire ring resolves at the ship; no travelling bullet is spawned.
+    offsets: [0],
+    fireRateMs: WEAPON_NOVA_FIRE_RATE,
+    bulletColor: BULLET_COLORS.nova,
+    bulletShape: 'circle',
+    bulletSize: 1.2,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.nova,
+    aoe: {
+      trigger: 'onFire',
+      radius: AOE_RADII.nova,
+      damagesEnemies: true,
+      clearsEnemyBullets: true,
+    },
+  },
+  mortar: {
+    id: 'mortar',
+    name: 'Mortar',
+    description:
+      'AOE: launches a slow shell that detonates on impact, damaging enemies and clearing bullets in a blast.',
+    offsets: [0],
+    fireRateMs: WEAPON_MORTAR_FIRE_RATE,
+    bulletColor: BULLET_COLORS.mortar,
+    bulletShape: 'circle',
+    bulletSize: 1.1,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.mortar,
+    aoe: {
+      trigger: 'onImpact',
+      radius: AOE_RADII.mortar,
+      damagesEnemies: true,
+      clearsEnemyBullets: true,
+      projectileSpeed: AOE_PROJECTILE_SPEEDS.mortar,
+    },
+  },
+  arc: {
+    id: 'arc',
+    name: 'Arc',
+    description:
+      'AOE: a chaining bolt strikes the nearest enemy and arcs to nearby targets, clearing bullets along the path.',
+    // The onFire chain resolves immediately; no travelling bullet.
+    offsets: [0],
+    fireRateMs: WEAPON_ARC_FIRE_RATE,
+    bulletColor: BULLET_COLORS.arc,
+    bulletShape: 'circle',
+    bulletSize: 0.9,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.arc,
+    aoe: {
+      trigger: 'onFire',
+      radius: AOE_RADII.arc,
+      damagesEnemies: true,
+      clearsEnemyBullets: true,
+      chains: 2,
+    },
+  },
 };
 
 /**
@@ -328,7 +528,17 @@ export function isOnBeatGrid(
   }
   const period = beatPeriodMs(bpm);
   // Use a small tolerance for float-safety when BPM is overridden.
-  return Math.abs(period % fireRateMs) < 1e-9 * Math.max(1, period);
+  const tolerance = 1e-9 * Math.max(1, period);
+  // Faster than (or equal to) the beat: the rate exactly subdivides the
+  // beat period (the conventional weapons, e.g. cannon 375 ms, rapid 125 ms).
+  if (period % fireRateMs < tolerance) return true;
+  // Slower than the beat: the rate is an exact integer multiple of the beat
+  // period (the AOE family, e.g. Nova 3000 ms = 4 beats, Mortar 1500 ms = 2).
+  // This keeps an arbitrary off-grid rate (e.g. 200 ms) rejected.
+  if (fireRateMs > period && Math.abs(fireRateMs % period) < tolerance) {
+    return true;
+  }
+  return false;
 }
 
 // ── Round-robin drop order ──────────────────────────────────────────

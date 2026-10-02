@@ -4,8 +4,9 @@
  * Pins the single shared rule consumed by `PlayScene` and
  * `GymFormationScene`: a small asteroid drops exactly one mineral at its
  * death site, large/medium asteroids drop none (their split children drop),
- * and a non-asteroid enemy re-drops the configured 25–50 % fraction of the
- * minerals it absorbed, scattered near the death site.
+ * and a non-asteroid enemy re-drops its collected minerals plus a random
+ * additive bonus (default 0.25–1.25), rounded to the nearest integer and
+ * scattered near the death site.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -97,31 +98,38 @@ describe('resolveMineralKillDrops — non-asteroid re-drop rule', () => {
     booted = null;
   });
 
-  it('re-drops between the configured fractions, never more than collected, at the death site', async () => {
+  it('re-drops the collected count plus an additive bonus at the death site', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 500, 250);
     for (let i = 0; i < 100; i += 1) enemy.collectMineral();
 
-    // Low extreme: rng() === 0 → floor(100 × 0.25) = 25, scatter radius 0.
+    // Low extreme: rng() === 0 → round(100 + 0.25) = 100, scatter radius 0.
     const low = resolveMineralKillDrops(scene, enemy, () => 0);
-    expect(low).toHaveLength(25);
+    expect(low).toHaveLength(100);
     for (const drop of low) {
       expect(drop.x).toBe(500);
       expect(drop.y).toBe(250);
     }
 
-    // High extreme: rng() === 0.999 → floor(100 × 0.5) = 50.
+    // High extreme: rng() === 0.999 → round(100 + 0.25 + 0.999) = 101.
     const high = resolveMineralKillDrops(scene, enemy, () => 0.999);
-    expect(high).toHaveLength(50);
+    expect(high).toHaveLength(101);
   });
 
-  it('re-drops nothing when the enemy absorbed nothing', async () => {
+  it('an enemy that absorbed nothing may occasionally drop one mineral', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 100, 100);
 
-    expect(resolveMineralKillDrops(scene, enemy, () => 0.999)).toEqual([]);
+    // rng() = 0 → round(0.25) = 0 (no drop); rng() = 0.999 → round(1.249) = 1.
+    expect(resolveMineralKillDrops(scene, enemy, () => 0)).toEqual([]);
+    const drop = resolveMineralKillDrops(scene, enemy, () => 0.999);
+    expect(drop).toHaveLength(1);
+    // The drop is scattered within the configured radius.
+    expect(
+      Math.hypot(drop[0].x - 100, drop[0].y - 100),
+    ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
   });
 
   it('scatters every drop within the configured re-drop radius', async () => {

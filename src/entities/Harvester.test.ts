@@ -251,16 +251,17 @@ describe('Harvester entity', () => {
     expect(h.alive).toBe(false);
   });
 
-  it('re-drops 25–50 % of absorbed minerals on destruction', async () => {
+  it('re-drops the collected minerals plus an additive bonus on destruction', async () => {
     const scene = await boot();
     const h = makeHarvester(scene, 100, 100);
     for (let i = 0; i < 4; i++) h.collectMineral();
 
-    // Deterministic lower/upper bounds (mirrors BaseEnemy.mineralRedropCount).
+    // Deterministic bounds (mirrors BaseEnemy.mineralRedropCount):
+    // round(4 + 0.25) = 4 at rng 0 and round(4 + 1.25) = 5 at rng 1.
     const low = h.mineralRedropCount(() => 0);
-    const high = h.mineralRedropCount(() => 0.999999);
-    expect(low).toBeGreaterThanOrEqual(1); // 25 % of 4
-    expect(high).toBeLessThanOrEqual(4); // never exceeds collected
+    const high = h.mineralRedropCount(() => 1);
+    expect(low).toBe(4);
+    expect(high).toBe(5);
     expect(high).toBeGreaterThanOrEqual(low);
   });
 

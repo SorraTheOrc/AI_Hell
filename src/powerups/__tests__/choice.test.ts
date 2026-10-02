@@ -21,7 +21,21 @@ import {
 describe('power-up choice strategy', () => {
   it('offers the full drop pool: P3–P9 plus the collectable weapon drops', () => {
     expect([...CHOICE_POOL].sort()).toEqual(
-      ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'dual', 'rapid', 'spread'].sort(),
+      [
+        'P3',
+        'P4',
+        'P5',
+        'P6',
+        'P7',
+        'P8',
+        'P9',
+        'dual',
+        'rapid',
+        'spread',
+        'nova',
+        'mortar',
+        'arc',
+      ].sort(),
     );
     // The reset utility drop is not a power-up choice.
     expect(CHOICE_POOL).not.toContain('reset');

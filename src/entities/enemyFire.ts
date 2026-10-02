@@ -77,6 +77,8 @@ export function fireForEnemy<TBullet>(
   now: number,
 ): TBullet[] {
   if (entity === null || entity === undefined) return [];
+  // Spawning enemies are still growing — they cannot fire yet.
+  if ((entity as { isSpawning?: boolean }).isSpawning) return [];
   const method = enemyFireMethod(enemyKey);
   const fn = (entity as Record<string, unknown>)[method];
   if (typeof fn !== 'function') return [];

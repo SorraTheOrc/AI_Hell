@@ -513,6 +513,73 @@ describe('WaveManager — dynamic spawn registration (generic seam)', () => {
   });
 });
 
+describe('WaveManager — carry-over adoption (AH-0MUNS3ZQ1002DJ9S)', () => {
+  it('AC1 — adoptCarriedSurvivors increments the alive count by the supplied amount', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('scout', 'v', 2)])]);
+    wm.beginGame();
+    const before = wm.enemiesAlive;
+    wm.adoptCarriedSurvivors(3);
+    expect(wm.enemiesAlive).toBe(before + 3);
+  });
+
+  it('AC3 — adopted survivors are decremented by onEnemyDestroyed like any other enemy', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('scout', 'single', 1)])]);
+    wm.beginGame();
+    expect(wm.enemiesAlive).toBe(1);
+    wm.adoptCarriedSurvivors(2);
+    expect(wm.enemiesAlive).toBe(3);
+
+    // Each destroyed survivor decrements the counter normally.
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(2);
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    expect(wm.enemiesAlive).toBe(1);
+  });
+
+  it('AC3 — the wave clears only once the adopted survivors AND fresh spawns are destroyed', () => {
+    const defs = [
+      level(1, 'Test', [
+        wave('scout', 'single', 1, false),
+        wave('scout', 'single', 1, false),
+      ]),
+    ];
+    const wm = new WaveManager(defs);
+    wm.beginGame();
+    expect(wm.enemiesAlive).toBe(1);
+
+    // Simulate a timeout: force the wave to advance, then adopt 2 survivors.
+    expect(wm.onEnemyDestroyed()).toBe('waveCleared');
+    expect(wm.waveNumber).toBe(2);
+    expect(wm.enemiesAlive).toBe(1);
+    wm.adoptCarriedSurvivors(2);
+    expect(wm.enemiesAlive).toBe(3); // 1 fresh spawn + 2 carried survivors
+
+    // The fresh spawn dies — the wave must NOT clear while survivors remain.
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    // One survivor dies — still not clear.
+    expect(wm.onEnemyDestroyed()).toBe('continue');
+    // The last survivor dies — the wave finally clears.
+    expect(wm.onEnemyDestroyed()).toBe('bossTriggered');
+  });
+
+  it('AC2 — adoptCarriedSurvivors is a safe no-op before beginGame', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('scout', 'v', 2)])]);
+    expect(wm.enemiesAlive).toBe(0);
+    wm.adoptCarriedSurvivors(5);
+    expect(wm.enemiesAlive).toBe(0);
+  });
+
+  it('AC2 — adoptCarriedSurvivors is a no-op during the boss encounter', () => {
+    const wm = new WaveManager([level(1, 'Test', [wave('scout', 'single', 1)])]);
+    wm.beginGame();
+    expect(wm.onEnemyDestroyed()).toBe('bossTriggered');
+    wm.beginBoss();
+    const before = wm.enemiesAlive;
+    wm.adoptCarriedSurvivors(4);
+    expect(wm.enemiesAlive).toBe(before);
+  });
+});
+
 describe('WaveManager — declared vs planned spawn count (AH-0MUJKJ8OO007TBSS)', () => {
   it('AC2 — a single-formation group with count > 1 declares exactly what it spawns', () => {
     // Two waves so clearing the first emits `waveCleared` rather than the

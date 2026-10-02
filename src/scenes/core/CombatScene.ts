@@ -34,11 +34,14 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import { playDestructionSound, playPhaseShiftSound } from '../../audio/effects';
+import { playDestructionSound, playMortarDetonationSound, playPhaseShiftSound } from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
+import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
+import { isPointNearSegment, selectAoETargets, selectChainTargets } from '../../utils/aoe';
+import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
@@ -52,6 +55,15 @@ import {
   type CombatEnemyBullet,
   type CombatEnemyEntity,
 } from './CombatCoreScene';
+import {
+  detonateWaveTimeoutSurvivors,
+  WAVE_TIME_LIMIT_SECONDS,
+  WAVE_TIMER_BAR_HEIGHT,
+  WAVE_TIMER_BAR_WIDTH,
+  WAVE_TIMER_BAR_X,
+  WAVE_TIMER_BAR_Y,
+} from './waveTimeout';
+import { Asteroid } from '../../entities/Asteroid';
 
 // Re-export the shared contracts so existing `from './CombatScene'`
 // imports keep working after they moved to the narrower base.
@@ -59,6 +71,24 @@ export type { CombatDrop, CombatEnemyBullet, CombatEnemyEntity };
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 export const COMBAT_BLINK_INTERVAL = 0.1;
+
+/**
+ * Half-width (px) of the Arc chain bolt used to clear enemy bullets lying on
+ * the bolt path between chained targets (parent AH-0MUOOB3OR001V8CD).
+ */
+export const ARC_CHAIN_HALF_WIDTH = 14;
+
+/** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
+const RESPAWN_COUNTDOWN_SECONDS = 3;
+
+/** Style for the centred respawn countdown overlay. */
+const COUNTDOWN_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: 'monospace',
+  fontSize: '24px',
+  color: '#ffffff',
+  backgroundColor: '#000000',
+  padding: { x: 12, y: 8 },
+};
 
 /**
  * Abstract shared combat scene. Parameterised by the enemy, bullet and
@@ -72,11 +102,46 @@ export abstract class CombatScene<
   /** Live bullet-impact flash graphics (AC5, tracked for observation). */
   protected bulletImpactEffects: Phaser.GameObjects.Graphics[] = [];
 
+  /**
+   * Live AOE effect graphics (nova ring; mortar burst / arc chain in F3/F4),
+   * tracked for observation and teardown on scene shutdown
+   * (parent AH-0MUOOB3OR001V8CD).
+   */
+  protected aoeEffects: Phaser.GameObjects.Graphics[] = [];
+
+  /**
+   * Live wormhole spawn containers, tracked for observation and teardown
+   * on scene shutdown (AH-0MURBER4L00821RR).
+   */
+  protected wormholeEffects: Phaser.GameObjects.Container[] = [];
+
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
   protected blinkPhase = 0;
   /** Cumulative player-hit counter (exposed by both scenes). */
   protected playerHitCount = 0;
+
+  // ── Shared opt-in wave-timeout + wipe→respawn lifecycle ──────────
+  // (AH-0MUNR5LM1004B223) The wave-timeout and the wipe→3 s countdown→
+  // respawn lifecycle live here so every combat scene (the formation gyms
+  // and the combat power-up gym) runs the *same code* — a single kind of
+  // scene — instead of each scene re-implementing them.
+
+  /** Seconds remaining on the shared wave-timeout (0 when inactive). */
+  protected waveTimeoutTimer = 0;
+  /** Whether the shared wave-timeout is counting down. */
+  protected waveTimeoutActive = false;
+  /** Configured duration of the active timeout (seconds). */
+  protected waveTimeoutDuration = 0;
+  /** The shared wave-timeout bar graphic (created lazily when enabled). */
+  protected waveTimeoutBar: Phaser.GameObjects.Graphics | null = null;
+
+  /** Seconds remaining on the wipe→respawn countdown. */
+  protected respawnCountdown = 0;
+  /** Whether the wipe→respawn countdown is active. */
+  protected respawnCountdownActive = false;
+  /** Centred countdown overlay (created lazily; hidden when idle). */
+  protected countdownText: Phaser.GameObjects.Text | null = null;
 
   /** P7 teleport activation keys: S / ↓ (JustDown semantics). */
   protected teleportKey: Phaser.Input.Keyboard.Key | null = null;
@@ -264,6 +329,18 @@ export abstract class CombatScene<
     enemy: TEnemy,
     bullet: PlayerBullet,
   ): boolean {
+    // Spawning enemies are invulnerable — player bullets pass through.
+    if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) {
+      return false;
+    }
+    // An `'onImpact'` AOE projectile detonates instead of dealing a direct
+    // hit: the blast resolves the damage for this and every other enemy in the
+    // radius, so the directly-hit enemy is not double-damaged.
+    if (bullet.aoeWeapon) {
+      this.detonateAoeProjectile(bullet);
+      bullet.destroy();
+      return true;
+    }
     if (enemy.takeDamage) {
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
@@ -298,6 +375,258 @@ export abstract class CombatScene<
       playDestructionSound();
     }
     this.onEnemyDestroyed(enemy);
+  }
+
+  /**
+   * Shared AOE effect application (parent AH-0MUOOB3OR001V8CD). Resolves one
+   * area effect at (x, y) from the weapon's descriptor:
+   *
+   * 1. damages every live enemy inside the radius through the same
+   *    `takeDamage()` / `destroySelf()` + `finaliseEnemyKill` seam a player
+   *    bullet uses (so destruction audio and score/drop/wave accounting run
+   *    exactly once per kill),
+   * 2. destroys every enemy bullet inside the radius with the shared impact
+   *    feedback,
+   * 3. damages the boss through the overridable {@link CombatScene.onAoeHitsBoss}
+   *    hook (the `onPlayerBulletHitsBoss`-style path).
+   *
+   * An `'onFire'` effect calls this at the ship from
+   * {@link CombatScene.onAoeFired}; an `'onImpact'` projectile calls it at the
+   * detonation point.
+   */
+  protected applyAoeEffect(def: WeaponDefinition, x: number, y: number): void {
+    const aoe = def.aoe;
+    if (!aoe) return;
+
+    if (aoe.damagesEnemies) {
+      // Pure target selection (utils/aoe) keeps the game and gyms identical.
+      const targets = selectAoETargets(
+        x,
+        y,
+        aoe.radius,
+        this.getEnemyEntities(),
+      );
+      for (const enemy of targets) this.damageEnemyViaAoe(enemy);
+    }
+
+    if (aoe.clearsEnemyBullets) {
+      const kept: TBullet[] = [];
+      const bulletRadius = this.getEnemyBulletRadius();
+      for (const bullet of this.getEnemyBullets()) {
+        const { x: bx, y: by } = bullet.graphics;
+        if (this._overlaps(x, y, aoe.radius, bx, by, bulletRadius)) {
+          // Shared interception feedback (cue + flash), then destroy.
+          resolveBulletVsBulletImpact(this, bx, by, {
+            registry: this.bulletImpactEffects,
+          });
+          bullet.graphics.destroy();
+        } else {
+          kept.push(bullet);
+        }
+      }
+      this.setEnemyBullets(kept);
+    }
+
+    this.onAoeHitsBoss(x, y, aoe.radius);
+  }
+
+  /**
+   * Applies one AOE damage instance to an enemy through the shared kill
+   * seam: multi-hit entities take `takeDamage()` (and finalise on the lethal
+   * blow); single-hit entities are destroyed and finalised outright.
+   */
+  private damageEnemyViaAoe(enemy: TEnemy): void {
+    if (!enemy.alive) return;
+    if (enemy.takeDamage) {
+      enemy.takeDamage();
+      if (!enemy.alive) this.finaliseEnemyKill(enemy);
+    } else {
+      enemy.destroySelf();
+      this.finaliseEnemyKill(enemy);
+    }
+  }
+
+  /**
+   * AOE effect hits the boss. Default returns false (the generic core owns no
+   * boss); the game overrides it to damage its multi-phase boss through the
+   * same path a player bullet would use. Returning true means the boss was
+   * hit.
+   */
+  protected onAoeHitsBoss(_x: number, _y: number, _radius: number): boolean {
+    return false;
+  }
+
+  /**
+   * Shared AOE dispatch from `_autoFire`: resolves an `'onFire'` effect at
+   * the ship immediately and spawns its distinctive VFX. An `'onImpact'`
+   * effect (mortar shell) resolves later, when its projectile detonates and
+   * calls {@link CombatScene.applyAoeEffect}.
+   */
+  protected override onAoeFired(
+    _weaponId: WeaponId,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    const aoe = def.aoe;
+    if (aoe?.trigger !== 'onFire') return;
+    if (aoe.chains) {
+      // Arc: strike the nearest enemy, then chain to nearby targets. The
+      // chain is computed once (before any damage) so the damage, the
+      // along-path bullet clear and the VFX all describe the same strikes.
+      const chain = selectChainTargets(
+        x,
+        y,
+        this.getEnemyEntities(),
+        // The descriptor counts *additional* targets after the primary.
+        aoe.chains + 1,
+        aoe.radius,
+      );
+      const path: ArcChainPoint[] = [
+        { x, y },
+        ...chain.map((enemy) => ({ x: enemy.x, y: enemy.y })),
+      ];
+      this.applyArcChainEffect(aoe, x, y, chain, path);
+      this.spawnArcChainVfx(path);
+      return;
+    }
+    this.applyAoeEffect(def, x, y);
+    this.spawnAoeEffectVfx(def, x, y);
+  }
+
+  /**
+   * Resolves a chaining (`'chains'`) `'onFire'` effect: damages the selected
+   * chain targets, clears enemy bullets along the bolt path, and reports the
+   * hit to the boss hook.
+   *
+   * @param aoe - The weapon's AOE descriptor.
+   * @param x - Effect origin x (the ship).
+   * @param y - Effect origin y.
+   * @param chain - The selected targets, in hop order.
+   * @param path - The chain vertices (origin → target → …).
+   */
+  private applyArcChainEffect(
+    aoe: NonNullable<WeaponDefinition['aoe']>,
+    x: number,
+    y: number,
+    chain: readonly TEnemy[],
+    path: readonly ArcChainPoint[],
+  ): void {
+    if (aoe.damagesEnemies) {
+      for (const enemy of chain) this.damageEnemyViaAoe(enemy);
+    }
+    if (aoe.clearsEnemyBullets) this.clearEnemyBulletsAlongPath(path);
+    this.onAoeHitsBoss(x, y, aoe.radius);
+  }
+
+  /**
+   * Destroys every enemy bullet within {@link ARC_CHAIN_HALF_WIDTH} px of any
+   * Arc bolt segment, playing the shared impact feedback for each.
+   */
+  private clearEnemyBulletsAlongPath(path: readonly ArcChainPoint[]): void {
+    if (path.length < 2) return;
+    const kept: TBullet[] = [];
+    for (const bullet of this.getEnemyBullets()) {
+      const { x: bx, y: by } = bullet.graphics;
+      let onPath = false;
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        if (
+          isPointNearSegment(
+            bx,
+            by,
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            ARC_CHAIN_HALF_WIDTH,
+          )
+        ) {
+          onPath = true;
+          break;
+        }
+      }
+      if (onPath) {
+        resolveBulletVsBulletImpact(this, bx, by, {
+          registry: this.bulletImpactEffects,
+        });
+        bullet.graphics.destroy();
+      } else {
+        kept.push(bullet);
+      }
+    }
+    this.setEnemyBullets(kept);
+  }
+
+  /**
+   * Spawns the Arc chaining-bolt VFX for the computed chain path. The shared
+   * core owns it so the game and every gym draw the identical zigzag bolts.
+   */
+  protected spawnArcChainVfx(path: readonly ArcChainPoint[]): void {
+    if (path.length < 2) return;
+    spawnArcChain(this, path, { registry: this.aoeEffects });
+  }
+
+  /**
+   * Spawns the distinctive neon-vector VFX for a firing AOE weapon. Owned by
+   * the shared core so the game and every gym render the identical effect
+   * (parent AH-0MUOOB3OR001V8CD AC5). Nova's expanding ring is the F2
+   * implementation; F3/F4 extend this with the Mortar detonation burst and
+   * the Arc chain bolts.
+   */
+  protected spawnAoeEffectVfx(
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (def.id === 'nova' && def.aoe) {
+      spawnNovaRing(this, x, y, def.aoe.radius, { registry: this.aoeEffects });
+    }
+  }
+
+  /**
+   * Shared hook for an `'onImpact'` AOE projectile: attaches the expiry
+   * detonation so the blast resolves at the projectile's position whether it
+   * hits an enemy/enemy bullet or reaches the end of its lifetime.
+   */
+  protected override onAoeProjectileSpawned(
+    bullet: PlayerBullet,
+    _def: WeaponDefinition,
+  ): void {
+    bullet.onExpire = () => this.detonateAoeProjectile(bullet);
+  }
+
+  /**
+   * Detonates an `'onImpact'` AOE projectile at its current position: applies
+   * the descriptor's area effect, then spawns the shared detonation VFX/cue.
+   * Idempotent per projectile — a projectile detonates at most once even if
+   * both the collision and expiry paths observe it.
+   */
+  protected detonateAoeProjectile(bullet: PlayerBullet): void {
+    const def = bullet.aoeWeapon;
+    if (!def?.aoe || bullet.aoeDetonated) return;
+    bullet.aoeDetonated = true;
+    this.applyAoeEffect(def, bullet.x, bullet.y);
+    this.spawnAoeDetonationVfx(def, bullet.x, bullet.y);
+  }
+
+  /**
+   * Spawns the distinctive detonation VFX/cue for an `'onImpact'` AOE weapon.
+   * Mortar's radial burst is the F3 implementation; the shared core owns it so
+   * the game and every gym detonate identically.
+   */
+  protected spawnAoeDetonationVfx(
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (def.id === 'mortar' && def.aoe) {
+      spawnMortarBurst(this, x, y, def.aoe.radius, {
+        registry: this.aoeEffects,
+      });
+      playMortarDetonationSound();
+    }
   }
 
   /**
@@ -579,6 +908,8 @@ export abstract class CombatScene<
           // Impact feedback fires from the shared path before the bullets
           // are destroyed (so the impact point is still readable).
           this.onBulletVsBulletImpact(eb, pb);
+          // An AOE projectile detonates at the interception point.
+          if (pb.aoeWeapon) this.detonateAoeProjectile(pb);
           pb.destroy();
           this.playerBullets.splice(i, 1);
           eb.graphics.destroy();
@@ -621,6 +952,8 @@ export abstract class CombatScene<
     if (this.invulnerable <= 0) {
       for (const enemy of this.getEnemyEntities()) {
         if (!enemy.alive) continue;
+        // Spawning enemies are still growing — no body collision.
+        if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) continue;
         if (
           this._overlaps(
             player.x,
@@ -654,6 +987,266 @@ export abstract class CombatScene<
     return Math.hypot(ax - bx, ay - by) <= ar + br;
   }
 
+  // ── Shared opt-in wave-timeout (AH-0MUNR5LM1004B223) ────────────
+
+  /**
+   * Whether this scene opts into the shared wave-timeout. Default off;
+   * subclasses arm it from their own config/state. When a scene opts in,
+   * the timeout keeps survivors and runs {@link onWaveTimeoutExpired}
+   * (carry-over semantics — AH-0MUNS3ZQ1002DJ9S).
+   */
+  protected isWaveTimeoutEnabled(): boolean {
+    return false;
+  }
+
+  /** Duration (seconds) the shared wave-timeout counts down from. */
+  protected getWaveTimeoutDuration(): number {
+    return this.isWaveTimeoutEnabled() ? WAVE_TIME_LIMIT_SECONDS : 0;
+  }
+
+  /** Live entities eligible for carry-over on timeout (survivors). */
+  protected getWaveTimeoutSurvivors(): readonly TEnemy[] {
+    return this.getEnemyEntities().filter((enemy) => enemy.alive);
+  }
+
+  /**
+   * Entities excluded from carry-over wave accounting. Default: asteroids
+   * persist independently and never gate wave completion
+   * (AH-0MUJM746P000QAEO). Retained for the shared detonation helper's
+   * signature; the helper is now a no-op (AH-0MUNS3ZQ1002DJ9S).
+   */
+  protected isWaveTimeoutExempt(entity: TEnemy): boolean {
+    return entity instanceof Asteroid;
+  }
+
+  /** Whether the countdown is paused (e.g. mid wipe→respawn countdown). */
+  protected isWaveTimeoutPaused(): boolean {
+    return false;
+  }
+
+  /**
+   * Starts (or disables) the shared wave-timeout for the current wave from
+   * {@link getWaveTimeoutDuration}. A missing/zero/negative duration leaves
+   * the timeout inactive (subclasses that opt out / the boss).
+   */
+  protected startWaveTimeout(): void {
+    const duration = this.getWaveTimeoutDuration();
+    if (!Number.isFinite(duration) || duration <= 0) {
+      this.hideWaveTimeout();
+      return;
+    }
+    this.waveTimeoutDuration = duration;
+    this.waveTimeoutTimer = duration;
+    this.waveTimeoutActive = true;
+  }
+
+  /** Stops the shared wave-timeout and hides its bar. */
+  protected hideWaveTimeout(): void {
+    this.waveTimeoutActive = false;
+    this.waveTimeoutTimer = 0;
+  }
+
+  /**
+   * Counts the shared wave-timeout down and fires the penalty on expiry.
+   * Scenes call this once per frame from their own `tick`.
+   */
+  protected _advanceWaveTimeout(dt: number): void {
+    if (!this.waveTimeoutActive) return;
+    if (this.isWaveTimeoutPaused()) return;
+    this.waveTimeoutTimer = Math.max(0, this.waveTimeoutTimer - dt);
+    if (this.waveTimeoutTimer <= 0) this._onWaveTimeout();
+  }
+
+  /**
+   * Shared wave-timeout expiry (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
+   * survivors are **kept** — the shared {@link detonateWaveTimeoutSurvivors}
+   * helper is a no-op — and the subclass lifecycle hook runs to refresh the
+   * wave (the formation gyms start the wipe→respawn countdown, spawning a
+   * fresh formation alongside the survivors).
+   */
+  protected _onWaveTimeout(): void {
+    this.hideWaveTimeout();
+    detonateWaveTimeoutSurvivors(
+      this.getWaveTimeoutSurvivors(),
+      (entity) => this.isWaveTimeoutExempt(entity),
+    );
+    this.onWaveTimeoutExpired();
+  }
+
+  /**
+   * Subclass lifecycle hook run after the timeout. Default no-op; the
+   * formation gyms start the wipe→respawn countdown here, preserving the
+   * survivors and spawning a fresh formation alongside them.
+   */
+  protected onWaveTimeoutExpired(): void {}
+
+  /**
+   * Redraws the shared wave-timeout bar (hidden when inactive). Mirrors
+   * `PlayScene._drawWaveTimer` and shares its geometry constants so the
+   * bars cannot drift.
+   */
+  protected _drawWaveTimeoutBar(): void {
+    const duration = this.getWaveTimeoutDuration();
+    // Opt-out scenes never allocate the bar.
+    if (duration <= 0) return;
+    if (!this.waveTimeoutBar) {
+      this.waveTimeoutBar = this.add.graphics();
+      this.waveTimeoutBar.setDepth(400);
+    }
+    const g = this.waveTimeoutBar;
+    g.clear();
+    if (!this.waveTimeoutActive) {
+      g.setVisible(false);
+      return;
+    }
+    g.setVisible(true);
+    // Background track.
+    g.fillStyle(0x111111, 0.85);
+    g.fillRect(
+      WAVE_TIMER_BAR_X,
+      WAVE_TIMER_BAR_Y,
+      WAVE_TIMER_BAR_WIDTH,
+      WAVE_TIMER_BAR_HEIGHT,
+    );
+    // Depleting fill.
+    const ratio = Math.max(
+      0,
+      Math.min(1, this.waveTimeoutTimer / Math.max(duration, Number.EPSILON)),
+    );
+    g.fillStyle(0x00ffff, 1);
+    g.fillRect(
+      WAVE_TIMER_BAR_X,
+      WAVE_TIMER_BAR_Y,
+      WAVE_TIMER_BAR_WIDTH * ratio,
+      WAVE_TIMER_BAR_HEIGHT,
+    );
+  }
+
+  /** Whether the wave-timeout is currently counting down (test seam). */
+  isWaveTimeoutActive(): boolean {
+    return this.waveTimeoutActive;
+  }
+
+  /** Seconds remaining on the wave-timeout (0 when inactive; test seam). */
+  getWaveTimeoutRemaining(): number {
+    return this.waveTimeoutActive ? Math.max(0, this.waveTimeoutTimer) : 0;
+  }
+
+  /**
+   * Sets the remaining wave-timeout seconds and makes it active (test seam,
+   * mirrors `PlayScene.setWaveTimerRemaining`). Ignored when the scene has no
+   * timeout configured so a test cannot arm a disabled scene.
+   */
+  setWaveTimeoutRemaining(seconds: number): void {
+    if (!Number.isFinite(seconds)) return;
+    if (this.getWaveTimeoutDuration() <= 0) return;
+    this.waveTimeoutTimer = Math.max(0, seconds);
+    this.waveTimeoutActive = true;
+  }
+
+  /** The wave-timeout bar graphic (null before create/teardown; test seam). */
+  getWaveTimeoutBar(): Phaser.GameObjects.Graphics | null {
+    return this.waveTimeoutBar;
+  }
+
+  // ── Shared wipe → 3 s countdown → respawn lifecycle ──────────────
+
+  /** Whether the scene has a live formation to wipe and respawn. */
+  protected hasRespawnableFormation(): boolean {
+    return this.getEnemyEntities().length > 0;
+  }
+
+  /** Whether the current formation has been fully wiped. */
+  protected isFormationWiped(): boolean {
+    const entities = this.getEnemyEntities();
+    return entities.length > 0 && entities.every((entity) => !entity.alive);
+  }
+
+  /**
+   * Rebuilds/refreshes the wave after the countdown elapses. Subclass hook;
+   * the default is a no-op.
+   */
+  protected respawnWave(): void {}
+
+  /** Starts the wipe→respawn countdown with the visible centred overlay. */
+  protected _startRespawnCountdown(): void {
+    this.respawnCountdownActive = true;
+    this.respawnCountdown = RESPAWN_COUNTDOWN_SECONDS;
+    if (!this.countdownText) {
+      this.countdownText = this.add
+        .text(
+          GAME_WIDTH / 2,
+          GAME_HEIGHT / 2,
+          this._countdownLabel(),
+          COUNTDOWN_STYLE,
+        )
+        .setOrigin(0.5)
+        .setDepth(100);
+    } else {
+      this.countdownText.setVisible(true);
+    }
+    this.countdownText.setText(this._countdownLabel());
+  }
+
+  private _countdownLabel(): string {
+    const n = Math.max(1, Math.ceil(this.respawnCountdown));
+    return `Respawning in ${n}...`;
+  }
+
+  /** Cancels the countdown and hides the overlay. */
+  protected _cancelRespawnCountdown(): void {
+    this.respawnCountdownActive = false;
+    this.respawnCountdown = 0;
+    if (this.countdownText) {
+      this.countdownText.setVisible(false);
+    }
+  }
+
+  /**
+   * Advances the wipe→respawn countdown, or starts it when the formation is
+   * wiped. Scenes call this once per frame from their own `tick`.
+   */
+  protected _tickRespawnCountdown(dt: number): void {
+    // No formation → nothing to wipe.
+    if (!this.hasRespawnableFormation()) return;
+
+    if (this.respawnCountdownActive) {
+      this.respawnCountdown = Math.max(0, this.respawnCountdown - dt);
+      if (this.countdownText) {
+        this.countdownText.setText(
+          this.respawnCountdown <= 0 ? 'Respawning...' : this._countdownLabel(),
+        );
+      }
+      if (this.respawnCountdown <= 0) {
+        // The countdown has elapsed: cancel/hide it, then refresh the wave.
+        this._cancelRespawnCountdown();
+        this.respawnWave();
+      }
+      return;
+    }
+
+    // Wipe signal: every entity is no longer alive (mid-explosion counts
+    // as killed, per `alive === false` after `destroySelf()`).
+    if (this.isFormationWiped()) {
+      this._startRespawnCountdown();
+    }
+  }
+
+  /** True while the wipe → respawn countdown is active. */
+  isRespawnCountdownActive(): boolean {
+    return this.respawnCountdownActive;
+  }
+
+  /** Seconds remaining on the wipe → respawn countdown (0 when idle). */
+  getRespawnCountdownRemaining(): number {
+    return this.respawnCountdownActive ? Math.max(0, this.respawnCountdown) : 0;
+  }
+
+  /** The centred countdown overlay (null before create/teardown). */
+  getRespawnCountdownText(): Phaser.GameObjects.Text | null {
+    return this.countdownText;
+  }
+
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
 
   /**
@@ -664,11 +1257,20 @@ export abstract class CombatScene<
   protected override resetRunState(): void {
     super.resetRunState();
     this.bulletImpactEffects = [];
+    this.aoeEffects = [];
+    this.wormholeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
     this.teleportKey = null;
     this.downKey = null;
+    this.waveTimeoutTimer = 0;
+    this.waveTimeoutActive = false;
+    this.waveTimeoutDuration = 0;
+    this.waveTimeoutBar = null;
+    this.respawnCountdown = 0;
+    this.respawnCountdownActive = false;
+    this.countdownText = null;
   }
 
   /**
@@ -679,10 +1281,22 @@ export abstract class CombatScene<
     super.teardownRunState();
     for (const effect of this.bulletImpactEffects) effect.destroy();
     this.bulletImpactEffects = [];
+    for (const effect of this.aoeEffects) effect.destroy();
+    this.aoeEffects = [];
+    for (const effect of this.wormholeEffects) effect.destroy();
+    this.wormholeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
     this.teleportKey = null;
     this.downKey = null;
+    this.waveTimeoutBar?.destroy();
+    this.waveTimeoutBar = null;
+    this.waveTimeoutActive = false;
+    this.waveTimeoutTimer = 0;
+    this.countdownText?.destroy();
+    this.countdownText = null;
+    this.respawnCountdownActive = false;
+    this.respawnCountdown = 0;
   }
 }
