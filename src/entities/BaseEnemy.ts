@@ -309,15 +309,14 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * [`mineralRedropBonusMin`, `mineralRedropBonusMax`] (defaults
    * 0.25–1.25), rounded to the nearest integer. The result may exceed the
    * collected count (there is no upper cap); an enemy that collected
-   * nothing re-drops nothing.
+   * nothing still draws the bonus and may occasionally drop a single mineral
+   * (when `round(bonus) === 1`).
    *
    * @param rng — random-number generator (defaults to `Math.random`);
    *   injected by tests for deterministic bounds checking. Exactly one
    *   draw is taken per call.
    */
   mineralRedropCount(rng: () => number = Math.random): number {
-    if (this._mineralCount <= 0) return 0;
-
     const rules = loadRules();
     const bonus =
       rules.mineralRedropBonusMin +

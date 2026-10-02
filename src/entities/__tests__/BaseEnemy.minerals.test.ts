@@ -74,11 +74,14 @@ describe('BaseEnemy mineral accounting', () => {
     expect(enemy.mineralCount).toBe(3);
   });
 
-  it('mineralRedropCount returns 0 when no minerals were collected', async () => {
+  it('mineralRedropCount at rng extremes when no minerals were collected', async () => {
     booted = await bootScene([HarnessScene]);
     const enemy = makeEnemy(booted.scene);
+    // rng() = 0 → round(0 + 0.25) = 0; rng() ≈ 1 → round(0 + 1.25) = 1.
+    // So an empty enemy drops nothing most of the time but may occasionally
+    // drop a single mineral.
     expect(enemy.mineralRedropCount(() => 0)).toBe(0);
-    expect(enemy.mineralRedropCount(() => 0.999)).toBe(0);
+    expect(enemy.mineralRedropCount(() => 0.999)).toBe(1);
   });
 
   it('re-drop returns round(collected + random(0.25, 1.25)) at the rng extremes', async () => {

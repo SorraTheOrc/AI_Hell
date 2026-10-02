@@ -117,12 +117,19 @@ describe('resolveMineralKillDrops — non-asteroid re-drop rule', () => {
     expect(high).toHaveLength(101);
   });
 
-  it('re-drops nothing when the enemy absorbed nothing', async () => {
+  it('an enemy that absorbed nothing may occasionally drop one mineral', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     const enemy = makeEnemy(scene, 100, 100);
 
-    expect(resolveMineralKillDrops(scene, enemy, () => 0.999)).toEqual([]);
+    // rng() = 0 → round(0.25) = 0 (no drop); rng() = 0.999 → round(1.249) = 1.
+    expect(resolveMineralKillDrops(scene, enemy, () => 0)).toEqual([]);
+    const drop = resolveMineralKillDrops(scene, enemy, () => 0.999);
+    expect(drop).toHaveLength(1);
+    // The drop is scattered within the configured radius.
+    expect(
+      Math.hypot(drop[0].x - 100, drop[0].y - 100),
+    ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
   });
 
   it('scatters every drop within the configured re-drop radius', async () => {

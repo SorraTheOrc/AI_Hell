@@ -1374,17 +1374,27 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const wm = scene.getWaveManager();
 
     // Place a mineral on the field through the public seam.
-    scene.spawnMineralAt(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    const targetX = GAME_WIDTH / 2;
+    const targetY = GAME_HEIGHT / 2;
+    scene.spawnMineralAt(targetX, targetY);
     const mineralsBefore = scene.getMinerals();
     expect(mineralsBefore.length).toBeGreaterThan(0);
 
     // Clear wave 1 and complete the transition.
+    // Note: killed non-asteroid enemies may now occasionally drop a single
+    // mineral each (empty-enemy re-drop, parent AH-0MULUOZQP009GRWX), so we
+    // cannot assert on the *total* mineral count. Instead we verify the
+    // originally-spawned mineral still exists at its position.
     killNonAsteroidEnemies(scene);
     expect(wm.waveNumber).toBe(2);
     finishTransition(scene);
 
-    // The mineral is still on the field after the wave transition.
-    expect(scene.getMinerals().length).toBe(mineralsBefore.length);
+    // The mineral we placed is still on the field after the wave transition.
+    const after = scene.getMinerals();
+    const persisted = after.find(
+      (m) => Math.abs(m.x - targetX) < 1 && Math.abs(m.y - targetY) < 1,
+    );
+    expect(persisted).toBeDefined();
   });
 
   // ── Power-up drop separation (AH-0MU7JTFM5000R4ME) ─────────────

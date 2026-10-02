@@ -13,7 +13,8 @@
  * - non-asteroid enemy → its collected minerals plus a random additive bonus
  *   in [`mineralRedropBonusMin`, `mineralRedropBonusMax`] (defaults
  *   0.25–1.25), rounded to the nearest integer and scattered at the death
- *   site (there is no upper cap);
+ *   site (there is no upper cap; an enemy that collected nothing still
+ *   draws the bonus and may occasionally drop a single mineral);
  * - anything else → none.
  *
  * @module scenes/core/mineralKillDrops
