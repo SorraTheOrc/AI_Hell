@@ -173,4 +173,13 @@ describe('shared enemy-fire dispatcher — real entity integration (AC4)', () =>
     expect(bullets[0].vx).toBeGreaterThan(0);
     expect(Math.abs(bullets[0].vy)).toBeLessThan(Math.abs(bullets[0].vx));
   });
+
+  it('suppresses fire while the enemy is spawning (AH-0MURBER4L00821RR AC4)', () => {
+    // Spawning enemies cannot shoot, regardless of their fire method.
+    const spawning = {
+      isSpawning: true,
+      tryFireAimedBullet: () => ({ vx: 1, vy: 0 }),
+    };
+    expect(fireForEnemy(spawning, 'scout', 1_000)).toEqual([]);
+  });
 });

@@ -179,4 +179,32 @@ describe('PlayerBullet — lifetime-based range (AC3, AC4)', () => {
     advanceAndCull(cannon, WEAPON_BULLET_LIFETIME.cannon);
     expect(cannon.isExpired()).toBe(true);
   });
+
+  it('invokes the onExpire callback exactly once before destroying an expired bullet (F3)', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 100, 100, 0, 0, 0.5);
+    let calls = 0;
+    let callBullet: PlayerBullet | null = null;
+    bullet.onExpire = (expired) => {
+      calls += 1;
+      callBullet = expired;
+    };
+
+    // Not yet expired — no callback.
+    advanceAndCull(bullet, 0.25);
+    expect(calls).toBe(0);
+
+    // Expiry fires the callback with the bullet, then destroys it.
+    expect(advanceAndCull(bullet, 0.25)).toBe(false);
+    expect(calls).toBe(1);
+    expect(callBullet).toBe(bullet);
+    expect(bullet.active).toBe(false);
+  });
+
+  it('leaves onExpire undefined for ordinary bullets (no callback required)', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 100, 100, 0, 0, 0.5);
+    expect(bullet.onExpire).toBeUndefined();
+    expect(() => advanceAndCull(bullet, 0.6)).not.toThrow();
+  });
 });

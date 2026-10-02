@@ -364,6 +364,15 @@ export class Asteroid extends BaseEnemy {
     // No-op — asteroids do not absorb minerals.
   }
 
+  /**
+   * Asteroids never drop re-dropped minerals — they are excluded from the
+   * re-drop rule. Small asteroids drop a single mineral directly via the
+   * asteroid branch in `resolveMineralKillDrops`, not via `mineralRedropCount`.
+   */
+  override mineralRedropCount(_rng?: () => number): number {
+    return 0;
+  }
+
   // ── Split behaviour ──────────────────────────────────────────────
 
   /**

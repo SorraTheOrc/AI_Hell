@@ -91,6 +91,30 @@ import {
   PHASE_SHIFT_WHOOSH_VOLUME,
   playVolumeFeedback,
   setSfxMuted,
+  playNovaFireSound,
+  NOVA_FIRE_THUMP_START_HZ,
+  NOVA_FIRE_THUMP_END_HZ,
+  NOVA_FIRE_THUMP_DURATION,
+  NOVA_FIRE_THUMP_VOLUME,
+  NOVA_FIRE_RING_START_HZ,
+  NOVA_FIRE_RING_END_HZ,
+  NOVA_FIRE_RING_DURATION,
+  NOVA_FIRE_RING_VOLUME,
+  NOVA_FIRE_MIN_INTERVAL,
+  _resetNovaFireLimiterForTests,
+  playMortarFireSound,
+  MORTAR_FIRE_START_HZ,
+  MORTAR_FIRE_END_HZ,
+  MORTAR_FIRE_VOLUME,
+  playMortarDetonationSound,
+  MORTAR_DETONATION_START_HZ,
+  MORTAR_DETONATION_END_HZ,
+  MORTAR_DETONATION_VOLUME,
+  playArcFireSound,
+  ARC_FIRE_ZAP_START_HZ,
+  ARC_FIRE_ZAP_END_HZ,
+  ARC_FIRE_ZAP_VOLUME,
+  ARC_FIRE_CRACKLE_VOLUME,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -328,6 +352,10 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playSpreadFireSound,
       playDualFireSound,
       playRapidFireSound,
+      playNovaFireSound,
+      playMortarFireSound,
+      playMortarDetonationSound,
+      playArcFireSound,
       playSpreadPickupSound,
       playDualPickupSound,
       playRapidPickupSound,
@@ -1853,5 +1881,185 @@ describe('volume-feedback — player-explosion cue, volume-scaled (AC1, AC3, AC5
     expect(newOscillators(snap).filter((o) => o.type !== 'noise')).toHaveLength(2);
     // Restore mute state for other suites.
     setSfxMuted(false);
+  });
+});
+
+// ── Nova AOE fire cue (F2, parent AH-0MUOOB3OR001V8CD AC4) ──────────
+
+describe('Nova fire cue — synthesis + rate limiting (F2 AC4)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // re-prime after the reset cleared the cache
+    _resetNovaFireLimiterForTests();
+  });
+
+  it('layers a deep expanding thump with a rising ring sweep', () => {
+    const snap = snapshot();
+    playNovaFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    expect(oscs).toHaveLength(2);
+    // Layer 1: the deep thump — a sawtooth falling to sub-bass.
+    expect(oscs[0].type).toBe('sawtooth');
+    expect(startFreq([oscs[0]])).toBe(NOVA_FIRE_THUMP_START_HZ);
+    expect(endFreq([oscs[0]])).toBe(NOVA_FIRE_THUMP_END_HZ);
+    // Layer 2: the expanding ring — a triangle climbing outward.
+    expect(oscs[1].type).toBe('triangle');
+    expect(startFreq([oscs[1]])).toBe(NOVA_FIRE_RING_START_HZ);
+    expect(endFreq([oscs[1]])).toBe(NOVA_FIRE_RING_END_HZ);
+    // Both layers stay within the GDD §7.3 player-cue ceiling (≤ 0.2).
+    expect(NOVA_FIRE_THUMP_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(NOVA_FIRE_RING_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('is distinct from every other weapon cue: falling sawtooth + rising triangle', () => {
+    const snap = snapshot();
+    playNovaFireSound();
+    const oscs = newOscillators(snap);
+    expect(oscs.map((o) => o.type)).toEqual(['sawtooth', 'triangle']);
+    // The thump is the longest player weapon cue — the "expanding" body.
+    expect(oscs[0].stopTime! - oscs[0].startTime!).toBeGreaterThanOrEqual(
+      NOVA_FIRE_THUMP_DURATION,
+    );
+    expect(NOVA_FIRE_THUMP_DURATION).toBeGreaterThan(NOVA_FIRE_RING_DURATION);
+  });
+
+  it('rate-limits repeated cues inside the minimum interval', () => {
+    const ctx = mockCtx();
+    ctx.currentTime = 5;
+    const first = snapshot();
+    playNovaFireSound();
+    expect(newOscillators(first)).toHaveLength(2);
+
+    // A second cue inside the throttle window synthesises nothing.
+    const second = snapshot();
+    ctx.currentTime = 5 + NOVA_FIRE_MIN_INTERVAL / 2;
+    playNovaFireSound();
+    expect(newOscillators(second)).toHaveLength(0);
+
+    // Past the window, the cue plays again.
+    const third = snapshot();
+    ctx.currentTime = 5 + NOVA_FIRE_MIN_INTERVAL + 0.01;
+    playNovaFireSound();
+    expect(newOscillators(third)).toHaveLength(2);
+  });
+});
+
+// ── Mortar AOE fire + detonation cues (F3 AC6) ───────────────────────
+
+describe('Mortar fire + detonation cues — synthesis (F3 AC6)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // re-prime after the reset cleared the cache
+  });
+
+  it('the launch cue is a muffled low thump with a barrel tick', () => {
+    const snap = snapshot();
+    playMortarFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    expect(oscs).toHaveLength(2);
+    expect(oscs[0].type).toBe('triangle');
+    expect(startFreq([oscs[0]])).toBe(MORTAR_FIRE_START_HZ);
+    expect(endFreq([oscs[0]])).toBe(MORTAR_FIRE_END_HZ);
+    // Barrel tick: a short high square.
+    expect(oscs[1].type).toBe('square');
+    expect(MORTAR_FIRE_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('the detonation cue is a heavy blast with a noise tail', () => {
+    const snap = snapshot();
+    playMortarDetonationSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Blast oscillator (sawtooth) plus the noise buffer source.
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+    expect(oscs[0].type).toBe('sawtooth');
+    expect(startFreq([oscs[0]])).toBe(MORTAR_DETONATION_START_HZ);
+    expect(endFreq([oscs[0]])).toBe(MORTAR_DETONATION_END_HZ);
+    expect(MORTAR_DETONATION_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('the launch and detonation cues are distinct from each other and from Nova', () => {
+    const launch = snapshot();
+    playMortarFireSound();
+    const launchOscs = newOscillators(launch);
+
+    const boom = snapshot();
+    playMortarDetonationSound();
+    const boomOscs = newOscillators(boom);
+
+    // Launch is a short triangle; detonation is a heavier sawtooth + noise.
+    expect(launchOscs[0].type).toBe('triangle');
+    expect(boomOscs[0].type).toBe('sawtooth');
+    expect(
+      boomOscs[0].stopTime! - boomOscs[0].startTime!,
+    ).toBeGreaterThan(launchOscs[0].stopTime! - launchOscs[0].startTime!);
+  });
+});
+
+// ── Arc AOE fire cue (F4 AC6) ────────────────────────────────────────
+
+describe('Arc fire cue — synthesis (F4 AC6)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('is a bright square zap layered with a high-passed noise crackle', () => {
+    const snap = snapshot();
+    playArcFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Zap oscillator plus the noise buffer source.
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+    expect(oscs[0].type).toBe('square');
+    expect(startFreq([oscs[0]])).toBe(ARC_FIRE_ZAP_START_HZ);
+    // Descending then rebounding contour — the electric "zap" shape.
+    const freqs = oscs[0].freqEvents.filter(
+      (event) => event.method !== 'setValueAtTime',
+    );
+    expect(freqs).toHaveLength(2);
+    expect(freqs[0].value).toBe(ARC_FIRE_ZAP_END_HZ);
+    expect(freqs[1].value).toBeCloseTo(ARC_FIRE_ZAP_START_HZ * 0.8, 5);
+    // The noise crackle source is present.
+    expect(oscs.some((o) => o.type === 'noise')).toBe(true);
+    expect(ARC_FIRE_ZAP_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(ARC_FIRE_CRACKLE_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
   });
 });

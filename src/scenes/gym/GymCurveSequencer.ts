@@ -32,6 +32,7 @@ import {
   defaultCandidatePool,
   sequencer,
   type CandidateGroup,
+  type ShootableWave,
 } from '../../core/difficultySequencer';
 import { waveDifficulty } from '../../core/enemyDifficulty';
 import type { DifficultyGeneration } from '../../core/configTypes';
@@ -41,6 +42,12 @@ import {
   addBackToIndexButton,
   addBackToMenuOnEsc,
 } from '../../utils/gymNavigation';
+import type {
+  LevelDefinition,
+  WaveDefinition,
+  WaveGroup,
+} from '../../waves/Formations';
+import { GYM_LEVEL_SCENE_KEY } from './GymLevel';
 
 // ── Panel element ids + data attributes (asserted by tests) ──────────
 
@@ -104,6 +111,82 @@ const PREVIEW_LINE_HEIGHT = 20;
 const COLUMN_GAP = 2;
 /** Margin (px) between the column-guide help box and the canvas edges (AC11). */
 export const CURVE_HELP_BOX_MARGIN = 16;
+
+// ── Launch controls (AH-0MUNU6MGM007CI45) ─────────────────────────
+
+/**
+ * Number of consecutive generated waves folded into one level group by the
+ * curve editor (AH-0MUNU6MGM007CI45). The editor edits a single flat curve,
+ * so the generated preview is partitioned into level groups of this size —
+ * each group becomes a {@link LevelDefinition} the Level Gym can play in full.
+ */
+export const CURVE_WAVES_PER_LEVEL = 3;
+/** Gap (px) between a row's text and its "Launch Wave" button. */
+export const CURVE_LAUNCH_BUTTON_GAP = 12;
+/** Label of the per-group "Launch Level" button. */
+export const CURVE_LAUNCH_LEVEL_LABEL = 'Launch Level';
+/** Label prefix of the per-row "Launch Wave" button (suffixed with the wave number). */
+export const CURVE_LAUNCH_WAVE_LABEL_PREFIX = 'Launch Wave';
+/** Prefix of a level-group heading rendered above its waves. */
+export const CURVE_LEVEL_HEADING_PREFIX = 'LEVEL';
+
+/**
+ * Partitions an ordered list into consecutive groups of at most
+ * `perGroup` items (the final group may be shorter). A non-positive
+ * `perGroup` puts everything in one group. Pure and order-preserving:
+ * the curve editor's level grouping is a plain partition of the generated
+ * wave list (AH-0MUNU6MGM007CI45).
+ */
+export function groupWavesByLevel<T>(
+  items: readonly T[],
+  perGroup: number = CURVE_WAVES_PER_LEVEL,
+): T[][] {
+  if (!Number.isFinite(perGroup) || perGroup < 1) return items.length ? [[...items]] : [];
+  const groups: T[][] = [];
+  for (let start = 0; start < items.length; start += perGroup) {
+    groups.push(items.slice(start, start + perGroup));
+  }
+  return groups;
+}
+
+/** Maps a sequencer-adjusted group to a plain, spawnable `WaveGroup`. */
+export function toWaveGroup(group: ShootableWave['groups'][number]): WaveGroup {
+  return {
+    enemyKey: group.enemyKey,
+    formation: group.formation,
+    count: group.count,
+    spacingX: group.spacingX,
+    spacingY: group.spacingY,
+    startX: group.startX,
+    startY: group.startY,
+  };
+}
+
+/** Maps one sequencer wave to the `WaveDefinition` shape the game consumes. */
+export function toWaveDefinition(wave: ShootableWave): WaveDefinition {
+  return {
+    groups: wave.groups.map(toWaveGroup),
+    shootEnabled: wave.shootEnabled,
+  };
+}
+
+/**
+ * Builds the level definitions the curve editor can launch from a flat
+ * sequencer result: consecutive waves are folded into level groups of
+ * {@link CURVE_WAVES_PER_LEVEL} (the final group may be shorter). Each group
+ * is a complete, sequentially-playable {@link LevelDefinition}
+ * (AH-0MUNU6MGM007CI45).
+ */
+export function buildCurveLevels(
+  waves: readonly ShootableWave[],
+  perGroup: number = CURVE_WAVES_PER_LEVEL,
+): LevelDefinition[] {
+  return groupWavesByLevel(waves, perGroup).map((group, index) => ({
+    level: index + 1,
+    name: `Curve Level ${index + 1}`,
+    waves: group.map(toWaveDefinition),
+  }));
+}
 
 /** A single rendered wave-preview row. */
 export interface WavePreviewEntry {
@@ -241,10 +324,16 @@ export class GymCurveSequencer extends Phaser.Scene {
   );
   /** Last regenerated preview (empty while stale). */
   private preview: WavePreviewEntry[] = [];
+  /** Raw sequencer waves backing `preview` (for building launchable levels). */
+  private sequencedWaves: ShootableWave[] = [];
+  /** Level groups built from `sequencedWaves` during regeneration. */
+  private levels: LevelDefinition[] = [];
   /** True when the curve changed since the last regeneration. */
   private previewStale = true;
   /** Phaser text objects making up the rendered wave list. */
   private previewTexts: Phaser.GameObjects.Text[] = [];
+  /** Phaser launch buttons rendered alongside the wave list (destroyed on re-render). */
+  private previewButtons: Phaser.GameObjects.Text[] = [];
   /** Plain-DOM tuning panel (removed on shutdown). */
   private panel: HTMLDivElement | null = null;
   /** Container holding the per-wave editor rows (re-rendered on edit). */
@@ -273,6 +362,7 @@ export class GymCurveSequencer extends Phaser.Scene {
       this.panel = null;
       this.rows = null;
       this.previewTexts = [];
+      this.previewButtons = [];
     });
   }
 
@@ -310,6 +400,8 @@ export class GymCurveSequencer extends Phaser.Scene {
   private _renderPreview(): void {
     for (const text of this.previewTexts) text.destroy();
     this.previewTexts = [];
+    for (const button of this.previewButtons) button.destroy();
+    this.previewButtons = [];
 
     if (this.previewStale) {
       this.previewTexts.push(
@@ -322,7 +414,9 @@ export class GymCurveSequencer extends Phaser.Scene {
       return;
     }
 
-    // Header row + one aligned row per wave (AC10).
+    // Header row, then one aligned group per level: a LEVEL heading with its
+    // "Launch Level" button, then each wave row with its "Launch Wave"
+    // button (AC1/AC2, AH-0MUNU6MGM007CI45).
     const widths = waveTableColumnWidths(this.preview);
     this.previewTexts.push(
       this.add.text(PREVIEW_HEADER_X, PREVIEW_START_Y, formatWaveTableHeader(widths), {
@@ -331,19 +425,101 @@ export class GymCurveSequencer extends Phaser.Scene {
         color: '#00ffff',
       }),
     );
-    this.preview.forEach((entry, index) => {
-      this.previewTexts.push(
-        this.add.text(
+
+    const groups = groupWavesByLevel(this.preview, CURVE_WAVES_PER_LEVEL);
+    let y = PREVIEW_START_Y + PREVIEW_LINE_HEIGHT;
+    groups.forEach((entries, levelIndex) => {
+      // Level heading + "Launch Level" button for the whole group.
+      const heading = this.add.text(
+        PREVIEW_HEADER_X,
+        y,
+        `${CURVE_LEVEL_HEADING_PREFIX} ${levelIndex + 1}`,
+        {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#ffcc00',
+        },
+      );
+      this.previewTexts.push(heading);
+      this.previewButtons.push(
+        this._launchButton(
+          heading.x + heading.width + CURVE_LAUNCH_BUTTON_GAP,
+          y,
+          CURVE_LAUNCH_LEVEL_LABEL,
+          levelIndex,
+          () => this._launchLevel(levelIndex),
+        ),
+      );
+      y += PREVIEW_LINE_HEIGHT;
+
+      entries.forEach((entry, offset) => {
+        const waveIndex = levelIndex * CURVE_WAVES_PER_LEVEL + offset;
+        const row = this.add.text(
           PREVIEW_HEADER_X,
-          PREVIEW_START_Y + (index + 1) * PREVIEW_LINE_HEIGHT,
+          y,
           formatWaveTableRow(entry, widths),
           {
             fontFamily: 'monospace',
             fontSize: '14px',
             color: '#00ff00',
           },
-        ),
-      );
+        );
+        this.previewTexts.push(row);
+        this.previewButtons.push(
+          this._launchButton(
+            row.x + row.width + CURVE_LAUNCH_BUTTON_GAP,
+            y,
+            `${CURVE_LAUNCH_WAVE_LABEL_PREFIX} ${entry.waveNumber}`,
+            waveIndex,
+            () => this._launchWave(waveIndex),
+          ),
+        );
+        y += PREVIEW_LINE_HEIGHT;
+      });
+    });
+  }
+
+  /**
+   * Builds one interactive preview launch button. `key` is stored as a data
+   * attribute so tests can identify the exact group/wave it launches.
+   */
+  private _launchButton(
+    x: number,
+    y: number,
+    label: string,
+    key: number,
+    onClick: () => void,
+  ): Phaser.GameObjects.Text {
+    const button = this.add
+      .text(x, y, label, {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#00ffff',
+        backgroundColor: '#1a1a1a',
+        padding: { x: 6, y: 2 },
+      })
+      .setOrigin(0, 0)
+      .setData('curveLaunch', true)
+      .setInteractive({ useHandCursor: true });
+    button.setData('curveLaunchKey', key);
+    button.on('pointerdown', onClick);
+    return button;
+  }
+
+  /** Boots the Level Gym scene with a whole level group (AC1). */
+  private _launchLevel(levelIndex: number): void {
+    const level = this.levels[levelIndex];
+    if (!level) return;
+    this.scene.start(GYM_LEVEL_SCENE_KEY, { level });
+  }
+
+  /** Boots the Level Gym scene with one wave (AC2). */
+  private _launchWave(waveIndex: number): void {
+    const wave = this.sequencedWaves[waveIndex];
+    if (!wave) return;
+    const name = `Wave ${waveIndex + 1}`;
+    this.scene.start(GYM_LEVEL_SCENE_KEY, {
+      level: { level: 0, name, waves: [toWaveDefinition(wave)] },
     });
   }
 
@@ -546,6 +722,8 @@ export class GymCurveSequencer extends Phaser.Scene {
   private _markStale(): void {
     this.previewStale = true;
     this.preview = [];
+    this.sequencedWaves = [];
+    this.levels = [];
     this._renderPreview();
   }
 
@@ -560,6 +738,10 @@ export class GymCurveSequencer extends Phaser.Scene {
     const result = sequencer(this.curve, this.candidates, {
       tolerance: CURVE_TARGET_TOLERANCE,
     });
+    // Keep the raw sequencer waves so the grouped level definitions (below)
+    // and the per-wave launch buttons can rebuild the exact spawnable shape.
+    this.sequencedWaves = result.waves;
+    this.levels = buildCurveLevels(result.waves);
     this.preview = result.waves.map((wave, index) => {
       const mode = this.modes[index] ?? CURVE_DEFAULT_MODE;
       const actualDifficulty =
@@ -607,6 +789,25 @@ export class GymCurveSequencer extends Phaser.Scene {
   /** A copy of the last regenerated wave preview (empty while stale). */
   get wavePreview(): WavePreviewEntry[] {
     return this.preview.map((entry) => ({ ...entry }));
+  }
+
+  /**
+   * Level groups the sequencer result was folded into for launching
+   * (AH-0MUNU6MGM007CI45). Empty while the preview is stale.
+   */
+  get curveLevels(): LevelDefinition[] {
+    return this.levels.map((level) => ({
+      ...level,
+      waves: level.waves.map((wave) => ({
+        ...wave,
+        groups: wave.groups.map((group) => ({ ...group })),
+      })),
+    }));
+  }
+
+  /** Number of waves a level group holds in the current preview. */
+  get wavesPerLevel(): number {
+    return CURVE_WAVES_PER_LEVEL;
   }
 
   /** True when the curve changed since the last regeneration. */

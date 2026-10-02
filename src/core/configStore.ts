@@ -108,9 +108,11 @@ function round2(value: number): number {
 /**
  * Default levels whose waves reuse the hand-authored static `LEVELS`
  * composition (AH-0MUJSUTXI008NP8K). Levels 1–3 are the no-fire onboarding
- * section: reusing the scripted waves keeps them legible and avoids the
- * degenerate low-target curve output (asteroid-only and 1-count waves) the
- * purely mechanical derivation produced.
+ * section, but the first four campaign waves (L1W1, L1W2, L2W1, L2W2) are
+ * overridden to `dynamic` (AH-0MUOCJM0N000RW2B) so the opening varies per run;
+ * the remaining onboarding waves stay `fixed`, which keeps the scripted
+ * onboarding legible and avoids the degenerate low-target curve output
+ * (asteroid-only and 1-count waves) the purely mechanical derivation produced.
  */
 const DEFAULT_FIXED_LEVELS: ReadonlySet<number> = new Set([1, 2, 3]);
 
@@ -122,6 +124,13 @@ const DEFAULT_FIXED_LEVELS: ReadonlySet<number> = new Set([1, 2, 3]);
  * measured calibration spread.
  */
 const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
+  // Dynamic opening (AH-0MUOCJM0N000RW2B): a narrow ascending band for the
+  // first four campaign waves. Levels 1–2 waves 1–2 are `dynamic`, so the
+  // targets are the seed base; the per-wave curation keeps the resulting
+  // waves varied and non-degenerate. Level 2 wave 3 stays the measured
+  // calibration target derived below.
+  1: [6, 8],
+  2: [9, 10],
   4: [16, 24, 28],
   5: [45, 62],
 };
@@ -131,23 +140,33 @@ const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
  * (AH-0MUJSUTLA006Q8E1). Used to ship a mixed-mode programme (at least one
  * `curve`, one `fixed` and one `dynamic` wave) so out-of-the-box play
  * exercises the full capability. Keyed by level number then 1-based wave.
+ *
+ * The first four campaign waves (L1W1, L1W2, L2W1, L2W2) are `dynamic`
+ * (AH-0MUOCJM0N000RW2B) so each run opens on a varied mix of existing
+ * archetypes; the remaining onboarding waves stay `fixed`, and the level-5
+ * wave 2 remains the original mixed-programme dynamic wave.
  */
 const DEFAULT_MODE_OVERRIDES: Readonly<
   Record<number, Readonly<Record<number, DifficultyGeneration>>>
 > = {
+  1: { 1: 'dynamic', 2: 'dynamic' },
+  2: { 1: 'dynamic', 2: 'dynamic' },
   5: { 2: 'dynamic' },
 };
 
 /**
  * Compute the baked-in default difficulty curve (AH-0MUITRZZE000OYQE;
- * retuned for playability by AH-0MUJSUTXI008NP8K).
+ * retuned for playability by AH-0MUJSUTXI008NP8K; dynamic opening by
+ * AH-0MUOCJM0N000RW2B).
  *
- * Levels 1–3 are `fixed` (their waves reuse the hand-authored static `LEVELS`
- * composition) and their stored targets are the measured calibration spread.
- * Levels 4–5 are `curve` with hand-tuned targets in
- * {@link DEFAULT_TARGET_OVERRIDES} that keep the generated compositions
- * non-degenerate and the difficulty rising. Targets are non-decreasing within
- * and across levels.
+ * Levels 1–3 are the no-fire onboarding section: the first four campaign
+ * waves (L1W1, L1W2, L2W1, L2W2) are `dynamic` with retuned opening targets,
+ * and the remaining onboarding waves are `fixed` (reusing the hand-authored
+ * static `LEVELS` composition). Levels 4–5 are `curve` with hand-tuned targets
+ * in {@link DEFAULT_TARGET_OVERRIDES} that keep the generated compositions
+ * non-degenerate and the difficulty rising, except the level-5 wave 2
+ * `dynamic` mixed-programme wave. Targets are non-decreasing within and across
+ * levels.
  *
  * Deterministic and pure: the same static campaign always yields the same
  * curve. Used as the fallback whenever the CSV config is missing or
@@ -178,9 +197,11 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
         levelName: level.name,
         wave: wi + 1,
         targetDifficulty: target,
-        // Onboarding levels reuse the static composition; the rest are
-        // curve-generated unless an explicit per-wave override ships a mixed
-        // programme (AH-0MUJSUQD8003FSUT, AH-0MUJSUTLA006Q8E1).
+        // Onboarding levels reuse the static composition except for the
+        // dynamic opening waves; the rest are curve-generated unless an
+        // explicit per-wave override ships a mixed programme
+        // (AH-0MUJSUQD8003FSUT, AH-0MUJSUTLA006Q8E1,
+        // AH-0MUOCJM0N000RW2B).
         generation:
           DEFAULT_MODE_OVERRIDES[level.level]?.[wi + 1] ??
           (fixed ? 'fixed' : 'curve'),

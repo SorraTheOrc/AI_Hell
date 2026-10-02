@@ -25,6 +25,8 @@ describe('ship configuration module', () => {
     expect(DEFAULT_CONFIG.frictionDeceleration).toBe(100);
     expect(DEFAULT_CONFIG.controlScheme).toBe('asteroids');
     expect(DEFAULT_CONFIG.asteroidsRotationSpeed).toBe(3);
+    expect(DEFAULT_CONFIG.asteroidsRotationAcceleration).toBe(12);
+    expect(DEFAULT_CONFIG.asteroidsRotationDeceleration).toBe(60);
   });
 
   it('falls back to defaults before the boot loader has run', () => {

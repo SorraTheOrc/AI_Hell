@@ -304,27 +304,24 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Number of minerals to re-drop when this enemy is destroyed — a value in
-   * the configured 25–50 % fraction range of the collected count, never
-   * exceeding it. An enemy that collected nothing re-drops nothing.
+   * Number of minerals to re-drop when this enemy is destroyed — the
+   * collected count plus a random additive bonus drawn from
+   * [`mineralRedropBonusMin`, `mineralRedropBonusMax`] (defaults
+   * 0.25–1.25), rounded to the nearest integer. The result may exceed the
+   * collected count (there is no upper cap); an enemy that collected
+   * nothing still draws the bonus and may occasionally drop a single mineral
+   * (when `round(bonus) === 1`).
    *
    * @param rng — random-number generator (defaults to `Math.random`);
-   *   injected by tests for deterministic bounds checking.
+   *   injected by tests for deterministic bounds checking. Exactly one
+   *   draw is taken per call.
    */
   mineralRedropCount(rng: () => number = Math.random): number {
-    if (this._mineralCount <= 0) return 0;
-
     const rules = loadRules();
-    const low = Math.floor(this._mineralCount * rules.mineralRedropFractionMin);
-    const high = Math.floor(this._mineralCount * rules.mineralRedropFractionMax);
-
-    // Clamp the inclusive integer range to the collected count.
-    const cappedHigh = Math.min(high, this._mineralCount);
-    const cappedLow = Math.min(Math.max(low, 0), cappedHigh);
-    if (cappedHigh <= cappedLow) return cappedLow;
-
-    const draw = cappedLow + Math.floor(rng() * (cappedHigh - cappedLow + 1));
-    return Math.min(Math.max(draw, cappedLow), cappedHigh);
+    const bonus =
+      rules.mineralRedropBonusMin +
+      rng() * (rules.mineralRedropBonusMax - rules.mineralRedropBonusMin);
+    return Math.round(this._mineralCount + bonus);
   }
 
   /**
@@ -358,6 +355,27 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Set whether the enemy is allowed to fire. */
   set shootEnabled(value: boolean) {
     this._shootEnabled = value;
+  }
+
+  // ── Spawn animation state (wormhole entry) ────────────────────────
+
+  /** Whether this enemy is currently in its spawn animation. */
+  protected _isSpawning = false;
+
+  /** True while the enemy is still growing from the wormhole spawn. */
+  get isSpawning(): boolean {
+    return this._isSpawning;
+  }
+
+  /**
+   * Sets the spawn animation state.  When `true`, the enemy is protected
+   * from collisions and cannot fire; the scene drives the visual growth
+   * animation each frame via {@link updateSpawnAnimation}.
+   *
+   * @param value - Whether the enemy is spawning.
+   */
+  setSpawning(value: boolean): void {
+    this._isSpawning = value;
   }
 
   /**

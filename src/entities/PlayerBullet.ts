@@ -16,6 +16,7 @@
 
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import type { WeaponDefinition } from '../utils/weapons';
 
 /**
  * A single player bullet: a Graphics object with position, velocity,
@@ -47,6 +48,27 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
 
   /** Elapsed time (seconds) since this bullet was created. */
   private _elapsed = 0;
+
+  /**
+   * The AOE weapon definition when this bullet is an `'onImpact'` projectile
+   * (Mortar). The owning scene detonates the descriptor's area effect when
+   * the projectile hits or expires; `undefined` for an ordinary bullet.
+   */
+  aoeWeapon?: WeaponDefinition;
+
+  /**
+   * Optional callback invoked when the bullet's lifetime expires, before its
+   * Graphics are destroyed. The shared combat core uses it to detonate an
+   * AOE projectile on expiry; ordinary bullets leave it undefined.
+   */
+  onExpire?: (bullet: PlayerBullet) => void;
+
+  /**
+   * True once an `'onImpact'` AOE projectile has detonated, so the blast
+   * resolves at most once even if both the collision and expiry paths observe
+   * the same projectile.
+   */
+  aoeDetonated = false;
 
   /**
    * Creates a new bullet Graphics object. Visuals are a filled circle
@@ -165,6 +187,9 @@ export function advanceAndCull(
 ): boolean {
   bullet.advance(dt);
   if (bullet.isExpired()) {
+    // Notify an `'onImpact'` projectile so its AOE blast resolves at the
+    // expiry point before the Graphics are destroyed.
+    bullet.onExpire?.(bullet);
     bullet.destroy();
     return false;
   }

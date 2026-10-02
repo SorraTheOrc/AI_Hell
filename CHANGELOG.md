@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.8 (2026-10-03)
+### Features
+- Gym practice now matches the real game exactly, so what you learn there always works in battle. (AH-0MUII2FJ5007MDDA)
+- Divers now stay where they attack, and the enemy formation shifts to follow them. (AH-0MUAYB957002EMYV)
+- Gyms now have a 30-second wave timer—surviving enemies explode and respawn, adding real time pressure. (AH-0MUNR5LM1004B223)
+- Tapping turn keys now makes small, precise turns while holding still spins at full speed. (AH-0MUNS42NA000N41U)
+- Extra life power-ups now appear much more often, giving you a better chance to recover after taking hits. (AH-0MUNS3VAQ0023L1J)
+- New area-of-effect weapons let you blast clusters of enemies and bullets without perfect aim. (AH-0MUOOB3OR001V8CD)
+- Enemies now emerge from a wormhole, growing to full size before they can fight or be hit. (AH-0MURBER4L00821RR)
+- Enemy and ship tuning now lives in editable CSV files, so designers can retune without touching code. (AH-0MTZWZ9TE009CVUA)
+- Your ship's shots now fire in a steady musical rhythm. (AH-0MUAYB8EH005RJ8B)
+- Enemy waves can now follow a smooth difficulty curve, making each run ramp up more naturally. (AH-0MUH6LEYY0054E63)
+- Enemies now glide smoothly back into formation instead of teleporting. (AH-0MUL15N63003PUDB)
+- Scouts are easier to kill and tanks fire less, making combat fairer. (AH-0MULW9HNC001GVCY)
+- See the level's theme name in the banner and HUD so you always know where you are. (AH-0MUMMBRCC0093MGV)
+- Destroyed enemies now reliably drop back the minerals they absorbed, plus a small bonus. (AH-0MULUOZQP009GRWX)
+### Bug Fixes
+- Asteroids now drop minerals in the gyms, matching the main game. (AH-0MUHMT5JC004WRSB)
+- Boss bullets now expire sooner, making boss fights fairer and more consistent. (AH-0MUL0WS9P006NUCT)
+- The Central AI boss now reliably appears after clearing Level 5. (AH-0MUNX32FA006RY4T)
+- Fixed a bug where asteroid waves could block progress and make the boss unreachable. (AH-0MUR1HZLQ001ELX9)
+- Boss victories now correctly return you to the main menu. (AH-0MUR0FNCW001SCNE)
+- Weapon pickups no longer wipe your other weapons. (AH-0MUPP1Q7S009NFHE)
+- Fixes a bug where the Level 5 boss sometimes failed to appear. (AH-0MUQFXDKF005NM9N)
+- Fixed rare test failures so boss encounters always trigger correctly. (AH-0MUNVVWWC0015JTM)
+
 ## v0.1.7 (2026-09-29)
 ### Features
 - Gym practice now matches the real game exactly, so what you learn there always applies. (AH-0MUII2FJ5007MDDA)

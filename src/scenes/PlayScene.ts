@@ -46,10 +46,12 @@ import {
 import { GameState } from '../core/GameState';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
+  playArcFireSound,
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
-  playMajorExplosionSound,
+  playMortarFireSound,
+  playNovaFireSound,
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
@@ -66,6 +68,14 @@ import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
+import {
+  spawnWormholeOpen,
+  spawnWormholeClose,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  type SpawnAnimatable,
+  type WormholeHandle,
+} from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
@@ -121,6 +131,20 @@ import {
   applyPhaseGhost,
   drawShieldBubble,
 } from './core/CombatEffectVisuals';
+import {
+  WAVE_TIME_LIMIT_SECONDS,
+  WAVE_TIMER_BAR_HEIGHT,
+  WAVE_TIMER_BAR_WIDTH,
+  WAVE_TIMER_BAR_X,
+  WAVE_TIMER_BAR_Y,
+} from './core/waveTimeout';
+
+// Re-exported for existing importers (tests, HUD); the single source of
+// truth now lives in `core/waveTimeout.ts`, shared with the gyms.
+export {
+  WAVE_TIME_LIMIT_SECONDS,
+  WAVE_TIMEOUT_EXPLOSION_SCALE,
+} from './core/waveTimeout';
 
 // ── Scoring (GDD §4.5) ──────────────────────────────────────────────
 
@@ -161,22 +185,6 @@ export const LEVEL_TRANSITION_SECONDS = 1.5;
  * the ~1.5–2 s window required by AH-0MU7JTEMC006QPSN.
  */
 export const BANNER_DURATION_SECONDS = 1.5;
-
-/**
- * Seconds a regular wave may run before the time-limit penalty triggers
- * (per-wave, resets each wave; tunable — default 30 s per
- * AH-0MU7JTG9R002ZWA6 assumptions).
- */
-export const WAVE_TIME_LIMIT_SECONDS = 30;
-
-/** Detonation scale factor applied to survivors on wave-timeout (10x). */
-export const WAVE_TIMEOUT_EXPLOSION_SCALE = 10;
-
-/** Wave time-limit bar geometry (top-centre, above the level readout). */
-const WAVE_TIMER_BAR_X = GAME_WIDTH * 0.25;
-const WAVE_TIMER_BAR_Y = 2;
-const WAVE_TIMER_BAR_WIDTH = GAME_WIDTH * 0.5;
-const WAVE_TIMER_BAR_HEIGHT = 6;
 
 /** Rightward formation drift speed (px/s). */
 const FORMATION_DRIFT_SPEED = 28;
@@ -314,18 +322,23 @@ export class PlayScene extends CombatScene<
   private driftX = 0;
   private driftDir = 1;
   /**
-   * Unit-level re-anchor offset (px), added to every formation group's origin
-   * on top of the drift. A Diver's attack re-bases the whole unit by adding
-   * the shared delta here, so the Diver's slot lands on its attack end and
-   * every other unit keeps its relative offset (AH-0MUAYB957002EMYV).
+   * Diver-group re-anchor offset (px), added only to Diver spawns' origin on
+   * top of the drift. A Diver's attack re-anchors the Diver group by adding
+   * the shared delta here, so the Diver's slot lands on its attack end while
+   * every other enemy stays where it is (producer review,
+   * AH-0MUL15N63003PUDB).
    */
-  private formationAnchorX = 0;
-  private formationAnchorY = 0;
+  private diverAnchorX = 0;
+  private diverAnchorY = 0;
 
   /** Glide manager: eases enemies to their re-anchored slots (AH-0MUL15N63003PUDB). */
   private glide = new FormationGlide();
 
   private transitionTimer = 0;
+
+  // ── Wormhole spawn animation tracking ────────────────────────────
+  /** The live wormhole handle for the current wave spawn, or null. */
+  private _spawnWormhole: WormholeHandle | null = null;
 
   /**
    * Whether the simulation is frozen by the pause menu (parent
@@ -518,8 +531,8 @@ export class PlayScene extends CombatScene<
     this.boss = null;
     this.driftX = 0;
     this.driftDir = 1;
-    this.formationAnchorX = 0;
-    this.formationAnchorY = 0;
+    this.diverAnchorX = 0;
+    this.diverAnchorY = 0;
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
@@ -529,6 +542,7 @@ export class PlayScene extends CombatScene<
     this.pendingHarvesterSpawns = [];
     this.harvestersSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
+    this._spawnWormhole = null;
     this.paused = false;
   }
 
@@ -625,10 +639,15 @@ export class PlayScene extends CombatScene<
     if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
       this._updateTransitionBanner();
-      // Asteroids continue their straight-line motion during transition.
-      this._moveAsteroids(dt);
-      // Asteroid-vs-player-bullet and asteroid-vs-player collisions remain active.
-      this._handleAsteroidCollisions();
+      // Carried-over survivors stay active through the transition pause
+      // (AH-0MUNS3ZQ1002DJ9S AC3): they keep their formation drift / their own
+      // motion, keep firing, and remain shootable/hitable. `_moveEnemies`
+      // handles both formation enemies and asteroids. Enemy bullets vs the
+      // player stay suspended for the pause (AH-0MU7JTF9W008B8HW grace), so a
+      // timed-out wave still gives the player the transition breather.
+      this._moveEnemies(dt);
+      this._collectEnemyFire();
+      this._handleCarriedSurvivorCollisions();
       if (this.transitionTimer === 0) this._onTransitionComplete();
     } else {
       this._moveEnemies(dt);
@@ -653,6 +672,9 @@ export class PlayScene extends CombatScene<
       // Automatic Phase Shift (P6): feed live danger before collision gating
       // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
       this._updatePhaseShiftAutoTrigger(dt);
+      // Advance the wormhole spawn animation first so an enemy that finishes
+      // growing this frame is collidable on the same frame it becomes whole.
+      this._updateSpawnAnimations(dt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
@@ -671,6 +693,47 @@ export class PlayScene extends CombatScene<
     this._drawWaveTimer();
   }
 
+  /**
+   * Advances the wormhole spawn animation for every spawning enemy.
+   * When all enemies in the current wave have finished growing, the
+   * wormhole closes and the spawn sequence is complete (AC1–AC4).
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    let anySpawning = false;
+    for (const s of this.spawned) {
+      if (!s.entity.isSpawning) continue;
+      const stillGrowing = updateSpawnAnimation(s.entity, dt);
+      if (stillGrowing) {
+        anySpawning = true;
+      } else {
+        s.entity.setSpawning(false);
+      }
+    }
+    if (!anySpawning && this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
+      this._spawnWormhole = null;
+    }
+  }
+
+  /**
+   * Test seam: immediately completes any in-progress wormhole spawn
+   * animations without ticking the whole scene, so collision tests observe
+   * fully-spawned enemies without advancing wave timers or asteroid spawns
+   * (AH-0MURBER4L00821RR). Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const s of this.spawned) {
+      if (!s.entity.isSpawning) continue;
+      // Fast-forward past the wormhole-open delay + full growth.
+      updateSpawnAnimation(s.entity as unknown as SpawnAnimatable, 10);
+      s.entity.setSpawning(false);
+    }
+    if (this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
+      this._spawnWormhole = null;
+    }
+  }
+
   // ── Wave spawning & progression ─────────────────────────────────
 
   /**
@@ -685,13 +748,17 @@ export class PlayScene extends CombatScene<
     this.planHarvesterSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
+      // Spawn one wormhole at the first enemy's position.
+      this._spawnWormhole = spawnWormholeOpen(this, spawns[0].x, spawns[0].y, {
+        registry: this.wormholeEffects,
+      });
       for (const spawn of spawns) this._spawnEnemy(spawn);
       playSpawnSound();
     }
     this.driftX = 0;
     this.driftDir = 1;
-    this.formationAnchorX = 0;
-    this.formationAnchorY = 0;
+    this.diverAnchorX = 0;
+    this.diverAnchorY = 0;
     this._startWaveTimer();
   }
 
@@ -700,6 +767,14 @@ export class PlayScene extends CombatScene<
     const cfg = loadEnemyConfig(spawn.enemyKey);
     const entity = createEnemyFromConfig(this, cfg, spawn.x, spawn.y, spawn.offset);
     entity.shootEnabled = spawn.shootEnabled;
+
+    // ── Wormhole spawn animation (AC1–AC4) ────────────────────────
+    // The enemy starts at 1 px and grows to its full scale over the
+    // growth duration; while spawning it is protected from collisions.
+    // Growth begins once the wormhole has finished opening.
+    startSpawnAnimation(entity, entity.scaleX);
+    entity.setSpawning(true);
+
     this.add.existing(entity);
     this.spawned.push({
       entity,
@@ -912,9 +987,13 @@ export class PlayScene extends CombatScene<
         s.entity.updatePosition?.(dt);
         continue;
       }
+      // Only Divers ride the Diver re-anchor offset; every other enemy uses
+      // the drift alone and therefore stays where it is when a Diver
+      // re-anchors (AC5, AH-0MUL15N63003PUDB).
+      const isDiver = s.entity.consumeFormationReanchor != null;
       s.entity.applyFormationPosition(
-        s.startX + this.driftX + this.formationAnchorX,
-        s.startY + this.formationAnchorY,
+        s.startX + this.driftX + (isDiver ? this.diverAnchorX : 0),
+        s.startY + (isDiver ? this.diverAnchorY : 0),
         dt,
         s.spacingX,
         s.spacingY,
@@ -930,11 +1009,12 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Consumes any pending enemy re-anchor requests and shifts the unit anchor
-   * so the requesting Diver's slot lands on its attack end, with every other
-   * unit shifted by the same delta (shared rule in
-   * `computeFormationReanchorDelta`). The most recent request wins when Divers
-   * are desynchronised (documented assumption).
+   * Consumes any pending enemy re-anchor requests and shifts the Diver-group
+   * anchor so the requesting Diver's slot lands on its attack end (shared rule
+   * in `computeFormationReanchorDelta`). The most recent request wins when
+   * Divers are desynchronised (documented assumption). Only the Divers move:
+   * every other enemy stays where it is (producer review,
+   * AH-0MUL15N63003PUDB).
    *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
@@ -948,24 +1028,24 @@ export class PlayScene extends CombatScene<
     if (!latest) return false;
 
     const { request, spawn } = latest;
+    // Re-anchor the Diver group only: the delta moves the Diver origin so the
+    // requester's slot lands on the attack end. Every other enemy is left
+    // exactly where it is (producer review, AH-0MUL15N63003PUDB).
     const { dx, dy } = computeFormationReanchorDelta(
       request,
-      spawn.startX + this.driftX + this.formationAnchorX,
-      spawn.startY + this.formationAnchorY,
+      spawn.startX + this.driftX + this.diverAnchorX,
+      spawn.startY + this.diverAnchorY,
       spawn.spacingX,
       spawn.spacingY,
     );
-    this.formationAnchorX += dx;
-    this.formationAnchorY += dy;
+    this.diverAnchorX += dx;
+    this.diverAnchorY += dy;
 
-    // Begin the glide for every formation-driven entity so they ease to their
-    // new slots instead of snapping (AH-0MUL15N63003PUDB). Only Divers glide;
-    // all other enemies snap directly to their re-based slots.
+    // Only the Divers glide to their new slots; non-Divers did not move this
+    // frame, so they are not tracked by the glide.
     const glideTargets = this.spawned
       .filter(
-        (s) =>
-          s.entity.alive &&
-          s.enemyKey === 'diver',
+        (s) => s.entity.alive && s.entity.consumeFormationReanchor != null,
       )
       .map((s) => s.entity);
     this.glide.begin(glideTargets);
@@ -1006,13 +1086,23 @@ export class PlayScene extends CombatScene<
 
   /**
    * The shared level/wave progress label used by both the persistent HUD
-   * readout and the transition banner, e.g. `Level 1 of 5, Wave 1 of 2`.
-   * During the boss encounter it collapses to just `Boss` (no numeric
-   * level/wave), per AH-0MU7JTEY3004EXR2.
+   * readout and the transition banner, e.g. `Level 1: Entry, Wave: 1 of 2`
+   * (AH-0MUMMBRCC0093MGV). During the boss encounter it collapses to just
+   * `Boss` (no numeric level and no name), per AH-0MU7JTEY3004EXR2.
+   *
+   * With sequenced levels active the name comes from the CSV
+   * (`WaveManager.levelName` → `LevelDefinition.name`); with static
+   * `LEVELS` it is the `LevelDefinition.name` property. When the name is
+   * empty the label falls back to a name-free numeric form
+   * (`Level N of 5, Wave M of K`) so no blank label or crash occurs.
    */
   private _progressLabel(): string {
     const wm = this.waveManager;
     if (wm.bossTriggered || wm.bossActive || wm.bossDefeated) return 'Boss';
+    const name = wm.levelName?.trim();
+    if (name) {
+      return `Level ${wm.level}: ${name}, Wave: ${wm.waveNumber} of ${wm.waveCount}`;
+    }
     return `Level ${wm.level} of ${wm.levelCount}, Wave ${wm.waveNumber} of ${wm.waveCount}`;
   }
 
@@ -1175,6 +1265,15 @@ export class PlayScene extends CombatScene<
       case 'rapid':
         playRapidFireSound();
         break;
+      case 'nova':
+        playNovaFireSound();
+        break;
+      case 'mortar':
+        playMortarFireSound();
+        break;
+      case 'arc':
+        playArcFireSound();
+        break;
     }
   }
 
@@ -1278,7 +1377,36 @@ export class PlayScene extends CombatScene<
         this.boss.x, this.boss.y, this.boss.getHitRadius(),
       )
     ) {
+      if (pb.aoeWeapon) {
+        // An `'onImpact'` AOE projectile detonates instead of dealing a direct
+        // phase hit; the blast damages the boss through `onAoeHitsBoss`.
+        this.detonateAoeProjectile(pb);
+      } else {
+        this._damageBoss();
+      }
       pb.destroy();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * AOE effect hits the boss: routes through the same `_damageBoss()` path a
+   * player bullet uses, so multi-phase pacing, phase scoring and minion
+   * summons are identical (parent AH-0MUOOB3OR001V8CD AC5).
+   */
+  protected override onAoeHitsBoss(
+    x: number,
+    y: number,
+    radius: number,
+  ): boolean {
+    if (
+      this.boss?.alive &&
+      this._overlaps(
+        x, y, radius,
+        this.boss.x, this.boss.y, this.boss.getHitRadius(),
+      )
+    ) {
       this._damageBoss();
       return true;
     }
@@ -1584,7 +1712,7 @@ export class PlayScene extends CombatScene<
     this.waveTimer = 0;
   }
 
-  /** Counts the wave time-limit down; detonates survivors on expiry. */
+  /** Counts the wave time-limit down; carries survivors over on expiry. */
   private _advanceWaveTimer(dt: number): void {
     if (!this.waveTimerActive) return;
     this.waveTimer = Math.max(0, this.waveTimer - dt);
@@ -1592,45 +1720,48 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Wave time-limit expired. If enemies remain, every non-asteroid survivor
-   * detonates at 10x scale and the run loses exactly one life (running the
-   * normal game-over flow at 0 lives), then the wave advances. Asteroids
-   * survive the timeout (they are not detonated), are NOT re-registered with
-   * the WaveManager (they no longer gate the next wave), and persist in the
-   * field (AH-0MUJM746P000QAEO). If no enemies remain, nothing happens (AC3).
+   * Wave time-limit expired — carry-over semantics (AH-0MUNS3ZQ1002DJ9S).
    *
-   * Gym↔game parity: the game is the only scene with a wave timer/timeout,
-   * so this cue + limiter is the single implementation. If a gym ever gains
-   * a wave-timeout path it must call `playMajorExplosionSound()` (reusing
-   * the shared limiter) rather than duplicating the cue — see
-   * AH-0MUK5ONAA0007YEX and AH-0MUJ1YZJ9008O4RC.
+   * No detonation and no life penalty: every surviving non-asteroid enemy
+   * persists in place, is adopted into the next wave's alive roster (so the
+   * wave only clears once both the fresh spawns **and** the carried-over
+   * survivors are destroyed), and continues moving/firing through the 3 s
+   * transition pause. Asteroids persist independently and are never adopted
+   * (they do not gate wave completion — AH-0MUJM746P000QAEO). If no enemies
+   * remain, the timer is simply hidden (AC3).
+   *
+   * The wave advances via {@link _advanceAfterTimeout}; the survivors are
+   * re-registered **after** the advance so the fresh wave's alive count is
+   * already set and the adopted survivors are added on top of it.
+   *
+   * Gym↔game parity: the gyms keep survivors and spawn a fresh formation
+   * through the shared `CombatScene._onWaveTimeout` path — the shared
+   * detonation helper (`core/waveTimeout.ts`) is now a no-op.
    */
   private _timeoutWave(): void {
     const survivors = this.spawned.filter((s) => s.entity.alive);
     if (survivors.length === 0) {
-      // No enemies left to detonate — the penalty does not apply.
+      // No enemies left to carry over — the penalty does not apply.
       this._hideWaveTimer();
       return;
     }
 
-    // Asteroids survive the timeout — separate them from detonatable enemies.
-    const detonateList = survivors.filter((s) => s.enemyKey !== 'asteroid');
+    // Asteroids carry over independently and are never wave-accounted; only
+    // non-asteroid survivors gate the next wave (AH-0MUJM746P000QAEO).
+    const carried = survivors.filter((s) => s.enemyKey !== 'asteroid');
 
-    // Detonate all non-asteroid survivors at 10x scale, each with the
-    // dedicated major-explosion cue (AH-0MUJ1YZJ9008O4RC AC2). Asteroids
-    // are excluded above and carry over silently.
-    for (const s of detonateList) {
-      playMajorExplosionSound();
-      s.entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
-    }
-    this._loseLife(false);
+    // No detonation, no life loss: advance the wave/level, then adopt the
+    // surviving non-asteroid enemies so they count toward the next wave's
+    // alive target (AH-0MUNS3ZQ1002DJ9S AC1/AC2).
     this._advanceAfterTimeout();
+    this.waveManager.adoptCarriedSurvivors(carried.length);
   }
 
   /**
-   * Advances the wave/level state machine after a timeout wiped the whole
-   * active wave: replays one destruction per remaining enemy so the
+   * Advances the wave/level state machine after a timeout while keeping the
+   * survivors alive: replays one destruction per remaining enemy so the
    * manager emits exactly one clear event, then reacts like any other wipe.
+   * The caller re-adopts the survivors afterwards so they gate the next wave.
    */
   private _advanceAfterTimeout(): void {
     const wm = this.waveManager;
@@ -1656,69 +1787,62 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Move carried-over asteroids during the transition pause.
-   * Asteroids use constant-velocity straight-line motion with four-edge wrap
-   * and rotation — independent of formation drift.
+   * Collision pass used during the wave/level transition pause: player
+   * bullets vs carried-over survivors (and the boss) plus ram collisions.
+   *
+   * Unlike the full {@link _handleCollisions} pass, enemy bullets vs the
+   * player remain suspended for the pause — the transition is a breather
+   * (AH-0MU7JTF9W008B8HW). Carried-over survivors still move and fire
+   * (AH-0MUNS3ZQ1002DJ9S AC3); their shots simply land once the next wave
+   * begins. Multi-hit enemies are handled by the shared
+   * `onPlayerBulletHitsEnemy` seam.
    */
-  private _moveAsteroids(dt: number): void {
-    for (const s of this.spawned) {
-      if (!s.entity.alive) continue;
-      if (s.enemyKey === 'asteroid') {
-        (s.entity as Asteroid).updatePosition(dt);
-      }
-    }
-  }
-
-  /**
-   * Handle asteroid-vs-player-bullet and asteroid-vs-player collisions
-   * during the transition pause. Enemy bullets and enemy-based collisions
-   * remain suspended (AH-0MU8TWF1H007OG2L).
-   */
-  private _handleAsteroidCollisions(): void {
+  private _handleCarriedSurvivorCollisions(): void {
     const playerHull = SHIP_SIZE / 2;
 
-    // 1. Player bullets vs asteroids (and the boss).
+    // 1. Player bullets vs carried-over survivors (and the boss).
     const keptBullets: PlayerBullet[] = [];
     for (const pb of this.playerBullets) {
       let spent = false;
       for (const s of this.spawned) {
         if (!s.entity.alive) continue;
-        if (s.enemyKey !== 'asteroid') continue;
-        if (this._overlaps(pb.x, pb.y, PLAYER_BULLET_RADIUS, s.entity.x, s.entity.y, s.entity.getHitRadius())) {
-          s.entity.destroySelf();
-          this._playEnemyDestruction(s.entity);
-          pb.destroy();
-          spent = true;
-          this._onEnemyKilled(s);
-          break;
+        if (
+          this._overlaps(
+            pb.x,
+            pb.y,
+            PLAYER_BULLET_RADIUS,
+            s.entity.x,
+            s.entity.y,
+            s.entity.getHitRadius(),
+          )
+        ) {
+          spent = this.onPlayerBulletHitsEnemy(s.entity, pb);
+          if (spent) break;
         }
       }
-      if (!spent && this.boss?.alive && this._overlaps(
-        pb.x, pb.y, PLAYER_BULLET_RADIUS, this.boss.x, this.boss.y, this.boss.getHitRadius(),
-      )) {
-        // Multi-hit boss: consume the bullet and damage a phase.
-        pb.destroy();
-        spent = true;
-        this._damageBoss();
-      }
+      if (!spent) spent = this.onPlayerBulletHitsBoss(pb);
       if (!spent) keptBullets.push(pb);
     }
     this.playerBullets = keptBullets;
 
     if (!this.player || this.effectsRegistry.isPhased) return;
 
-    // 2. Player body vs asteroid body — both are hit.
+    // 2. Player body vs carried-over survivor body — both are hit.
     if (this.invulnerable <= 0) {
       for (const s of this.spawned) {
         if (!s.entity.alive) continue;
-        if (s.enemyKey !== 'asteroid') continue;
-        if (this._overlaps(
-          this.player.x, this.player.y, playerHull, s.entity.x, s.entity.y, s.entity.getHitRadius(),
-        )) {
+        if (
+          this._overlaps(
+            this.player.x,
+            this.player.y,
+            playerHull,
+            s.entity.x,
+            s.entity.y,
+            s.entity.getHitRadius(),
+          )
+        ) {
+          this.onPlayerRamsEnemy(s.entity);
           this._hitPlayer();
-          s.entity.destroySelf();
-          this._playEnemyDestruction(s.entity);
-          this._onEnemyKilled(s, false);
           break;
         }
       }

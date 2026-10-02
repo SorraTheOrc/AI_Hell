@@ -91,6 +91,18 @@ describe('gymHelp — id → { name, description, drawIcon } lookup', () => {
     }
   });
 
+  it('resolves AOE weapon rows sourced from the catalogue (F5 AC5)', () => {
+    const ids: WeaponId[] = ['nova', 'mortar', 'arc'];
+    for (const id of ids) {
+      const help = getHelpEntry(id);
+      expect(help.id).toBe(id);
+      expect(help.name).toBe(WEAPON_CATALOGUE[id].name);
+      expect(help.description).toBe(WEAPON_CATALOGUE[id].description);
+      // The AOE descriptions call out the area effect.
+      expect(help.description).toMatch(/AOE/i);
+    }
+  });
+
   it('resolves the reset drop from RESET_DROP', () => {
     const help = getHelpEntry('reset');
     expect(help.name).toBe(RESET_DROP.name);

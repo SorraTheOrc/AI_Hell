@@ -27,6 +27,7 @@ import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
+import { CombatScene } from '../core/CombatScene';
 import { isOnGrid } from '../../utils/beat';
 import {
   WEAPON_CATALOGUE,
@@ -183,6 +184,9 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       spread: [],
       dual: [],
       rapid: [],
+      nova: [],
+      mortar: [],
+      arc: [],
     };
     const original = scene.spawnPlayerBullet.bind(scene);
     vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
@@ -350,7 +354,7 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     expect(bullets.at(-1)!.color).toBe(0x00ffff); // cannon cyan only
   });
 
-  it('collecting a Reset power-up clears all timed weapons, leaving only the cannon (AC4)', async () => {
+  it('collecting a Reset power-up preserves all timed weapons (AC4)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -364,12 +368,13 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     scene.collectOverlapping();
     expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
 
-    // Collect a Reset drop → all timed weapons cleared, only the cannon left.
+    // Collect a Reset drop — weapons are preserved (cannon is always permanent).
     scene.spawnDrop('reset', 480, 270);
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
-    expect(player.getActiveWeapons()).toEqual(['cannon']);
-    expect(player.getEquippedWeapon()).toBe('cannon');
+    // Reset drop no longer clears weapons — spread and dual are preserved.
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
+    expect(player.getEquippedWeapon()).toBe('dual');
   });
 });
 
@@ -386,21 +391,21 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → nova → mortar → arc → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle 2–4: dual, rapid, reset.
-    for (const expected of ['dual', 'rapid', 'reset']) {
+    // Cycle through the rest of the order (conventional, AOE, then Reset).
+    for (const expected of ['dual', 'rapid', 'nova', 'mortar', 'arc', 'reset']) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
       expect(drops[0].weaponType).toBe(expected);
     }
 
-    // Cycle 5 wraps back around to spread.
+    // The next cycle wraps back around to spread.
     scene.tick(7.1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
   });
@@ -592,30 +597,32 @@ describe('GymWeapons — scheme-aware input routing (parent AC1/AC2/AC3)', () =>
     player.setScheme('asteroids');
     expect(player.getHeading()).toBe(0);
 
-    // WASD path: A → turnLeft (CCW, wraps to 2π−0.75); D → turnRight (+0.75).
+    // WASD path: A → turnLeft (CCW, wraps to 2π−0.375); D → turnRight (+0.375).
+    // The spin-up ramp reaches the 3 rad/s cap at t=0.25s, so a 0.25s turn
+    // rotates 0.375 rad (AH-0MUNS42NA000N41U).
     scene.getWasd()!.A.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.A.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
 
     resetToAsteroids(player);
     scene.getWasd()!.D.isDown = true;
     scene.tick(0.25);
     scene.getWasd()!.D.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
 
     // Arrow path: Left → turnLeft; Right → turnRight.
     resetToAsteroids(player);
     scene.getCursors()!.left.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.left.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(2 * Math.PI - 0.375, 3);
 
     resetToAsteroids(player);
     scene.getCursors()!.right.isDown = true;
     scene.tick(0.25);
     scene.getCursors()!.right.isDown = false;
-    expect(player.getHeading()).toBeCloseTo(0.75, 3);
+    expect(player.getHeading()).toBeCloseTo(0.375, 3);
   });
 
   it('routes input by the player scheme at read time — the same held Up arrow maps differently per scheme (AC2/AC3)', async () => {
@@ -756,12 +763,13 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     scene.collectOverlapping();
     expect(rapidPickup).toHaveBeenCalledTimes(1);
 
-    // Collect Reset → returns to cannon with its own cue.
+    // Collect Reset — plays the reset pickup cue, weapons preserved.
     scene.spawnDrop('reset', 480, 270);
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
     expect(resetPickup).toHaveBeenCalledTimes(1);
-    expect(player.getEquippedWeapon()).toBe('cannon');
+    // Reset no longer changes equipped weapon — last weapon stays equipped.
+    expect(player.getEquippedWeapon()).toBe('rapid');
   });
 });
 
@@ -922,6 +930,9 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'spread',
       'dual',
       'rapid',
+      'nova',
+      'mortar',
+      'arc',
       'reset',
     ]);
   });
@@ -941,9 +952,13 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
 // ── Parent AH-0MUDCT7EU0061OSZ: re-based on the narrower shared core ───
 
-describe('GymWeapons — re-based on the shared CombatCoreScene core', () => {
-  it('extends the narrower shared base (prototype identity)', () => {
+describe('GymWeapons — re-based on the shared CombatScene core', () => {
+  it('extends the shared combat core (prototype identity)', () => {
     expect(Object.getPrototypeOf(GymWeapons.prototype)).toBe(
+      CombatScene.prototype,
+    );
+    // The combat core itself extends the narrower shared base.
+    expect(Object.getPrototypeOf(CombatScene.prototype)).toBe(
       CombatCoreScene.prototype,
     );
   });
@@ -1039,5 +1054,117 @@ describe('GymWeapons — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
     expect(() => scene.create()).not.toThrow();
     expect(scene.getPlayer()).not.toBeNull();
     expect(scene.getBullets()).toHaveLength(0);
+  });
+});
+describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootAoe(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('spawns three inert practice targets so the AOE effects are visible', async () => {
+    const scene = await bootAoe();
+    expect(scene.getTargets()).toHaveLength(3);
+    for (const target of scene.getTargets()) {
+      expect(target.alive).toBe(true);
+      expect(target.getHitRadius()).toBeGreaterThan(0);
+    }
+  });
+
+  it('Nova resolves its ring against the practice targets through the shared core', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('nova');
+
+    scene.tick(3.0); // Nova's 3000 ms beat cadence
+
+    // The nearest (centre) target is within the Nova ring radius (90 px);
+    // the upper two are ~134 px away and survive.
+    const targets = scene.getTargets();
+    expect(targets[0].alive).toBe(false);
+    expect(targets[1].alive).toBe(true);
+    expect(targets[2].alive).toBe(true);
+    // The shared Nova ring VFX was registered.
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Arc chains between the practice targets through the shared core', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('arc');
+
+    scene.tick(0.75); // Arc's 750 ms beat cadence
+
+    // Nearest (centre) plus the two chained neighbours (120 px away, within
+    // the 120 px chain reach).
+    for (const target of scene.getTargets()) {
+      expect(target.alive).toBe(false);
+    }
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Mortar launches its shell and detonates on expiry through the shared core', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('mortar');
+
+    // Fire once, then advance past the 2 s shell lifetime so the shared
+    // expiry detonation resolves.
+    scene.tick(3.6);
+
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('collects an AOE weapon drop through the shared collection path', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnDrop('nova', 480, 270);
+    scene.advanceDrops(0.5); // full size → collectible
+    scene.collectOverlapping();
+
+    expect(player.hasWeapon('nova')).toBe(true);
+  });
+
+  it('respawns the practice targets once the AOE weapons have cleared them', async () => {
+    const scene = await bootAoe();
+    for (const target of scene.getTargets()) target.destroySelf();
+    expect(scene.getTargets().every((t) => !t.alive)).toBe(true);
+
+    // Tick past the respawn delay so the cleared tripod comes back.
+    scene.tick(2.5);
+
+    expect(scene.getTargets()).toHaveLength(3);
+    for (const target of scene.getTargets()) expect(target.alive).toBe(true);
+  });
+
+  it('inherits the AOE dispatch/VFX from the shared core (no gym-local copy)', () => {
+    for (const method of [
+      'onAoeFired',
+      'applyAoeEffect',
+      'onAoeProjectileSpawned',
+      'detonateAoeProjectile',
+      'spawnAoeEffectVfx',
+      'spawnArcChainVfx',
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(GymWeapons.prototype, method),
+        `GymWeapons must not define ${method}`,
+      ).toBe(false);
+      expect(
+        (GymWeapons.prototype as unknown as Record<string, unknown>)[method],
+        `GymWeapons.${method} must be the shared CombatScene hook`,
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)[method],
+      );
+    }
   });
 });

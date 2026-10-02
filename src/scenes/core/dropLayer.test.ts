@@ -15,6 +15,7 @@ import { DEFAULT_RULES } from '../../core/rules';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { WeightedRandomSpawner } from '../../powerups/spawner';
 import type { DropId } from '../../powerups/types';
+import { WEAPON_DROP_IDS } from '../../powerups/types';
 import { dropCollectRadius } from '../../powerups/icons';
 import {
   advanceDropLifecycles,
@@ -73,6 +74,42 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
     }
     // Deterministic rng 0 selects the first pool entry.
     expect(spawner.next()).toBe('P3');
+  });
+
+  it('gives P8 Extra Life a ≈ 3/27 share of power-up draws (≈2.8× its former 1/25)', () => {
+    // Deterministic sweep RNG: sample evenly across [0, 1) so each id's count
+    // is exactly proportional to its weight — no statistical noise and no seed
+    // dependence. The sample count is a multiple of the combined pool weight
+    // (27 power-up + 14 weapon = 41), so every band boundary lands exactly.
+    const SAMPLE_COUNT = 41_000;
+    let cursor = 0;
+    const sweepRng = () => cursor++ / SAMPLE_COUNT;
+    const spawner = buildDefaultDropSpawner(
+      DEFAULT_RULES.powerUpWeights,
+      DEFAULT_RULES.weaponWeights,
+      sweepRng,
+    );
+
+    let powerUps = 0;
+    let extraLives = 0;
+    for (let n = 0; n < SAMPLE_COUNT; n++) {
+      const id = spawner.next();
+      if ((WEAPON_DROP_IDS as readonly DropId[]).includes(id)) continue;
+      powerUps += 1;
+      if (id === 'P8') extraLives += 1;
+    }
+
+    // P8 weight 3 of the 27 total power-up weight → exactly 3/27 = 1/9.
+    const p8Share = extraLives / powerUps;
+    expect(p8Share).toBeCloseTo(3 / 27, 3);
+    // Tied to the shipped weight table (not a hard-coded expectation).
+    const weightTotal = Object.values(DEFAULT_RULES.powerUpWeights).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.P8 / weightTotal, 3);
+    // Relative weight tripled (1 → 3): ≈ 2.8× the former 1/25 normalised share.
+    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 27) / (1 / 25), 2);
   });
 });
 

@@ -65,6 +65,7 @@ import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
 import {
   angleToVelocity,
   createBulletsFromHeading,
+  type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
 import {
@@ -280,6 +281,41 @@ export class CombatCoreScene<
   protected onWeaponFired(_weaponId: WeaponId): void {}
 
   /**
+   * Shared AOE dispatch hook (parent AH-0MUOOB3OR001V8CD): called by
+   * {@link CombatCoreScene._autoFire} once for every AOE weapon that fires,
+   * with the firing weapon and the ship position. Default no-op; the shared
+   * {@link CombatScene} overrides it to resolve an `'onFire'` area effect, and
+   * an `'onImpact'` projectile later resolves its own blast through the same
+   * shared effect path.
+   *
+   * @param _weaponId - The AOE weapon that fired.
+   * @param _def - Its catalogue definition (carries the AOE descriptor).
+   * @param _x - Ship world x at the moment of firing.
+   * @param _y - Ship world y at the moment of firing.
+   */
+  protected onAoeFired(
+    _weaponId: WeaponId,
+    _def: WeaponDefinition,
+    _x: number,
+    _y: number,
+  ): void {}
+
+  /**
+   * Shared hook called once for every `'onImpact'` AOE projectile the moment
+   * it is spawned (parent AH-0MUOOB3OR001V8CD). Default no-op; the shared
+   * {@link CombatScene} overrides it to attach the projectile's expiry
+   * detonation. The projectile already carries its definition in
+   * {@link PlayerBullet.aoeWeapon}.
+   *
+   * @param _bullet - The freshly spawned projectile.
+   * @param _def - Its AOE weapon definition.
+   */
+  protected onAoeProjectileSpawned(
+    _bullet: PlayerBullet,
+    _def: WeaponDefinition,
+  ): void {}
+
+  /**
    * The scene's P4 bomb notice, or null when the scene has none. Default
    * null; every scene that can collect P4 supplies its {@link BombNotice}
    * so the shared collect path shows the notice (AC3).
@@ -410,14 +446,28 @@ export class CombatCoreScene<
     for (const weaponId of fired) {
       this.onWeaponFired(weaponId);
       const def = player.getWeaponDef(weaponId);
+      if (def.aoe) {
+        // AOE dispatch: the shared core owns the hook, so the game and the
+        // gyms resolve the same area effect from one implementation.
+        this.onAoeFired(weaponId, def, player.x, player.y);
+        // An `onFire` effect (nova ring / arc chain) resolves at the ship
+        // and does not spawn a travelling bullet; an `onImpact` effect
+        // launches its projectile through the normal bullet path, and the
+        // projectile resolves its blast on impact/expiry.
+        if (def.aoe.trigger === 'onFire') continue;
+      }
       for (const bd of createBulletsFromHeading(
         def,
         headingDeg,
         player.x,
         player.y,
       )) {
-        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.spawnPlayerBullet(
+        // An `'onImpact'` projectile travels at its own (slower) speed so the
+        // detonation point stays legible; conventional bullets use the shared
+        // speed.
+        const speed = def.aoe?.projectileSpeed ?? PLAYER_BULLET_SPEED;
+        const vel = angleToVelocity(bd.angleDeg, speed);
+        const bullet = this.spawnPlayerBullet(
           bd.x,
           bd.y,
           vel.vx,
@@ -425,6 +475,13 @@ export class CombatCoreScene<
           bd.color,
           def.bulletLifetime,
         );
+        if (def.aoe?.trigger === 'onImpact') {
+          // Tag the projectile so the shared combat core can detonate its
+          // area effect on impact/expiry, then let the scene attach its
+          // detonation callback through the shared hook.
+          bullet.aoeWeapon = def;
+          this.onAoeProjectileSpawned(bullet, def);
+        }
       }
     }
   }
@@ -474,8 +531,8 @@ export class CombatCoreScene<
     const player = this.getPlayer();
     if (drop.weaponDropId) {
       if (drop.weaponDropId === 'reset') {
-        registry.tryResetWeapons();
-        player?.resetWeapon();
+        // Reset drop no longer clears timed weapons — the onWeaponCollected
+        // hook below still fires the pickup audio cue.
       } else {
         registry.applyWeapon(drop.weaponDropId as WeaponId);
         player?.equipWeapon(drop.weaponDropId as WeaponId);

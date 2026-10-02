@@ -1081,20 +1081,20 @@ describe('Player — Asteroids control scheme', () => {
     for (const r of small) expect(r).toBeCloseTo(1.12, 5);
   });
 
-  it('rotates by rotationSpeed while a turn key is held (AC1)', async () => {
+  it('ramps to rotationSpeed while a turn key is held (AC1)', async () => {
     const player = await bootAsteroidsPlayer();
 
-    // Default rotationSpeed 3 rad/s → 1s turn right = 3 rad.
+    // Spin-up ramp: after 0.25s at 12 rad/s² the angular velocity reaches
+    // the configured 3 rad/s top speed.
     player.setInput({ forward: false, turnLeft: false, turnRight: true });
-    player.physicsTick(1, 960, 540);
+    player.physicsTick(0.25, 960, 540);
+    expect(player.getMovementState().angularVelocity).toBeCloseTo(3, 5);
 
-    expect(player.getHeading()).toBeCloseTo(3, 5);
-    expect(player.rotation).toBeCloseTo(3, 5);
-
-    // Turn left 1s back toward 0.
-    player.setInput({ forward: false, turnLeft: true, turnRight: false });
+    // Holding at full speed now rotates exactly rotationSpeed × dt.
+    const before = player.getHeading();
     player.physicsTick(1, 960, 540);
-    expect(player.getHeading()).toBeCloseTo(0, 3);
+    expect(player.getMovementState().angularVelocity).toBeCloseTo(3, 5);
+    expect(player.getHeading() - before).toBeCloseTo(3, 3);
   });
 
   it('wraps the rotation speed via the config slider (AC3)', async () => {
@@ -1105,9 +1105,14 @@ describe('Player — Asteroids control scheme', () => {
       asteroidsRotationSpeed: 6,
     });
 
+    // Ramp to the new 6 rad/s top speed over 0.5s (12 rad/s²), then hold.
     player.setInput({ forward: false, turnLeft: false, turnRight: true });
-    player.physicsTick(1, 960, 540);
-    expect(player.getHeading()).toBeCloseTo(6, 5);
+    player.physicsTick(0.5, 960, 540);
+    expect(player.getMovementState().angularVelocity).toBeCloseTo(6, 5);
+
+    const before = player.getHeading();
+    player.physicsTick(0.5, 960, 540); // 0.5s at 6 rad/s = 3 rad
+    expect(player.getHeading() - before).toBeCloseTo(3, 3);
   });
 
   it('thrusts in the facing direction when forward is held (AC1)', async () => {
@@ -1124,17 +1129,20 @@ describe('Player — Asteroids control scheme', () => {
   it('accelerates along the current facing after turning (AC1)', async () => {
     const player = await bootAsteroidsPlayer();
 
-    // Turn right for 0.5s → facing ≈ 1.5 rad; then thrust forward 1s.
+    // Turn right for 0.5s: the ramp reaches 3 rad/s at t=0.25s, so the
+    // ship rotates 0.375 rad during the ramp then 0.75 rad → 1.125 rad.
     player.setInput({ forward: false, turnLeft: false, turnRight: true });
     player.physicsTick(0.5, 960, 540);
     player.setInput({ forward: true, turnLeft: false, turnRight: false });
+    // Releasing the turn key adds a brief 0.05s spin-down glide (+0.075 rad)
+    // before the forward thrust is applied along the final facing (1.2 rad).
     player.physicsTick(1, 960, 540);
 
     // Velocity direction matches the facing angle (screen coords).
     const { vx, vy } = player.getMovementState();
     const heading = Math.atan2(vy, vx);
-    expect(heading).toBeCloseTo(1.5, 2);
-    expect(player.getHeading()).toBeCloseTo(1.5, 2);
+    expect(heading).toBeCloseTo(1.2, 2);
+    expect(player.getHeading()).toBeCloseTo(1.2, 2);
   });
 
   it('fires only the main engine while forward thrust is held (AC1)', async () => {
@@ -1231,11 +1239,31 @@ describe('Player — Asteroids control scheme', () => {
     expect(player.getMovementState().vx).toBe(0);
     expect(player.getMovementState().vy).toBe(0);
     expect(player.rotation).toBe(0);
+    // Angular velocity is zeroed so no residual spin carries over.
+    expect(player.getMovementState().angularVelocity).toBe(0);
     expect(player.getFlameLengths()).toEqual({
       main: 0,
       leftSide: 0,
       rightSide: 0,
     });
+  });
+
+  it('resets angular velocity on respawnInPlace and setScheme (AH-0MUNS42NA000N41U)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Spin up to full angular velocity, then respawn in place.
+    player.setInput({ forward: false, turnLeft: false, turnRight: true });
+    player.physicsTick(0.3, 960, 540);
+    expect(player.getMovementState().angularVelocity).toBeCloseTo(3, 5);
+
+    player.respawnInPlace();
+    expect(player.getMovementState().angularVelocity).toBe(0);
+
+    // Spin up again, then swap schemes: the new scheme starts with no spin.
+    player.physicsTick(0.3, 960, 540);
+    expect(player.getMovementState().angularVelocity).toBeCloseTo(3, 5);
+    player.setScheme('fourDirectional');
+    expect(player.getMovementState().angularVelocity).toBe(0);
   });
 });
 
@@ -1431,7 +1459,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
       ...DEFAULT_RULES,
       beatBpm: 120,
       // 120 BPM → 500 ms/beat; cannon 2/beat → 250 ms.
-      weaponSubdivisions: { cannon: 2, spread: 1, dual: 1, rapid: 6 },
+      weaponSubdivisions: { cannon: 2, spread: 1, dual: 1, rapid: 6, nova: 0.25, mortar: 0.5, arc: 1 },
     });
 
     const player = await bootGridPlayer();
@@ -1444,7 +1472,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
     saveRules({
       ...DEFAULT_RULES,
       // 80 BPM → 750 ms/beat; cannon 1/beat → 750 ms (half the default rate).
-      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6 },
+      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, nova: 0.25, mortar: 0.5, arc: 1 },
     });
 
     const player = await bootGridPlayer();
@@ -1457,7 +1485,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
 
     player.setRules({
       ...DEFAULT_RULES,
-      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6 },
+      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, nova: 0.25, mortar: 0.5, arc: 1 },
     });
 
     expect(player.getFireInterval('cannon')).toBe(750);
@@ -1468,7 +1496,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
   it('the configured cadence gates real shots on the beat grid', async () => {
     saveRules({
       ...DEFAULT_RULES,
-      weaponSubdivisions: { cannon: 3, spread: 1, dual: 1, rapid: 6 },
+      weaponSubdivisions: { cannon: 3, spread: 1, dual: 1, rapid: 6, nova: 0.25, mortar: 0.5, arc: 1 },
     });
 
     const player = await bootGridPlayer();

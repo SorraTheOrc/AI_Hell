@@ -520,6 +520,40 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     expect(weapons[0].remaining).toBe(10);
   });
 
+  it('equips an AOE weapon with the same 10 s timed model (F5 AC3/AC6)', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.applyWeapon('nova')).toBe(true);
+    expect(reg.hasWeapon('nova')).toBe(true);
+    const weapons = reg.activeWeapons();
+    expect(weapons).toHaveLength(1);
+    expect(weapons[0].weaponId).toBe('nova');
+    expect(weapons[0].duration).toBe(10);
+    expect(weapons[0].remaining).toBe(10);
+
+    // Expires independently after its own countdown, like Spread/Dual/Rapid.
+    reg.tick(10.1);
+    expect(reg.hasWeapon('nova')).toBe(false);
+    expect(reg.activeWeapons()).toHaveLength(0);
+  });
+
+  it('an AOE weapon and a conventional weapon expire independently', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('mortar');
+    reg.tick(6);
+    reg.applyWeapon('arc');
+
+    expect(reg.activeWeapons().map((w) => w.weaponId).sort()).toEqual([
+      'arc',
+      'mortar',
+    ]);
+
+    // 4 s later mortar hits 10 s; arc still has 6 s remaining.
+    reg.tick(4.1);
+    expect(reg.hasWeapon('mortar')).toBe(false);
+    expect(reg.hasWeapon('arc')).toBe(true);
+    expect(reg.activeWeapons()[0].remaining).toBeCloseTo(5.9, 1);
+  });
+
   it('equips distinct weapons independently and expires them on tick', () => {
     const reg = new EffectsRegistry();
     reg.applyWeapon('spread');
@@ -552,6 +586,17 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     // Weapons collected after the reset equip normally.
     expect(reg.applyWeapon('rapid')).toBe(true);
     expect(reg.hasWeapon('rapid')).toBe(true);
+  });
+
+  it('Reset clears AOE weapons as well as conventional ones (F5 AC3)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('nova');
+    reg.applyWeapon('arc');
+    reg.applyWeapon('spread');
+    expect(reg.tryResetWeapons()).toBe(true);
+    expect(reg.activeWeapons()).toHaveLength(0);
+    expect(reg.hasWeapon('nova')).toBe(false);
+    expect(reg.hasWeapon('arc')).toBe(false);
   });
 
   it('Reset with no active weapons is a no-op', () => {

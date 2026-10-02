@@ -208,6 +208,8 @@ describe('Type coercion (AC2)', () => {
       frictionDeceleration: '150',
       controlScheme: 'asteroids',
       asteroidsRotationSpeed: '4',
+      asteroidsRotationAcceleration: '20',
+      asteroidsRotationDeceleration: '90',
     };
     const config = m.coerceShipConfig(row, DEFAULT_CONFIG);
     expect(config.thrustAcceleration).toBe(400);
@@ -216,6 +218,8 @@ describe('Type coercion (AC2)', () => {
     expect(config.thrustFlameLength).toBe(1.0);
     expect(config.frictionDeceleration).toBe(150);
     expect(config.asteroidsRotationSpeed).toBe(4);
+    expect(config.asteroidsRotationAcceleration).toBe(20);
+    expect(config.asteroidsRotationDeceleration).toBe(90);
   });
 
   it('coerceShipConfig validates controlScheme enum', async () => {
@@ -226,6 +230,8 @@ describe('Type coercion (AC2)', () => {
       thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
       frictionDeceleration: '100', controlScheme: 'fourDirectional',
       asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
     };
     const config = m.coerceShipConfig(row, DEFAULT_CONFIG);
     expect(config.controlScheme).toBe('fourDirectional');
@@ -417,6 +423,8 @@ describe('Validation (AC3)', () => {
       thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
       frictionDeceleration: '100', controlScheme: 'fourDirectional',
       asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
     };
     const result = m.validateShipConfig(row, DEFAULT_CONFIG);
     expect(result.errors).toEqual([]);
@@ -431,6 +439,8 @@ describe('Validation (AC3)', () => {
       thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
       frictionDeceleration: '100', controlScheme: 'invalid',
       asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
     };
     const result = m.validateShipConfig(row, DEFAULT_CONFIG);
     expect(result.errors.some((e: string) => e.toLowerCase().includes('control'))).toBe(true);
@@ -444,6 +454,8 @@ describe('Validation (AC3)', () => {
       thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
       frictionDeceleration: '100', controlScheme: 'invalid',
       asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
     };
     const result = m.coerceShipConfig(row, DEFAULT_CONFIG);
     expect(result.thrustAcceleration).toBe(0); // malformed → 0
@@ -634,6 +646,8 @@ describe('Default fallbacks (AC6)', () => {
     expect(config.shipColor).not.toBeNaN();
     expect(config.controlScheme).not.toBeUndefined();
     expect(config.asteroidsRotationSpeed).not.toBeNaN();
+    expect(config.asteroidsRotationAcceleration).not.toBeNaN();
+    expect(config.asteroidsRotationDeceleration).not.toBeNaN();
   });
 
   it('partial rows with only key and displayName get all other fields from defaults', async () => {
@@ -896,10 +910,82 @@ describe('Codec AC refinements (AH-0MUE7Y2940000LVE)', () => {
       thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
       frictionDeceleration: '100', controlScheme: 'fourDirectional',
       asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
     };
     const result = m.validateShipConfig(row, DEFAULT_CONFIG);
     expect(result.ok).toBe(false);
     expect(result.errors.some((e: string) => e.toLowerCase().includes('malformed'))).toBe(true);
+  });
+});
+
+// ── Asteroids turn-ramp columns (AH-0MUNS42NA000N41U) ────────────────
+
+describe('Asteroids turn-ramp ship config (AH-0MUNS42NA000N41U)', () => {
+  function validShipRow(): Record<string, string> {
+    return {
+      thrustAcceleration: '300', maxSpeed: '175', shipSize: '20',
+      thrustFlameLength: '0.75', shipColor: '0x00ffff',
+      thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
+      frictionDeceleration: '100', controlScheme: 'asteroids',
+      asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
+    };
+  }
+
+  it('exports the new columns in SHIP_COLUMN_ORDER', async () => {
+    const m = await loadCsvModule();
+    expect(m.SHIP_COLUMN_ORDER).toContain('asteroidsRotationAcceleration');
+    expect(m.SHIP_COLUMN_ORDER).toContain('asteroidsRotationDeceleration');
+  });
+
+  it('round-trips the ramp values through serialize → parse → coerce', async () => {
+    const m = await loadCsvModule();
+    const config = {
+      ...DEFAULT_CONFIG,
+      asteroidsRotationAcceleration: 30,
+      asteroidsRotationDeceleration: 180,
+    };
+    const rows = m.parseCsvRows(m.serializeShipConfigs([config]));
+    const coerced = m.coerceShipConfig(rows[0], DEFAULT_CONFIG);
+    expect(coerced.asteroidsRotationAcceleration).toBe(30);
+    expect(coerced.asteroidsRotationDeceleration).toBe(180);
+  });
+
+  it('validateShipConfig requires both new fields', async () => {
+    const m = await loadCsvModule();
+    const row = validShipRow();
+    delete row.asteroidsRotationAcceleration;
+    delete row.asteroidsRotationDeceleration;
+    const result = m.validateShipConfig(row, DEFAULT_CONFIG);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ')).toContain('asteroidsRotationAcceleration');
+    expect(result.errors.join(' ')).toContain('asteroidsRotationDeceleration');
+  });
+
+  it('coerceShipConfig defaults the new fields when absent', async () => {
+    const m = await loadCsvModule();
+    const row = validShipRow();
+    delete row.asteroidsRotationAcceleration;
+    delete row.asteroidsRotationDeceleration;
+    const coerced = m.coerceShipConfig(row, DEFAULT_CONFIG);
+    expect(coerced.asteroidsRotationAcceleration).toBe(
+      DEFAULT_CONFIG.asteroidsRotationAcceleration,
+    );
+    expect(coerced.asteroidsRotationDeceleration).toBe(
+      DEFAULT_CONFIG.asteroidsRotationDeceleration,
+    );
+  });
+
+  it('flags malformed ramp numbers', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateShipConfig(
+      { ...validShipRow(), asteroidsRotationAcceleration: 'fast' },
+      DEFAULT_CONFIG,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ').toLowerCase()).toContain('malformed');
   });
 });
 

@@ -17,6 +17,8 @@ import type { ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
+import * as effectsModule from '../../audio/effects';
 
 /** Live asteroid entities of the given tier in a mineral gym. */
 function liveAsteroids(scene: GymMinerals): Asteroid[] {
@@ -124,6 +126,9 @@ describe('GymMinerals', () => {
   it('a destroyed small asteroid drops exactly one mineral at its position (AC1)', async () => {
     booted = await bootScene([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
+    // Complete the wormhole spawn animation so the asteroids are collidable.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
     clearMinerals(scene);
     expect(scene.getMinerals()).toHaveLength(0);
 
@@ -360,5 +365,68 @@ describe('GymMinerals — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)'
     expect(registry.hasTeleport()).toBe(false);
     // The mineral layer is re-seeded cleanly on the restart.
     expect(scene.getSeededMineralCount()).toBe(100);
+  });
+});
+
+describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<GymMinerals> {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    return booted.scene as GymMinerals;
+  }
+
+  it('AC1 — the minerals gym arms the shared wave-timeout on create', async () => {
+    const scene = await boot();
+
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+    expect(scene.getWaveTimeoutRemaining()).toBeGreaterThan(0);
+    expect(scene.getWaveTimeoutRemaining()).toBeLessThanOrEqual(
+      WAVE_TIME_LIMIT_SECONDS,
+    );
+  });
+
+  it('AC2 — asteroids survive the timeout silently and the formation refreshes', async () => {
+    const cue = vi
+      .spyOn(effectsModule, 'playMajorExplosionSound')
+      .mockImplementation(() => undefined);
+    const scene = await boot();
+    const initial = liveAsteroids(scene);
+    const before = initial.length;
+    expect(before).toBeGreaterThan(0);
+
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1);
+
+    // Nothing detonates and the shared major-explosion cue never plays: the
+    // asteroids persist (carry-over, AH-0MUNS3ZQ1002DJ9S). The player's
+    // continuous auto-fire may destroy some during the countdown, so assert
+    // the field is not wiped by the timeout rather than tracking identities.
+    expect(cue).not.toHaveBeenCalled();
+    expect(liveAsteroids(scene).length).toBeGreaterThan(0);
+    expect(scene.isWaveTimeoutActive()).toBe(false);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // The shared 3 s countdown refreshes the field with a fresh formation
+    // alongside the survivors and restarts the window.
+    scene.tick(1);
+    scene.tick(1);
+    scene.tick(1);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(liveAsteroids(scene).length).toBeGreaterThanOrEqual(before);
+    expect(scene.isWaveTimeoutActive()).toBe(true);
+  });
+
+  it('AC2 — a visible timer bar shows while the timeout counts down', async () => {
+    const scene = await boot();
+    scene.tick(0.016);
+
+    expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
   });
 });

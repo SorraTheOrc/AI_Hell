@@ -239,4 +239,16 @@ export interface ShipConfig {
   controlScheme: ControlScheme;
   /** Rotation speed in radians/s for the Asteroids control scheme. */
   asteroidsRotationSpeed: number;
+  /**
+   * Angular acceleration (rad/s²) for the Asteroids scheme: how quickly the
+   * turn rate ramps up to `asteroidsRotationSpeed` while a turn key is held.
+   * Default 12 rad/s².
+   */
+  asteroidsRotationAcceleration: number;
+  /**
+   * Angular deceleration (rad/s²) for the Asteroids scheme: how quickly the
+   * turn rate ramps back to zero on release (or a direction change).
+   * Default 60 rad/s².
+   */
+  asteroidsRotationDeceleration: number;
 }

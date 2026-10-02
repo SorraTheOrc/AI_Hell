@@ -180,7 +180,26 @@ export class FourDirectionalModel implements MovementModel {
 export interface AsteroidsConfig extends BaseMovementConfig {
   /** Rotation speed in radians per second. */
   rotationSpeed: number;
+  /**
+   * Angular acceleration (rad/s²) applied while ramping the angular
+   * velocity *up* toward `rotationSpeed` when a turn key is held.
+   * Defaults to {@link DEFAULT_ROTATION_ACCELERATION} (12) when omitted.
+   */
+  rotationAcceleration?: number;
+  /**
+   * Angular deceleration (rad/s²) applied while ramping the angular
+   * velocity *down* toward zero after release (or toward a smaller
+   * target after a direction change). Defaults to
+   * {@link DEFAULT_ROTATION_DECELERATION} (60) when omitted.
+   */
+  rotationDeceleration?: number;
 }
+
+/** Default angular acceleration (rad/s²) for the Asteroids spin-up ramp. */
+export const DEFAULT_ROTATION_ACCELERATION = 12;
+
+/** Default angular deceleration (rad/s²) for the Asteroids spin-down ramp. */
+export const DEFAULT_ROTATION_DECELERATION = 60;
 
 /**
  * Extends MovementState with a facing angle for rotation-based schemes.
@@ -188,8 +207,76 @@ export interface AsteroidsConfig extends BaseMovementConfig {
 export interface RotatingMovementState extends MovementState {
   /** Ship's facing angle in radians (0 = right, positive = clockwise). */
   facing: number;
+  /**
+   * Angular velocity in rad/s (signed; positive = clockwise). Optional so
+   * states created before the spin-up ramp existed remain valid; an absent
+   * value is treated as 0 (stationary).
+   */
+  angularVelocity?: number;
 }
 
+/**
+ * Ramps a scalar angular velocity toward `target` over `dt` seconds,
+ * returning both the new velocity and the exact angular displacement
+ * travelled during the tick.
+ *
+ * Uses `acceleration` while the magnitude is increasing (spin-up) and
+ * `deceleration` while it is decreasing (release / direction change),
+ * clamping so the velocity lands exactly on `target` without overshooting.
+ * The displacement is the closed-form integral of the (piecewise-linear)
+ * velocity over the tick, which makes the result independent of the frame
+ * rate for a fixed simulated duration. Pure function.
+ *
+ * @param current — angular velocity at the start of the tick (rad/s).
+ * @param target — desired angular velocity for the current input (rad/s).
+ * @param acceleration — spin-up rate (rad/s²); non-positive snaps to target.
+ * @param deceleration — spin-down rate (rad/s²); non-positive snaps to target.
+ * @param dt — tick duration in seconds.
+ */
+export function rampAngularVelocity(
+  current: number,
+  target: number,
+  acceleration: number,
+  deceleration: number,
+  dt: number,
+): { velocity: number; displacement: number } {
+  const delta = target - current;
+  // Already on target (includes the common idle case): hold it.
+  if (delta === 0) return { velocity: target, displacement: current * dt };
+
+  const rate = Math.abs(target) >= Math.abs(current) ? acceleration : deceleration;
+  // A non-positive rate disables the ramp for that direction; snap to the
+  // target in a single tick (documented fallback — the sliders have minimums).
+  if (rate <= 0) return { velocity: target, displacement: target * dt };
+
+  const direction = Math.sign(delta);
+  const timeToTarget = Math.abs(delta) / rate;
+  if (timeToTarget >= dt) {
+    return {
+      velocity: current + direction * rate * dt,
+      displacement: current * dt + 0.5 * direction * rate * dt * dt,
+    };
+  }
+  // Reaches the target part-way through the tick, then holds it for the
+  // remainder — no overshoot and no lost time on a long frame.
+  return {
+    velocity: target,
+    displacement:
+      current * timeToTarget +
+      0.5 * direction * rate * timeToTarget * timeToTarget +
+      target * (dt - timeToTarget),
+  };
+}
+
+/**
+ * Asteroids movement model: Newtonian thrust in the ship's facing
+ * direction plus a constant-angular-acceleration turn ramp
+ * (AH-0MUNS42NA000N41U). The angular velocity ramps toward the held
+ * turn direction's target at `rotationAcceleration` (spin-up) or
+ * `rotationDeceleration` (release / direction change) and is integrated
+ * in closed form, so a tap nudges the heading while a hold reaches the
+ * configured `rotationSpeed` and rotation is framerate-independent.
+ */
 export class AsteroidsModel implements MovementModel {
   inputType = 'asteroids';
 
@@ -204,14 +291,28 @@ export class AsteroidsModel implements MovementModel {
     const aInput = input as AsteroidsInput;
     const rConfig = config as AsteroidsConfig;
     const rs = rConfig.rotationSpeed ?? 3; // default 3 rad/s
+    const ra = rConfig.rotationAcceleration ?? DEFAULT_ROTATION_ACCELERATION;
+    const rd = rConfig.rotationDeceleration ?? DEFAULT_ROTATION_DECELERATION;
 
     // Cast state to include facing (Asteroids always has a facing angle)
     const rotState = state as RotatingMovementState;
-    let facing = rotState.facing ?? 0;
 
-    // Apply rotation
-    if (aInput.turnLeft) facing -= rs * dt;
-    if (aInput.turnRight) facing += rs * dt;
+    // Constant-angular-acceleration turn ramp (AH-0MUNS42NA000N41U): the
+    // angular velocity ramps toward the input's target instead of jumping
+    // to it, so a short tap nudges the heading a few degrees while a hold
+    // still reaches the configured top speed. Both turn keys together
+    // cancel (turn = 0) and ramp back to zero. Release uses the faster
+    // deceleration so the ship stops crisply.
+    const turn = (aInput.turnRight ? 1 : 0) - (aInput.turnLeft ? 1 : 0);
+    const targetAngularVelocity = turn * rs;
+    const { velocity: angularVelocity, displacement } = rampAngularVelocity(
+      rotState.angularVelocity ?? 0,
+      targetAngularVelocity,
+      ra,
+      rd,
+      dt,
+    );
+    let facing = (rotState.facing ?? 0) + displacement;
 
     // Normalise facing to [0, 2π)
     facing = ((facing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
@@ -266,6 +367,7 @@ export class AsteroidsModel implements MovementModel {
       vx,
       vy,
       facing,
+      angularVelocity,
     } as MovementState;
   }
 

@@ -68,6 +68,8 @@ const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> 
   thrustFlameLength: { min: 0.1, max: 2, step: 0.05 },
   frictionDeceleration: { min: 0, max: 400, step: 5 },
   asteroidsRotationSpeed: { min: 0.5, max: 10, step: 0.5 },
+  asteroidsRotationAcceleration: { min: 2, max: 60, step: 2 },
+  asteroidsRotationDeceleration: { min: 12, max: 300, step: 12 },
 };
 
 /**

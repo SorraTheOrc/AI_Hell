@@ -172,7 +172,16 @@ describe('weapon icon geometry (AH-0MUAYB5UK0052P1D)', () => {
 
   it('all weapon icons are visually distinct from each other', async () => {
     const scene = await bootBare();
-    const icons: WeaponDropIconId[] = ['cannon', 'spread', 'dual', 'rapid', 'reset'];
+    const icons: WeaponDropIconId[] = [
+      'cannon',
+      'spread',
+      'dual',
+      'rapid',
+      'nova',
+      'mortar',
+      'arc',
+      'reset',
+    ];
     const profiles: Array<{
       id: WeaponDropIconId;
       arcCount: number;
@@ -278,7 +287,16 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
 
   it('drawWeaponDrop renders bubble + icon for every weapon type and reset — strictly more geometry than the bare icon', async () => {
     const scene = await bootBare();
-    const ids: WeaponDropIconId[] = ['cannon', 'spread', 'dual', 'rapid', 'reset'];
+    const ids: WeaponDropIconId[] = [
+      'cannon',
+      'spread',
+      'dual',
+      'rapid',
+      'nova',
+      'mortar',
+      'arc',
+      'reset',
+    ];
     for (const id of ids) {
       const icon = scene.add.graphics();
       drawWeaponIcon(icon, id, 0, 0, 32);
@@ -288,5 +306,86 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
       drawWeaponDrop(drop, id, 0, 0, 32);
       expect(drop.commandBuffer.length).toBeGreaterThan(iconCommands);
     }
+  });
+});
+
+describe('AOE weapon icons (F5 AC4)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootBare(): Promise<Phaser.Scene> {
+    booted = await bootScene([BareScene]);
+    return booted!.scene as Phaser.Scene;
+  }
+
+  /** Count ARC draw commands in a graphics command buffer. */
+  function countArcCommands(buf: number[]): number {
+    let count = 0;
+    for (let i = 0; i < buf.length; ) {
+      if (buf[i] === Cmd.ARC) {
+        count++;
+        i += 1 + 7;
+      } else if (buf[i] === Cmd.LINE_STYLE) {
+        i += 1 + 3;
+      } else if (buf[i] === Cmd.FILL_STYLE) {
+        i += 1 + 2;
+      } else if (buf[i] === Cmd.FILL_RECT) {
+        i += 1 + 4;
+      } else {
+        i++;
+      }
+    }
+    return count;
+  }
+
+  /** Count MOVE_TO/LINE_TO commands in a graphics command buffer. */
+  function countLineSegments(buf: number[]): number {
+    let count = 0;
+    for (let i = 0; i < buf.length; ) {
+      const op = buf[i];
+      if (op === Cmd.LINE_TO) {
+        count++;
+        i += 1 + 2;
+      } else if (op === Cmd.MOVE_TO) {
+        count++;
+        i += 1 + 2;
+      } else if (op === Cmd.LINE_STYLE) {
+        i += 1 + 3;
+      } else if (op === Cmd.FILL_STYLE) {
+        i += 1 + 2;
+      } else if (op === Cmd.FILL_RECT) {
+        i += 1 + 4;
+      } else {
+        i++;
+      }
+    }
+    return count;
+  }
+
+  it('Nova draws concentric rings (≥ 2 arc commands)', async () => {
+    const scene = await bootBare();
+    const g = scene.add.graphics();
+    drawWeaponIcon(g, 'nova', 0, 0, 32);
+    expect(countArcCommands(g.commandBuffer as number[])).toBeGreaterThanOrEqual(2);
+  });
+
+  it('Mortar draws an arc + trajectory/blast lines', async () => {
+    const scene = await bootBare();
+    const g = scene.add.graphics();
+    drawWeaponIcon(g, 'mortar', 0, 0, 32);
+    expect(countArcCommands(g.commandBuffer as number[])).toBeGreaterThanOrEqual(1);
+    expect(countLineSegments(g.commandBuffer as number[])).toBeGreaterThanOrEqual(4);
+  });
+
+  it('Arc draws a jagged multi-segment bolt (≥ 4 line segments, no arcs)', async () => {
+    const scene = await bootBare();
+    const g = scene.add.graphics();
+    drawWeaponIcon(g, 'arc', 0, 0, 32);
+    expect(countArcCommands(g.commandBuffer as number[])).toBe(0);
+    expect(countLineSegments(g.commandBuffer as number[])).toBeGreaterThanOrEqual(4);
   });
 });

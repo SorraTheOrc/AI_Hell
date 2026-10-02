@@ -22,6 +22,7 @@ import type {
 } from '../core/configTypes';
 import {
   loadConfigs,
+  loadDifficultyCurves,
   resetConfigStore,
   defaultDifficultyCurves,
   DIFFICULTY_CURVES_CSV_PATH,
@@ -435,7 +436,10 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
   });
 
   it('produces different `dynamic` waves for different seeds and the same for the same seed', () => {
-    const rows = modeRows(1, 'Entry', [{ target: 30, generation: 'dynamic' }]);
+    // Level 4 is used because the opening dynamic waves (L1W1..L2W2) are
+    // curated to a fixed archetype set and would not vary across seeds
+    // (AH-0MUOCJM0N000RW2B).
+    const rows = modeRows(4, 'Firestorm', [{ target: 30, generation: 'dynamic' }]);
 
     const seedA = buildSequencedLevels(rows, undefined, { seed: 1 });
     const seedARepeat = buildSequencedLevels(rows, undefined, { seed: 1 });
@@ -767,5 +771,156 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     const seedB = buildSequencedLevels(undefined, undefined, { seed: 2 });
     expect(seedARepeat).toEqual(seedA);
     expect(seedB).not.toEqual(seedA);
+  });
+});
+
+// ── Dynamic varied opening (AH-0MUOCJM0N000RW2B) ─────────────────────
+
+/**
+ * The campaign's first four waves (L1W1, L1W2, L2W1, L2W2) are `dynamic` and
+ * non-firing, using existing archetypes only. They vary per run while each
+ * seed reproduces its campaign exactly, and they never reintroduce the
+ * degenerate 1-count / asteroid-only opening the retuned campaign
+ * (AH-0MUJSUTXI008NP8K) removed. Every assertion is made through the public
+ * `buildSequencedLevels` / `defaultDifficultyCurves` API.
+ */
+describe('Dynamic varied opening (AH-0MUOCJM0N000RW2B)', () => {
+  /** 1-based (level, wave) pairs that make up the opening. */
+  const OPENING = [
+    { level: 1, wave: 1 },
+    { level: 1, wave: 2 },
+    { level: 2, wave: 1 },
+    { level: 2, wave: 2 },
+  ] as const;
+
+  /** Seeds used for the non-degeneracy and variation sweep. */
+  const SEEDS = [0, 1, 2, 3, 7, 42, 100, 255, 777, 999];
+
+  /** The default curve rows (explicit, so the test is registry-independent). */
+  function defaultRows() {
+    return defaultDifficultyCurves();
+  }
+
+  /** Build the default campaign for a seed from the explicit default rows. */
+  function campaign(seed = 0) {
+    return buildSequencedLevels(defaultRows(), undefined, { seed });
+  }
+
+  /** The four opening waves, in campaign order, for a seed. */
+  function openingWaves(seed = 0) {
+    const levels = campaign(seed);
+    return OPENING.map(
+      ({ level, wave }) => levels.find((l) => l.level === level)!.waves[wave - 1],
+    );
+  }
+
+  /** `enemyKeyxcount` per group, joined with `+` (or `none`). */
+  function compositions(seed = 0): string[] {
+    return openingWaves(seed).map(
+      (wave) =>
+        wave.groups.map((g) => `${g.enemyKey}x${g.count}`).join('+') || 'none',
+    );
+  }
+
+  it('AC1 — marks L1W1..L2W2 dynamic and keeps every levels 1–3 wave non-firing', () => {
+    const openingRows = defaultRows().filter((row) =>
+      OPENING.some((o) => o.level === row.level && o.wave === row.wave),
+    );
+    expect(openingRows).toHaveLength(4);
+    for (const row of openingRows) {
+      expect(row.generation).toBe('dynamic');
+    }
+
+    for (const level of campaign().filter((l) => l.level <= 3)) {
+      for (const wave of level.waves) {
+        expect(wave.shootEnabled).toBe(false);
+      }
+    }
+  });
+
+  it('AC1b — the no-argument default path also opens on the dynamic campaign', () => {
+    const rows = loadDifficultyCurves();
+    const openingRows = rows.filter((row) =>
+      OPENING.some((o) => o.level === row.level && o.wave === row.wave),
+    );
+    expect(openingRows.map((r) => r.generation)).toEqual([
+      'dynamic',
+      'dynamic',
+      'dynamic',
+      'dynamic',
+    ]);
+  });
+
+  it('AC2 — uses at least three distinct archetypes with four distinct compositions at the default seed', () => {
+    const waves = openingWaves(0);
+    const archetypes = new Set(
+      waves.flatMap((wave) => wave.groups.map((g) => g.enemyKey)),
+    );
+    expect(archetypes.size).toBeGreaterThanOrEqual(3);
+    expect(new Set(compositions(0)).size).toBe(4);
+  });
+
+  it('AC2b — curates the default-seed opening to the documented archetype order', () => {
+    // Regression pin for the spike's measured default-seed composition
+    // (AH-0MUQ523AJ0064PR3): scout, then diver/swarm swapped, then scout.
+    expect(
+      compositions(0).map((composition) => composition.split('x')[0]),
+    ).toEqual(['scout', 'diver', 'swarm', 'scout']);
+  });
+
+  it('AC3 — varies the opening across seeds but reproduces each seed exactly', () => {
+    expect(campaign(0)).toEqual(campaign(0));
+
+    const patterns = new Set(SEEDS.map((seed) => compositions(seed).join(' | ')));
+    expect(patterns.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('AC3b — keeps curve and fixed waves independent of the seed', () => {
+    const seedA = campaign(1);
+    const seedB = campaign(2);
+    const waveOf = (levels: ReturnType<typeof campaign>, level: number, wave: number) =>
+      levels.find((l) => l.level === level)!.waves[wave - 1];
+
+    // Level 2 wave 3 and all of level 3 are fixed; level 4 and level 5 wave 1
+    // are curve. None may depend on the run seed.
+    expect(waveOf(seedB, 2, 3)).toEqual(waveOf(seedA, 2, 3));
+    for (let wave = 1; wave <= 3; wave++) {
+      expect(waveOf(seedB, 3, wave)).toEqual(waveOf(seedA, 3, wave));
+    }
+    for (let wave = 1; wave <= 3; wave++) {
+      expect(waveOf(seedB, 4, wave)).toEqual(waveOf(seedA, 4, wave));
+    }
+    expect(waveOf(seedB, 5, 1)).toEqual(waveOf(seedA, 5, 1));
+  });
+
+  it('AC4 — no opening wave is asteroid-only or a 1-count group across a seed sweep', () => {
+    for (const seed of SEEDS) {
+      for (const wave of openingWaves(seed)) {
+        const total = wave.groups.reduce((sum, group) => sum + group.count, 0);
+        expect(total).toBeGreaterThan(1);
+        expect(
+          wave.groups.every((group) => group.enemyKey === 'asteroid'),
+        ).toBe(false);
+      }
+      // Every opening wave has a non-empty composition.
+      for (const wave of openingWaves(seed)) {
+        expect(wave.groups.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('AC5 — default targets stay non-decreasing across the opening into the later campaign', () => {
+    const rows = defaultRows();
+    const openingTargets = OPENING.map(
+      ({ level, wave }) =>
+        rows.find((r) => r.level === level && r.wave === wave)!.targetDifficulty,
+    );
+    expect(openingTargets).toEqual([6, 8, 9, 10]);
+    // Level 2 wave 3 and the level-3 targets are unchanged from the retune.
+    expect(
+      rows
+        .filter((r) => r.level === 3)
+        .map((r) => r.targetDifficulty),
+    ).toEqual([11.4, 11.85, 12.3]);
   });
 });
