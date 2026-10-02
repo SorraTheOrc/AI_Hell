@@ -446,6 +446,23 @@ load, which makes assertions taken right after boot flaky.
 - **Never weaken an assertion to hide a flake** — fix the nondeterminism at its
   source (assertions stay exact; a guard may poll with bounded deterministic
   ticks and fail loudly with diagnostic state).
+- **Pin the campaign for wave-progression suites.** The default sequenced
+  campaign is generated per run from a `Math.random()`-derived seed, so its
+  wave composition varies. The `PlayScene — playable run` and
+  `PlayScene — boss encounter` suites, `SceneNavigation.test.ts` and the
+  shared-boss `CombatScene.equivalence.test.ts` therefore opt out of sequencing
+  (`localStorage` `ai-hell-game-rules` → `sequencedWavesEnabled: false`) and run
+  the deterministic static `LEVELS`; the sequenced path keeps its dedicated
+  suites (e.g. the CSV-backed level-name and sequenced-campaign tests). This
+  also sidesteps a game defect where the sequencer can emit an `asteroid` wave
+  group that `waveEnemyCount()` counts but the kill path never un-counts,
+  stalling the walk-to-boss helpers (tracked by AH-0MUR1HZLQ001ELX9).
+- **Boss-reach helpers assert loudly.** `reachBoss()` / `timeOutToBoss()` exit
+  on the WaveManager's `bossTriggered` / `bossActive` state (not the
+  later-spawned `getBoss()` entity) and throw a descriptive error naming the
+  wave/accounting state if the boss was never reached, so a regression fails at
+  the helper instead of as an unrelated assertion later
+  (AH-0MUNVVWWC0015JTM).
 
 #### Configuration (CSV)
 

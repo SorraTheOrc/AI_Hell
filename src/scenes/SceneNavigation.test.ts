@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
+import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -47,6 +48,15 @@ let simTime = 0;
  */
 async function bootAllGames(): Promise<Phaser.Game> {
   simTime = 0;
+  // Use the deterministic static campaign: these are navigation/loop tests,
+  // and the default sequenced campaign is generated from a `Math.random()`
+  // seed, which makes the walk-to-the-boss loop load-dependent and can stall
+  // on an un-accounted asteroid wave group (AH-0MUNVVWWC0015JTM; game bug
+  // tracked by AH-0MUR1HZLQ001ELX9).
+  localStorage.setItem(
+    RULES_STORAGE_KEY,
+    JSON.stringify({ sequencedWavesEnabled: false }),
+  );
   const booted = await bootScene(
     [MenuScene, PlayScene, GameOverScene, GymIndex],
     { deterministicBoot: true },
@@ -244,16 +254,29 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     const gs = play.getGameState();
     gs.lives = 99;
 
-    // Walk to the boss and defeat it.
-    for (let guard = 0; guard < 300 && !play.getBoss(); guard++) {
+    // Walk to the boss and defeat it. Exit on the WaveManager's boss state
+    // (not the later-spawned entity) and fail loudly if it is never reached.
+    for (let guard = 0; guard < 300; guard++) {
+      const wm = play.getWaveManager();
+      if (wm.bossTriggered || wm.bossActive) break;
       for (let g = 0; g < 200 && play.getAliveCount() > 0; g++) {
-        const enemy = play.getEnemies().find((e) => e.alive)!;
+        const enemy = play.getEnemies().find((e) => e.alive);
+        if (!enemy) break;
         play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
         play.tick(0.016);
       }
       if (play.isTransitioning()) play.tick(1.6);
     }
+    if (play.isTransitioning()) play.tick(1.6);
     const boss = play.getBoss();
+    if (!boss) {
+      const wm = play.getWaveManager();
+      throw new Error(
+        `Failed to reach boss: bossTriggered=${wm.bossTriggered} ` +
+          `bossActive=${wm.bossActive} level=${wm.level} wave=${wm.waveNumber} ` +
+          `enemiesAlive=${wm.enemiesAlive} aliveCount=${play.getAliveCount()}`,
+      );
+    }
     expect(boss).not.toBeNull();
     for (let i = 0; i < 4; i++) {
       play.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);

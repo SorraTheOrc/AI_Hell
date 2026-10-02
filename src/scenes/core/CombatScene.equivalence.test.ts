@@ -6,6 +6,7 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { PLAYER_BULLET_SPEED } from '../../core/constants';
+import { RULES_STORAGE_KEY } from '../../core/rules';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
@@ -1590,7 +1591,9 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
  */
 function reachPlayBoss(play: PlayScene): void {
   play.getGameState().lives = 99;
-  for (let guard = 0; guard < 300 && !play.getBoss(); guard++) {
+  for (let guard = 0; guard < 300; guard++) {
+    const wm = play.getWaveManager();
+    if (wm.bossTriggered || wm.bossActive) break;
     for (let inner = 0; inner < 500 && play.getAliveCount() > 0; inner++) {
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
@@ -1598,6 +1601,16 @@ function reachPlayBoss(play: PlayScene): void {
       play.tick(0.016);
     }
     if (play.isTransitioning()) play.tick(3.0);
+  }
+  // The boss entity only exists once the transition completes.
+  if (play.isTransitioning()) play.tick(3.0);
+  if (!play.getBoss()) {
+    const wm = play.getWaveManager();
+    throw new Error(
+      `reachPlayBoss failed: bossTriggered=${wm.bossTriggered} ` +
+        `bossActive=${wm.bossActive} level=${wm.level} wave=${wm.waveNumber} ` +
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${play.getAliveCount()}`,
+    );
   }
 }
 
@@ -1626,6 +1639,14 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
   });
 
   it('a single tick(dt) advances the boss in PlayScene and GymBoss alike', async () => {
+    // Deterministic static campaign: the default sequenced campaign is
+    // generated from a `Math.random()` seed and can stall the walk-to-boss
+    // loop on an un-accounted asteroid group (AH-0MUNVVWWC0015JTM; game bug
+    // tracked by AH-0MUR1HZLQ001ELX9).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'boss-equiv-play-host',

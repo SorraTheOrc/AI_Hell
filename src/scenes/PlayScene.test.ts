@@ -132,13 +132,39 @@ function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
   }
 }
 
-/** Walks the run to the boss encounter (Level 5 cleared). */
+/**
+ * Walks the run to the boss encounter (Level 5 cleared).
+ *
+ * Exit condition uses `bossActive` / `bossTriggered` on the WaveManager
+ * rather than `scene.getBoss()`.  The boss entity is only created when
+ * `_onTransitionComplete()` fires *after* the transition timer elapses;
+ * under high concurrency that tick may arrive a step or two later, so
+ * polling `getBoss()` alone can exit the loop prematurely (AH-0MUNVVWWC0015JTM).
+ */
 function reachBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
   gs.lives = 99; // survive incidental enemy fire while clearing levels.
-  for (let guard = 0; guard < 200 && !scene.getBoss(); guard++) {
+  for (let guard = 0; guard < 200; guard++) {
+    const wm = scene.getWaveManager();
+    if (wm.bossTriggered || wm.bossActive) break;
     killAllEnemies(scene);
     finishTransition(scene);
+  }
+  // If the loop exited because `bossTriggered` was detected but the
+  // transition hasn't been advanced yet (e.g. the boss was triggered
+  // between iterations), complete the transition so the entity spawns.
+  if (scene.isTransitioning()) finishTransition(scene);
+  // Hard assertion — if we exhausted the guard the boss was never reached.
+  const boss = scene.getBoss();
+  if (!boss) {
+    const wm = scene.getWaveManager();
+    throw new Error(
+      `Failed to reach boss encounter after 200 iterations: ` +
+        `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive} ` +
+        `level=${wm.level} wave=${wm.waveNumber} ` +
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()} ` +
+        `transitioning=${scene.isTransitioning()}`,
+    );
   }
 }
 
@@ -147,17 +173,36 @@ function reachBoss(scene: PlayScene): void {
  * expire, so every survivor is carried over each wave/level boundary
  * (AH-0MUNS3ZQ1002DJ9S). No life penalty applies; the high life count just
  * absorbs any incidental enemy fire while the run advances.
+ *
+ * Uses `bossTriggered`/`bossActive` to detect that the boss encounter is
+ * due, then advances the final transition so `_onTransitionComplete()`
+ * spawns the boss entity — otherwise the loop can exit before the entity
+ * exists (AH-0MUNVVWWC0015JTM).
  */
 function timeOutToBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
   gs.lives = 99; // absorb incidental enemy fire while timeouts advance the run.
-  for (let guard = 0; guard < 200 && !scene.getBoss(); guard++) {
+  for (let guard = 0; guard < 200; guard++) {
+    const wm = scene.getWaveManager();
+    if (wm.bossTriggered || wm.bossActive) break;
     if (scene.isTransitioning()) {
       finishTransition(scene);
       continue;
     }
     scene.setWaveTimerRemaining(0.001);
     scene.tick(0.01);
+  }
+  // Boss entity is only created when the transition timer elapses.
+  // If the boss was triggered via timeout we still need to complete
+  // the transition so that _onTransitionComplete() spawns it.
+  if (scene.isTransitioning()) finishTransition(scene);
+  const boss = scene.getBoss();
+  if (!boss) {
+    const wm = scene.getWaveManager();
+    throw new Error(
+      `Failed to reach boss encounter via timeout after 200 iterations: ` +
+        `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive}`,
+    );
   }
 }
 
@@ -215,6 +260,19 @@ function plainCampaign(): LevelDefinition[] {
 
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    // Use the deterministic static campaign for these wave/transition tests.
+    // The default sequenced campaign can randomly include `asteroid` groups,
+    // which the WaveManager counts as wave enemies but the kill path never
+    // un-counts (asteroids are not wave-accounted, AH-0MUJM746P000QAEO) — that
+    // stalls wave clearance (AH-0MUNVVWWC0015JTM; game bug tracked separately).
+    // The sequenced campaign has its own suites.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
 
   afterEach(() => {
     booted?.game.destroy(true);
@@ -695,6 +753,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MUMMBRCC0093MGV AC3 — CSV-backed name is displayed with sequenced levels', async () => {
+    // This test specifically exercises the sequenced (shipped-default)
+    // campaign, so re-enable it after the suite-level static-campaign setup.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: true }),
+    );
     const scene = await bootPlay();
     const wm = scene.getWaveManager();
 
@@ -1364,6 +1428,16 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
 describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    // Deterministic static campaign (see the playable-run suite note): the
+    // default sequenced campaign can include un-accounted asteroid groups that
+    // stall `reachBoss` (AH-0MUNVVWWC0015JTM; game bug tracked separately).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
 
   afterEach(() => {
     booted?.game.destroy(true);
