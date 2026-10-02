@@ -156,6 +156,14 @@ default `curve`) and the three modes may be mixed freely within one level
   (`generated` | `scripted`) is still read when `generation` is absent, mapping
   `generated` → `curve` and `scripted` → `fixed`.
 
+The sequencer's default candidate pool (`defaultCandidatePool()`)
+deliberately excludes two archetypes delivered by their own spawners: the rare
+**Harvester** (§4.1 E7) and the non-wave-accounted **Asteroid** (random
+offscreen spawner, §4.1 E6). Because asteroids do not gate wave completion, a
+sequenced wave group containing one would be counted as a wave enemy but never
+un-counted; excluding it keeps every sequenced wave clearable and the run
+advancing to the boss (AH-0MUR1HZLQ001ELX9).
+
 The merged campaign always starts from the static `LEVELS` skeleton, so levels
 1–5 are present unless a configured level overrides one; a configured level
 numbered beyond the static five is appended, ascending. Fallback is **per
@@ -300,7 +308,10 @@ The following rules govern how enemy entities interact with each other and with 
   during the wave. Each asteroid appears **fully offscreen** on a random edge
   (top/bottom/left/right, uniform) — offset outward by its half-size plus a
   small margin — and drifts **inward** (perpendicular to the edge, with a ±30°
-  spread) into the playfield. The **boss encounter spawns no asteroids**.
+  spread) into the playfield. The **boss encounter spawns no asteroids**. The
+  asteroid is deliberately excluded from the difficulty auto-sequencer's
+  candidate pool (`defaultCandidatePool`), so a sequenced wave never contains a
+  group the game counts but never un-counts (AH-0MUR1HZLQ001ELX9).
 - **Escalation**: each wave starts at **2** asteroids. Weights are medium
   **80** (fixed) vs large **20** (+20 each wave); when the large weight
   reaches 2× the medium weight (**160**) the weights reset to 80:20 and the

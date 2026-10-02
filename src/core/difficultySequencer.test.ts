@@ -16,6 +16,9 @@ import {
   adjustGroupForTarget,
 } from './difficultySequencer';
 import type { EnemyConfig } from './enemyConfig';
+import { WaveManager, type WaveEvent } from '../waves/WaveManager';
+import type { LevelDefinition } from '../waves/Formations';
+import { formationSpawnCount } from '../utils/formations';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -291,7 +294,7 @@ describe('sequencer', () => {
 // ── defaultCandidatePool ─────────────────────────────────────────────
 
 describe('defaultCandidatePool', () => {
-  it('should contain entries for all default enemy archetypes', () => {
+  it('should contain entries for all wave-accounted default enemy archetypes', () => {
     const pool = defaultCandidatePool();
     const keys = pool.map((c) => c.enemyKey);
     expect(keys).toContain('scout');
@@ -300,7 +303,6 @@ describe('defaultCandidatePool', () => {
     expect(keys).toContain('phaser');
     expect(keys).toContain('swarm');
     expect(keys).toContain('boss');
-    expect(keys).toContain('asteroid');
   });
 
   it('should have reasonable count ranges for each archetype', () => {
@@ -319,14 +321,14 @@ describe('defaultCandidatePool', () => {
     expect(scout!.adjustableFields).toContain('count');
   });
 
-  it('pins single-formation archetypes (Asteroid) to their seed count', () => {
-    // `buildSingleOffset` ignores count, so a scaled Asteroid group would
-    // declare more enemies than it spawns. The pool must not offer scaling
-    // for single-formation archetypes (AH-0MUDYTPMC002GLEJ regression).
-    const asteroid = defaultCandidatePool().find((c) => c.enemyKey === 'asteroid');
-    expect(asteroid).toBeDefined();
-    expect(asteroid!.minCount).toBe(asteroid!.baseCount);
-    expect(asteroid!.maxCount).toBe(asteroid!.baseCount);
+  it('pins single-formation archetypes (Boss Swarm) to their seed count', () => {
+    // `buildSingleOffset` ignores count, so a scaled single-formation group
+    // would declare more enemies than it spawns. The pool must not offer
+    // scaling for single-formation archetypes (AH-0MUDYTPMC002GLEJ regression).
+    const boss = defaultCandidatePool().find((c) => c.enemyKey === 'boss');
+    expect(boss).toBeDefined();
+    expect(boss!.minCount).toBe(boss!.baseCount);
+    expect(boss!.maxCount).toBe(boss!.baseCount);
   });
 
   it('F6 — excludes the Harvester from the auto-sequencer candidate pool', () => {
@@ -334,6 +336,83 @@ describe('defaultCandidatePool', () => {
     // dedicated HarvesterSpawner, never selected as a wave group.
     const keys = defaultCandidatePool().map((c) => c.enemyKey);
     expect(keys).not.toContain('harvester');
+  });
+});
+
+// ── Wave-accounting safety (AH-0MUR1HZLQ001ELX9) ───────────────────────
+
+/**
+ * The game counts every planned spawn in a wave's alive total
+ * (`WaveManager.waveEnemyCount()`) but never un-counts an asteroid kill —
+ * asteroids are not wave-accounted (AH-0MUJM746P000QAEO). A sequenced wave
+ * that contained an asteroid group therefore never cleared, soft-locking the
+ * run and making the boss unreachable. The sequencer's default candidate pool
+ * must not offer the asteroid at all (producer decision, Option A).
+ */
+describe('wave-accounting safety (AH-0MUR1HZLQ001ELX9)', () => {
+  it('excludes the non-wave-accounted Asteroid from the default candidate pool', () => {
+    const keys = defaultCandidatePool().map((c) => c.enemyKey);
+    expect(keys).not.toContain('asteroid');
+  });
+
+  it('never selects an Asteroid group for the low-target band where it used to win', () => {
+    // Pre-fix, target 9 (a firing wave) selected `asteroidx1` (score 8.62).
+    // Post-fix the sequencer must pick a wave-accounted archetype instead.
+    const wave = sequencer([9], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    }).waves[0];
+    expect(wave.groups.length).toBeGreaterThan(0);
+    expect(wave.groups.map((g) => g.enemyKey)).not.toContain('asteroid');
+  });
+
+  it('reaches the boss when a default-pool wave is cleared with the game kill rule', () => {
+    // Reproduce the stall deterministically: build the wave the sequencer
+    // produces at target 9 with the default pool, then clear it exactly as
+    // `PlayScene` does — enemy ships un-count, asteroids do not. Pre-fix the
+    // wave is `asteroidx1`, so nothing un-counts and the boss is never
+    // reached; post-fix every group is wave-accounted and the clear raises
+    // `bossTriggered`.
+    const wave = sequencer([9], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    }).waves[0];
+    const level: LevelDefinition = {
+      level: 1,
+      name: 'Probe',
+      waves: [
+        {
+          groups: wave.groups.map((g) => ({
+            enemyKey: g.enemyKey,
+            formation: g.formation,
+            count: g.count,
+            spacingX: g.spacingX,
+            spacingY: g.spacingY,
+            startX: g.startX,
+            startY: g.startY,
+          })),
+          shootEnabled: wave.shootEnabled,
+        },
+      ],
+    };
+    const manager = new WaveManager([level]);
+    manager.beginGame();
+    // The wave exists and is accounted before any kill; after the clear the
+    // active wave is gone (boss due), so capture the size up front.
+    const initialCount = manager.waveEnemyCount();
+
+    let event: WaveEvent = 'continue';
+    for (const group of level.waves[0].groups) {
+      // Asteroids are skipped: `_onEnemyKilled` never advances progression
+      // for them (AH-0MUJM746P000QAEO).
+      if (group.enemyKey === 'asteroid') continue;
+      const spawns = formationSpawnCount(group.formation, group.count);
+      for (let i = 0; i < spawns; i++) {
+        event = manager.onEnemyDestroyed();
+      }
+    }
+
+    expect(initialCount).toBeGreaterThan(0);
+    expect(event).toBe('bossTriggered');
+    expect(manager.bossTriggered).toBe(true);
   });
 });
 

@@ -98,7 +98,10 @@ one on schedule during `tick(dt)`:
   so they do not gate wave completion and persist across wave/level
   transitions. (The generic `registerDynamicSpawn` / `unregisterDynamicSpawn`
   seam remains on `WaveManager` for any future dynamically spawned enemy that
-  must be wave-accounted.)
+  must be wave-accounted.) The asteroid is therefore **excluded from the
+  difficulty auto-sequencer's candidate pool** (`defaultCandidatePool()`) — a
+  sequenced asteroid group would be counted as a wave enemy but never un-counted
+  (AH-0MUR1HZLQ001ELX9).
 
 The **boss encounter spawns no asteroids**: `planAsteroidSpawns()` clears the
 plan outside a regular wave and the release loop is guarded on boss state.
@@ -1319,6 +1322,17 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   `validateDifficultyCurveRow` codec (`src/core/csv.ts`). The legacy 4-column
   form keeps working: an absent `generation` defaults to `curve`, and the codec
   always writes the column back.
+- **Candidate pool (AH-0MUR1HZLQ001ELX9):** the default pool
+  (`defaultCandidatePool()`) deliberately excludes two archetypes that are
+  delivered by their own spawners: the **Harvester** (rare later-level roaming
+  spawn, `HarvesterSpawner`) and the **Asteroid** (random offscreen spawner,
+  `AsteroidSpawner`). The asteroid is explicitly **not wave-accounted**
+  (AH-0MUJM746P000QAEO), so a sequenced wave group containing one would be
+  counted by `WaveManager.waveEnemyCount()` but never un-counted — the wave
+  would never clear, soft-locking the run and making the boss unreachable.
+  Excluding it keeps every sequenced group wave-accounted and preserves the
+  "asteroids are not wave-accounted" contract for the random spawner and split
+  children.
 - **Per-wave generation modes (AH-0MUJSUQD8003FSUT):** `generation` is a
   **per-wave** selector and the three modes may be mixed freely within a level:
   `curve` builds the wave from its target once (fixed for the run); `fixed`

@@ -453,10 +453,10 @@ load, which makes assertions taken right after boot flaky.
   shared-boss `CombatScene.equivalence.test.ts` therefore opt out of sequencing
   (`localStorage` `ai-hell-game-rules` → `sequencedWavesEnabled: false`) and run
   the deterministic static `LEVELS`; the sequenced path keeps its dedicated
-  suites (e.g. the CSV-backed level-name and sequenced-campaign tests). This
-  also sidesteps a game defect where the sequencer can emit an `asteroid` wave
-  group that `waveEnemyCount()` counts but the kill path never un-counts,
-  stalling the walk-to-boss helpers (tracked by AH-0MUR1HZLQ001ELX9).
+  suites (e.g. the CSV-backed level-name and sequenced-campaign tests). The
+  default candidate pool excludes `asteroid` (and the Harvester), so a
+  sequenced wave can never emit a group that `waveEnemyCount()` counts but the
+  kill path never un-counts (AH-0MUR1HZLQ001ELX9).
 - **Boss-reach helpers assert loudly.** `reachBoss()` / `timeOutToBoss()` exit
   on the WaveManager's `bossTriggered` / `bossActive` state (not the
   later-spawned `getBoss()` entity) and throw a descriptive error naming the
@@ -498,6 +498,13 @@ instead.
   be mixed freely within one level. The legacy per-level `source` column
   (`generated` | `scripted`) is still read when `generation` is absent, mapping
   `generated` → `curve` and `scripted` → `fixed`.
+- **Candidate pool (AH-0MUR1HZLQ001ELX9):** the default pool
+  (`defaultCandidatePool()`) excludes the two archetypes delivered by their own
+  spawners — the rare **Harvester** and the **Asteroid** (random offscreen
+  spawner). The asteroid is not wave-accounted, so a sequenced group containing
+  one would be counted by `waveEnemyCount()` but never un-counted, stalling the
+  wave and making the boss unreachable. Excluding it keeps every sequenced group
+  wave-accounted and preserves the random-spawner / split-child contract.
 - **Dynamic opening (AH-0MUOCJM0N000RW2B):** the first four campaign waves
   (L1W1, L1W2, L2W1, L2W2) are `dynamic`, so each run opens on a varied,
   non-firing mix of existing archetypes instead of repeated Scouts. Each opening

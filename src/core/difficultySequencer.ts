@@ -148,20 +148,34 @@ const DEFAULT_MAX_GROUPS_PER_WAVE = 5;
 const COMPOSE_EPSILON = 1e-9;
 
 /**
- * The default candidate pool — one entry per seed archetype with sensible
- * count ranges and count as the only adjustable field.
+ * The default candidate pool — one entry per seed archetype the sequencer may
+ * select as a wave group, with sensible count ranges and count as the only
+ * adjustable field.
+ *
+ * Two archetypes are deliberately excluded because they are delivered by
+ * their own spawners:
+ *
+ * - the **Harvester** (F6) is a rare later-level roaming spawn delivered by
+ *   the dedicated `HarvesterSpawner`;
+ * - the **Asteroid** is delivered by the dedicated random offscreen spawner
+ *   (`AsteroidSpawner`) and is explicitly **not wave-accounted** by the game:
+ *   `PlayScene._onEnemyKilled()` never advances wave progression for an
+ *   asteroid kill (AH-0MUJM746P000QAEO). A sequenced wave group containing an
+ *   asteroid would be counted by `WaveManager.waveEnemyCount()` but never
+ *   un-counted, so the wave would never clear, soft-locking the run and making
+ *   the boss unreachable (AH-0MUR1HZLQ001ELX9). Excluding it keeps the
+ *   "asteroids are not wave-accounted" contract intact.
  *
  * These defaults can be customised by the caller to give the sequencer
  * a wider (or narrower) set of tuning options.
  */
 export function defaultCandidatePool(): CandidateGroup[] {
   return Object.entries(DEFAULT_ENEMY_CONFIGS)
-    // The Harvester is integrated as a rare later-level roaming spawn (F6),
-    // deliberately outside the difficulty auto-sequencer: it is delivered by
-    // the dedicated HarvesterSpawner, never selected as a wave group.
-    .filter(([key]) => key !== 'harvester')
+    // See the JSDoc above: both archetypes are delivered by their own
+    // spawners and must never be selected as a wave group.
+    .filter(([key]) => key !== 'harvester' && key !== 'asteroid')
     .map(([key, cfg]) => {
-      // `single`-formation archetypes (the roaming Asteroid) spawn exactly one
+      // `single`-formation archetypes (e.g. the Boss Swarm) spawn exactly one
       // entity per group regardless of `count` (`buildSingleOffset` ignores its
       // argument). `waveEnemyCount` now derives from the planned spawns, so an
       // over-declared `single` group can no longer inflate the alive count, but

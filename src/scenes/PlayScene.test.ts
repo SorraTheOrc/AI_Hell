@@ -262,12 +262,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
-    // Use the deterministic static campaign for these wave/transition tests.
-    // The default sequenced campaign can randomly include `asteroid` groups,
-    // which the WaveManager counts as wave enemies but the kill path never
-    // un-counts (asteroids are not wave-accounted, AH-0MUJM746P000QAEO) — that
-    // stalls wave clearance (AH-0MUNVVWWC0015JTM; game bug tracked separately).
-    // The sequenced campaign has its own suites.
+    // Use the deterministic static campaign for these wave/transition tests so
+    // their assertions do not depend on the runtime-sequenced campaign's
+    // per-run composition (the sequenced path has its own suites). The
+    // sequencer's default candidate pool excludes the non-wave-accounted
+    // Asteroid, so a sequenced wave can no longer stall wave clearance
+    // (AH-0MUR1HZLQ001ELX9).
     localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
