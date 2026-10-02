@@ -1133,7 +1133,11 @@ sequentially through the shared `CombatScene` core (input, auto-fire,
 collision/hit lifecycle and formation drift are the same code as the game and
 the other gyms). It shows the level name plus `Wave n/N` in the HUD, starts
 the ship with the **spread** and **dual** weapons equipped, and offers the
-standard "← INDEX"/ESC navigation. It is the launch target of the
+standard "← INDEX"/ESC navigation. Like every player-bearing gym it binds the
+arrow/WASD keys for the shared `_tickPlayer` control step and plays the shared
+spawn cue (`playSpawnSound`) as each wave spawns, so the launched level is
+fully playable and audible (parity with the game and the other gyms). It is
+the launch target of the
 difficulty-curve editor's **Launch Level** / **Launch Wave N** buttons: the
 editor folds its generated waves into level groups of `CURVE_WAVES_PER_LEVEL`
 (3) and offers one **Launch Level** button per group (full level) plus one

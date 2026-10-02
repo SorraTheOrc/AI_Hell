@@ -43,7 +43,9 @@ import {
 } from '../../utils/formations';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
+import { playSpawnSound } from '../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
+import type { WasdKeysLike } from '../../utils/input';
 import { EffectsRegistry } from '../../powerups/effects';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 
@@ -244,6 +246,16 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.add.existing(this.player);
     this.player.setPosition(GAME_WIDTH / 2, GAME_HEIGHT / 2);
 
+    // Keyboard bindings for the shared player-control step. Every gym scene
+    // binds arrow + WASD keys the same way (PlayScene, GymFormationScene,
+    // GymPlayer, GymWeapons, …). Omitting them leaves `_readPlayerInput()`
+    // returning null and freezes the ship — the regression reported in the
+    // producer audit of this work item.
+    this.cursors = this.input.keyboard?.createCursorKeys();
+    this.wasd = this.input.keyboard?.addKeys(
+      'W,A,S,D',
+    ) as WasdKeysLike | undefined;
+
     // Standard gym navigation (AC5).
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
@@ -283,6 +295,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     );
 
     this.enemyBullets.push(...spawnWave(this, wave, this.spawned));
+    // Spawn cue, matching the other gym scenes (GymFormationScene plays the
+    // shared spawn sound once per wave). Without this the launched level is
+    // silent on entry — the second half of the producer audit.
+    playSpawnSound();
   }
 
   /** Advances to the next wave once the current one is clear. */
@@ -429,6 +445,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     super.teardownRunState();
     this.player?.destroy();
     this.player = null;
+    this.cursors = undefined;
+    this.wasd = undefined;
     cleanupWave(this.spawned, this.enemyBullets);
     this.statusText?.destroy();
     this.statusText = null;
@@ -474,5 +492,15 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** The player ship (for weapon assertions). */
   getShip(): Player | null {
     return this.player;
+  }
+
+  /** Arrow-key bindings for the player (undefined when no keyboard). */
+  getCursors(): Phaser.Types.Input.Keyboard.CursorKeys | undefined {
+    return this.cursors;
+  }
+
+  /** WASD bindings for the player (undefined when no keyboard). */
+  getWasd(): WasdKeysLike | undefined {
+    return this.wasd;
   }
 }

@@ -7,9 +7,10 @@
  * back-to-index / ESC-to-menu navigation.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
@@ -70,6 +71,7 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     booted?.game.destroy(true);
     booted = null;
     document.body.innerHTML = '';
+    vi.restoreAllMocks();
   });
 
   /** Boots the scene and restarts it with launch data. */
@@ -162,6 +164,49 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(ship!.getActiveWeapons()).toEqual(
       expect.arrayContaining(['spread', 'dual']),
     );
+  });
+
+  // ── Producer audit fix — player input + audio parity ────────────
+
+  it('binds arrow/WASD keys so the player ship can move (gym parity)', async () => {
+    const scene = await bootWith({ level: makeLevel('Move', [scoutWave(1)]) });
+    const ship = scene.getShip();
+    expect(ship).not.toBeNull();
+
+    // Every player-bearing gym binds both key sets. Without them the shared
+    // `_readPlayerInput()` returns null and the ship is frozen — the
+    // regression raised in the producer audit.
+    expect(scene.getCursors(), 'arrow keys not bound').toBeDefined();
+    expect(scene.getWasd(), 'WASD keys not bound').toBeDefined();
+
+    // Hold the right arrow in four-directional mode and step one frame.
+    ship!.setScheme('fourDirectional');
+    scene.getCursors()!.right.isDown = true;
+    const beforeX = ship!.x;
+    scene.update(0, 1000);
+    scene.getCursors()!.right.isDown = false;
+
+    expect(ship!.x).toBeGreaterThan(beforeX);
+  });
+
+  it('plays the shared spawn sound for each launched wave (gym parity)', async () => {
+    const spawnSound = vi.spyOn(effectsModule, 'playSpawnSound');
+    booted = await bootScene([GymLevel]);
+    spawnSound.mockClear();
+
+    booted.game.scene.start('GymLevel', {
+      level: makeLevel('Audio', [scoutWave(1), scoutWave(1)]),
+    });
+    await tick();
+    const scene = booted.game.scene.getScene('GymLevel') as GymLevel;
+
+    // One spawn cue for the first wave.
+    expect(spawnSound).toHaveBeenCalledTimes(1);
+
+    // Clearing the first wave spawns the second and plays the cue again.
+    scene.getEnemies().forEach((e) => e.destroySelf());
+    scene.tick(0.016);
+    expect(spawnSound).toHaveBeenCalledTimes(2);
   });
 
   // ── AC5 — HUD + navigation ───────────────────────────────────────
