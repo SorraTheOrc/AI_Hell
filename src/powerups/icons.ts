@@ -366,6 +366,15 @@ function _drawWeaponIcon(
     case 'rapid':
       drawRapidIcon(graphics, x, y, size);
       break;
+    case 'nova':
+      drawNovaIcon(graphics, x, y, size);
+      break;
+    case 'mortar':
+      drawMortarIcon(graphics, x, y, size);
+      break;
+    case 'arc':
+      drawArcIcon(graphics, x, y, size);
+      break;
   }
 }
 
@@ -487,6 +496,80 @@ function drawRapidIcon(
     g.arc(x, startY + i * spacing, dotRadius, 0, Math.PI * 2);
     g.strokePath();
   }
+}
+
+/**
+ * Nova icon — two concentric rings around a core dot, hinting at the
+ * expanding onFire pulse centred on the ship.
+ */
+function drawNovaIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.arc(x, y, s * 0.85, 0, Math.PI * 2);
+  g.strokePath();
+  g.beginPath();
+  g.arc(x, y, s * 0.5, 0, Math.PI * 2);
+  g.strokePath();
+  g.beginPath();
+  g.arc(x, y, s * 0.14, 0, Math.PI * 2);
+  g.strokePath();
+}
+
+/**
+ * Mortar icon — a lobbed shell (rounded body) with an arced trajectory and
+ * a small blast burst, hinting at the onImpact detonation.
+ */
+function drawMortarIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Arced trajectory from the lower-left to the shell.
+  g.beginPath();
+  g.moveTo(x - s * 0.8, y + s * 0.4);
+  g.lineTo(x - s * 0.3, y - s * 0.4);
+  g.lineTo(x + s * 0.15, y - s * 0.1);
+  g.strokePath();
+  // Shell body (rounded) at the arc's end.
+  g.beginPath();
+  g.arc(x + s * 0.3, y + s * 0.25, s * 0.32, 0, Math.PI * 2);
+  g.strokePath();
+  // Blast ticks radiating from the shell.
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const r0 = s * 0.45;
+    const r1 = s * 0.8;
+    g.beginPath();
+    g.moveTo(x + s * 0.3 + Math.cos(angle) * r0, y + s * 0.25 + Math.sin(angle) * r0);
+    g.lineTo(x + s * 0.3 + Math.cos(angle) * r1, y + s * 0.25 + Math.sin(angle) * r1);
+    g.strokePath();
+  }
+}
+
+/**
+ * Arc icon — a jagged lightning bolt, hinting at the chaining electric
+ * strike between nearby targets.
+ */
+function drawArcIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.moveTo(x + s * 0.25, y - s * 0.95);
+  g.lineTo(x - s * 0.45, y + s * 0.05);
+  g.lineTo(x - s * 0.05, y + s * 0.05);
+  g.lineTo(x - s * 0.25, y + s * 0.95);
+  g.lineTo(x + s * 0.45, y - s * 0.05);
+  g.lineTo(x + s * 0.05, y - s * 0.05);
+  g.closePath();
+  g.strokePath();
 }
 
 // ── Field drop rendering: glowing bubble + icon ────────────────────

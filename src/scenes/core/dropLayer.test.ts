@@ -15,6 +15,7 @@ import { DEFAULT_RULES } from '../../core/rules';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { WeightedRandomSpawner } from '../../powerups/spawner';
 import type { DropId } from '../../powerups/types';
+import { WEAPON_DROP_IDS } from '../../powerups/types';
 import { dropCollectRadius } from '../../powerups/icons';
 import {
   advanceDropLifecycles,
@@ -78,9 +79,9 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
   it('gives P8 Extra Life a ≈ 3/27 share of power-up draws (≈2.8× its former 1/25)', () => {
     // Deterministic sweep RNG: sample evenly across [0, 1) so each id's count
     // is exactly proportional to its weight — no statistical noise and no seed
-    // dependence. 70 000 = 2 000 × the combined pool weight (35), so every band
-    // boundary lands on an exact sample point.
-    const SAMPLE_COUNT = 70_000;
+    // dependence. The sample count is a multiple of the combined pool weight
+    // (27 power-up + 14 weapon = 41), so every band boundary lands exactly.
+    const SAMPLE_COUNT = 41_000;
     let cursor = 0;
     const sweepRng = () => cursor++ / SAMPLE_COUNT;
     const spawner = buildDefaultDropSpawner(
@@ -89,12 +90,11 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       sweepRng,
     );
 
-    const WEAPON_IDS: DropId[] = ['spread', 'dual', 'rapid', 'reset'];
     let powerUps = 0;
     let extraLives = 0;
     for (let n = 0; n < SAMPLE_COUNT; n++) {
       const id = spawner.next();
-      if (WEAPON_IDS.includes(id)) continue;
+      if ((WEAPON_DROP_IDS as readonly DropId[]).includes(id)) continue;
       powerUps += 1;
       if (id === 'P8') extraLives += 1;
     }

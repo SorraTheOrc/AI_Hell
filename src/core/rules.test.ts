@@ -69,6 +69,14 @@ describe('game rules configuration module', () => {
         expect(DEFAULT_RULES.weaponWeights[id]).toBe(DEFAULT_WEAPON_WEIGHT);
       }
     });
+
+    it('includes the AOE weapon drops in the weighted pool (F5 AC1/AC2)', () => {
+      for (const id of ['nova', 'mortar', 'arc'] as const) {
+        expect(WEAPON_WEIGHT_IDS).toContain(id);
+        expect(DEFAULT_RULES.weaponWeights[id]).toBe(DEFAULT_WEAPON_WEIGHT);
+        expect(DEFAULT_RULES.weaponWeights[id]).toBeGreaterThan(0);
+      }
+    });
   });
 
   // ── AC2: load/save persistence and partial merge ─────────────────
@@ -88,6 +96,9 @@ describe('game rules configuration module', () => {
           spread: 3,
           dual: 4,
           rapid: 2,
+          nova: 1,
+          mortar: 1,
+          arc: 1,
           reset: 1,
         },
         mineralCollectAmount: 2,

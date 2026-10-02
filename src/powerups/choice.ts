@@ -40,6 +40,9 @@ export const CHOICE_POOL: readonly DropId[] = [
   'spread',
   'dual',
   'rapid',
+  'nova',
+  'mortar',
+  'arc',
 ];
 
 // ── Option model ────────────────────────────────────────────────────
@@ -59,12 +62,23 @@ const WEAPON_NAMES: Record<WeaponDropId, string> = {
   spread: 'Spread Shot',
   dual: 'Dual Shot',
   rapid: 'Rapid Fire',
+  nova: 'Nova',
+  mortar: 'Mortar',
+  arc: 'Arc',
   reset: 'Reset',
 };
 
 /** Whether a drop id is a weapon drop. */
 export function isWeaponDrop(id: DropId): id is WeaponDropId {
-  return id === 'spread' || id === 'dual' || id === 'rapid' || id === 'reset';
+  return (
+    id === 'spread' ||
+    id === 'dual' ||
+    id === 'rapid' ||
+    id === 'nova' ||
+    id === 'mortar' ||
+    id === 'arc' ||
+    id === 'reset'
+  );
 }
 
 /** Whether an option is a weapon option (used by the choice scene). */

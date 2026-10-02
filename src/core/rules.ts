@@ -153,6 +153,9 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'spread',
   'dual',
   'rapid',
+  'nova',
+  'mortar',
+  'arc',
   'reset',
 ];
 
