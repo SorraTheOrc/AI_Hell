@@ -1054,7 +1054,7 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
     },
   );
 
-  it('AC4 — the Reset drop clears equipped weapons', async () => {
+  it('AC4 — the Reset drop preserves equipped weapons', async () => {
     booted = await bootScene([
       makeWeaponScene(
         GYM_ENEMIES_DEFAULT_KEY,
@@ -1072,7 +1072,9 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
 
     scene.spawnPowerUpDrop('reset', player.x, player.y);
     scene.tick(0.1);
-    expect(registry.activeWeapons()).toHaveLength(0);
+
+    // Reset drop no longer clears weapons — spread and dual are preserved.
+    expect(registry.activeWeapons()).toHaveLength(2);
   });
 });
 

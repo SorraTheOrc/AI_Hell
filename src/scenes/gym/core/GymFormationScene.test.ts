@@ -2280,7 +2280,7 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
     expect(player.hasWeapon('spread')).toBe(false);
   });
 
-  it('AC — the Reset drop clears every active weapon', async () => {
+  it('AC — the Reset drop preserves every active weapon', async () => {
     const scene = await boot({
       spawner: new RoundRobinSpawner<DropId>(['spread']),
       placement: atPlayer(),
@@ -2298,12 +2298,14 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
 
     scene.spawnPowerUpDrop('reset', player.x, player.y);
     scene.tick(0.1);
-    expect(registry.activeWeapons()).toHaveLength(0);
-    expect(player.hasWeapon('spread')).toBe(false);
-    expect(player.hasWeapon('rapid')).toBe(false);
-  });
 
-  it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
+    // Reset drop no longer clears weapons — spread and rapid are preserved.
+    expect(registry.activeWeapons()).toHaveLength(2);
+    expect(player.hasWeapon('spread')).toBe(true);
+    expect(player.hasWeapon('rapid')).toBe(true);
+    });
+
+    it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
     const scene = await boot({
       spawner: new WeightedRandomSpawner<DropId>(
         [...WEAPON_DROP_IDS, 'P3'],

@@ -393,7 +393,7 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getCollectAnimations().length).toBe(1);
   });
 
-  it('AC4 — _collectDrop weapon reset clears the equipped weapon through the registry', async () => {
+  it('AC4 — _collectDrop weapon reset preserves the equipped weapon via the registry', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     scene.effects.applyWeapon('spread');
     expect(scene.effects.hasWeapon('spread')).toBe(true);
@@ -402,7 +402,8 @@ describe('CombatCoreScene — shared base class', () => {
     scene.runCollectDrop(drop);
 
     expect(scene.hooks).toContain('onWeaponCollected:reset');
-    expect(scene.effects.hasWeapon('spread')).toBe(false);
+    // Reset drop no longer clears weapons — spread is preserved.
+    expect(scene.effects.hasWeapon('spread')).toBe(true);
     expect(drop.absorbing).toBe(true);
   });
 

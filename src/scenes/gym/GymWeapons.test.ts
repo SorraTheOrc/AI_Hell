@@ -350,7 +350,7 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     expect(bullets.at(-1)!.color).toBe(0x00ffff); // cannon cyan only
   });
 
-  it('collecting a Reset power-up clears all timed weapons, leaving only the cannon (AC4)', async () => {
+  it('collecting a Reset power-up preserves all timed weapons (AC4)', async () => {
     const scene = await bootWeapons();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -364,12 +364,13 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     scene.collectOverlapping();
     expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
 
-    // Collect a Reset drop → all timed weapons cleared, only the cannon left.
+    // Collect a Reset drop — weapons are preserved (cannon is always permanent).
     scene.spawnDrop('reset', 480, 270);
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
-    expect(player.getActiveWeapons()).toEqual(['cannon']);
-    expect(player.getEquippedWeapon()).toBe('cannon');
+    // Reset drop no longer clears weapons — spread and dual are preserved.
+    expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
+    expect(player.getEquippedWeapon()).toBe('dual');
   });
 });
 
@@ -758,12 +759,13 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     scene.collectOverlapping();
     expect(rapidPickup).toHaveBeenCalledTimes(1);
 
-    // Collect Reset → returns to cannon with its own cue.
+    // Collect Reset — plays the reset pickup cue, weapons preserved.
     scene.spawnDrop('reset', 480, 270);
     scene.advanceDrops(0.5);
     scene.collectOverlapping();
     expect(resetPickup).toHaveBeenCalledTimes(1);
-    expect(player.getEquippedWeapon()).toBe('cannon');
+    // Reset no longer changes equipped weapon — last weapon stays equipped.
+    expect(player.getEquippedWeapon()).toBe('rapid');
   });
 });
 
