@@ -370,13 +370,12 @@ export interface EnemyFormationConfig<
   onEntityDestroyed?(entity: TEntity): void;
   /**
    * Optional wave-timeout duration (seconds). When set and > 0 the scene runs
-   * the shared game wave-timeout: on expiry every surviving non-asteroid
-   * enemy detonates at `WAVE_TIMEOUT_EXPLOSION_SCALE` via the shared
-   * `detonateWaveTimeoutSurvivors` helper (reusing the major-explosion cue
-   * and its concurrency limiter), then the formation respawns through the
-   * existing wipe→countdown lifecycle. Omit (or 0) to disable — used by the
-   * boss and by gyms whose entities must not be destroyed
-   * (AH-0MUNR5LM1004B223).
+   * the shared game wave-timeout: on expiry survivors are **kept** (no
+   * detonation — the shared helper is now a no-op, AH-0MUNS3ZQ1002DJ9S) and
+   * the formation refreshes through the existing wipe→countdown lifecycle,
+   * spawning a fresh formation alongside the survivors. Omit (or 0) to
+   * disable — used by the boss and by gyms whose entities must not be
+   * destroyed (AH-0MUNR5LM1004B223).
    */
   timeoutDuration?: number;
 }
@@ -1605,19 +1604,89 @@ export class GymFormationScene<
   }
 
   /**
-   * On timeout expiry the shared base already detonated every surviving
-   * non-asteroid enemy via `detonateWaveTimeoutSurvivors` (asteroids survive
-   * silently, game parity AH-0MUJM746P000QAEO); refresh the gym through the
-   * existing 3 s wipe→respawn countdown so an asteroid-only formation still
-   * refreshes.
+   * On timeout expiry survivors are **kept** (the shared base no longer
+   * detonates them — AH-0MUNS3ZQ1002DJ9S) and the gym refreshes through the
+   * existing 3 s wipe→respawn countdown. At the countdown's end a fresh
+   * formation is spawned alongside the surviving enemies so both must be
+   * cleared (game parity).
    */
   protected override onWaveTimeoutExpired(): void {
     this._startRespawnCountdown();
   }
 
-  /** Rebuild the formation when the shared countdown elapses. */
+  /**
+   * Rebuild the formation when the shared countdown elapses, preserving any
+   * live survivors so a fresh formation spawns alongside them (carry-over
+   * parity with `PlayScene._timeoutWave`, AH-0MUNS3ZQ1002DJ9S).
+   */
   protected override respawnWave(): void {
-    this.respawnFormation();
+    this.respawnWithCarriedSurvivors();
+  }
+
+  /**
+   * Carry-over respawn (AH-0MUNS3ZQ1002DJ9S): keep every live entity where
+   * it is, drop only the dead ones, and add a fresh formation alongside the
+   * survivors. Both the survivors and the fresh formation must be destroyed
+   * before the wipe→respawn countdown can trigger again.
+   *
+   * Distinct from {@link respawnFormation}, which is a clean slate (used by
+   * the manual Respawn button). During the countdown the survivors remain in
+   * `entities`, so they keep moving and firing; they are re-anchored to the
+   * same formation base as the fresh formation on the next tick.
+   */
+  protected respawnWithCarriedSurvivors(): void {
+    const survivors = this.entities.filter((entity) => entity.alive);
+
+    // No survivors to carry (an ordinary full wipe): a clean-slate respawn is
+    // the correct behaviour, including re-resolving the formation base.
+    if (survivors.length === 0) {
+      this.respawnFormation();
+      return;
+    }
+
+    // Clear enemy bullets so a stale shot does not instantly hit the player
+    // after the respawn. Player bullets are intentionally kept (parity with
+    // `respawnFormation`).
+    for (const bullet of this.bullets) bullet.graphics.destroy();
+    this.bullets.length = 0;
+
+    // Drop the glide for dead entities; survivors keep their live positions.
+    this.glide.clear();
+
+    // Keep live survivors in place; tear down only the dead entities.
+    for (const entity of this.entities) {
+      if (!entity.alive) entity.destroy();
+    }
+    this.entities = survivors;
+
+    // Rebuild a fresh formation alongside the survivors at the current base
+    // (no resample, so the survivors do not jump when the formation base is
+    // regenerated). The fresh formation is a complete formation for the
+    // configured geometry.
+    const wasShooting = this.shootEnabled;
+    const offsets = this.config.buildOffsets(this.config.count);
+    for (const offset of offsets) {
+      const entity = this.config.createEntity(
+        this,
+        this.formationBaseX + offset.col * this.config.spacingX,
+        this.formationBaseY + offset.row * this.config.spacingY,
+        offset,
+      );
+      this.add.existing(entity);
+      this.entities.push(entity);
+    }
+    // Preserve SHOOT toggle across the respawn (no surprise toggle).
+    for (const entity of this.entities) entity.shootEnabled = wasShooting;
+
+    this._cancelRespawnCountdown();
+    if (this.countdownText) this.countdownText.setVisible(false);
+    this.statusText?.setText(
+      `SCORE: n/a — ${this.config.statusLabel}: ${this.entities.length}`,
+    );
+    // A fresh formation restarts the opt-in wave-timeout
+    // (AH-0MUNR5LM1004B223).
+    this.startWaveTimeout();
+    playSpawnSound();
   }
 
   /**

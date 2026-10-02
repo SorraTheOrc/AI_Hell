@@ -297,6 +297,29 @@ export class WaveManager {
   }
 
   /**
+   * Adopts `count` surviving enemies into the active wave so they gate its
+   * completion (AH-0MUNS3ZQ1002DJ9S). Called by the wave-timeout carry-over
+   * path: survivors are no longer detonated, so they must be counted in the
+   * next wave's alive roster — the wave clears only once both the fresh
+   * spawns and the adopted survivors are destroyed.
+   *
+   * Must be called **after** the wave has advanced (so the fresh wave's
+   * alive count is already set) and before any adopted survivor dies. Safe
+   * no-op when no regular wave is active (before `beginGame()`, boss
+   * due/active, run over) — survivors persist into the boss encounter but
+   * do not gate it.
+   *
+   * Asteroids are never adopted through this seam (AH-0MUJM746P000QAEO):
+   * they do not gate wave completion and persist independently.
+   */
+  adoptCarriedSurvivors(count: number): void {
+    if (!this._started || this._bossTriggered || this._bossActive || this._bossDefeated) {
+      return;
+    }
+    if (count > 0) this._enemiesAlive += count;
+  }
+
+  /**
    * Unregisters `count` dynamically spawned enemies that are removed
    * without a destruction event (e.g. an off-screen child is discarded).
    * Never drives the counter below zero. Safe no-op when no regular wave

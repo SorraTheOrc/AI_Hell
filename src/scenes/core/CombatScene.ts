@@ -702,7 +702,8 @@ export abstract class CombatScene<
   /**
    * Whether this scene opts into the shared wave-timeout. Default off;
    * subclasses arm it from their own config/state. When a scene opts in,
-   * the timeout detonates survivors and runs {@link onWaveTimeoutExpired}.
+   * the timeout keeps survivors and runs {@link onWaveTimeoutExpired}
+   * (carry-over semantics — AH-0MUNS3ZQ1002DJ9S).
    */
   protected isWaveTimeoutEnabled(): boolean {
     return false;
@@ -713,14 +714,16 @@ export abstract class CombatScene<
     return this.isWaveTimeoutEnabled() ? WAVE_TIME_LIMIT_SECONDS : 0;
   }
 
-  /** Live entities eligible for the timeout penalty (survivors). */
+  /** Live entities eligible for carry-over on timeout (survivors). */
   protected getWaveTimeoutSurvivors(): readonly TEnemy[] {
     return this.getEnemyEntities().filter((enemy) => enemy.alive);
   }
 
   /**
-   * Entities exempt from the timeout penalty (survive silently). Default:
-   * asteroids carry over exactly as in the shipped game (AH-0MUJM746P000QAEO).
+   * Entities excluded from carry-over wave accounting. Default: asteroids
+   * persist independently and never gate wave completion
+   * (AH-0MUJM746P000QAEO). Retained for the shared detonation helper's
+   * signature; the helper is now a no-op (AH-0MUNS3ZQ1002DJ9S).
    */
   protected isWaveTimeoutExempt(entity: TEnemy): boolean {
     return entity instanceof Asteroid;
@@ -765,11 +768,11 @@ export abstract class CombatScene<
   }
 
   /**
-   * Shared wave-timeout expiry: every surviving non-exempt enemy detonates
-   * at `WAVE_TIMEOUT_EXPLOSION_SCALE` through the shared
-   * {@link detonateWaveTimeoutSurvivors} helper — the same cue + concurrency
-   * limiter the shipped game runs (AH-0MUK5ONAA0007YEX) — then the subclass
-   * lifecycle hook runs.
+   * Shared wave-timeout expiry (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
+   * survivors are **kept** — the shared {@link detonateWaveTimeoutSurvivors}
+   * helper is a no-op — and the subclass lifecycle hook runs to refresh the
+   * wave (the formation gyms start the wipe→respawn countdown, spawning a
+   * fresh formation alongside the survivors).
    */
   protected _onWaveTimeout(): void {
     this.hideWaveTimeout();
@@ -781,8 +784,9 @@ export abstract class CombatScene<
   }
 
   /**
-   * Subclass lifecycle hook run after the timeout detonation. Default no-op;
-   * the formation gyms start the wipe→respawn countdown here.
+   * Subclass lifecycle hook run after the timeout. Default no-op; the
+   * formation gyms start the wipe→respawn countdown here, preserving the
+   * survivors and spawning a fresh formation alongside them.
    */
   protected onWaveTimeoutExpired(): void {}
 

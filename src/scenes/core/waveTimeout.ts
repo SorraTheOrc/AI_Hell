@@ -1,20 +1,17 @@
 /**
- * Shared wave-timeout constants and detonation helper (GDD §7.3).
+ * Shared wave-timeout constants (GDD §7.3).
  *
  * The shipped game (`PlayScene._timeoutWave`) and any gym wave-timeout run
- * this single implementation, so the major-explosion cue, its concurrency
- * limiter (`playMajorExplosionSound`) and the 10x detonation scale can never
- * diverge — the gym↔game parity convention in AGENTS.md. Extracted for
- * AH-0MUK5ONAA0007YEX (reuse the cue + limiter if a gym timeout is added)
- * and consumed by AH-0MUNR5LM1004B223 (enemy-gym timeout).
+ * a carry-over model where surviving enemies persist into the next wave.
+ * The shared detonation helper `detonateWaveTimeoutSurvivors` is a no-op —
+ * see AH-0MUNS3ZQ1002DJ9S for the carry-over implementation.
  *
  * Asteroids are special: they survive the timeout (they are not detonated)
  * and carry over, exactly as in the game (AH-0MUJM746P000QAEO). Callers pass
- * an `exclude` predicate to skip them.
+ * an `exclude` predicate to skip them (no-op for all entities now).
  */
 
 import { GAME_WIDTH } from '../../core/constants';
-import { playMajorExplosionSound } from '../../audio/effects';
 
 /**
  * Seconds a wave may run before the time-limit penalty triggers
@@ -23,7 +20,11 @@ import { playMajorExplosionSound } from '../../audio/effects';
  */
 export const WAVE_TIME_LIMIT_SECONDS = 30;
 
-/** Detonation scale factor applied to survivors on wave-timeout (10x). */
+/**
+ * Legacy detonation scale factor — retained for JSDoc references in callers
+ * but no longer used at runtime (AH-0MUNS3ZQ1002DJ9S replaced detonation with
+ * carry-over; the constant persists so existing doc comments remain valid).
+ */
 export const WAVE_TIMEOUT_EXPLOSION_SCALE = 10;
 
 /** Wave time-limit bar geometry (top-centre, above the level readout). */
@@ -45,25 +46,19 @@ export interface WaveTimeoutDetonatable {
 }
 
 /**
- * Detonates every surviving detonatable entity at the shared
- * {@link WAVE_TIMEOUT_EXPLOSION_SCALE}, playing the shared major-explosion
- * cue once per detonation (reusing its concurrency limiter). Entities for
- * which `exclude` returns true are skipped silently — the game passes a
- * predicate that skips carried-over asteroids.
+ * No-op placeholder for the former wave-timeout detonation helper (AH-0MUNS3ZQ1002DJ9S).
  *
- * @returns the number of entities that were detonated.
+ * Survivors are no longer detonated on timeout; they persist into the next
+ * wave as active, gating threats. This function remains as a stable API so
+ * callers (`PlayScene._timeoutWave`, `GymFormationScene._onWaveTimeout`)
+ * compile without change — the carry-over logic lives in the callers
+ * instead.
+ *
+ * @returns 0 — no entities are detonated.
  */
 export function detonateWaveTimeoutSurvivors<T extends WaveTimeoutDetonatable>(
-  survivors: readonly T[],
-  exclude?: (entity: T) => boolean,
+  _survivors: readonly T[],
+  _exclude?: (entity: T) => boolean,
 ): number {
-  let detonated = 0;
-  for (const entity of survivors) {
-    if (!entity.alive) continue;
-    if (exclude?.(entity)) continue;
-    playMajorExplosionSound();
-    entity.destroySelf(WAVE_TIMEOUT_EXPLOSION_SCALE);
-    detonated += 1;
-  }
-  return detonated;
+  return 0;
 }

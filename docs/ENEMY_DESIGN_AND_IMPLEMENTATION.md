@@ -496,10 +496,12 @@ for reference implementations (the base class drives them).
 - **Tear-down:** `SHUTDOWN` cancels the countdown and hides the overlay
   so a scene restart never double-fires or leaks.
 
-### 2.6 Wave-timeout in the enemy gyms (AH-0MUNR5LM1004B223, AH-0MUK5ONAA0007YEX)
+### 2.6 Wave-timeout carry-over in the enemy gyms (AH-0MUNS3ZQ1002DJ9S, AH-0MUNR5LM1004B223, AH-0MUK5ONAA0007YEX)
 
 The shipped game's wave time-limit is mirrored by the enemy gyms as a
-single shared implementation so the two cannot diverge:
+single shared implementation so the two cannot diverge. On timeout the
+survivors are **kept** and carry over — there is no detonation and no
+life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
 
 - **Shared state machine.** The timer, the depleting bar and the
   wipe→3 s countdown→respawn lifecycle live once in the shared
@@ -508,12 +510,12 @@ single shared implementation so the two cannot diverge:
   so every combat gym opts in through the same hooks — a single kind of
   scene. `GymFormationScene` (and every `GymEnemies` / `GymBoss` /
   `GymMinerals` subclass) and `GymPowerUpsCombat` all consume it.
-- **Shared helper.** `detonateWaveTimeoutSurvivors` and the
-  `WAVE_TIME_LIMIT_SECONDS` / `WAVE_TIMEOUT_EXPLOSION_SCALE` / bar-geometry
-  constants live in `src/scenes/core/waveTimeout.ts`. `PlayScene._timeoutWave`
-  and the shared `CombatScene._onWaveTimeout` both call the helper, so the
-  major-explosion cue, its `MAJOR_EXPLOSION_*` concurrency limiter and the 10×
-  detonation scale are the *same code*.
+- **Shared helper is a no-op.** `detonateWaveTimeoutSurvivors` in
+  `src/scenes/core/waveTimeout.ts` is retained as a stable API but returns 0
+  and destroys nothing; `WAVE_TIME_LIMIT_SECONDS` and the bar-geometry
+  constants live there too. `PlayScene._timeoutWave` and the shared
+  `CombatScene._onWaveTimeout` both call it, so the game and the gyms cannot
+  diverge on the (now absent) penalty.
 - **Opt-in.** `GymFormationScene` subclasses enable it through
   `EnemyFormationConfig.timeoutDuration` (seconds); `GymPowerUpsCombat` opts in
   by overriding `getWaveTimeoutDuration()`. `GymEnemies` sets it to
@@ -522,19 +524,23 @@ single shared implementation so the two cannot diverge:
   for its scout wave. The boss (`GymEnemies` with the `boss` config) and
   `GymBoss` leave it unset, as do the enemy-free `GymPlayer`, `GymWeapons`
   and `GymPowerUpsUtility`.
-- **Expiry flow.** On expiry every surviving non-asteroid enemy detonates at
-  `WAVE_TIMEOUT_EXPLOSION_SCALE` (asteroids survive silently, matching the
-  game), the bar hides, and the shared 3 s wipe→respawn countdown starts —
-  so a gym (which has no lives) simply refreshes its formation. The timeout
-  pauses while a countdown is active and restarts on every respawn.
+- **Expiry flow.** On expiry survivors persist, the bar hides, and the shared
+  3 s wipe→respawn countdown starts. At the countdown's end a **fresh
+  formation spawns alongside the survivors** (`GymFormationScene`'s
+  `respawnWithCarriedSurvivors`, or `GymPowerUpsCombat.respawnWave`), so both
+  the survivors and the fresh formation must be cleared before the wipe is
+  complete. A full wipe with no survivors falls back to a clean-slate
+  `respawnFormation`/base reset. The timeout pauses while a countdown is
+  active and restarts on every respawn.
 - **UI.** A depleting top-of-screen bar mirrors `PlayScene._drawWaveTimer()`
   and shares its geometry constants and drawing code.
 - **Parity guard.** `CombatScene.equivalence.test.ts` asserts the shared
   wave-timeout / countdown methods are defined exactly once (in the shared
   core) and that both gym bases resolve them to the same function objects, so
   a divergent copy cannot be re-introduced.
-- **Tests.** `src/scenes/core/waveTimeout.test.ts` covers the helper;
-  `GymFormationScene.test.ts` covers the opt-in/expiry/respawn behaviour,
+- **Tests.** `src/scenes/core/waveTimeout.test.ts` covers the no-op helper;
+  `GymFormationScene.test.ts` covers the opt-in/expiry/carry-over-respawn
+  behaviour (survivors + fresh formation must both be cleared),
   `GymEnemies.test.ts` asserts every non-boss key enables it while the boss
   does not, and `GymMinerals.test.ts` / `GymPowerUpsCombat.test.ts` cover the
   newly-enabled gyms.

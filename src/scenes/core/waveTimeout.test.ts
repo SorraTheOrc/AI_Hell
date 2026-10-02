@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as effectsModule from '../../audio/effects';
 import {
   detonateWaveTimeoutSurvivors,
-  WAVE_TIMEOUT_EXPLOSION_SCALE,
   type WaveTimeoutDetonatable,
 } from './waveTimeout';
 
@@ -18,12 +17,12 @@ class RecordingEntity implements WaveTimeoutDetonatable {
   }
 }
 
-describe('waveTimeout — shared wave-timeout detonation helper (AH-0MUK5ONAA0007YEX)', () => {
+describe('waveTimeout — shared helper is a no-op (AH-0MUNS3ZQ1002DJ9S)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('detonates every alive survivor at the shared 10x scale, playing the shared major-explosion cue once each', () => {
+  it('returns 0 and leaves every survivor alive with no explosion VFX', () => {
     const cue = vi
       .spyOn(effectsModule, 'playMajorExplosionSound')
       .mockImplementation(() => undefined);
@@ -31,31 +30,16 @@ describe('waveTimeout — shared wave-timeout detonation helper (AH-0MUK5ONAA000
 
     const detonated = detonateWaveTimeoutSurvivors(survivors);
 
-    expect(detonated).toBe(2);
-    expect(cue).toHaveBeenCalledTimes(2);
+    // No entity is detonated and the major-explosion cue never plays.
+    expect(detonated).toBe(0);
+    expect(cue).not.toHaveBeenCalled();
     for (const entity of survivors) {
-      expect(entity.alive).toBe(false);
-      expect(entity.destroyCalls).toEqual([WAVE_TIMEOUT_EXPLOSION_SCALE]);
+      expect(entity.alive).toBe(true);
+      expect(entity.destroyCalls).toEqual([]);
     }
   });
 
-  it('skips entities already dead and does not play the cue for them', () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
-    const dead = new RecordingEntity();
-    dead.alive = false;
-    const live = new RecordingEntity();
-
-    const detonated = detonateWaveTimeoutSurvivors([dead, live]);
-
-    expect(detonated).toBe(1);
-    expect(cue).toHaveBeenCalledTimes(1);
-    expect(dead.destroyCalls).toEqual([]);
-    expect(live.destroyCalls).toEqual([WAVE_TIMEOUT_EXPLOSION_SCALE]);
-  });
-
-  it('honours the exclude predicate (carried-over asteroids survive with no cue)', () => {
+  it('is a no-op even with an exclude predicate supplied', () => {
     const cue = vi
       .spyOn(effectsModule, 'playMajorExplosionSound')
       .mockImplementation(() => undefined);
@@ -67,10 +51,11 @@ describe('waveTimeout — shared wave-timeout detonation helper (AH-0MUK5ONAA000
       (entity) => entity === asteroid,
     );
 
-    expect(detonated).toBe(1);
-    expect(cue).toHaveBeenCalledTimes(1);
+    expect(detonated).toBe(0);
+    expect(cue).not.toHaveBeenCalled();
     expect(asteroid.alive).toBe(true);
+    expect(ship.alive).toBe(true);
     expect(asteroid.destroyCalls).toEqual([]);
-    expect(ship.destroyCalls).toEqual([WAVE_TIMEOUT_EXPLOSION_SCALE]);
+    expect(ship.destroyCalls).toEqual([]);
   });
 });

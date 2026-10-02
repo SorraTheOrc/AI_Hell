@@ -51,7 +51,6 @@ import {
 import { DEFAULT_CONFIG } from '../../../core/config';
 import { seedConfigStore } from '../../../core/configStore';
 import { PHASE_GHOST_ALPHA } from '../../core/CombatEffectVisuals';
-import { WAVE_TIMEOUT_EXPLOSION_SCALE } from '../../core/waveTimeout';
 
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -1453,7 +1452,7 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
     expect(scene.getWaveTimeoutBar()).toBeNull();
   });
 
-  it('AC2/AC4 — expiry detonates every survivor at 10x via the shared cue, then starts the respawn countdown', async () => {
+  it('AC2/AC4 — expiry keeps every survivor (no detonation), then starts the respawn countdown', async () => {
     const cue = vi
       .spyOn(effectsModule, 'playMajorExplosionSound')
       .mockImplementation(() => undefined);
@@ -1463,12 +1462,11 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // Every survivor detonated at the shared 10x scale, cue played once each.
-    expect(scene.aliveCount).toBe(0);
-    expect(cue).toHaveBeenCalledTimes(FORMATION_COUNT);
-    for (const entity of survivors) {
-      expect(entity.lastDestroyScale).toBe(WAVE_TIMEOUT_EXPLOSION_SCALE);
-    }
+    // No survivor is detonated and the major-explosion cue never plays
+    // (carry-over, AH-0MUNS3ZQ1002DJ9S).
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    expect(cue).not.toHaveBeenCalled();
+    for (const entity of survivors) expect(entity.alive).toBe(true);
 
     // The timeout is spent and the shared wipe→respawn countdown began.
     expect(scene.isWaveTimeoutActive()).toBe(false);
@@ -1486,7 +1484,9 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
     scene.tick(1.0);
     scene.tick(1.0); // countdown → respawn
 
-    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+    // The original survivors persist alongside a fresh formation, so both
+    // must be cleared (AH-0MUNS3ZQ1002DJ9S).
+    expect(scene.aliveCount).toBe(FORMATION_COUNT * 2);
     expect(scene.isRespawnCountdownActive()).toBe(false);
     expect(scene.isWaveTimeoutActive()).toBe(true);
     expect(scene.getWaveTimeoutRemaining()).toBeCloseTo(1, 5);
@@ -1511,6 +1511,48 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
     scene.tick(0.016);
 
     expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
+  });
+
+  it('AC3 — survivors and the fresh formation must both be cleared to advance (carry-over)', async () => {
+    const scene = await bootWithTimeout(1);
+    const survivorsBefore = [...scene.formationEntities];
+    expect(survivorsBefore).toHaveLength(FORMATION_COUNT);
+
+    // Time out → countdown → a fresh formation spawns alongside survivors.
+    scene.setWaveTimeoutRemaining(0.05);
+    scene.tick(0.1);
+    scene.tick(1);
+    scene.tick(1);
+    scene.tick(1);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+
+    const survivorSet = new Set(survivorsBefore);
+    const fresh = scene.formationEntities.filter((e) => !survivorSet.has(e));
+    expect(fresh).toHaveLength(FORMATION_COUNT);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT * 2);
+    // AC5 — the fresh formation is a complete formation: every entity is
+    // alive, on the display list, and positioned at the configured geometry.
+    expect(fresh.every((e) => e.alive)).toBe(true);
+    expect(fresh.every((e) => scene.children.list.includes(e))).toBe(true);
+    const offsets = vOffsets(FORMATION_COUNT);
+    for (const [index, entity] of fresh.entries()) {
+      const { row, col } = offsets[index];
+      expect(entity.x).toBeCloseTo(scene.formationX + col * SPACING_X, 5);
+      expect(entity.y).toBeCloseTo(scene.formationY + row * SPACING_Y, 5);
+    }
+
+    // Destroy only the fresh formation: no wipe yet (survivors remain).
+    for (const entity of fresh) entity.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.aliveCount).toBe(FORMATION_COUNT);
+
+    // Destroy the survivors too — the formation is now fully wiped and the
+    // wipe→respawn countdown starts again.
+    for (const entity of survivorsBefore) entity.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+    expect(scene.aliveCount).toBe(0);
   });
 
   it('AC4 — a disabled timeout never detonates the formation', async () => {

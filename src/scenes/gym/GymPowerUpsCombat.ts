@@ -403,26 +403,39 @@ export class GymPowerUpsCombat extends CombatScene<
   }
 
   /**
-   * Wave-timeout expiry: the shared base already detonated every surviving
-   * non-asteroid threat (the scouts) through the shared major-explosion cue
-   * + limiter; refresh the wave through the shared 3 s countdown.
+   * Wave-timeout expiry: survivors are **kept** (the shared helper is a no-op;
+   * carry-over parity with `PlayScene`, AH-0MUNS3ZQ1002DJ9S) and the wave
+   * refreshes through the shared 3 s countdown.
    */
   protected override onWaveTimeoutExpired(): void {
     this._startRespawnCountdown();
   }
 
   /**
-   * Rebuilds the scout wave after the shared countdown elapses: clears stale
-   * bullets, resets the formation base and respawns a fresh V-formation, then
-   * restarts the shared wave-timeout.
+   * Refreshes the scout wave after the shared countdown elapses: clears stale
+   * bullets, keeps the live scouts in place, spawns a fresh V-formation
+   * alongside them, then restarts the shared wave-timeout (carry-over parity,
+   * AH-0MUNS3ZQ1002DJ9S). A full wipe (no survivors) resets the base, matching
+   * the previous clean-slate behaviour.
    */
   protected override respawnWave(): void {
     for (const bullet of this.scoutBullets) bullet.graphics.destroy();
     this.scoutBullets = [];
-    for (const scout of this.scouts) scout.destroy();
-    this.scouts = [];
-    this.formationBaseX = COMBAT_START_X;
-    this.formationBaseY = COMBAT_START_Y;
+
+    // Keep live scouts; drop only the dead ones.
+    const survivors = this.scouts.filter((scout) => scout.alive);
+    for (const scout of this.scouts) {
+      if (!scout.alive) scout.destroy();
+    }
+    this.scouts = survivors;
+
+    // A clean-slate respawn (ordinary wipe) resets the base; a carry-over
+    // refresh keeps the current base so survivors do not jump.
+    if (survivors.length === 0) {
+      this.formationBaseX = COMBAT_START_X;
+      this.formationBaseY = COMBAT_START_Y;
+    }
+
     this._spawnScoutFormation();
     playSpawnSound();
     this.startWaveTimeout();

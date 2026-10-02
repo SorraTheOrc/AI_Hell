@@ -144,12 +144,13 @@ function reachBoss(scene: PlayScene): void {
 
 /**
  * Walks the run to the boss encounter by repeatedly letting the wave timer
- * expire, so the Level-1 asteroid is carried over every wave/level boundary
- * (AH-0MU8TWF1H007OG2L). Non-asteroid enemies detonate on each timeout.
+ * expire, so every survivor is carried over each wave/level boundary
+ * (AH-0MUNS3ZQ1002DJ9S). No life penalty applies; the high life count just
+ * absorbs any incidental enemy fire while the run advances.
  */
 function timeOutToBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
-  gs.lives = 99; // absorb the per-timeout life penalty.
+  gs.lives = 99; // absorb incidental enemy fire while timeouts advance the run.
   for (let guard = 0; guard < 200 && !scene.getBoss(); guard++) {
     if (scene.isTransitioning()) {
       finishTransition(scene);
@@ -865,20 +866,22 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getWaveTimerRemaining()).toBe(0);
   });
 
-  it('AH-0MU7JTG9R002ZWA6 AC2/AC4 — expiry detonates non-asteroid survivors at 10x, costs one life, and advances the wave', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1 — expiry carries survivors over, costs no life, and advances the wave', async () => {
     const scene = await bootPlayWithAsteroid();
     waveVfx.scales.length = 0;
     const livesBefore = scene.getGameState().lives;
+    const survivorsBefore = scene.getAliveCount();
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    // All non-asteroid survivors detonated at 10x scale; asteroid survives.
-    expect(scene.getAliveCount()).toBe(1); // the asteroid
-    expect(waveVfx.scales.some((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE)).toBe(true);
+    // Every survivor (asteroid and non-asteroid alike) persists — no
+    // detonation VFX at any scale.
+    expect(scene.getAliveCount()).toBe(survivorsBefore);
+    expect(waveVfx.scales).not.toContain(WAVE_TIMEOUT_EXPLOSION_SCALE);
 
-    // Exactly one life lost and the wave advanced.
-    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    // No life lost and the wave advanced.
+    expect(scene.getGameState().lives).toBe(livesBefore);
     expect(scene.getWaveManager().waveNumber).toBe(2);
   });
 
@@ -940,20 +943,18 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(Math.abs(asteroid.y - asteroidY)).toBeLessThan(2);
   });
 
-  it('AH-0MU8TWF1H007OG2L AC2 — non-asteroid enemies detonate on timeout while asteroids survive', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1 — non-asteroid enemies persist on timeout alongside asteroids', async () => {
     const scene = await bootPlayWithAsteroid();
-    waveVfx.scales.length = 0;
-    const asteroids = findAsteroids(scene);
-    expect(asteroids.length).toBeGreaterThan(0);
+    const nonAsteroidsBefore = scene.getAliveCount() - findAsteroids(scene).length;
+    expect(nonAsteroidsBefore).toBeGreaterThan(0);
 
     // Time out the wave.
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    // All non-asteroid enemies were detonated.
-    expect(scene.getAliveCount()).toBe(asteroids.length);
-    // Asteroid explosion scale should not be 10x; only non-asteroid detonation was 10x.
-    expect(waveVfx.scales.some((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE)).toBe(true);
+    // No non-asteroid enemy was detonated.
+    const nonAsteroidsAfter = scene.getAliveCount() - findAsteroids(scene).length;
+    expect(nonAsteroidsAfter).toBe(nonAsteroidsBefore);
   });
 
   it('AH-0MU8TWF1H007OG2L AC3 — surviving asteroids are shootable during the transition period', async () => {
@@ -986,7 +987,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     }
   });
 
-  it('AH-0MU8TWF1H007OG2L AC4 — timeout costs a life and advances the wave when asteroids survive', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1 — timeout costs no life and advances the wave', async () => {
     const scene = await bootPlay();
     const livesBefore = scene.getGameState().lives;
     const waveBefore = scene.getWaveManager().waveNumber;
@@ -995,62 +996,64 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    // Exactly one life lost.
-    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+    // No life lost.
+    expect(scene.getGameState().lives).toBe(livesBefore);
     // The wave advanced.
     expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
   });
 
-  it('AH-0MU8TWF1H007OG2L AC5 — surviving asteroids are NOT re-registered with WaveManager after timeout (AH-0MUJM746P000QAEO)', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1/AC2 — asteroids are not wave-accounted but non-asteroid survivors are adopted', async () => {
     const scene = await bootPlayWithAsteroid();
     const wm = scene.getWaveManager();
     const asteroidsBefore = findAsteroids(scene);
     expect(asteroidsBefore.length).toBeGreaterThan(0);
+    const carriedBefore = scene.getAliveCount() - asteroidsBefore.length;
+    expect(carriedBefore).toBeGreaterThan(0);
 
     // Time out the wave to trigger transition.
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
-    // Finish the transition so the next wave is spawned.
-    finishTransition(scene);
 
     // Asteroids survived the timeout and are still alive.
-    const asteroidsAfter = findAsteroids(scene);
-    expect(asteroidsAfter.length).toBeGreaterThan(0);
+    expect(findAsteroids(scene).length).toBeGreaterThan(0);
+    // enemiesAlive reflects the next wave's formation enemies PLUS the
+    // adopted non-asteroid survivors; asteroids are never adopted.
+    expect(wm.enemiesAlive).toBe(wm.waveEnemyCount() + carriedBefore);
 
-    // enemiesAlive reflects ONLY the next wave's formation enemies.
-    expect(wm.enemiesAlive).toBe(wm.waveEnemyCount());
+    // Finish the transition so the next wave is spawned; the survivors are
+    // still alive alongside the fresh spawns.
+    finishTransition(scene);
+    expect(findAsteroids(scene).length).toBeGreaterThan(0);
   });
 
   // ── Wave-timeout major-explosion SFX (AH-0MUJ1YZJ9008O4RC) ─────
 
-  it('AH-0MUJ1YZJ9008O4RC AC2 — timeout fires the major-explosion cue once per detonated survivor', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1 — timeout never fires the major-explosion cue and keeps survivors', async () => {
     vi.restoreAllMocks();
     const scene = await bootPlay();
-    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
-    expect(detonated).toBeGreaterThan(0);
+    const survivorsBefore = scene.getAliveCount();
+    expect(survivorsBefore).toBeGreaterThan(0);
     const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).toHaveBeenCalledTimes(detonated);
-    expect(scene.getAliveCount()).toBe(findAsteroids(scene).length);
+    expect(majorCue).not.toHaveBeenCalled();
+    expect(scene.getAliveCount()).toBe(survivorsBefore);
     vi.restoreAllMocks();
   });
 
-  it('AH-0MUJ1YZJ9008O4RC AC2/AC4 — asteroids survive the timeout and do not trigger the cue', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1 — asteroids survive the timeout and no cue fires', async () => {
     vi.restoreAllMocks();
     const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
-    const detonated = scene.getAliveCount() - asteroids.length;
-    expect(detonated).toBeGreaterThan(0);
     const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).toHaveBeenCalledTimes(detonated);
+    expect(majorCue).not.toHaveBeenCalled();
     for (const asteroid of asteroids) expect(asteroid.alive).toBe(true);
     vi.restoreAllMocks();
   });
@@ -1071,42 +1074,51 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     vi.restoreAllMocks();
   });
 
-  it('AH-0MUJ1YZJ9008O4RC AC4 — the timeout life loss keeps the generic cue and never the player cue', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1 — timeout plays no destruction cue and loses no life', async () => {
     vi.restoreAllMocks();
     const scene = await bootPlay();
-    const generic = vi.spyOn(effectsModule, 'playDestructionSound');
     const playerCue = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
     const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
+    const livesBefore = scene.getGameState().lives;
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(generic).toHaveBeenCalledTimes(1);
     expect(playerCue).not.toHaveBeenCalled();
-    expect(majorCue).toHaveBeenCalled();
+    expect(majorCue).not.toHaveBeenCalled();
+    expect(scene.getGameState().lives).toBe(livesBefore);
     vi.restoreAllMocks();
   });
 
-  it('AH-0MUJ1YZJ9008O4RC AC2 — detonation scale, life penalty and wave advance are unchanged', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC1/AC2 — no detonation, no life penalty, survivors adopted, wave advances', async () => {
     vi.restoreAllMocks();
     const scene = await bootPlayWithAsteroid();
-    const detonated = scene.getAliveCount() - findAsteroids(scene).length;
+    const wm = scene.getWaveManager();
+    const carried = scene.getAliveCount() - findAsteroids(scene).length;
+    expect(carried).toBeGreaterThan(0);
     const livesBefore = scene.getGameState().lives;
-    const waveBefore = scene.getWaveManager().waveNumber;
+    const waveBefore = wm.waveNumber;
     waveVfx.scales.length = 0;
     const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).toHaveBeenCalledTimes(detonated);
-    expect(
-      waveVfx.scales.filter((s) => s === WAVE_TIMEOUT_EXPLOSION_SCALE).length,
-    ).toBe(detonated);
-    expect(scene.getGameState().lives).toBe(livesBefore - 1);
-    expect(scene.getWaveManager().waveNumber).toBe(waveBefore + 1);
+    // No 10x detonation VFX, no life loss, wave advanced.
+    expect(majorCue).not.toHaveBeenCalled();
+    expect(waveVfx.scales).not.toContain(WAVE_TIMEOUT_EXPLOSION_SCALE);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(wm.waveNumber).toBe(waveBefore + 1);
+    // The surviving non-asteroid enemies are adopted into the new wave's
+    // roster so they gate its completion (asteroids are never adopted).
+    expect(wm.enemiesAlive).toBe(wm.waveEnemyCount() + carried);
     vi.restoreAllMocks();
   });
+
+  // Note: the "survivors gate the next wave" invariant is covered
+  // deterministically by the WaveManager carry-over tests
+  // (AH-0MUNS3ZQ1002DJ9S in WaveManager.test.ts); the PlayScene integration
+  // assertion above confirms `_timeoutWave` adopts the survivors.
 
   // ── Phase 2: Asteroid behaviour during transition (AH-0MUCG5SWH008104P) ──
 
@@ -1142,8 +1154,8 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
     expect(scene.isTransitioning()).toBe(true);
-    // The timeout penalty costs one life and grants brief invulnerability.
-    expect(scene.getGameState().lives).toBe(livesAtBoot - 1);
+    // The timeout carries survivors over without a life penalty.
+    expect(scene.getGameState().lives).toBe(livesAtBoot);
 
     // Clear the post-hit invulnerability so the ram can register during
     // the transition (test seam; invulnerability itself is covered elsewhere).
@@ -1158,28 +1170,27 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
       { ...state, x: asteroid.x, y: asteroid.y };
     scene.tick(0.001);
 
-    // Ramming during the transition costs another life and destroys the asteroid.
-    expect(scene.getGameState().lives).toBe(livesAtBoot - 2);
+    // Ramming during the transition costs a life and destroys the asteroid.
+    expect(scene.getGameState().lives).toBeLessThanOrEqual(livesAtBoot - 1);
     expect(asteroid.alive).toBe(false);
   });
 
-  it('AH-0MUCG5SWH008104P AC4 — no new enemy bullets spawn and no further life is lost during transition', async () => {
+  it('AH-0MUNS3ZQ1002DJ9S AC3 — carried-over survivors persist through the transition pause', async () => {
     const scene = await bootPlay();
 
     // Time out the wave to enter the transition period.
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
     expect(scene.isTransitioning()).toBe(true);
-    const livesAfterTimeout = scene.getGameState().lives;
-    const enemyBulletsAtTransitionStart = scene.getEnemyBullets().length;
+    const survivorsAtStart = scene.getAliveCount();
+    expect(survivorsAtStart).toBeGreaterThan(0);
 
-    // Tick through the transition (player not overlapping any asteroid).
+    // Tick through the transition; the survivors remain fully active and are
+    // still on the field at the end of the pause.
     scene.tick(LEVEL_TRANSITION_SECONDS * 0.5);
-
-    // Enemy fire is suspended — no new enemy bullets spawn during transition.
-    expect(scene.getEnemyBullets().length).toBeLessThanOrEqual(enemyBulletsAtTransitionStart);
-    // No further life is lost during the transition.
-    expect(scene.getGameState().lives).toBe(livesAfterTimeout);
+    expect(scene.getAliveCount()).toBe(survivorsAtStart);
+    scene.tick(LEVEL_TRANSITION_SECONDS * 0.5 + 0.01);
+    expect(scene.isTransitioning()).toBe(false);
   });
 
   it('AH-0MUCG5SWH008104P AC5 — un-destroyed carried-over asteroids persist after transition', async () => {

@@ -970,7 +970,7 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
     );
   });
 
-  it('AC2 — expiry detonates every scout via the shared cue, then refreshes the wave after the countdown', async () => {
+  it('AC2 — expiry keeps every scout (no detonation), then refreshes the wave after the countdown', async () => {
     const cue = vi
       .spyOn(effectsModule, 'playMajorExplosionSound')
       .mockImplementation(() => undefined);
@@ -981,19 +981,21 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // Every scout detonated through the shared major-explosion cue.
-    expect(scouts.every((scout) => !scout.alive)).toBe(true);
-    expect(cue).toHaveBeenCalledTimes(scouts.length);
+    // No scout is detonated and the shared major-explosion cue never plays
+    // (carry-over, AH-0MUNS3ZQ1002DJ9S).
+    expect(scouts.every((scout) => scout.alive)).toBe(true);
+    expect(cue).not.toHaveBeenCalled();
     expect(scene.isWaveTimeoutActive()).toBe(false);
     expect(scene.isRespawnCountdownActive()).toBe(true);
 
-    // The shared 3 s countdown refreshes the wave and restarts the window.
+    // The shared 3 s countdown refreshes the wave with a fresh formation
+    // alongside the survivors and restarts the window.
     scene.tick(1);
     scene.tick(1);
     scene.tick(1);
     expect(scene.isRespawnCountdownActive()).toBe(false);
     const refreshed = scene.getScouts();
-    expect(refreshed).toHaveLength(scouts.length);
+    expect(refreshed).toHaveLength(scouts.length * 2);
     expect(refreshed.every((scout) => scout.alive)).toBe(true);
     expect(scene.isWaveTimeoutActive()).toBe(true);
   });

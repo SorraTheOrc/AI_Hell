@@ -394,25 +394,29 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
       .spyOn(effectsModule, 'playMajorExplosionSound')
       .mockImplementation(() => undefined);
     const scene = await boot();
-    const before = liveAsteroids(scene).length;
+    const initial = liveAsteroids(scene);
+    const before = initial.length;
     expect(before).toBeGreaterThan(0);
 
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // Asteroids are exempt (game parity): nothing detonates and the shared
-    // major-explosion cue never plays.
+    // Nothing detonates and the shared major-explosion cue never plays: the
+    // asteroids persist (carry-over, AH-0MUNS3ZQ1002DJ9S). The player's
+    // continuous auto-fire may destroy some during the countdown, so assert
+    // the field is not wiped by the timeout rather than tracking identities.
     expect(cue).not.toHaveBeenCalled();
-    expect(liveAsteroids(scene)).toHaveLength(before);
+    expect(liveAsteroids(scene).length).toBeGreaterThan(0);
     expect(scene.isWaveTimeoutActive()).toBe(false);
     expect(scene.isRespawnCountdownActive()).toBe(true);
 
-    // The shared 3 s countdown refreshes the field and restarts the window.
+    // The shared 3 s countdown refreshes the field with a fresh formation
+    // alongside the survivors and restarts the window.
     scene.tick(1);
     scene.tick(1);
     scene.tick(1);
     expect(scene.isRespawnCountdownActive()).toBe(false);
-    expect(liveAsteroids(scene)).toHaveLength(before);
+    expect(liveAsteroids(scene).length).toBeGreaterThanOrEqual(before);
     expect(scene.isWaveTimeoutActive()).toBe(true);
   });
 
