@@ -10,8 +10,10 @@ import { describe, expect, test } from 'vitest';
 
 import {
   distanceSquared,
+  distanceToSegmentSquared,
   findNearestTarget,
   isInAoEArea,
+  isPointNearSegment,
   selectAoETargets,
   selectChainTargets,
   type AoEGeometryTarget,
@@ -155,5 +157,54 @@ describe('selectChainTargets', () => {
     const dead = new Target(5, 0, 0, false);
     const live = new Target(10, 0);
     expect(selectChainTargets(0, 0, [dead, live], 2)).toEqual([live]);
+  });
+
+  test('stops the chain when the next hop exceeds maxHopDistance', () => {
+    const near = new Target(30, 0);
+    const far = new Target(120, 0); // 90 px from near, beyond a 60 px reach
+    const beyond = new Target(140, 0);
+    expect(selectChainTargets(0, 0, [near, far, beyond], 3, 60)).toEqual([
+      near,
+    ]);
+  });
+
+  test('a primary target beyond maxHopDistance yields an empty chain', () => {
+    const far = new Target(200, 0);
+    expect(selectChainTargets(0, 0, [far], 2, 100)).toEqual([]);
+  });
+
+  test('chains within reach hop-by-hop (each hop measured from the previous)', () => {
+    // a is 50 from the origin, b is 40 from a, c is 30 from b — all within 60.
+    const a = new Target(50, 0);
+    const b = new Target(90, 0);
+    const c = new Target(120, 0);
+    expect(selectChainTargets(0, 0, [c, a, b], 3, 60)).toEqual([a, b, c]);
+  });
+});
+
+describe('isPointNearSegment / distanceToSegmentSquared', () => {
+  test('squared distance is zero for a point on the segment', () => {
+    expect(distanceToSegmentSquared(5, 0, 0, 0, 10, 0)).toBe(0);
+  });
+
+  test('measures perpendicular distance to the segment interior', () => {
+    expect(distanceToSegmentSquared(5, 3, 0, 0, 10, 0)).toBe(9);
+  });
+
+  test('clamps to the nearest endpoint beyond the segment ends', () => {
+    // Point beyond B along the x-axis: distance is to B, not the infinite line.
+    expect(distanceToSegmentSquared(14, 0, 0, 0, 10, 0)).toBe(16);
+    expect(distanceToSegmentSquared(-4, 0, 0, 0, 10, 0)).toBe(16);
+  });
+
+  test('a degenerate segment is treated as a point', () => {
+    expect(distanceToSegmentSquared(3, 4, 0, 0, 0, 0)).toBe(25);
+  });
+
+  test('isPointNearSegment respects the tolerance', () => {
+    expect(isPointNearSegment(5, 3, 0, 0, 10, 0, 3)).toBe(true);
+    expect(isPointNearSegment(5, 3, 0, 0, 10, 0, 2.9)).toBe(false);
+    expect(isPointNearSegment(14, 0, 0, 0, 10, 0, 4)).toBe(true);
+    expect(isPointNearSegment(14, 0, 0, 0, 10, 0, 3.9)).toBe(false);
   });
 });

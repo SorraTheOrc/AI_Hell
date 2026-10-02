@@ -122,6 +122,8 @@ export function findNearestTarget<T extends AoEGeometryTarget>(
  * @param originY - Chain origin y (px).
  * @param targets - Candidate targets.
  * @param maxLinks - Maximum number of targets to return (0 → empty).
+ * @param maxHopDistance - Maximum distance (px) for each hop, including the
+ *   first from the origin; defaults to `Infinity` (unbounded reach).
  * @returns The chained targets in hop order.
  */
 export function selectChainTargets<T extends AoEGeometryTarget>(
@@ -129,19 +131,65 @@ export function selectChainTargets<T extends AoEGeometryTarget>(
   originY: number,
   targets: readonly T[],
   maxLinks: number,
+  maxHopDistance: number = Infinity,
 ): T[] {
   const chain: T[] = [];
   if (!Number.isFinite(maxLinks) || maxLinks <= 0) return chain;
+  const hopLimitSq =
+    (Number.isFinite(maxHopDistance) ? maxHopDistance : Infinity) ** 2;
   const chosen = new Set<T>();
   let fromX = originX;
   let fromY = originY;
   while (chain.length < maxLinks) {
     const next = findNearestTarget(fromX, fromY, targets, chosen);
     if (!next) break;
+    // Each hop (including the first from the origin) must be within reach.
+    if (distanceSquared(fromX, fromY, next.x, next.y) > hopLimitSq) break;
     chain.push(next);
     chosen.add(next);
     fromX = next.x;
     fromY = next.y;
   }
   return chain;
+}
+
+/**
+ * Squared distance from point P to the **segment** AB (not the infinite
+ * line) — the closest point is clamped to the segment's endpoints. Used by
+ * the Arc chain to clear enemy bullets lying along a bolt segment.
+ */
+export function distanceToSegmentSquared(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return distanceSquared(px, py, ax, ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  return distanceSquared(px, py, ax + t * dx, ay + t * dy);
+}
+
+/**
+ * True when point P lies within `tolerance` px of the segment AB. The Arc
+ * chain uses this to destroy enemy bullets on the bolt path.
+ */
+export function isPointNearSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  tolerance: number,
+): boolean {
+  return (
+    distanceToSegmentSquared(px, py, ax, ay, bx, by) <=
+    tolerance * tolerance
+  );
 }

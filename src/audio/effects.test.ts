@@ -110,6 +110,11 @@ import {
   MORTAR_DETONATION_START_HZ,
   MORTAR_DETONATION_END_HZ,
   MORTAR_DETONATION_VOLUME,
+  playArcFireSound,
+  ARC_FIRE_ZAP_START_HZ,
+  ARC_FIRE_ZAP_END_HZ,
+  ARC_FIRE_ZAP_VOLUME,
+  ARC_FIRE_CRACKLE_VOLUME,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -350,6 +355,7 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playNovaFireSound,
       playMortarFireSound,
       playMortarDetonationSound,
+      playArcFireSound,
       playSpreadPickupSound,
       playDualPickupSound,
       playRapidPickupSound,
@@ -2013,5 +2019,47 @@ describe('Mortar fire + detonation cues — synthesis (F3 AC6)', () => {
     expect(
       boomOscs[0].stopTime! - boomOscs[0].startTime!,
     ).toBeGreaterThan(launchOscs[0].stopTime! - launchOscs[0].startTime!);
+  });
+});
+
+// ── Arc AOE fire cue (F4 AC6) ────────────────────────────────────────
+
+describe('Arc fire cue — synthesis (F4 AC6)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound();
+  });
+
+  it('is a bright square zap layered with a high-passed noise crackle', () => {
+    const snap = snapshot();
+    playArcFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Zap oscillator plus the noise buffer source.
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+    expect(oscs[0].type).toBe('square');
+    expect(startFreq([oscs[0]])).toBe(ARC_FIRE_ZAP_START_HZ);
+    // Descending then rebounding contour — the electric "zap" shape.
+    const freqs = oscs[0].freqEvents.filter(
+      (event) => event.method !== 'setValueAtTime',
+    );
+    expect(freqs).toHaveLength(2);
+    expect(freqs[0].value).toBe(ARC_FIRE_ZAP_END_HZ);
+    expect(freqs[1].value).toBeCloseTo(ARC_FIRE_ZAP_START_HZ * 0.8, 5);
+    // The noise crackle source is present.
+    expect(oscs.some((o) => o.type === 'noise')).toBe(true);
+    expect(ARC_FIRE_ZAP_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(ARC_FIRE_CRACKLE_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
   });
 });

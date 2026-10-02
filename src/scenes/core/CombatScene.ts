@@ -39,8 +39,8 @@ import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
-import { spawnMortarBurst, spawnNovaRing } from '../../vfx/aoeEffect';
-import { selectAoETargets } from '../../utils/aoe';
+import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
+import { isPointNearSegment, selectAoETargets, selectChainTargets } from '../../utils/aoe';
 import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -71,6 +71,12 @@ export type { CombatDrop, CombatEnemyBullet, CombatEnemyEntity };
 
 /** Blink half-period (s) while the player is invulnerable after a hit. */
 export const COMBAT_BLINK_INTERVAL = 0.1;
+
+/**
+ * Half-width (px) of the Arc chain bolt used to clear enemy bullets lying on
+ * the bolt path between chained targets (parent AH-0MUOOB3OR001V8CD).
+ */
+export const ARC_CHAIN_HALF_WIDTH = 14;
 
 /** Wipe → respawn countdown (s) — visible centred text, deterministic via tick(dt). */
 const RESPAWN_COUNTDOWN_SECONDS = 3;
@@ -452,10 +458,104 @@ export abstract class CombatScene<
     x: number,
     y: number,
   ): void {
-    if (def.aoe?.trigger === 'onFire') {
-      this.applyAoeEffect(def, x, y);
-      this.spawnAoeEffectVfx(def, x, y);
+    const aoe = def.aoe;
+    if (aoe?.trigger !== 'onFire') return;
+    if (aoe.chains) {
+      // Arc: strike the nearest enemy, then chain to nearby targets. The
+      // chain is computed once (before any damage) so the damage, the
+      // along-path bullet clear and the VFX all describe the same strikes.
+      const chain = selectChainTargets(
+        x,
+        y,
+        this.getEnemyEntities(),
+        // The descriptor counts *additional* targets after the primary.
+        aoe.chains + 1,
+        aoe.radius,
+      );
+      const path: ArcChainPoint[] = [
+        { x, y },
+        ...chain.map((enemy) => ({ x: enemy.x, y: enemy.y })),
+      ];
+      this.applyArcChainEffect(aoe, x, y, chain, path);
+      this.spawnArcChainVfx(path);
+      return;
     }
+    this.applyAoeEffect(def, x, y);
+    this.spawnAoeEffectVfx(def, x, y);
+  }
+
+  /**
+   * Resolves a chaining (`'chains'`) `'onFire'` effect: damages the selected
+   * chain targets, clears enemy bullets along the bolt path, and reports the
+   * hit to the boss hook.
+   *
+   * @param aoe - The weapon's AOE descriptor.
+   * @param x - Effect origin x (the ship).
+   * @param y - Effect origin y.
+   * @param chain - The selected targets, in hop order.
+   * @param path - The chain vertices (origin → target → …).
+   */
+  private applyArcChainEffect(
+    aoe: NonNullable<WeaponDefinition['aoe']>,
+    x: number,
+    y: number,
+    chain: readonly TEnemy[],
+    path: readonly ArcChainPoint[],
+  ): void {
+    if (aoe.damagesEnemies) {
+      for (const enemy of chain) this.damageEnemyViaAoe(enemy);
+    }
+    if (aoe.clearsEnemyBullets) this.clearEnemyBulletsAlongPath(path);
+    this.onAoeHitsBoss(x, y, aoe.radius);
+  }
+
+  /**
+   * Destroys every enemy bullet within {@link ARC_CHAIN_HALF_WIDTH} px of any
+   * Arc bolt segment, playing the shared impact feedback for each.
+   */
+  private clearEnemyBulletsAlongPath(path: readonly ArcChainPoint[]): void {
+    if (path.length < 2) return;
+    const kept: TBullet[] = [];
+    for (const bullet of this.getEnemyBullets()) {
+      const { x: bx, y: by } = bullet.graphics;
+      let onPath = false;
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        if (
+          isPointNearSegment(
+            bx,
+            by,
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            ARC_CHAIN_HALF_WIDTH,
+          )
+        ) {
+          onPath = true;
+          break;
+        }
+      }
+      if (onPath) {
+        resolveBulletVsBulletImpact(this, bx, by, {
+          registry: this.bulletImpactEffects,
+        });
+        bullet.graphics.destroy();
+      } else {
+        kept.push(bullet);
+      }
+    }
+    this.setEnemyBullets(kept);
+  }
+
+  /**
+   * Spawns the Arc chaining-bolt VFX for the computed chain path. The shared
+   * core owns it so the game and every gym draw the identical zigzag bolts.
+   */
+  protected spawnArcChainVfx(path: readonly ArcChainPoint[]): void {
+    if (path.length < 2) return;
+    spawnArcChain(this, path, { registry: this.aoeEffects });
   }
 
   /**

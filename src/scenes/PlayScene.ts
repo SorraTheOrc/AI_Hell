@@ -46,6 +46,7 @@ import {
 import { GameState } from '../core/GameState';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
+  playArcFireSound,
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
@@ -1200,6 +1201,9 @@ export class PlayScene extends CombatScene<
         break;
       case 'mortar':
         playMortarFireSound();
+        break;
+      case 'arc':
+        playArcFireSound();
         break;
     }
   }

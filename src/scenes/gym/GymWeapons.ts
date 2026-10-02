@@ -64,6 +64,7 @@ import {
   playRapidFireSound,
   playNovaFireSound,
   playMortarFireSound,
+  playArcFireSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
@@ -273,6 +274,9 @@ export class GymWeapons extends CombatCoreScene<
         break;
       case 'mortar':
         playMortarFireSound();
+        break;
+      case 'arc':
+        playArcFireSound();
         break;
     }
   }

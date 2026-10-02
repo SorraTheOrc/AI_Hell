@@ -613,4 +613,86 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     expect(cue).toHaveBeenCalledTimes(1);
   });
+
+  // ── F4 — Arc nearest-enemy targeting + chaining ─────────────────────
+
+  it('F4 AC3/AC4 — Arc strikes the nearest enemy then chains to nearby targets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const nearest = new StubEnemy(scene, 150, 100); // 50 px from the ship
+    const chained = new StubEnemy(scene, 200, 100); // 50 px from nearest
+    const far = new StubEnemy(scene, 700, 450); // out of reach
+    scene.entities.push(nearest, chained, far);
+
+    scene.runAutoFire(0.75);
+
+    expect(nearest.destroyed).toBe(true);
+    expect(chained.destroyed).toBe(true);
+    expect(far.destroyed).toBe(false);
+  });
+
+  it('F4 AC4 — Arc chains at most the descriptor chain count', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    // A tight line of four enemies all within reach of each other.
+    const enemies = [
+      new StubEnemy(scene, 140, 100),
+      new StubEnemy(scene, 180, 100),
+      new StubEnemy(scene, 220, 100),
+      new StubEnemy(scene, 260, 100),
+    ];
+    scene.entities.push(...enemies);
+
+    scene.runAutoFire(0.75);
+
+    const destroyed = enemies.filter((e) => e.destroyed).length;
+    // chains = 2 → the primary plus two chained targets.
+    expect(destroyed).toBe(3);
+    expect(WEAPON_CATALOGUE.arc.aoe!.chains).toBe(2);
+  });
+
+  it('F4 AC4 — Arc clears enemy bullets lying along the bolt path only', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const nearest = new StubEnemy(scene, 150, 100);
+    const chained = new StubEnemy(scene, 200, 100);
+    scene.entities.push(nearest, chained);
+    const onPath = new StubBullet(scene, 175, 100);
+    const offPath = new StubBullet(scene, 175, 300);
+    scene.bullets.push(onPath, offPath);
+
+    scene.runAutoFire(0.75);
+
+    expect(scene.bullets).toEqual([offPath]);
+    expect(onPath.graphics.active).toBe(false);
+  });
+
+  it('F4 AC5 — Arc spawns the chaining-bolt VFX through the shared core', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    scene.entities.push(
+      new StubEnemy(scene, 150, 100),
+      new StubEnemy(scene, 200, 100),
+    );
+
+    scene.runAutoFire(0.75);
+
+    expect(scene.getAoeEffects()).toHaveLength(1);
+  });
+
+  it('F4 AC3 — Arc is a no-op with no live enemies (no chain, no VFX)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+
+    scene.runAutoFire(0.75);
+
+    // The chain is empty → no damage and no chain VFX to draw.
+    expect(scene.getAoeEffects()).toHaveLength(0);
+    expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
+  });
 });

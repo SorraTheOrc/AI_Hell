@@ -1908,6 +1908,83 @@ export function playMortarDetonationSound(): void {
   noise.stop(t + MORTAR_DETONATION_DURATION + 0.02);
 }
 
+// ── Arc AOE fire cue (F4, parent AH-0MUOOB3OR001V8CD) ───────────────
+
+/** Arc zap pitch start (Hz) — a bright electric strike. */
+export const ARC_FIRE_ZAP_START_HZ = 1400;
+
+/** Arc zap pitch end (Hz). */
+export const ARC_FIRE_ZAP_END_HZ = 500;
+
+/** Arc zap layer duration (seconds). */
+export const ARC_FIRE_ZAP_DURATION = 0.12;
+
+/** Arc zap layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const ARC_FIRE_ZAP_VOLUME = 0.13;
+
+/** Arc crackle noise layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const ARC_FIRE_CRACKLE_VOLUME = 0.08;
+
+/**
+ * Plays the dedicated Arc fire cue: a bright square zap (1400 → 500 → 1120
+ * Hz) layered with a high-passed noise crackle, reading as a chaining
+ * electric strike. Distinct from every other weapon cue by its high, buzzy
+ * texture. Safe no-op without an AudioContext.
+ */
+export function playArcFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Layer 1: the bright electric zap.
+  const zap = ctx.createOscillator();
+  const zapGain = ctx.createGain();
+  zap.type = 'square';
+  zap.frequency.setValueAtTime(ARC_FIRE_ZAP_START_HZ, t);
+  zap.frequency.exponentialRampToValueAtTime(
+    ARC_FIRE_ZAP_END_HZ,
+    t + 0.06,
+  );
+  zap.frequency.exponentialRampToValueAtTime(
+    ARC_FIRE_ZAP_START_HZ * 0.8,
+    t + 0.1,
+  );
+  zapGain.gain.setValueAtTime(ARC_FIRE_ZAP_VOLUME, t);
+  zapGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + ARC_FIRE_ZAP_DURATION,
+  );
+  zap.connect(zapGain).connect(ensureMasterGain(ctx));
+  zap.start(t);
+  zap.stop(t + ARC_FIRE_ZAP_DURATION + 0.02);
+
+  // Layer 2: high-passed noise crackle — the electrical texture.
+  const crackleDuration = 0.08;
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * crackleDuration)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'highpass';
+  noiseFilter.frequency.setValueAtTime(2000, t);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(ARC_FIRE_CRACKLE_VOLUME, t);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + crackleDuration);
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + crackleDuration + 0.02);
+}
+
 // ── Player weapon pickup activation cues (GDD §4.4, §7.3) ──────────
 
 /**

@@ -12,12 +12,15 @@ import Phaser from 'phaser';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { BULLET_COLORS } from '../utils/weapons';
 import {
+  ARC_CHAIN_COLOR,
+  ARC_CHAIN_DURATION,
   MORTAR_BURST_COLOR,
   MORTAR_BURST_DURATION,
   MORTAR_BURST_START_SCALE,
   NOVA_RING_COLOR,
   NOVA_RING_DURATION,
   NOVA_RING_START_SCALE,
+  spawnArcChain,
   spawnMortarBurst,
   spawnNovaRing,
 } from './aoeEffect';
@@ -166,5 +169,78 @@ describe('aoeEffect — Mortar detonation burst (F3 AC5)', () => {
     // The two effects intentionally differ in both colour and lifetime, so the
     // Mortar blast never reads as a Nova pulse.
     expect(MORTAR_BURST_DURATION).not.toBe(NOVA_RING_DURATION);
+  });
+});
+
+describe('aoeEffect — Arc chaining bolt (F4 AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('draws a bolt through every chain vertex and registers it', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Graphics[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const handle = spawnArcChain(
+      scene,
+      [
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 50, y: 40 },
+      ],
+      { registry },
+    );
+
+    expect(registry).toContain(handle.graphics);
+    expect(scene.children.list).toContain(handle.graphics);
+    // Reach is the farthest vertex from the origin: sqrt(50² + 40²).
+    expect(handle.radius).toBeCloseTo(Math.hypot(50, 40), 5);
+    expect(tweenSpy).toHaveBeenCalledTimes(1);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(ARC_CHAIN_DURATION * 1000);
+  });
+
+  it('tears down on completion and reports the completed handle', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Graphics[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const handle = spawnArcChain(
+      scene,
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+      ],
+      { registry },
+    );
+    expect(handle.isComplete()).toBe(false);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(handle.isComplete()).toBe(true);
+    expect(registry).not.toContain(handle.graphics);
+    expect(handle.graphics.active).toBe(false);
+  });
+
+  it('handles a single-vertex path (no segments) without throwing', async () => {
+    const scene = await boot();
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const handle = spawnArcChain(scene, [{ x: 10, y: 10 }]);
+    expect(handle.radius).toBe(0);
+    expect(tweenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('is visually distinct from Nova and Mortar (colour)', () => {
+    expect(ARC_CHAIN_COLOR).not.toBe(NOVA_RING_COLOR);
+    expect(ARC_CHAIN_COLOR).not.toBe(MORTAR_BURST_COLOR);
   });
 });
