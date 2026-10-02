@@ -408,7 +408,7 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(drop.absorbing).toBe(true);
   });
 
-  it('AC2 — _collectDrop weapon reset clears the equipped weapon via the registry', async () => {
+  it('AC2 — _collectDrop weapon reset preserves previously equipped weapons', async () => {
     const scene = await boot();
     scene.effects.applyWeapon('spread');
     expect(scene.effects.hasWeapon('spread')).toBe(true);
@@ -417,7 +417,8 @@ describe('CombatScene — shared combat core hook contract', () => {
     scene.runCollectDrop(drop);
 
     expect(scene.hooks).toContain('onWeaponCollected:reset');
-    expect(scene.effects.hasWeapon('spread')).toBe(false);
+    // Reset drop no longer clears weapons — spread is preserved.
+    expect(scene.effects.hasWeapon('spread')).toBe(true);
     expect(drop.absorbing).toBe(true);
   });
 

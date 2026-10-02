@@ -474,8 +474,10 @@ export class CombatCoreScene<
     const player = this.getPlayer();
     if (drop.weaponDropId) {
       if (drop.weaponDropId === 'reset') {
-        registry.tryResetWeapons();
-        player?.resetWeapon();
+        // No-op in current system: cannon is always permanent, not a timed
+        // weapon. This "adds" the cannon without clearing other weapons.
+        registry.applyWeapon('cannon' as WeaponId);
+        player?.equipWeapon('cannon' as WeaponId);
       } else {
         registry.applyWeapon(drop.weaponDropId as WeaponId);
         player?.equipWeapon(drop.weaponDropId as WeaponId);
