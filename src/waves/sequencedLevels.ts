@@ -75,6 +75,16 @@ const DEFAULT_WAVE_GENERATION: DifficultyGeneration = 'curve';
  */
 export const DYNAMIC_TARGET_JITTER = 20;
 
+/**
+ * Maximum target jitter for `dynamic` waves in the no-fire onboarding levels
+ * (1–3). Much tighter than {@link DYNAMIC_TARGET_JITTER}: at the low opening
+ * targets the ±20 global jitter would overwhelm the target band and
+ * reintroduce the degenerate 1-count / asteroid-only waves the retuned
+ * campaign removed (AH-0MUOCJM0N000RW2B). The level-5 dynamic wave keeps the
+ * global ±20 so its pinned composition is unchanged.
+ */
+export const EARLY_DYNAMIC_TARGET_JITTER = 2;
+
 /** Signature of the injected sequencer, matching `difficultySequencer`. */
 export type SequencerFn = (
   curve: DifficultyCurveConfig,
@@ -164,17 +174,66 @@ function seededUnit(seed: number, level: number, wave: number): number {
 }
 
 /**
- * Shift a `dynamic` wave's target by up to ±{@link DYNAMIC_TARGET_JITTER}
- * points, seeded from (seed, level, wave) and clamped to the 0–100 scale.
+ * Shift a `dynamic` wave's target by up to ±`jitter` points, seeded from
+ * (seed, level, wave) and clamped to the 0–100 scale. `jitter` defaults to the
+ * global {@link DYNAMIC_TARGET_JITTER} (used by the level-5 dynamic wave);
+ * the no-fire opening waves pass {@link EARLY_DYNAMIC_TARGET_JITTER}.
  */
 export function dynamicTarget(
   target: number,
   seed: number,
   level: number,
   wave: number,
+  jitter: number = DYNAMIC_TARGET_JITTER,
 ): number {
-  const jitter = (seededUnit(seed, level, wave) * 2 - 1) * DYNAMIC_TARGET_JITTER;
-  return Math.max(0, Math.min(100, target + jitter));
+  const shift = (seededUnit(seed, level, wave) * 2 - 1) * jitter;
+  return Math.max(0, Math.min(100, target + shift));
+}
+
+/**
+ * Curated candidate pools and a minimum-count floor for the campaign's
+ * `dynamic` opening waves (AH-0MUOCJM0N000RW2B). The opening targets sit in a
+ * narrow band where one shared pool cannot deliver variety without producing
+ * degenerate waves, so each opening wave is constrained to a few light
+ * archetypes. `1:2` and `2:1` deliberately exchange `diver`/`swarm` on a
+ * seed-derived bit so repeat runs open on a different order; the two `scout`
+ * anchors keep the level ramp safe.
+ */
+const OPENING_WAVE_CURATION: Readonly<
+  Record<
+    string,
+    { candidateKeys: readonly string[]; seedSwap?: boolean; minCount: number }
+  >
+> = {
+  '1:1': { candidateKeys: ['scout'], minCount: 4 },
+  '1:2': { candidateKeys: ['diver', 'swarm'], seedSwap: true, minCount: 4 },
+  '2:1': { candidateKeys: ['swarm', 'diver'], seedSwap: true, minCount: 4 },
+  '2:2': { candidateKeys: ['scout'], minCount: 4 },
+};
+
+/**
+ * Resolve a curated opening wave to a candidate pool drawn from `pool`,
+ * applying the minimum-count floor and (for swapped waves) the seed-derived
+ * archetype choice. Unknown keys are dropped rather than inventing an
+ * archetype, so a custom pool that omits a curated key simply narrows the
+ * wave's options.
+ */
+function openingCandidates(
+  curation: { candidateKeys: readonly string[]; seedSwap?: boolean; minCount: number },
+  pool: CandidateGroup[],
+  seed: number,
+): CandidateGroup[] {
+  const keys = curation.seedSwap
+    ? [curation.candidateKeys[seededUnit(seed, 0, 0) >= 0.5 ? 1 : 0]]
+    : curation.candidateKeys;
+  const byKey = new Map(pool.map((candidate) => [candidate.enemyKey, candidate]));
+  return keys
+    .map((key) => byKey.get(key))
+    .filter((candidate): candidate is CandidateGroup => candidate !== undefined)
+    .map((candidate) => ({
+      ...candidate,
+      minCount: Math.max(candidate.minCount, curation.minCount),
+    }));
 }
 
 /**
@@ -237,9 +296,24 @@ function buildConfiguredLevel(
 
     const target =
       mode === 'dynamic'
-        ? dynamicTarget(row.targetDifficulty, seed, levelNumber, row.wave)
+        ? dynamicTarget(
+            row.targetDifficulty,
+            seed,
+            levelNumber,
+            row.wave,
+            levelNumber < FIRST_FIRING_LEVEL
+              ? EARLY_DYNAMIC_TARGET_JITTER
+              : DYNAMIC_TARGET_JITTER,
+          )
         : row.targetDifficulty;
-    const wave = buildSequencedWave(seq, target, shootEnabled, candidates);
+    const curation =
+      mode === 'dynamic'
+        ? OPENING_WAVE_CURATION[`${levelNumber}:${row.wave}`]
+        : undefined;
+    const waveCandidates = curation
+      ? openingCandidates(curation, candidates, seed)
+      : candidates;
+    const wave = buildSequencedWave(seq, target, shootEnabled, waveCandidates);
     if (!wave) return null;
     waves.push(wave);
   }

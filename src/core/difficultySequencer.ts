@@ -239,9 +239,15 @@ export function adjustGroupForTarget(
   target: number,
   tolerance: number,
   _maxIterations: number = DEFAULT_MAX_ITERATIONS,
+  suppressFiring = false,
 ): AdjustedGroup {
   const countMin = clamp(candidate.minCount, 1, 200);
   const countMax = clamp(candidate.maxCount, 1, 200);
+
+  // Only pass `suppressFiring` when set: omitting it keeps the archetype's own
+  // auto-suppression rule (e.g. the non-firing Asteroid), which passing an
+  // explicit `false` would override.
+  const scoreOptions = suppressFiring ? { suppressFiring: true } : undefined;
 
   let lo = countMin;
   let hi = countMax;
@@ -249,7 +255,7 @@ export function adjustGroupForTarget(
 
   // Evaluate the base count first (caller's starting point).
   const baseConfigForCount = { ...baseConfig, count: candidate.baseCount };
-  const baseResult = enemyDifficulty(baseConfigForCount);
+  const baseResult = enemyDifficulty(baseConfigForCount, scoreOptions);
   best = {
     enemyKey: candidate.enemyKey,
     formation: baseConfig.formationKind,
@@ -264,7 +270,7 @@ export function adjustGroupForTarget(
   // Evaluate endpoints.
   for (const count of [countMin, countMax]) {
     const config = { ...baseConfig, count };
-    const result = enemyDifficulty(config);
+    const result = enemyDifficulty(config, scoreOptions);
     const adjusted: AdjustedGroup = {
       enemyKey: candidate.enemyKey,
       formation: config.formationKind,
@@ -284,7 +290,7 @@ export function adjustGroupForTarget(
   while (lo <= hi && Math.abs((best?.score ?? 0) - target) > tolerance) {
     const mid = Math.round((lo + hi) / 2);
     const config = { ...baseConfig, count: mid };
-    const result = enemyDifficulty(config);
+    const result = enemyDifficulty(config, scoreOptions);
     const adjusted: AdjustedGroup = {
       enemyKey: candidate.enemyKey,
       formation: config.formationKind,
@@ -321,9 +327,17 @@ function evaluateCandidate(
   target: number,
   tolerance: number,
   maxIterations: number,
+  suppressFiring = false,
 ): { adjusted: AdjustedGroup; error: number } {
   const baseConfig = resolveBaseConfig(candidate);
-  const adjusted = adjustGroupForTarget(candidate, baseConfig, target, tolerance, maxIterations);
+  const adjusted = adjustGroupForTarget(
+    candidate,
+    baseConfig,
+    target,
+    tolerance,
+    maxIterations,
+    suppressFiring,
+  );
   const error = Math.abs(adjusted.score - target);
   return { adjusted, error };
 }
@@ -361,6 +375,7 @@ function composeWaveGroups(
   tolerance: number,
   maxIterations: number,
   maxGroups: number,
+  suppressFiring = false,
 ): { groups: AdjustedGroup[]; total: number } {
   const groups: AdjustedGroup[] = [initial];
   let total = initial.score;
@@ -383,6 +398,7 @@ function composeWaveGroups(
         residual,
         tolerance,
         maxIterations,
+        suppressFiring,
       );
       if (adjusted.score <= 0) continue;
 
@@ -437,6 +453,11 @@ export function sequencer(
 ): SequencerResult {
   const tolerance = options.tolerance ?? DEFAULT_TOLERANCE;
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  // A wave that does not fire must be scored without firing factors, so the
+  // sequencer selects a composition that is genuinely appropriate for a
+  // non-firing wave (AH-0MUOCJM0N000RW2B). When the caller does not declare
+  // the fire rule, keep the archetype-level default (no forced suppression).
+  const suppressFiring = options.defaultShootEnabled === false;
 
   // Validate candidates.
   for (const c of candidates) {
@@ -455,7 +476,13 @@ export function sequencer(
     let bestResult: { adjusted: AdjustedGroup; error: number } | null = null;
 
     for (const candidate of candidates) {
-      const result = evaluateCandidate(candidate, target, tolerance, maxIterations);
+      const result = evaluateCandidate(
+        candidate,
+        target,
+        tolerance,
+        maxIterations,
+        suppressFiring,
+      );
       if (!bestResult || result.error < bestResult.error) {
         bestResult = result;
       }
@@ -486,6 +513,7 @@ export function sequencer(
             tolerance,
             maxIterations,
             options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE,
+            suppressFiring,
           );
 
     const shootEnabled =

@@ -97,6 +97,26 @@ describe('difficulty-curves.csv seed data', () => {
     }
   });
 
+  it('marks the dynamic opening waves with the retuned ascending targets', () => {
+    const rows = parseDifficultyCurves(readCsvFile('difficulty-curves.csv'));
+    const opening = rows.filter(
+      (row) => (row.level === 1 || row.level === 2) && row.wave <= 2,
+    );
+    expect(
+      opening.map((row) => [
+        row.level,
+        row.wave,
+        row.generation,
+        row.targetDifficulty,
+      ]),
+    ).toEqual([
+      [1, 1, 'dynamic', 6],
+      [1, 2, 'dynamic', 8],
+      [2, 1, 'dynamic', 9],
+      [2, 2, 'dynamic', 10],
+    ]);
+  });
+
   it('matches the computed default curve exactly', () => {
     const csv = readCsvFile('difficulty-curves.csv');
     expect(parseDifficultyCurves(csv)).toEqual(defaultDifficultyCurves());

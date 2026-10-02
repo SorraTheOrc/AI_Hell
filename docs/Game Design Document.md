@@ -148,7 +148,11 @@ default `curve`) and the three modes may be mixed freely within one level
 - **`dynamic`** — the wave is rebuilt from its curve at run start, seeded from
   the run's seed, so successive runs differ while a given seed reproduces
   exactly. The seed perturbs the wave's target before sequencing; the saved
-  curve is unchanged. A legacy per-level `source` column
+  curve is unchanged. The shipped opening waves (L1W1, L1W2, L2W1, L2W2) are
+  `dynamic` on a **curated** set of light archetypes with a minimum count of 4
+  and a tight ±2 target jitter, so the opening is varied and never degenerate
+  (AH-0MUOCJM0N000RW2B); the level-5 dynamic wave keeps the global ±20 jitter.
+  A legacy per-level `source` column
   (`generated` | `scripted`) is still read when `generation` is absent, mapping
   `generated` → `curve` and `scripted` → `fixed`.
 
@@ -194,7 +198,7 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Level | Theme | Enemy Count | Enemy-Fired Bullets | Description |
 |-------|-------|-------------|---------------------|-------------|
-| 1 | Entry | Moderate | No | Introduction to formation waves (Scout V-formations) plus randomly spawning, self-splitting Asteroids that drift in from a random offscreen edge every wave — simple movement patterns, no enemy bullets |
+| 1 | Entry | Moderate | No | Introduction to formation waves — the opening is a varied, non-firing mix of light archetypes (Scouts, Divers, Swarms) rebuilt per run from a seeded curve — plus randomly spawning, self-splitting Asteroids that drift in from a random offscreen edge every wave — simple movement patterns, no enemy bullets |
 | 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
 | 3 | The Core | Large | No | Dense formations; maximum positional threat |
 | 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
@@ -210,10 +214,12 @@ The following rules govern how enemy entities interact with each other and with 
 > generated from `src/data/difficulty-curves.csv` (`curve`), kept verbatim from
 > `LEVELS` (`fixed`) or rebuilt at run start from a seeded curve (`dynamic`),
 > selected by the config's per-wave `generation` column (see §2.5.1). The
-> shipped default campaign mixes all three modes (levels 1–3 `fixed`, levels
-> 4–5 `curve` with a `dynamic` wave). The static skeleton (levels 1–5) is always
-> present; the static campaign is the fallback, and the boss still triggers
-> after the final level.
+> shipped default campaign mixes all three modes: the first four campaign waves
+> (L1W1, L1W2, L2W1, L2W2) are `dynamic` and open on a curated, varied,
+> non-firing mix; the remaining levels 1–3 waves are `fixed`; levels 4–5 are
+> `curve` with a final `dynamic` wave (AH-0MUOCJM0N000RW2B). The static skeleton
+> (levels 1–5) is always present; the static campaign is the fallback, and the
+> boss still triggers after the final level.
 
 > **Level-name progress label (AH-0MUMMBRCC0093MGV).** The shared
 > level/wave progress label shown in both the persistent HUD readout and the

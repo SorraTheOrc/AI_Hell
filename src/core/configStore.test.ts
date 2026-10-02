@@ -686,20 +686,62 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(loadDifficultyCurves()[0].targetDifficulty).not.toBe(-1);
   });
 
-  it('ships a mixed-mode default: fixed onboarding, curve + dynamic later levels', () => {
+  it('ships a mixed-mode default: dynamic opening, fixed onboarding, curve + dynamic later levels', () => {
+    const opening = new Set(['1:1', '1:2', '2:1', '2:2']);
     const modes = new Set<string>();
     for (const row of defaultDifficultyCurves()) {
       const expected =
-        row.level <= 3
-          ? 'fixed'
-          : row.level === 5 && row.wave === 2
-            ? 'dynamic'
-            : 'curve';
+        opening.has(`${row.level}:${row.wave}`)
+          ? 'dynamic'
+          : row.level <= 3
+            ? 'fixed'
+            : row.level === 5 && row.wave === 2
+              ? 'dynamic'
+              : 'curve';
       expect(row.generation).toBe(expected);
       modes.add(String(row.generation));
     }
     // Out-of-the-box play exercises every generation mode (AH-0MUJSUTLA006Q8E1).
     expect([...modes].sort()).toEqual(['curve', 'dynamic', 'fixed']);
+  });
+
+  it('marks the dynamic opening waves with the retuned ascending targets', () => {
+    const opening = defaultDifficultyCurves().filter(
+      (row) => (row.level === 1 || row.level === 2) && row.wave <= 2,
+    );
+    expect(
+      opening.map((row) => [row.level, row.wave, row.generation, row.targetDifficulty]),
+    ).toEqual([
+      [1, 1, 'dynamic', 6],
+      [1, 2, 'dynamic', 8],
+      [2, 1, 'dynamic', 9],
+      [2, 2, 'dynamic', 10],
+    ]);
+  });
+
+  it('pins the whole default curve, leaving every other wave mode/target unchanged', () => {
+    expect(
+      defaultDifficultyCurves().map((row) => [
+        row.level,
+        row.wave,
+        row.generation,
+        row.targetDifficulty,
+      ]),
+    ).toEqual([
+      [1, 1, 'dynamic', 6],
+      [1, 2, 'dynamic', 8],
+      [2, 1, 'dynamic', 9],
+      [2, 2, 'dynamic', 10],
+      [2, 3, 'fixed', 10.95],
+      [3, 1, 'fixed', 11.4],
+      [3, 2, 'fixed', 11.85],
+      [3, 3, 'fixed', 12.3],
+      [4, 1, 'curve', 16],
+      [4, 2, 'curve', 24],
+      [4, 3, 'curve', 28],
+      [5, 1, 'curve', 45],
+      [5, 2, 'dynamic', 62],
+    ]);
   });
 
   it('the onboarding (fixed) targets follow the measured LEVELS calibration', () => {
@@ -709,6 +751,10 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
         .filter((row) => row.level === level.level)
         .sort((a, b) => a.wave - b.wave);
       expect(levelRows.length).toBe(level.waves.length);
+      // The measured-calibration pin applies to the levels whose final wave is
+      // still hand-authored (`fixed`); the level-1 final wave is now dynamic
+      // (AH-0MUOCJM0N000RW2B).
+      if (levelRows[levelRows.length - 1].generation !== 'fixed') continue;
       const expected = Math.round(levelDifficulty(level.waves).score * 100) / 100;
       expect(levelRows[levelRows.length - 1].targetDifficulty).toBe(expected);
     }

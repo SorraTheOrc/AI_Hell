@@ -481,6 +481,14 @@ instead.
   be mixed freely within one level. The legacy per-level `source` column
   (`generated` | `scripted`) is still read when `generation` is absent, mapping
   `generated` → `curve` and `scripted` → `fixed`.
+- **Dynamic opening (AH-0MUOCJM0N000RW2B):** the first four campaign waves
+  (L1W1, L1W2, L2W1, L2W2) are `dynamic`, so each run opens on a varied,
+  non-firing mix of existing archetypes instead of repeated Scouts. Each opening
+  wave draws from a curated candidate pool (scout / diver / swarm) with a
+  **minimum count of 4**, and L1W2 / L2W1 swap `diver`/`swarm` on a seed-derived
+  bit; the **±2** early-wave jitter keeps the opening non-degenerate, while the
+  level-5 dynamic wave keeps the global ±20 jitter. Levels 1–3 remain
+  non-firing.
 - **Toggle:** `sequencedWavesEnabled` in the `ai-hell-game-rules` localStorage
   record, default **true** (AH-0MUJSUTLA006Q8E1). Opt out in a dev run from the
   browser console:

@@ -1328,7 +1328,11 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   run start, seeded from the run seed, so successive runs differ while a given
   seed reproduces exactly. The `dynamic` seed shifts the wave's target by up to
   ±`DYNAMIC_TARGET_JITTER` points before sequencing (the saved curve is never
-  mutated). A missing/unknown mode falls back to `curve`. The legacy per-level
+  mutated); the no-fire opening waves (levels 1–3) instead use the tight
+  ±`EARLY_DYNAMIC_TARGET_JITTER` (2) and a **curated** candidate pool with a
+  minimum count of 4, so the opening (L1W1, L1W2, L2W1, L2W2) stays varied and
+  never degenerate (AH-0MUOCJM0N000RW2B). A missing/unknown mode falls back to
+  `curve`. The legacy per-level
   `source` column (`generated` | `scripted`, AH-0MUH7Q6HN0006QPD) is still read
   when `generation` is absent: `scripted` → `fixed`, `generated` → `curve`. The
   merged campaign starts from the static `LEVELS` skeleton, so levels 1–5 are
@@ -1362,9 +1366,11 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   generation for that wave. The whole campaign falls back to static `LEVELS`
   only when there are no rows, the candidate pool is empty, or the merged result
   would be empty. A missing/malformed curve CSV falls back to the computed
-  default curve (`defaultDifficultyCurves()`: levels 1–3 `fixed` on the
+  default curve (`defaultDifficultyCurves()`: the first four campaign waves
+  `dynamic` on a curated opening, the remaining levels 1–3 waves `fixed` on the
   measured `LEVELS` calibration, levels 4–5 `curve` on hand-tuned targets with
-  level 5 wave 2 `dynamic` — AH-0MUJSUTXI008NP8K / AH-0MUJSUTLA006Q8E1); and
+  level 5 wave 2 `dynamic` — AH-0MUOCJM0N000RW2B / AH-0MUJSUTXI008NP8K /
+  AH-0MUJSUTLA006Q8E1); and
   `PlayScene` catches any error and leaves the static campaign active. The run
   is therefore never left unplayable.
 
