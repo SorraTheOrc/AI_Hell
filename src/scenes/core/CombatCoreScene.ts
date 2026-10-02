@@ -65,6 +65,7 @@ import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
 import {
   angleToVelocity,
   createBulletsFromHeading,
+  type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
 import {
@@ -280,6 +281,26 @@ export class CombatCoreScene<
   protected onWeaponFired(_weaponId: WeaponId): void {}
 
   /**
+   * Shared AOE dispatch hook (parent AH-0MUOOB3OR001V8CD): called by
+   * {@link CombatCoreScene._autoFire} once for every AOE weapon that fires,
+   * with the firing weapon and the ship position. Default no-op; the shared
+   * {@link CombatScene} overrides it to resolve an `'onFire'` area effect, and
+   * an `'onImpact'` projectile later resolves its own blast through the same
+   * shared effect path.
+   *
+   * @param _weaponId - The AOE weapon that fired.
+   * @param _def - Its catalogue definition (carries the AOE descriptor).
+   * @param _x - Ship world x at the moment of firing.
+   * @param _y - Ship world y at the moment of firing.
+   */
+  protected onAoeFired(
+    _weaponId: WeaponId,
+    _def: WeaponDefinition,
+    _x: number,
+    _y: number,
+  ): void {}
+
+  /**
    * The scene's P4 bomb notice, or null when the scene has none. Default
    * null; every scene that can collect P4 supplies its {@link BombNotice}
    * so the shared collect path shows the notice (AC3).
@@ -410,6 +431,16 @@ export class CombatCoreScene<
     for (const weaponId of fired) {
       this.onWeaponFired(weaponId);
       const def = player.getWeaponDef(weaponId);
+      if (def.aoe) {
+        // AOE dispatch: the shared core owns the hook, so the game and the
+        // gyms resolve the same area effect from one implementation.
+        this.onAoeFired(weaponId, def, player.x, player.y);
+        // An `onFire` effect (nova ring / arc chain) resolves at the ship
+        // and does not spawn a travelling bullet; an `onImpact` effect
+        // launches its projectile through the normal bullet path, and the
+        // projectile resolves its blast on impact/expiry.
+        if (def.aoe.trigger === 'onFire') continue;
+      }
       for (const bd of createBulletsFromHeading(
         def,
         headingDeg,

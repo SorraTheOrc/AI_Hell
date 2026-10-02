@@ -848,6 +848,9 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       spread: [],
       dual: [],
       rapid: [],
+      nova: [],
+      mortar: [],
+      arc: [],
     };
     const original = scene.spawnPlayerBullet.bind(scene);
     vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(

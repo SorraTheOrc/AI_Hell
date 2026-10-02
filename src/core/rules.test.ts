@@ -82,7 +82,7 @@ describe('game rules configuration module', () => {
       const custom: GameRules = {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
-        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8 },
+        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, nova: 0.25, mortar: 0.5, arc: 1 },
         powerUpWeights: { P3: 10, P4: 9, P5: 8, P6: 7, P7: 6, P8: 1, P9: 5 },
         weaponWeights: {
           spread: 3,
@@ -200,6 +200,9 @@ describe('game rules configuration module', () => {
         spread: 1,
         dual: 1,
         rapid: 6,
+        nova: 0.25,
+        mortar: 0.5,
+        arc: 1,
       });
     });
 
@@ -213,7 +216,7 @@ describe('game rules configuration module', () => {
       saveRules({
         ...DEFAULT_RULES,
         beatBpm: 160,
-        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8 },
+        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, nova: 0.25, mortar: 0.5, arc: 1 },
       });
 
       const loaded = loadRules();
@@ -223,6 +226,9 @@ describe('game rules configuration module', () => {
         spread: 2,
         dual: 2,
         rapid: 8,
+        nova: 0.25,
+        mortar: 0.5,
+        arc: 1,
       });
     });
 
@@ -254,6 +260,9 @@ describe('game rules configuration module', () => {
         spread: 1,
         dual: 1,
         rapid: 6,
+        nova: 0.25,
+        mortar: 0.5,
+        arc: 1,
       });
     });
 

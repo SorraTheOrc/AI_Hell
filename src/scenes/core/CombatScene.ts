@@ -39,6 +39,8 @@ import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
+import { selectAoETargets } from '../../utils/aoe';
+import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
@@ -341,6 +343,100 @@ export abstract class CombatScene<
       playDestructionSound();
     }
     this.onEnemyDestroyed(enemy);
+  }
+
+  /**
+   * Shared AOE effect application (parent AH-0MUOOB3OR001V8CD). Resolves one
+   * area effect at (x, y) from the weapon's descriptor:
+   *
+   * 1. damages every live enemy inside the radius through the same
+   *    `takeDamage()` / `destroySelf()` + `finaliseEnemyKill` seam a player
+   *    bullet uses (so destruction audio and score/drop/wave accounting run
+   *    exactly once per kill),
+   * 2. destroys every enemy bullet inside the radius with the shared impact
+   *    feedback,
+   * 3. damages the boss through the overridable {@link CombatScene.onAoeHitsBoss}
+   *    hook (the `onPlayerBulletHitsBoss`-style path).
+   *
+   * An `'onFire'` effect calls this at the ship from
+   * {@link CombatScene.onAoeFired}; an `'onImpact'` projectile calls it at the
+   * detonation point.
+   */
+  protected applyAoeEffect(def: WeaponDefinition, x: number, y: number): void {
+    const aoe = def.aoe;
+    if (!aoe) return;
+
+    if (aoe.damagesEnemies) {
+      // Pure target selection (utils/aoe) keeps the game and gyms identical.
+      const targets = selectAoETargets(
+        x,
+        y,
+        aoe.radius,
+        this.getEnemyEntities(),
+      );
+      for (const enemy of targets) this.damageEnemyViaAoe(enemy);
+    }
+
+    if (aoe.clearsEnemyBullets) {
+      const kept: TBullet[] = [];
+      const bulletRadius = this.getEnemyBulletRadius();
+      for (const bullet of this.getEnemyBullets()) {
+        const { x: bx, y: by } = bullet.graphics;
+        if (this._overlaps(x, y, aoe.radius, bx, by, bulletRadius)) {
+          // Shared interception feedback (cue + flash), then destroy.
+          resolveBulletVsBulletImpact(this, bx, by, {
+            registry: this.bulletImpactEffects,
+          });
+          bullet.graphics.destroy();
+        } else {
+          kept.push(bullet);
+        }
+      }
+      this.setEnemyBullets(kept);
+    }
+
+    this.onAoeHitsBoss(x, y, aoe.radius);
+  }
+
+  /**
+   * Applies one AOE damage instance to an enemy through the shared kill
+   * seam: multi-hit entities take `takeDamage()` (and finalise on the lethal
+   * blow); single-hit entities are destroyed and finalised outright.
+   */
+  private damageEnemyViaAoe(enemy: TEnemy): void {
+    if (!enemy.alive) return;
+    if (enemy.takeDamage) {
+      enemy.takeDamage();
+      if (!enemy.alive) this.finaliseEnemyKill(enemy);
+    } else {
+      enemy.destroySelf();
+      this.finaliseEnemyKill(enemy);
+    }
+  }
+
+  /**
+   * AOE effect hits the boss. Default returns false (the generic core owns no
+   * boss); the game overrides it to damage its multi-phase boss through the
+   * same path a player bullet would use. Returning true means the boss was
+   * hit.
+   */
+  protected onAoeHitsBoss(_x: number, _y: number, _radius: number): boolean {
+    return false;
+  }
+
+  /**
+   * Shared AOE dispatch from `_autoFire`: resolves an `'onFire'` effect at
+   * the ship immediately. An `'onImpact'` effect (mortar shell) resolves
+   * later, when its projectile detonates and calls
+   * {@link CombatScene.applyAoeEffect}.
+   */
+  protected override onAoeFired(
+    _weaponId: WeaponId,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (def.aoe?.trigger === 'onFire') this.applyAoeEffect(def, x, y);
   }
 
   /**

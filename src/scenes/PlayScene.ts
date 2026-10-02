@@ -1303,6 +1303,29 @@ export class PlayScene extends CombatScene<
     return false;
   }
 
+  /**
+   * AOE effect hits the boss: routes through the same `_damageBoss()` path a
+   * player bullet uses, so multi-phase pacing, phase scoring and minion
+   * summons are identical (parent AH-0MUOOB3OR001V8CD AC5).
+   */
+  protected override onAoeHitsBoss(
+    x: number,
+    y: number,
+    radius: number,
+  ): boolean {
+    if (
+      this.boss?.alive &&
+      this._overlaps(
+        x, y, radius,
+        this.boss.x, this.boss.y, this.boss.getHitRadius(),
+      )
+    ) {
+      this._damageBoss();
+      return true;
+    }
+    return false;
+  }
+
   /** Ramming an enemy destroys it but awards no score. */
   protected override onPlayerRamsEnemy(enemy: EnemyEntity): void {
     const s = this.spawned.find((candidate) => candidate.entity === enemy);

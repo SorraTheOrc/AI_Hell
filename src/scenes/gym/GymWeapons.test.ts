@@ -183,6 +183,9 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       spread: [],
       dual: [],
       rapid: [],
+      nova: [],
+      mortar: [],
+      arc: [],
     };
     const original = scene.spawnPlayerBullet.bind(scene);
     vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(

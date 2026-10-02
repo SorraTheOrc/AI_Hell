@@ -33,6 +33,9 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
+  nova: 0x66ffff, // pale cyan — expanding ring
+  mortar: 0xff6600, // deep orange — shell/blast
+  arc: 0xcc66ff, // electric purple — chaining bolt
 };
 
 /** Icon stroke colour for the Reset drop (returns ship to cannon). */
