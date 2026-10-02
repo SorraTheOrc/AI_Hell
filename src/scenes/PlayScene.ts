@@ -49,6 +49,7 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
+  playMortarFireSound,
   playNovaFireSound,
   playRapidFireSound,
   playSpawnSound,
@@ -1197,6 +1198,9 @@ export class PlayScene extends CombatScene<
       case 'nova':
         playNovaFireSound();
         break;
+      case 'mortar':
+        playMortarFireSound();
+        break;
     }
   }
 
@@ -1300,8 +1304,14 @@ export class PlayScene extends CombatScene<
         this.boss.x, this.boss.y, this.boss.getHitRadius(),
       )
     ) {
+      if (pb.aoeWeapon) {
+        // An `'onImpact'` AOE projectile detonates instead of dealing a direct
+        // phase hit; the blast damages the boss through `onAoeHitsBoss`.
+        this.detonateAoeProjectile(pb);
+      } else {
+        this._damageBoss();
+      }
       pb.destroy();
-      this._damageBoss();
       return true;
     }
     return false;

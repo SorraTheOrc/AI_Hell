@@ -1777,6 +1777,137 @@ export function playNovaFireSound(): void {
   ring.stop(t + NOVA_FIRE_RING_DURATION + 0.02);
 }
 
+// ── Mortar AOE fire + detonation cues (F3, parent AH-0MUOOB3OR001V8CD) ─
+//
+// The Mortar has two distinct moments: the muffled launch of the shell and
+// the much heavier blast when it detonates. Both are deliberately lower and
+// rounder than the short conventional shoot blips so the pair reads as
+// "lobbed then exploded".
+
+/** Mortar launch pitch start (Hz) — a muffled, low launch pop. */
+export const MORTAR_FIRE_START_HZ = 220;
+
+/** Mortar launch pitch end (Hz). */
+export const MORTAR_FIRE_END_HZ = 90;
+
+/** Mortar launch cue duration (seconds). */
+export const MORTAR_FIRE_DURATION = 0.18;
+
+/** Mortar launch cue gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const MORTAR_FIRE_VOLUME = 0.15;
+
+/** Mortar detonation pitch start (Hz) — the blast body. */
+export const MORTAR_DETONATION_START_HZ = 180;
+
+/** Mortar detonation pitch end (Hz). */
+export const MORTAR_DETONATION_END_HZ = 40;
+
+/** Mortar detonation cue duration (seconds). */
+export const MORTAR_DETONATION_DURATION = 0.32;
+
+/** Mortar detonation cue gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const MORTAR_DETONATION_VOLUME = 0.19;
+
+/**
+ * Plays the Mortar launch cue: a muffled triangle thump falling 220 → 90 Hz
+ * with a short high tick for the shell leaving the barrel. Distinct from the
+ * Nova thump (which is longer, deeper and paired with a rising ring). Safe
+ * no-op without an AudioContext.
+ */
+export function playMortarFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'triangle';
+  thump.frequency.setValueAtTime(MORTAR_FIRE_START_HZ, t);
+  thump.frequency.exponentialRampToValueAtTime(
+    MORTAR_FIRE_END_HZ,
+    t + MORTAR_FIRE_DURATION,
+  );
+  thumpGain.gain.setValueAtTime(MORTAR_FIRE_VOLUME, t);
+  thumpGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MORTAR_FIRE_DURATION,
+  );
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
+  thump.start(t);
+  thump.stop(t + MORTAR_FIRE_DURATION + 0.02);
+
+  // A brief high tick as the shell leaves the barrel.
+  const tick = ctx.createOscillator();
+  const tickGain = ctx.createGain();
+  tick.type = 'square';
+  tick.frequency.setValueAtTime(900, t);
+  tick.frequency.exponentialRampToValueAtTime(600, t + 0.04);
+  tickGain.gain.setValueAtTime(0.06, t);
+  tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+  tick.connect(tickGain).connect(ensureMasterGain(ctx));
+  tick.start(t);
+  tick.stop(t + 0.06);
+}
+
+/**
+ * Plays the Mortar detonation cue: a heavy sawtooth blast (180 → 40 Hz) with
+ * a low-passed noise wash for the explosion tail. Distinct from every fire cue
+ * (much heavier and longer) and from the Major explosion (shorter, single
+ * layer). The 1.5 s beat cadence means detonations cannot stack, so no
+ * explicit rate limiter is needed. Safe no-op without an AudioContext.
+ */
+export function playMortarDetonationSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+
+  // Layer 1: the blast body.
+  const blast = ctx.createOscillator();
+  const blastGain = ctx.createGain();
+  blast.type = 'sawtooth';
+  blast.frequency.setValueAtTime(MORTAR_DETONATION_START_HZ, t);
+  blast.frequency.exponentialRampToValueAtTime(
+    MORTAR_DETONATION_END_HZ,
+    t + MORTAR_DETONATION_DURATION,
+  );
+  blastGain.gain.setValueAtTime(MORTAR_DETONATION_VOLUME, t);
+  blastGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MORTAR_DETONATION_DURATION,
+  );
+  blast.connect(blastGain).connect(ensureMasterGain(ctx));
+  blast.start(t);
+  blast.stop(t + MORTAR_DETONATION_DURATION + 0.02);
+
+  // Layer 2: low-passed noise wash for the debris tail.
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * MORTAR_DETONATION_DURATION)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'lowpass';
+  noiseFilter.frequency.setValueAtTime(800, t);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.08, t);
+  noiseGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + MORTAR_DETONATION_DURATION,
+  );
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(t);
+  noise.stop(t + MORTAR_DETONATION_DURATION + 0.02);
+}
+
 // ── Player weapon pickup activation cues (GDD §4.4, §7.3) ──────────
 
 /**

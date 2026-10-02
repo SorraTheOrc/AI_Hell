@@ -63,6 +63,7 @@ import {
   playDualFireSound,
   playRapidFireSound,
   playNovaFireSound,
+  playMortarFireSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
@@ -269,6 +270,9 @@ export class GymWeapons extends CombatCoreScene<
         break;
       case 'nova':
         playNovaFireSound();
+        break;
+      case 'mortar':
+        playMortarFireSound();
         break;
     }
   }

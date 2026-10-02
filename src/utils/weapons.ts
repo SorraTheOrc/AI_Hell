@@ -88,6 +88,13 @@ export interface AoEDescriptor {
    * Arc weapon's chain mechanic.
    */
   chains?: number;
+  /**
+   * Projectile speed (px/s) for an `'onImpact'` weapon. The shared auto-fire
+   * loop launches the projectile at this speed; when omitted it falls back to
+   * the shared `BULLET_SPEED`. An `'onFire'` descriptor never launches a
+   * projectile, so the field is ignored for it.
+   */
+  projectileSpeed?: number;
 }
 
 /**
@@ -282,6 +289,16 @@ export const AOE_RADII = {
 } as const;
 
 /**
+ * AOE `'onImpact'` projectile speeds (px/s). Slower than the standard
+ * `BULLET_SPEED` (350), so the Mortar shell visibly arcs across the screen
+ * and its detonation point stays legible.
+ */
+export const AOE_PROJECTILE_SPEEDS = {
+  /** Mortar shell — deliberately slow, giving the blast a readable travel. */
+  mortar: 180,
+} as const;
+
+/**
  * Bullet shape type — determines how the bullet is drawn.
  * `circle` = filled circle (cannon, spread, rapid);
  * `line` = short line segment (dual).
@@ -430,6 +447,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
       radius: AOE_RADII.mortar,
       damagesEnemies: true,
       clearsEnemyBullets: true,
+      projectileSpeed: AOE_PROJECTILE_SPEEDS.mortar,
     },
   },
   arc: {

@@ -41,6 +41,7 @@ import {
   isAoeWeapon,
   AOE_WEAPON_IDS,
   AOE_RADII,
+  AOE_PROJECTILE_SPEEDS,
   type WeaponId,
   BULLET_SPEED,
   WEAPON_BULLET_LIFETIME,
@@ -168,6 +169,10 @@ describe('AOE weapons (parent AH-0MUOOB3OR001V8CD AC1)', () => {
     expect(aoe.radius).toBe(AOE_RADII.mortar);
     expect(aoe.damagesEnemies).toBe(true);
     expect(aoe.clearsEnemyBullets).toBe(true);
+    // The mortar shell travels slower than a conventional bullet so its
+    // detonation point is legible.
+    expect(aoe.projectileSpeed).toBe(AOE_PROJECTILE_SPEEDS.mortar);
+    expect(aoe.projectileSpeed!).toBeLessThan(BULLET_SPEED);
     // The mortar shell lives long enough to reach a target and detonate.
     expect(WEAPON_CATALOGUE.mortar.bulletLifetime).toBeGreaterThan(0);
   });

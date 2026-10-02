@@ -34,12 +34,12 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import { playDestructionSound, playPhaseShiftSound } from '../../audio/effects';
+import { playDestructionSound, playMortarDetonationSound, playPhaseShiftSound } from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
-import { spawnNovaRing } from '../../vfx/aoeEffect';
+import { spawnMortarBurst, spawnNovaRing } from '../../vfx/aoeEffect';
 import { selectAoETargets } from '../../utils/aoe';
 import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
@@ -317,6 +317,14 @@ export abstract class CombatScene<
     enemy: TEnemy,
     bullet: PlayerBullet,
   ): boolean {
+    // An `'onImpact'` AOE projectile detonates instead of dealing a direct
+    // hit: the blast resolves the damage for this and every other enemy in the
+    // radius, so the directly-hit enemy is not double-damaged.
+    if (bullet.aoeWeapon) {
+      this.detonateAoeProjectile(bullet);
+      bullet.destroy();
+      return true;
+    }
     if (enemy.takeDamage) {
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
@@ -464,6 +472,50 @@ export abstract class CombatScene<
   ): void {
     if (def.id === 'nova' && def.aoe) {
       spawnNovaRing(this, x, y, def.aoe.radius, { registry: this.aoeEffects });
+    }
+  }
+
+  /**
+   * Shared hook for an `'onImpact'` AOE projectile: attaches the expiry
+   * detonation so the blast resolves at the projectile's position whether it
+   * hits an enemy/enemy bullet or reaches the end of its lifetime.
+   */
+  protected override onAoeProjectileSpawned(
+    bullet: PlayerBullet,
+    _def: WeaponDefinition,
+  ): void {
+    bullet.onExpire = () => this.detonateAoeProjectile(bullet);
+  }
+
+  /**
+   * Detonates an `'onImpact'` AOE projectile at its current position: applies
+   * the descriptor's area effect, then spawns the shared detonation VFX/cue.
+   * Idempotent per projectile — a projectile detonates at most once even if
+   * both the collision and expiry paths observe it.
+   */
+  protected detonateAoeProjectile(bullet: PlayerBullet): void {
+    const def = bullet.aoeWeapon;
+    if (!def?.aoe || bullet.aoeDetonated) return;
+    bullet.aoeDetonated = true;
+    this.applyAoeEffect(def, bullet.x, bullet.y);
+    this.spawnAoeDetonationVfx(def, bullet.x, bullet.y);
+  }
+
+  /**
+   * Spawns the distinctive detonation VFX/cue for an `'onImpact'` AOE weapon.
+   * Mortar's radial burst is the F3 implementation; the shared core owns it so
+   * the game and every gym detonate identically.
+   */
+  protected spawnAoeDetonationVfx(
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (def.id === 'mortar' && def.aoe) {
+      spawnMortarBurst(this, x, y, def.aoe.radius, {
+        registry: this.aoeEffects,
+      });
+      playMortarDetonationSound();
     }
   }
 
@@ -746,6 +798,8 @@ export abstract class CombatScene<
           // Impact feedback fires from the shared path before the bullets
           // are destroyed (so the impact point is still readable).
           this.onBulletVsBulletImpact(eb, pb);
+          // An AOE projectile detonates at the interception point.
+          if (pb.aoeWeapon) this.detonateAoeProjectile(pb);
           pb.destroy();
           this.playerBullets.splice(i, 1);
           eb.graphics.destroy();

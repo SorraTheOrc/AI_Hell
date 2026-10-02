@@ -102,6 +102,14 @@ import {
   NOVA_FIRE_RING_VOLUME,
   NOVA_FIRE_MIN_INTERVAL,
   _resetNovaFireLimiterForTests,
+  playMortarFireSound,
+  MORTAR_FIRE_START_HZ,
+  MORTAR_FIRE_END_HZ,
+  MORTAR_FIRE_VOLUME,
+  playMortarDetonationSound,
+  MORTAR_DETONATION_START_HZ,
+  MORTAR_DETONATION_END_HZ,
+  MORTAR_DETONATION_VOLUME,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -340,6 +348,8 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playDualFireSound,
       playRapidFireSound,
       playNovaFireSound,
+      playMortarFireSound,
+      playMortarDetonationSound,
       playSpreadPickupSound,
       playDualPickupSound,
       playRapidPickupSound,
@@ -1937,5 +1947,71 @@ describe('Nova fire cue — synthesis + rate limiting (F2 AC4)', () => {
     ctx.currentTime = 5 + NOVA_FIRE_MIN_INTERVAL + 0.01;
     playNovaFireSound();
     expect(newOscillators(third)).toHaveLength(2);
+  });
+});
+
+// ── Mortar AOE fire + detonation cues (F3 AC6) ───────────────────────
+
+describe('Mortar fire + detonation cues — synthesis (F3 AC6)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // re-prime after the reset cleared the cache
+  });
+
+  it('the launch cue is a muffled low thump with a barrel tick', () => {
+    const snap = snapshot();
+    playMortarFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    expect(oscs).toHaveLength(2);
+    expect(oscs[0].type).toBe('triangle');
+    expect(startFreq([oscs[0]])).toBe(MORTAR_FIRE_START_HZ);
+    expect(endFreq([oscs[0]])).toBe(MORTAR_FIRE_END_HZ);
+    // Barrel tick: a short high square.
+    expect(oscs[1].type).toBe('square');
+    expect(MORTAR_FIRE_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('the detonation cue is a heavy blast with a noise tail', () => {
+    const snap = snapshot();
+    playMortarDetonationSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    // Blast oscillator (sawtooth) plus the noise buffer source.
+    expect(oscs.filter((o) => o.type !== 'noise')).toHaveLength(1);
+    expect(oscs[0].type).toBe('sawtooth');
+    expect(startFreq([oscs[0]])).toBe(MORTAR_DETONATION_START_HZ);
+    expect(endFreq([oscs[0]])).toBe(MORTAR_DETONATION_END_HZ);
+    expect(MORTAR_DETONATION_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('the launch and detonation cues are distinct from each other and from Nova', () => {
+    const launch = snapshot();
+    playMortarFireSound();
+    const launchOscs = newOscillators(launch);
+
+    const boom = snapshot();
+    playMortarDetonationSound();
+    const boomOscs = newOscillators(boom);
+
+    // Launch is a short triangle; detonation is a heavier sawtooth + noise.
+    expect(launchOscs[0].type).toBe('triangle');
+    expect(boomOscs[0].type).toBe('sawtooth');
+    expect(
+      boomOscs[0].stopTime! - boomOscs[0].startTime!,
+    ).toBeGreaterThan(launchOscs[0].stopTime! - launchOscs[0].startTime!);
   });
 });

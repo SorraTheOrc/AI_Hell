@@ -301,6 +301,21 @@ export class CombatCoreScene<
   ): void {}
 
   /**
+   * Shared hook called once for every `'onImpact'` AOE projectile the moment
+   * it is spawned (parent AH-0MUOOB3OR001V8CD). Default no-op; the shared
+   * {@link CombatScene} overrides it to attach the projectile's expiry
+   * detonation. The projectile already carries its definition in
+   * {@link PlayerBullet.aoeWeapon}.
+   *
+   * @param _bullet - The freshly spawned projectile.
+   * @param _def - Its AOE weapon definition.
+   */
+  protected onAoeProjectileSpawned(
+    _bullet: PlayerBullet,
+    _def: WeaponDefinition,
+  ): void {}
+
+  /**
    * The scene's P4 bomb notice, or null when the scene has none. Default
    * null; every scene that can collect P4 supplies its {@link BombNotice}
    * so the shared collect path shows the notice (AC3).
@@ -447,8 +462,12 @@ export class CombatCoreScene<
         player.x,
         player.y,
       )) {
-        const vel = angleToVelocity(bd.angleDeg, PLAYER_BULLET_SPEED);
-        this.spawnPlayerBullet(
+        // An `'onImpact'` projectile travels at its own (slower) speed so the
+        // detonation point stays legible; conventional bullets use the shared
+        // speed.
+        const speed = def.aoe?.projectileSpeed ?? PLAYER_BULLET_SPEED;
+        const vel = angleToVelocity(bd.angleDeg, speed);
+        const bullet = this.spawnPlayerBullet(
           bd.x,
           bd.y,
           vel.vx,
@@ -456,6 +475,13 @@ export class CombatCoreScene<
           bd.color,
           def.bulletLifetime,
         );
+        if (def.aoe?.trigger === 'onImpact') {
+          // Tag the projectile so the shared combat core can detonate its
+          // area effect on impact/expiry, then let the scene attach its
+          // detonation callback through the shared hook.
+          bullet.aoeWeapon = def;
+          this.onAoeProjectileSpawned(bullet, def);
+        }
       }
     }
   }
