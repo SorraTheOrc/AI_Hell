@@ -126,6 +126,9 @@ describe('GymMinerals', () => {
   it('a destroyed small asteroid drops exactly one mineral at its position (AC1)', async () => {
     booted = await bootScene([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
+    // Complete the wormhole spawn animation so the asteroids are collidable.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
     clearMinerals(scene);
     expect(scene.getMinerals()).toHaveLength(0);
 

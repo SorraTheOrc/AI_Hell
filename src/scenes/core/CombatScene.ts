@@ -109,6 +109,12 @@ export abstract class CombatScene<
    */
   protected aoeEffects: Phaser.GameObjects.Graphics[] = [];
 
+  /**
+   * Live wormhole spawn containers, tracked for observation and teardown
+   * on scene shutdown (AH-0MURBER4L00821RR).
+   */
+  protected wormholeEffects: Phaser.GameObjects.Container[] = [];
+
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
   protected blinkPhase = 0;
@@ -323,6 +329,10 @@ export abstract class CombatScene<
     enemy: TEnemy,
     bullet: PlayerBullet,
   ): boolean {
+    // Spawning enemies are invulnerable — player bullets pass through.
+    if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) {
+      return false;
+    }
     // An `'onImpact'` AOE projectile detonates instead of dealing a direct
     // hit: the blast resolves the damage for this and every other enemy in the
     // radius, so the directly-hit enemy is not double-damaged.
@@ -942,6 +952,8 @@ export abstract class CombatScene<
     if (this.invulnerable <= 0) {
       for (const enemy of this.getEnemyEntities()) {
         if (!enemy.alive) continue;
+        // Spawning enemies are still growing — no body collision.
+        if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) continue;
         if (
           this._overlaps(
             player.x,
@@ -1246,6 +1258,7 @@ export abstract class CombatScene<
     super.resetRunState();
     this.bulletImpactEffects = [];
     this.aoeEffects = [];
+    this.wormholeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
@@ -1270,6 +1283,8 @@ export abstract class CombatScene<
     this.bulletImpactEffects = [];
     for (const effect of this.aoeEffects) effect.destroy();
     this.aoeEffects = [];
+    for (const effect of this.wormholeEffects) effect.destroy();
+    this.wormholeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;

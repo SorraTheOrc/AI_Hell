@@ -68,6 +68,14 @@ import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
+import {
+  spawnWormholeOpen,
+  spawnWormholeClose,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  type SpawnAnimatable,
+  type WormholeHandle,
+} from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
@@ -328,6 +336,10 @@ export class PlayScene extends CombatScene<
 
   private transitionTimer = 0;
 
+  // ── Wormhole spawn animation tracking ────────────────────────────
+  /** The live wormhole handle for the current wave spawn, or null. */
+  private _spawnWormhole: WormholeHandle | null = null;
+
   /**
    * Whether the simulation is frozen by the pause menu (parent
    * AH-0MU9LPZ0G0015292). While `true`, `tick()` short-circuits so no
@@ -530,6 +542,7 @@ export class PlayScene extends CombatScene<
     this.pendingHarvesterSpawns = [];
     this.harvestersSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
+    this._spawnWormhole = null;
     this.paused = false;
   }
 
@@ -659,6 +672,9 @@ export class PlayScene extends CombatScene<
       // Automatic Phase Shift (P6): feed live danger before collision gating
       // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
       this._updatePhaseShiftAutoTrigger(dt);
+      // Advance the wormhole spawn animation first so an enemy that finishes
+      // growing this frame is collidable on the same frame it becomes whole.
+      this._updateSpawnAnimations(dt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
@@ -677,6 +693,47 @@ export class PlayScene extends CombatScene<
     this._drawWaveTimer();
   }
 
+  /**
+   * Advances the wormhole spawn animation for every spawning enemy.
+   * When all enemies in the current wave have finished growing, the
+   * wormhole closes and the spawn sequence is complete (AC1–AC4).
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    let anySpawning = false;
+    for (const s of this.spawned) {
+      if (!s.entity.isSpawning) continue;
+      const stillGrowing = updateSpawnAnimation(s.entity, dt);
+      if (stillGrowing) {
+        anySpawning = true;
+      } else {
+        s.entity.setSpawning(false);
+      }
+    }
+    if (!anySpawning && this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
+      this._spawnWormhole = null;
+    }
+  }
+
+  /**
+   * Test seam: immediately completes any in-progress wormhole spawn
+   * animations without ticking the whole scene, so collision tests observe
+   * fully-spawned enemies without advancing wave timers or asteroid spawns
+   * (AH-0MURBER4L00821RR). Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const s of this.spawned) {
+      if (!s.entity.isSpawning) continue;
+      // Fast-forward past the wormhole-open delay + full growth.
+      updateSpawnAnimation(s.entity as unknown as SpawnAnimatable, 10);
+      s.entity.setSpawning(false);
+    }
+    if (this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
+      this._spawnWormhole = null;
+    }
+  }
+
   // ── Wave spawning & progression ─────────────────────────────────
 
   /**
@@ -691,6 +748,10 @@ export class PlayScene extends CombatScene<
     this.planHarvesterSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
+      // Spawn one wormhole at the first enemy's position.
+      this._spawnWormhole = spawnWormholeOpen(this, spawns[0].x, spawns[0].y, {
+        registry: this.wormholeEffects,
+      });
       for (const spawn of spawns) this._spawnEnemy(spawn);
       playSpawnSound();
     }
@@ -706,6 +767,14 @@ export class PlayScene extends CombatScene<
     const cfg = loadEnemyConfig(spawn.enemyKey);
     const entity = createEnemyFromConfig(this, cfg, spawn.x, spawn.y, spawn.offset);
     entity.shootEnabled = spawn.shootEnabled;
+
+    // ── Wormhole spawn animation (AC1–AC4) ────────────────────────
+    // The enemy starts at 1 px and grows to its full scale over the
+    // growth duration; while spawning it is protected from collisions.
+    // Growth begins once the wormhole has finished opening.
+    startSpawnAnimation(entity, entity.scaleX);
+    entity.setSpawning(true);
+
     this.add.existing(entity);
     this.spawned.push({
       entity,

@@ -26,7 +26,11 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
 
   async function bootPlay(): Promise<PlayScene> {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
-    return booted.scene as PlayScene;
+    const scene = booted.scene as PlayScene;
+    // Complete the wormhole spawn animation so enemies are collidable.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    return scene;
   }
 
   /** Grows a drop to full size so it is immediately collectible. */

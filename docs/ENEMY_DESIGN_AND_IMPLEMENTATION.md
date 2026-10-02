@@ -548,6 +548,61 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
   does not, and `GymMinerals.test.ts` / `GymPowerUpsCombat.test.ts` cover the
   newly-enabled gyms.
 
+### 2.7 Wormhole spawn animation (AH-0MURBER4L00821RR)
+
+When a wave (or formation gym) spawns enemies, each enemy enters through a
+wormhole and grows from **1 pixel to its full size** instead of appearing
+fully formed. The same code runs in `PlayScene` and every formation gym, per
+the gym-parity convention (§5.1).
+
+**Timeline** (scene-tick seconds, not wall-clock — so deterministic
+`scene.tick(dt)` tests drive it identically to a live run):
+
+| Phase | Duration | Behaviour |
+|-------|----------|-----------|
+| Wormhole opens | 1 s | The wormhole VFX scales from 0.01 to full at the spawn position. |
+| Enemy grows | 1.5 s | Each enemy eases from 0.01 scale to its full scale (ease-out cubic). |
+| Wormhole closes | 0.5 s | The wormhole scales to zero and fades out. |
+
+Total spawn-protection window = **3 s**. During that window the spawning
+enemy is protected (AC4):
+
+- **Player bullets pass through** — `CombatScene.onPlayerBulletHitsEnemy`
+  returns `false` for a spawning enemy, so the bullet is not consumed and no
+  damage is applied.
+- **No body collision** — the player-body-vs-enemy pass in
+  `CombatScene._handleCollisions` skips spawning enemies.
+- **No shooting** — `fireForEnemy` returns `[]` for a spawning enemy, so
+  firing is suppressed regardless of `shootEnabled`.
+- **No mineral absorption** — the enemy-absorption loop in
+  `collectMinerals` (`src/scenes/core/mineralLayer.ts`) skips spawning
+  enemies.
+
+**Implementation.**
+
+- `src/vfx/wormholeSpawn.ts` owns the wormhole VFX (`spawnWormholeOpen` /
+  `spawnWormholeClose`) and the dt-driven growth helpers
+  (`startSpawnAnimation`, `updateSpawnAnimation`, `isEnemySpawning`). The
+  spawn state is stored as entity data, so any `Container`-based entity works.
+- `BaseEnemy` exposes `isSpawning` / `setSpawning()` — the single flag every
+  shared collision/fire/absorption gate reads.
+- `PlayScene._spawnEnemy` starts the animation; `PlayScene._updateSpawnAnimations`
+  advances it before collisions so an enemy that finishes growing this frame
+  is collidable on the same frame; the wormhole closes once every wave enemy
+  has finished.
+- `GymFormationScene.create` starts the animation for each formation entity
+  and `_updateSpawnAnimations` advances/closes it, so `GymEnemies` and the
+  other formation gyms are in lock-step with the game.
+- Both scenes expose a `finishSpawnAnimations()` test seam that completes the
+  animation without advancing wave timers/asteroid spawns, so collision tests
+  can observe fully-spawned enemies deterministically.
+
+**Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters and
+  the dt-driven growth curve; `PlayScene.test.ts` (describe
+  “wormhole spawn animation”) and `GymEnemies.test.ts` (describe
+  “wormhole spawn animation parity”) cover the spawn-protection gates in both
+  scenes.
+
 ### 3.2 Existing scenes (reference implementations)
 
 | Scene | Entity | Formation | Fire pattern | Audio |

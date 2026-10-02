@@ -123,6 +123,14 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
+import {
+  spawnWormholeOpen,
+  spawnWormholeClose,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  type SpawnAnimatable,
+  type WormholeHandle,
+} from '../../../vfx/wormholeSpawn';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -209,6 +217,19 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * not seek simply omit it (optional chaining skips them).
    */
   setSeekTargets?(minerals: readonly Mineral[]): void;
+  /**
+   * Optional: whether the entity is in its wormhole spawn animation.
+   * While spawning the entity is protected from collisions and cannot
+   * fire. Entities that omit the seam are treated as fully spawned.
+   */
+  readonly isSpawning?: boolean;
+  /**
+   * Optional: sets the wormhole spawn-animation state.  Called by the
+   * scene when the growth animation starts and finishes.
+   */
+  setSpawning?(value: boolean): void;
+  /** Current horizontal scale (drives the growth animation). */
+  readonly scaleX: number;
   /**
    * Hit radius (px) used for circle-vs-circle collision checks.
    *
@@ -428,6 +449,9 @@ export class GymFormationScene<
   protected formationBaseY!: number;
   private shootEnabled = false;
 
+  /** Live wormhole handle for the current formation spawn, or null. */
+  private _spawnWormhole: WormholeHandle | null = null;
+
   // Wipe → 3s countdown → respawn and the opt-in wave-timeout lifecycle now
   // live in the shared `CombatScene` core (AH-0MUNR5LM1004B223) so every
   // combat scene runs one implementation.
@@ -532,6 +556,8 @@ export class GymFormationScene<
 
     // ── Spawn the formation ─────────────────────────────────────────
     const offsets = config.buildOffsets(config.count);
+    // Wormhole opens at the formation origin; every entity grows from
+    // 1 px to its full size while protected (AC1–AC4, gym parity).
     for (const offset of offsets) {
       const entity = config.createEntity(
         this,
@@ -542,7 +568,16 @@ export class GymFormationScene<
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
+      startSpawnAnimation(entity as unknown as SpawnAnimatable, entity.scaleX);
+      entity.setSpawning?.(true);
       this.entities.push(entity);
+    }
+    if (offsets.length > 0) {
+      this._spawnWormhole = spawnWormholeOpen(
+        this,
+        this.formationBaseX,
+        this.formationBaseY,
+      );
     }
     playSpawnSound();
 
@@ -668,6 +703,7 @@ export class GymFormationScene<
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
+    this._spawnWormhole = null;
     this._resolveFormationBase();
   }
 
@@ -1408,6 +1444,10 @@ export class GymFormationScene<
       this.glide.update(dt);
     }
 
+    // Advance the wormhole spawn animation (AC1–AC4): grown enemies are
+    // marked spawned and the wormhole closes once every entity has finished.
+    this._updateSpawnAnimations(dt);
+
     // Shared boss advance (AH-0MUII3E5E006A93F, AC1): appended boss bullets
     // are advanced by the shared bullet lifecycle below, matching the
     // PlayScene ordering relative to collisions. A no-op without a boss.
@@ -1467,6 +1507,45 @@ export class GymFormationScene<
 
     // ── Wipe detection → 3s countdown → formation respawn ───────────
     this._tickRespawnCountdown(dt);
+  }
+
+  /**
+   * Advances the wormhole spawn animation for every spawning entity.
+   * Once all entities have finished growing the wormhole closes and
+   * every entity is marked fully spawned (AC1–AC4, gym parity).
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    let anySpawning = false;
+    for (const entity of this.entities) {
+      if (!entity.isSpawning) continue;
+      const stillGrowing = updateSpawnAnimation(entity as unknown as SpawnAnimatable, dt);
+      if (stillGrowing) {
+        anySpawning = true;
+      } else {
+        entity.setSpawning?.(false);
+      }
+    }
+    if (!anySpawning && this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole);
+      this._spawnWormhole = null;
+    }
+  }
+
+  /**
+   * Test seam: immediately completes any in-progress wormhole spawn
+   * animations without ticking the whole scene (AH-0MURBER4L00821RR).
+   * Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const entity of this.entities) {
+      if (!entity.isSpawning) continue;
+      updateSpawnAnimation(entity as unknown as SpawnAnimatable, 10);
+      entity.setSpawning?.(false);
+    }
+    if (this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole);
+      this._spawnWormhole = null;
+    }
   }
 
   /**

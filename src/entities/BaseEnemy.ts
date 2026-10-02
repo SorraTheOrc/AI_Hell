@@ -357,6 +357,27 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._shootEnabled = value;
   }
 
+  // ── Spawn animation state (wormhole entry) ────────────────────────
+
+  /** Whether this enemy is currently in its spawn animation. */
+  protected _isSpawning = false;
+
+  /** True while the enemy is still growing from the wormhole spawn. */
+  get isSpawning(): boolean {
+    return this._isSpawning;
+  }
+
+  /**
+   * Sets the spawn animation state.  When `true`, the enemy is protected
+   * from collisions and cannot fire; the scene drives the visual growth
+   * animation each frame via {@link updateSpawnAnimation}.
+   *
+   * @param value - Whether the enemy is spawning.
+   */
+  setSpawning(value: boolean): void {
+    this._isSpawning = value;
+  }
+
   /**
    * Full destruction teardown. Each subclass overrides `destroyGraphics()`
    * to destroy its type-specific graphics objects; the base class handles

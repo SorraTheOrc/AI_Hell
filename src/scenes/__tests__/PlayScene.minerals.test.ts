@@ -230,6 +230,9 @@ describe('PlayScene mineral wiring', () => {
 
   it('a non-asteroid enemy absorbs an overlapping mineral without damage', async () => {
     const scene = await bootPlay();
+    // Complete the wormhole spawn animation so the enemy can absorb minerals.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
     const enemy = scene.getEnemies().find((e) => e.alive)!;
 
     scene.spawnMineralAt(enemy.x, enemy.y);

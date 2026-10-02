@@ -79,8 +79,25 @@ vi.mock('../vfx/explosionParticles', async (importOriginal) => {
   };
 });
 
+/**
+ * Completes the wormhole spawn sequence (open 1 s + grow 1.5 s + close 0.5 s)
+ * for the current wave so every enemy is fully spawned and collidable
+ * (AH-0MURBER4L00821RR). Uses the scene's test seam rather than ticking, so
+ * wave timers and asteroid spawns are not advanced. Fully-grown enemies are
+ * the pre-animation state the collision tests expect.
+ */
+function finishSpawnSequence(scene: PlayScene): void {
+  scene.finishSpawnAnimations();
+  // One tick lets the scene clear the finished spawn state and close the
+  // wormhole through the normal update path.
+  scene.tick(0.001);
+}
+
 /** Destroys every live enemy via player bullets (deterministic). */
 function killAllEnemies(scene: PlayScene): void {
+  // Enemies are protected until their spawn animation completes; advance
+  // past it first so the kill loop can actually damage them.
+  finishSpawnSequence(scene);
   for (let guard = 0; guard < 500 && scene.getAliveCount() > 0; guard++) {
     const enemy = scene.getEnemies().find((e) => e.alive)!;
     scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
@@ -104,9 +121,13 @@ function killNonAsteroidEnemies(scene: PlayScene): void {
   }
 }
 
-/** Advances past the transition pause, spawning the next wave. */
+/**
+ * Advances past the transition pause, spawning the next wave, then past
+ * that wave's wormhole spawn sequence so its enemies are fully spawned.
+ */
 function finishTransition(scene: PlayScene): void {
   if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+  finishSpawnSequence(scene);
 }
 
 /**
@@ -366,6 +387,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   it('AC4 — a player bullet destroys an enemy and awards score', async () => {
     const scene = await bootPlay();
+    finishSpawnSequence(scene);
     const before = scene.getAliveCount();
     const enemy = scene.getEnemies().find((e) => e.alive)!;
 
@@ -378,6 +400,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   it('AC5 — a wrapped player bullet still destroys an enemy at its new position', async () => {
     const scene = await bootPlay();
+    finishSpawnSequence(scene);
     const enemy = scene.getEnemies().find((e) => e.alive)!;
 
     // Spawn the bullet off-screen to the left; a single tick wraps it onto
@@ -617,6 +640,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   it('AC4 — an enemy body colliding with the player costs a life', async () => {
     const scene = await bootPlay();
+    finishSpawnSequence(scene);
     const player = scene.getPlayer()!;
 
     // Let auto-fire fire its opening volley, then reposition the ship onto
@@ -2448,7 +2472,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
     const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
 
-    // Kill the Diver with a player bullet.
+    // Kill the Diver with a player bullet (fully spawned, so damage applies).
+    finishSpawnSequence(scene);
     scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
     scene.tick(0.016);
 
@@ -2460,6 +2485,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   it('a generic enemy (Scout) plays the generic destruction sound', async () => {
     vi.restoreAllMocks();
     const scene = await bootPlay();
+    finishSpawnSequence(scene);
     const enemy = scene.getEnemies().find((e) => !(e as { playDestructionAudio?: unknown }).playDestructionAudio)!;
 
     const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
@@ -2488,6 +2514,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     // Let auto-fire fire its opening volley, then park the ship on the Diver
     // so the body-collision path triggers (mirrors the scout ram test).
+    finishSpawnSequence(scene);
     scene.tick(0.016);
     player.setPosition(seam!.x, seam!.y);
     const state = player.getMovementState();
@@ -3479,5 +3506,123 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
     const level4 = generated.find((l) => l.level === 4);
     expect(level4).toBeDefined();
     expect(level4!.level).toBe(4);
+  });
+});
+
+describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
+    return booted.scene as PlayScene;
+  }
+
+  it('AC1 — spawns a wormhole when the wave spawns', async () => {
+    const scene = await bootPlay();
+    // A live wormhole container is registered for teardown on spawn.
+    const wormholes = scene.children.list.filter(
+      (child): child is Phaser.GameObjects.Container =>
+        child instanceof Phaser.GameObjects.Container,
+    );
+    expect(wormholes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('AC2 — enemies start at 1 pixel and are marked spawning', async () => {
+    const scene = await bootPlay();
+    // Spawn another wave and inspect only the freshly-created enemies (the
+    // deterministic boot settle may already have advanced earlier waves).
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const enemy of fresh) {
+      expect((enemy as unknown as { scaleX: number }).scaleX).toBeCloseTo(0.01, 5);
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(true);
+    }
+  });
+
+  it('AC2/AC4 — enemies grow to full size and stop being protected', async () => {
+    const scene = await bootPlay();
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+    const originalScale = (enemy as unknown as { scaleX: number }).scaleX;
+
+    // Finish the wormhole open phase + growth deterministically.
+    scene.finishSpawnAnimations();
+
+    expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(false);
+    // The scale is restored from 0.01 to the pre-animation value (1).
+    expect((enemy as unknown as { scaleX: number }).scaleX).toBeCloseTo(1, 5);
+    void originalScale;
+  });
+
+  it('AC4 — player bullets cannot destroy a spawning enemy', async () => {
+    const scene = await bootPlay();
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+    const aliveBefore = scene.getAliveCount();
+
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+
+    expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(true);
+    expect(scene.getAliveCount()).toBe(aliveBefore);
+    expect(enemy.alive).toBe(true);
+  });
+
+  it('AC4 — player bullets destroy the enemy once spawning completes', async () => {
+    const scene = await bootPlay();
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    const aliveBefore = scene.getAliveCount();
+
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(scene.getAliveCount()).toBeLessThan(aliveBefore);
+  });
+
+  it('AC4 — a spawning enemy cannot collide with the player', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const enemy = scene.getEnemies().find((e) => e.alive)!;
+    const livesBefore = scene.getGameState().lives;
+
+    // Park the player on the still-spawning enemy.
+    player.setPosition(enemy.x, enemy.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: { x: number; y: number } })._movementState =
+      { ...state, x: enemy.x, y: enemy.y };
+    scene.tick(0.001);
+
+    expect(scene.getGameState().lives).toBe(livesBefore);
+  });
+
+  it('AC4 — a spawning enemy cannot shoot at the player', async () => {
+    const scene = await bootPlay();
+    // Spawn another wave and arm only the freshly-created enemies: they are
+    // still within their spawn window, so fire must be suppressed.
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before);
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const enemy of fresh) {
+      if (enemy.alive) enemy.shootEnabled = true;
+    }
+    scene.tick(0.1);
+    expect(
+      fresh.every(
+        (e) => e.alive && (e as unknown as { isSpawning: boolean }).isSpawning,
+      ),
+    ).toBe(true);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
   });
 });

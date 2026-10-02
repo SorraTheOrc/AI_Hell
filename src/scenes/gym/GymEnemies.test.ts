@@ -760,6 +760,9 @@ describe('GymEnemies — single reusable enemy gym', () => {
   describe('swarm — AC3 a player bullet destroys a swarm member; a swarm burst hitting the player respawns it (AH-0MTFTJ01K000JG4I)', () => {
     it('a player bullet destroys one swarm member and a subsequent aimed swarm burst hits the player (hits → respawn + invulnerability + sound)', async () => {
       const scene = await bootWithKey('swarm');
+      // Complete the wormhole spawn animation so members are collidable.
+      scene.finishSpawnAnimations();
+      scene.tick(0.001);
       const player = scene.getPlayer()!;
       expect(player).not.toBeNull();
 
@@ -1290,6 +1293,8 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
 
   it('a player bullet destroying the asteroid spawns split children', async () => {
     const scene = await bootAsteroidGym();
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
     const asteroid = liveAsteroids(scene)[0];
 
     const pb = scene.spawnPlayerBullet(asteroid.x, asteroid.y, 0, 0);
@@ -1317,6 +1322,8 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
 
   it('a destroyed small asteroid drops one mineral at its position (AC1)', async () => {
     const scene = await bootAsteroidGym();
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
     const clearBullets = (): void => {
       (
         scene as unknown as { playerBullets: unknown[] }
@@ -1549,5 +1556,64 @@ describe('normaliseSpawnRanges (AH-0MUKCLXLW0032R67, AC3c/AC3d)', () => {
       startYMax: undefined,
     });
     expect(config).toMatchObject({ startXMin: 123, startXMax: 123, startYMin: 234, startYMax: 234 });
+  });
+});
+
+describe('GymEnemies — wormhole spawn animation parity (AH-0MURBER4L00821RR AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootGym(): Promise<GymEnemies> {
+    class Wrapper extends GymEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: 'scout' });
+      }
+    }
+    Object.defineProperty(Wrapper, 'name', { value: 'Wrapper_scout_gym_spawn_test' });
+    booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
+    return booted.scene as unknown as GymEnemies;
+  }
+
+  it('spawns enemies at 1 pixel, marked spawning, and grows them to full size', async () => {
+    const scene = await bootGym();
+    const entities = scene.formationEntities.filter(
+      (e) => (e as unknown as { alive: boolean }).alive,
+    );
+    expect(entities.length).toBeGreaterThan(0);
+
+    // Freshly booted: every entity is spawning at 1 px.
+    for (const entity of entities) {
+      const e = entity as unknown as { scaleX: number; isSpawning: boolean };
+      expect(e.isSpawning).toBe(true);
+      expect(e.scaleX).toBeCloseTo(0.01, 5);
+    }
+
+    // The scene test seam completes the sequence deterministically.
+    scene.finishSpawnAnimations();
+    for (const entity of entities) {
+      const e = entity as unknown as { scaleX: number; isSpawning: boolean };
+      expect(e.isSpawning).toBe(false);
+      expect(e.scaleX).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('protects spawning enemies from player bullets', async () => {
+    const scene = await bootGym();
+    const victim = scene.formationEntities.find(
+      (e) => (e as unknown as { alive: boolean }).alive,
+    )! as unknown as { alive: boolean; x: number; y: number; isSpawning: boolean };
+    const before = scene.aliveCount;
+
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(victim.isSpawning).toBe(true);
+    expect(victim.alive).toBe(true);
+    expect(scene.aliveCount).toBe(before);
   });
 });

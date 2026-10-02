@@ -186,6 +186,9 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
+    // Complete the wormhole spawn animation so enemies are collidable.
+    play.finishSpawnAnimations();
+    play.tick(0.001);
     // Earn some score by destroying an enemy.
     const enemy = play.getEnemies().find((e) => e.alive)!;
     play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
@@ -209,6 +212,8 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
       const play = game.scene.getScene('PlayScene') as PlayScene;
+      play.finishSpawnAnimations();
+      play.tick(0.001);
       // Kill every enemy, then die.
       for (let guard = 0; guard < 300 && play.getAliveCount() > 0; guard++) {
         const enemy = play.getEnemies().find((e) => e.alive)!;
@@ -325,6 +330,8 @@ describe('Scene navigation — keyboard-driven loop (AH-0MUBZTZ7P00838MH)', () =
 
     // Earn a score, then die.
     const play = game.scene.getScene('PlayScene') as PlayScene;
+    play.finishSpawnAnimations();
+    play.tick(0.001);
     const enemy = play.getEnemies().find((e) => e.alive)!;
     play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
     play.tick(0.016);
