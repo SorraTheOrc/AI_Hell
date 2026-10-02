@@ -664,6 +664,18 @@ handling all run through the shared core (`_tickPlayer`, `_autoFire`,
 `_handleCollisions`) — the gym overrides only the two destruction hooks
 (`onPlayerBulletHitsEnemy` absorbs the bullet; `onPlayerRamsEnemy` leaves the
 obstacle alive), so no collision loop is copied (AH-0MUAYB2XR007N10W).
+
+**Documented divergence — the weapon gym's AOE practice targets.**
+`GymWeapons` spawns three inert, static `TrainingTarget`s that the shipped
+`PlayScene` has no counterpart for. They exist solely so the inherited AOE
+dispatch/VFX (`CombatScene.onAoeFired` → `applyAoeEffect` / `applyArcChainEffect`)
+can visibly demonstrate the Nova ring, Mortar blast and Arc chain in a
+theatre that otherwise has no enemies; they never move and never fire, so the
+gym stays threat-free. The AOE resolution itself is **not** duplicated — the
+gym exposes the targets through the shared `getEnemyEntities()` participant
+contract and inherits every AOE hook from the shared core, so the game and the
+gym resolve the same effect from one implementation (parent
+AH-0MQUYHY0000MZ2F, F6 AC3/AC5).
 ---
 
 ## 6. Testing strategy
