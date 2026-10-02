@@ -200,6 +200,9 @@ class AoeStubScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   getBulletImpactEffects(): Phaser.GameObjects.Graphics[] {
     return this.bulletImpactEffects;
   }
+  getAoeEffects(): Phaser.GameObjects.Graphics[] {
+    return this.aoeEffects;
+  }
 }
 
 describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
@@ -431,5 +434,33 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
         5,
       );
     }
+  });
+
+  // ── F2 — Nova expanding-ring VFX through the shared dispatch ──────
+
+  it('F2 AC3 — firing Nova spawns the expanding-ring VFX through the shared core', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('nova');
+    expect(scene.getAoeEffects()).toHaveLength(0);
+
+    scene.runAutoFire(3.0);
+
+    // Exactly one Nova ring was registered (the cannon spawns no AOE VFX).
+    expect(scene.getAoeEffects()).toHaveLength(1);
+    const ring = scene.getAoeEffects()[0];
+    expect(ring.x).toBe(100);
+    expect(ring.y).toBe(100);
+  });
+
+  it('F2 AC3 — an onImpact weapon spawns no onFire ring', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+
+    scene.runAutoFire(1.5);
+
+    // Mortar detonates later (F3); no Nova ring is drawn at fire time.
+    expect(scene.getAoeEffects()).toHaveLength(0);
   });
 });

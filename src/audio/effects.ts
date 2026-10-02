@@ -1675,6 +1675,108 @@ export function playRapidFireSound(): void {
   blip(500, 900, 0.05, 'triangle', 0.12);
 }
 
+// ── AOE weapon fire cues (parent AH-0MUOOB3OR001V8CD) ─────────────
+//
+// The AOE family needs fire cues that read as "an area opened up", not as
+// another bullet leaving the barrel. Nova is a low expanding thump layered
+// with a rising ring sweep — unmistakable next to the short cannon/spread/
+// dual/rapid blips and the rising P6 phase chirp. Every layer stays within
+// the GDD §7.3 player-cue ceiling (≤ 0.2) and the whole cue is a safe no-op
+// without an AudioContext (headless tests / autoplay-blocked browsers).
+
+/** Nova thump start frequency (Hz) — a deep sub-bass drop. */
+export const NOVA_FIRE_THUMP_START_HZ = 160;
+
+/** Nova thump end frequency (Hz). */
+export const NOVA_FIRE_THUMP_END_HZ = 40;
+
+/** Nova thump layer duration (seconds). */
+export const NOVA_FIRE_THUMP_DURATION = 0.35;
+
+/** Nova thump layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const NOVA_FIRE_THUMP_VOLUME = 0.18;
+
+/** Nova rising-ring sweep start frequency (Hz). */
+export const NOVA_FIRE_RING_START_HZ = 300;
+
+/** Nova rising-ring sweep end frequency (Hz) — the outward "expansion". */
+export const NOVA_FIRE_RING_END_HZ = 1800;
+
+/** Nova rising-ring layer duration (seconds). */
+export const NOVA_FIRE_RING_DURATION = 0.25;
+
+/** Nova rising-ring layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const NOVA_FIRE_RING_VOLUME = 0.12;
+
+/**
+ * Minimum interval (seconds) between Nova fire cues — rate limiting so a
+ * burst of background/simultaneous frames cannot stack identical cues on
+ * top of each other (GDD §7.3). The 3 s beat cadence means this is rarely
+ * reached in normal play.
+ */
+export const NOVA_FIRE_MIN_INTERVAL = 0.05;
+
+/** Module-scoped timestamp of the last Nova cue (rate limiter state). */
+let lastNovaFireAt = Number.NEGATIVE_INFINITY;
+
+/** Resets the Nova fire-cue rate limiter (test seam). */
+export function _resetNovaFireLimiterForTests(): void {
+  lastNovaFireAt = Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Plays the dedicated Nova fire cue: a deep expanding thump (sawtooth
+ * falling 160 → 40 Hz) layered with a rising triangle ring sweep (300 →
+ * 1800 Hz). Distinct from every other weapon cue by both its low-end body
+ * and its rising contour. Rate-limited by {@link NOVA_FIRE_MIN_INTERVAL}
+ * and routed through the master SFX gain. Safe no-op without an
+ * AudioContext.
+ */
+export function playNovaFireSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  if (now - lastNovaFireAt < NOVA_FIRE_MIN_INTERVAL) return;
+  lastNovaFireAt = now;
+  const t = now;
+
+  // Layer 1: deep expanding thump — the "pulse" body.
+  const thump = ctx.createOscillator();
+  const thumpGain = ctx.createGain();
+  thump.type = 'sawtooth';
+  thump.frequency.setValueAtTime(NOVA_FIRE_THUMP_START_HZ, t);
+  thump.frequency.exponentialRampToValueAtTime(
+    NOVA_FIRE_THUMP_END_HZ,
+    t + NOVA_FIRE_THUMP_DURATION,
+  );
+  thumpGain.gain.setValueAtTime(NOVA_FIRE_THUMP_VOLUME, t);
+  thumpGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + NOVA_FIRE_THUMP_DURATION,
+  );
+  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
+  thump.start(t);
+  thump.stop(t + NOVA_FIRE_THUMP_DURATION + 0.02);
+
+  // Layer 2: rising ring sweep — the outward "expansion" texture.
+  const ring = ctx.createOscillator();
+  const ringGain = ctx.createGain();
+  ring.type = 'triangle';
+  ring.frequency.setValueAtTime(NOVA_FIRE_RING_START_HZ, t);
+  ring.frequency.exponentialRampToValueAtTime(
+    NOVA_FIRE_RING_END_HZ,
+    t + NOVA_FIRE_RING_DURATION,
+  );
+  ringGain.gain.setValueAtTime(NOVA_FIRE_RING_VOLUME, t);
+  ringGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t + NOVA_FIRE_RING_DURATION,
+  );
+  ring.connect(ringGain).connect(ensureMasterGain(ctx));
+  ring.start(t);
+  ring.stop(t + NOVA_FIRE_RING_DURATION + 0.02);
+}
+
 // ── Player weapon pickup activation cues (GDD §4.4, §7.3) ──────────
 
 /**

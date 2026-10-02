@@ -39,6 +39,7 @@ import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
+import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { selectAoETargets } from '../../utils/aoe';
 import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
@@ -94,6 +95,13 @@ export abstract class CombatScene<
 > extends CombatCoreScene<TEnemy, TBullet, TDrop> {
   /** Live bullet-impact flash graphics (AC5, tracked for observation). */
   protected bulletImpactEffects: Phaser.GameObjects.Graphics[] = [];
+
+  /**
+   * Live AOE effect graphics (nova ring; mortar burst / arc chain in F3/F4),
+   * tracked for observation and teardown on scene shutdown
+   * (parent AH-0MUOOB3OR001V8CD).
+   */
+  protected aoeEffects: Phaser.GameObjects.Graphics[] = [];
 
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
@@ -426,9 +434,9 @@ export abstract class CombatScene<
 
   /**
    * Shared AOE dispatch from `_autoFire`: resolves an `'onFire'` effect at
-   * the ship immediately. An `'onImpact'` effect (mortar shell) resolves
-   * later, when its projectile detonates and calls
-   * {@link CombatScene.applyAoeEffect}.
+   * the ship immediately and spawns its distinctive VFX. An `'onImpact'`
+   * effect (mortar shell) resolves later, when its projectile detonates and
+   * calls {@link CombatScene.applyAoeEffect}.
    */
   protected override onAoeFired(
     _weaponId: WeaponId,
@@ -436,7 +444,27 @@ export abstract class CombatScene<
     x: number,
     y: number,
   ): void {
-    if (def.aoe?.trigger === 'onFire') this.applyAoeEffect(def, x, y);
+    if (def.aoe?.trigger === 'onFire') {
+      this.applyAoeEffect(def, x, y);
+      this.spawnAoeEffectVfx(def, x, y);
+    }
+  }
+
+  /**
+   * Spawns the distinctive neon-vector VFX for a firing AOE weapon. Owned by
+   * the shared core so the game and every gym render the identical effect
+   * (parent AH-0MUOOB3OR001V8CD AC5). Nova's expanding ring is the F2
+   * implementation; F3/F4 extend this with the Mortar detonation burst and
+   * the Arc chain bolts.
+   */
+  protected spawnAoeEffectVfx(
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    if (def.id === 'nova' && def.aoe) {
+      spawnNovaRing(this, x, y, def.aoe.radius, { registry: this.aoeEffects });
+    }
   }
 
   /**
@@ -1063,6 +1091,7 @@ export abstract class CombatScene<
   protected override resetRunState(): void {
     super.resetRunState();
     this.bulletImpactEffects = [];
+    this.aoeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
@@ -1085,6 +1114,8 @@ export abstract class CombatScene<
     super.teardownRunState();
     for (const effect of this.bulletImpactEffects) effect.destroy();
     this.bulletImpactEffects = [];
+    for (const effect of this.aoeEffects) effect.destroy();
+    this.aoeEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;

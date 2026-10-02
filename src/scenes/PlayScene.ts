@@ -49,6 +49,7 @@ import {
   playCannonFireSound,
   playDestructionSound,
   playDualFireSound,
+  playNovaFireSound,
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
@@ -1192,6 +1193,9 @@ export class PlayScene extends CombatScene<
         break;
       case 'rapid':
         playRapidFireSound();
+        break;
+      case 'nova':
+        playNovaFireSound();
         break;
     }
   }

@@ -91,6 +91,17 @@ import {
   PHASE_SHIFT_WHOOSH_VOLUME,
   playVolumeFeedback,
   setSfxMuted,
+  playNovaFireSound,
+  NOVA_FIRE_THUMP_START_HZ,
+  NOVA_FIRE_THUMP_END_HZ,
+  NOVA_FIRE_THUMP_DURATION,
+  NOVA_FIRE_THUMP_VOLUME,
+  NOVA_FIRE_RING_START_HZ,
+  NOVA_FIRE_RING_END_HZ,
+  NOVA_FIRE_RING_DURATION,
+  NOVA_FIRE_RING_VOLUME,
+  NOVA_FIRE_MIN_INTERVAL,
+  _resetNovaFireLimiterForTests,
 } from './effects';
 
 // ── Recording Web Audio mock ────────────────────────────────────────
@@ -328,6 +339,7 @@ describe('player audio cues — safe no-op fallback (AC5)', () => {
       playSpreadFireSound,
       playDualFireSound,
       playRapidFireSound,
+      playNovaFireSound,
       playSpreadPickupSound,
       playDualPickupSound,
       playRapidPickupSound,
@@ -1853,5 +1865,77 @@ describe('volume-feedback — player-explosion cue, volume-scaled (AC1, AC3, AC5
     expect(newOscillators(snap).filter((o) => o.type !== 'noise')).toHaveLength(2);
     // Restore mute state for other suites.
     setSfxMuted(false);
+  });
+});
+
+// ── Nova AOE fire cue (F2, parent AH-0MUOOB3OR001V8CD AC4) ──────────
+
+describe('Nova fire cue — synthesis + rate limiting (F2 AC4)', () => {
+  beforeAll(() => {
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // prime the module-scoped context
+  });
+
+  beforeEach(() => {
+    _resetAudioContextForTests();
+    RecordingAudioContext.instances.length = 0;
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      RecordingAudioContext;
+    playCannonFireSound(); // re-prime after the reset cleared the cache
+    _resetNovaFireLimiterForTests();
+  });
+
+  it('layers a deep expanding thump with a rising ring sweep', () => {
+    const snap = snapshot();
+    playNovaFireSound();
+    const oscs = newOscillators(snap);
+    const gains = newGains(snap);
+
+    expect(oscs).toHaveLength(2);
+    // Layer 1: the deep thump — a sawtooth falling to sub-bass.
+    expect(oscs[0].type).toBe('sawtooth');
+    expect(startFreq([oscs[0]])).toBe(NOVA_FIRE_THUMP_START_HZ);
+    expect(endFreq([oscs[0]])).toBe(NOVA_FIRE_THUMP_END_HZ);
+    // Layer 2: the expanding ring — a triangle climbing outward.
+    expect(oscs[1].type).toBe('triangle');
+    expect(startFreq([oscs[1]])).toBe(NOVA_FIRE_RING_START_HZ);
+    expect(endFreq([oscs[1]])).toBe(NOVA_FIRE_RING_END_HZ);
+    // Both layers stay within the GDD §7.3 player-cue ceiling (≤ 0.2).
+    expect(NOVA_FIRE_THUMP_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(NOVA_FIRE_RING_VOLUME).toBeLessThanOrEqual(0.2);
+    expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('is distinct from every other weapon cue: falling sawtooth + rising triangle', () => {
+    const snap = snapshot();
+    playNovaFireSound();
+    const oscs = newOscillators(snap);
+    expect(oscs.map((o) => o.type)).toEqual(['sawtooth', 'triangle']);
+    // The thump is the longest player weapon cue — the "expanding" body.
+    expect(oscs[0].stopTime! - oscs[0].startTime!).toBeGreaterThanOrEqual(
+      NOVA_FIRE_THUMP_DURATION,
+    );
+    expect(NOVA_FIRE_THUMP_DURATION).toBeGreaterThan(NOVA_FIRE_RING_DURATION);
+  });
+
+  it('rate-limits repeated cues inside the minimum interval', () => {
+    const ctx = mockCtx();
+    ctx.currentTime = 5;
+    const first = snapshot();
+    playNovaFireSound();
+    expect(newOscillators(first)).toHaveLength(2);
+
+    // A second cue inside the throttle window synthesises nothing.
+    const second = snapshot();
+    ctx.currentTime = 5 + NOVA_FIRE_MIN_INTERVAL / 2;
+    playNovaFireSound();
+    expect(newOscillators(second)).toHaveLength(0);
+
+    // Past the window, the cue plays again.
+    const third = snapshot();
+    ctx.currentTime = 5 + NOVA_FIRE_MIN_INTERVAL + 0.01;
+    playNovaFireSound();
+    expect(newOscillators(third)).toHaveLength(2);
   });
 });
