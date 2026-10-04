@@ -280,3 +280,299 @@ export function resolveEndOfRunJuiceParams(
     soundEnabled: ENDOFRUN_ENABLE_SOUND,
   };
 }
+
+// ── Rendering layers (F2 victory celebration) ──────────────────────
+//
+// The layers below are the Phaser rendering half of the module; the pure
+// parameter model above stays free of any Phaser dependency.  They mirror
+// the `playerDeathJuice.ts` layer contract: each layer reads its values from
+// the resolved params, is individually switchable via an `ENDOFRUN_ENABLE_*`
+// toggle, pushes every display object into a caller-owned registry and
+// removes it on completion so `SHUTDOWN` teardown can destroy leftovers.
+//
+// Depth note: juice layers render at negative depth so they sit *above* the
+// GameOverScene background (which F5 gives a lower negative depth) but
+// *behind* the default-depth (0) score / initials / leaderboard UI.  This is
+// what keeps the treatment non-blocking — it can never occlude the UI or
+// intercept a pointer.
+
+import Phaser from 'phaser';
+
+import { createRng, type ExplosionHandle } from './explosionParticles';
+import type { JuiceRegistry } from './playerDeathJuice';
+
+/** Depth of the victory flash — behind the GameOverScene UI. */
+export const ENDOFRUN_VICTORY_FLASH_DEPTH = -10;
+
+/** Depth of the victory rings — above the flash, behind the confetti. */
+export const ENDOFRUN_VICTORY_RING_DEPTH = -9;
+
+/** Depth of the victory confetti — the front-most juice layer, still behind UI. */
+export const ENDOFRUN_VICTORY_CONFETTI_DEPTH = -8;
+
+/** Number of staggered celebration rings spawned by the victory treatment. */
+export const ENDOFRUN_VICTORY_RING_COUNT = 2;
+
+/** Stagger (ms) between successive victory rings. */
+export const ENDOFRUN_VICTORY_RING_STAGGER_MS = 120;
+
+/** Confetti piece width (px). */
+export const ENDOFRUN_CONFETTI_WIDTH = 8;
+
+/** Confetti piece height (px). */
+export const ENDOFRUN_CONFETTI_HEIGHT = 4;
+
+/** Confetti travel distance (px) from the burst centre. */
+export const ENDOFRUN_CONFETTI_TRAVEL = 220;
+
+/** Confetti angular spin per tween (degrees). */
+export const ENDOFRUN_CONFETTI_SPIN = 540;
+
+/** Number of distinct victory palette colours cycled across confetti pieces. */
+export const ENDOFRUN_VICTORY_PALETTE_SIZE = 3;
+
+/** Optional overrides for the victory celebration layers. */
+export interface VictoryJuiceOptions {
+  /**
+   * Caller-owned registry every juice display object is added to and removed
+   * from on completion. Defaults to a fresh array. Scenes pass their
+   * `endOfRunEffects` array so `SHUTDOWN` can destroy any leftovers.
+   */
+  registry?: JuiceRegistry;
+  /** PRNG seed for deterministic confetti layout in tests. */
+  seed?: number;
+  /** X origin of the celebration (defaults to the scene centre). */
+  x?: number;
+  /** Y origin of the celebration (defaults to the scene centre). */
+  y?: number;
+}
+
+/** Handle returned by {@link spawnVictoryJuice}. */
+export interface VictoryJuiceHandle {
+  /** The resolved victory parameters the effect ran with. */
+  params: EndOfRunJuiceParams;
+  /** Every juice-owned display object (flash, rings, confetti). */
+  registry: JuiceRegistry;
+  /** The flash rectangle (or `null` when the flash toggle is off). */
+  flash: Phaser.GameObjects.Rectangle | null;
+  /** The spawned celebration rings (empty when the ring toggle is off). */
+  rings: Phaser.GameObjects.Graphics[];
+  /** The spawned confetti pieces (empty when the particle toggle is off). */
+  confetti: Phaser.GameObjects.Rectangle[];
+  /** Reserved for a future delegated particle burst (always `null` today). */
+  particles: ExplosionHandle | null;
+}
+
+/** Picks the victory cycle colour for confetti index `i`. */
+function victoryPaletteColor(params: EndOfRunJuiceParams, i: number): number {
+  const palette = [params.victoryColor, params.victoryGreen, params.victorySparkle];
+  return palette[i % palette.length];
+}
+
+/**
+ * Spawns the bright victory flash/glow overlay (F2 layer 1).
+ *
+ * A non-interactive full-screen rectangle in the victory colour, fixed to the
+ * camera (scroll factor 0) behind the UI, fading from the resolved alpha to 0
+ * over the resolved duration. On completion it is destroyed and removed from
+ * `registry`.
+ *
+ * No-op (`null`) when the flash toggle is off or the scene lacks an `add`
+ * facility.
+ */
+export function spawnVictoryFlash(
+  scene: Phaser.Scene,
+  params: EndOfRunJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Rectangle | null {
+  if (!params.victoryFlashEnabled) return null;
+  const sceneAdd = scene?.add as
+    | { rectangle?: (...args: unknown[]) => Phaser.GameObjects.Rectangle }
+    | undefined;
+  if (!sceneAdd || typeof sceneAdd.rectangle !== 'function') return null;
+
+  const width = scene.scale?.width ?? 0;
+  const height = scene.scale?.height ?? 0;
+  const flash = sceneAdd.rectangle(
+    width / 2,
+    height / 2,
+    width,
+    height,
+    params.victoryColor,
+    params.victoryFlashAlpha,
+  );
+  flash.setDepth(ENDOFRUN_VICTORY_FLASH_DEPTH);
+  flash.setScrollFactor(0);
+  flash.setData('juiceLayer', 'victoryFlash');
+  registry?.push(flash);
+
+  scene.tweens.add({
+    targets: flash,
+    alpha: 0,
+    duration: params.victoryFlashDurationMs,
+    ease: 'Power2',
+    onComplete: () => {
+      if (registry) {
+        const index = registry.indexOf(flash);
+        if (index >= 0) registry.splice(index, 1);
+      }
+      flash.destroy();
+    },
+  });
+
+  return flash;
+}
+
+/**
+ * Spawns the victory celebration rings (F2 layer 2).
+ *
+ * {@link ENDOFRUN_VICTORY_RING_COUNT} stroked rings expand outward from (x, y)
+ * over the resolved duration, staggered by
+ * {@link ENDOFRUN_VICTORY_RING_STAGGER_MS}. Each ring is its own Graphics so
+ * it can be torn down independently; every ring is pushed to `registry` on
+ * spawn and spliced out when its tween completes.
+ *
+ * No-op (`[]`) when the ring toggle is off.
+ */
+export function spawnVictoryRings(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  params: EndOfRunJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Graphics[] {
+  if (!params.victoryRingEnabled || params.victoryRingRadius <= 0) return [];
+
+  const rings: Phaser.GameObjects.Graphics[] = [];
+  for (let i = 0; i < ENDOFRUN_VICTORY_RING_COUNT; i++) {
+    const ring = scene.add.graphics({ x, y });
+    ring.setDepth(ENDOFRUN_VICTORY_RING_DEPTH);
+    const color = i % 2 === 0 ? params.victoryColor : params.victoryGreen;
+    ring.lineStyle(params.ringLineWidth, color, 1);
+    ring.strokeCircle(0, 0, params.victoryRingRadius);
+    ring.setScale(params.ringStartScale);
+    ring.setData('juiceLayer', 'victoryRing');
+    ring.setData('ringIndex', i);
+    registry?.push(ring);
+    rings.push(ring);
+
+    scene.tweens.add({
+      targets: ring,
+      scale: 1,
+      alpha: 0,
+      delay: i * ENDOFRUN_VICTORY_RING_STAGGER_MS,
+      duration: params.ringDurationMs,
+      ease: 'Power2',
+      onComplete: () => {
+        if (registry) {
+          const index = registry.indexOf(ring);
+          if (index >= 0) registry.splice(index, 1);
+        }
+        ring.destroy();
+      },
+    });
+  }
+
+  return rings;
+}
+
+/**
+ * Spawns the victory confetti burst (F2 layer 3).
+ *
+ * `params.victoryParticleCount` small confetti rectangles fly outward from
+ * (x, y), spinning and fading over `params.victoryParticleLifespanMs`. Each
+ * piece cycles through the victory palette so the burst reads as multi-colour
+ * celebration. Every piece is an individual Rectangle with its own tween, so
+ * it can be torn down independently; each is pushed to `registry` on spawn
+ * and spliced out on completion. A seeded RNG keeps the layout deterministic
+ * for tests.
+ *
+ * No-op (`[]`) when the particle toggle is off or the count is zero.
+ */
+export function spawnVictoryConfetti(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  params: EndOfRunJuiceParams,
+  registry?: JuiceRegistry,
+  options: { seed?: number } = {},
+): Phaser.GameObjects.Rectangle[] {
+  if (!params.victoryParticlesEnabled || params.victoryParticleCount <= 0) return [];
+
+  const rng = createRng(options.seed ?? Date.now());
+  const confetti: Phaser.GameObjects.Rectangle[] = [];
+
+  for (let i = 0; i < params.victoryParticleCount; i++) {
+    const angle = rng() * Math.PI * 2;
+    const travel = ENDOFRUN_CONFETTI_TRAVEL * (0.5 + rng() * 0.5);
+    const dx = Math.cos(angle) * travel;
+    const dy = Math.sin(angle) * travel;
+    const spin = (rng() - 0.5) * 2 * ENDOFRUN_CONFETTI_SPIN;
+
+    const piece = scene.add.rectangle(
+      x,
+      y,
+      ENDOFRUN_CONFETTI_WIDTH,
+      ENDOFRUN_CONFETTI_HEIGHT,
+      victoryPaletteColor(params, i),
+      1,
+    );
+    piece.setDepth(ENDOFRUN_VICTORY_CONFETTI_DEPTH);
+    piece.setData('juiceLayer', 'victoryConfetti');
+    registry?.push(piece);
+    confetti.push(piece);
+
+    scene.tweens.add({
+      targets: piece,
+      x: x + dx,
+      y: y + dy,
+      angle: spin,
+      alpha: 0,
+      scale: 0.4,
+      duration: params.victoryParticleLifespanMs,
+      ease: 'Power1',
+      onComplete: () => {
+        if (registry) {
+          const index = registry.indexOf(piece);
+          if (index >= 0) registry.splice(index, 1);
+        }
+        piece.destroy();
+      },
+    });
+  }
+
+  return confetti;
+}
+
+/**
+ * Composes and plays the full victory celebration (F2, parent AC2).
+ *
+ * The single shared entry point for the victory end-of-run treatment: it
+ * resolves the victory parameters, then spawns the flash, one or more rings
+ * and the confetti burst — each layer self-guarded by its `ENDOFRUN_ENABLE_*`
+ * toggle. Every spawned display object is added to `options.registry` (or a
+ * fresh array) so `SHUTDOWN` teardown can destroy them. Purely cosmetic: it
+ * never reads or writes gameplay state and never intercepts input.
+ *
+ * @param scene   — the scene to render into.
+ * @param options — registry, seed and origin injection (tests / teardown).
+ */
+export function spawnVictoryJuice(
+  scene: Phaser.Scene,
+  options: VictoryJuiceOptions = {},
+): VictoryJuiceHandle {
+  const params = resolveEndOfRunJuiceParams('victory');
+  const registry: JuiceRegistry = options.registry ?? [];
+  const width = scene.scale?.width ?? 0;
+  const height = scene.scale?.height ?? 0;
+  const x = options.x ?? width / 2;
+  const y = options.y ?? height / 2;
+
+  const flash = spawnVictoryFlash(scene, params, registry);
+  const rings = spawnVictoryRings(scene, x, y, params, registry);
+  const confetti = spawnVictoryConfetti(scene, x, y, params, registry, {
+    seed: options.seed,
+  });
+
+  return { params, registry, flash, rings, confetti, particles: null };
+}
