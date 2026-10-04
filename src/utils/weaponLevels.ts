@@ -53,7 +53,7 @@
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
-import { WEAPON_CATALOGUE, getWeaponById, type WeaponId } from './weapons';
+import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
 import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from './beat';
 
 // ── Upgrade variables ───────────────────────────────────────────────
@@ -592,6 +592,86 @@ export function resolveWeaponAtLevel(
     fireRateMs,
     beatSubdivision: beatPeriodMs() / fireRateMs,
   };
+}
+
+/**
+ * Expands a weapon's shot pattern for extra projectiles (the
+ * `projectileCount` upgrade) and a wider fan (the `spreadAngle` upgrade).
+ *
+ * A weapon with no extra projectiles keeps its base pattern exactly. When
+ * extra projectiles are present, the bullets are re-distributed as an even
+ * angular fan across the base pattern's span plus `spreadAngle` on each side
+ * (a single bullet stays on the weapon's base heading).
+ *
+ * Pure and deterministic so the game and every gym expand identically.
+ */
+export function expandWeaponPattern(
+  base: WeaponDefinition,
+  stats: WeaponLevelStats,
+): { offsets: number[] } {
+  const extra = Math.max(0, Math.round(stats.projectileCount));
+  if (extra === 0) {
+    return { offsets: [...base.offsets] };
+  }
+  const total = base.offsets.length + extra;
+  const baseMax = base.offsets.reduce((max, o) => Math.max(max, Math.abs(o)), 0);
+  const halfSpan = baseMax + (stats.spreadAngle * Math.PI) / 180;
+  if (total <= 1) {
+    return { offsets: [base.offsets[0] ?? 0] };
+  }
+  return {
+    offsets: Array.from(
+      { length: total },
+      (_, i) => -halfSpan + (2 * halfSpan * i) / (total - 1),
+    ),
+  };
+}
+
+/**
+ * Resolves a weapon at `level` to a **level-resolved `WeaponDefinition`** —
+ * the single conversion used by the player and every gym (parent
+ * AH-0MUPMPCB2009J54J, parity).
+ *
+ * At level 0 the base catalogue definition is returned unchanged (AC8). At
+ * level ≥ 1 the scalar and pattern upgrade variables are applied to a fresh
+ * copy:
+ * - `fireRateMs` — quantised to the beat grid,
+ * - `offsets` — expanded by `projectileCount`/`spreadAngle`,
+ * - `bulletLifetime` — range multiplier,
+ * - `levelBulletSize` — bullet-radius upgrade multiplier,
+ * - `aoe.radius` — area multiplier for AOE weapons.
+ *
+ * `bulletColor`, `bulletShape` and `sideOffsets` are carried through from the
+ * base definition (an expanded pattern is an angular fan, so the base
+ * side-by-side offsets are dropped when projectiles are added).
+ *
+ * @param weaponId - The weapon to resolve (must be in the catalogue).
+ * @param level - The weapon's level (0 = un-upgraded).
+ */
+export function resolveWeaponDefinition(
+  weaponId: WeaponId,
+  level: number,
+): WeaponDefinition {
+  const base = getWeaponById(weaponId);
+  const safeLevel = Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0;
+  if (safeLevel <= 0) {
+    return base;
+  }
+  const stats = resolveWeaponAtLevel(weaponId, safeLevel);
+  const leveled: WeaponDefinition = {
+    ...base,
+    fireRateMs: stats.fireRateMs,
+    offsets: expandWeaponPattern(base, stats).offsets,
+    bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
+    levelBulletSize: stats.bulletSize,
+  };
+  // An expanded pattern is an angular fan; the base parallel offsets no
+  // longer line up with the new bullet count.
+  delete leveled.sideOffsets;
+  if (base.aoe) {
+    leveled.aoe = { ...base.aoe, radius: base.aoe.radius * stats.aoeRadius };
+  }
+  return leveled;
 }
 
 /**

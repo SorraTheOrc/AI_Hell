@@ -23,10 +23,12 @@ import {
   UPGRADE_VARIABLES,
   WEAPON_UPGRADE_SPECS,
   curveValue,
+  expandWeaponPattern,
   quantiseFireRateMs,
   quantiseSubdivision,
   resolveVariable,
   resolveWeaponAtLevel,
+  resolveWeaponDefinition,
   type WeaponLevelStats,
   type WeaponUpgradeVariable,
 } from './weaponLevels';
@@ -403,5 +405,75 @@ describe('fire-rate quantisation to the beat grid (AH-0MUQOV9JV00389E7)', () => 
         }
       }
     }
+  });
+});
+
+describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled definition)', () => {
+  test('level 0 returns the exact base catalogue definition (no regression)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      expect(resolveWeaponDefinition(weaponId, 0)).toBe(
+        BASE_WEAPON_DEFINITIONS[weaponId],
+      );
+    }
+  });
+
+  test('a leveled definition resolves the scalar variables onto the base', () => {
+    const base = WEAPON_CATALOGUE.rapid;
+    const stats = resolveWeaponAtLevel('rapid', 4);
+    const leveled = resolveWeaponDefinition('rapid', 4);
+
+    expect(leveled.fireRateMs).toBe(stats.fireRateMs);
+    expect(leveled.bulletLifetime).toBeCloseTo(
+      base.bulletLifetime * stats.bulletLifetime,
+      10,
+    );
+    expect(leveled.levelBulletSize).toBe(stats.bulletSize);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    // The base catalogue object is never mutated.
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(base.bulletLifetime);
+    expect(WEAPON_CATALOGUE.rapid.levelBulletSize).toBeUndefined();
+  });
+
+  test('expandWeaponPattern adds projectiles and widens the fan', () => {
+    const base = WEAPON_CATALOGUE.spread;
+    const stats = resolveWeaponAtLevel('spread', 5);
+    expect(stats.projectileCount).toBeGreaterThan(0);
+    const { offsets } = expandWeaponPattern(base, stats);
+    expect(offsets.length).toBe(base.offsets.length + stats.projectileCount);
+    // A symmetric fan that spans wider than the base pattern.
+    const span = Math.max(...offsets) - Math.min(...offsets);
+    const baseSpan =
+      Math.max(...base.offsets) - Math.min(...base.offsets);
+    expect(span).toBeGreaterThanOrEqual(baseSpan);
+    expect(offsets[0]).toBeCloseTo(-offsets[offsets.length - 1], 10);
+  });
+
+  test('expandWeaponPattern is a no-op without extra projectiles', () => {
+    const base = WEAPON_CATALOGUE.dual;
+    const stats = resolveWeaponAtLevel(WEAPON_IDS[0], 0);
+    expect(stats.projectileCount).toBe(0);
+    expect(expandWeaponPattern(base, stats).offsets).toEqual([...base.offsets]);
+  });
+
+  test('leveled weapon definitions spawn more projectiles than the base', () => {
+    for (const weaponId of WEAPON_IDS) {
+      const base = WEAPON_CATALOGUE[weaponId];
+      const leveled = resolveWeaponDefinition(weaponId, 6);
+      expect(leveled.offsets.length).toBeGreaterThan(base.offsets.length);
+      // An expanded pattern is angular, so base side offsets are dropped.
+      expect(leveled.sideOffsets).toBeUndefined();
+    }
+  });
+
+  test('an AOE weapon scales its blast radius onto the descriptor', () => {
+    const base = WEAPON_CATALOGUE.nova;
+    const stats = resolveWeaponAtLevel('nova', 3);
+    const leveled = resolveWeaponDefinition('nova', 3);
+    expect(leveled.aoe!.radius).toBeCloseTo(
+      base.aoe!.radius * stats.aoeRadius,
+      10,
+    );
+    expect(leveled.aoe!.trigger).toBe(base.aoe!.trigger);
+    expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(base.aoe!.radius);
   });
 });

@@ -474,6 +474,9 @@ export class CombatCoreScene<
           vel.vy,
           bd.color,
           def.bulletLifetime,
+          // Weapon leveling grows the bullet: `levelBulletSize` is 1/absent on
+          // a base definition, so the base radius is unchanged (AC8).
+          PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1),
         );
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
@@ -490,6 +493,10 @@ export class CombatCoreScene<
    * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s,
    * with the given colour and lifetime (seconds).
    * Public so tests can place bullets deterministically.
+   *
+   * `radius` defaults to the shared {@link PLAYER_BULLET_RADIUS}; the shared
+   * auto-fire path passes a level-scaled radius when a weapon has bullet-size
+   * upgrades.
    */
   spawnPlayerBullet(
     x: number,
@@ -498,13 +505,14 @@ export class CombatCoreScene<
     vy: number,
     color = 0x00ffff,
     lifetime = 1.5,
+    radius = PLAYER_BULLET_RADIUS,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
       x,
       y,
       color,
-      PLAYER_BULLET_RADIUS,
+      radius,
       vx,
       vy,
       lifetime,

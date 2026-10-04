@@ -18,7 +18,7 @@ import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
-import { WEAPON_CATALOGUE } from '../utils/weapons';
+import { isOnBeatGrid, WEAPON_CATALOGUE } from '../utils/weapons';
 import { resolveWeaponAtLevel } from '../utils/weaponLevels';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
@@ -905,14 +905,21 @@ describe('Player ship entity', () => {
     it('getWeaponDef returns a level-resolved definition and never mutates the base (AC4)', async () => {
       const player = await freshPlayer();
       const base = WEAPON_CATALOGUE.rapid;
-      // Level 0 → the exact base catalogue definition (AC8).
+      // Level 0 (and level 1, the first collection) → the exact base
+      // catalogue definition (AC8).
+      expect(player.getWeaponDef('rapid')).toBe(base);
+      player.equipWeapon('rapid');
       expect(player.getWeaponDef('rapid')).toBe(base);
 
+      // The second collection is the first *upgrade* (upgrade index 1).
       player.equipWeapon('rapid');
       const stats = resolveWeaponAtLevel('rapid', 1);
       const leveled = player.getWeaponDef('rapid');
       expect(leveled.fireRateMs).toBe(stats.fireRateMs);
-      expect(leveled.bulletSize).toBeCloseTo(base.bulletSize * stats.bulletSize, 10);
+      // The upgrade adds a bullet-radius multiplier (`levelBulletSize`) without
+      // changing the base visual size (AC8).
+      expect(leveled.levelBulletSize).toBe(stats.bulletSize);
+      expect(leveled.bulletSize).toBe(base.bulletSize);
       expect(leveled.bulletLifetime).toBeCloseTo(
         base.bulletLifetime * stats.bulletLifetime,
         10,
@@ -923,10 +930,13 @@ describe('Player ship entity', () => {
       expect(WEAPON_CATALOGUE.rapid.bulletSize).toBe(base.bulletSize);
     });
 
-    it('an AOE weapon scales its blast radius with level (AC4)', async () => {
+    it('an AOE weapon scales its blast radius with the first upgrade (AC4)', async () => {
       const player = await freshPlayer();
       const baseRadius = WEAPON_CATALOGUE.nova.aoe!.radius;
       player.equipWeapon('nova');
+      expect(player.getWeaponDef('nova').aoe!.radius).toBe(baseRadius);
+
+      player.equipWeapon('nova'); // first upgrade
       const stats = resolveWeaponAtLevel('nova', 1);
       expect(player.getWeaponDef('nova').aoe!.radius).toBeCloseTo(
         baseRadius * stats.aoeRadius,
@@ -957,6 +967,30 @@ describe('Player ship entity', () => {
       expect(player.getWeaponLevel('rapid')).toBe(0);
       expect(player.getWeaponDef('rapid')).toBe(WEAPON_CATALOGUE.rapid);
     });
+
+    it('a fire-rate upgrade raises the cadence and stays on the beat grid (AH-0MUQOUKMW0063VBT)', async () => {
+      const player = await freshPlayer();
+      const base = player.getFireInterval('rapid');
+
+      player.equipWeapon('rapid'); // first collection: base (AC8)
+      expect(player.getFireInterval('rapid')).toBe(base);
+
+      player.equipWeapon('rapid'); // first upgrade
+      const levelOne = player.getFireInterval('rapid');
+      expect(levelOne).toBeLessThan(base);
+      expect(isOnBeatGrid(levelOne)).toBe(true);
+
+      player.equipWeapon('rapid'); // second upgrade
+      const levelTwo = player.getFireInterval('rapid');
+      expect(levelTwo).toBeLessThanOrEqual(levelOne);
+      expect(isOnBeatGrid(levelTwo)).toBe(true);
+
+      // The scheduler is armed on the upgraded interval.
+      player.tryFire(10);
+      const interval = player.getFireInterval('rapid');
+      const shot = player.getLastShotTime('rapid')!;
+      expect(isOnGrid(shot, interval, 0)).toBe(true);
+    });
   });
 
   // ── Phase-locked beat-grid auto-fire (AH-0MUAYB8EH005RJ8B) ──────
@@ -977,7 +1011,7 @@ describe('Player ship entity', () => {
 
   it('tryFire fires active weapons on the shared beat grid, phase-locked (AC1/AC2)', async () => {
     const player = await freshPlayer();
-    player.equipWeapon('rapid'); // rapid 125 ms (6/beat), cannon 375 ms (2/beat)
+    player.equipWeapon('rapid'); // first collection = base (125 ms, 6/beat)
 
     // t = 500 ms: both weapons' grid ticks have elapsed.
     expect(player.tryFire(0.5)).toEqual(['cannon', 'rapid']);

@@ -89,13 +89,12 @@ import {
 import {
   WeaponId,
   WEAPON_CATALOGUE,
-  getWeaponById,
   isTimedWeapon,
   computeHeading,
   weaponFireRateMs,
   type WeaponDefinition,
 } from '../utils/weapons';
-import { resolveWeaponAtLevel } from '../utils/weaponLevels';
+import { resolveWeaponAtLevel, resolveWeaponDefinition, quantiseFireRateMs } from '../utils/weaponLevels';
 import { BeatClock, createBeatClock } from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
@@ -735,6 +734,16 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * The **resolver level** for a weapon: the number of *upgrades* applied,
+   * i.e. `collections − 1` (AC8). The first collection unlocks the weapon at
+   * its base stats (level 1 = base, matching the pre-leveling timed-drop
+   * behaviour); each further collection applies the next upgrade.
+   */
+  private _weaponUpgradeIndex(weaponId: WeaponId): number {
+    return Math.max(0, this.getWeaponLevel(weaponId) - 1);
+  }
+
+  /**
    * Clears every weapon level back to base — the run-scoped reset performed
    * on run restart (AC7). Distinct from {@link resetWeapon}, which clears
    * only timed *activations* and deliberately retains levels (AC6).
@@ -757,36 +766,19 @@ export class Player extends Phaser.GameObjects.Graphics {
    * defaulting to the most-recently collected weapon (backward-compatible
    * no-arg form) (AC4).
    *
-   * A weapon at level 0 returns the base catalogue definition unchanged
-   * (AC8). At level ≥ 1 the scalar upgrade variables are applied to a copy:
-   * `fireRateMs` (quantised to the beat grid), `bulletSize` and
-   * `bulletLifetime` multipliers, and the AOE descriptor's `radius` for AOE
-   * weapons. Pattern expansion (projectile count) and the non-representable
-   * variables are applied by the shared combat core.
+   * A weapon at level 0/1 returns the base catalogue definition unchanged
+   * (AC8): the first collection unlocks the weapon at its base stats, and
+   * each *further* collection applies the next upgrade. At upgrade index ≥ 1
+   * the scalar and pattern variables are applied to a copy: `fireRateMs`
+   * (quantised to the beat grid), `offsets` (projectile count / spread),
+   * `bulletSize` and `bulletLifetime` multipliers, and the AOE descriptor's
+   * `radius` for AOE weapons.
    *
    * @param weaponId — Weapon to look up (defaults to the primary weapon).
    */
   getWeaponDef(weaponId?: WeaponId): WeaponDefinition {
     const id = weaponId ?? this._primaryWeapon;
-    const base = getWeaponById(id);
-    const level = this.getWeaponLevel(id);
-    if (level <= 0) {
-      return base;
-    }
-    const stats = resolveWeaponAtLevel(id, level);
-    const leveled: WeaponDefinition = {
-      ...base,
-      fireRateMs: stats.fireRateMs,
-      bulletSize: base.bulletSize * stats.bulletSize,
-      bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
-    };
-    if (base.aoe) {
-      leveled.aoe = {
-        ...base.aoe,
-        radius: base.aoe.radius * stats.aoeRadius,
-      };
-    }
-    return leveled;
+    return resolveWeaponDefinition(id, this._weaponUpgradeIndex(id));
   }
 
   /**
@@ -828,13 +820,28 @@ export class Player extends Phaser.GameObjects.Graphics {
    * exact subdivision of the beat period (AH-0MUAYB8EH005RJ8B).
    */
   private _effectiveInterval(weaponId: WeaponId): number {
-    return (
-      weaponFireRateMs(
-        weaponId,
-        this._rules.weaponSubdivisions,
-        this._rules.beatBpm,
-      ) / this._fireRateMultiplier
+    const baseInterval = weaponFireRateMs(
+      weaponId,
+      this._rules.weaponSubdivisions,
+      this._rules.beatBpm,
     );
+    // Weapon leveling raises the fire rate on each *upgrade* (the second and
+    // later collections; the first collection is base — AC8). Divide by the
+    // upgrade's fire-rate multiplier, then re-quantise so the leveled cadence
+    // stays on the shared beat grid (parent AH-0MUPMPCB2009J54J). At upgrade
+    // index 0 the multiplier is 1 and the base interval is already on-grid,
+    // so this is a no-op and the existing cadence (and P5 behaviour) is
+    // unchanged.
+    const upgradeIndex = this._weaponUpgradeIndex(weaponId);
+    const levelMultiplier =
+      upgradeIndex > 0
+        ? resolveWeaponAtLevel(weaponId, upgradeIndex).fireRate
+        : 1;
+    const leveledInterval = quantiseFireRateMs(
+      baseInterval / levelMultiplier,
+      this._rules.beatBpm,
+    );
+    return leveledInterval / this._fireRateMultiplier;
   }
 
   /**

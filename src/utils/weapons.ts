@@ -340,6 +340,14 @@ export interface WeaponDefinition {
   /** Bullet radius multiplier relative to the default. */
   bulletSize: number;
   /**
+   * Additional bullet-radius multiplier granted by **weapon leveling**
+   * (parent AH-0MUPMPCB2009J54J). `1`/absent on a base definition; a
+   * level-resolved definition carries the level's `bulletSize` upgrade so the
+   * shared combat core can grow the bullet without changing the base visual
+   * size (AC8).
+   */
+  levelBulletSize?: number;
+  /**
    * Bullet lifetime in seconds. The bullet wraps across all four screen
    * edges while alive and expires once this elapses; effective range is
    * `BULLET_SPEED × bulletLifetime` (AH-0MU960UTE001PTV0).
