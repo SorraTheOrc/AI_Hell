@@ -208,3 +208,36 @@ describe('PlayerBullet — lifetime-based range (AC3, AC4)', () => {
     expect(() => advanceAndCull(bullet, 0.6)).not.toThrow();
   });
 });
+
+describe('PlayerBullet — reduced fallback lifetime (AH-0MUU131PU006O7ZD AC4)', () => {
+  it('createPlayerBullet defaults to the reduced Cannon base lifetime (0.75 s)', async () => {
+    const scene = await makeScene();
+    // No lifetime argument → the fallback default applies.
+    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 0, 0);
+
+    expect(bullet.lifetime).toBe(0.75);
+    expect(bullet.lifetime).toBe(WEAPON_BULLET_LIFETIME.cannon);
+  });
+
+  it('the PlayerBullet constructor defaults to the reduced Cannon base lifetime (0.75 s)', async () => {
+    const scene = await makeScene();
+    // No lifetime argument → the constructor fallback applies.
+    const bullet = new PlayerBullet(scene, 100, 100, 0, 0, 3, 0x00ffff);
+
+    expect(bullet.lifetime).toBe(0.75);
+    expect(bullet.lifetime).toBe(WEAPON_BULLET_LIFETIME.cannon);
+  });
+
+  it('a fallback bullet expires at half the old 1.5 s lifetime', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 0, 0);
+
+    // Just under the new lifetime: still alive.
+    expect(advanceAndCull(bullet, 0.74)).toBe(true);
+    expect(bullet.isExpired()).toBe(false);
+
+    // Past it: expired, exactly as the halved range requires.
+    expect(advanceAndCull(bullet, 0.02)).toBe(false);
+    expect(bullet.isExpired()).toBe(true);
+  });
+});

@@ -498,9 +498,10 @@ export class CombatCoreScene<
    * with the given colour and lifetime (seconds).
    * Public so tests can place bullets deterministically.
    *
-   * `radius` defaults to the shared {@link PLAYER_BULLET_RADIUS}; the shared
-   * auto-fire path passes a level-scaled radius when a weapon has bullet-size
-   * upgrades.
+   * `lifetime` defaults to the reduced Cannon base range (0.75 s,
+   * AH-0MUU131PU006O7ZD); `radius` defaults to the shared
+   * {@link PLAYER_BULLET_RADIUS}. The shared auto-fire path passes a
+   * level-scaled radius when a weapon has bullet-size upgrades.
    */
   spawnPlayerBullet(
     x: number,
@@ -508,7 +509,7 @@ export class CombatCoreScene<
     vx: number,
     vy: number,
     color = 0x00ffff,
-    lifetime = 1.5,
+    lifetime = 0.75,
     radius = PLAYER_BULLET_RADIUS,
   ): PlayerBullet {
     const bullet = createPlayerBullet(

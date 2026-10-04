@@ -383,7 +383,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     scene.runApplyAoe(WEAPON_CATALOGUE.nova, 250, 300);
 
-    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,90');
+    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,45');
     expect(scene.bossHitCount).toBe(0); // no boss present
   });
 
@@ -394,7 +394,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     scene.runApplyAoe(WEAPON_CATALOGUE.mortar, 250, 300);
 
     expect(scene.bossHitCount).toBe(1);
-    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,70');
+    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,35');
   });
 
   // ── AC7 — beat-quantised triggering ───────────────────────────────
@@ -551,8 +551,8 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const def = WEAPON_CATALOGUE.mortar;
     scene.bullets.push(new StubBullet(scene, 120, 100));
     // Far enough not to be hit directly by the projectile's pass-1 scan, but
-    // inside the Mortar blast radius (70 px) from the interception point.
-    const enemy = new StubEnemy(scene, 170, 100);
+    // inside the Mortar blast radius (35 px) from the interception point.
+    const enemy = new StubEnemy(scene, 150, 100);
     scene.entities.push(enemy);
     const bullet = scene.spawnPlayerBullet(
       120,

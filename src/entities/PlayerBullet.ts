@@ -81,6 +81,8 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
    * @param vy - Vertical velocity (px/s).
    * @param radius - Bullet radius in px.
    * @param color - Bullet colour (Phaser integer).
+   * @param lifetime - Bullet lifetime in seconds (default 0.75 s, matching the
+   *   reduced Cannon base range — AH-0MUU131PU006O7ZD).
    */
   constructor(
     scene: Phaser.Scene,
@@ -90,7 +92,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     vy: number,
     radius: number,
     color: number,
-    lifetime: number = 1.5,
+    lifetime: number = 0.75,
   ) {
     super(scene, { x, y });
     this.vx = vx;
@@ -148,7 +150,8 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
  * @param radius - Bullet radius in px.
  * @param vx - Horizontal velocity (px/s).
  * @param vy - Vertical velocity (px/s).
- * @param lifetime - Bullet lifetime in seconds (default 1.5 s).
+ * @param lifetime - Bullet lifetime in seconds (default 0.75 s, matching the
+ *   reduced Cannon base range — AH-0MUU131PU006O7ZD).
  * @returns The new bullet Graphics object.
  */
 export function createPlayerBullet(
@@ -159,7 +162,7 @@ export function createPlayerBullet(
   radius: number,
   vx: number,
   vy: number,
-  lifetime: number = 1.5,
+  lifetime: number = 0.75,
 ): PlayerBullet {
   const bullet = new PlayerBullet(scene, x, y, vx, vy, radius, color, lifetime);
   scene.add.existing(bullet);

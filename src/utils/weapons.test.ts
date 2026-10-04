@@ -102,19 +102,47 @@ describe('bulletLifetime (AC3/AC4 — per-weapon range)', () => {
     }
   });
 
-  test('lifetimes match the agreed per-weapon defaults', () => {
-    expect(WEAPON_CATALOGUE.cannon.bulletLifetime).toBe(1.5);
-    expect(WEAPON_CATALOGUE.spread.bulletLifetime).toBe(1.4);
-    expect(WEAPON_CATALOGUE.dual.bulletLifetime).toBe(1.4);
-    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(0.75);
+  test('lifetimes match the agreed per-weapon defaults (AC1)', () => {
+    expect(WEAPON_CATALOGUE.cannon.bulletLifetime).toBe(0.75);
+    expect(WEAPON_CATALOGUE.spread.bulletLifetime).toBe(0.7);
+    expect(WEAPON_CATALOGUE.dual.bulletLifetime).toBe(0.7);
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(0.375);
+    expect(WEAPON_CATALOGUE.nova.bulletLifetime).toBe(0.25);
+    expect(WEAPON_CATALOGUE.mortar.bulletLifetime).toBe(1.0);
+    expect(WEAPON_CATALOGUE.arc.bulletLifetime).toBe(0.25);
+  });
+
+  test('every base lifetime is exactly half the pre-reduction value (AC1)', () => {
+    // The operator-mandated 50 % range reduction (AH-0MUU131PU006O7ZD).
+    // Pre-change values: cannon 1.5, spread 1.4, dual 1.4, rapid 0.75,
+    // nova 0.5, mortar 2.0, arc 0.5.
+    expect(WEAPON_BULLET_LIFETIME.cannon).toBeCloseTo(1.5 / 2, 10);
+    expect(WEAPON_BULLET_LIFETIME.spread).toBeCloseTo(1.4 / 2, 10);
+    expect(WEAPON_BULLET_LIFETIME.dual).toBeCloseTo(1.4 / 2, 10);
+    expect(WEAPON_BULLET_LIFETIME.rapid).toBeCloseTo(0.75 / 2, 10);
+    expect(WEAPON_BULLET_LIFETIME.nova).toBeCloseTo(0.5 / 2, 10);
+    expect(WEAPON_BULLET_LIFETIME.mortar).toBeCloseTo(2.0 / 2, 10);
+    expect(WEAPON_BULLET_LIFETIME.arc).toBeCloseTo(0.5 / 2, 10);
   });
 
   test('the shared WEAPON_BULLET_LIFETIME constant matches the catalogue', () => {
-    expect(WEAPON_BULLET_LIFETIME.cannon).toBe(1.5);
-    expect(WEAPON_BULLET_LIFETIME.spread).toBe(1.4);
-    expect(WEAPON_BULLET_LIFETIME.dual).toBe(1.4);
-    expect(WEAPON_BULLET_LIFETIME.rapid).toBe(0.75);
-    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.rapid);
+    expect(WEAPON_BULLET_LIFETIME.cannon).toBe(0.75);
+    expect(WEAPON_BULLET_LIFETIME.spread).toBe(0.7);
+    expect(WEAPON_BULLET_LIFETIME.dual).toBe(0.7);
+    expect(WEAPON_BULLET_LIFETIME.rapid).toBe(0.375);
+    for (const id of Object.keys(WEAPON_BULLET_LIFETIME) as WeaponId[]) {
+      expect(WEAPON_CATALOGUE[id].bulletLifetime).toBe(
+        WEAPON_BULLET_LIFETIME[id],
+      );
+    }
+  });
+
+  test('effective range (BULLET_SPEED × lifetime) is halved (AC1)', () => {
+    // Cannon: 350 px/s × 0.75 s = 262.5 px (was ~525 px).
+    expect(BULLET_SPEED * WEAPON_BULLET_LIFETIME.cannon).toBeCloseTo(262.5, 5);
+    expect(BULLET_SPEED * WEAPON_BULLET_LIFETIME.spread).toBeCloseTo(245, 5);
+    expect(BULLET_SPEED * WEAPON_BULLET_LIFETIME.dual).toBeCloseTo(245, 5);
+    expect(BULLET_SPEED * WEAPON_BULLET_LIFETIME.rapid).toBeCloseTo(131.25, 5);
   });
 
   test('weapon lifetimes are individually tunable (rapid shorter than cannon)', () => {
@@ -153,6 +181,36 @@ describe('AOE weapons (parent AH-0MUOOB3OR001V8CD AC1)', () => {
       expect(isAoeWeapon(id)).toBe(false);
       expect(WEAPON_CATALOGUE[id].aoe).toBeUndefined();
     }
+  });
+
+  test('every AOE radius is exactly half the pre-reduction value (AC2)', () => {
+    // Pre-change radii: Nova 90, Mortar 70, Arc 120 (AH-0MUU131PU006O7ZD).
+    expect(AOE_RADII.nova).toBe(45);
+    expect(AOE_RADII.mortar).toBe(35);
+    expect(AOE_RADII.arc).toBe(60);
+    expect(AOE_RADII.nova).toBeCloseTo(90 / 2, 10);
+    expect(AOE_RADII.mortar).toBeCloseTo(70 / 2, 10);
+    expect(AOE_RADII.arc).toBeCloseTo(120 / 2, 10);
+  });
+
+  test('AOE radii are halved alongside the conventional bullet range (AC2/AC5)', () => {
+    // The conventional base lifetime and AOE radii were halved together, so
+    // the shared sources of truth stay in step (AH-0MUU131PU006O7ZD).
+    const halvings: Array<[number, number]> = [
+      [WEAPON_BULLET_LIFETIME.cannon, 1.5],
+      [AOE_RADII.nova, 90],
+      [AOE_RADII.mortar, 70],
+      [AOE_RADII.arc, 120],
+    ];
+    for (const [after, before] of halvings) {
+      expect(after).toBeCloseTo(before / 2, 10);
+    }
+  });
+
+  test('each catalogue aoe.radius reflects the halved AOE_RADII value (AC2)', () => {
+    expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(AOE_RADII.nova);
+    expect(WEAPON_CATALOGUE.mortar.aoe!.radius).toBe(AOE_RADII.mortar);
+    expect(WEAPON_CATALOGUE.arc.aoe!.radius).toBe(AOE_RADII.arc);
   });
 
   test('Nova resolves an onFire ring at the ship', () => {

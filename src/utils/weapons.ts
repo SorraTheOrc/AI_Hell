@@ -236,23 +236,27 @@ export const DUAL_SIDE_OFFSET = 8;
  * Per-weapon bullet lifetime (seconds). Bullets wrap across all four screen
  * edges while alive and are destroyed once this many seconds elapse; the
  * effective range is therefore `BULLET_SPEED × bulletLifetime`. Each weapon
- * is tuned independently (AH-0MU960UTE001PTV0).
+ * is tuned independently (AH-0MU960UTE001PTV0); the base lifetimes were
+ * halved to bring engagements closer and reduce on-screen bullet saturation
+ * (AH-0MUU131PU006O7ZD). Because `resolveWeaponDefinition` applies the level
+ * multipliers to these base values, every weapon's range at every level is
+ * halved too.
  */
 export const WEAPON_BULLET_LIFETIME = {
-  /** Cannon — long reach for the default weapon (~525 px). */
-  cannon: 1.5,
-  /** Spread — slightly shorter than cannon (~490 px). */
-  spread: 1.4,
-  /** Dual — matches spread (~490 px). */
-  dual: 1.4,
-  /** Rapid — short reach balanced by its high fire rate (~262 px). */
-  rapid: 0.75,
+  /** Cannon — long reach for the default weapon (~262 px). */
+  cannon: 0.75,
+  /** Spread — slightly shorter than cannon (~245 px). */
+  spread: 0.7,
+  /** Dual — matches spread (~245 px). */
+  dual: 0.7,
+  /** Rapid — short reach balanced by its high fire rate (~131 px). */
+  rapid: 0.375,
   /** Nova — the ring resolves instantly; no travelling bullet. */
-  nova: 0.5,
-  /** Mortar — the shell lives ~2 s (its detonation window), wrapping meanwhile. */
-  mortar: 2.0,
+  nova: 0.25,
+  /** Mortar — the shell lives ~1 s (its detonation window), wrapping meanwhile. */
+  mortar: 1.0,
   /** Arc — the bolt resolves instantly; no travelling bullet. */
-  arc: 0.5,
+  arc: 0.25,
 } as const;
 
 // ── Bullet visual definitions ───────────────────────────────────────
@@ -277,15 +281,17 @@ export const BULLET_COLORS = {
 
 /**
  * AOE effect radii (px) — the single source of truth read by the catalogue
- * descriptors and (later) the distinctive VFX helpers.
+ * descriptors and (later) the distinctive VFX helpers. Halved alongside the
+ * conventional bullet ranges so AOE coverage is tighter and more positional
+ * (AH-0MUU131PU006O7ZD).
  */
 export const AOE_RADII = {
   /** Nova ring radius — a defensive pulse around the ship. */
-  nova: 90,
+  nova: 45,
   /** Mortar blast radius — a focused detonation at the impact point. */
-  mortar: 70,
+  mortar: 35,
   /** Arc chaining reach — the longest AOE, spanning nearby targets. */
-  arc: 120,
+  arc: 60,
 } as const;
 
 /**

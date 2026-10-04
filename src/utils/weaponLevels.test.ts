@@ -477,3 +477,76 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(base.aoe!.radius);
   });
 });
+
+describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
+  // The pre-reduction base values shipped before this item. Because the level
+  // multipliers applied by `resolveWeaponDefinition` are relative, halving the
+  // base halves the absolute range at every level — these tests pin that the
+  // only change is the base halving, not the curve.
+  const PRE_CHANGE_LIFETIME: Record<WeaponId, number> = {
+    cannon: 1.5,
+    spread: 1.4,
+    dual: 1.4,
+    rapid: 0.75,
+    nova: 0.5,
+    mortar: 2.0,
+    arc: 0.5,
+  };
+  const PRE_CHANGE_AOE_RADIUS = { nova: 90, mortar: 70, arc: 120 } as const;
+
+  test('level 0 resolves to half the pre-change base lifetime', () => {
+    for (const id of WEAPON_IDS) {
+      const leveled = resolveWeaponDefinition(id, 0);
+      expect(leveled.bulletLifetime).toBeCloseTo(
+        PRE_CHANGE_LIFETIME[id] / 2,
+        10,
+      );
+    }
+  });
+
+  test('leveled bullet range is half the pre-change value at every level', () => {
+    for (const id of WEAPON_IDS) {
+      for (const level of [1, 2, 5, 20]) {
+        const stats = resolveWeaponAtLevel(id, level);
+        const leveled = resolveWeaponDefinition(id, level);
+        // Pre-change absolute range at this level = old base × multiplier.
+        const preChange = PRE_CHANGE_LIFETIME[id] * stats.bulletLifetime;
+        expect(leveled.bulletLifetime).toBeCloseTo(preChange / 2, 10);
+      }
+    }
+  });
+
+  test('capped-level bullet range is half the pre-change capped value', () => {
+    // A very high level saturates the bulletLifetime multiplier at its 2.2×
+    // cap; the absolute capped range is still exactly half the old one.
+    const stats = resolveWeaponAtLevel('cannon', 1000);
+    expect(stats.bulletLifetime).toBeCloseTo(
+      WEAPON_UPGRADE_SPECS.bulletLifetime.cap,
+      6,
+    );
+    const leveled = resolveWeaponDefinition('cannon', 1000);
+    const preChangeCapped =
+      PRE_CHANGE_LIFETIME.cannon * WEAPON_UPGRADE_SPECS.bulletLifetime.cap;
+    expect(leveled.bulletLifetime).toBeCloseTo(preChangeCapped / 2, 10);
+  });
+
+  test('AOE radius is half the pre-change value at level 0 and at the capped level', () => {
+    for (const id of ['nova', 'mortar', 'arc'] as const) {
+      const level0 = resolveWeaponDefinition(id, 0);
+      expect(level0.aoe!.radius).toBeCloseTo(
+        PRE_CHANGE_AOE_RADIUS[id] / 2,
+        10,
+      );
+
+      const stats = resolveWeaponAtLevel(id, 1000);
+      expect(stats.aoeRadius).toBeCloseTo(
+        WEAPON_UPGRADE_SPECS.aoeRadius.cap,
+        6,
+      );
+      const capped = resolveWeaponDefinition(id, 1000);
+      const preChangeCapped =
+        PRE_CHANGE_AOE_RADIUS[id] * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
+      expect(capped.aoe!.radius).toBeCloseTo(preChangeCapped / 2, 10);
+    }
+  });
+});
