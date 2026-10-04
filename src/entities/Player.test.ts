@@ -18,6 +18,8 @@ import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
+import { WEAPON_CATALOGUE } from '../utils/weapons';
+import { resolveWeaponAtLevel } from '../utils/weaponLevels';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
@@ -858,6 +860,105 @@ describe('Player ship entity', () => {
     expect(player!.getWeaponDef().id).toBe('rapid');
   });
 
+  // ── Weapon leveling (parent AH-0MUPMPCB2009J54J) ────────────────
+
+  describe('weapon leveling (AH-0MUPMPCB2009J54J)', () => {
+    it('getWeaponLevel defaults to 0 and rises with every collection (AC1/AC2/AC5)', async () => {
+      const player = await freshPlayer();
+      expect(player.getWeaponLevel('rapid')).toBe(0);
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevel('rapid')).toBe(1);
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevel('rapid')).toBe(2);
+      // Levels are per-weapon and independent.
+      expect(player.getWeaponLevel('spread')).toBe(0);
+      expect(player.getWeaponLevel('cannon')).toBe(0);
+    });
+
+    it('collecting a temporary drop levels up and re-activates the timed duration (AC2)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      // Partially consume the 10 s timer.
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS - 100);
+      expect(player.hasWeapon('spread')).toBe(true);
+
+      player.equipWeapon('spread'); // re-collect → level up + fresh timer
+      expect(player.getWeaponLevel('spread')).toBe(2);
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS - 100);
+      expect(player.hasWeapon('spread')).toBe(true);
+    });
+
+    it('level persists across a timeout and re-collection raises it again (AC3)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('dual');
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(2);
+
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
+      expect(player.hasWeapon('dual')).toBe(false);
+      expect(player.getWeaponLevel('dual')).toBe(2); // retained
+
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(3);
+    });
+
+    it('getWeaponDef returns a level-resolved definition and never mutates the base (AC4)', async () => {
+      const player = await freshPlayer();
+      const base = WEAPON_CATALOGUE.rapid;
+      // Level 0 → the exact base catalogue definition (AC8).
+      expect(player.getWeaponDef('rapid')).toBe(base);
+
+      player.equipWeapon('rapid');
+      const stats = resolveWeaponAtLevel('rapid', 1);
+      const leveled = player.getWeaponDef('rapid');
+      expect(leveled.fireRateMs).toBe(stats.fireRateMs);
+      expect(leveled.bulletSize).toBeCloseTo(base.bulletSize * stats.bulletSize, 10);
+      expect(leveled.bulletLifetime).toBeCloseTo(
+        base.bulletLifetime * stats.bulletLifetime,
+        10,
+      );
+      // The shared catalogue entry is a fresh object, not the mutable base.
+      expect(leveled).not.toBe(base);
+      expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(125);
+      expect(WEAPON_CATALOGUE.rapid.bulletSize).toBe(base.bulletSize);
+    });
+
+    it('an AOE weapon scales its blast radius with level (AC4)', async () => {
+      const player = await freshPlayer();
+      const baseRadius = WEAPON_CATALOGUE.nova.aoe!.radius;
+      player.equipWeapon('nova');
+      const stats = resolveWeaponAtLevel('nova', 1);
+      expect(player.getWeaponDef('nova').aoe!.radius).toBeCloseTo(
+        baseRadius * stats.aoeRadius,
+        10,
+      );
+      expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(baseRadius);
+    });
+
+    it('resetWeapon clears activations but retains levels (AC6)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      player.equipWeapon('dual');
+
+      player.resetWeapon();
+      expect(player.getActiveWeapons()).toEqual(['cannon']);
+      expect(player.getWeaponLevel('spread')).toBe(1);
+      expect(player.getWeaponLevel('dual')).toBe(1);
+    });
+
+    it('resetWeaponLevels clears every level (AC7)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevel('rapid')).toBe(1);
+
+      player.resetWeaponLevels();
+      expect(player.getWeaponLevel('spread')).toBe(0);
+      expect(player.getWeaponLevel('rapid')).toBe(0);
+      expect(player.getWeaponDef('rapid')).toBe(WEAPON_CATALOGUE.rapid);
+    });
+  });
+
   // ── Phase-locked beat-grid auto-fire (AH-0MUAYB8EH005RJ8B) ──────
 
   /**
@@ -908,7 +1009,9 @@ describe('Player ship entity', () => {
     for (let i = 0; i < 40; i++) player.tryFire(0.05); // 2 s of 50 ms frames
 
     for (const id of player.getActiveWeapons()) {
-      const interval = player.getWeaponDef(id).fireRateMs;
+      // The scheduler interval (base rules until the shared core applies
+      // weapon levels); assert each shot lands on that exact grid tick.
+      const interval = player.getFireInterval(id);
       const shot = player.getLastShotTime(id);
       expect(shot).toBeDefined();
       expect(isOnGrid(shot!, interval)).toBe(true);

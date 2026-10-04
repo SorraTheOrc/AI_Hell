@@ -45,6 +45,12 @@
  * `tickWeaponTimers()`, and a shared **beat clock** that gates bullet
  * emission.
  *
+ * Weapons are also **constantly upgradable** (parent AH-0MUPMPCB2009J54J):
+ * each weapon carries a run-scoped **level** that every collection raises.
+ * `getWeaponLevel()` reports it and `getWeaponDef()` returns a
+ * level-resolved definition; `resetWeapon` keeps levels while
+ * `resetWeaponLevels()` clears them on run restart.
+ *
  * Fire timing is **globally quantised to an 80 BPM beat**
  * (AH-0MUAYB8EH005RJ8B): every active weapon's shots land on a tick of one
  * shared beat grid, phase-locked to the clock anchor, so simultaneously
@@ -87,7 +93,9 @@ import {
   isTimedWeapon,
   computeHeading,
   weaponFireRateMs,
+  type WeaponDefinition,
 } from '../utils/weapons';
+import { resolveWeaponAtLevel } from '../utils/weaponLevels';
 import { BeatClock, createBeatClock } from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
@@ -205,6 +213,14 @@ export class Player extends Phaser.GameObjects.Graphics {
   private readonly _permanentWeapons: Set<WeaponId> = new Set(['cannon']);
   /** Collected timed weapons → remaining lifetime in ms (10 s each, independent countdown). */
   private _weaponTimers: Map<WeaponId, number> = new Map();
+  /**
+   * Run-scoped **level** of each weapon (weapon leveling, parent
+   * AH-0MUPMPCB2009J54J). Uncollected weapons are absent (level 0 = base).
+   * A collection levels the weapon up; the level persists across a weapon
+   * timing out (AC3) and across a Reset (AC6), and is cleared only by
+   * {@link resetWeaponLevels} on run restart (AC7).
+   */
+  private _weaponLevels: Map<WeaponId, number> = new Map();
   /** Absolute beat-clock time (ms, a grid tick) of each active weapon's next shot. */
   private _weaponNextShot: Map<WeaponId, number> = new Map();
   /** Beat-clock time (ms, a grid tick) of each active weapon's most recent shot. */
@@ -652,6 +668,9 @@ export class Player extends Phaser.GameObjects.Graphics {
    * @param weaponId — The weapon power-up to add ('spread' | 'dual' | 'rapid').
    * @param permanent — When true, the weapon is granted permanently for the
    *   current run (used by the hold-full choice) and never expires.
+   *
+   * Both temporary and permanent collections **level the weapon up** (AC2);
+   * the level persists for the run (AC3, AC6).
    */
   equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!isTimedWeapon(weaponId)) {
@@ -660,6 +679,11 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (!WEAPON_CATALOGUE[weaponId]) {
       return;
     }
+    // Every collection levels the weapon up (AC2): a temporary drop and a
+    // permanent mineral choice both raise the run-scoped level. The level is
+    // retained across timeouts (AC3) and Resets (AC6); only a run restart
+    // clears it (AC7, `resetWeaponLevels`).
+    this._weaponLevels.set(weaponId, this.getWeaponLevel(weaponId) + 1);
     if (permanent) {
       // Permanent for the run: active forever, no countdown to tick down.
       this._permanentWeapons.add(weaponId);
@@ -683,6 +707,11 @@ export class Player extends Phaser.GameObjects.Graphics {
    *
    * Also clears any hold-full choice weapons granted permanently for the
    * run — a Reset returns the ship to the bare cannon.
+   *
+   * **Levels are retained** (AC6): a Reset stops the weapons firing but
+   * keeps the run's upgrade progress, so re-collecting a weapon later
+   * re-activates it at the same level. Only a run restart clears levels
+   * ({@link resetWeaponLevels}).
    */
   resetWeapon(): void {
     this._weaponTimers.clear();
@@ -695,6 +724,26 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Returns the run-scoped level of a weapon: `0` for a never-collected
+   * weapon (the base, un-upgraded state), otherwise the number of times it
+   * has been collected (AC5). Levels are unbounded.
+   *
+   * @param weaponId — The weapon whose level to read.
+   */
+  getWeaponLevel(weaponId: WeaponId): number {
+    return this._weaponLevels.get(weaponId) ?? 0;
+  }
+
+  /**
+   * Clears every weapon level back to base — the run-scoped reset performed
+   * on run restart (AC7). Distinct from {@link resetWeapon}, which clears
+   * only timed *activations* and deliberately retains levels (AC6).
+   */
+  resetWeaponLevels(): void {
+    this._weaponLevels.clear();
+  }
+
+  /**
    * Returns the most-recently collected timed weapon, or 'cannon' when
    * no timed weapons are active. Backward-compatible single-weapon view
    * (used by scene audio cues and legacy callers).
@@ -704,13 +753,40 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Returns the weapon definition for a given weapon id, defaulting to
-   * the most-recently collected weapon (backward-compatible no-arg form).
+   * Returns the **level-resolved** weapon definition for a given weapon id,
+   * defaulting to the most-recently collected weapon (backward-compatible
+   * no-arg form) (AC4).
+   *
+   * A weapon at level 0 returns the base catalogue definition unchanged
+   * (AC8). At level ≥ 1 the scalar upgrade variables are applied to a copy:
+   * `fireRateMs` (quantised to the beat grid), `bulletSize` and
+   * `bulletLifetime` multipliers, and the AOE descriptor's `radius` for AOE
+   * weapons. Pattern expansion (projectile count) and the non-representable
+   * variables are applied by the shared combat core.
    *
    * @param weaponId — Weapon to look up (defaults to the primary weapon).
    */
-  getWeaponDef(weaponId?: WeaponId): ReturnType<typeof getWeaponById> {
-    return getWeaponById(weaponId ?? this._primaryWeapon);
+  getWeaponDef(weaponId?: WeaponId): WeaponDefinition {
+    const id = weaponId ?? this._primaryWeapon;
+    const base = getWeaponById(id);
+    const level = this.getWeaponLevel(id);
+    if (level <= 0) {
+      return base;
+    }
+    const stats = resolveWeaponAtLevel(id, level);
+    const leveled: WeaponDefinition = {
+      ...base,
+      fireRateMs: stats.fireRateMs,
+      bulletSize: base.bulletSize * stats.bulletSize,
+      bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
+    };
+    if (base.aoe) {
+      leveled.aoe = {
+        ...base.aoe,
+        radius: base.aoe.radius * stats.aoeRadius,
+      };
+    }
+    return leveled;
   }
 
   /**
