@@ -233,23 +233,23 @@ export function resolveEndOfRunJuiceParams(
 
   return {
     // ── Victory flash ────────────────────────────────────────────
-    victoryFlashEnabled: ENDOFRUN_ENABLE_VICTORY_FLASH,
-    victoryFlashAlpha: ENDOFRUN_VICTORY_FLASH_ALPHA,
+    victoryFlashEnabled: isVictory && ENDOFRUN_ENABLE_VICTORY_FLASH,
+    victoryFlashAlpha: isVictory ? ENDOFRUN_VICTORY_FLASH_ALPHA : 0,
     victoryFlashDurationMs: ENDOFRUN_VICTORY_FLASH_DURATION_MS,
     victoryColor: ENDOFRUN_VICTORY_COLOR,
     victoryGreen: ENDOFRUN_VICTORY_GREEN,
     victorySparkle: ENDOFRUN_VICTORY_SPARKLE,
 
     // ── Victory particles ────────────────────────────────────────
-    victoryParticleCount: ENDOFRUN_VICTORY_PARTICLE_COUNT,
+    victoryParticleCount: isVictory ? ENDOFRUN_VICTORY_PARTICLE_COUNT : 0,
     victoryParticleLifespanMs: ENDOFRUN_VICTORY_PARTICLE_LIFESPAN_MS,
-    victoryParticleVelocity: ENDOFRUN_VICTORY_PARTICLE_VELOCITY,
+    victoryParticleVelocity: isVictory ? ENDOFRUN_VICTORY_PARTICLE_VELOCITY : 0,
     victoryParticleScale: ENDOFRUN_VICTORY_PARTICLE_SCALE,
-    victoryParticlesEnabled: ENDOFRUN_ENABLE_VICTORY_PARTICLES,
+    victoryParticlesEnabled: isVictory && ENDOFRUN_ENABLE_VICTORY_PARTICLES,
 
     // ── Victory ring ─────────────────────────────────────────────
-    victoryRingRadius: ENDOFRUN_VICTORY_RING_RADIUS,
-    victoryRingEnabled: ENDOFRUN_ENABLE_VICTORY_RING,
+    victoryRingRadius: isVictory ? ENDOFRUN_VICTORY_RING_RADIUS : 0,
+    victoryRingEnabled: isVictory && ENDOFRUN_ENABLE_VICTORY_RING,
 
     // ── Shared ring params ───────────────────────────────────────
     ringDurationMs: ENDOFRUN_RING_DURATION_MS,
@@ -262,19 +262,19 @@ export function resolveEndOfRunJuiceParams(
     defeatGray: ENDOFRUN_DEFEAT_GRAY,
 
     // ── Defeat vignette ──────────────────────────────────────────
-    defeatVignetteAlpha: ENDOFRUN_DEFEAT_VIGNETTE_ALPHA,
+    defeatVignetteAlpha: isVictory ? 0 : ENDOFRUN_DEFEAT_VIGNETTE_ALPHA,
     defeatVignetteDurationMs: ENDOFRUN_DEFEAT_VIGNETTE_DURATION_MS,
-    defeatVignetteEnabled: ENDOFRUN_ENABLE_DEFEAT_VIGNETTE,
+    defeatVignetteEnabled: !isVictory && ENDOFRUN_ENABLE_DEFEAT_VIGNETTE,
 
     // ── Defeat glitch ────────────────────────────────────────────
-    defeatGlitchSteps: ENDOFRUN_DEFEAT_GLITCH_STEPS,
+    defeatGlitchSteps: isVictory ? 0 : ENDOFRUN_DEFEAT_GLITCH_STEPS,
     defeatGlitchStepDurationMs: ENDOFRUN_DEFEAT_GLITCH_STEP_DURATION_MS,
-    defeatGlitchAlpha: ENDOFRUN_DEFEAT_GLITCH_ALPHA,
-    defeatGlitchEnabled: ENDOFRUN_ENABLE_DEFEAT_GLITCH,
+    defeatGlitchAlpha: isVictory ? 0 : ENDOFRUN_DEFEAT_GLITCH_ALPHA,
+    defeatGlitchEnabled: !isVictory && ENDOFRUN_ENABLE_DEFEAT_GLITCH,
 
     // ── Defeat ring ──────────────────────────────────────────────
-    defeatRingEnabled: ENDOFRUN_ENABLE_DEFEAT_RING,
-    defeatRingRadius: ENDOFRUN_DEFEAT_RING_RADIUS,
+    defeatRingEnabled: !isVictory && ENDOFRUN_ENABLE_DEFEAT_RING,
+    defeatRingRadius: isVictory ? 0 : ENDOFRUN_DEFEAT_RING_RADIUS,
 
     // ── Sound ────────────────────────────────────────────────────
     soundEnabled: ENDOFRUN_ENABLE_SOUND,

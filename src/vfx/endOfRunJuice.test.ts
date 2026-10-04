@@ -6,7 +6,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   resolveEndOfRunJuiceParams,
-  type EndOfRunOutcome,
   ENDOFRUN_DEFAULT_OUTCOME,
   ENDOFRUN_ENABLE_VICTORY_FLASH,
   ENDOFRUN_ENABLE_VICTORY_PARTICLES,
@@ -21,6 +20,9 @@ import {
   ENDOFRUN_VICTORY_PARTICLE_VELOCITY,
   ENDOFRUN_VICTORY_PARTICLE_SCALE,
   ENDOFRUN_VICTORY_RING_RADIUS,
+  ENDOFRUN_RING_DURATION_MS,
+  ENDOFRUN_RING_START_SCALE,
+  ENDOFRUN_RING_LINE_WIDTH,
   ENDOFRUN_DEFEAT_VIGNETTE_ALPHA,
   ENDOFRUN_DEFEAT_VIGNETTE_DURATION_MS,
   ENDOFRUN_DEFEAT_GLITCH_STEPS,
@@ -33,9 +35,6 @@ import {
   ENDOFRUN_DEFEAT_COLOR,
   ENDOFRUN_DEFEAT_RED,
   ENDOFRUN_DEFEAT_GRAY,
-  ENDOFRUN_RING_DURATION_MS,
-  ENDOFRUN_RING_START_SCALE,
-  ENDOFRUN_RING_LINE_WIDTH,
 } from './endOfRunJuice';
 
 // ── Fixture helpers ──────────────────────────────────────────────────
@@ -141,6 +140,9 @@ describe('resolveEndOfRunJuiceParams', () => {
     expect(v.ringDurationMs).toBe(d.ringDurationMs);
     expect(v.ringStartScale).toBe(d.ringStartScale);
     expect(v.ringLineWidth).toBe(d.ringLineWidth);
+    expect(v.ringDurationMs).toBe(ENDOFRUN_RING_DURATION_MS);
+    expect(v.ringStartScale).toBe(ENDOFRUN_RING_START_SCALE);
+    expect(v.ringLineWidth).toBe(ENDOFRUN_RING_LINE_WIDTH);
   });
 
   // ── Per-layer toggles ────────────────────────────────────────────
