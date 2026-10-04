@@ -13,6 +13,10 @@ import {
   spawnVictoryRings,
   spawnVictoryConfetti,
   spawnVictoryJuice,
+  spawnDefeatVignette,
+  spawnDefeatGlitch,
+  spawnDefeatRing,
+  spawnDefeatScreenJuice,
   ENDOFRUN_VICTORY_RING_COUNT,
   ENDOFRUN_DEFAULT_OUTCOME,
   ENDOFRUN_ENABLE_VICTORY_FLASH,
@@ -550,5 +554,248 @@ describe('spawnVictoryJuice — composition entry point (F2, parent AC2/AC4)', (
 
     expect(registry).toHaveLength(0);
     expect(handle.flash?.active).toBe(false);
+  });
+});
+
+// ── F3: defeat screen treatment VFX ─────────────────────────────────
+
+describe('spawnDefeatVignette — red edge vignette (F3, parent AC3/AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('creates the vignette, registered and below the UI', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const vignette = spawnDefeatVignette(
+      scene,
+      resolveEndOfRunJuiceParams('defeat'),
+      registry,
+    );
+
+    expect(vignette).not.toBeNull();
+    expect(registry).toContain(vignette);
+    expect(vignette?.depth).toBeLessThan(0);
+    expect(vignette?.getData('juiceLayer')).toBe('defeatVignette');
+  });
+
+  it('fades out over the resolved vignette duration', async () => {
+    const scene = await boot();
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveEndOfRunJuiceParams('defeat');
+
+    spawnDefeatVignette(scene, params);
+
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(params.defeatVignetteDurationMs);
+    expect(config.alpha).toBe(0);
+  });
+
+  it('is a no-op when the vignette toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const vignette = spawnDefeatVignette(
+      scene,
+      { ...resolveEndOfRunJuiceParams('defeat'), defeatVignetteEnabled: false },
+      registry,
+    );
+
+    expect(vignette).toBeNull();
+    expect(registry).toHaveLength(0);
+  });
+});
+
+describe('spawnDefeatGlitch — desaturated glitch flicker (F3, parent AC3/AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('creates the glitch overlay, registered and below the UI', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const glitch = spawnDefeatGlitch(
+      scene,
+      resolveEndOfRunJuiceParams('defeat'),
+      registry,
+    );
+
+    expect(glitch).not.toBeNull();
+    expect(registry).toContain(glitch);
+    expect(glitch?.depth).toBeLessThan(0);
+    expect(glitch?.getData('juiceLayer')).toBe('defeatGlitch');
+  });
+
+  it('flashes for the resolved number of steps using yoyo/repeat', async () => {
+    const scene = await boot();
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveEndOfRunJuiceParams('defeat');
+
+    spawnDefeatGlitch(scene, params);
+
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(params.defeatGlitchStepDurationMs);
+    expect(config.yoyo).toBe(true);
+    expect(config.repeat).toBe(params.defeatGlitchSteps - 1);
+  });
+
+  it('destroys the glitch overlay and de-registers it on completion', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const glitch = spawnDefeatGlitch(scene, resolveEndOfRunJuiceParams('defeat'), registry);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(registry).not.toContain(glitch);
+    expect(glitch?.active).toBe(false);
+  });
+
+  it('is a no-op when the glitch toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const glitch = spawnDefeatGlitch(
+      scene,
+      { ...resolveEndOfRunJuiceParams('defeat'), defeatGlitchEnabled: false },
+      registry,
+    );
+
+    expect(glitch).toBeNull();
+    expect(registry).toHaveLength(0);
+  });
+});
+
+describe('spawnDefeatRing — slow dim red ring (F3, parent AC3/AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('creates the ring, registered and below the UI', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = resolveEndOfRunJuiceParams('defeat');
+
+    const ring = spawnDefeatRing(scene, 10, 20, params, registry);
+
+    expect(ring).not.toBeNull();
+    expect(registry).toContain(ring);
+    expect(ring?.depth).toBeLessThan(0);
+    expect(ring?.scale).toBeCloseTo(params.ringStartScale, 5);
+    expect(ring?.getData('juiceLayer')).toBe('defeatRing');
+  });
+
+  it('is a no-op when the defeat ring toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const ring = spawnDefeatRing(
+      scene,
+      0,
+      0,
+      { ...resolveEndOfRunJuiceParams('defeat'), defeatRingEnabled: false },
+      registry,
+    );
+
+    expect(ring).toBeNull();
+    expect(registry).toHaveLength(0);
+  });
+});
+
+describe('spawnDefeatScreenJuice — composition entry point (F3, parent AC3/AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('composes the vignette, ring and glitch in one call', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = resolveEndOfRunJuiceParams('defeat');
+
+    const handle = spawnDefeatScreenJuice(scene, { registry });
+
+    expect(handle.params).toEqual(params);
+    expect(handle.vignette).not.toBeNull();
+    expect(handle.ring).not.toBeNull();
+    expect(handle.glitch).not.toBeNull();
+    expect(registry).toHaveLength(3);
+  });
+
+  it('uses the defeat outcome parameters, not the victory ones', async () => {
+    const scene = await boot();
+
+    const handle = spawnDefeatScreenJuice(scene);
+
+    // Defeat treatment has zeroed victory particle data and live defeat data.
+    expect(handle.params.defeatVignetteEnabled).toBe(true);
+    expect(handle.params.defeatGlitchEnabled).toBe(true);
+    expect(handle.params.victoryParticlesEnabled).toBe(false);
+    expect(handle.params.victoryParticleCount).toBe(0);
+    expect(handle.params.victoryFlashEnabled).toBe(false);
+  });
+
+  it('creates no victory layers', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    spawnDefeatScreenJuice(scene, { registry });
+
+    for (const obj of registry) {
+      expect(obj.getData?.('juiceLayer')).not.toBe('victoryRing');
+      expect(obj.getData?.('juiceLayer')).not.toBe('victoryConfetti');
+      expect(obj.getData?.('juiceLayer')).not.toBe('victoryFlash');
+    }
+  });
+
+  it('destroys all treatment objects when the registry is drained on teardown', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const handle = spawnDefeatScreenJuice(scene, { registry });
+    expect(registry.length).toBe(3);
+
+    for (const obj of [...registry]) {
+      (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
+    }
+    registry.length = 0;
+
+    expect(registry).toHaveLength(0);
+    expect(handle.vignette?.active).toBe(false);
+    expect(handle.glitch?.active).toBe(false);
   });
 });

@@ -576,3 +576,263 @@ export function spawnVictoryJuice(
 
   return { params, registry, flash, rings, confetti, particles: null };
 }
+
+// ── Rendering layers (F3 defeat screen treatment) ──────────────────
+//
+// The defeat treatment is deliberately *distinct* from both the victory
+// celebration (bright, warm, expanding) and the in-run fatal death juice
+// (`playerDeathJuice.ts` — cyan flash/shake/shockwave at the death point).
+// It is sombre and screen-centred: a red edge vignette, a desaturated grey
+// glitch flicker and a slow, dim red ring.  Like every other layer it reads
+// its values from the pure parameter model, honours its `ENDOFRUN_ENABLE_*`
+// toggle, and pushes each display object into the caller-owned registry so
+// `SHUTDOWN` can tear it down.
+//
+// Depth note (same contract as the victory layers): negative depth keeps the
+// treatment above the GameOverScene background and behind the default-depth
+// (0) UI, so it never occludes the score / initials / leaderboard or blocks a
+// pointer.
+
+/** Depth of the defeat vignette — behind the GameOverScene UI. */
+export const ENDOFRUN_DEFEAT_VIGNETTE_DEPTH = -10;
+
+/** Depth of the defeat ring — above the vignette, behind the glitch. */
+export const ENDOFRUN_DEFEAT_RING_DEPTH = -9;
+
+/** Depth of the defeat glitch flicker — front-most juice layer, behind UI. */
+export const ENDOFRUN_DEFEAT_GLITCH_DEPTH = -8;
+
+/** Number of vignette bands drawn from the screen edge inward. */
+export const ENDOFRUN_DEFEAT_VIGNETTE_BANDS = 12;
+
+/** Width (px) of each vignette band. */
+export const ENDOFRUN_DEFEAT_VIGNETTE_BAND_WIDTH = 18;
+
+/** Optional overrides for the defeat screen treatment layers. */
+export interface DefeatJuiceOptions {
+  /**
+   * Caller-owned registry every treatment display object is added to and
+   * removed from on completion. Defaults to a fresh array.
+   */
+  registry?: JuiceRegistry;
+  /** X origin of the defeat ring (defaults to the scene centre). */
+  x?: number;
+  /** Y origin of the defeat ring (defaults to the scene centre). */
+  y?: number;
+}
+
+/** Handle returned by {@link spawnDefeatScreenJuice}. */
+export interface DefeatJuiceHandle {
+  /** The resolved defeat parameters the treatment ran with. */
+  params: EndOfRunJuiceParams;
+  /** Every treatment-owned display object (vignette, ring, glitch). */
+  registry: JuiceRegistry;
+  /** The vignette Graphics (or `null` when the vignette toggle is off). */
+  vignette: Phaser.GameObjects.Graphics | null;
+  /** The defeat ring Graphics (or `null` when the ring toggle is off). */
+  ring: Phaser.GameObjects.Graphics | null;
+  /** The glitch flicker rectangle (or `null` when the glitch toggle is off). */
+  glitch: Phaser.GameObjects.Rectangle | null;
+}
+
+/**
+ * Spawns the sombre red edge vignette (F3 layer 1).
+ *
+ * A single Graphics draws {@link ENDOFRUN_DEFEAT_VIGNETTE_BANDS} stroked
+ * rectangles inward from the screen edge, each in the defeat colour with a
+ * band-dependent alpha so the screen edges darken into a red frame. Fixed to
+ * the camera (scroll factor 0) behind the UI; it fades out over
+ * `params.defeatVignetteDurationMs` and is destroyed / de-registered on
+ * completion.
+ *
+ * No-op (`null`) when the vignette toggle is off.
+ */
+export function spawnDefeatVignette(
+  scene: Phaser.Scene,
+  params: EndOfRunJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Graphics | null {
+  if (!params.defeatVignetteEnabled) return null;
+  const sceneAdd = scene?.add as
+    | { graphics?: (...args: unknown[]) => Phaser.GameObjects.Graphics }
+    | undefined;
+  if (!sceneAdd || typeof sceneAdd.graphics !== 'function') return null;
+
+  const width = scene.scale?.width ?? 0;
+  const height = scene.scale?.height ?? 0;
+  const vignette = scene.add.graphics({ x: 0, y: 0 });
+  vignette.setDepth(ENDOFRUN_DEFEAT_VIGNETTE_DEPTH);
+  vignette.setScrollFactor(0);
+  vignette.setData('juiceLayer', 'defeatVignette');
+
+  // Draw bands from the edge inward: the outermost band is brightest and
+  // each inner band fades, producing a red vignette frame.
+  for (let i = 0; i < ENDOFRUN_DEFEAT_VIGNETTE_BANDS; i++) {
+    const inset = i * ENDOFRUN_DEFEAT_VIGNETTE_BAND_WIDTH;
+    const alpha =
+      params.defeatVignetteAlpha *
+      (1 - i / ENDOFRUN_DEFEAT_VIGNETTE_BANDS);
+    vignette.lineStyle(ENDOFRUN_DEFEAT_VIGNETTE_BAND_WIDTH, params.defeatRed, alpha);
+    vignette.strokeRect(
+      inset,
+      inset,
+      Math.max(0, width - inset * 2),
+      Math.max(0, height - inset * 2),
+    );
+  }
+
+  registry?.push(vignette);
+
+  scene.tweens.add({
+    targets: vignette,
+    alpha: 0,
+    duration: params.defeatVignetteDurationMs,
+    ease: 'Power2',
+    onComplete: () => {
+      if (registry) {
+        const index = registry.indexOf(vignette);
+        if (index >= 0) registry.splice(index, 1);
+      }
+      vignette.destroy();
+    },
+  });
+
+  return vignette;
+}
+
+/**
+ * Spawns the desaturated grey glitch flicker overlay (F3 layer 2).
+ *
+ * A full-screen grey rectangle fixed to the camera, flashing between 0 and
+ * `params.defeatGlitchAlpha` for `params.defeatGlitchSteps` flickers of
+ * `params.defeatGlitchStepDurationMs`, then destroyed / de-registered on
+ * completion. The grey wash reads as the screen desaturating and glitching
+ * out — the visual counterpart to the descending defeat sting.
+ *
+ * No-op (`null`) when the glitch toggle is off or there are no steps.
+ */
+export function spawnDefeatGlitch(
+  scene: Phaser.Scene,
+  params: EndOfRunJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Rectangle | null {
+  if (!params.defeatGlitchEnabled || params.defeatGlitchSteps <= 0) return null;
+  const sceneAdd = scene?.add as
+    | { rectangle?: (...args: unknown[]) => Phaser.GameObjects.Rectangle }
+    | undefined;
+  if (!sceneAdd || typeof sceneAdd.rectangle !== 'function') return null;
+
+  const width = scene.scale?.width ?? 0;
+  const height = scene.scale?.height ?? 0;
+  const glitch = sceneAdd.rectangle(
+    width / 2,
+    height / 2,
+    width,
+    height,
+    params.defeatGray,
+    0,
+  );
+  glitch.setDepth(ENDOFRUN_DEFEAT_GLITCH_DEPTH);
+  glitch.setScrollFactor(0);
+  glitch.setData('juiceLayer', 'defeatGlitch');
+  registry?.push(glitch);
+
+  scene.tweens.add({
+    targets: glitch,
+    alpha: { from: 0, to: params.defeatGlitchAlpha },
+    duration: params.defeatGlitchStepDurationMs,
+    yoyo: true,
+    repeat: params.defeatGlitchSteps - 1,
+    ease: 'Stepped',
+    onComplete: () => {
+      if (registry) {
+        const index = registry.indexOf(glitch);
+        if (index >= 0) registry.splice(index, 1);
+      }
+      glitch.destroy();
+    },
+  });
+
+  return glitch;
+}
+
+/**
+ * Spawns the slow, dim red defeat ring (F3 layer 3).
+ *
+ * A single stroked Graphics expands from `params.ringStartScale` to full
+ * `params.defeatRingRadius` over `params.ringDurationMs`, fading as it goes.
+ * Red and screen-centred, it is visually distinct from the cyan death
+ * shockwave (`playerDeathJuice.ts`) and the bright victory rings. Tracked in
+ * `registry` and torn down on completion.
+ *
+ * No-op (`null`) when the defeat ring toggle is off.
+ */
+export function spawnDefeatRing(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  params: EndOfRunJuiceParams,
+  registry?: JuiceRegistry,
+): Phaser.GameObjects.Graphics | null {
+  if (!params.defeatRingEnabled || params.defeatRingRadius <= 0) return null;
+
+  const ring = scene.add.graphics({ x, y });
+  ring.setDepth(ENDOFRUN_DEFEAT_RING_DEPTH);
+  ring.lineStyle(params.ringLineWidth, params.defeatColor, 1);
+  ring.strokeCircle(0, 0, params.defeatRingRadius);
+  ring.setScale(params.ringStartScale);
+  ring.setData('juiceLayer', 'defeatRing');
+  registry?.push(ring);
+
+  scene.tweens.add({
+    targets: ring,
+    scale: 1,
+    alpha: 0,
+    duration: params.ringDurationMs,
+    ease: 'Power2',
+    onComplete: () => {
+      if (registry) {
+        const index = registry.indexOf(ring);
+        if (index >= 0) registry.splice(index, 1);
+      }
+      ring.destroy();
+    },
+  });
+
+  return ring;
+}
+
+/**
+ * Composes and plays the full defeat screen treatment (F3, parent AC3).
+ *
+ * The single shared entry point for the defeat end-of-run treatment: it
+ * resolves the defeat parameters, then spawns the red vignette, the dim red
+ * ring and the desaturated glitch flicker — each layer self-guarded by its
+ * `ENDOFRUN_ENABLE_*` toggle. Every display object is added to
+ * `options.registry` (or a fresh array) so `SHUTDOWN` teardown can destroy
+ * them. Purely cosmetic: it never reads or writes gameplay state and never
+ * intercepts input.
+ *
+ * The defeat **sting** (audio) is deliberately not triggered here — the
+ * screen owns that one-shot (F5), so it fires exactly once per defeat.
+ *
+ * @param scene   — the scene to render into.
+ * @param options — registry and origin injection (tests / teardown).
+ */
+export function spawnDefeatScreenJuice(
+  scene: Phaser.Scene,
+  options: DefeatJuiceOptions = {},
+): DefeatJuiceHandle {
+  const params = resolveEndOfRunJuiceParams('defeat');
+  const registry: JuiceRegistry = options.registry ?? [];
+  const width = scene.scale?.width ?? 0;
+  const height = scene.scale?.height ?? 0;
+  const x = options.x ?? width / 2;
+  const y = options.y ?? height / 2;
+
+  const vignette = spawnDefeatVignette(scene, params, registry);
+  const ring = spawnDefeatRing(scene, x, y, params, registry);
+  const glitch = spawnDefeatGlitch(scene, params, registry);
+
+  return { params, registry, vignette, ring, glitch };
+}
