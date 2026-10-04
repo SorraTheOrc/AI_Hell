@@ -527,18 +527,22 @@ export function isOnBeatGrid(
     return false;
   }
   const period = beatPeriodMs(bpm);
-  // Use a small tolerance for float-safety when BPM is overridden.
-  const tolerance = 1e-9 * Math.max(1, period);
-  // Faster than (or equal to) the beat: the rate exactly subdivides the
-  // beat period (the conventional weapons, e.g. cannon 375 ms, rapid 125 ms).
-  if (period % fireRateMs < tolerance) return true;
+  // Compare in *ratio* space rather than via `%`: `period % fireRateMs` loses
+  // precision for high subdivisions (e.g. rapid at 11/beat = 68.18 ms), where
+  // 750 / 68.18… evaluates to 10.999… and the remainder check fails on a
+  // mathematically on-grid rate. A relative tolerance on the subdivision
+  // count is stable across the whole catalogue (AH-0MUQOV9JV00389E7).
+  const tolerance = 1e-6;
+  const subdivisions = period / fireRateMs;
+  if (subdivisions >= 1) {
+    return Math.abs(subdivisions - Math.round(subdivisions)) <= tolerance;
+  }
   // Slower than the beat: the rate is an exact integer multiple of the beat
   // period (the AOE family, e.g. Nova 3000 ms = 4 beats, Mortar 1500 ms = 2).
-  // This keeps an arbitrary off-grid rate (e.g. 200 ms) rejected.
-  if (fireRateMs > period && Math.abs(fireRateMs % period) < tolerance) {
-    return true;
-  }
-  return false;
+  // This keeps an arbitrary off-grid rate (e.g. 200 ms, or 1000 ms = 1⅓
+  // beats) rejected.
+  const beats = fireRateMs / period;
+  return Math.abs(beats - Math.round(beats)) <= tolerance;
 }
 
 // ── Round-robin drop order ──────────────────────────────────────────

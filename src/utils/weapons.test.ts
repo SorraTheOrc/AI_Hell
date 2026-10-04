@@ -495,6 +495,15 @@ describe('beat-grid fire rates (AH-0MUAYB8EH005RJ8B AC3)', () => {
     expect(isOnBeatGrid(1000)).toBe(false);
   });
 
+  test('the invariant accepts high subdivisions despite floating-point drift', () => {
+    // Rapid reaches 11/beat and 13/beat under weapon leveling; the naive
+    // `period % fireRateMs` check fails for these mathematically on-grid
+    // rates, so the ratio-based check must accept them (AH-0MUQOV9JV00389E7).
+    expect(isOnBeatGrid(750 / 11)).toBe(true);
+    expect(isOnBeatGrid(750 / 13)).toBe(true);
+    expect(isOnBeatGrid(750 / 7)).toBe(true);
+  });
+
   test('an invalid fire rate is never on the beat grid', () => {
     expect(isOnBeatGrid(0)).toBe(false);
     expect(isOnBeatGrid(-375)).toBe(false);

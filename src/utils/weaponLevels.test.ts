@@ -23,12 +23,15 @@ import {
   UPGRADE_VARIABLES,
   WEAPON_UPGRADE_SPECS,
   curveValue,
+  quantiseFireRateMs,
+  quantiseSubdivision,
   resolveVariable,
   resolveWeaponAtLevel,
   type WeaponLevelStats,
   type WeaponUpgradeVariable,
 } from './weaponLevels';
-import { WEAPON_CATALOGUE, type WeaponId } from './weapons';
+import { WEAPON_CATALOGUE, isOnBeatGrid, type WeaponId } from './weapons';
+import { beatPeriodMs, createBeatClock, isOnGrid } from './beat';
 
 const WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
 
@@ -217,13 +220,22 @@ describe('resolveWeaponAtLevel (AC1 — per-variable stats)', () => {
     }
   });
 
-  test('fireRateMs is the base interval divided by the fire-rate multiplier', () => {
+  test('level 0 fireRateMs equals the base interval exactly', () => {
     for (const weaponId of WEAPON_IDS) {
-      const stats = resolveWeaponAtLevel(weaponId, 5);
-      expect(stats.fireRateMs).toBeCloseTo(
-        WEAPON_CATALOGUE[weaponId].fireRateMs / stats.fireRate,
-        10,
-      );
+      const stats = resolveWeaponAtLevel(weaponId, 0);
+      expect(stats.fireRateMs).toBe(WEAPON_CATALOGUE[weaponId].fireRateMs);
+    }
+  });
+
+  test('the resolved beatSubdivision backs fireRateMs on the default grid', () => {
+    for (const weaponId of WEAPON_IDS) {
+      for (const level of [0, 1, 5, 50]) {
+        const stats = resolveWeaponAtLevel(weaponId, level);
+        expect(stats.beatSubdivision).toBeCloseTo(
+          beatPeriodMs() / stats.fireRateMs,
+          10,
+        );
+      }
     }
   });
 
@@ -309,6 +321,87 @@ describe('monotonicity and caps across levels 1..100 (AC4/AC5/AC6)', () => {
       expect(resolveVariable('rapid', variable, 9)).toBe(
         statOf(resolveWeaponAtLevel('rapid', 9), variable),
       );
+    }
+  });
+});
+
+describe('fire-rate quantisation to the beat grid (AH-0MUQOV9JV00389E7)', () => {
+  test('quantiseSubdivision snaps fast values to whole subdivisions >= 1 (AC1)', () => {
+    expect(quantiseSubdivision(1)).toBe(1);
+    expect(quantiseSubdivision(2.4)).toBe(2);
+    expect(quantiseSubdivision(2.5)).toBe(3); // ties round up to the faster cadence
+    expect(quantiseSubdivision(5.6)).toBe(6);
+    expect(quantiseSubdivision(0.6)).toBeCloseTo(0.5);
+  });
+
+  test('quantiseSubdivision snaps slow values to whole-beat reciprocals (AC1)', () => {
+    // Slower than the beat: 1/beat, 1/2-beat, 1/3-beat, …
+    expect(quantiseSubdivision(0.5)).toBe(0.5);
+    expect(quantiseSubdivision(1 / 3)).toBeCloseTo(1 / 3);
+    expect(quantiseSubdivision(0.4)).toBeCloseTo(1 / 3);
+    expect(quantiseSubdivision(0.25)).toBe(0.25);
+    // Desired slower than 1/beat snaps to a whole-beat multiple.
+    expect(quantiseSubdivision(0.1)).toBeCloseTo(1 / 10);
+  });
+
+  test('quantiseSubdivision is defensively 1 for invalid input', () => {
+    expect(quantiseSubdivision(0)).toBe(1);
+    expect(quantiseSubdivision(-2)).toBe(1);
+    expect(quantiseSubdivision(Number.NaN)).toBe(1);
+  });
+
+  test('quantiseFireRateMs snaps an off-grid interval to the nearest valid one (AC4)', () => {
+    // 1000 ms is not on the 750 ms beat; the nearest valid rates are 750 (1
+    // beat) and 1500 (2 beats) — 750 is closer.
+    expect(quantiseFireRateMs(1000)).toBe(750);
+    // 280 ms is just below 1/3-beat (250 ms) and above 1/4-beat (187.5 ms).
+    expect(quantiseFireRateMs(280)).toBe(250);
+    // 200 ms is nearest 1/4-beat (187.5 ms).
+    expect(quantiseFireRateMs(200)).toBe(187.5);
+    // An already on-grid interval is unchanged.
+    expect(quantiseFireRateMs(375)).toBe(375);
+    expect(quantiseFireRateMs(1500)).toBe(1500);
+    // Every result is on the grid.
+    for (const ms of [1000, 280, 200, 90, 4000, 1]) {
+      expect(isOnBeatGrid(quantiseFireRateMs(ms))).toBe(true);
+    }
+  });
+
+  test('every weapon at every level 1..100 is on the beat grid (AC2/AC3)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      for (let level = 1; level <= 100; level++) {
+        const stats = resolveWeaponAtLevel(weaponId, level);
+        expect(isOnBeatGrid(stats.fireRateMs)).toBe(true);
+      }
+    }
+  });
+
+  test('fire-rate upgrades never slow a weapon down (interval non-increasing)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      let previous = resolveWeaponAtLevel(weaponId, 0).fireRateMs;
+      for (let level = 1; level <= 100; level++) {
+        const current = resolveWeaponAtLevel(weaponId, level).fireRateMs;
+        expect(current).toBeLessThanOrEqual(previous);
+        previous = current;
+      }
+    }
+  });
+
+  test('a leveled weapon fires only on its quantised grid ticks (AC5)', () => {
+    // Mirrors the scene-level spawn-grid test (AH-0MUGY89LE006WVDQ): schedule
+    // a weapon's leveled fire rate through the shared beat clock and assert
+    // every emitted shot lands on an exact tick of that interval.
+    for (const weaponId of WEAPON_IDS) {
+      for (const level of [1, 10, 50, 100]) {
+        const interval = resolveWeaponAtLevel(weaponId, level).fireRateMs;
+        expect(isOnBeatGrid(interval)).toBe(true);
+        const clock = createBeatClock();
+        for (let shot = 0; shot < 10; shot++) {
+          const tick = clock.nextTick(interval);
+          expect(isOnGrid(tick, interval, 0)).toBe(true);
+          clock.advance(interval);
+        }
+      }
     }
   });
 });

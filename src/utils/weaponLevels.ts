@@ -33,6 +33,15 @@
  * are rounded to the nearest whole number and clamped to their cap so that
  * they step up and then flatten without ever exceeding the cap.
  *
+ * ## Beat-grid quantisation
+ *
+ * Fire-rate upgrades are quantised to the nearest valid beat subdivision
+ * ({@link quantiseSubdivision} / {@link quantiseFireRateMs}) so a leveled
+ * weapon always fires on the shared 80 BPM grid: a fast weapon fires at an
+ * integer subdivision and a slow weapon at a whole-beat multiple. An
+ * off-grid desired rate falls back to the nearest on-grid rate
+ * (AH-0MUAYB8EH005RJ8B, AH-0MUQOV9JV00389E7).
+ *
  * ## MVP scope
  *
  * This epic targets an MVP-partial vertical slice: the four producer-confirmed
@@ -45,6 +54,7 @@
  */
 
 import { WEAPON_CATALOGUE, getWeaponById, type WeaponId } from './weapons';
+import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from './beat';
 
 // ── Upgrade variables ───────────────────────────────────────────────
 
@@ -428,6 +438,60 @@ export function curveValue(spec: WeaponUpgradeSpec, level: number): number {
   return Math.min(spec.cap, Math.max(spec.base, Math.round(raw)));
 }
 
+// ── Beat-grid quantisation ──────────────────────────────────────────
+
+/**
+ * Snaps an arbitrary shots-per-beat **subdivision** to the nearest valid
+ * beat subdivision.
+ *
+ * Valid subdivisions keep fire on the shared beat grid (AC6,
+ * AH-0MUAYB8EH005RJ8B):
+ * - **Fast** weapons fire at an integer subdivision ≥ 1 (e.g. 2/beat,
+ *   3/beat, 4/beat, 6/beat) — the interval is `beatPeriod / n`.
+ * - **Slow** weapons fire once every integer number of beats, i.e. at a
+ *   reciprocal subdivision `1/n` (1/beat, 1/2-beat, 1/3-beat, …).
+ *
+ * A desired subdivision of exactly `1` stays `1`. Ties round **up** to the
+ * faster cadence (a fire-rate upgrade never slows a weapon down).
+ *
+ * @param desiredSubdivision - The un-quantised shots-per-beat value.
+ * @returns The nearest valid on-grid subdivision.
+ */
+export function quantiseSubdivision(desiredSubdivision: number): number {
+  if (!Number.isFinite(desiredSubdivision) || desiredSubdivision <= 0) {
+    return 1;
+  }
+  if (desiredSubdivision >= 1) {
+    return Math.max(1, Math.round(desiredSubdivision));
+  }
+  // Slower than the beat: snap to the nearest whole-beat multiple (1/n).
+  return 1 / Math.max(1, Math.round(1 / desiredSubdivision));
+}
+
+/**
+ * Quantises an arbitrary fire interval (ms) to the nearest interval that
+ * lies on the shared beat grid for `bpm`.
+ *
+ * This is the fallback required by AC4: when a level-resolved fire rate
+ * would be off-grid, the nearest valid subdivision is used instead. The
+ * return value always satisfies `isOnBeatGrid`.
+ *
+ * @param desiredMs - The un-quantised desired interval in ms.
+ * @param bpm - Tempo in beats per minute (default 80).
+ * @returns The nearest on-grid interval in ms.
+ */
+export function quantiseFireRateMs(
+  desiredMs: number,
+  bpm: number = DEFAULT_BPM,
+): number {
+  const period = beatPeriodMs(bpm);
+  if (!Number.isFinite(desiredMs) || desiredMs <= 0) {
+    return period; // defensive fallback: one shot per beat
+  }
+  const subdivision = quantiseSubdivision(period / desiredMs);
+  return beatSubdivisionMs(subdivision, bpm);
+}
+
 // ── Resolved stats ──────────────────────────────────────────────────
 
 /**
@@ -477,10 +541,18 @@ export interface WeaponLevelStats {
   knockback: number;
   /**
    * Derived fire interval (ms): the weapon's base `fireRateMs` divided by
-   * {@link WeaponLevelStats.fireRate}. Beat-grid quantisation is applied by
-   * the shared combat path (see the fire-rate beat-grid work item).
+   * {@link WeaponLevelStats.fireRate}, then **quantised to the nearest
+   * valid beat subdivision** so the rate always satisfies `isOnBeatGrid`
+   * (AC6, AH-0MUAYB8EH005RJ8B). At level 0 this equals the weapon's base
+   * interval exactly.
    */
   fireRateMs: number;
+  /**
+   * The on-grid subdivision backing {@link WeaponLevelStats.fireRateMs}:
+   * `beatPeriodMs(80) / fireRateMs`. An integer for fast weapons, a
+   * reciprocal `1/n` for whole-beat weapons.
+   */
+  beatSubdivision: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────
@@ -509,11 +581,16 @@ export function resolveWeaponAtLevel(
     values[variable] = curveValue(WEAPON_UPGRADE_SPECS[variable], safeLevel);
   }
 
+  // Fire-rate levels are quantised to the nearest valid beat subdivision so
+  // every shot stays on the shared grid (AH-0MUAYB8EH005RJ8B).
+  const fireRateMs = quantiseFireRateMs(definition.fireRateMs / values.fireRate);
+
   return {
     weaponId,
     level: safeLevel,
     ...values,
-    fireRateMs: definition.fireRateMs / values.fireRate,
+    fireRateMs,
+    beatSubdivision: beatPeriodMs() / fireRateMs,
   };
 }
 
