@@ -1591,12 +1591,14 @@ export class PlayScene extends CombatScene<
 
   /**
    * Updates effect visuals each tick: the P3 shield bubble is drawn around
-   * the ship while shielded (lineStyle + low-alpha fill, radius
-   * SHIP_SIZE × 1.6, mirrors GymPowerUpsCombat) and cleared otherwise, and
+   * the ship while shielded (shared helper — steady lineStyle + low-alpha
+   * fill, radius SHIP_SIZE × 1.6, with the shared ending pulse/fade in the
+   * final second, mirrors GymPowerUpsCombat) and cleared otherwise, and
    * the P6 phase ghost alpha is applied when phased.
    */
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while P3 is active (shared helper).
+    // Shield bubble: drawn around the ship while P3 is active (shared helper,
+    // including the shared ending pulse/fade in the final second).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
         this.shieldBubble,
