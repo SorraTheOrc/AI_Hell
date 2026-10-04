@@ -104,6 +104,12 @@ export interface HUDEntry {
 export interface HUDOptions {
   /** Whether to show the lives counter row. Defaults to true for backward compatibility. Combat gyms with no lives mechanic pass `{ showLives: false }`. */
   showLives?: boolean;
+  /**
+   * Reads the current run-scoped **level** for an active weapon (from the
+   * player). When provided, a weapon row shows `Lv.N` once the weapon has
+   * been upgraded (level ≥ 2); level 0/1 shows no suffix (AC4).
+   */
+  getWeaponLevel?: (weaponId: string) => number;
 }
 
 export class HUD extends Phaser.GameObjects.Container {
@@ -114,6 +120,7 @@ export class HUD extends Phaser.GameObjects.Container {
   private _rowObjects: Phaser.GameObjects.GameObject[] = [];
   private _iconGraphics: Phaser.GameObjects.Graphics;
   private _showLives: boolean;
+  private _getWeaponLevel?: (weaponId: string) => number;
   private _minerals = 0;
   private _mineralCapacity = 0;
 
@@ -123,6 +130,7 @@ export class HUD extends Phaser.GameObjects.Container {
     this.setDepth(HUD_DEPTH);
 
     this._showLives = options?.showLives ?? true;
+    this._getWeaponLevel = options?.getWeaponLevel;
 
     this._iconGraphics = new Phaser.GameObjects.Graphics(scene);
     this._livesLabel = new Phaser.GameObjects.Text(
@@ -364,12 +372,18 @@ export class HUD extends Phaser.GameObjects.Container {
       8,
     );
 
-    // Weapon name.
+    // Weapon name, suffixed with the run-scoped level once it has been
+    // upgraded (parent AH-0MUPMPCB2009J54J). Level 0/1 shows no suffix (AC4).
+    const level = this._getWeaponLevel?.(weapon.weaponId) ?? 0;
+    const label =
+      level >= 2
+        ? `${WEAPON_ROW_PREFIX}${weapon.weaponId} Lv.${level}`
+        : `${WEAPON_ROW_PREFIX}${weapon.weaponId}`;
     const name = new Phaser.GameObjects.Text(
       this.scene,
       NAME_X,
       y + ROW_HEIGHT * 0.25,
-      `${WEAPON_ROW_PREFIX}${weapon.weaponId}`,
+      label,
       TEXT_STYLE,
     );
 

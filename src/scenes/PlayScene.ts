@@ -429,7 +429,11 @@ export class PlayScene extends CombatScene<
     this.bombNotice = new BombNotice(this);
 
     // HUD (lives counter + active effects).
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
+    this.hud = new HUD(this, this.effectsRegistry, {
+      showLives: true,
+      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
+      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
+    });
 
     this._buildHudText();
 

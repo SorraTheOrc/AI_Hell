@@ -123,6 +123,7 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
+import { type WeaponId } from '../../../utils/weapons';
 import {
   spawnWormholeOpen,
   spawnWormholeClose,
@@ -830,7 +831,11 @@ export class GymFormationScene<
     // so it is already clean here; only the standalone HUD is rebuilt per
     // scene start (lives visible so P8 is observable). Sharing the one
     // reset path stops the registry drifting on restart (gap 10).
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
+    this.hud = new HUD(this, this.effectsRegistry, {
+      showLives: true,
+      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
+      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
+    });
 
     // Shared P4 bomb notice — shown by the shared collect path when the
     // scene collects a P4 (gap 4, AC3).
@@ -1183,7 +1188,11 @@ export class GymFormationScene<
     this.mineralChoiceOptions = [];
     this.mineralsSeeded = 0;
     if (!this.hud) {
-      this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+      this.hud = new HUD(this, this.effectsRegistry, {
+        showLives: false,
+        // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
+        getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
+      });
     }
     this._syncMineralHud();
     this.seedMinerals(100);

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
-import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT, PERMANENT_VALUE, formatValue } from './HUD';
+import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT, PERMANENT_VALUE, formatValue, type HUDOptions } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
 import { PowerUpType } from '../powerups/types';
 
@@ -21,10 +21,17 @@ class BareScene extends Phaser.Scene {
 }
 
 /** Boots a BareScene and attaches a HUD wired to `registry`. */
-async function bootWithHUD(registry?: EffectsRegistry) {
+async function bootWithHUD(registry?: EffectsRegistry, options?: HUDOptions) {
   const { game, scene } = await bootScene([BareScene]);
-  const hud = new HUD(scene, registry ?? null);
+  const hud = new HUD(scene, registry ?? null, options);
   return { game, scene, hud };
+}
+
+/** Text strings currently rendered by a HUD container. */
+function hudTexts(hud: HUD): string[] {
+  return (hud as unknown as { list: Phaser.GameObjects.GameObject[] }).list
+    .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
+    .map((c) => c.text);
 }
 
 const destroy = (game: Phaser.Game) => game.destroy(true);
@@ -365,6 +372,57 @@ describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
           c.text === 'Weapon: rapid',
       ),
     ).toBe(false);
+    destroy(game);
+  });
+});
+
+describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
+  it('shows Lv.N for an upgraded weapon and updates reactively (AC1/AC3/AC5)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    let level = 1;
+    const { game, hud } = await bootWithHUD(reg, {
+      getWeaponLevel: () => level,
+    });
+    hud.refresh();
+
+    // A level-1 weapon shows no suffix (AC4) alongside its timer (AC5).
+    expect(hudTexts(hud)).toContain('Weapon: spread');
+    expect(hudTexts(hud)).toContain('10s');
+    expect(hudTexts(hud).some((t) => t.includes('Lv.'))).toBe(false);
+
+    // A level-up is reflected on the next refresh (AC3), timer unchanged.
+    level = 3;
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('Weapon: spread Lv.3');
+    expect(hudTexts(hud)).toContain('10s');
+    destroy(game);
+  });
+
+  it('reads the level from the provider by weapon id (AC2)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('dual');
+    const seen: string[] = [];
+    const { game, hud } = await bootWithHUD(reg, {
+      getWeaponLevel: (id) => {
+        seen.push(id);
+        return id === 'dual' ? 4 : 0;
+      },
+    });
+    hud.refresh();
+
+    expect(seen).toContain('dual');
+    expect(hudTexts(hud)).toContain('Weapon: dual Lv.4');
+    destroy(game);
+  });
+
+  it('shows no level suffix without a provider (backward compatible)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('rapid');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('Weapon: rapid');
+    expect(hudTexts(hud).some((t) => t.includes('Lv.'))).toBe(false);
     destroy(game);
   });
 });

@@ -2394,9 +2394,34 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
       ).list.some(
         (c) =>
           c instanceof Phaser.GameObjects.Text &&
-          c.text === 'Weapon: spread',
+          c.text.startsWith('Weapon: spread'),
       ),
     ).toBe(true);
+  });
+
+  it('AC — the HUD shows a weapon level once the weapon is upgraded', async () => {
+    const scene = await boot({
+      spawner: new RoundRobinSpawner<DropId>(['spread']),
+      placement: atPlayer(),
+      spawnInterval: INTERVAL,
+    });
+    const player = scene.getPlayer()!;
+    const hud = scene.getHUD()!;
+
+    scene.getEffectsRegistry().applyWeapon('spread');
+    // The boot-time drop may already have granted level 1; one more
+    // collection guarantees an upgrade (level ≥ 2).
+    player.equipWeapon('spread');
+    const level = player.getWeaponLevel('spread');
+    expect(level).toBeGreaterThanOrEqual(2);
+    hud.refresh();
+
+    const texts = (
+      hud as unknown as { list: Phaser.GameObjects.GameObject[] }
+    ).list
+      .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
+      .map((c) => c.text);
+    expect(texts).toContain(`Weapon: spread Lv.${level}`);
   });
 });
 
