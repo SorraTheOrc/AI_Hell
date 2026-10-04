@@ -1217,7 +1217,14 @@ the launch target of the
 difficulty-curve editor's **Launch Level** / **Launch Wave N** buttons: the
 editor folds its generated waves into level groups of `CURVE_WAVES_PER_LEVEL`
 (3) and offers one **Launch Level** button per group (full level) plus one
-**Launch Wave** button per row (single wave).
+**Launch Wave** button per row (single wave). Because the runtime sequencer is
+a pure function of its target, a flat curve would otherwise play the *same*
+wave three times in a level; regeneration therefore runs each level group
+through `sequenceVariedWaves()` (`GymCurveSequencer.ts`), which nudges a
+wave's target deterministically (bounded, alternating, at most
+`CURVE_WAVE_VARIATION_JITTER` per step) until the composition differs from the
+level's earlier waves, while still reporting the designer's authored target on
+each wave. This is what fixed the producer-audit rejection of this work item.
 
 ### 8.6 Adding a new enemy (convention)
 

@@ -415,6 +415,8 @@ The **Dev Utilities** column's **CurveSequencer** tool (`GymCurveSequencer`) gen
 
 Editing the curve clears the preview (and its launch buttons) until **Regenerate** is pressed, matching the existing edit-to-clear behaviour. The pure helpers `groupWavesByLevel`, `toWaveDefinition` and `buildCurveLevels` (all exported from `GymCurveSequencer.ts`) back the grouping and are unit-tested independently of the scene.
 
+**Per-wave variety.** The runtime sequencer is a pure function of its target, so a flat curve (every wave the same target) would otherwise compose three *identical* waves in a level. Regeneration therefore sequences each level group through `sequenceVariedWaves()`, which nudges a wave's target deterministically by at most `CURVE_WAVE_VARIATION_JITTER` (±2, growing across `CURVE_WAVE_MAX_VARIATION_ATTEMPTS` bounded attempts, alternating direction) until its composition differs from the earlier waves in the same level. Each launched wave keeps the designer's authored target on its `targetDifficulty` for display, and the nudge is derived from the wave's position rather than a mutable seed, so regenerating an unchanged curve reproduces the same waves exactly. This fixed the producer-audit rejection where launching a level from the curve editor played the same wave three times.
+
 #### Adding a New Gym Scene (convention)
 
 1. Create `src/scenes/gym/Gym<Name>.ts` with `export class Gym<Name> extends Phaser.Scene` (key `Gym<Name>`), or extend the shared combat core (`CombatCoreScene` / `CombatScene`) when the gym needs the player-control, auto-fire or collision/hit paths so it consumes the same code as the game (`GymPlayer` is the reference: AH-0MUAYB2XR007N10W). No registry edit needed — the index discovers it automatically.
