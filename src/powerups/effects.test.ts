@@ -7,6 +7,8 @@ import {
   P8_LIVES_START,
   P8_LIVES_MAX,
   P9_MAX_STACKS,
+  P10_MAX_STACKS,
+  P10_SCOOP_DURATION,
   applySpeedMultiplier,
   magnetRadius,
   MAGNET_ATTRACTION_SPEED,
@@ -219,6 +221,99 @@ describe('P9 magnet math (AC5): radius and attraction speed', () => {
   it('attraction speed is slower than the ship max speed', () => {
     expect(MAGNET_ATTRACTION_SPEED).toBeGreaterThan(0);
     expect(MAGNET_ATTRACTION_SPEED).toBeLessThan(MAX_SPEED);
+  });
+});
+
+describe('P10 Mineral Scoop (AH-0MUPMR9TX00756BQ): timed pickup + permanent stacks', () => {
+  it('a field pickup activates a 15 s timed effect and adds no permanent stacks', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.isScoopActive()).toBe(false);
+
+    reg.applyCollect('P10'); // field drop — not permanent
+
+    expect(reg.isScoopActive()).toBe(true);
+    expect(reg.remaining('P10')).toBeCloseTo(P10_SCOOP_DURATION, 5);
+    expect(P10_SCOOP_DURATION).toBe(15);
+    expect(reg.scoopStacks()).toBe(0); // refresh-only, never stacking
+  });
+
+  it('the timed pickup expires after 15 s', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P10');
+    reg.tick(14.9);
+    expect(reg.isScoopActive()).toBe(true);
+    reg.tick(0.2);
+    expect(reg.isScoopActive()).toBe(false);
+  });
+
+  it('re-collecting refreshes the timer to full without adding stacks', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P10');
+    reg.tick(10);
+    expect(reg.remaining('P10')).toBeCloseTo(5, 3);
+
+    reg.applyCollect('P10'); // refresh
+    expect(reg.remaining('P10')).toBeCloseTo(15, 5);
+    expect(reg.scoopStacks()).toBe(0);
+  });
+
+  it('the hold-full upgrade is permanent and stacks up to 5', () => {
+    const reg = new EffectsRegistry();
+    for (let i = 0; i < 8; i++) reg.applyCollect('P10', true);
+
+    expect(reg.scoopStacks()).toBe(P10_MAX_STACKS);
+    expect(P10_MAX_STACKS).toBe(5);
+    expect(reg.isScoopActive()).toBe(false); // permanent path is not timed
+
+    reg.tick(1000);
+    expect(reg.scoopStacks()).toBe(P10_MAX_STACKS);
+  });
+
+  it('scoopEffectStacks() drives the shared radius curve for both paths', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.scoopEffectStacks()).toBe(0); // inactive → no pull
+
+    reg.applyCollect('P10'); // timed → one stack's worth of pull
+    expect(reg.scoopEffectStacks()).toBe(1);
+
+    reg.applyCollect('P10', true); // permanent stack → overrides to real stacks
+    expect(reg.scoopEffectStacks()).toBe(1);
+    reg.applyCollect('P10', true);
+    expect(reg.scoopEffectStacks()).toBe(2);
+  });
+
+  it('activeEffects() surfaces the timed row and the permanent stack row (never x0)', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.activeEffects().filter((e) => e.id === 'P10')).toHaveLength(0);
+
+    reg.applyCollect('P10');
+    const timed = reg.activeEffects().find((e) => e.id === 'P10');
+    expect(timed?.type).toBe(PowerUpType.MINERAL_SCOOP);
+    expect(timed?.remaining).toBeCloseTo(15, 5);
+    expect(timed?.stacks).toBeUndefined();
+
+    reg.applyCollect('P10', true);
+    reg.applyCollect('P10', true);
+    const stacked = reg.activeEffects().filter((e) => e.id === 'P10');
+    // One timed row (from the field pickup) + one stacks row (permanent).
+    expect(stacked).toHaveLength(2);
+    const stackRow = stacked.find((e) => e.stacks !== undefined);
+    expect(stackRow?.stacks).toBe(2);
+    expect(stacked.some((e) => e.stacks === 0)).toBe(false);
+  });
+
+  it('reset() clears both the timed effect and the permanent stacks', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P10');
+    reg.applyCollect('P10', true);
+    reg.applyCollect('P10', true);
+
+    reg.reset();
+
+    expect(reg.isScoopActive()).toBe(false);
+    expect(reg.scoopStacks()).toBe(0);
+    expect(reg.scoopEffectStacks()).toBe(0);
+    expect(reg.activeEffects().some((e) => e.id === 'P10')).toBe(false);
   });
 });
 

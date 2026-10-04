@@ -12,6 +12,10 @@
  *   the timer to full duration (never additive).
  * - **P8 Extra Life** — immediate: +1 life (starts 3, cap 5).
  * - **P9 Magnet** — permanent stack (cap 5); radius 2× ship size +50%/stack.
+ * - **P10 Mineral Scoop** — attracts nearby minerals: a timed 15 s effect
+ *   when collected as a field drop (refresh-only, never stacking), or a
+ *   permanent stacking effect (cap 5) when granted as a hold-full reward.
+ *   Shares the P9 attraction radius curve (base 2× ship size, +50%/stack).
  * - **P3 Shield** — timed 15 s bubble; absorbs one hit, popped on absorb,
  *   refreshes on re-collect before expiry.
  * - **P4 Bomb** — instant: clears on-screen enemy bullets on collect (does
@@ -70,6 +74,12 @@ export const P8_LIVES_MAX = 5;
 
 /** Hard cap on permanent magnet stacks (P9). */
 export const P9_MAX_STACKS = 5;
+
+/** Hard cap on permanent mineral-scoop stacks (P10). */
+export const P10_MAX_STACKS = 5;
+
+/** Duration in seconds of the P10 field-pickup mineral attraction. */
+export const P10_SCOOP_DURATION = 15;
 
 /** Timed durations for combat-coupled effects (seconds). */
 export const P3_SHIELD_DURATION = 15;
@@ -156,6 +166,8 @@ export class EffectsRegistry {
   private _timed = new Map<PowerUpId, TimedEffectState>();
   private _lives = P8_LIVES_START;
   private _magnetStacks = 0;
+  /** Permanent mineral-scoop stacks (P10). */
+  private _scoopStacks = 0;
   /** Stored teleport uses (P7), FIFO — pushed on collect, shifted on Space. */
   private _teleportStacks = 0;
   /** Active timed weapons: each weapon has its own countdown. */
@@ -243,6 +255,28 @@ export class EffectsRegistry {
       case PowerUpType.MAGNET:
         if (this._magnetStacks < P9_MAX_STACKS) {
           this._magnetStacks += 1;
+        }
+        break;
+      case PowerUpType.MINERAL_SCOOP:
+        // P10 is a hybrid: a field pickup grants a timed, refresh-only
+        // attraction, while the hold-full reward grants permanent stacks.
+        if (permanent) {
+          if (this._scoopStacks < P10_MAX_STACKS) {
+            this._scoopStacks += 1;
+          }
+        } else {
+          const scoop = this._timed.get(id);
+          if (scoop) {
+            // Refresh to full duration — never additive, never stacking.
+            scoop.remaining = scoop.duration;
+          } else {
+            this._timed.set(id, {
+              id,
+              type: PowerUpType.MINERAL_SCOOP,
+              duration: P10_SCOOP_DURATION,
+              remaining: P10_SCOOP_DURATION,
+            });
+          }
         }
         break;
     }
@@ -450,6 +484,28 @@ export class EffectsRegistry {
     return this._magnetStacks;
   }
 
+  /** Current permanent mineral-scoop stack count (P10); caps at 5. */
+  scoopStacks(): number {
+    return this._scoopStacks;
+  }
+
+  /** Whether the timed P10 field-pickup mineral attraction is active. */
+  isScoopActive(): boolean {
+    return this._timed.has('P10');
+  }
+
+  /**
+   * Effective scoop stacks driving the attraction radius: the permanent
+   * stack count when any upgrade was chosen, otherwise one stack while the
+   * timed field pickup is active (mirroring "one magnet's worth" of pull),
+   * otherwise zero (no attraction). The shared helper consumes this so the
+   * timed and permanent paths use the exact same radius curve.
+   */
+  scoopEffectStacks(): number {
+    if (this._scoopStacks > 0) return this._scoopStacks;
+    return this._timed.has('P10') ? 1 : 0;
+  }
+
   // ── Weapon accessors ──────────────────────────────────────────────
 
   /** Current active timed weapons (id → remaining seconds). */
@@ -521,6 +577,16 @@ export class EffectsRegistry {
         stacks: this._magnetStacks,
       });
     }
+    // P10 permanent upgrades render as a stack row; the timed field pickup
+    // is already surfaced from `_timed` above. A zero stack count is never
+    // surfaced (no misleading "x0").
+    if (this._scoopStacks > 0) {
+      result.push({
+        id: 'P10' as PowerUpId,
+        type: PowerUpType.MINERAL_SCOOP,
+        stacks: this._scoopStacks,
+      });
+    }
     if (this._teleportStacks > 0) {
       result.push({
         id: 'P7' as PowerUpId,
@@ -554,6 +620,7 @@ export class EffectsRegistry {
     this._timed.clear();
     this._lives = P8_LIVES_START;
     this._magnetStacks = 0;
+    this._scoopStacks = 0;
     this._teleportStacks = 0;
     this._weapons.clear();
     this._phaseCharges = 0;

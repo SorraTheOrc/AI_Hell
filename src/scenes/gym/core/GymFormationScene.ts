@@ -1202,10 +1202,13 @@ export class GymFormationScene<
    * Player collects overlapping minerals into the hold; non-asteroid
    * enemies absorb them. Asteroids are inert to minerals. Runs the shared
    * `collectMinerals` routine — the same code the game runs
-   * (AH-0MUII3DHM008L7JF · AC1).
+   * (AH-0MUII3DHM008L7JF · AC1). The P10 Mineral Scoop attraction pass runs
+   * first (shared `_applyMineralScoop`), so a mineral pulled into the hull
+   * this frame is collected this frame — matching `PlayScene`.
    */
-  private _updateMinerals(): void {
+  private _updateMinerals(dt: number): void {
     if (this.minerals.length === 0) return;
+    this._applyMineralScoop(this.minerals, dt);
     // Only mineral-absorbing, non-asteroid entities collect minerals
     // (asteroids are inert — GDD §4.5).
     const absorbers = this.entities.filter(
@@ -1489,7 +1492,7 @@ export class GymFormationScene<
     }
 
     // ── Mineral layer: collection + hold-full choice ────────────────
-    this._updateMinerals();
+    this._updateMinerals(dt);
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);

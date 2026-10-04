@@ -94,6 +94,10 @@ import {
   collectOverlappingDrops,
   playDropPickupCue,
 } from './dropLayer';
+import {
+  applyMineralScoop,
+  type MovableMineral,
+} from '../../powerups/mineralScoop';
 import type { BombNotice } from './BombNotice';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { BeatClock, createBeatClock } from '../../utils/beat';
@@ -611,6 +615,24 @@ export class CombatCoreScene<
       drops,
       this.getPlayer(),
       this.getEffectsRegistry().magnetStacks(),
+      dt,
+    );
+  }
+
+  /**
+   * Applies the P10 Mineral Scoop pull (shared range/speed) to every live
+   * mineral within range, using the scene's effective scoop stacks. The
+   * mineral-field analogue of {@link _applyDropMagnet}; scenes with a mineral
+   * field call it immediately before their shared `collectMinerals` pass so
+   * attraction and collection run in the same order everywhere.
+   */
+  protected _applyMineralScoop(minerals: MovableMineral[], dt: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    applyMineralScoop(
+      minerals,
+      player,
+      this.getEffectsRegistry().scoopEffectStacks(),
       dt,
     );
   }

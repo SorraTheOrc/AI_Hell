@@ -20,7 +20,7 @@ import {
 } from '../choice';
 
 describe('power-up choice strategy', () => {
-  it('offers the full drop pool: P3–P9 plus the collectable weapon drops', () => {
+  it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
     expect([...CHOICE_POOL].sort()).toEqual(
       [
         'P3',
@@ -30,6 +30,7 @@ describe('power-up choice strategy', () => {
         'P7',
         'P8',
         'P9',
+        'P10',
         'dual',
         'rapid',
         'spread',
@@ -40,6 +41,10 @@ describe('power-up choice strategy', () => {
     );
     // The reset utility drop is not a power-up choice.
     expect(CHOICE_POOL).not.toContain('reset');
+  });
+
+  it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {
+    expect(CHOICE_POOL).toContain('P10');
   });
 
   it('the default strategy offers three distinct options from the pool', () => {

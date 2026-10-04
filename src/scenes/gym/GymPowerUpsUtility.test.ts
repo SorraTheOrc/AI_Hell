@@ -450,7 +450,7 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
   }
 
   /** Collects a fully-grown drop of the given type under the ship. */
-  function collectDrop(scene: GymPowerUpsUtility, id: 'P5' | 'P8' | 'P9'): void {
+  function collectDrop(scene: GymPowerUpsUtility, id: 'P5' | 'P8' | 'P9' | 'P10'): void {
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     scene.spawnDrop(id, 480, 270);
@@ -491,6 +491,19 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
     const scene = await bootPowerUps();
 
     collectDrop(scene, 'P9');
+
+    expect(magnetSound).toHaveBeenCalledTimes(1);
+    expect(speedSound).not.toHaveBeenCalled();
+    expect(lifeSound).not.toHaveBeenCalled();
+  });
+
+  it('collecting P10 (Mineral Scoop) reuses the magnet pickup cue exactly once', async () => {
+    const speedSound = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
+    const lifeSound = vi.spyOn(effectsModule, 'playExtraLifeCollectSound');
+    const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
+    const scene = await bootPowerUps();
+
+    collectDrop(scene, 'P10');
 
     expect(magnetSound).toHaveBeenCalledTimes(1);
     expect(speedSound).not.toHaveBeenCalled();
@@ -662,7 +675,7 @@ describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isPaused('GymPowerUpsUtility')).toBe(true);
     const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
-    expect(help.getEntries().map((e) => e.id)).toEqual(['P5', 'P8', 'P9']);
+    expect(help.getEntries().map((e) => e.id)).toEqual(['P5', 'P8', 'P9', 'P10']);
   });
 
   it('AC4 — ? closes help and resumes the gym where it paused', async () => {
@@ -765,5 +778,77 @@ describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, g
     expect(() => scene.create()).not.toThrow();
     expect(scene.getPlayer()).not.toBeNull();
     expect(scene.getDrops()).toHaveLength(0);
+  });
+});
+describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootPowerUps(): Promise<GymPowerUpsUtility> {
+    booted = await bootScene([GymPowerUpsUtility]);
+    return booted!.scene as GymPowerUpsUtility;
+  }
+
+  it('seeds a live mineral field on create', async () => {
+    const scene = await bootPowerUps();
+    expect(scene.getMinerals().length).toBeGreaterThan(0);
+  });
+
+  it('spawns P10 in its round-robin (P5 → P8 → P9 → P10)', async () => {
+    const scene = await bootPowerUps();
+    // Default spawn interval is 12.5 s; the 4th round-robin slot (P10)
+    // therefore spawns at ~37.5 s.
+    for (let i = 0; i < 39 * 60; i++) scene.tick(1 / 60);
+    expect(scene.getDrops().some((d) => d.powerUp.id === 'P10')).toBe(true);
+  });
+
+  it('a P10 field pickup activates the timed scoop and pulls an in-range mineral', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Collect P10 under the ship (field pickup → timed, refresh-only).
+    scene.spawnDrop('P10', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(registry.isScoopActive()).toBe(true);
+    expect(registry.scoopStacks()).toBe(0);
+
+    // A mineral 40 px away: inside the 1-stack radius (60 px), outside the hull.
+    const mineral = scene.spawnMineral(520, 270);
+    const before = mineral.x;
+    scene.tick(0.1); // ~12 px of pull at 120 px/s
+
+    expect(mineral.x).toBeLessThan(before);
+    expect(mineral.x).toBeCloseTo(508, 0);
+  });
+
+  it('the scoop shares the same radius curve as the P9 magnet', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P10', true);
+    registry.applyCollect('P10', true);
+    expect(registry.scoopStacks()).toBe(2);
+    expect(registry.scoopEffectStacks()).toBe(2);
+  });
+
+  it('a same-instance stop/restart clears the P10 scoop state and the field', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('P10', true);
+    registry.applyCollect('P10');
+
+    scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+    expect(registry.scoopStacks()).toBe(0);
+    expect(registry.isScoopActive()).toBe(false);
+    expect(scene.getMinerals()).toHaveLength(0);
+
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getMinerals().length).toBeGreaterThan(0);
   });
 });

@@ -679,6 +679,10 @@ export class PlayScene extends CombatScene<
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
       this._updateSpawnAnimations(dt);
+      // P10 Mineral Scoop attractor runs before the shared mineral collection
+      // inside _handleCollisions, so a mineral pulled into the hull this frame
+      // is collected this frame (parity with every gym).
+      this._applyMineralScoop(this.minerals, dt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.

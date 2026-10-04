@@ -73,7 +73,7 @@ describe('gymHelp — catalogue descriptions are the single source of truth (AC3
 
 describe('gymHelp — id → { name, description, drawIcon } lookup', () => {
   it('resolves power-up rows from POWER_UP_CATALOGUE', () => {
-    const ids: PowerUpId[] = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9'];
+    const ids: PowerUpId[] = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'];
     for (const id of ids) {
       const help = getHelpEntry(id);
       expect(help.id).toBe(id);
@@ -127,7 +127,7 @@ describe('gymHelp — every resolved entry draws a code-drawn icon', () => {
     booted = await bootScene([BareScene]);
     const graphics = (booted.scene as Phaser.Scene).add.graphics();
     const drops: HelpDropId[] = [
-      'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9',
+      'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10',
       'cannon', 'spread', 'dual', 'rapid', 'reset',
     ];
     for (const id of drops) {

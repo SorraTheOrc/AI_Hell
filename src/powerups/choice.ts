@@ -8,7 +8,7 @@
  * choice scene or the PlayScene wiring.
  *
  * The default strategy draws `count` **distinct** entries uniformly at random
- * from the full drop pool (P3–P9 plus the collectable weapon drops
+ * from the full drop pool (P3–P10 plus the collectable weapon drops
  * spread/dual/rapid), degrading gracefully (returning fewer options) when the
  * pool cannot supply the requested count.
  *
@@ -26,7 +26,7 @@ import type { WeaponId } from '../utils/weapons';
 // ── Pool ────────────────────────────────────────────────────────────
 
 /**
- * Every drop the hold-full choice can offer: the power-ups P3–P9 plus the
+ * Every drop the hold-full choice can offer: the power-ups P3–P10 plus the
  * collectable weapon drops (spread, dual, rapid). The `reset` utility drop is
  * intentionally excluded — it removes weapons rather than granting one.
  */
@@ -38,6 +38,7 @@ export const CHOICE_POOL: readonly DropId[] = [
   'P7',
   'P8',
   'P9',
+  'P10',
   'spread',
   'dual',
   'rapid',

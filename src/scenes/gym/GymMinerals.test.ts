@@ -86,6 +86,24 @@ describe('GymMinerals', () => {
     expect(scene.getMineralHold()).toBeGreaterThanOrEqual(1);
   });
 
+  it('AC5 — the shared P10 scoop pulls an in-range mineral toward the ship', async () => {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    const scene = booted.scene as GymMinerals;
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    // Two permanent scoop stacks → radius 2×20×(1+0.5×2) = 80 px.
+    registry.applyCollect('P10', true);
+    registry.applyCollect('P10', true);
+
+    const mineral = scene.getMinerals()[0];
+    mineral.setPosition(player.x + 40, player.y);
+    const before = mineral.x;
+    scene.tick(0.1); // ~12 px of pull at MAGNET_ATTRACTION_SPEED
+
+    expect(mineral.x).toBeLessThan(before);
+    expect(mineral.x).toBeCloseTo(player.x + 40 - 12, 0);
+  });
+
   it('P6 phase blocks mineral collection and resumes on expiry (Q7)', async () => {
     booted = await bootScene([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
