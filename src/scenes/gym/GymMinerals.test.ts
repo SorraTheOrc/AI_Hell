@@ -13,7 +13,7 @@ import { GymMinerals } from './GymMinerals';
 import { GymEnemies } from './GymEnemies';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
-import type { ChoiceOption } from '../../powerups/choice';
+import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
@@ -243,6 +243,28 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
     overlay.select(0);
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
+  });
+
+  it('the hold-full choice receives the player weapon levels (AC1/AC2)', async () => {
+    const scene = await bootMinerals();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('spread');
+    player.equipWeapon('spread');
+    player.equipWeapon('rapid');
+
+    let captured: ChoiceContext | undefined;
+    scene.setMineralChoiceStrategy({
+      choose: (_count, _rng, context) => {
+        captured = context;
+        return [{ id: 'spread', name: 'Spread Shot', kind: 'weapon' }];
+      },
+    });
+    scene.openMineralChoice();
+
+    expect(captured?.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'rapid', level: 1 },
+    ]);
   });
 
   it('AC2 — P7 granted by the choice teleports on S/↓ and grants P6', async () => {

@@ -187,6 +187,25 @@ describe('applyMineralChoiceReward', () => {
     expect(player.equipWeapon).toHaveBeenCalledWith('spread', true);
   });
 
+  it('permanently levels up a chosen owned weapon via the shared equip path (AC3)', () => {
+    const registry = new EffectsRegistry();
+    const applyWeapon = vi.spyOn(registry, 'applyWeapon');
+    const player = { equipWeapon: vi.fn() };
+    const option: ChoiceOption = {
+      id: 'spread',
+      name: 'Spread Shot Lv.3',
+      kind: 'weapon-level',
+      level: 3,
+    };
+
+    applyMineralChoiceReward(option, registry, player);
+
+    // The same permanent-equip path grants the level-up: Player.equipWeapon
+    // increments the run-scoped level on every collection.
+    expect(applyWeapon).toHaveBeenCalledWith('spread', true);
+    expect(player.equipWeapon).toHaveBeenCalledWith('spread', true);
+  });
+
   it('permanently applies a chosen power-up (no weapon equip)', () => {
     const registry = new EffectsRegistry();
     const applyCollect = vi.spyOn(registry, 'applyCollect');

@@ -956,6 +956,34 @@ describe('Player ship entity', () => {
       expect(player.getWeaponLevel('dual')).toBe(1);
     });
 
+    it('a permanent mineral choice levels the weapon up and keeps it (AC3)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread', true);
+      expect(player.getWeaponLevel('spread')).toBe(1);
+      expect(player.hasWeapon('spread')).toBe(true);
+
+      player.equipWeapon('spread', true);
+      expect(player.getWeaponLevel('spread')).toBe(2);
+      // The second collection is an upgrade, so the resolved definition grows.
+      expect(player.getWeaponDef('spread').levelBulletSize).toBeGreaterThan(1);
+      // Permanent: it never times out.
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS * 10);
+      expect(player.hasWeapon('spread')).toBe(true);
+    });
+
+    it('getWeaponLevels lists every owned weapon with its level (choice context)', async () => {
+      const player = await freshPlayer();
+      expect(player.getWeaponLevels()).toEqual([]);
+
+      player.equipWeapon('spread');
+      player.equipWeapon('spread');
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevels()).toEqual([
+        { id: 'spread', level: 2 },
+        { id: 'rapid', level: 1 },
+      ]);
+    });
+
     it('resetWeaponLevels clears every level (AC7)', async () => {
       const player = await freshPlayer();
       player.equipWeapon('spread');

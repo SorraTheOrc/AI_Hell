@@ -21,6 +21,7 @@ import {
   type PowerUpId,
   type WeaponDropId,
 } from './types';
+import type { WeaponId } from '../utils/weapons';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
@@ -47,15 +48,52 @@ export const CHOICE_POOL: readonly DropId[] = [
 
 // ── Option model ────────────────────────────────────────────────────
 
+/**
+ * The kind of option offered:
+ * - `'powerup'` — a P3–P9 power-up,
+ * - `'weapon'` — a collectable weapon drop (grant \*or\* re-activate),
+ * - `'weapon-level'` — a permanent level-up of a weapon the player already
+ *   owns (parent AH-0MUPMPCB2009J54J).
+ */
+export type ChoiceOptionKind = 'powerup' | 'weapon' | 'weapon-level';
+
 /** One option offered by the hold-full choice. */
 export interface ChoiceOption {
   /** The drop id presented (power-up or weapon). */
   id: DropId;
   /** Human-readable display name. */
   name: string;
-  /** Whether the option is a power-up or a weapon drop. */
-  kind: 'powerup' | 'weapon';
+  /** Whether the option is a power-up, a weapon drop or a weapon level-up. */
+  kind: ChoiceOptionKind;
+  /**
+   * For `'weapon-level'` options: the weapon level this option grants
+   * (the current level + 1). Absent for power-up/weapon options.
+   */
+  level?: number;
 }
+
+/**
+ * Player context for the choice pool. Used to offer weapon **level-ups** that
+ * reflect the run's current weapon levels (AC1/AC2).
+ */
+export interface ChoiceContext {
+  /**
+   * Weapons the player has collected this run (id → current level ≥ 1). Only
+   * genuine weapon drops are considered; the cannon and the Reset utility are
+   * ignored.
+   */
+  weaponLevels?: ReadonlyArray<{ id: WeaponId; level: number }>;
+}
+
+/** Weapon drops that can be levelled up (everything except the Reset utility). */
+const LEVELABLE_WEAPON_IDS: readonly WeaponDropId[] = [
+  'spread',
+  'dual',
+  'rapid',
+  'nova',
+  'mortar',
+  'arc',
+];
 
 /** Display names for the collectable weapon drops. */
 const WEAPON_NAMES: Record<WeaponDropId, string> = {
@@ -81,9 +119,9 @@ export function isWeaponDrop(id: DropId): id is WeaponDropId {
   );
 }
 
-/** Whether an option is a weapon option (used by the choice scene). */
+/** Whether an option is a weapon option (a drop or a level-up). */
 export function isWeaponOption(option: ChoiceOption): boolean {
-  return option.kind === 'weapon';
+  return option.kind !== 'powerup';
 }
 
 /** Builds the display descriptor for a drop id. */
@@ -108,31 +146,67 @@ export interface ChoiceStrategy {
    * @param count — maximum number of options to offer.
    * @param rng — random-number generator (defaults to `Math.random`);
    *   injected by tests for determinism.
+   * @param context — optional player context (owned weapon levels) so the
+   *   pool can include weapon level-up offers.
    */
-  choose(count: number, rng?: () => number): ChoiceOption[];
+  choose(
+    count: number,
+    rng?: () => number,
+    context?: ChoiceContext,
+  ): ChoiceOption[];
+}
+
+/**
+ * Builds the candidate option list: the base pool plus a **level-up** offer
+ * for every weapon the player owns (AC1/AC4). When the player owns no weapons
+ * the list is exactly the base pool (AC5).
+ */
+export function buildChoiceCandidates(
+  pool: readonly DropId[],
+  context?: ChoiceContext,
+): ChoiceOption[] {
+  const candidates = [...new Set(pool)].map(toChoiceOption);
+  for (const { id, level } of context?.weaponLevels ?? []) {
+    if (!LEVELABLE_WEAPON_IDS.includes(id as WeaponDropId) || level < 1) {
+      continue;
+    }
+    const weaponId = id as WeaponDropId;
+    candidates.push({
+      id: weaponId,
+      name: `${WEAPON_NAMES[weaponId]} Lv.${level + 1}`,
+      kind: 'weapon-level',
+      level: level + 1,
+    });
+  }
+  return candidates;
 }
 
 /**
  * Creates a strategy that draws `count` distinct options uniformly at random
- * from `pool`. When the pool holds fewer than `count` entries, all of them
- * are returned (graceful degradation).
+ * from `pool` (extended with owned-weapon level-up offers from `context`).
+ * When the candidate list holds fewer than `count` entries, all of them are
+ * returned (graceful degradation).
  */
 export function createRandomChoiceStrategy(
   pool: readonly DropId[] = CHOICE_POOL,
 ): ChoiceStrategy {
   return {
-    choose(count: number, rng: () => number = Math.random): ChoiceOption[] {
-      const available = [...new Set(pool)];
-      const n = Math.max(0, Math.min(Math.floor(count), available.length));
+    choose(
+      count: number,
+      rng: () => number = Math.random,
+      context?: ChoiceContext,
+    ): ChoiceOption[] {
+      const candidates = buildChoiceCandidates(pool, context);
+      const n = Math.max(0, Math.min(Math.floor(count), candidates.length));
       // Partial Fisher–Yates shuffle: the first n entries become a
-      // uniformly random, distinct sample of the pool.
+      // uniformly random, distinct sample of the candidates.
       for (let i = 0; i < n; i++) {
-        const j = i + Math.floor(rng() * (available.length - i));
-        const tmp = available[i];
-        available[i] = available[j];
-        available[j] = tmp;
+        const j = i + Math.floor(rng() * (candidates.length - i));
+        const tmp = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
       }
-      return available.slice(0, n).map(toChoiceOption);
+      return candidates.slice(0, n);
     },
   };
 }
@@ -148,6 +222,7 @@ export function chooseOptions(
   count = 3,
   strategy: ChoiceStrategy = randomChoiceStrategy,
   rng: () => number = Math.random,
+  context?: ChoiceContext,
 ): ChoiceOption[] {
-  return strategy.choose(count, rng);
+  return strategy.choose(count, rng, context);
 }

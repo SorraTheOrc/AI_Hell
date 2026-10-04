@@ -1234,7 +1234,11 @@ export class GymFormationScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
-    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3);
+    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
+      // Offer level-ups for weapons the player already owns (parent
+      // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+    });
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],

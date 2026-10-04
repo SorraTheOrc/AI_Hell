@@ -734,6 +734,18 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Snapshot of every weapon the player has collected this run, with its
+   * current level (id → level ≥ 1). Used by the hold-full choice to offer
+   * weapon level-ups that reflect the run's progress (parent
+   * AH-0MUPMPCB2009J54J). A never-collected weapon is omitted (level 0).
+   */
+  getWeaponLevels(): Array<{ id: WeaponId; level: number }> {
+    return [...this._weaponLevels.entries()]
+      .filter(([, level]) => level > 0)
+      .map(([id, level]) => ({ id, level }));
+  }
+
+  /**
    * The **resolver level** for a weapon: the number of *upgrades* applied,
    * i.e. `collections − 1` (AC8). The first collection unlocks the weapon at
    * its base stats (level 1 = base, matching the pre-leveling timed-drop

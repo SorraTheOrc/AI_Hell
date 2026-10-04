@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CHOICE_POOL,
   ChoiceStrategy,
+  buildChoiceCandidates,
   chooseOptions,
   createRandomChoiceStrategy,
   isWeaponOption,
@@ -94,5 +95,46 @@ describe('power-up choice strategy', () => {
     };
     const options = chooseOptions(3, fixed);
     expect(options.map((o) => o.id)).toEqual(['spread', 'P5', 'P9']);
+  });
+
+  describe('weapon level-up offers (AH-0MUPOVYZU0073OUV)', () => {
+    const context = {
+      weaponLevels: [
+        { id: 'spread' as const, level: 2 },
+        { id: 'rapid' as const, level: 1 },
+        { id: 'cannon' as const, level: 0 },
+      ],
+    };
+
+    it('adds a level-up offer for each owned weapon, reflecting its level (AC1/AC2/AC4)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUps = candidates.filter((o) => o.kind === 'weapon-level');
+      expect(levelUps.map((o) => o.id).sort()).toEqual(['rapid', 'spread']);
+
+      const spread = levelUps.find((o) => o.id === 'spread')!;
+      expect(spread.level).toBe(3);
+      expect(spread.name).toContain('Lv.3');
+      const rapid = levelUps.find((o) => o.id === 'rapid')!;
+      expect(rapid.level).toBe(2);
+    });
+
+    it('ignores unowned/level-0 weapons and the cannon (AC5)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [{ id: 'cannon', level: 0 }],
+      });
+      expect(candidates.some((o) => o.kind === 'weapon-level')).toBe(false);
+    });
+
+    it('keeps the base pool unchanged when the player owns no weapons (AC5)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, { weaponLevels: [] });
+      expect(candidates.map((o) => o.id).sort()).toEqual([...CHOICE_POOL].sort());
+      expect(candidates.every((o) => o.kind !== 'weapon-level')).toBe(true);
+    });
+
+    it('still offers exactly three distinct options with contextual level-ups (AC6)', () => {
+      const options = createRandomChoiceStrategy().choose(3, () => 0.5, context);
+      expect(options).toHaveLength(3);
+      expect(new Set(options.map((o) => `${o.kind}:${o.id}`)).size).toBe(3);
+    });
   });
 });

@@ -170,8 +170,10 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
 /**
  * Applies a hold-full choice option permanently for the current run, so
  * the gym and the game grant the same effect for the same choice:
- * a weapon option permanently equips the weapon; a power-up option
- * permanently applies the collect effect (GDD §4.5).
+ * a weapon option permanently equips the weapon; a `weapon-level` option
+ * permanently **levels up** an owned weapon (the same `equipWeapon` path
+ * increments the run-scoped level, AC3); a power-up option permanently
+ * applies the collect effect (GDD §4.5).
  *
  * @param option — the chosen option (exactly the option offered).
  * @param effectsRegistry — the scene's effect registry.
@@ -182,8 +184,11 @@ export function applyMineralChoiceReward(
   effectsRegistry: EffectsRegistry,
   player: { equipWeapon(weaponId: WeaponId, permanent?: boolean): void } | null,
 ): void {
-  if (isWeaponDrop(option.id)) {
+  if (option.kind === 'weapon-level' || isWeaponDrop(option.id)) {
     const weaponId = option.id as WeaponId;
+    // Permanent equip both grants the weapon and raises its run-scoped level
+    // by one (`Player.equipWeapon` increments on every collection), so a
+    // level-up offer permanently strengthens an already-owned weapon.
     effectsRegistry.applyWeapon(weaponId, true);
     player?.equipWeapon(weaponId, true);
   } else {
