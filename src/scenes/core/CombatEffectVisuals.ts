@@ -11,11 +11,12 @@
  * the gym parity item AH-0MUICQC34005QOYF.
  *
  * The P3 shield bubble also winds down as it expires (AH-0MUAYB5HR001HDYC):
- * in the final second the fill ramps up to a documented "opaque" alpha and
- * the rim pulses, and in the final half second the fill shrinks inside the
- * hull radius before the bubble clears at expiry. The animation is a pure
- * function of `EffectsRegistry.remaining('P3')`, so it is frame-rate
- * independent and identical in the game and every gym.
+ * the rim pulses continuously for the whole active lifetime, the fill ramps
+ * up to a documented "opaque" alpha in the final second, and the fill then
+ * shrinks inside the hull radius in the final half second before the bubble
+ * clears at expiry. The animation is a pure function of
+ * `EffectsRegistry.remaining('P3')`, so it is frame-rate independent and
+ * identical in the game and every gym.
  *
  * @module scenes/core/CombatEffectVisuals
  */
@@ -36,8 +37,9 @@ export const SHIELD_BUBBLE_FILL_ALPHA = 0.12;
 /** Shield-bubble stroke alpha. */
 export const SHIELD_BUBBLE_STROKE_ALPHA = 0.9;
 /**
- * Seconds before expiry at which the shield-bubble ending animation begins:
- * the fill ramps up and the rim starts pulsing (AH-0MUAYB5HR001HDYC).
+ * Seconds before expiry at which the shield-bubble ending fade begins: the
+ * fill starts ramping up toward {@link SHIELD_BUBBLE_ENDING_FILL_ALPHA}
+ * (AH-0MUAYB5HR001HDYC). The rim pulses for the whole active lifetime.
  */
 export const SHIELD_BUBBLE_ENDING_SECONDS = 1.0;
 /**
@@ -58,7 +60,7 @@ export const SHIELD_BUBBLE_ENDING_FILL_ALPHA = 0.6;
 export const SHIELD_BUBBLE_SHRINK_MIN_FACTOR = 0.3;
 /**
  * Shield-bubble rim pulse angular rate (radians per second of remaining
- * time) during the ending window.
+ * time). The rim pulses continuously for the whole active lifetime.
  */
 export const SHIELD_BUBBLE_PULSE_RATE = 12;
 /**
@@ -84,11 +86,11 @@ export interface GhostVisualTarget {
  * Clears *graphics* and draws the shared P3 shield bubble around *player*
  * when the registry says the player is shielded.
  *
- * The bubble has a steady state while more than
- * {@link SHIELD_BUBBLE_ENDING_SECONDS} remain and a time-based ending
- * animation in the final second (AH-0MUAYB5HR001HDYC): the fill ramps up to
- * {@link SHIELD_BUBBLE_ENDING_FILL_ALPHA} and the rim pulses, then in the
- * final {@link SHIELD_BUBBLE_SHRINK_SECONDS} the fill shrinks toward
+ * The bubble has a continuously pulsing rim (stroke alpha oscillates for the
+ * whole active lifetime, from collection until it disappears) and a
+ * time-based ending fade in the final second (AH-0MUAYB5HR001HDYC): the fill
+ * ramps up to {@link SHIELD_BUBBLE_ENDING_FILL_ALPHA}, then in the final
+ * {@link SHIELD_BUBBLE_SHRINK_SECONDS} the fill shrinks toward
  * {@link SHIELD_BUBBLE_SHRINK_MIN_FACTOR} (inside the hull) before the
  * bubble clears at expiry. The animation is a pure function of
  * `registry.remaining('P3')` — frame-rate independent and deterministic.
@@ -115,24 +117,25 @@ export function drawShieldBubble(
   if (remaining === undefined || remaining <= 0) return false;
 
   const fullRadius = SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR;
-  let strokeAlpha = SHIELD_BUBBLE_STROKE_ALPHA;
   let fillAlpha = SHIELD_BUBBLE_FILL_ALPHA;
   let fillRadius = fullRadius;
 
-  if (remaining <= SHIELD_BUBBLE_ENDING_SECONDS) {
-    // Rim pulse: phase-locked so it starts at the steady alpha at T-1 s (no
-    // sudden pop as the ending window opens) and oscillates for the second.
-    const pulse =
-      0.5 +
-      0.5 *
-        Math.cos(
-          (remaining - SHIELD_BUBBLE_ENDING_SECONDS) * SHIELD_BUBBLE_PULSE_RATE,
-        );
-    strokeAlpha =
-      SHIELD_BUBBLE_STROKE_ALPHA *
-      (SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER +
-        (1 - SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER) * pulse);
+  // Rim pulse: runs continuously for the whole active lifetime (operator
+  // clarification, AH-0MUAYB5HR001HDYC) — the shield is never a steady ring.
+  // The phase is locked so the pulse passes through the base alpha at T-1 s,
+  // keeping the transition into the ending window seamless.
+  const pulse =
+    0.5 +
+    0.5 *
+      Math.cos(
+        (remaining - SHIELD_BUBBLE_ENDING_SECONDS) * SHIELD_BUBBLE_PULSE_RATE,
+      );
+  const strokeAlpha =
+    SHIELD_BUBBLE_STROKE_ALPHA *
+    (SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER +
+      (1 - SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER) * pulse);
 
+  if (remaining <= SHIELD_BUBBLE_ENDING_SECONDS) {
     // Fill ramps from the steady alpha up to the documented "opaque" alpha.
     const progress = 1 - remaining / SHIELD_BUBBLE_ENDING_SECONDS; // 0..1
     fillAlpha =

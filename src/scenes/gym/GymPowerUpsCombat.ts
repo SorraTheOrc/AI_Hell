@@ -445,7 +445,7 @@ export class GymPowerUpsCombat extends CombatScene<
 
   private _updateVisuals(): void {
     // Shield bubble: drawn around the ship while P3 is active (shared helper,
-    // including the shared ending pulse/fade in the final second).
+    // including the continuous rim pulse and ending fade).
     if (this.shieldBubble) {
       drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
     }

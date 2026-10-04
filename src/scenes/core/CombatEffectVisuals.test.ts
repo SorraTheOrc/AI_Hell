@@ -99,7 +99,7 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
     expect(SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER).toBeLessThan(1);
   });
 
-  it('draws the bubble at the shared colour/width/radius/alpha while shielded', () => {
+  it('draws the bubble at the shared colour/width/radius and steady fill while shielded', () => {
     const registry = new EffectsRegistry();
     registry.applyCollect('P3');
     const g = new FakeGraphics();
@@ -108,9 +108,12 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
 
     expect(drawn).toBe(true);
     expect(g.cleared).toBe(1);
-    expect(g.lineStyleCalls).toEqual([
-      [SHIELD_BUBBLE_LINE_WIDTH, SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_STROKE_ALPHA],
-    ]);
+    expect(g.lineStyleCalls[0][0]).toBe(SHIELD_BUBBLE_LINE_WIDTH);
+    expect(g.lineStyleCalls[0][1]).toBe(SHIELD_BUBBLE_COLOR);
+    // The rim pulses for the whole shield lifetime (operator clarification,
+    // AH-0MUAYB5HR001HDYC), so its alpha is an oscillation within bounds.
+    expect(g.lineStyleCalls[0][2]).toBeGreaterThan(0);
+    expect(g.lineStyleCalls[0][2]).toBeLessThanOrEqual(SHIELD_BUBBLE_STROKE_ALPHA);
     expect(g.strokeCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
     expect(g.fillStyleCalls).toEqual([[SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_FILL_ALPHA]]);
     expect(g.fillCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
@@ -169,23 +172,29 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
 });
 
 describe('CombatEffectVisuals — P3 shield ending animation (AH-0MUAYB5HR001HDYC)', () => {
-  it('keeps the steady-state bubble (no pulsing) with more than one second remaining', () => {
-    for (const remaining of [15, 5, 1.5, 1.01]) {
+  it('keeps the steady fill and full radius while the rim pulses continuously above one second', () => {
+    const strokeAlphas = new Set<number>();
+    for (const remaining of [15, 12, 8, 5, 3, 2, 1.5, 1.01]) {
       const g = new FakeGraphics();
       const drawn = drawShieldBubble(graphics(g), { x: 10, y: 20 }, shieldAt(remaining));
 
       expect(drawn).toBe(true);
       expect(g.cleared).toBe(1);
-      expect(g.lineStyleCalls).toEqual([
-        [SHIELD_BUBBLE_LINE_WIDTH, SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_STROKE_ALPHA],
-      ]);
-      expect(g.strokeCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
+      // Fill and radius stay at their steady values outside the ending window.
       expect(g.fillStyleCalls).toEqual([[SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_FILL_ALPHA]]);
       expect(g.fillCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
+      expect(g.strokeCircleCalls).toEqual([[10, 20, SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR]]);
+      // Rim alpha stays a visible, bounded oscillation.
+      const strokeAlpha = g.lineStyleCalls[0][2];
+      expect(strokeAlpha).toBeGreaterThan(0);
+      expect(strokeAlpha).toBeLessThanOrEqual(SHIELD_BUBBLE_STROKE_ALPHA);
+      strokeAlphas.add(strokeAlpha);
     }
+    // Continuous pulse: the rim alpha must vary across the whole lifetime.
+    expect(strokeAlphas.size).toBeGreaterThan(1);
   });
 
-  it('ramps the fill opaque and pulses the rim during the final second', () => {
+  it('pulses the rim and ramps the fill opaque during the final second', () => {
     const strokeAlphas = new Set<number>();
     for (let remaining = 0.95; remaining > 0; remaining -= 0.05) {
       const g = new FakeGraphics();
