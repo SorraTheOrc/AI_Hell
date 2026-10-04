@@ -723,3 +723,114 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     expect(layers.some((t) => t.startsWith('defeat'))).toBe(false);
   });
 });
+
+// ── Verification sweep (AH-0MUTYKR1O007XE2N) ────────────────────────
+
+describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUTYKR1O007XE2N)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootWith(data: {
+    won: boolean;
+    score?: number;
+  }): Promise<GameOverScene> {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', data);
+    await new Promise((r) => setTimeout(r, 350));
+    return booted.game.scene.getScene('GameOverScene') as GameOverScene;
+  }
+
+  it('arrows and Shift+Tab move focus while the treatment is active', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    expect(scene.getFocusedIndex()).toBe(0);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect(scene.getFocusedIndex()).toBe(0);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    expect(scene.getFocusedIndex()).toBe(0);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
+    expect(scene.getFocusedIndex()).toBe(1);
+  });
+
+  it('Enter activates the focused Return to Menu control while the treatment is active', async () => {
+    const scene = await bootWith({ won: true, score: 12345 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    // Focus the Return to Menu button (index 1), then activate with Enter.
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('Space activates the focused control while the treatment is active', async () => {
+    const scene = await bootWith({ won: false, score: 200 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
+    scene.handleKey(new KeyboardEvent('keydown', { key: ' ' }));
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('the Skip pointer handler works for a non-qualifying score while the treatment is active', async () => {
+    // Fill the board so this low score cannot qualify.
+    for (let i = 1; i <= 10; i++) addEntry('AAA', i * 1000);
+    const scene = await bootWith({ won: false, score: 50 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    const skip = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === '←  Skip',
+    );
+    expect(skip).toBeDefined();
+    skip!.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('the treatment objects are non-interactive and cannot intercept input', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+
+    const effects = scene.getEndOfRunEffects();
+    expect(effects.length).toBeGreaterThan(0);
+    for (const effect of effects) {
+      // No input component → the object cannot capture a pointer event.
+      expect(effect.input ?? null).toBeNull();
+    }
+  });
+
+  it('a stop/restart sweep leaves no orphaned treatment objects in the scene', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+    const effects = scene.getEndOfRunEffects();
+    expect(effects.length).toBeGreaterThan(0);
+
+    // Restart the scene: SHUTDOWN destroys the old treatment.
+    scene.scene.restart({ won: true, score: 999 });
+    await new Promise((r) => setTimeout(r, 350));
+
+    for (const effect of effects) expect(effect.active).toBe(false);
+
+    // No leftover juice layer from the previous defeat treatment survives.
+    const restarted = booted!.game.scene.getScene('GameOverScene') as GameOverScene;
+    const layers = restarted
+      .getEndOfRunEffects()
+      .map((o) => (o.getData ? o.getData('juiceLayer') : undefined));
+    expect(layers.some((t) => typeof t === 'string' && t.startsWith('defeat'))).toBe(false);
+    expect(layers.some((t) => typeof t === 'string' && t.startsWith('victory'))).toBe(true);
+  });
+});
