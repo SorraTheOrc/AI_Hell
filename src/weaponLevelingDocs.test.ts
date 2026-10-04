@@ -68,4 +68,19 @@ describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
     expect(readme).toContain('resolveWeaponAtLevel');
     expect(readme).toMatch(/weapon leveling/i);
   });
+
+  it('the GDD §4.5 records the permanent weapon level-up choice (AC2)', () => {
+    expect(gdd).toMatch(/permanent level-up offer/);
+    expect(gdd).toMatch(/weapon-level/);
+  });
+
+  it('the GDD gym list registers the weapon-leveling gym (AC6)', () => {
+    expect(gdd).toContain('GymWeaponLeveling.ts');
+    expect(gdd).toMatch(/WeaponLeveling/);
+  });
+
+  it('the README names the weapon-leveling gym (AC4)', () => {
+    expect(readme).toContain('GymWeaponLeveling');
+    expect(readme).toMatch(/leveling gym/i);
+  });
 });
