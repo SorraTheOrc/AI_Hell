@@ -119,15 +119,26 @@ import {
   playVictoryFanfareSound,
   VICTORY_ARPEGGIO_FREQS,
   VICTORY_ARPEGGIO_VOLUME,
+  VICTORY_CADENCE_FREQS,
+  VICTORY_CADENCE_VOLUME,
   VICTORY_CHORD_FREQS,
   VICTORY_CHORD_VOLUME,
   VICTORY_CHORD_DURATION,
+  VICTORY_BASS_FREQS,
+  VICTORY_BASS_VOLUME,
+  VICTORY_BASS_DURATION,
   VICTORY_SPARKLE_FREQS,
+  VICTORY_SPARKLE_VOLUME,
+  VICTORY_SHIMMER_VOLUME,
+  VICTORY_SHIMMER_FILTER_HZ,
   playDefeatStingSound,
   DEFEAT_STING_FREQS,
   DEFEAT_STING_NOTE_VOLUME,
+  DEFEAT_STING_NOTE_DURATION,
   DEFEAT_STING_DRONE_VOLUME,
   DEFEAT_STING_DRONE_HZ,
+  DEFEAT_STING_DRONE_END_HZ,
+  DEFEAT_STING_DRONE_DURATION,
   DEFEAT_STING_TAIL_VOLUME,
   DEFEAT_STING_TAIL_FILTER_HZ,
 } from './effects';
@@ -2116,20 +2127,31 @@ describe('end-of-run victory fanfare — synthesis (parent AC1)', () => {
       playCannonFireSound(); // prime the module-scoped context
     });
 
-    it('schedules a rising major arpeggio of at least three distinct notes', () => {
+    it('schedules a rising two-phrase major melody of distinct notes', () => {
       const snap = snapshot();
       playVictoryFanfareSound();
       const oscs = newOscillators(snap);
 
-      const arpeggio = oscs
+      const melody = oscs
         .filter((o) => o.type === 'triangle')
         .map((o) => o.freqEvents[0].value);
-      expect(arpeggio.length).toBeGreaterThanOrEqual(3);
-      expect(new Set(arpeggio).size).toBeGreaterThanOrEqual(3);
-      expect(arpeggio).toEqual([...VICTORY_ARPEGGIO_FREQS]);
-      // Rising: every note is higher than the previous one.
-      for (let i = 1; i < arpeggio.length; i++) {
-        expect(arpeggio[i]).toBeGreaterThan(arpeggio[i - 1]);
+      // The "call" arpeggio followed by the faster "answer" cadence.
+      expect(melody).toEqual([
+        ...VICTORY_ARPEGGIO_FREQS,
+        ...VICTORY_CADENCE_FREQS,
+      ]);
+      // Many distinct pitches — an unmistakable fanfare, not a monotonic peep.
+      expect(new Set(melody).size).toBeGreaterThanOrEqual(5);
+      // Each phrase rises in pitch.
+      for (let i = 1; i < VICTORY_ARPEGGIO_FREQS.length; i++) {
+        expect(VICTORY_ARPEGGIO_FREQS[i]).toBeGreaterThan(
+          VICTORY_ARPEGGIO_FREQS[i - 1],
+        );
+      }
+      for (let i = 1; i < VICTORY_CADENCE_FREQS.length; i++) {
+        expect(VICTORY_CADENCE_FREQS[i]).toBeGreaterThan(
+          VICTORY_CADENCE_FREQS[i - 1],
+        );
       }
     });
 
@@ -2156,15 +2178,41 @@ describe('end-of-run victory fanfare — synthesis (parent AC1)', () => {
       }
     });
 
-    it('adds a sparkle tail above the chord', () => {
+    it('adds a sustained low bass bed beneath the chord for weight', () => {
       const snap = snapshot();
       playVictoryFanfareSound();
       const oscs = newOscillators(snap);
 
-      const sparkles = oscs.filter((o) =>
-        (VICTORY_SPARKLE_FREQS as readonly number[]).includes(
-          o.freqEvents[0]?.value,
-        ),
+      const bass = oscs.filter(
+        (o) =>
+          o.type === 'sine' &&
+          (VICTORY_BASS_FREQS as readonly number[]).includes(
+            o.freqEvents[0]?.value,
+          ),
+      );
+      expect(bass).toHaveLength(VICTORY_BASS_FREQS.length);
+      // The bass sits below the chord and rings for its own (longer) duration.
+      expect(Math.max(...VICTORY_BASS_FREQS)).toBeLessThan(
+        Math.min(...VICTORY_CHORD_FREQS),
+      );
+      for (const voice of bass) {
+        expect(voice.stopTime! - voice.startTime!).toBeGreaterThanOrEqual(
+          VICTORY_BASS_DURATION,
+        );
+      }
+    });
+
+    it('adds a sparkle flourish above the chord', () => {
+      const snap = snapshot();
+      playVictoryFanfareSound();
+      const oscs = newOscillators(snap);
+
+      const sparkles = oscs.filter(
+        (o) =>
+          o.type === 'sine' &&
+          (VICTORY_SPARKLE_FREQS as readonly number[]).includes(
+            o.freqEvents[0]?.value,
+          ),
       );
       expect(sparkles).toHaveLength(VICTORY_SPARKLE_FREQS.length);
       // Sparkles are the highest pitches in the cue.
@@ -2172,6 +2220,18 @@ describe('end-of-run victory fanfare — synthesis (parent AC1)', () => {
       for (const s of sparkles) {
         expect(s.freqEvents[0].value).toBeGreaterThan(chordTop);
       }
+    });
+
+    it('adds a soft high-pass filtered shimmer crackle tail', () => {
+      const filterStart = mockCtx().filters.length;
+      playVictoryFanfareSound();
+      const filters = mockCtx().filters.slice(filterStart);
+
+      expect(filters.some((f) => f.type === 'highpass')).toBe(true);
+      expect(
+        filters.some((f) => f.frequencyHz.includes(VICTORY_SHIMMER_FILTER_HZ)),
+      ).toBe(true);
+      expect(VICTORY_SHIMMER_VOLUME).toBeLessThanOrEqual(0.2);
     });
 
     it('keeps every layer at or below the 0.2 player-cue volume ceiling', () => {
@@ -2182,18 +2242,22 @@ describe('end-of-run victory fanfare — synthesis (parent AC1)', () => {
       expect(peakGain(gains)).toBeLessThanOrEqual(0.2);
       const values = gains.flatMap((g) => g.gainEvents.map((e) => e.value));
       expect(values).toContain(VICTORY_ARPEGGIO_VOLUME);
+      expect(values).toContain(VICTORY_CADENCE_VOLUME);
       expect(values).toContain(VICTORY_CHORD_VOLUME);
+      expect(values).toContain(VICTORY_BASS_VOLUME);
+      expect(values).toContain(VICTORY_SPARKLE_VOLUME);
+      expect(values).toContain(VICTORY_SHIMMER_VOLUME);
     });
 
-    it('total duration is within the 1.5-2.5 s brief', () => {
+    it('is a long, grand celebration (~2.5-4 s), not a short peep', () => {
       const snap = snapshot();
       playVictoryFanfareSound();
       const oscs = newOscillators(snap);
 
       const start = Math.min(...oscs.map((o) => o.startTime!));
       const end = Math.max(...oscs.map((o) => o.stopTime!));
-      expect(end - start).toBeGreaterThanOrEqual(1.5);
-      expect(end - start).toBeLessThanOrEqual(2.5);
+      expect(end - start).toBeGreaterThanOrEqual(2.5);
+      expect(end - start).toBeLessThanOrEqual(4.0);
     });
   });
 });
@@ -2218,7 +2282,7 @@ describe('end-of-run defeat sting — synthesis (parent AC3)', () => {
       playCannonFireSound(); // prime the module-scoped context
     });
 
-    it('plays a descending line of distinct notes', () => {
+    it('plays a slow descending line of distinct notes', () => {
       const snap = snapshot();
       playDefeatStingSound();
       const oscs = newOscillators(snap);
@@ -2232,7 +2296,7 @@ describe('end-of-run defeat sting — synthesis (parent AC3)', () => {
       }
     });
 
-    it('adds a sustained low drone beneath the line', () => {
+    it('adds a sustained low drone that sinks in pitch beneath the line', () => {
       const snap = snapshot();
       playDefeatStingSound();
       const oscs = newOscillators(snap);
@@ -2241,7 +2305,15 @@ describe('end-of-run defeat sting — synthesis (parent AC3)', () => {
         (o) => o.type === 'sine' && o.freqEvents[0].value === DEFEAT_STING_DRONE_HZ,
       );
       expect(drone).toBeDefined();
-      expect(drone!.stopTime! - drone!.startTime!).toBeGreaterThan(1);
+      expect(drone!.stopTime! - drone!.startTime!).toBeGreaterThan(
+        DEFEAT_STING_DRONE_DURATION - 0.01,
+      );
+      // The drone bends down as it fades — a sinking, mournful bed.
+      const bend = drone!.freqEvents.find(
+        (event) => event.method === 'exponentialRampToValueAtTime',
+      );
+      expect(bend?.value).toBe(DEFEAT_STING_DRONE_END_HZ);
+      expect(DEFEAT_STING_DRONE_END_HZ).toBeLessThan(DEFEAT_STING_DRONE_HZ);
     });
 
     it('is structurally distinct from the player-destruction cue', () => {
@@ -2279,6 +2351,24 @@ describe('end-of-run defeat sting — synthesis (parent AC3)', () => {
       expect(DEFEAT_STING_TAIL_FILTER_HZ).toBeLessThan(
         PLAYER_DESTRUCTION_TAIL_FILTER_HZ,
       );
+    });
+
+    it('is a sustained sting (~2-4 s) that outlasts a short blip', () => {
+      const snap = snapshot();
+      playDefeatStingSound();
+      const oscs = newOscillators(snap);
+
+      const start = Math.min(...oscs.map((o) => o.startTime!));
+      const end = Math.max(...oscs.map((o) => o.stopTime!));
+      expect(end - start).toBeGreaterThanOrEqual(2.0);
+      expect(end - start).toBeLessThanOrEqual(4.0);
+      // Each descending note rings for at least its own note duration.
+      const notes = oscs.filter((o) => o.type === 'triangle');
+      for (const note of notes) {
+        expect(note.stopTime! - note.startTime!).toBeGreaterThanOrEqual(
+          DEFEAT_STING_NOTE_DURATION,
+        );
+      }
     });
   });
 });

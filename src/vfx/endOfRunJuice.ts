@@ -67,12 +67,13 @@ export const ENDOFRUN_DEFEAT_GRAY = 0x444444;
 
 /**
  * Peak alpha of the victory flash (fades 1 → 0). A bright, brief flash
- * to punctuate the moment of victory.
+ * to punctuate the moment of victory. Raised from 0.45 after the producer
+ * audit asked for a more emphatic celebration (AH-0MUTV7632000ZWCB).
  */
-export const ENDOFRUN_VICTORY_FLASH_ALPHA = 0.45;
+export const ENDOFRUN_VICTORY_FLASH_ALPHA = 0.55;
 
-/** Victory flash fade duration (ms). */
-export const ENDOFRUN_VICTORY_FLASH_DURATION_MS = 200;
+/** Victory flash fade duration (ms) — longer, so the punch reads. */
+export const ENDOFRUN_VICTORY_FLASH_DURATION_MS = 320;
 
 /** Whether the victory flash layer is enabled (per-layer toggle). */
 export const ENDOFRUN_ENABLE_VICTORY_FLASH = true;
@@ -80,10 +81,10 @@ export const ENDOFRUN_ENABLE_VICTORY_FLASH = true;
 // ── Particle / confetti tunables (victory) ──────────────────────────
 
 /** Base particle count for the victory confetti burst. */
-export const ENDOFRUN_VICTORY_PARTICLE_COUNT = 80;
+export const ENDOFRUN_VICTORY_PARTICLE_COUNT = 140;
 
 /** Victory particle lifespan (ms) — long enough to fill the screen. */
-export const ENDOFRUN_VICTORY_PARTICLE_LIFESPAN_MS = 1200;
+export const ENDOFRUN_VICTORY_PARTICLE_LIFESPAN_MS = 2200;
 
 /** Velocity spread for confetti particles (px per frame, scaled by Phaser). */
 export const ENDOFRUN_VICTORY_PARTICLE_VELOCITY = 180;
@@ -311,10 +312,10 @@ export const ENDOFRUN_VICTORY_RING_DEPTH = -9;
 export const ENDOFRUN_VICTORY_CONFETTI_DEPTH = -8;
 
 /** Number of staggered celebration rings spawned by the victory treatment. */
-export const ENDOFRUN_VICTORY_RING_COUNT = 2;
+export const ENDOFRUN_VICTORY_RING_COUNT = 3;
 
 /** Stagger (ms) between successive victory rings. */
-export const ENDOFRUN_VICTORY_RING_STAGGER_MS = 120;
+export const ENDOFRUN_VICTORY_RING_STAGGER_MS = 180;
 
 /** Confetti piece width (px). */
 export const ENDOFRUN_CONFETTI_WIDTH = 8;
@@ -323,7 +324,7 @@ export const ENDOFRUN_CONFETTI_WIDTH = 8;
 export const ENDOFRUN_CONFETTI_HEIGHT = 4;
 
 /** Confetti travel distance (px) from the burst centre. */
-export const ENDOFRUN_CONFETTI_TRAVEL = 220;
+export const ENDOFRUN_CONFETTI_TRAVEL = 260;
 
 /** Confetti angular spin per tween (degrees). */
 export const ENDOFRUN_CONFETTI_SPIN = 540;
