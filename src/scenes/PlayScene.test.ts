@@ -14,6 +14,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
+import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
@@ -1573,7 +1574,9 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // Phases 1–4 all awarded (1000+2000+3000+5000).
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
-    await new Promise((r) => setTimeout(r, 350));
+    // The transition is delayed by the short victory hold
+    // (VICTORY_TRANSITION_HOLD_MS); wait past it.
+    await new Promise((r) => setTimeout(r, 900));
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
@@ -3624,5 +3627,100 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
       ),
     ).toBe(true);
     expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+});
+
+describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    return booted.scene as PlayScene;
+  }
+
+  /** Drives the boss through all four phases so the run is won. */
+  function defeatBoss(scene: PlayScene): void {
+    const boss = scene.getBoss()!;
+    for (let i = 0; i < 4; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
+  }
+
+  it('AC1/AC2 — defeating the boss plays the fanfare once and spawns the shared celebration once', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+
+    defeatBoss(scene);
+
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(victorySpy).toHaveBeenCalledTimes(1);
+    // The celebration is the shared F2 helper, owning the scene registry.
+    const options = victorySpy.mock.calls[0][1] as { registry?: unknown[] };
+    expect(options.registry).toBe(scene.getVictoryEffects());
+    expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AC1 — the fanfare and celebration fire exactly once even across extra ticks', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+
+    defeatBoss(scene);
+    scene.tick(0.016);
+    scene.tick(0.016);
+
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(victorySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC3 — the defeat path is unchanged: no fanfare, no victory celebration', async () => {
+    const scene = await bootPlay();
+    const gs = scene.getGameState();
+    gs.lives = 1;
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    expect(gs.lives).toBe(0);
+    expect(fanfareSpy).not.toHaveBeenCalled();
+    expect(victorySpy).not.toHaveBeenCalled();
+    expect(scene.getVictoryEffects()).toHaveLength(0);
+  });
+
+  it('AC4 — the victory celebration is destroyed on SHUTDOWN (no leaks)', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    defeatBoss(scene);
+
+    const effects = scene.getVictoryEffects();
+    expect(effects.length).toBeGreaterThan(0);
+
+    // Wait for the short hold, then the GameOverScene transition fires
+    // SHUTDOWN on PlayScene.
+    await new Promise((r) => setTimeout(r, 900));
+
+    expect(scene.getVictoryEffects()).toHaveLength(0);
+    for (const effect of effects) {
+      expect(effect.active).toBe(false);
+    }
   });
 });

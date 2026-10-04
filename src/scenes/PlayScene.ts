@@ -55,6 +55,7 @@ import {
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
+  playVictoryFanfareSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
@@ -77,6 +78,7 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import { spawnVictoryJuice } from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
@@ -194,6 +196,14 @@ const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 
 /** Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %). */
 export const POWER_UP_DROP_CHANCE = 0.18;
+
+/**
+ * Short in-run hold (ms) after the victory celebration is triggered and
+ * before the `GameOverScene` transition. Keeps the moment-of-win flourish
+ * visible without a long blocking delay; the sustained celebration then
+ * continues on `GameOverScene`. Set to 0 to transition immediately.
+ */
+export const VICTORY_TRANSITION_HOLD_MS = 250;
 
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
@@ -335,6 +345,13 @@ export class PlayScene extends CombatScene<
   private glide = new FormationGlide();
 
   private transitionTimer = 0;
+
+  /**
+   * Registry for the in-run victory celebration display objects (the shared
+   * `spawnVictoryJuice` layers). Cleared — with every leftover object
+   * destroyed — on scene SHUTDOWN so a stop/restart leaks nothing.
+   */
+  private victoryEffects: Phaser.GameObjects.GameObject[] = [];
 
   // ── Wormhole spawn animation tracking ────────────────────────────
   /** The live wormhole handle for the current wave spawn, or null. */
@@ -526,6 +543,7 @@ export class PlayScene extends CombatScene<
    */
   protected override resetRunState(): void {
     super.resetRunState();
+    this.victoryEffects = [];
     this.spawned = [];
     this.enemyBullets = [];
     this.drops = [];
@@ -603,6 +621,10 @@ export class PlayScene extends CombatScene<
     this.bannerText = null;
     this.waveTimerBar?.destroy();
     this.waveTimerBar = null;
+
+    // Destroy any in-run victory celebration still alive on shutdown.
+    for (const effect of this.victoryEffects) effect.destroy();
+    this.victoryEffects = [];
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
@@ -1237,7 +1259,8 @@ export class PlayScene extends CombatScene<
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
-      this._finishRun(true);
+      this._triggerVictoryCelebration();
+      this._finishRunWithPurpose(true);
       return;
     }
 
@@ -1246,6 +1269,34 @@ export class PlayScene extends CombatScene<
     if (result !== previousPhase) {
       this._spawnMinions(result);
     }
+  }
+
+  /**
+   * Fires the end-of-run victory treatment at the moment the boss dies
+   * (parent AH-0MUTV7632000ZWCB AC1/AC6): the dedicated fanfare plays once
+   * and the shared `spawnVictoryJuice` celebration is spawned into this
+   * scene's registry. The sustained celebration is re-rendered on
+   * `GameOverScene`, so the transition needs only a short tunable hold
+   * ({@link VICTORY_TRANSITION_HOLD_MS}) for the in-run flourish to read.
+   */
+  private _triggerVictoryCelebration(): void {
+    playVictoryFanfareSound();
+    spawnVictoryJuice(this, { registry: this.victoryEffects });
+  }
+
+  /**
+   * Transitions to `GameOverScene` for a won run after the short victory
+   * hold, so the in-run celebration is visible before the screen changes.
+   * A zero hold transitions immediately (keeps timing tests deterministic).
+   */
+  private _finishRunWithPurpose(won: boolean): void {
+    if (!won || VICTORY_TRANSITION_HOLD_MS <= 0) {
+      this._finishRun(won);
+      return;
+    }
+    this.time.delayedCall(VICTORY_TRANSITION_HOLD_MS, () =>
+      this._finishRun(won),
+    );
   }
 
   // ── Player input & fire ─────────────────────────────────────────
@@ -2220,6 +2271,15 @@ export class PlayScene extends CombatScene<
   /** Active composed player-death juice effects (empty once torn down). */
   getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
     return this.playerDeathEffects.slice();
+  }
+
+  /**
+   * The live in-run victory celebration display objects (shared
+   * `spawnVictoryJuice` layers). Shrinks as each tween completes and is
+   * emptied on SHUTDOWN. Exposed for victory-trigger / teardown tests.
+   */
+  getVictoryEffects(): Phaser.GameObjects.GameObject[] {
+    return this.victoryEffects;
   }
 
   /** True while the player is invulnerable after a hit. */
