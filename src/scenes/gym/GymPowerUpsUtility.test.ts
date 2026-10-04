@@ -202,10 +202,10 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     scene.tick(1 / 60);
     expect(registry.magnetStacks()).toBe(1);
 
-    // Place a fresh P5 drop some distance away (inside the magnet radius
-    // of 2×20×(1+0.5) = 60 px is too small to observe movement from far;
-    // use a drop 30 px away and step the simulation ~0.5 s).
-    const drop = scene.spawnDrop('P5', 510, 270); // 30 px right of the ship
+    // Place a fresh P5 drop some distance away (inside the 1-stack magnet
+    // radius of 1×20×(1+0.5) = 30 px; use a drop 20 px away and step the
+    // simulation ~0.5 s).
+    const drop = scene.spawnDrop('P5', 500, 270); // 20 px right of the ship
     scene.advanceDrops(0.5); // grow to full size so it can be attracted
 
     const before = { x: drop.x, y: drop.y };
@@ -224,8 +224,8 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     scene.tick(1 / 60);
     expect(registry.magnetStacks()).toBe(1);
 
-    // Place a P5 drop 30 px right of the ship.
-    const drop = scene.spawnDrop('P5', 510, 270);
+    // Place a P5 drop 20 px right of the ship (inside the 30 px 1-stack radius).
+    const drop = scene.spawnDrop('P5', 500, 270);
     scene.advanceDrops(0.5); // grow to full size
 
     const beforeGraphics = { x: drop.graphics.x, y: drop.graphics.y };
@@ -819,13 +819,14 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     expect(registry.isScoopActive()).toBe(true);
     expect(registry.scoopStacks()).toBe(0);
 
-    // A mineral 40 px away: inside the 1-stack radius (60 px), outside the hull.
-    const mineral = scene.spawnMineral(520, 270);
+    // A mineral 30 px away: inside the 2-stack radius (1×20×(1+0.5×2) = 40 px),
+    // outside the hull.
+    const mineral = scene.spawnMineral(510, 270);
     const before = mineral.x;
     scene.tick(0.1); // ~12 px of pull at 120 px/s
 
     expect(mineral.x).toBeLessThan(before);
-    expect(mineral.x).toBeCloseTo(508, 0);
+    expect(mineral.x).toBeCloseTo(498, 0);
   });
 
   it('the scoop shares the same radius curve as the P9 magnet', async () => {

@@ -11,11 +11,11 @@
  *   for 10 s (both use the same 1.5× multiplier); re-collecting refreshes
  *   the timer to full duration (never additive).
  * - **P8 Extra Life** — immediate: +1 life (starts 3, cap 5).
- * - **P9 Magnet** — permanent stack (cap 5); radius 2× ship size +50%/stack.
+ * - **P9 Magnet** — permanent stack (cap 5); radius 1× ship size +50%/stack.
  * - **P10 Mineral Scoop** — attracts nearby minerals: a timed 15 s effect
  *   when collected as a field drop (refresh-only, never stacking), or a
  *   permanent stacking effect (cap 5) when granted as a hold-full reward.
- *   Shares the P9 attraction radius curve (base 2× ship size, +50%/stack).
+ *   Shares the P9 attraction radius curve (base 1× ship size, +50%/stack).
  * - **P3 Shield** — timed 15 s bubble; absorbs one hit, popped on absorb,
  *   refreshes on re-collect before expiry.
  * - **P4 Bomb** — instant: clears on-screen enemy bullets on collect (does
@@ -136,7 +136,7 @@ export function applySpeedMultiplier<T extends { thrust: number; maxSpeed: numbe
 
 /**
  * Computes the magnet attraction radius for the given ship size and stack
- * count: base 2× ship size, +50% of the base per stack.
+ * count: base 1× ship size, +50% of the base per stack.
  */
 export function magnetRadius(shipSize: number, stacks: number): number {
   return (

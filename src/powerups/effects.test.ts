@@ -196,9 +196,9 @@ describe('P9 Magnet (AC4): one permanent stack per pickup, cap 5', () => {
 });
 
 describe('P9 magnet math (AC5): radius and attraction speed', () => {
-  it('base radius is 2× ship size', () => {
-    expect(MAGNET_RADIUS_BASE_MULTIPLIER).toBe(2);
-    expect(magnetRadius(SHIP_SIZE, 0)).toBeCloseTo(SHIP_SIZE * 2);
+  it('base radius is 1× ship size (50% of the original 2×)', () => {
+    expect(MAGNET_RADIUS_BASE_MULTIPLIER).toBe(1);
+    expect(magnetRadius(SHIP_SIZE, 0)).toBeCloseTo(SHIP_SIZE * 1);
   });
 
   it('each stack adds +50% of the base radius', () => {
@@ -209,13 +209,13 @@ describe('P9 magnet math (AC5): radius and attraction speed', () => {
     expect(MAGNET_RADIUS_PER_STACK).toBe(0.5);
   });
 
-  it('the radius formula matches 2× ship size +50% per stack', () => {
-    // radius(stack) = 2·shipSize·(1 + 0.5·stack)
+  it('the radius formula matches 1× ship size +50% per stack', () => {
+    // radius(stack) = 1·shipSize·(1 + 0.5·stack)
     const shipSize = 20;
-    expect(magnetRadius(shipSize, 1)).toBeCloseTo(2 * shipSize * 1.5);
-    expect(magnetRadius(shipSize, 2)).toBeCloseTo(2 * shipSize * 2);
-    expect(magnetRadius(shipSize, 3)).toBeCloseTo(2 * shipSize * 2.5);
-    expect(magnetRadius(shipSize, 5)).toBeCloseTo(2 * shipSize * 3.5);
+    expect(magnetRadius(shipSize, 1)).toBeCloseTo(1 * shipSize * 1.5);
+    expect(magnetRadius(shipSize, 2)).toBeCloseTo(1 * shipSize * 2);
+    expect(magnetRadius(shipSize, 3)).toBeCloseTo(1 * shipSize * 2.5);
+    expect(magnetRadius(shipSize, 5)).toBeCloseTo(1 * shipSize * 3.5);
   });
 
   it('attraction speed is slower than the ship max speed', () => {

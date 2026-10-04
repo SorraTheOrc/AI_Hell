@@ -12,7 +12,7 @@
  *   `Player.setSpeedMultiplier` + `Player.setFireRateMultiplier`.
  * - **P8 Extra Life** — +1 life immediately (starts 3, cap 5).
  * - **P9 Magnet** — permanent stack (cap 5); drops within
- *   `2× ship size +50%/stack` are pulled toward the ship at
+ *   `1× ship size +50%/stack` are pulled toward the ship at
  *   `MAGNET_ATTRACTION_SPEED` (slower than ship max speed).
  * - **P10 Mineral Scoop** — attracts the gym's live mineral field toward the
  *   ship at the same range/speed curve (timed 15 s as a field pickup,

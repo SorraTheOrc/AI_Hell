@@ -63,16 +63,16 @@ describe('PlayScene mineral wiring', () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
-    // Two permanent scoop stacks → radius 2×20×(1+0.5×2) = 80 px.
+    // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
     registry.applyCollect('P10', true);
     registry.applyCollect('P10', true);
 
-    const mineral = scene.spawnMineralAt(player.x + 40, player.y);
+    const mineral = scene.spawnMineralAt(player.x + 30, player.y);
     const before = mineral.x;
     scene.tick(0.1); // ~12 px of pull at MAGNET_ATTRACTION_SPEED
 
     expect(mineral.x).toBeLessThan(before);
-    expect(mineral.x).toBeCloseTo(player.x + 40 - 12, 0);
+    expect(mineral.x).toBeCloseTo(player.x + 30 - 12, 0);
   });
 
   it('reaching capacity pauses play and opens the choice with three distinct options', async () => {

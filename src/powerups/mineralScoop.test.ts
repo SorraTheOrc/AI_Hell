@@ -15,12 +15,12 @@ import { mineralScoopRadius, applyMineralScoop } from './mineralScoop';
 import { magnetRadius } from './effects';
 
 describe('mineralScoopRadius', () => {
-  it('follows the magnet curve: 2 × ship size × (1 + 0.5 × stacks)', () => {
-    expect(mineralScoopRadius(SHIP_SIZE, 1)).toBeCloseTo(2 * SHIP_SIZE * 1.5, 5);
-    expect(mineralScoopRadius(SHIP_SIZE, 2)).toBeCloseTo(2 * SHIP_SIZE * 2, 5);
-    // The radius formula at zero stacks is the bare base (2× ship size);
+  it('follows the magnet curve: 1 × ship size × (1 + 0.5 × stacks)', () => {
+    expect(mineralScoopRadius(SHIP_SIZE, 1)).toBeCloseTo(1 * SHIP_SIZE * 1.5, 5);
+    expect(mineralScoopRadius(SHIP_SIZE, 2)).toBeCloseTo(1 * SHIP_SIZE * 2, 5);
+    // The radius formula at zero stacks is the bare base (1× ship size);
     // `applyMineralScoop` separately guards stacks <= 0 to disable attraction.
-    expect(mineralScoopRadius(SHIP_SIZE, 0)).toBe(2 * SHIP_SIZE);
+    expect(mineralScoopRadius(SHIP_SIZE, 0)).toBe(1 * SHIP_SIZE);
   });
 
   it('grows with stacks', () => {
@@ -55,7 +55,7 @@ describe('applyMineralScoop', () => {
   });
 
   it('does not move an out-of-range mineral', () => {
-    // 1-stack radius = 2 × 20 × 1.5 = 60 px; place it 70 px away.
+    // 1-stack radius = 1 × 20 × 1.5 = 30 px; place it 70 px away.
     const mineral = makeMineral(550, 270);
     const before = { x: mineral.x, y: mineral.y };
 
@@ -112,10 +112,10 @@ describe('applyMineralScoop', () => {
   });
 
   it('attracts at MAGNET_ATTRACTION_SPEED (matches the magnet speed)', () => {
-    const mineral = makeMineral(480, 270 - 50); // 50 px above, inside 60 px radius
+    const mineral = makeMineral(480, 270 - 20); // 20 px above, inside 30 px radius
     applyMineralScoop([mineral], player, 1, 0.1); // 0.1 s → 12 px
 
-    expect(mineral.y).toBeCloseTo(270 - 50 + MAGNET_ATTRACTION_SPEED * 0.1, 5);
+    expect(mineral.y).toBeCloseTo(270 - 20 + MAGNET_ATTRACTION_SPEED * 0.1, 5);
   });
 
   it('moves multiple minerals toward the player', () => {

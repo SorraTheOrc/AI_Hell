@@ -32,7 +32,7 @@ export interface MovableMineral {
 
 /**
  * Scoop attraction radius (px) for `stacks` effective stacks: the same curve
- * as the P9 magnet — base 2× ship size, +50% of the base per stack.
+ * as the P9 magnet — base 1× ship size, +50% of the base per stack.
  */
 export function mineralScoopRadius(shipSize: number, stacks: number): number {
   return magnetRadius(shipSize, stacks);
