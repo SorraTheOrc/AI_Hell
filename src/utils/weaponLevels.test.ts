@@ -92,6 +92,20 @@ describe('upgrade variable catalogue (AC2)', () => {
     }
   });
 
+  test('every variable documents its cap/k rationale (AC5)', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      expect(WEAPON_UPGRADE_SPECS[variable].rationale.trim().length).toBeGreaterThan(20);
+    }
+  });
+
+  test('every variable has a measurable level-1 gain (AC2 — per-level effect)', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const base = curveValue(WEAPON_UPGRADE_SPECS[variable], 0);
+      const levelOne = curveValue(WEAPON_UPGRADE_SPECS[variable], 1);
+      expect(levelOne).toBeGreaterThan(base);
+    }
+  });
+
   test('the MVP slice has at least four variables spanning distinct domains', () => {
     expect(MVP_UPGRADE_VARIABLES.length).toBeGreaterThanOrEqual(4);
     for (const variable of MVP_UPGRADE_VARIABLES) {

@@ -153,6 +153,11 @@ export interface WeaponUpgradeSpec {
   discrete: boolean;
   /** `'mvp'` variables ship now; `'planned'` variables are specified only. */
   tier: 'mvp' | 'planned';
+  /**
+   * Why this cap and saturation rate were chosen — the tuning rationale.
+   * Kept beside the numbers so balance intent cannot drift from the values.
+   */
+  rationale: string;
 }
 
 /**
@@ -171,6 +176,10 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'fireRate',
     label: 'Fire rate',
     description: 'Fires more often (shots-per-second multiplier).',
+    rationale:
+      'Cadence is the most feel-sensitive variable; a 3× ceiling keeps ' +
+      'indefinite levels from trivialising bullet density, and k=0.18 ' +
+      'front-loads the early gains (≈17 % of the span by level 1).',
     curve: 'exponential-saturation',
     base: 1,
     cap: 3,
@@ -182,6 +191,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'projectileCount',
     label: 'Projectiles',
     description: 'Adds projectiles to every shot.',
+    rationale:
+      'Extra bullets multiply total damage, so the cap is deliberately ' +
+      'small (8) and k=0.22 lands the first extra bullet at level 1.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 8,
@@ -193,6 +205,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'spreadAngle',
     label: 'Spread',
     description: 'Widens the shot fan.',
+    rationale:
+      'Fan width is a coverage/readability tool; 45° is the widest fan ' +
+      'that still reads as aimed fire, and k=0.2 widens quickly then plateaus.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 45,
@@ -204,6 +219,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'bulletSize',
     label: 'Bullet size',
     description: 'Increases bullet radius.',
+    rationale:
+      'Larger bullets improve hit probability; 2.5× keeps them legible ' +
+      'against the neon background, k=0.16 spreads the gain across the early levels.',
     curve: 'exponential-saturation',
     base: 1,
     cap: 2.5,
@@ -215,6 +233,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'bulletSpeed',
     label: 'Bullet speed',
     description: 'Bullets travel faster.',
+    rationale:
+      'Speed trades readability for reach; 1.8× is the fastest still-' +
+      'trackable bullet, so k=0.14 is deliberately gentle.',
     curve: 'exponential-saturation',
     base: 1,
     cap: 1.8,
@@ -226,6 +247,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'bulletLifetime',
     label: 'Range',
     description: 'Bullets live longer (longer effective range).',
+    rationale:
+      'Range grows with lifetime; 2.2× extends reach without filling the ' +
+      'screen with wrapped bullets, and k=0.12 gives a slow ramp.',
     curve: 'exponential-saturation',
     base: 1,
     cap: 2.2,
@@ -237,6 +261,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'damage',
     label: 'Damage',
     description: 'Each bullet deals more damage.',
+    rationale:
+      'Damage is the strongest scalar, so it saturates late and high ' +
+      '(4×, k=0.2) — meaningful at every level but never an instant win.',
     curve: 'exponential-saturation',
     base: 1,
     cap: 4,
@@ -248,6 +275,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'piercing',
     label: 'Piercing',
     description: 'Bullets pass through more enemies.',
+    rationale:
+      'Piercing is very strong in crowds; the cap is 5 and k=0.25 grants ' +
+      'the first pierce at level 1 so it feels responsive.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 5,
@@ -259,6 +289,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'bounce',
     label: 'Bounce',
     description: 'Bullets bounce off walls/enemies more often.',
+    rationale:
+      'Bounce mainly adds coverage in corridors; cap 4 with k=0.25 keeps ' +
+      'it from becoming a perpetual wall bounce.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 4,
@@ -270,6 +303,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'homing',
     label: 'Homing',
     description: 'Bullets curve toward nearby enemies (0–1).',
+    rationale:
+      'Homing changes aiming feel; 0.9 is a strong-but-imperfect curve and ' +
+      'k=0.15 keeps it a late-game payoff rather than an early aim-bot.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 0.9,
@@ -281,6 +317,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'aoeRadius',
     label: 'Area',
     description: 'Increases area-of-effect radius.',
+    rationale:
+      'Area is the AOE family identity; 2.5× is a large but bounded blast, ' +
+      'and k=0.18 gives a visible early gain without screen-filling rings.',
     curve: 'exponential-saturation',
     base: 1,
     cap: 2.5,
@@ -292,6 +331,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'statusChance',
     label: 'Status',
     description: 'Chance to apply a status effect (0–1).',
+    rationale:
+      'Status procs must stay a bonus, not the primary damage; a 60 % ' +
+      'ceiling (k=0.12) keeps them special and bounded.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 0.6,
@@ -303,6 +345,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'chainCount',
     label: 'Chain',
     description: 'Additional target jumps for chaining weapons.',
+    rationale:
+      'Chains scale with enemy density; cap 4 extra jumps with k=0.22 ' +
+      'grants the first jump at level 1.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 4,
@@ -314,6 +359,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'critChance',
     label: 'Crit',
     description: 'Chance for a critical hit (0–1).',
+    rationale:
+      'Crit is a damage multiplier in disguise; a 50 % ceiling (k=0.12) ' +
+      'constrains expected damage growth across the run.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 0.5,
@@ -325,6 +373,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'splitCount',
     label: 'Split',
     description: 'Extra fragments spawned on hit/expiry.',
+    rationale:
+      'Split fragments multiply bullets; cap 3 with k=0.2 keeps fragment ' +
+      'counts (and per-frame cost) bounded.',
     curve: 'exponential-saturation',
     base: 0,
     cap: 3,
@@ -336,6 +387,9 @@ export const WEAPON_UPGRADE_SPECS: Record<
     variable: 'knockback',
     label: 'Knockback',
     description: 'Pushes enemies back harder.',
+    rationale:
+      'Knockback is a control tool rather than a damage source; 3× is ' +
+      'enough to push enemies clear, and k=0.18 gives a steady ramp.',
     curve: 'exponential-saturation',
     base: 1,
     cap: 3,

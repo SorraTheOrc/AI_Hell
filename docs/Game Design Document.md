@@ -447,6 +447,46 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
 
 > **Hold-full rewards are functional in every gym (AH-0MUHMXWGC0058BO4):** The overlay renders **exactly** the option set the caller stored, so the label shown is the option applied — every launcher (`PlayScene` and each formation gym) passes its stored `options` plus an `onSelect` callback to the single `MineralChoiceScene` contract. In the asteroids-only `GymMinerals` — which has no field power-up drops — the P3/P6/P7 rewards granted by the hold-full choice behave as in the main game: **P7 Teleport** is bound to **S / ↓** whenever a player exists and consumes a stored use (granting a 1.5 s P6 on arrival), **P3 Shield** is honoured through the shared `CombatScene` hit-gating hooks (`isPlayerPhased()` / `tryAbsorbPlayerHit()`), and a permanent **P6 Phase Shift** grants unlimited automatic activations through the shared danger feed while the phase pass-through and mineral gate stay identical to the game. The effects registry ticks every frame (driving the HUD, including the finite/unlimited P6 charge readout) independent of the opt-in drop layer so timed effects expire normally. The teleport gate accepts a stored use (`canTeleport()` is true when `hasTeleport()`), while the opt-in drop layer still gates field-drop teleports elsewhere.
 
+#### 4.4.2 Weapon Leveling (AH-0MUPMPCB2009J54J)
+
+Weapons are **constantly upgradable**: every weapon carries a **run-scoped integer level** and each level changes a set of tunable variables. A **temporary** weapon drop increases that weapon's level (and re-activates it under the existing 10 s timed semantics); a **permanent** mineral-choice pick can raise a weapon's level for the rest of the run. Levels are **unbounded**, persist for the run (including across a weapon timing out), and reset only on run restart. The full catalogue lives in `src/utils/weaponLevels.ts`; the pure resolver is `resolveWeaponAtLevel(weaponId, level)`.
+
+**Diminishing-returns curve.** Every variable uses the same exponential-saturation curve, so a higher level is always at least as good, but each successive level adds less:
+
+```
+effective(level) = cap − (cap − base) × e^(−k × level)
+```
+
+- `base` is the un-upgraded (level 0) value; `effective(0) = base`.
+- `cap` is a hard, finite ceiling the value approaches but never exceeds for continuous variables (discrete counts round and saturate exactly at the cap).
+- `k` is the saturation rate; larger `k` reaches the cap sooner.
+- Integer counts (projectiles, piercing, bounce, chain, split) are rounded to whole numbers and clamped to their cap.
+
+**Catalogue (16 variables).** The four **MVP** variables — **Fire rate**, **Projectiles**, **Bullet size** and **Area** — are implemented in this epic; the remainder are fully specified here and shipped by follow-up items. `Level-1` is the resolved value at level 1 (the first pickup), shown to make the per-level gain concrete.
+
+| Variable | Base (L0) | Cap | k | Level-1 | Tier |
+|----------|-----------|-----|---|---------|------|
+| **Fire rate** (shots/s multiplier) | 1 | 3 | 0.18 | ≈1.33 | MVP |
+| **Projectiles** (extra per shot) | 0 | 8 | 0.22 | 2 | MVP |
+| Spread (extra fan half-angle, °) | 0 | 45 | 0.20 | ≈8.16 | planned |
+| **Bullet size** (radius multiplier) | 1 | 2.5 | 0.16 | ≈1.22 | MVP |
+| Bullet speed (multiplier) | 1 | 1.8 | 0.14 | ≈1.10 | planned |
+| Range (lifetime multiplier) | 1 | 2.2 | 0.12 | ≈1.14 | planned |
+| Damage (multiplier) | 1 | 4 | 0.20 | ≈1.54 | planned |
+| Piercing (extra targets) | 0 | 5 | 0.25 | 1 | planned |
+| Bounce (extra bounces) | 0 | 4 | 0.25 | 1 | planned |
+| Homing (strength, 0–1) | 0 | 0.9 | 0.15 | ≈0.13 | planned |
+| **Area** (AoE radius multiplier) | 1 | 2.5 | 0.18 | ≈1.25 | MVP |
+| Status (chance, 0–1) | 0 | 0.6 | 0.12 | ≈0.07 | planned |
+| Chain (extra jumps) | 0 | 4 | 0.22 | 1 | planned |
+| Crit (chance, 0–1) | 0 | 0.5 | 0.12 | ≈0.06 | planned |
+| Split (extra fragments) | 0 | 3 | 0.20 | 1 | planned |
+| Knockback (force multiplier) | 1 | 3 | 0.18 | ≈1.33 | planned |
+
+**Rationale for each cap/rate.** Fire rate is the most feel-sensitive variable, so a 3× ceiling keeps indefinite levels from trivialising bullet density while `k=0.18` front-loads the early gains. Extra projectiles multiply total damage, so the cap is deliberately small (8) and `k=0.22` lands the first extra bullet at level 1. Spread is a coverage/readability tool: 45° is the widest fan that still reads as aimed fire. Bullet size improves hit probability; 2.5× keeps bullets legible against the neon background. Bullet speed trades readability for reach (1.8× is the fastest still-trackable bullet), and range extends reach without filling the screen with wrapped bullets (2.2×, a slow `k=0.12`). Damage is the strongest scalar, so it saturates late and high (4×) — meaningful but never an instant win. Piercing and bounce are very strong in crowds, so both cap at 5/4 with `k=0.25` granting the first step at level 1. Homing changes aiming feel (0.9 is strong but imperfect, a late-game payoff), while area-of-effect radius is the AOE family's identity (2.5× is a large but bounded blast). Status, crit and split stay bonuses rather than primary damage, so their ceilings are modest (60 % / 50 % / 3 extra fragments). Chain scales with enemy density (4 extra jumps), and knockback is a control tool (3× is enough to push enemies clear). Every rationale is kept beside its numbers in `WEAPON_UPGRADE_SPECS` (`rationale` field) so balance intent cannot drift from the values.
+
+**Beat-grid invariant.** A fire-rate upgrade must not produce an off-grid interval: fire-rate levels map to the nearest valid beat subdivision so every shot stays on the shared 80 BPM grid (AH-0MUAYB8EH005RJ8B). Coverage: `src/utils/weaponLevels.test.ts` (monotonicity, caps, curve, catalogue completeness) and the fire-rate beat-grid work item.
+
 ### 4.5 Scoring System
 
 | Action | Points |
