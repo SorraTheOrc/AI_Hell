@@ -86,7 +86,7 @@ export interface PickupCueDrop {
 
 /**
  * Builds the default weighted-random drop spawner over the combined pool
- * (power-up IDs P3–P9 plus the weapon drops) using the game-rules weights.
+ * (power-up IDs P3–P10 plus the weapon drops) using the game-rules weights.
  * The single implementation behind `PlayScene` and every gym.
  */
 export function buildDefaultDropSpawner(
@@ -218,6 +218,11 @@ export function playDropPickupCue(drop: PickupCueDrop): void {
         playExtraLifeCollectSound();
         break;
       case 'P9':
+        playMagnetCollectSound();
+        break;
+      case 'P10':
+        // Mineral Scoop reuses the magnet field-hum cue (optional polish to
+        // add a dedicated cue later).
         playMagnetCollectSound();
         break;
       default:

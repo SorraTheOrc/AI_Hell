@@ -25,6 +25,7 @@ const ICON_COLORS: Record<PowerUpType, number> = {
   [PowerUpType.TELEPORT]: 0xffcc00, // amber — teleport portal
   [PowerUpType.EXTRA_LIFE]: 0xff6ec7, // pink — life
   [PowerUpType.MAGNET]: 0xb57bff, // purple — magnet
+  [PowerUpType.MINERAL_SCOOP]: 0x33ff99, // neon green — mineral scoop
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -119,6 +120,9 @@ function _drawPowerUpIcon(
       break;
     case PowerUpType.MAGNET:
       drawMagnet(graphics, x, y, size);
+      break;
+    case PowerUpType.MINERAL_SCOOP:
+      drawMineralScoop(graphics, x, y, size);
       break;
   }
 }
@@ -303,6 +307,38 @@ function drawMagnet(
   g.moveTo(x - width / 2, y - arm / 3);
   g.lineTo(x + width / 2, y - arm / 3);
   g.strokePath();
+}
+
+/**
+ * Mineral scoop — a shovel/scoop bowl with a handle and mineral dots
+ * gathering inside it. Distinct neon-green hue so it never reads as the
+ * purple P9 Magnet.
+ */
+function drawMineralScoop(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Handle: diagonal shaft from the upper-right into the bowl.
+  g.beginPath();
+  g.moveTo(x + s * 0.75, y - s * 0.85);
+  g.lineTo(x + s * 0.2, y - s * 0.15);
+  g.strokePath();
+  // Bowl: lower semi-circle with a rim across the top opening.
+  g.beginPath();
+  g.arc(x, y + s * 0.05, s * 0.6, 0, Math.PI, false);
+  g.strokePath();
+  g.beginPath();
+  g.moveTo(x - s * 0.6, y + s * 0.05);
+  g.lineTo(x + s * 0.6, y + s * 0.05);
+  g.strokePath();
+  // Attracted mineral dots gathering in the bowl.
+  for (const dotX of [-0.28, 0, 0.28]) {
+    g.beginPath();
+    g.arc(x + s * dotX, y + s * 0.32, s * 0.08, 0, Math.PI * 2);
+    g.strokePath();
+  }
 }
 
 // ── Weapon power-up icons ──────────────────────────────────────────

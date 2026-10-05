@@ -91,7 +91,7 @@ describe('game rules configuration module', () => {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
         weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, nova: 0.25, mortar: 0.5, arc: 1 },
-        powerUpWeights: { P3: 10, P4: 9, P5: 8, P6: 7, P7: 6, P8: 1, P9: 5 },
+        powerUpWeights: { P3: 10, P4: 9, P5: 8, P6: 7, P7: 6, P8: 1, P9: 5, P10: 5 },
         weaponWeights: {
           spread: 3,
           dual: 4,

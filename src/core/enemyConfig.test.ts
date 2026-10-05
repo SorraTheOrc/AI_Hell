@@ -45,6 +45,8 @@ describe('EnemyConfig schema', () => {
   });
 
   it('exposes the agreed per-enemy bullet lifetimes (AC3/AC4)', () => {
+    // Guard for AH-0MUU131PU006O7ZD AC5: the player-weapon range reduction is
+    // player-only — these enemy lifetimes must stay unchanged.
     expect(DEFAULT_ENEMY_CONFIGS.scout.bulletLifetime).toBe(1.5);
     expect(DEFAULT_ENEMY_CONFIGS.diver.bulletLifetime).toBe(1.5);
     expect(DEFAULT_ENEMY_CONFIGS.tank.bulletLifetime).toBe(2.0);

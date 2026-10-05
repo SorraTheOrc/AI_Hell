@@ -1,7 +1,7 @@
 /**
  * Gym scene — non-combat power-ups (P5 Speed Boost, P8 Extra Life,
- * P9 Magnet) with round-robin spawning, grow/hold/shrink lifecycle,
- * overlap collection, and the standalone HUD (parent AC1–AC6).
+ * P9 Magnet, P10 Mineral Scoop) with round-robin spawning, grow/hold/shrink
+ * lifecycle, overlap collection, and the standalone HUD (parent AC1–AC6).
  *
  * Threat-free: no enemies, no bullets. The player ship flies around
  * collecting drops; each collected drop applies its FULL GDD §4.4
@@ -11,21 +11,27 @@
  *   for 10 s (refresh on re-collect), applied to the ship via
  *   `Player.setSpeedMultiplier` + `Player.setFireRateMultiplier`.
  * - **P8 Extra Life** — +1 life immediately (starts 3, cap 5).
- * - **P9 Magnet** — permanent stack (cap 5); drops within
- *   `2× ship size +50%/stack` are pulled toward the ship at
- *   `MAGNET_ATTRACTION_SPEED` (slower than ship max speed).
+ * - **P9 Magnet** — drops within `1× ship size +50%/stack` are pulled
+ *   toward the ship at `MAGNET_ATTRACTION_SPEED` (slower than ship max
+ *   speed); a timed 15 s field pickup (refresh-only) or a permanent
+ *   stacking upgrade (cap 5).
+ * - **P10 Mineral Scoop** — attracts the gym's live mineral field toward the
+ *   ship at the same range/speed curve (timed 15 s as a field pickup,
+ *   permanent stacking when chosen as a hold-full reward).
  *
- * Spawn cadence: one drop every `POWER_UP_SPAWN_INTERVAL` (5 s), cycling
- * P5 → P8 → P9; each drop lives `POWER_UP_LIFECYCLE_TOTAL_LIFETIME` (5 s),
- * so the next spawn coincides with the previous drop's despawn (exactly
- * one drop on screen while nothing is collected).
+ * Spawn cadence: one drop every `POWER_UP_SPAWN_INTERVAL` (default 12.5 s),
+ * cycling P5 → P8 → P9 → P10; each drop lives for the same interval, so the
+ * next spawn coincides with the previous drop's despawn (exactly one drop on
+ * screen while nothing is collected).
  *
  * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
  * run through the shared `src/scenes/core/dropLayer.ts` template methods
  * (`_updateDropLayer`, `_advanceDropLifecycles`, `_collectOverlappingDrops`,
  * `_applyDropMagnet`, `_playPickupCue`), so this gym cannot drift from the
  * game; only the round-robin spawn *source* is gym-specific
- * (AH-0MUII3CXX0023H24, gap 4).
+ * (AH-0MUII3CXX0023H24, gap 4). The P10 mineral attraction runs through the
+ * shared `_applyMineralScoop` template method and the shared
+ * `collectMinerals` pass, exactly as in `PlayScene` and `GymFormationScene`.
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
@@ -35,6 +41,8 @@ import Phaser from 'phaser';
 
 import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
 import { Player } from '../../entities/Player';
+import { Mineral } from '../../entities/Mineral';
+import { collectMinerals } from '../core/mineralLayer';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
@@ -52,8 +60,11 @@ import {
   POWER_UP_SPAWN_INTERVAL,
 } from '../../core/constants';
 
-/** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9). */
-const NON_COMBAT_ORDER: readonly PowerUpId[] = ['P5', 'P8', 'P9'];
+/** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9 → P10). */
+const NON_COMBAT_ORDER: readonly PowerUpId[] = ['P5', 'P8', 'P9', 'P10'];
+
+/** Number of minerals seeded on the gym's demonstration mineral field. */
+export const UTILITY_MINERAL_SEED_COUNT = 40;
 
 /** Deterministic spawn positions (cycling) — never under the ship start. */
 const SPAWN_POSITIONS: readonly { x: number; y: number }[] = [
@@ -92,6 +103,8 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
+  /** Live mineral field seeded so the P10 scoop is demonstrable (AC5). */
+  private minerals: Mineral[] = [];
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner(NON_COMBAT_ORDER);
   /** Index into the deterministic spawn positions. */
@@ -130,6 +143,10 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
 
+    // Mineral field: seeded so the P10 Mineral Scoop runs the same shared
+    // attraction + collection pass as the game and the formation gyms (AC5).
+    this._seedMinerals(UTILITY_MINERAL_SEED_COUNT);
+
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
@@ -149,6 +166,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     super.resetRunState();
     this.player = null;
     this.drops = [];
+    this.minerals = [];
     this.spawnIndex = 0;
     this.spawnTimer = 0;
     this.hud = null;
@@ -163,6 +181,8 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     super.teardownRunState();
     for (const drop of this.drops) drop.graphics.destroy();
     this.drops = [];
+    for (const mineral of this.minerals) mineral.destroy();
+    this.minerals = [];
     this.player?.destroy();
     this.player = null;
     this.hud?.destroy();
@@ -208,6 +228,20 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
     //    lifecycle, overlap collection, absorb VFX ──
     this.drops = this._updateDropLayer(this.drops, dt);
+
+    // ── Mineral field: P10 scoop attraction then shared collection ──
+    // Same order and same helpers as PlayScene and GymFormationScene, so an
+    // enabled scoop behaves identically here (AC4/AC5).
+    if (this.minerals.length > 0) {
+      this._applyMineralScoop(this.minerals, dt);
+      this.minerals = collectMinerals(
+        this.minerals,
+        this.player,
+        [],
+        () => {},
+        { playerPhased: this.isPlayerPhased() },
+      );
+    }
 
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
@@ -256,6 +290,30 @@ export class GymPowerUpsUtility extends CombatCoreScene<
    */
   advanceDrops(dt: number): void {
     this.drops = this._advanceDropLifecycles(this.drops, dt);
+  }
+
+  /**
+   * Seeds `count` minerals scattered across the play area, away from the
+   * ship's start position, so the P10 scoop has a field to attract.
+   */
+  private _seedMinerals(count: number): void {
+    for (let i = 0; i < count; i++) {
+      const x = 20 + Math.random() * (GAME_WIDTH - 40);
+      const y = 20 + Math.random() * (GAME_HEIGHT - 120);
+      this.minerals.push(new Mineral(this, { x, y }));
+    }
+  }
+
+  /** Places a mineral at an exact position (public test/demo seam). */
+  spawnMineral(x: number, y: number): Mineral {
+    const mineral = new Mineral(this, { x, y });
+    this.minerals.push(mineral);
+    return mineral;
+  }
+
+  /** Live minerals on the gym's demonstration field. */
+  getMinerals(): Mineral[] {
+    return [...this.minerals];
   }
 
   // ── Public test accessors ─────────────────────────────────────────

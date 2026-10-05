@@ -30,12 +30,18 @@ import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '..
 const CHOICE_HEADING_COLOR = '#ffdd44';
 /** Neon-cyan option colour. */
 const CHOICE_OPTION_COLOR = '#00ffff';
+/** Secondary / muted colour for change summaries. */
+const CHOICE_DETAIL_COLOR = '#aaaaaa';
+/** Accent colour for the "New" badge. */
+const CHOICE_NEW_COLOR = '#ff8800';
 /** Fully opaque backdrop, blanking the screen behind the choice dialog. */
 const CHOICE_BACKDROP_ALPHA = 1.0;
 
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
   private controls: Phaser.GameObjects.Text[] = [];
+  /** Detail-line text objects (one per option). */
+  private details: Phaser.GameObjects.Text[] = [];
   /** Optional generic selection handler supplied by the launcher. */
   private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
 
@@ -81,9 +87,13 @@ export class MineralChoiceScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.controls = [];
+    this.details = [];
     this.options.forEach((option, index) => {
-      const text = this.add
-        .text(GAME_WIDTH / 2, 210 + index * 64, `${index + 1}.  ${option.name}`, {
+      const y = 210 + index * 64;
+
+      // Primary label: "1.  Spread Shot Lv.3"
+      const label = this.add
+        .text(GAME_WIDTH / 2, y, `${index + 1}.  ${option.name}`, {
           fontFamily: 'monospace',
           fontSize: '20px',
           color: CHOICE_OPTION_COLOR,
@@ -91,9 +101,28 @@ export class MineralChoiceScene extends Phaser.Scene {
           padding: { x: 16, y: 8 },
         })
         .setOrigin(0.5);
-      text.setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => this.select(index));
-      this.controls.push(text);
+      label.setInteractive({ useHandCursor: true });
+      label.on('pointerdown', () => this.select(index));
+      this.controls.push(label);
+
+      // Detail line: change summary or "New" badge.
+      const detailY = y + 28;
+      let detailText = '';
+      if (option.isNew) {
+        detailText = '★ New';
+      } else if (option.changeSummary) {
+        detailText = option.changeSummary;
+      }
+      if (detailText) {
+        const detail = this.add
+          .text(GAME_WIDTH / 2, detailY, detailText, {
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            color: option.isNew ? CHOICE_NEW_COLOR : CHOICE_DETAIL_COLOR,
+          })
+          .setOrigin(0.5);
+        this.details.push(detail);
+      }
     });
 
     // Number keys 1..n select the matching option.
@@ -111,6 +140,15 @@ export class MineralChoiceScene extends Phaser.Scene {
   /** The rendered option labels (e.g. `["1.  Shield", ...]`). */
   getOptionLabels(): string[] {
     return this.controls.map((control) => control.text);
+  }
+
+  /**
+   * The rendered detail lines beneath each option (e.g.
+   * `["+1 Projectiles", "★ New", ...]`).  Returns an empty array when no
+   * detail lines are present.
+   */
+  getDetailLines(): string[] {
+    return this.details.map((d) => d.text);
   }
 
   /**

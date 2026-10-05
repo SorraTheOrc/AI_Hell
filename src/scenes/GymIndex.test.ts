@@ -93,6 +93,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Player',
       'PowerUpsCombat',
       'PowerUpsUtility',
+      'WeaponLeveling',
       'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
@@ -101,6 +102,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymPlayer',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
+      'GymWeaponLeveling',
       'GymWeapons',
     ]);
     // Middle column: one config row per non-boss seed archetype, no scene

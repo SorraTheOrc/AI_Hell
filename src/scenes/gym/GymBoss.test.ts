@@ -29,6 +29,7 @@ import {
 import { GymFormationScene } from './core/GymFormationScene';
 import {
   BOSS_PHASE_COUNT,
+  BOSS_HIT_POINTS_PER_PHASE,
   BOSS_TELEGRAPH_MS,
   BOSS_COLOR,
   BOSS_RADIUS,
@@ -52,6 +53,11 @@ function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text
   );
   expect(found, `button "${label}" not found`).toBeDefined();
   return found!;
+}
+
+/** Depletes the boss's current phase (BOSS_HIT_POINTS_PER_PHASE hits). */
+function damagePhase(scene: GymBoss): void {
+  for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) scene.damageBoss();
 }
 
 describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
@@ -122,7 +128,7 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;
 
-    scene.damageBoss();
+    damagePhase(scene);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(boss.getPhase()).toBe(BossPhase.Spiral);
 
@@ -136,8 +142,8 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;
 
-    scene.damageBoss();
-    scene.damageBoss();
+    damagePhase(scene);
+    damagePhase(scene);
     expect(boss.getPhaseNumber()).toBe(3);
     expect(boss.getPhase()).toBe(BossPhase.Pulse);
 
@@ -151,9 +157,9 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;
 
-    scene.damageBoss();
-    scene.damageBoss();
-    scene.damageBoss();
+    damagePhase(scene);
+    damagePhase(scene);
+    damagePhase(scene);
     expect(boss.getPhaseNumber()).toBe(4);
     expect(boss.isDesperation()).toBe(true);
 
@@ -171,14 +177,14 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
 
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // Click damage 3 times to reach phase 4.
-    damageBtn.emit('pointerdown');
+    // Click damage BOSS_HIT_POINTS_PER_PHASE times per phase to reach phase 4.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.getPhaseNumber()).toBe(2);
 
-    damageBtn.emit('pointerdown');
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.getPhaseNumber()).toBe(3);
 
-    damageBtn.emit('pointerdown');
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.getPhaseNumber()).toBe(4);
   });
 
@@ -187,14 +193,14 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const boss = scene.formationBoss;
     const damageBtn = findButton(scene, 'DAMAGE');
 
-    // Damage all 4 phases.
-    damageBtn.emit('pointerdown');
-    damageBtn.emit('pointerdown');
-    damageBtn.emit('pointerdown');
+    // Damage all 4 phases (BOSS_HIT_POINTS_PER_PHASE hits each).
+    for (let phase = 1; phase <= 3; phase++) {
+      for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
+    }
     expect(boss.getHealthSegments()).toBe(1);
 
-    // Final damage destroys the Boss.
-    damageBtn.emit('pointerdown');
+    // Final phase's hits destroy the Boss.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.alive).toBe(false);
     expect(boss.bodyVisible).toBe(false);
   });
@@ -680,7 +686,7 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
     const scene = await bootGym();
     const before = scene.getMinions().length;
 
-    scene.damageBoss();
+    damagePhase(scene);
 
     expect(scene.formationBoss.getPhaseNumber()).toBe(2);
     expect(scene.getMinions().length).toBe(
@@ -690,10 +696,10 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
 
   it('AC3 — Phase 3 (Pulse) summons no minions, matching the shared plan', async () => {
     const scene = await bootGym();
-    scene.damageBoss();
+    damagePhase(scene);
     const before = scene.getMinions().length;
 
-    scene.damageBoss(); // → Phase 3 (Pulse, no minions)
+    damagePhase(scene); // → Phase 3 (Pulse, no minions)
 
     expect(scene.formationBoss.getPhaseNumber()).toBe(3);
     expect(planMinionSpawns(3)).toHaveLength(0);
@@ -709,6 +715,50 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
     scene.tick(0.016);
 
     expect(minion!.alive).toBe(false);
+  });
+
+  // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
+
+  it('AC5 — partial-phase DAMAGE hits spawn no new minions', async () => {
+    const scene = await bootGym();
+    const before = scene.getMinions().length;
+
+    // 9 partial hits: phase 1 must survive with no minions spawned.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) scene.damageBoss();
+
+    expect(scene.formationBoss.getPhaseNumber()).toBe(1);
+    expect(scene.getMinions().length).toBe(before);
+  });
+
+  it('AC4/AC5 — depletion spawns each phase’s minion wave exactly once (PlayScene parity)', async () => {
+    const scene = await bootGym();
+    let expected = scene.getMinions().length;
+
+    for (let phase = 1; phase <= 3; phase++) {
+      damagePhase(scene); // depletes the phase
+      expected += planMinionSpawns(phase + 1).length;
+      expect(scene.formationBoss.getPhaseNumber()).toBe(phase + 1);
+      expect(scene.getMinions().length).toBe(expected);
+    }
+
+    // Phase 4 depletes → boss destroyed, no further minions.
+    damagePhase(scene);
+    expect(scene.formationBoss.alive).toBe(false);
+    expect(scene.getMinions().length).toBe(expected);
+  });
+
+  it('AC6/AC3 — 39 DAMAGE clicks leave the boss alive; the 40th destroys it (PlayScene parity)', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    const damageBtn = findButton(scene, 'DAMAGE');
+    const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+
+    for (let i = 0; i < totalHits - 1; i++) damageBtn.emit('pointerdown');
+    expect(boss.alive).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+
+    damageBtn.emit('pointerdown');
+    expect(boss.alive).toBe(false);
   });
 });
 

@@ -170,24 +170,48 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
 /**
  * Applies a hold-full choice option permanently for the current run, so
  * the gym and the game grant the same effect for the same choice:
- * a weapon option permanently equips the weapon; a power-up option
- * permanently applies the collect effect (GDD §4.5).
+ * a weapon option permanently equips the weapon; a `weapon-level` option
+ * permanently **levels up** an owned weapon (the same `equipWeapon` path
+ * increments the run-scoped level, AC3); a power-up option permanently
+ * applies the collect effect (GDD §4.5).
  *
  * @param option — the chosen option (exactly the option offered).
  * @param effectsRegistry — the scene's effect registry.
  * @param player — the ship to equip, or null when no player exists.
  */
+/**
+ * Minimal player contract: weapon equip for weapon/weapon-level offers.
+ * Structurally satisfied by {@link Player} in both the game and every gym.
+ *
+ * Power-up options no longer call into the player directly: the registry's
+ * `applyCollect` advances the **single** run-scoped store the scene injected
+ * from the player (AH-0MUV5CLW6005VF7K, Q1=A), so the level rises exactly
+ * once with no double-count.
+ */
+interface MineralChoicePlayer {
+  equipWeapon(weaponId: WeaponId, permanent?: boolean): void;
+}
+
 export function applyMineralChoiceReward(
   option: ChoiceOption,
   effectsRegistry: EffectsRegistry,
-  player: { equipWeapon(weaponId: WeaponId, permanent?: boolean): void } | null,
+  player: MineralChoicePlayer | null,
 ): void {
-  if (isWeaponDrop(option.id)) {
+  if (option.kind === 'weapon-level' || isWeaponDrop(option.id)) {
     const weaponId = option.id as WeaponId;
+    // Permanent equip both grants the weapon and raises its run-scoped level
+    // by one (`Player.equipWeapon` increments on every collection), so a
+    // level-up offer permanently strengthens an already-owned weapon.
     effectsRegistry.applyWeapon(weaponId, true);
     player?.equipWeapon(weaponId, true);
   } else {
-    effectsRegistry.applyCollect(option.id as PowerUpId, true);
+    // Power-up options (both `powerup` and `power-up-level`): the registry
+    // applies the hold-full effect **and** advances the single run-scoped
+    // store (it was injected from the player), so future choices can offer
+    // level-ups with no double-count (parent AH-0MUV5CLVO002ZHS9;
+    // AH-0MUV5CLW6005VF7K AC1/AC3).
+    const powerUpId = option.id as PowerUpId;
+    effectsRegistry.applyCollect(powerUpId, true);
   }
 }
 

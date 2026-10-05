@@ -44,6 +44,7 @@ import {
   formatWaveTableHeader,
   formatWaveTableRow,
   groupWavesByLevel,
+  sequenceVariedWaves,
   toWaveDefinition,
   waveTableColumnWidths,
   type WavePreviewEntry,
@@ -563,6 +564,73 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
       expect(levels[1].level).toBe(2);
       expect(levels[1].waves).toHaveLength(1);
       expect(levels[0].waves[1].groups[0].count).toBe(2);
+    });
+
+    // ── Per-wave variety (producer-audit regression) ───────────────
+
+    it('sequenceVariedWaves turns identical flat targets into distinct waves', () => {
+      // A flat curve (every wave the same target) previously produced three
+      // identical waves in a level — the producer-audit rejection of this
+      // work item. The varied sequencer must return visibly different
+      // compositions while preserving each wave's authored target.
+      const waves = sequenceVariedWaves([30, 30, 30]);
+      const compositions = waves.map((w) =>
+        w.groups.map((g) => `${g.enemyKey}:${g.count}`).join('+'),
+      );
+      expect(waves).toHaveLength(3);
+      expect(new Set(compositions).size).toBe(3);
+      // The designer's target is reported unchanged, not the internal nudge.
+      expect(waves.map((w) => w.targetDifficulty)).toEqual([30, 30, 30]);
+    });
+
+    it('sequenceVariedWaves keeps every wave near the curve it was given', () => {
+      const targets = [40, 40, 40];
+      const waves = sequenceVariedWaves(targets);
+      // Each selection must still track the authored target within the
+      // variation budget, and never leave the 0–100 editor scale.
+      waves.forEach((wave, index) => {
+        const score = wave.groups.reduce((sum, group) => sum + group.score, 0);
+        expect(wave.targetDifficulty).toBe(targets[index]);
+        expect(wave.groups.length).toBeGreaterThan(0);
+        expect(Math.abs(score - targets[index])).toBeLessThanOrEqual(20);
+        expect(score).toBeGreaterThanOrEqual(0);
+        expect(score).toBeLessThanOrEqual(100);
+      });
+    });
+
+    it('sequenceVariedWaves is deterministic for an unchanged curve', () => {
+      const first = sequenceVariedWaves([40, 40, 40]).map((w) =>
+        w.groups.map((g) => `${g.enemyKey}:${g.count}`).join('+'),
+      );
+      const second = sequenceVariedWaves([40, 40, 40]).map((w) =>
+        w.groups.map((g) => `${g.enemyKey}:${g.count}`).join('+'),
+      );
+      expect(second).toEqual(first);
+    });
+
+    it('a flat curve yields distinct waves in every launched level', async () => {
+      booted = await bootScene([GymCurveSequencer]);
+      const scene = booted.scene as GymCurveSequencer;
+
+      // Flatten the whole curve to a single target and regenerate.
+      for (let i = 0; i < scene.curveTargets.length; i++) setSlider(i, '30');
+      (
+        panel()!.querySelector(
+          `#${CURVE_REGENERATE_BUTTON_ID}`,
+        ) as HTMLButtonElement
+      ).click();
+
+      const levels = scene.curveLevels;
+      expect(levels.length).toBeGreaterThan(0);
+      for (const level of levels) {
+        const compositions = level.waves.map((w) =>
+          w.groups.map((g) => `${g.enemyKey}:${g.count}`).join('+'),
+        );
+        expect(
+          new Set(compositions).size,
+          `level ${level.level} repeated a composition: ${compositions.join(' | ')}`,
+        ).toBe(compositions.length);
+      }
     });
 
     it('exposes curveLevels and a level group per chunk after Regenerate', async () => {

@@ -7,26 +7,54 @@
  * (P3/P4/P6/P7) are exercised by the GymPowerUpsCombat scene with live
  * scout threats (AH-0MTC2P6G3007PJ40).
  *
- * - **P5 Speed Boost** — timed: +50% movement speed and +50% rate of fire
- *   for 10 s (both use the same 1.5× multiplier); re-collecting refreshes
- *   the timer to full duration (never additive).
- * - **P8 Extra Life** — immediate: +1 life (starts 3, cap 5).
- * - **P9 Magnet** — permanent stack (cap 5); radius 2× ship size +50%/stack.
- * - **P3 Shield** — timed 15 s bubble; absorbs one hit, popped on absorb,
- *   refreshes on re-collect before expiry.
+ * ## Single run-scoped level model (AH-0MUV5CLW6005VF7K)
+ *
+ * The registry no longer keeps its own lives/stack/charge counters. It
+ * consumes the **one** run-scoped {@link PowerUpLevelStore} owned by the
+ * player (producer decision Q1=A): every scene injects the player's store
+ * through {@link EffectsRegistry.setStore}/{@link EffectsRegistry.setStoreResolver},
+ * and {@link EffectsRegistry.applyCollect} calls `store.collect(...)` as the
+ * single mutation point. Effect strengths (durations, the P5 multiplier,
+ * caps) are resolved from the catalogue via `store.stats(...)` rather than
+ * raw tuning constants, so balance intent cannot drift between scenes
+ * (AC1/AC2/AC3). `P9_MAGNET_DURATION` / `P10_SCOOP_DURATION` are the only
+ * non-levelled effect constants that remain: the P9/P10 **field-pickup**
+ * timed duration is not a catalogue axis (documented, AC2).
+ *
+ * - **P5 Speed Boost** — timed: `speedMultiplier` movement speed and
+ *   fire-rate for `speedDuration` seconds (both use the same level-resolved
+ *   multiplier); re-collecting refreshes the timer to full duration (never
+ *   additive).
+ * - **P8 Extra Life** — immediate: adds the level-resolved `lifeGain`,
+ *   clamped to the level-resolved `livesCap` (base 3 start, cap 5).
+ * - **P9 Magnet** — attracts nearby drops: a timed 15 s effect when
+ *   collected as a field drop (refresh-only, never stacking), or a
+ *   permanent stacking effect when granted as a hold-full reward.
+ *   Shares the P9/P10 attraction radius curve (base 1× ship size, +50%/stack).
+ * - **P10 Mineral Scoop** — attracts nearby minerals: a timed 15 s effect
+ *   when collected as a field drop (refresh-only, never stacking), or a
+ *   permanent stacking effect when granted as a hold-full reward.
+ *   Shares the P9 attraction radius curve (base 1× ship size, +50%/stack).
+ * - **P3 Shield** — timed `shieldDuration` bubble; absorbs one hit, popped
+ *   on absorb, refreshes on re-collect before expiry. The multi-hit
+ *   `shieldAbsorptions` axis is tracked by the store but its consumption is
+ *   deferred to AH-0MUVM9RAO004Y3LB.
  * - **P4 Bomb** — instant: clears on-screen enemy bullets on collect (does
- *   not damage 1-HP enemies, GDD §4.4); no registry state itself.
+ *   not damage 1-HP enemies, GDD §4.4); the store tracks `bombCharges` but
+ *   consumption is deferred to AH-0MUVM9RAO004Y3LB.
  * - **P6 Phase Shift** — charge-based auto-trigger (parent
- *   AH-0MUIYX1EE008FVS8). Collecting P6 stores one auto-activation charge
- *   (or grants unlimited activations for the hold-full reward); the shared
- *   combat core calls {@link EffectsRegistry.updateDanger} each frame and the
- *   registry activates a 1.5 s pass-through the moment the player is in real
- *   danger and a charge is available. After expiry it re-arms only once
+ *   AH-0MUIYX1EE008FVS8). Collecting P6 stores the level-resolved
+ *   `phaseCharges` auto-activation charges (or grants unlimited activations
+ *   for the hold-full reward); the shared combat core calls
+ *   {@link EffectsRegistry.updateDanger} each frame and the registry
+ *   activates a `phaseDuration` pass-through the moment the player is in
+ *   real danger and a charge is available. After expiry it re-arms only once
  *   danger has cleared and a short cooldown has elapsed (Q2/Q3).
  * - **P7 Teleport** — stored FIFO stacks (no timer); Space consumes one use
- *   and grants P6 Phase Shift (1.5 s) at the landing spot without consuming
- *   an auto-activation charge (Q6). Safe-spot resolution is the scene's
- *   responsibility; this module tracks only the stored count.
+ *   and grants P6 Phase Shift for `teleportPhaseDuration` at the landing
+ *   spot without consuming an auto-activation charge (Q6). Safe-spot
+ *   resolution is the scene's responsibility; this module tracks only the
+ *   stored count.
  *
  * The registry is pure (no Phaser imports). The scene layers
  * movement/ship integration, bullet clearing, hit-response and teleport
@@ -42,9 +70,13 @@ import {
   MAGNET_ATTRACTION_SPEED,
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
-  PHASE_DURATION,
   PHASE_REARM_COOLDOWN,
 } from '../core/constants';
+import {
+  POWER_UP_LIVES_START,
+  PowerUpLevelStore,
+  type PowerUpLevelStats,
+} from './powerUpLevels';
 import type { WeaponId } from '../utils/weapons';
 
 // Re-export the magnet tuning values for convenience.
@@ -57,22 +89,27 @@ export {
 // Re-export weapon type for consumers.
 export type { WeaponId };
 
-// ── Tunable effect values ───────────────────────────────────────────
+// ── Non-levelled effect values ──────────────────────────────────────
 
-/** Movement multiplier applied while P5 is active (+50%). */
-export const P5_SPEED_MULTIPLIER = 1.5;
+/**
+ * Lives counter initial value (P8 model). Mirrors the store's start so
+ * standalone-registry tests and the store agree (AC3).
+ */
+export const P8_LIVES_START = POWER_UP_LIVES_START;
 
-/** Lives counter initial value (P8 model). */
-export const P8_LIVES_START = 3;
+/**
+ * Duration in seconds of the P9 field-pickup drop attraction. **Not a
+ * levelled axis** — the P9/P10 field-pickup timed window stays constant
+ * while only the permanent stack cap (and hence the attraction radius)
+ * levels (AC2).
+ */
+export const P9_MAGNET_DURATION = 15;
 
-/** Hard cap on the lives counter (P8). */
-export const P8_LIVES_MAX = 5;
-
-/** Hard cap on permanent magnet stacks (P9). */
-export const P9_MAX_STACKS = 5;
-
-/** Timed durations for combat-coupled effects (seconds). */
-export const P3_SHIELD_DURATION = 15;
+/**
+ * Duration in seconds of the P10 field-pickup mineral attraction. **Not a
+ * levelled axis**, mirroring {@link P9_MAGNET_DURATION}.
+ */
+export const P10_SCOOP_DURATION = 15;
 
 /** Duration in seconds for timed weapon effects (GDD §4.4). */
 export const WEAPON_EFFECT_DURATION = 10;
@@ -126,7 +163,7 @@ export function applySpeedMultiplier<T extends { thrust: number; maxSpeed: numbe
 
 /**
  * Computes the magnet attraction radius for the given ship size and stack
- * count: base 2× ship size, +50% of the base per stack.
+ * count: base 1× ship size, +50% of the base per stack.
  */
 export function magnetRadius(shipSize: number, stacks: number): number {
   return (
@@ -135,6 +172,9 @@ export function magnetRadius(shipSize: number, stacks: number): number {
     (1 + MAGNET_RADIUS_PER_STACK * stacks)
   );
 }
+
+/** Supplies the run-scoped level store the registry should consume. */
+export type PowerUpLevelStoreResolver = () => PowerUpLevelStore | null;
 
 // ── Effects registry ────────────────────────────────────────────────
 
@@ -151,21 +191,17 @@ interface TimedEffectState {
  * Tracks all active power-up effects and their state. Call `applyCollect`
  * when a drop is collected, `tick(dt)` each frame (seconds), and read the
  * aggregated model via the accessors (used by the scene and the HUD).
+ *
+ * Lives/stack/charge state is **delegated** to the injected run-scoped
+ * {@link PowerUpLevelStore}; only timing state (active durations, timers,
+ * P6 re-arm) lives here.
  */
 export class EffectsRegistry {
   private _timed = new Map<PowerUpId, TimedEffectState>();
-  private _lives = P8_LIVES_START;
-  private _magnetStacks = 0;
-  /** Stored teleport uses (P7), FIFO — pushed on collect, shifted on Space. */
-  private _teleportStacks = 0;
   /** Active timed weapons: each weapon has its own countdown. */
   private _weapons: Map<WeaponId, WeaponEffect> = new Map();
 
-  // ── P6 auto-trigger state (Q2/Q3/Q6) ─────────────────────────────
-  /** Stored auto-activation charges from normally-collected P6 pickups. */
-  private _phaseCharges = 0;
-  /** True when the hold-full reward granted unlimited activations. */
-  private _phasePermanent = false;
+  // ── P6 auto-trigger timing state (Q2/Q3/Q6) ──────────────────────
   /**
    * Whether danger has cleared since the last auto-trigger. A fresh P6 is
    * armed (`true`); firing latches it off until danger drops below the
@@ -175,76 +211,148 @@ export class EffectsRegistry {
   /** Seconds of re-arm cooldown remaining after the last phase expired. */
   private _phaseRearmCooldown = 0;
 
+  // ── Single run-scoped level store (AC1) ──────────────────────────
+  /** Private fallback store for standalone use/tests (no scene wiring). */
+  private _store: PowerUpLevelStore;
+  /**
+   * Optional dynamic resolver (e.g. the scene's live player). Consulted on
+   * every store access so a respawned player's store is picked up
+   * automatically. When it yields `null`, {@link _store} is used.
+   */
+  private _storeResolver: PowerUpLevelStoreResolver | null = null;
+
+  /**
+   * @param store — the run-scoped level store to consume. Defaults to a
+   *   private store so the registry is usable standalone (tests); real
+   *   scenes inject the player's store via {@link setStore} or
+   *   {@link setStoreResolver}.
+   */
+  constructor(store?: PowerUpLevelStore) {
+    this._store = store ?? new PowerUpLevelStore();
+  }
+
+  /** Binds the registry to a specific run-scoped level store instance. */
+  setStore(store: PowerUpLevelStore): void {
+    this._store = store;
+    this._storeResolver = null;
+  }
+
+  /**
+   * Binds the registry to a resolver that yields the current run-scoped
+   * store (typically `() => getPlayer()?.getPowerUpLevelStore() ?? null`).
+   * Unlike {@link setStore}, the resolver is consulted on every access, so
+   * a player respawn/restart is picked up without re-wiring.
+   */
+  setStoreResolver(resolver: PowerUpLevelStoreResolver | null): void {
+    this._storeResolver = resolver;
+  }
+
+  /** The level store the registry currently consumes. */
+  private get _levelStore(): PowerUpLevelStore {
+    return this._storeResolver?.() ?? this._store;
+  }
+
   /**
    * Applies the effect of a collected power-up.
    *
-   * - P3/P5/P6: starts the timed duration, or refreshes it to full if active.
-   * - P4: instant bomb — no registry state (scene clears bullets); no-op here.
-   * - P7: +1 stored teleport use (no cap beyond magnet/life limits — stacks
-   *   FIFO; if a cap is needed callers enforce it). No timer.
-   * - P8: +1 life immediately, capped at P8_LIVES_MAX (excess ignored).
-   * - P9: +1 permanent stack, capped at P9_MAX_STACKS (no-op beyond).
+   * Advances the single run-scoped level store by exactly one collection,
+   * then applies the registry-local timing state resolved from the new
+   * level's stats (AC1/AC2/AC3):
+   *
+   * - P3/P5: starts the timed `shieldDuration`/`speedDuration`, or refreshes
+   *   it to the new full duration if already active.
+   * - P4: instant bomb — no registry state (scene clears bullets); the store
+   *   still tracks the collection.
+   * - P6: stores the level-resolved `phaseCharges` (or marks the permanent
+   *   reward); the phase itself is applied later by the shared combat core
+   *   via `updateDanger`.
+   * - P7: the store grants the level-resolved stored teleport uses. No timer.
+   * - P8: the store grants the level-resolved lives, clamped to the cap.
+   * - P9/P10: a field pickup (no flag) starts the timed refresh-only
+   *   attraction; the hold-full reward adds a permanent stack via the store
+   *   (hybrid preserved).
    *
    * @param id — the collected power-up.
    * @param permanent — when true, timed effects never expire for the run
    *   (used by the hold-full choice).
    */
   applyCollect(id: PowerUpId, permanent = false): void {
-    this._applyPowerUpEffect(id, permanent);
+    const store = this._levelStore;
+    // The single mutation point: every collection (field or hold-full)
+    // advances the level exactly once and derives the grants (AC1/AC3).
+    store.collect(id, permanent);
+    this._applyTimedEffect(id, permanent, store.stats(id));
   }
 
   /**
-   * Internal: applies the effect of a collected power-up ID.
+   * Applies the registry-local timing state for a collection, resolving the
+   * effect strength from the supplied level stats.
    */
-  private _applyPowerUpEffect(id: PowerUpId, permanent = false): void {
+  private _applyTimedEffect(
+    id: PowerUpId,
+    permanent: boolean,
+    stats: PowerUpLevelStats,
+  ): void {
     const entry = getPowerUpById(id);
-
     switch (entry.type) {
       case PowerUpType.SHIELD:
-      case PowerUpType.SPEED_BOOST: {
-        const duration = entry.duration ?? (entry.type === PowerUpType.SHIELD ? P3_SHIELD_DURATION : 10);
-        const existing = this._timed.get(id);
-        if (existing) {
-          // Refresh to full duration — never additive.
-          existing.remaining = existing.duration;
-          if (permanent) existing.permanent = true;
-        } else {
-          this._timed.set(id, {
-            id,
-            type: entry.type,
-            duration,
-            remaining: duration,
-            ...(permanent ? { permanent: true } : {}),
-          });
-        }
+        this._startOrRefreshTimed(
+          id,
+          entry.type,
+          stats.shieldDuration ?? 15,
+          permanent,
+        );
         break;
-      }
-      case PowerUpType.PHASE_SHIFT:
-        // Collecting P6 stores an auto-activation charge (hold-full reward:
-        // unlimited). The phase itself is applied later by the shared combat
-        // core via `updateDanger` when the player is in real danger (Q3).
-        if (permanent) {
-          this._phasePermanent = true;
-        } else {
-          this._phaseCharges += 1;
-        }
-        break;
-      case PowerUpType.BOMB:
-        // Instant effect — no registry state. The scene clears bullets on collect.
-        break;
-      case PowerUpType.TELEPORT:
-        this._teleportStacks += 1;
-        break;
-      case PowerUpType.EXTRA_LIFE:
-        if (this._lives < P8_LIVES_MAX) {
-          this._lives += 1;
-        }
+      case PowerUpType.SPEED_BOOST:
+        this._startOrRefreshTimed(
+          id,
+          entry.type,
+          stats.speedDuration ?? 10,
+          permanent,
+        );
         break;
       case PowerUpType.MAGNET:
-        if (this._magnetStacks < P9_MAX_STACKS) {
-          this._magnetStacks += 1;
+        // P9 hybrid: only the field pickup opens a timed attraction; the
+        // hold-full reward is a permanent stack handled by the store.
+        if (!permanent) {
+          this._startOrRefreshTimed(id, entry.type, P9_MAGNET_DURATION, false);
         }
         break;
+      case PowerUpType.MINERAL_SCOOP:
+        // P10 hybrid: mirrors P9.
+        if (!permanent) {
+          this._startOrRefreshTimed(id, entry.type, P10_SCOOP_DURATION, false);
+        }
+        break;
+      default:
+        // P4 bomb, P6 phase, P7 teleport, P8 life: no registry-local timed
+        // state — the level store owns charges/stacks/lives.
+        break;
+    }
+  }
+
+  /** Starts a timed effect or refreshes it to the (possibly new) duration. */
+  private _startOrRefreshTimed(
+    id: PowerUpId,
+    type: PowerUpType,
+    duration: number,
+    permanent: boolean,
+  ): void {
+    const existing = this._timed.get(id);
+    if (existing) {
+      // Refresh to the current full duration — never additive. A level-up
+      // mid-effect strengthens it (resolved-live, weapon parity).
+      existing.duration = duration;
+      existing.remaining = duration;
+      if (permanent) existing.permanent = true;
+    } else {
+      this._timed.set(id, {
+        id,
+        type,
+        duration,
+        remaining: duration,
+        ...(permanent ? { permanent: true } : {}),
+      });
     }
   }
 
@@ -311,6 +419,9 @@ export class EffectsRegistry {
    * true (hit absorbed); otherwise returns false (hit not absorbed).
    * Phase does NOT absorb — it prevents hits via pass-through before they
    * are tested (scene should skip collision checks when phased).
+   *
+   * The multi-hit `shieldAbsorptions` axis is deferred to
+   * AH-0MUVM9RAO004Y3LB, so the shield still absorbs exactly one hit.
    */
   tryAbsorbShield(): boolean {
     if (!this._timed.has('P3')) return false;
@@ -319,26 +430,29 @@ export class EffectsRegistry {
   }
 
   /**
-   * Activates P6 Phase Shift for its full duration (e.g. on P7 teleport
-   * arrival). Refreshes if already active — never additive. This is the
-   * direct, charge-free activation path; it does not consume an
-   * auto-activation charge (Q6).
+   * Activates P6 Phase Shift (upgrade-level duration for P7 arrivals) —
+   * e.g. on P7 teleport arrival. Refreshes if already active — never
+   * additive. This is the direct, charge-free activation path; it does not
+   * consume an auto-activation charge (Q6).
    */
   applyPhaseShift(): void {
-    this._activatePhase();
+    this._activatePhase(
+      this._levelStore.stats('P7').teleportPhaseDuration ?? 1.5,
+    );
   }
 
-  /** (Re)activates the P6 timed effect at its full duration. */
-  private _activatePhase(): void {
+  /** (Re)activates the P6 timed effect at `duration` seconds. */
+  private _activatePhase(duration: number): void {
     const existing = this._timed.get('P6');
     if (existing) {
-      existing.remaining = existing.duration;
+      existing.duration = duration;
+      existing.remaining = duration;
     } else {
       this._timed.set('P6', {
         id: 'P6' as PowerUpId,
         type: PowerUpType.PHASE_SHIFT,
-        duration: PHASE_DURATION,
-        remaining: PHASE_DURATION,
+        duration,
+        remaining: duration,
       });
     }
   }
@@ -350,7 +464,7 @@ export class EffectsRegistry {
    * When `inDanger` is true, the player is not already phased, a charge is
    * available (or the reward is permanent), danger has cleared since the
    * last trigger and the re-arm cooldown has elapsed, this activates Phase
-   * Shift for {@link PHASE_DURATION} seconds and consumes one charge
+   * Shift for the level-resolved `phaseDuration` and consumes one charge
    * (permanent rewards do not consume).
    *
    * @param inDanger — whether the danger helper reports the ship surrounded.
@@ -369,32 +483,35 @@ export class EffectsRegistry {
     if (this._timed.has('P6')) return false;
     if (!this._phaseDangerCleared) return false;
     if (this._phaseRearmCooldown > 0) return false;
-    if (!this._phasePermanent && this._phaseCharges <= 0) return false;
 
-    if (!this._phasePermanent) this._phaseCharges -= 1;
-    this._activatePhase();
+    const store = this._levelStore;
+    // `consumePhaseCharge` returns false only when neither a real charge nor
+    // the permanent reward is available (AC3: one derived charge model).
+    if (!store.consumePhaseCharge()) return false;
+
+    this._activatePhase(store.stats('P6').phaseDuration ?? 1.5);
     this._phaseDangerCleared = false;
     return true;
   }
 
   /** Stored P6 auto-activation charges (0 for a permanent reward). */
   phaseCharges(): number {
-    return this._phaseCharges;
+    return this._levelStore.phaseCharges();
   }
 
   /** Whether the hold-full reward granted unlimited Phase Shift activations. */
   isPhasePermanent(): boolean {
-    return this._phasePermanent;
+    return this._levelStore.isPhasePermanent();
   }
 
   /** Stored teleport uses (P7). */
   teleportStacks(): number {
-    return this._teleportStacks;
+    return this._levelStore.teleportStacks();
   }
 
   /** Whether at least one teleport use is stored. */
   hasTeleport(): boolean {
-    return this._teleportStacks > 0;
+    return this._levelStore.teleportStacks() > 0;
   }
 
   /**
@@ -403,8 +520,7 @@ export class EffectsRegistry {
    * if none were stored.
    */
   consumeTeleport(): boolean {
-    if (this._teleportStacks <= 0) return false;
-    this._teleportStacks -= 1;
+    if (!this._levelStore.consumeTeleport()) return false;
     this.applyPhaseShift();
     return true;
   }
@@ -415,39 +531,82 @@ export class EffectsRegistry {
   }
 
   /**
-   * Current movement multiplier from P5: 1.5 while active, else 1.
+   * Current movement multiplier from P5: the level-resolved
+   * `speedMultiplier` while active, else 1.
    */
   speedMultiplier(): number {
-    return this._timed.has('P5') ? P5_SPEED_MULTIPLIER : 1;
+    if (!this._timed.has('P5')) return 1;
+    return this._levelStore.stats('P5').speedMultiplier ?? 1;
   }
 
   /**
-   * Current fire-rate multiplier from P5: 1.5 while active, else 1.
-   * Uses the same constant as the movement multiplier so both axes
-   * cannot diverge (single source of truth — AC3).
+   * Current fire-rate multiplier from P5: the same level-resolved
+   * `speedMultiplier` while active, else 1, so both axes cannot diverge
+   * (single source of truth — AC2/AC3).
    */
   fireRateMultiplier(): number {
-    return this._timed.has('P5') ? P5_SPEED_MULTIPLIER : 1;
+    return this.speedMultiplier();
   }
 
-  /** Current lives count (P8 model); starts at 3, caps at 5. */
+  /** Current lives count (P8 model); starts at 3, capped level-resolved. */
   lives(): number {
-    return this._lives;
+    return this._levelStore.lives();
   }
 
   /**
-   * Sets the lives counter directly (clamped to `[0, P8_LIVES_MAX]`).
+   * Sets the lives counter directly (clamped to `[0, livesCap]`).
    * Lets the playable game drive the HUD from its authoritative run state
    * (GameState) when a player is hit; P8 collection still uses
    * `applyCollect('P8')`.
    */
   setLives(value: number): void {
-    this._lives = Math.max(0, Math.min(P8_LIVES_MAX, Math.floor(value)));
+    this._levelStore.setLives(value);
   }
 
-  /** Current permanent magnet stack count (P9); caps at 5. */
+  /** Current permanent magnet stack count (P9); level-capped. */
   magnetStacks(): number {
-    return this._magnetStacks;
+    return this._levelStore.magnetStacks();
+  }
+
+  /** Whether any magnet effect (timed or permanent) is currently active. */
+  isMagnetActive(): boolean {
+    return this._timed.has('P9') || this._levelStore.magnetStacks() > 0;
+  }
+
+  /**
+   * Effective magnet stacks driving the attraction radius: the permanent
+   * stack count when any upgrade was chosen, otherwise one stack while the
+   * timed field pickup is active (mirroring "one magnet\'s worth" of pull),
+   * otherwise zero (no attraction). The shared helper consumes this so the
+   * timed and permanent paths use the exact same radius curve.
+   */
+  magnetEffectStacks(): number {
+    const stacks = this._levelStore.magnetStacks();
+    if (stacks > 0) return stacks;
+    return this._timed.has('P9') ? 1 : 0;
+  }
+
+  /** Current permanent mineral-scoop stack count (P10); level-capped. */
+  scoopStacks(): number {
+    return this._levelStore.scoopStacks();
+  }
+
+  /** Whether the timed P10 field-pickup mineral attraction is active. */
+  isScoopActive(): boolean {
+    return this._timed.has('P10');
+  }
+
+  /**
+   * Effective scoop stacks driving the attraction radius: the permanent
+   * stack count when any upgrade was chosen, otherwise one stack while the
+   * timed field pickup is active (mirroring "one magnet's worth" of pull),
+   * otherwise zero (no attraction). The shared helper consumes this so the
+   * timed and permanent paths use the exact same radius curve.
+   */
+  scoopEffectStacks(): number {
+    const stacks = this._levelStore.scoopStacks();
+    if (stacks > 0) return stacks;
+    return this._timed.has('P10') ? 1 : 0;
   }
 
   // ── Weapon accessors ──────────────────────────────────────────────
@@ -514,51 +673,68 @@ export class EffectsRegistry {
         remaining: effect.remaining,
       });
     }
-    if (this._magnetStacks > 0) {
+    // P9 permanent upgrades render as a stack row; the timed field pickup
+    // is already surfaced from `_timed` above. A zero stack count is never
+    // surfaced (no misleading "x0").
+    const magnetStacks = this._levelStore.magnetStacks();
+    if (magnetStacks > 0) {
       result.push({
         id: 'P9' as PowerUpId,
         type: PowerUpType.MAGNET,
-        stacks: this._magnetStacks,
+        stacks: magnetStacks,
       });
     }
-    if (this._teleportStacks > 0) {
+    // P10 permanent upgrades render as a stack row; the timed field pickup
+    // is already surfaced from `_timed` above. A zero stack count is never
+    // surfaced (no misleading "x0").
+    const scoopStacks = this._levelStore.scoopStacks();
+    if (scoopStacks > 0) {
+      result.push({
+        id: 'P10' as PowerUpId,
+        type: PowerUpType.MINERAL_SCOOP,
+        stacks: scoopStacks,
+      });
+    }
+    const teleportStacks = this._levelStore.teleportStacks();
+    if (teleportStacks > 0) {
       result.push({
         id: 'P7' as PowerUpId,
         type: PowerUpType.TELEPORT,
-        stacks: this._teleportStacks,
+        stacks: teleportStacks,
       });
     }
     // P6 auto-activation charges (parent AH-0MUIYX1EE008FVS8): a finite
     // stock-pile renders as a count, the hold-full reward as unlimited. A
     // zero charge count is never surfaced (no misleading "x0").
-    if (this._phasePermanent) {
+    if (this.isPhasePermanent()) {
       result.push({
         id: 'P6' as PowerUpId,
         type: PowerUpType.PHASE_SHIFT,
         permanent: true,
       });
-    } else if (this._phaseCharges > 0) {
-      result.push({
-        id: 'P6' as PowerUpId,
-        type: PowerUpType.PHASE_SHIFT,
-        stacks: this._phaseCharges,
-      });
+    } else {
+      const phaseCharges = this._levelStore.phaseCharges();
+      if (phaseCharges > 0) {
+        result.push({
+          id: 'P6' as PowerUpId,
+          type: PowerUpType.PHASE_SHIFT,
+          stacks: phaseCharges,
+        });
+      }
     }
     return result;
   }
 
   /**
-   * Resets the entire registry to initial state (for scene restart).
+   * Resets the entire registry to initial state (for scene restart): clears
+   * the local timing state and resets the run-scoped level store (levels and
+   * derived resources together, AC6).
    */
   reset(): void {
     this._timed.clear();
-    this._lives = P8_LIVES_START;
-    this._magnetStacks = 0;
-    this._teleportStacks = 0;
     this._weapons.clear();
-    this._phaseCharges = 0;
-    this._phasePermanent = false;
     this._phaseDangerCleared = true;
     this._phaseRearmCooldown = 0;
+    this._levelStore.reset();
   }
 }

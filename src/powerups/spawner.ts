@@ -103,7 +103,7 @@ export class RoundRobinSpawner<T extends string = PowerUpId> implements PowerUpS
 
 /**
  * Draws the next ID at random, weighted by per-ID weights. Generic so it
- * can be used for power-up IDs (P3–P9), weapon types (spread, dual, rapid),
+ * can be used for power-up IDs (P3–P10), weapon types (spread, dual, rapid),
  * or any combined `DropId` union.
  *
  * All entries start with equal weight (pure random, AC3).  Weights can

@@ -2251,3 +2251,371 @@ export function playPhaseShiftSound(): void {
   noise.start(t);
   noise.stop(t + whooshDuration + 0.02);
 }
+
+// ── End-of-run victory fanfare (parent AH-0MUTV7632000ZWCB, F4) ─────
+//
+// The run-ending win is the most consequential *positive* moment in the
+// game, so it gets a full celebratory fanfare, not a single blip.  Five
+// stacked layers build a real "ta-daaa":
+//   1. a rising major arpeggio (the "call"),
+//   2. a faster rising cadence that pushes to the top of the range (the
+//      "answer"),
+//   3. a sustained major chord with a deep bass bed (the resolution),
+//   4. a high sparkle flourish (the shimmer),
+//   5. a soft high-passed noise crackle tail.
+// Every layer routes through the master SFX gain and is a no-op without an
+// AudioContext (headless tests / autoplay-blocked browsers).
+//
+// Producer audit (AH-0MUTV7632000ZWCB, 2026-10-04) rejected the original
+// single-scale cue as "nothing more than a monotonic peep" and asked for a
+// longer, grander celebration; the cue was rebuilt as a two-phrase fanfare
+// resolving into a held chord with a bass bed (~3.3 s total).
+//
+// Deliberately SFX-only: background music is out of MVP scope (GDD §7.3).
+
+/** Rising major arpeggio frequencies (Hz): C5 → E5 → G5 → C6 (the "call"). */
+export const VICTORY_ARPEGGIO_FREQS = [523.25, 659.25, 783.99, 1046.5] as const;
+
+/** Time (s) between successive arpeggio notes. */
+export const VICTORY_ARPEGGIO_STEP = 0.2;
+
+/** Per-note arpeggio ring time (s) — longer than the step for a legato call. */
+export const VICTORY_ARPEGGIO_NOTE_DURATION = 0.36;
+
+/** Per-note arpeggio peak gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
+export const VICTORY_ARPEGGIO_VOLUME = 0.15;
+
+/** Rising cadence frequencies (Hz): C6 → E6 → G6 → C7 (the "answer"). */
+export const VICTORY_CADENCE_FREQS = [1046.5, 1318.51, 1567.98, 2093.0] as const;
+
+/** Time (s) between successive cadence notes — quicker than the call. */
+export const VICTORY_CADENCE_STEP = 0.16;
+
+/** Per-note cadence peak gain — the loudest melody layer (still ≤ 0.2). */
+export const VICTORY_CADENCE_VOLUME = 0.17;
+
+/** Sustained major chord frequencies (Hz): C6, E6, G6, C7. */
+export const VICTORY_CHORD_FREQS = [1046.5, 1318.51, 1567.98, 2093.0] as const;
+
+/** Per-voice sustained-chord peak gain. */
+export const VICTORY_CHORD_VOLUME = 0.1;
+
+/** Sustained-chord hold duration (s) — the triumphant "ta-daaa". */
+export const VICTORY_CHORD_DURATION = 1.6;
+
+/** Low bass-bed frequencies (Hz): C4, G4 — adds weight under the chord. */
+export const VICTORY_BASS_FREQS = [261.63, 392.0] as const;
+
+/** Per-voice bass-bed peak gain. */
+export const VICTORY_BASS_VOLUME = 0.08;
+
+/** Bass-bed hold duration (s) — slightly longer than the chord. */
+export const VICTORY_BASS_DURATION = 1.8;
+
+/** Sparkle-flourish frequencies (Hz), played in quick succession. */
+export const VICTORY_SPARKLE_FREQS = [
+  2349.32, 2793.83, 3520.0, 4186.01, 3520.0, 2793.83,
+] as const;
+
+/** Delay (s) between successive sparkle blips. */
+export const VICTORY_SPARKLE_STEP = 0.08;
+
+/** Sparkle-blip peak gain — deliberately light. */
+export const VICTORY_SPARKLE_VOLUME = 0.06;
+
+/** Sparkle-blip duration (s). */
+export const VICTORY_SPARKLE_DURATION = 0.2;
+
+/** Soft high shimmer (filtered noise) duration (s) — the crackle tail. */
+export const VICTORY_SHIMMER_DURATION = 1.2;
+
+/** Soft high shimmer peak gain. */
+export const VICTORY_SHIMMER_VOLUME = 0.045;
+
+/** High-pass centre (Hz) for the bright shimmer wash. */
+export const VICTORY_SHIMMER_FILTER_HZ = 6000;
+
+/**
+ * End-of-run victory fanfare (parent AH-0MUTV7632000ZWCB AC1).
+ *
+ * Plays a rising major arpeggio (the call) into a faster rising cadence
+ * (the answer), resolving into a sustained major chord over a deep bass bed,
+ * with a high sparkle flourish and a soft high-passed noise crackle tail.
+ * Total duration (~3.3 s) and every layer's pitch/gain/rhythm are exported
+ * constants, so the cue is fully tunable in one place. All layers route
+ * through the master SFX gain (mute/volume apply) and every layer peaks at
+ * ≤ 0.2. Safe no-op without an AudioContext.
+ */
+export function playVictoryFanfareSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+
+  // ── Layer 1: rising major arpeggio (the "call"). ─────────────────
+  for (let i = 0; i < VICTORY_ARPEGGIO_FREQS.length; i++) {
+    const t = t0 + i * VICTORY_ARPEGGIO_STEP;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(VICTORY_ARPEGGIO_FREQS[i], t);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(VICTORY_ARPEGGIO_VOLUME, t + 0.012);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      t + VICTORY_ARPEGGIO_NOTE_DURATION,
+    );
+    osc.connect(gain).connect(ensureMasterGain(ctx));
+    osc.start(t);
+    osc.stop(t + VICTORY_ARPEGGIO_NOTE_DURATION + 0.02);
+  }
+
+  // ── Layer 2: faster rising cadence (the "answer"). ───────────────
+  const cadenceStart = t0 + VICTORY_ARPEGGIO_FREQS.length * VICTORY_ARPEGGIO_STEP;
+  for (let i = 0; i < VICTORY_CADENCE_FREQS.length; i++) {
+    const t = cadenceStart + i * VICTORY_CADENCE_STEP;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(VICTORY_CADENCE_FREQS[i], t);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(VICTORY_CADENCE_VOLUME, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      t + VICTORY_CADENCE_STEP * 1.3,
+    );
+    osc.connect(gain).connect(ensureMasterGain(ctx));
+    osc.start(t);
+    osc.stop(t + VICTORY_CADENCE_STEP * 1.3 + 0.02);
+  }
+
+  // ── Layer 3: sustained major chord (the "ta-daaa"). ──────────────
+  const chordStart =
+    cadenceStart + VICTORY_CADENCE_FREQS.length * VICTORY_CADENCE_STEP;
+  for (const freq of VICTORY_CHORD_FREQS) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, chordStart);
+    gain.gain.setValueAtTime(0, chordStart);
+    gain.gain.linearRampToValueAtTime(VICTORY_CHORD_VOLUME, chordStart + 0.03);
+    gain.gain.setValueAtTime(
+      VICTORY_CHORD_VOLUME,
+      chordStart + VICTORY_CHORD_DURATION * 0.6,
+    );
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      chordStart + VICTORY_CHORD_DURATION,
+    );
+    osc.connect(gain).connect(ensureMasterGain(ctx));
+    osc.start(chordStart);
+    osc.stop(chordStart + VICTORY_CHORD_DURATION + 0.02);
+  }
+
+  // ── Layer 3b: low bass bed (adds weight under the chord). ────────
+  for (const freq of VICTORY_BASS_FREQS) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, chordStart);
+    gain.gain.setValueAtTime(0, chordStart);
+    gain.gain.linearRampToValueAtTime(VICTORY_BASS_VOLUME, chordStart + 0.04);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      chordStart + VICTORY_BASS_DURATION,
+    );
+    osc.connect(gain).connect(ensureMasterGain(ctx));
+    osc.start(chordStart);
+    osc.stop(chordStart + VICTORY_BASS_DURATION + 0.02);
+  }
+
+  // ── Layer 4: high sparkle flourish (the shimmer). ────────────────
+  const sparkleStart = chordStart + VICTORY_CHORD_DURATION * 0.25;
+  for (let i = 0; i < VICTORY_SPARKLE_FREQS.length; i++) {
+    const t = sparkleStart + i * VICTORY_SPARKLE_STEP;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(VICTORY_SPARKLE_FREQS[i], t);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(VICTORY_SPARKLE_VOLUME, t + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + VICTORY_SPARKLE_DURATION);
+    osc.connect(gain).connect(ensureMasterGain(ctx));
+    osc.start(t);
+    osc.stop(t + VICTORY_SPARKLE_DURATION + 0.02);
+  }
+
+  // ── Layer 5: soft high shimmer (filtered-noise crackle tail). ────
+  const shimmerBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * VICTORY_SHIMMER_DURATION)),
+    ctx.sampleRate,
+  );
+  const shimmerData = shimmerBuffer.getChannelData(0);
+  for (let i = 0; i < shimmerData.length; i++) {
+    shimmerData[i] = Math.random() * 2 - 1;
+  }
+  const shimmer = ctx.createBufferSource();
+  shimmer.buffer = shimmerBuffer;
+  shimmer.loop = false;
+
+  const shimmerFilter = ctx.createBiquadFilter();
+  shimmerFilter.type = 'highpass';
+  shimmerFilter.frequency.setValueAtTime(VICTORY_SHIMMER_FILTER_HZ, chordStart);
+  shimmerFilter.Q.setValueAtTime(0.7, chordStart);
+
+  const shimmerGain = ctx.createGain();
+  shimmerGain.gain.setValueAtTime(VICTORY_SHIMMER_VOLUME, chordStart);
+  shimmerGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    chordStart + VICTORY_SHIMMER_DURATION,
+  );
+
+  shimmer.connect(shimmerFilter);
+  shimmerFilter.connect(shimmerGain);
+  shimmerGain.connect(ensureMasterGain(ctx));
+  shimmer.start(chordStart);
+  shimmer.stop(chordStart + VICTORY_SHIMMER_DURATION + 0.02);
+}
+
+// ── End-of-run defeat sting (parent AH-0MUTV7632000ZWCB, F4) ────────
+//
+// The counterpart to the fanfare: a descending, sombre sting so a lost run
+// reads instantly and unmistakably differently from a win.  Three layers:
+// (1) a slow descending minor line, (2) a sustained low drone that sinks
+// further as it fades, (3) a dark low-pass filtered noise tail.
+//
+// Producer audit (AH-0MUTV7632000ZWCB, 2026-10-04) asked for the cues to
+// last longer and carry more weight; the sting was extended to a five-note
+// descent and a longer sinking drone (~2.9 s total).
+//
+// Deliberately distinct from playPlayerDestructionSound() (parent AC3):
+// that cue is a fast sawtooth thump/body sweep with a *high-pass* shrapnel
+// hiss, whereas this sting is a slow discrete descending triangle line with
+// a *low-pass* rumble wash — different contour, waveform and filter.
+
+/** Descending sombre line (Hz): G4 → F4 → D4 → B3 → G3. */
+export const DEFEAT_STING_FREQS = [392, 349.23, 293.66, 246.94, 196] as const;
+
+/** Time (s) between successive descending notes. */
+export const DEFEAT_STING_STEP = 0.3;
+
+/** Per-note ring time (s) — the line is slow and heavy. */
+export const DEFEAT_STING_NOTE_DURATION = 0.55;
+
+/** Per-note descending-line peak gain (≤ 0.2 player-cue ceiling). */
+export const DEFEAT_STING_NOTE_VOLUME = 0.14;
+
+/** Sustained low drone frequency (Hz) — the mournful bed. */
+export const DEFEAT_STING_DRONE_HZ = 98;
+
+/** Frequency (Hz) the drone sinks to — the "bottom falls out". */
+export const DEFEAT_STING_DRONE_END_HZ = 73.42;
+
+/** Sustained drone peak gain. */
+export const DEFEAT_STING_DRONE_VOLUME = 0.1;
+
+/** Sustained drone duration (s). */
+export const DEFEAT_STING_DRONE_DURATION = 2.2;
+
+/** Low-pass filtered noise-tail duration (s). */
+export const DEFEAT_STING_TAIL_DURATION = 1.4;
+
+/** Low-pass filtered noise-tail peak gain. */
+export const DEFEAT_STING_TAIL_VOLUME = 0.08;
+
+/** Low-pass centre (Hz) for the dark rumble wash. */
+export const DEFEAT_STING_TAIL_FILTER_HZ = 280;
+
+/** Low-pass filter resonance (Q) for the rumble wash. */
+export const DEFEAT_STING_TAIL_FILTER_Q = 0.7;
+
+/**
+ * End-of-run defeat sting (parent AH-0MUTV7632000ZWCB AC3).
+ *
+ * Plays a slow five-note descending minor line over a sustained low drone
+ * that sinks in pitch as it fades, with a dark low-pass filtered noise tail.
+ * Structurally distinct from both the victory fanfare (rising/celebratory)
+ * and {@link playPlayerDestructionSound} (fast sawtooth sweep + high-pass
+ * hiss). Every layer routes through the master SFX gain and peaks at ≤ 0.2.
+ * Safe no-op without an AudioContext.
+ */
+export function playDefeatStingSound(): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+
+  // ── Layer 1: slow descending minor line. ─────────────────────────
+  for (let i = 0; i < DEFEAT_STING_FREQS.length; i++) {
+    const t = t0 + i * DEFEAT_STING_STEP;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(DEFEAT_STING_FREQS[i], t);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(DEFEAT_STING_NOTE_VOLUME, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      t + DEFEAT_STING_NOTE_DURATION,
+    );
+    osc.connect(gain).connect(ensureMasterGain(ctx));
+    osc.start(t);
+    osc.stop(t + DEFEAT_STING_NOTE_DURATION + 0.02);
+  }
+
+  // ── Layer 2: sustained low drone that sinks as it fades. ─────────
+  const drone = ctx.createOscillator();
+  const droneGain = ctx.createGain();
+  drone.type = 'sine';
+  drone.frequency.setValueAtTime(DEFEAT_STING_DRONE_HZ, t0);
+  drone.frequency.exponentialRampToValueAtTime(
+    DEFEAT_STING_DRONE_END_HZ,
+    t0 + DEFEAT_STING_DRONE_DURATION * 0.85,
+  );
+  droneGain.gain.setValueAtTime(0, t0);
+  droneGain.gain.linearRampToValueAtTime(DEFEAT_STING_DRONE_VOLUME, t0 + 0.08);
+  droneGain.gain.setValueAtTime(
+    DEFEAT_STING_DRONE_VOLUME,
+    t0 + DEFEAT_STING_DRONE_DURATION * 0.5,
+  );
+  droneGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    t0 + DEFEAT_STING_DRONE_DURATION,
+  );
+  drone.connect(droneGain).connect(ensureMasterGain(ctx));
+  drone.start(t0);
+  drone.stop(t0 + DEFEAT_STING_DRONE_DURATION + 0.02);
+
+  // ── Layer 3: dark low-pass filtered noise tail. ──────────────────
+  const tailStart = t0 + DEFEAT_STING_FREQS.length * DEFEAT_STING_STEP;
+  const noiseBuffer = ctx.createBuffer(
+    1,
+    Math.max(1, Math.floor(ctx.sampleRate * DEFEAT_STING_TAIL_DURATION)),
+    ctx.sampleRate,
+  );
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseData.length; i++) {
+    noiseData[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = false;
+
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'lowpass';
+  noiseFilter.frequency.setValueAtTime(DEFEAT_STING_TAIL_FILTER_HZ, tailStart);
+  noiseFilter.Q.setValueAtTime(DEFEAT_STING_TAIL_FILTER_Q, tailStart);
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0, tailStart);
+  noiseGain.gain.linearRampToValueAtTime(DEFEAT_STING_TAIL_VOLUME, tailStart + 0.02);
+  noiseGain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    tailStart + DEFEAT_STING_TAIL_DURATION,
+  );
+
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ensureMasterGain(ctx));
+  noise.start(tailStart);
+  noise.stop(tailStart + DEFEAT_STING_TAIL_DURATION + 0.02);
+}

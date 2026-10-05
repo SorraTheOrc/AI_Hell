@@ -22,11 +22,11 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
 | E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | E7 | Harvester | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
-| Boss | The Central AI | §4.3 | 4 attack phases, multi-hit health (4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
+| Boss | The Central AI | §4.3 | 4 attack phases, 10 hits per phase (40 total; 4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
 Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
 E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
-Boss is multi-hit via its 4-phase bar. All enemies **never collide with each
+Boss is multi-hit via its 4-phase bar — **10 hits per phase (40 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
@@ -1217,7 +1217,14 @@ the launch target of the
 difficulty-curve editor's **Launch Level** / **Launch Wave N** buttons: the
 editor folds its generated waves into level groups of `CURVE_WAVES_PER_LEVEL`
 (3) and offers one **Launch Level** button per group (full level) plus one
-**Launch Wave** button per row (single wave).
+**Launch Wave** button per row (single wave). Because the runtime sequencer is
+a pure function of its target, a flat curve would otherwise play the *same*
+wave three times in a level; regeneration therefore runs each level group
+through `sequenceVariedWaves()` (`GymCurveSequencer.ts`), which nudges a
+wave's target deterministically (bounded, alternating, at most
+`CURVE_WAVE_VARIATION_JITTER` per step) until the composition differs from the
+level's earlier waves, while still reporting the designer's authored target on
+each wave. This is what fixed the producer-audit rejection of this work item.
 
 ### 8.6 Adding a new enemy (convention)
 

@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
+  PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
 } from '../../core/constants';
@@ -268,6 +269,51 @@ describe('CombatCoreScene — shared base class', () => {
         PLAYER_BULLET_SPEED,
         5,
       );
+    }
+  });
+
+  it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    const base = player.getWeaponDef('spread');
+    expect(base.levelBulletSize).toBeUndefined();
+
+    // Collect the spread weapon three times: the first unlock is base, the
+    // next two are upgrades, then fire a burst.
+    player.equipWeapon('spread');
+    player.equipWeapon('spread');
+    player.equipWeapon('spread');
+    expect(player.getWeaponLevel('spread')).toBe(3);
+    const resolved = player.getWeaponDef('spread');
+    expect(resolved.offsets.length).toBeGreaterThan(base.offsets.length);
+    expect(resolved.levelBulletSize).toBeGreaterThan(1);
+
+    scene.runAutoFire(10);
+
+    // Only the spread bullets carry the spread colour, and there are more of
+    // them than the base 3-bullet pattern (projectile-count upgrade).
+    const spreadBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === base.bulletColor);
+    expect(spreadBullets.length).toBe(resolved.offsets.length);
+    expect(spreadBullets.length).toBeGreaterThan(base.offsets.length);
+    for (const bullet of spreadBullets) {
+      expect(bullet.radius).toBeCloseTo(
+        PLAYER_BULLET_RADIUS * resolved.levelBulletSize!,
+        5,
+      );
+      // Bullet-size upgrades also scale the rendered radius above base.
+      expect(bullet.radius).toBeGreaterThan(PLAYER_BULLET_RADIUS);
+    }
+  });
+
+  it('AC2 — a base (level 0) weapon keeps the shared base bullet radius', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.runAutoFire(10);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+    for (const bullet of scene.getPlayerBullets()) {
+      expect(bullet.radius).toBe(PLAYER_BULLET_RADIUS);
     }
   });
 

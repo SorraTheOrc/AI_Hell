@@ -40,9 +40,9 @@ describe('AOE weapons are documented (F7 AC1/AC2/AC5)', () => {
       '3000 ms',
       '1500 ms',
       '750 ms',
-      '90 px',
-      '70 px',
-      '120 px',
+      '45 px',
+      '35 px',
+      '60 px',
     ]) {
       expect(gdd).toContain(value);
     }

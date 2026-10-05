@@ -13,7 +13,7 @@ import { GymMinerals } from './GymMinerals';
 import { GymEnemies } from './GymEnemies';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
-import type { ChoiceOption } from '../../powerups/choice';
+import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
@@ -84,6 +84,24 @@ describe('GymMinerals', () => {
     scene.tick(0.016);
 
     expect(scene.getMineralHold()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('AC5 — the shared P10 scoop pulls an in-range mineral toward the ship', async () => {
+    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    const scene = booted.scene as GymMinerals;
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
+    registry.applyCollect('P10', true);
+    registry.applyCollect('P10', true);
+
+    const mineral = scene.getMinerals()[0];
+    mineral.setPosition(player.x + 30, player.y);
+    const before = mineral.x;
+    scene.tick(0.1); // ~12 px of pull at MAGNET_ATTRACTION_SPEED
+
+    expect(mineral.x).toBeLessThan(before);
+    expect(mineral.x).toBeCloseTo(player.x + 30 - 12, 0);
   });
 
   it('P6 phase blocks mineral collection and resumes on expiry (Q7)', async () => {
@@ -243,6 +261,28 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
     overlay.select(0);
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
+  });
+
+  it('the hold-full choice receives the player weapon levels (AC1/AC2)', async () => {
+    const scene = await bootMinerals();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('spread');
+    player.equipWeapon('spread');
+    player.equipWeapon('rapid');
+
+    let captured: ChoiceContext | undefined;
+    scene.setMineralChoiceStrategy({
+      choose: (_count, _rng, context) => {
+        captured = context;
+        return [{ id: 'spread', name: 'Spread Shot', kind: 'weapon' }];
+      },
+    });
+    scene.openMineralChoice();
+
+    expect(captured?.weaponLevels).toEqual([
+      { id: 'spread', level: 2 },
+      { id: 'rapid', level: 1 },
+    ]);
   });
 
   it('AC2 — P7 granted by the choice teleports on S/↓ and grants P6', async () => {

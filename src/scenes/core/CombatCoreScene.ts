@@ -94,6 +94,10 @@ import {
   collectOverlappingDrops,
   playDropPickupCue,
 } from './dropLayer';
+import {
+  applyMineralScoop,
+  type MovableMineral,
+} from '../../powerups/mineralScoop';
 import type { BombNotice } from './BombNotice';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { BeatClock, createBeatClock } from '../../utils/beat';
@@ -119,7 +123,7 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * `alive` flag on the lethal hit; the scene then finalises the kill exactly
    * once (destruction audio + `onEnemyDestroyed`) by observing `alive`.
    */
-  takeDamage?(): number | void;
+  takeDamage?(): number | void | { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number; };
   /**
    * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
    * shared tick hands the scene's live mineral field to the entity so it can
@@ -216,6 +220,24 @@ export class CombatCoreScene<
   /** Registry used by subclasses that do not supply their own. */
   private readonly defaultEffectsRegistry = new EffectsRegistry();
 
+  /**
+   * Binds `registry` to the scene's live player store — the single
+   * run-scoped power-up level model (AH-0MUV5CLW6005VF7K, Q1=A).
+   *
+   * The resolver is dynamic, so a player created after the bind (or a
+   * respawned player) is picked up automatically; `getPlayer()` returning
+   * null falls back to the registry's private store. Safe to call before the
+   * player exists and idempotent, so scenes with their own registry can
+   * invoke it from their `create()`/`resetRunState()`.
+   *
+   * @param registry — the registry to bind (the scene's own or the default).
+   */
+  protected _bindPowerUpLevelStore(registry: EffectsRegistry): void {
+    registry.setStoreResolver(
+      () => this.getPlayer()?.getPowerUpLevelStore() ?? null,
+    );
+  }
+
   // ── Participant contract (safe concrete defaults) ─────────────────
 
   /** The keyboard-controlled player ship (null when the scene has none). */
@@ -223,8 +245,14 @@ export class CombatCoreScene<
     return null;
   }
 
-  /** The shared active-effect registry. */
+  /**
+   * The shared active-effect registry (default implementation). Binds the
+   * registry to this scene's live player store (dynamic resolver) so a stub
+   * scene that does not override this accessor still consumes the single
+   * run-scoped level model (AH-0MUV5CLW6005VF7K). Idempotent and cheap.
+   */
   protected getEffectsRegistry(): EffectsRegistry {
+    this._bindPowerUpLevelStore(this.defaultEffectsRegistry);
     return this.defaultEffectsRegistry;
   }
 
@@ -295,6 +323,24 @@ export class CombatCoreScene<
    */
   protected onAoeFired(
     _weaponId: WeaponId,
+    _def: WeaponDefinition,
+    _x: number,
+    _y: number,
+  ): void {}
+
+  /**
+   * Shared hook called once for every `'onRandom'` AOE weapon that fires
+   * (parent AH-0MUUF9GZV004WVT9): the area resolves immediately at one or
+   * more points sampled uniformly at random within the weapon's effective
+   * range, centred on the ship — no travelling projectile. Default no-op; the
+   * shared {@link CombatScene} overrides it to sample the points and resolve
+   * the effect (and VFX/cue) at each.
+   *
+   * @param _def - The firing weapon's catalogue definition.
+   * @param _x - Ship world x at the moment of firing.
+   * @param _y - Ship world y at the moment of firing.
+   */
+  protected onAoeRandomFired(
     _def: WeaponDefinition,
     _x: number,
     _y: number,
@@ -450,11 +496,16 @@ export class CombatCoreScene<
         // AOE dispatch: the shared core owns the hook, so the game and the
         // gyms resolve the same area effect from one implementation.
         this.onAoeFired(weaponId, def, player.x, player.y);
-        // An `onFire` effect (nova ring / arc chain) resolves at the ship
-        // and does not spawn a travelling bullet; an `onImpact` effect
-        // launches its projectile through the normal bullet path, and the
-        // projectile resolves its blast on impact/expiry.
+        // Neither an `onFire` effect (nova ring / arc chain) nor an
+        // `onRandom` effect (mortar blast) launches a travelling projectile:
+        // both resolve their area effect at fire time. Only an `onImpact`
+        // effect launches a projectile through the normal bullet path, and
+        // the projectile resolves its blast on impact/expiry.
         if (def.aoe.trigger === 'onFire') continue;
+        if (def.aoe.trigger === 'onRandom') {
+          this.onAoeRandomFired(def, player.x, player.y);
+          continue;
+        }
       }
       for (const bd of createBulletsFromHeading(
         def,
@@ -474,6 +525,9 @@ export class CombatCoreScene<
           vel.vy,
           bd.color,
           def.bulletLifetime,
+          // Weapon leveling grows the bullet: `levelBulletSize` is 1/absent on
+          // a base definition, so the base radius is unchanged (AC8).
+          PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1),
         );
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
@@ -490,6 +544,11 @@ export class CombatCoreScene<
    * Spawns a player bullet at (x, y) travelling at (vx, vy) px/s,
    * with the given colour and lifetime (seconds).
    * Public so tests can place bullets deterministically.
+   *
+   * `lifetime` defaults to the reduced Cannon base range (0.75 s,
+   * AH-0MUU131PU006O7ZD); `radius` defaults to the shared
+   * {@link PLAYER_BULLET_RADIUS}. The shared auto-fire path passes a
+   * level-scaled radius when a weapon has bullet-size upgrades.
    */
   spawnPlayerBullet(
     x: number,
@@ -497,14 +556,15 @@ export class CombatCoreScene<
     vx: number,
     vy: number,
     color = 0x00ffff,
-    lifetime = 1.5,
+    lifetime = 0.75,
+    radius = PLAYER_BULLET_RADIUS,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
       x,
       y,
       color,
-      PLAYER_BULLET_RADIUS,
+      radius,
       vx,
       vy,
       lifetime,
@@ -596,13 +656,33 @@ export class CombatCoreScene<
 
   /**
    * Applies the P9 magnet pull (shared range/speed) to every collectible
-   * drop within range, using the scene's active magnet stacks.
+   * drop within range, using the scene's effective magnet stacks
+   * (permanent stacking or timed field-pickup). The hybrid accessor
+   * consumes the effective count so both paths drive the same radius curve.
    */
   protected _applyDropMagnet(drops: TDrop[], dt: number): void {
     applyDropMagnet(
       drops,
       this.getPlayer(),
-      this.getEffectsRegistry().magnetStacks(),
+      this.getEffectsRegistry().magnetEffectStacks(),
+      dt,
+    );
+  }
+
+  /**
+   * Applies the P10 Mineral Scoop pull (shared range/speed) to every live
+   * mineral within range, using the scene's effective scoop stacks. The
+   * mineral-field analogue of {@link _applyDropMagnet}; scenes with a mineral
+   * field call it immediately before their shared `collectMinerals` pass so
+   * attraction and collection run in the same order everywhere.
+   */
+  protected _applyMineralScoop(minerals: MovableMineral[], dt: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    applyMineralScoop(
+      minerals,
+      player,
+      this.getEffectsRegistry().scoopEffectStacks(),
       dt,
     );
   }
@@ -676,7 +756,13 @@ export class CombatCoreScene<
    * `super.resetRunState()` first. Called at the top of `create()`.
    */
   protected resetRunState(): void {
-    this.getEffectsRegistry().reset();
+    // Bind the registry to this scene's live player store, then reset both
+    // the timing state and the level store together (AC6). The dynamic
+    // resolver means a player created later in `create()` is picked up with
+    // no further wiring — the single shared injection point.
+    const registry = this.getEffectsRegistry();
+    this._bindPowerUpLevelStore(registry);
+    registry.reset();
     this.playerBullets = [];
     this.playerExplosions = [];
     this.playerDeathEffects = [];

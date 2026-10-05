@@ -1,0 +1,635 @@
+/**
+ * Tests for the weapon level-curve resolver (AH-0MUQONLQW002BZI6).
+ *
+ * Covers the six acceptance criteria:
+ * - AC1: `resolveWeaponAtLevel(weaponId, level)` exports per-variable stats.
+ * - AC2: a `WeaponUpgradeSpec` catalogue of >= 12 variables.
+ * - AC3: every variable uses a diminishing-returns curve with a finite cap.
+ * - AC4/AC6: values are monotonic non-decreasing across levels 1..100 and
+ *   strictly increasing while below the cap — never decreasing.
+ * - AC5: no variable ever exceeds its cap.
+ *
+ * The monotonicity/cap checks are property-style sweeps: every weapon in
+ * the catalogue at every level in a wide range, asserting the invariant for
+ * every variable. No brittle golden values — the properties are the
+ * contract.
+ */
+
+import { describe, expect, test } from 'vitest';
+
+import {
+  BASE_WEAPON_DEFINITIONS,
+  MVP_UPGRADE_VARIABLES,
+  UPGRADE_VARIABLES,
+  WEAPON_UPGRADE_SPECS,
+  curveValue,
+  expandWeaponPattern,
+  formatDelta,
+  quantiseFireRateMs,
+  quantiseSubdivision,
+  resolveVariable,
+  resolveWeaponAtLevel,
+  resolveWeaponDefinition,
+  summariseWeaponLevelChange,
+  type WeaponLevelStats,
+  type WeaponUpgradeVariable,
+} from './weaponLevels';
+import { WEAPON_CATALOGUE, isOnBeatGrid, type WeaponId } from './weapons';
+import { beatPeriodMs, createBeatClock, isOnGrid } from './beat';
+
+const WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
+
+/** Reads `stats[variable]` with a typed key. */
+function statOf(stats: WeaponLevelStats, variable: WeaponUpgradeVariable): number {
+  return stats[variable];
+}
+
+describe('upgrade variable catalogue (AC2)', () => {
+  test('enumerates at least 12 tunable variables', () => {
+    expect(UPGRADE_VARIABLES.length).toBeGreaterThanOrEqual(12);
+  });
+
+  test('spans the required domains (cadence, pattern, projectile, damage, control, status)', () => {
+    const required: WeaponUpgradeVariable[] = [
+      'fireRate',
+      'projectileCount',
+      'spreadAngle',
+      'bulletSize',
+      'bulletSpeed',
+      'bulletLifetime',
+      'damage',
+      'piercing',
+      'bounce',
+      'homing',
+      'aoeRadius',
+      'statusChance',
+      'chainCount',
+      'critChance',
+      'splitCount',
+      'knockback',
+    ];
+    for (const variable of required) {
+      expect(UPGRADE_VARIABLES).toContain(variable);
+    }
+  });
+
+  test('every variable has a matching spec with a finite cap above its base', () => {
+    expect(Object.keys(WEAPON_UPGRADE_SPECS).sort()).toEqual(
+      [...UPGRADE_VARIABLES].sort(),
+    );
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      expect(spec.variable).toBe(variable);
+      expect(spec.label.length).toBeGreaterThan(0);
+      expect(spec.description.length).toBeGreaterThan(0);
+      expect(Number.isFinite(spec.cap)).toBe(true);
+      expect(spec.cap).toBeGreaterThan(spec.base);
+      expect(spec.k).toBeGreaterThan(0);
+      expect(spec.curve).toBe('exponential-saturation');
+    }
+  });
+
+  test('discrete variables have whole-number bases and caps', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      if (spec.discrete) {
+        expect(Number.isInteger(spec.base)).toBe(true);
+        expect(Number.isInteger(spec.cap)).toBe(true);
+      }
+    }
+  });
+
+  test('every variable documents its cap/k rationale (AC5)', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      expect(WEAPON_UPGRADE_SPECS[variable].rationale.trim().length).toBeGreaterThan(20);
+    }
+  });
+
+  test('every variable has a measurable level-1 gain (AC2 — per-level effect)', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const base = curveValue(WEAPON_UPGRADE_SPECS[variable], 0);
+      const levelOne = curveValue(WEAPON_UPGRADE_SPECS[variable], 1);
+      expect(levelOne).toBeGreaterThan(base);
+    }
+  });
+
+  test('the MVP slice has at least four variables spanning distinct domains', () => {
+    expect(MVP_UPGRADE_VARIABLES.length).toBeGreaterThanOrEqual(4);
+    for (const variable of MVP_UPGRADE_VARIABLES) {
+      expect(WEAPON_UPGRADE_SPECS[variable].tier).toBe('mvp');
+    }
+    // Producer-confirmed MVP set: fire rate, projectile count, bullet size, AoE.
+    expect(MVP_UPGRADE_VARIABLES).toEqual([
+      'fireRate',
+      'projectileCount',
+      'bulletSize',
+      'aoeRadius',
+    ]);
+  });
+
+  test('re-exports the base weapon catalogue', () => {
+    expect(BASE_WEAPON_DEFINITIONS).toBe(WEAPON_CATALOGUE);
+  });
+});
+
+describe('curveValue (AC3 — diminishing returns with a finite cap)', () => {
+  test('returns the base value at level 0', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      expect(curveValue(WEAPON_UPGRADE_SPECS[variable], 0)).toBe(
+        WEAPON_UPGRADE_SPECS[variable].base,
+      );
+    }
+  });
+
+  test('is strictly increasing for continuous variables while below the cap', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      if (spec.discrete) continue;
+      for (let level = 0; level < 100; level++) {
+        expect(curveValue(spec, level + 1)).toBeGreaterThan(
+          curveValue(spec, level),
+        );
+      }
+    }
+  });
+
+  test('every level increment is smaller than the previous (diminishing returns)', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      if (spec.discrete) continue;
+      const earlyDelta = curveValue(spec, 1) - curveValue(spec, 0);
+      const lateDelta = curveValue(spec, 51) - curveValue(spec, 50);
+      expect(lateDelta).toBeLessThan(earlyDelta);
+    }
+  });
+
+  test('approaches but never reaches the cap for continuous variables', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      if (spec.discrete) continue;
+      // A level high enough for the residual to be visible in a double but
+      // still strictly below the cap (at extreme levels float underflow
+      // rounds the residual away, which is the asymptotic limit).
+      const huge = curveValue(spec, 150);
+      expect(huge).toBeLessThan(spec.cap);
+      expect(spec.cap - huge).toBeLessThan(1e-4);
+      // The cap is a hard upper bound at *every* level.
+      expect(curveValue(spec, 1_000_000)).toBeLessThanOrEqual(spec.cap);
+    }
+  });
+
+  test('discrete variables saturate exactly at the cap', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      if (!spec.discrete) continue;
+      expect(curveValue(spec, 1_000_000)).toBe(spec.cap);
+    }
+  });
+
+  test('negative and non-finite levels are treated as level 0', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      const spec = WEAPON_UPGRADE_SPECS[variable];
+      expect(curveValue(spec, -5)).toBe(spec.base);
+      expect(curveValue(spec, Number.NaN)).toBe(spec.base);
+      expect(curveValue(spec, Number.POSITIVE_INFINITY)).toBe(spec.base);
+    }
+  });
+});
+
+describe('resolveWeaponAtLevel (AC1 — per-variable stats)', () => {
+  test('returns a snapshot naming the weapon and clamped level', () => {
+    const stats = resolveWeaponAtLevel('cannon', 3.9);
+    expect(stats.weaponId).toBe('cannon');
+    expect(stats.level).toBe(3);
+  });
+
+  test('every weapon exposes every catalogued variable', () => {
+    for (const weaponId of WEAPON_IDS) {
+      const stats = resolveWeaponAtLevel(weaponId, 7);
+      for (const variable of UPGRADE_VARIABLES) {
+        expect(typeof statOf(stats, variable)).toBe('number');
+        expect(Number.isFinite(statOf(stats, variable))).toBe(true);
+      }
+    }
+  });
+
+  test('level 0 reproduces the base values (no regression at level 0)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      const stats = resolveWeaponAtLevel(weaponId, 0);
+      for (const variable of UPGRADE_VARIABLES) {
+        expect(statOf(stats, variable)).toBe(
+          WEAPON_UPGRADE_SPECS[variable].base,
+        );
+      }
+    }
+  });
+
+  test('level 0 fireRateMs equals the base interval exactly', () => {
+    for (const weaponId of WEAPON_IDS) {
+      const stats = resolveWeaponAtLevel(weaponId, 0);
+      expect(stats.fireRateMs).toBe(WEAPON_CATALOGUE[weaponId].fireRateMs);
+    }
+  });
+
+  test('the resolved beatSubdivision backs fireRateMs on the default grid', () => {
+    for (const weaponId of WEAPON_IDS) {
+      for (const level of [0, 1, 5, 50]) {
+        const stats = resolveWeaponAtLevel(weaponId, level);
+        expect(stats.beatSubdivision).toBeCloseTo(
+          beatPeriodMs() / stats.fireRateMs,
+          10,
+        );
+      }
+    }
+  });
+
+  test('is pure and deterministic for the same inputs', () => {
+    const a = resolveWeaponAtLevel('spread', 12);
+    const b = resolveWeaponAtLevel('spread', 12);
+    expect(a).toEqual(b);
+  });
+
+  test('rejects an unknown weapon id with a clear error', () => {
+    expect(() =>
+      resolveWeaponAtLevel('bogus' as WeaponId, 1),
+    ).toThrow(/Unknown weapon/);
+  });
+});
+
+describe('monotonicity and caps across levels 1..100 (AC4/AC5/AC6)', () => {
+  test('no variable ever decreases as level rises', () => {
+    for (const weaponId of WEAPON_IDS) {
+      let previous = resolveWeaponAtLevel(weaponId, 0);
+      for (let level = 1; level <= 100; level++) {
+        const current = resolveWeaponAtLevel(weaponId, level);
+        for (const variable of UPGRADE_VARIABLES) {
+          expect(statOf(current, variable)).toBeGreaterThanOrEqual(
+            statOf(previous, variable),
+          );
+        }
+        previous = current;
+      }
+    }
+  });
+
+  test('every variable stays within [base, cap] at every level', () => {
+    for (const weaponId of WEAPON_IDS) {
+      for (let level = 0; level <= 100; level++) {
+        const stats = resolveWeaponAtLevel(weaponId, level);
+        for (const variable of UPGRADE_VARIABLES) {
+          const spec = WEAPON_UPGRADE_SPECS[variable];
+          const value = statOf(stats, variable);
+          expect(value).toBeGreaterThanOrEqual(spec.base);
+          expect(value).toBeLessThanOrEqual(spec.cap);
+        }
+      }
+    }
+  });
+
+  test('continuous variables gain a level at every step (strict increase)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      let previous = resolveWeaponAtLevel(weaponId, 0);
+      for (let level = 1; level <= 100; level++) {
+        const current = resolveWeaponAtLevel(weaponId, level);
+        for (const variable of UPGRADE_VARIABLES) {
+          if (WEAPON_UPGRADE_SPECS[variable].discrete) continue;
+          expect(statOf(current, variable)).toBeGreaterThan(
+            statOf(previous, variable),
+          );
+        }
+        previous = current;
+      }
+    }
+  });
+
+  test('discrete variables are whole numbers and flatten at their cap', () => {
+    for (const weaponId of WEAPON_IDS) {
+      const saturated = resolveWeaponAtLevel(weaponId, 1_000);
+      for (const variable of UPGRADE_VARIABLES) {
+        const spec = WEAPON_UPGRADE_SPECS[variable];
+        if (!spec.discrete) continue;
+        for (let level = 0; level <= 100; level++) {
+          expect(Number.isInteger(statOf(resolveWeaponAtLevel(weaponId, level), variable))).toBe(true);
+        }
+        expect(statOf(saturated, variable)).toBe(spec.cap);
+        // Once saturated, further levels do not change the value.
+        expect(statOf(resolveWeaponAtLevel(weaponId, 10_000), variable)).toBe(
+          statOf(saturated, variable),
+        );
+      }
+    }
+  });
+
+  test('resolveVariable agrees with resolveWeaponAtLevel', () => {
+    for (const variable of UPGRADE_VARIABLES) {
+      expect(resolveVariable('rapid', variable, 9)).toBe(
+        statOf(resolveWeaponAtLevel('rapid', 9), variable),
+      );
+    }
+  });
+});
+
+describe('fire-rate quantisation to the beat grid (AH-0MUQOV9JV00389E7)', () => {
+  test('quantiseSubdivision snaps fast values to whole subdivisions >= 1 (AC1)', () => {
+    expect(quantiseSubdivision(1)).toBe(1);
+    expect(quantiseSubdivision(2.4)).toBe(2);
+    expect(quantiseSubdivision(2.5)).toBe(3); // ties round up to the faster cadence
+    expect(quantiseSubdivision(5.6)).toBe(6);
+    expect(quantiseSubdivision(0.6)).toBeCloseTo(0.5);
+  });
+
+  test('quantiseSubdivision snaps slow values to whole-beat reciprocals (AC1)', () => {
+    // Slower than the beat: 1/beat, 1/2-beat, 1/3-beat, …
+    expect(quantiseSubdivision(0.5)).toBe(0.5);
+    expect(quantiseSubdivision(1 / 3)).toBeCloseTo(1 / 3);
+    expect(quantiseSubdivision(0.4)).toBeCloseTo(1 / 3);
+    expect(quantiseSubdivision(0.25)).toBe(0.25);
+    // Desired slower than 1/beat snaps to a whole-beat multiple.
+    expect(quantiseSubdivision(0.1)).toBeCloseTo(1 / 10);
+  });
+
+  test('quantiseSubdivision is defensively 1 for invalid input', () => {
+    expect(quantiseSubdivision(0)).toBe(1);
+    expect(quantiseSubdivision(-2)).toBe(1);
+    expect(quantiseSubdivision(Number.NaN)).toBe(1);
+  });
+
+  test('quantiseFireRateMs snaps an off-grid interval to the nearest valid one (AC4)', () => {
+    // 1000 ms is not on the 750 ms beat; the nearest valid rates are 750 (1
+    // beat) and 1500 (2 beats) — 750 is closer.
+    expect(quantiseFireRateMs(1000)).toBe(750);
+    // 280 ms is just below 1/3-beat (250 ms) and above 1/4-beat (187.5 ms).
+    expect(quantiseFireRateMs(280)).toBe(250);
+    // 200 ms is nearest 1/4-beat (187.5 ms).
+    expect(quantiseFireRateMs(200)).toBe(187.5);
+    // An already on-grid interval is unchanged.
+    expect(quantiseFireRateMs(375)).toBe(375);
+    expect(quantiseFireRateMs(1500)).toBe(1500);
+    // Every result is on the grid.
+    for (const ms of [1000, 280, 200, 90, 4000, 1]) {
+      expect(isOnBeatGrid(quantiseFireRateMs(ms))).toBe(true);
+    }
+  });
+
+  test('every weapon at every level 1..100 is on the beat grid (AC2/AC3)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      for (let level = 1; level <= 100; level++) {
+        const stats = resolveWeaponAtLevel(weaponId, level);
+        expect(isOnBeatGrid(stats.fireRateMs)).toBe(true);
+      }
+    }
+  });
+
+  test('fire-rate upgrades never slow a weapon down (interval non-increasing)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      let previous = resolveWeaponAtLevel(weaponId, 0).fireRateMs;
+      for (let level = 1; level <= 100; level++) {
+        const current = resolveWeaponAtLevel(weaponId, level).fireRateMs;
+        expect(current).toBeLessThanOrEqual(previous);
+        previous = current;
+      }
+    }
+  });
+
+  test('a leveled weapon fires only on its quantised grid ticks (AC5)', () => {
+    // Mirrors the scene-level spawn-grid test (AH-0MUGY89LE006WVDQ): schedule
+    // a weapon's leveled fire rate through the shared beat clock and assert
+    // every emitted shot lands on an exact tick of that interval.
+    for (const weaponId of WEAPON_IDS) {
+      for (const level of [1, 10, 50, 100]) {
+        const interval = resolveWeaponAtLevel(weaponId, level).fireRateMs;
+        expect(isOnBeatGrid(interval)).toBe(true);
+        const clock = createBeatClock();
+        for (let shot = 0; shot < 10; shot++) {
+          const tick = clock.nextTick(interval);
+          expect(isOnGrid(tick, interval, 0)).toBe(true);
+          clock.advance(interval);
+        }
+      }
+    }
+  });
+});
+
+describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled definition)', () => {
+  test('level 0 returns the exact base catalogue definition (no regression)', () => {
+    for (const weaponId of WEAPON_IDS) {
+      expect(resolveWeaponDefinition(weaponId, 0)).toBe(
+        BASE_WEAPON_DEFINITIONS[weaponId],
+      );
+    }
+  });
+
+  test('a leveled definition resolves the scalar variables onto the base', () => {
+    const base = WEAPON_CATALOGUE.rapid;
+    const stats = resolveWeaponAtLevel('rapid', 4);
+    const leveled = resolveWeaponDefinition('rapid', 4);
+
+    expect(leveled.fireRateMs).toBe(stats.fireRateMs);
+    expect(leveled.bulletLifetime).toBeCloseTo(
+      base.bulletLifetime * stats.bulletLifetime,
+      10,
+    );
+    expect(leveled.levelBulletSize).toBe(stats.bulletSize);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    // The base catalogue object is never mutated.
+    expect(WEAPON_CATALOGUE.rapid.bulletLifetime).toBe(base.bulletLifetime);
+    expect(WEAPON_CATALOGUE.rapid.levelBulletSize).toBeUndefined();
+  });
+
+  test('expandWeaponPattern adds projectiles and widens the fan', () => {
+    const base = WEAPON_CATALOGUE.spread;
+    const stats = resolveWeaponAtLevel('spread', 5);
+    expect(stats.projectileCount).toBeGreaterThan(0);
+    const { offsets } = expandWeaponPattern(base, stats);
+    expect(offsets.length).toBe(base.offsets.length + stats.projectileCount);
+    // A symmetric fan that spans wider than the base pattern.
+    const span = Math.max(...offsets) - Math.min(...offsets);
+    const baseSpan =
+      Math.max(...base.offsets) - Math.min(...base.offsets);
+    expect(span).toBeGreaterThanOrEqual(baseSpan);
+    expect(offsets[0]).toBeCloseTo(-offsets[offsets.length - 1], 10);
+  });
+
+  test('expandWeaponPattern is a no-op without extra projectiles', () => {
+    const base = WEAPON_CATALOGUE.dual;
+    const stats = resolveWeaponAtLevel(WEAPON_IDS[0], 0);
+    expect(stats.projectileCount).toBe(0);
+    expect(expandWeaponPattern(base, stats).offsets).toEqual([...base.offsets]);
+  });
+
+  test('leveled weapon definitions spawn more projectiles than the base', () => {
+    for (const weaponId of WEAPON_IDS) {
+      const base = WEAPON_CATALOGUE[weaponId];
+      const leveled = resolveWeaponDefinition(weaponId, 6);
+      expect(leveled.offsets.length).toBeGreaterThan(base.offsets.length);
+      // An expanded pattern is angular, so base side offsets are dropped.
+      expect(leveled.sideOffsets).toBeUndefined();
+    }
+  });
+
+  test('an AOE weapon scales its blast radius onto the descriptor', () => {
+    const base = WEAPON_CATALOGUE.nova;
+    const stats = resolveWeaponAtLevel('nova', 3);
+    const leveled = resolveWeaponDefinition('nova', 3);
+    expect(leveled.aoe!.radius).toBeCloseTo(
+      base.aoe!.radius * stats.aoeRadius,
+      10,
+    );
+    expect(leveled.aoe!.trigger).toBe(base.aoe!.trigger);
+    expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(base.aoe!.radius);
+  });
+});
+
+describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
+  // The pre-reduction base values shipped before this item. Because the level
+  // multipliers applied by `resolveWeaponDefinition` are relative, halving the
+  // base halves the absolute range at every level — these tests pin that the
+  // only change is the base halving, not the curve.
+  const PRE_CHANGE_LIFETIME: Record<WeaponId, number> = {
+    cannon: 1.5,
+    spread: 1.4,
+    dual: 1.4,
+    rapid: 0.75,
+    nova: 0.5,
+    mortar: 2.0,
+    arc: 0.5,
+  };
+  const PRE_CHANGE_AOE_RADIUS = { nova: 90, mortar: 70, arc: 120 } as const;
+
+  test('level 0 resolves to half the pre-change base lifetime', () => {
+    for (const id of WEAPON_IDS) {
+      const leveled = resolveWeaponDefinition(id, 0);
+      expect(leveled.bulletLifetime).toBeCloseTo(
+        PRE_CHANGE_LIFETIME[id] / 2,
+        10,
+      );
+    }
+  });
+
+  test('leveled bullet range is half the pre-change value at every level', () => {
+    for (const id of WEAPON_IDS) {
+      for (const level of [1, 2, 5, 20]) {
+        const stats = resolveWeaponAtLevel(id, level);
+        const leveled = resolveWeaponDefinition(id, level);
+        // Pre-change absolute range at this level = old base × multiplier.
+        const preChange = PRE_CHANGE_LIFETIME[id] * stats.bulletLifetime;
+        expect(leveled.bulletLifetime).toBeCloseTo(preChange / 2, 10);
+      }
+    }
+  });
+
+  test('capped-level bullet range is half the pre-change capped value', () => {
+    // A very high level saturates the bulletLifetime multiplier at its 2.2×
+    // cap; the absolute capped range is still exactly half the old one.
+    const stats = resolveWeaponAtLevel('cannon', 1000);
+    expect(stats.bulletLifetime).toBeCloseTo(
+      WEAPON_UPGRADE_SPECS.bulletLifetime.cap,
+      6,
+    );
+    const leveled = resolveWeaponDefinition('cannon', 1000);
+    const preChangeCapped =
+      PRE_CHANGE_LIFETIME.cannon * WEAPON_UPGRADE_SPECS.bulletLifetime.cap;
+    expect(leveled.bulletLifetime).toBeCloseTo(preChangeCapped / 2, 10);
+  });
+
+  test('AOE radius is half the pre-change value at level 0 and at the capped level', () => {
+    for (const id of ['nova', 'mortar', 'arc'] as const) {
+      const level0 = resolveWeaponDefinition(id, 0);
+      expect(level0.aoe!.radius).toBeCloseTo(
+        PRE_CHANGE_AOE_RADIUS[id] / 2,
+        10,
+      );
+
+      const stats = resolveWeaponAtLevel(id, 1000);
+      expect(stats.aoeRadius).toBeCloseTo(
+        WEAPON_UPGRADE_SPECS.aoeRadius.cap,
+        6,
+      );
+      const capped = resolveWeaponDefinition(id, 1000);
+      const preChangeCapped =
+        PRE_CHANGE_AOE_RADIUS[id] * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
+      expect(capped.aoe!.radius).toBeCloseTo(preChangeCapped / 2, 10);
+    }
+  });
+});
+
+// ── Change-summary formatter (AH-0MUU1GOAU007RFVR) ──────────────────
+
+describe('summariseWeaponLevelChange (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
+  test('returns a summary with +N Projectiles and +NN% scalars for a real upgrade', () => {
+    const summary = summariseWeaponLevelChange('spread', 2, 3);
+    expect(summary.length).toBeGreaterThan(0);
+    // Contains a discrete count delta.
+    expect(summary).toMatch(/\+\d+ Projectiles/);
+    // Contains a percentage scalar.
+    expect(summary).toMatch(/\+\d+%/);
+  });
+
+  test('only lists variables that actually change', () => {
+    const summary = summariseWeaponLevelChange('spread', 2, 3);
+    const parts = summary.split(/,\s*/);
+    expect(parts.length).toBeLessThanOrEqual(MVP_UPGRADE_VARIABLES.length);
+    for (const part of parts) {
+      expect(part.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  test('returns an empty string when the curve has flattened at the cap', () => {
+    // At a very high level, the MVP variables are all at or very near cap.
+    const summary = summariseWeaponLevelChange('cannon', 100, 101);
+    // With the MVP variables all flat at cap, no deltas.
+    expect(summary).toBe('');
+  });
+
+  test('is deterministic: same inputs always produce the same output', () => {
+    const a = summariseWeaponLevelChange('rapid', 3, 4);
+    const b = summariseWeaponLevelChange('rapid', 3, 4);
+    expect(a).toBe(b);
+  });
+
+  test('uses the shared level maths (not duplicated values)', () => {
+    // Verify that the summary matches what resolveWeaponAtLevel says.
+    const weaponId = 'nova';
+    const fromLevel = 2;
+    const toLevel = 3;
+    const from = resolveWeaponAtLevel(weaponId, fromLevel);
+    const to = resolveWeaponAtLevel(weaponId, toLevel);
+    const summary = summariseWeaponLevelChange(weaponId, fromLevel, toLevel);
+    // The summary must not be empty when values actually differ.
+    const hasDeltas = MVP_UPGRADE_VARIABLES.some(
+      (v) => to[v] !== from[v],
+    );
+    if (hasDeltas) {
+      expect(summary.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
+  test('formats discrete counts as +N Label', () => {
+    expect(formatDelta('Projectiles', 3, 1, true)).toBe('+3 Projectiles');
+    expect(formatDelta('Projectiles', 0, 5, true)).toBe('');
+  });
+
+  test('formats continuous scalars as +NN% Label', () => {
+    // +0.15 / 1.0 = +15%
+    expect(formatDelta('Bullet size', 0.15, 1.0, false)).toBe(
+      '+15% Bullet size',
+    );
+    // +0.05 / 1.0 = +5%
+    expect(formatDelta('Bullet size', 0.05, 1.0, false)).toBe(
+      '+5% Bullet size',
+    );
+  });
+
+  test('returns an empty string for near-zero floating-point deltas', () => {
+    expect(formatDelta('Projectiles', 1e-10, 5, false)).toBe('');
+  });
+
+  test('returns an empty string for non-finite deltas', () => {
+    expect(formatDelta('Projectiles', Number.NaN, 1, false)).toBe('');
+    expect(
+      formatDelta('Projectiles', Number.POSITIVE_INFINITY, 1, false),
+    ).toBe('');
+  });
+});

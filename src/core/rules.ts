@@ -60,7 +60,7 @@ export interface GameRules {
    */
   weaponSubdivisions: WeaponSubdivisions;
   /**
-   * Relative weight per power-up ID (P3–P9). Higher weight ⇒ more
+   * Relative weight per power-up ID (P3–P10). Higher weight ⇒ more
    * likely. These are relative, not percentages — the spawner normalises
    * them internally.
    */
@@ -122,7 +122,7 @@ export function defaultWeaponSubdivisions(): WeaponSubdivisions {
   return { ...DEFAULT_WEAPON_SUBDIVISIONS };
 }
 
-/** Default relative weight for standard-rarity power-ups (P3–P7, P9). */
+/** Default relative weight for standard-rarity power-ups (P3–P7, P9, P10). */
 export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
 
 /**
@@ -137,7 +137,7 @@ export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
-/** Every power-up ID covered by the default weight table (P3–P9). */
+/** Every power-up ID covered by the default weight table (P3–P10). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'P3',
   'P4',
@@ -146,6 +146,7 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'P7',
   'P8',
   'P9',
+  'P10',
 ];
 
 /** Every weapon drop covered by the default weapon weight table. */

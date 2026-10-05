@@ -45,6 +45,12 @@
  * `tickWeaponTimers()`, and a shared **beat clock** that gates bullet
  * emission.
  *
+ * Weapons are also **constantly upgradable** (parent AH-0MUPMPCB2009J54J):
+ * each weapon carries a run-scoped **level** that every collection raises.
+ * `getWeaponLevel()` reports it and `getWeaponDef()` returns a
+ * level-resolved definition; `resetWeapon` keeps levels while
+ * `resetWeaponLevels()` clears them on run restart.
+ *
  * Fire timing is **globally quantised to an 80 BPM beat**
  * (AH-0MUAYB8EH005RJ8B): every active weapon's shots land on a tick of one
  * shared beat grid, phase-locked to the clock anchor, so simultaneously
@@ -83,14 +89,17 @@ import {
 import {
   WeaponId,
   WEAPON_CATALOGUE,
-  getWeaponById,
   isTimedWeapon,
   computeHeading,
   weaponFireRateMs,
+  type WeaponDefinition,
 } from '../utils/weapons';
+import { resolveWeaponAtLevel, resolveWeaponDefinition, quantiseFireRateMs } from '../utils/weaponLevels';
 import { BeatClock, createBeatClock } from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { type PowerUpId } from '../powerups/types';
+import { PowerUpLevelStore } from '../powerups/powerUpLevels';
 
 /** Floating-point slack (ms) when comparing the beat clock against a grid tick. */
 const BEAT_EPSILON_MS = 1e-6;
@@ -205,6 +214,16 @@ export class Player extends Phaser.GameObjects.Graphics {
   private readonly _permanentWeapons: Set<WeaponId> = new Set(['cannon']);
   /** Collected timed weapons → remaining lifetime in ms (10 s each, independent countdown). */
   private _weaponTimers: Map<WeaponId, number> = new Map();
+  /**
+   * Run-scoped **level** of each weapon (weapon leveling, parent
+   * AH-0MUPMPCB2009J54J). Uncollected weapons are absent (level 0 = base).
+   * A collection levels the weapon up; the level persists across a weapon
+   * timing out (AC3) and across a Reset (AC6), and is cleared only by
+   * {@link resetWeaponLevels} on run restart (AC7).
+   */
+  private _weaponLevels: Map<WeaponId, number> = new Map();
+  /** Run-scoped power-up level store — every collection levels the power-up (parent AH-0MUV5CLVO002ZHS9). */
+  private _powerUpLevelStore: PowerUpLevelStore = new PowerUpLevelStore();
   /** Absolute beat-clock time (ms, a grid tick) of each active weapon's next shot. */
   private _weaponNextShot: Map<WeaponId, number> = new Map();
   /** Beat-clock time (ms, a grid tick) of each active weapon's most recent shot. */
@@ -652,6 +671,9 @@ export class Player extends Phaser.GameObjects.Graphics {
    * @param weaponId — The weapon power-up to add ('spread' | 'dual' | 'rapid').
    * @param permanent — When true, the weapon is granted permanently for the
    *   current run (used by the hold-full choice) and never expires.
+   *
+   * Both temporary and permanent collections **level the weapon up** (AC2);
+   * the level persists for the run (AC3, AC6).
    */
   equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!isTimedWeapon(weaponId)) {
@@ -660,6 +682,11 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (!WEAPON_CATALOGUE[weaponId]) {
       return;
     }
+    // Every collection levels the weapon up (AC2): a temporary drop and a
+    // permanent mineral choice both raise the run-scoped level. The level is
+    // retained across timeouts (AC3) and Resets (AC6); only a run restart
+    // clears it (AC7, `resetWeaponLevels`).
+    this._weaponLevels.set(weaponId, this.getWeaponLevel(weaponId) + 1);
     if (permanent) {
       // Permanent for the run: active forever, no countdown to tick down.
       this._permanentWeapons.add(weaponId);
@@ -683,6 +710,11 @@ export class Player extends Phaser.GameObjects.Graphics {
    *
    * Also clears any hold-full choice weapons granted permanently for the
    * run — a Reset returns the ship to the bare cannon.
+   *
+   * **Levels are retained** (AC6): a Reset stops the weapons firing but
+   * keeps the run's upgrade progress, so re-collecting a weapon later
+   * re-activates it at the same level. Only a run restart clears levels
+   * ({@link resetWeaponLevels}).
    */
   resetWeapon(): void {
     this._weaponTimers.clear();
@@ -695,6 +727,96 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Returns the run-scoped level of a weapon: `0` for a never-collected
+   * weapon (the base, un-upgraded state), otherwise the number of times it
+   * has been collected (AC5). Levels are unbounded.
+   *
+   * @param weaponId — The weapon whose level to read.
+   */
+  getWeaponLevel(weaponId: WeaponId): number {
+    return this._weaponLevels.get(weaponId) ?? 0;
+  }
+
+  /**
+   * Snapshot of every weapon the player has collected this run, with its
+   * current level (id → level ≥ 1). Used by the hold-full choice to offer
+   * weapon level-ups that reflect the run's progress (parent
+   * AH-0MUPMPCB2009J54J). A never-collected weapon is omitted (level 0).
+   */
+  getWeaponLevels(): Array<{ id: WeaponId; level: number }> {
+    return [...this._weaponLevels.entries()]
+      .filter(([, level]) => level > 0)
+      .map(([id, level]) => ({ id, level }));
+  }
+
+  /**
+   * The **resolver level** for a weapon: the number of *upgrades* applied,
+   * i.e. `collections − 1` (AC8). The first collection unlocks the weapon at
+   * its base stats (level 1 = base, matching the pre-leveling timed-drop
+   * behaviour); each further collection applies the next upgrade.
+   */
+  private _weaponUpgradeIndex(weaponId: WeaponId): number {
+    return Math.max(0, this.getWeaponLevel(weaponId) - 1);
+  }
+
+  /**
+   * Clears every weapon level back to base — the run-scoped reset performed
+   * on run restart (AC7). Distinct from {@link resetWeapon}, which clears
+   * only timed *activations* and deliberately retains levels (AC6).
+   */
+  resetWeaponLevels(): void {
+    this._weaponLevels.clear();
+  }
+
+  /**
+   * Collects a power-up: increments its run-scoped level (every
+   * collection levels the power-up up, parent AH-0MUV5CLVO002ZHS9).
+   * For `permanent` (hold-full) rewards, the permanent-grant count
+   * also increments — relevant for P9/P10 hybrid semantics.
+   *
+   * @param id — The power-up collected.
+   * @param permanent — True for a hold-full permanent reward.
+   * @returns The new collection level.
+   */
+  collectPowerUp(id: PowerUpId, permanent = false): number {
+    return this._powerUpLevelStore.collect(id, permanent);
+  }
+
+  /** The run-scoped collection level of `id` (0 when never collected). */
+  getPowerUpLevel(id: PowerUpId): number {
+    return this._powerUpLevelStore.getLevel(id);
+  }
+
+  /**
+   * The player's single run-scoped power-up level store. Scenes inject this
+   * **same instance** into their `EffectsRegistry` so the effect path and the
+   * hold-full choice consume one level model with no double-counting
+   * (AH-0MUV5CLW6005VF7K, Q1=A).
+   */
+  getPowerUpLevelStore(): PowerUpLevelStore {
+    return this._powerUpLevelStore;
+  }
+
+  /**
+   * Snapshot of every power-up the player has collected this run, with its
+   * current level (id → level ≥ 1). Used by the hold-full choice to offer
+   * power-up level-ups that reflect the run's progress (AH-0MUV5CLVO002ZHS9).
+   * A never-collected power-up is omitted (level 0).
+   */
+  getPowerUpLevels(): Array<{ id: PowerUpId; level: number }> {
+    return this._powerUpLevelStore.getLevels();
+  }
+
+  /**
+   * Clears every power-up level back to base — the run-scoped reset
+   * performed on run restart. Distinct from {@link resetWeapon}, which
+   * clears only timed *activations* and deliberately retains levels.
+   */
+  resetPowerUpLevels(): void {
+    this._powerUpLevelStore.reset();
+  }
+
+  /**
    * Returns the most-recently collected timed weapon, or 'cannon' when
    * no timed weapons are active. Backward-compatible single-weapon view
    * (used by scene audio cues and legacy callers).
@@ -704,13 +826,23 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Returns the weapon definition for a given weapon id, defaulting to
-   * the most-recently collected weapon (backward-compatible no-arg form).
+   * Returns the **level-resolved** weapon definition for a given weapon id,
+   * defaulting to the most-recently collected weapon (backward-compatible
+   * no-arg form) (AC4).
+   *
+   * A weapon at level 0/1 returns the base catalogue definition unchanged
+   * (AC8): the first collection unlocks the weapon at its base stats, and
+   * each *further* collection applies the next upgrade. At upgrade index ≥ 1
+   * the scalar and pattern variables are applied to a copy: `fireRateMs`
+   * (quantised to the beat grid), `offsets` (projectile count / spread),
+   * `bulletSize` and `bulletLifetime` multipliers, and the AOE descriptor's
+   * `radius` for AOE weapons.
    *
    * @param weaponId — Weapon to look up (defaults to the primary weapon).
    */
-  getWeaponDef(weaponId?: WeaponId): ReturnType<typeof getWeaponById> {
-    return getWeaponById(weaponId ?? this._primaryWeapon);
+  getWeaponDef(weaponId?: WeaponId): WeaponDefinition {
+    const id = weaponId ?? this._primaryWeapon;
+    return resolveWeaponDefinition(id, this._weaponUpgradeIndex(id));
   }
 
   /**
@@ -752,13 +884,28 @@ export class Player extends Phaser.GameObjects.Graphics {
    * exact subdivision of the beat period (AH-0MUAYB8EH005RJ8B).
    */
   private _effectiveInterval(weaponId: WeaponId): number {
-    return (
-      weaponFireRateMs(
-        weaponId,
-        this._rules.weaponSubdivisions,
-        this._rules.beatBpm,
-      ) / this._fireRateMultiplier
+    const baseInterval = weaponFireRateMs(
+      weaponId,
+      this._rules.weaponSubdivisions,
+      this._rules.beatBpm,
     );
+    // Weapon leveling raises the fire rate on each *upgrade* (the second and
+    // later collections; the first collection is base — AC8). Divide by the
+    // upgrade's fire-rate multiplier, then re-quantise so the leveled cadence
+    // stays on the shared beat grid (parent AH-0MUPMPCB2009J54J). At upgrade
+    // index 0 the multiplier is 1 and the base interval is already on-grid,
+    // so this is a no-op and the existing cadence (and P5 behaviour) is
+    // unchanged.
+    const upgradeIndex = this._weaponUpgradeIndex(weaponId);
+    const levelMultiplier =
+      upgradeIndex > 0
+        ? resolveWeaponAtLevel(weaponId, upgradeIndex).fireRate
+        : 1;
+    const leveledInterval = quantiseFireRateMs(
+      baseInterval / levelMultiplier,
+      this._rules.beatBpm,
+    );
+    return leveledInterval / this._fireRateMultiplier;
   }
 
   /**

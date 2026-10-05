@@ -188,6 +188,131 @@ export function buildCurveLevels(
   }));
 }
 
+// ── Per-wave variety (AH-0MUNU6MGM007CI45) ─────────────────────────
+
+/**
+ * Initial per-wave target jitter (0–100 difficulty points). The sequencer is
+ * a pure function of its target, so two waves with the same target — or two
+ * targets inside one archetype's band — compose identically. A small,
+ * deterministic per-wave nudge breaks those ties so a level's waves do not
+ * all play the same (the producer-audit rejection of AH-0MUNU6MGM007CI45: a
+ * flat curve produced three identical waves). Kept small so a launched wave
+ * still tracks the curve the designer drew.
+ */
+export const CURVE_WAVE_VARIATION_JITTER = 2;
+
+/**
+ * Maximum number of progressively larger nudges tried when a wave still
+ * duplicates an earlier wave in its level. Each attempt alternates direction
+ * and grows by {@link CURVE_WAVE_VARIATION_JITTER}, so the search walks
+ * outward from the caller's target until a distinct composition is found (or
+ * the budget is exhausted). Bounded so sequencing stays fast and a genuinely
+ * saturated target can never loop forever.
+ */
+export const CURVE_WAVE_MAX_VARIATION_ATTEMPTS = 24;
+
+/**
+ * Deterministic `[0, 1)` hash of two integers. Pure: the same inputs always
+ * yield the same fraction, so regenerating an unchanged curve reproduces the
+ * same waves exactly (the curve editor has no run-seed concept, so variety is
+ * derived from the wave's position rather than a mutable seed).
+ */
+function curveHashUnit(a: number, b: number): number {
+  let h = (Math.imul(a + 1, 0x9e3779b1) ^ Math.imul(b + 1, 0x85ebca77)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 0x100000000;
+}
+
+/** Clamps a difficulty target to the 0–100 editor scale. */
+function clampTarget(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+/**
+ * Selects a target for variation attempt `attempt` (0-based). Attempt 0 is the
+ * smallest nudge ({@link CURVE_WAVE_VARIATION_JITTER}, direction from the
+ * wave's hash); later attempts alternate direction and grow linearly. The
+ * shift is added to `base` and clamped to the 0–100 scale.
+ */
+function variationTarget(base: number, wave: number, attempt: number): number {
+  if (!Number.isFinite(base)) return base;
+  if (attempt === 0) {
+    const dir = curveHashUnit(wave, 7) >= 0.5 ? 1 : -1;
+    return clampTarget(base + dir * CURVE_WAVE_VARIATION_JITTER);
+  }
+  const magnitude = Math.ceil(attempt / 2) * CURVE_WAVE_VARIATION_JITTER;
+  const direction = attempt % 2 === 1 ? 1 : -1;
+  return clampTarget(base + direction * magnitude);
+}
+
+/**
+ * Builds one level's waves with a guarantee of visible variety
+ * (AH-0MUNU6MGM007CI45): if a wave composes identically to an earlier wave in
+ * the same level, its target is progressively nudged (see
+ * {@link variationTarget}) until the composition differs. The caller's target
+ * is preserved on each returned wave's `targetDifficulty`, so the editor still
+ * reports the designer's curve value while the launched composition varies.
+ */
+export function sequenceVariedWaves(
+  targets: readonly number[],
+  candidates: readonly CandidateGroup[] = defaultCandidatePool(),
+  tolerance: number = CURVE_TARGET_TOLERANCE,
+): ShootableWave[] {
+  const pool: CandidateGroup[] = [...candidates];
+  const chosen: ShootableWave[] = [];
+  const seen = new Set<string>();
+
+  for (let wave = 0; wave < targets.length; wave++) {
+    const base = targets[wave];
+    let selected: ShootableWave | null = null;
+
+    for (
+      let attempt = 0;
+      attempt < CURVE_WAVE_MAX_VARIATION_ATTEMPTS && !selected;
+      attempt++
+    ) {
+      const target =
+        attempt === 0 && Number.isFinite(base)
+          ? base
+          : variationTarget(base, wave, attempt - 1);
+      const waveResult = sequencer([target], pool, { tolerance }).waves[0];
+      if (!waveResult) continue;
+      const composition = compositionKey(waveResult);
+      if (!seen.has(composition)) {
+        seen.add(composition);
+        selected = { ...waveResult, targetDifficulty: base };
+      }
+    }
+
+    // Exhausted the budget (e.g. every neighbouring target saturates to the
+    // same composition) — fall back to the caller's unmodified target rather
+    // than dropping the wave. The wave is still playable; it is simply the
+    // best the sequencer can do for the curve. Record its composition so a
+    // later wave still tries to differ.
+    if (!selected) {
+      const fallback = sequencer([base], pool, { tolerance }).waves[0];
+      if (fallback) {
+        seen.add(compositionKey(fallback));
+        selected = { ...fallback, targetDifficulty: base };
+      }
+    }
+
+    if (selected) chosen.push(selected);
+  }
+
+  return chosen;
+}
+
+/** Canonical composition string used to detect duplicate waves. */
+function compositionKey(wave: ShootableWave): string {
+  return (
+    wave.groups
+      .map((group) => `${group.enemyKey}:${group.count}`)
+      .join('+') || 'none'
+  );
+}
+
 /** A single rendered wave-preview row. */
 export interface WavePreviewEntry {
   /** 1-based wave position. */
@@ -735,14 +860,30 @@ export class GymCurveSequencer extends Phaser.Scene {
    * also run once on scene create.
    */
   regenerate(): void {
-    const result = sequencer(this.curve, this.candidates, {
-      tolerance: CURVE_TARGET_TOLERANCE,
-    });
+    // Sequence each level group independently so every wave within a level
+    // differs from its neighbours even when the curve is flat (the audit
+    // rejection of AH-0MUNU6MGM007CI45: three identical waves). `targets`
+    // keeps the designer's curve values; the variety nudge only affects the
+    // composition the sequencer selects, never the displayed target.
+    const levelTargetGroups = groupWavesByLevel(
+      this.curve,
+      CURVE_WAVES_PER_LEVEL,
+    );
+    const waves: ShootableWave[] = [];
+    for (const targets of levelTargetGroups) {
+      waves.push(
+        ...sequenceVariedWaves(
+          targets,
+          this.candidates,
+          CURVE_TARGET_TOLERANCE,
+        ),
+      );
+    }
     // Keep the raw sequencer waves so the grouped level definitions (below)
     // and the per-wave launch buttons can rebuild the exact spawnable shape.
-    this.sequencedWaves = result.waves;
-    this.levels = buildCurveLevels(result.waves);
-    this.preview = result.waves.map((wave, index) => {
+    this.sequencedWaves = waves;
+    this.levels = buildCurveLevels(waves);
+    this.preview = waves.map((wave, index) => {
       const mode = this.modes[index] ?? CURVE_DEFAULT_MODE;
       const actualDifficulty =
         Math.round(

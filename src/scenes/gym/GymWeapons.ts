@@ -107,12 +107,18 @@ const ROUND_ROBIN_ORDER: readonly DropType[] = [
  * targets sit within the Arc chain reach of the centre and of each other
  * (so the chain visits all three) while staying outside the Nova ring.
  *
+ * The offsets are sized to the **halved** AOE radii (Nova 45 px, Arc 60 px,
+ * AH-0MUU131PU006O7ZD): the centre is 40 px from the ship (inside Nova's
+ * effective 45 + 14 px target reach) and each upper target is ~70 px from the
+ * ship (outside Nova) but within a 60 px Arc hop of the centre and of its
+ * sibling.
+ *
  * Intentional divergence (F6 AC5): the game has no static targets.
  */
 const PRACTICE_TARGET_OFFSETS: readonly { x: number; y: number }[] = [
-  { x: 0, y: -60 },
-  { x: -60, y: -120 },
-  { x: 60, y: -120 },
+  { x: 0, y: -40 },
+  { x: -25, y: -65 },
+  { x: 25, y: -65 },
 ];
 
 /** Hit radius (px) of a practice target. */

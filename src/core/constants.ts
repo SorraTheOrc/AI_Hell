@@ -102,8 +102,8 @@ export const POWER_UP_BUBBLE_GLOW_ALPHA = 0.35;
 
 // ── P9 Magnet (GDD §4.4) ────────────────────────────────────────────
 
-/** Base magnet radius as a multiple of the ship size (2×). */
-export const MAGNET_RADIUS_BASE_MULTIPLIER = 2;
+/** Base magnet/scoop radius as a multiple of the ship size (1×). */
+export const MAGNET_RADIUS_BASE_MULTIPLIER = 1;
 
 /** Each magnet stack adds this fraction of the base radius (+50%). */
 export const MAGNET_RADIUS_PER_STACK = 0.5;
