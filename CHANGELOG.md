@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.9 (2026-10-05)
+### Features
+- Gym practice now matches the real game exactly, so what you learn there always applies. (AH-0MUII2FJ5007MDDA)
+- Asteroids now drop minerals in the gyms, matching the main game. (AH-0MUHMT5JC004WRSB)
+- A new Mineral Scoop power-up pulls nearby minerals toward your ship, so you can collect them faster. (AH-0MUPMR9TX00756BQ)
+- Running out of time no longer costs a life — surviving enemies stay and must be cleared. (AH-0MUNS3ZQ1002DJ9S)
+- Weapons now level up as you collect them, growing stronger with each pickup. (AH-0MUPMPCB2009J54J)
+- Mortar shells now strike random spots around your ship instead of flying forward. (AH-0MUUF9GZV004WVT9)
+- The final boss now takes 40 hits to defeat, making the climactic fight challenging even with fully upgraded weapons. (AH-0MUTV3J7T006MZ4K)
+- Power-up choices when your hold is full now actually level up your power-ups. (AH-0MUV5CLVO002ZHS9)
+- Every power-up you collect now grows stronger for the rest of the run. (AH-0MUV5CLW6005VF7K)
+- Enemy and ship tuning now lives in editable CSV files, so designers can retune without touching code. (AH-0MTZWZ9TE009CVUA)
+- Your ship's shots now fire in a steady rhythmic beat, so auto-fire feels musical instead of drifting. (AH-0MUAYB8EH005RJ8B)
+- Enemy waves now ramp up smoothly instead of always being the same fixed set. (AH-0MUH6LEYY0054E63)
+- Your shield now pulses and fades out before expiring, so you know when to reposition. (AH-0MUAYB5HR001HDYC)
+- Magnet and Mineral Scoop now start with a smaller pickup range, making upgrades feel more impactful. (AH-0MUTTAHQ9001T83A)
+- The opening waves now feature a varied mix of enemies that changes each run. (AH-0MUOCJM0N000RW2B)
+- Preview and play any generated level or single wave directly from the curve editor, starting with spread and dual weapons. (AH-0MUNU6MGM007CI45)
+- Winning now feels like a real celebration, and losing hits hard with its own clear, sombre send-off. (AH-0MUTV7632000ZWCB)
+- Upgrade choices now show exactly what improves, and new items are marked New. (AH-0MUU1GOAU007RFVR)
+- Power-ups now level up as you collect them, growing stronger over a run. (AH-0MUU2QJE2007JNR6)
+- Magnet pickups now last 15 seconds, while choosing it as a reward makes it permanent. (AH-0MUTOTLCY005NZ8L)
+
 ## v0.1.8 (2026-10-03)
 ### Features
 - Gym practice now matches the real game exactly, so what you learn there always works in battle. (AH-0MUII2FJ5007MDDA)
