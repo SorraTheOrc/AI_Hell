@@ -24,6 +24,7 @@ import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
 import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { minionCountForPhase } from '../waves/BossMinions';
+import type { WeaponDefinition } from '../utils/weapons';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -1652,6 +1653,68 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
 
     expect(boss.alive).toBe(false);
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
+  });
+
+  // ── Levelled-weapon integration (AC6, AH-0MUUJEYZ7006UN5Z) ──────
+
+  /** Fully levels a weapon so its upgrade curve has saturated. */
+  function fullyLevelWeapon(scene: PlayScene, id: 'nova'): WeaponDefinition {
+    const player = scene.getPlayer()!;
+    for (let i = 0; i < 30; i++) player.equipWeapon(id, true);
+    return player.getWeaponDef(id);
+  }
+
+  /** Shared AOE application seam (the real path a levelled AOE weapon uses). */
+  function applyAoe(
+    scene: PlayScene,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    (
+      scene as unknown as {
+        applyAoeEffect(def: WeaponDefinition, x: number, y: number): void;
+      }
+    ).applyAoeEffect(def, x, y);
+  }
+
+  it('AC6 — a fully levelled AOE weapon deals one hit per blast, not a whole phase', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const def = fullyLevelWeapon(scene, 'nova');
+    expect(def.aoe).toBeDefined();
+
+    // 9 max-level blasts: phase 1 survives (each blast is one hit).
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+      applyAoe(scene, def, boss.x, boss.y);
+    }
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(boss.alive).toBe(true);
+
+    // The 10th blast depletes exactly one phase — no phase is skipped.
+    applyAoe(scene, def, boss.x, boss.y);
+    expect(boss.getPhaseNumber()).toBe(2);
+    expect(boss.alive).toBe(true);
+  });
+
+  it('AC6 — a fully levelled weapon still requires 40 hits to destroy the boss', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const def = fullyLevelWeapon(scene, 'nova');
+    const totalHits = 4 * BOSS_HIT_POINTS_PER_PHASE;
+
+    // 39 blasts leave the boss alive on its final phase.
+    for (let i = 0; i < totalHits - 1; i++) {
+      applyAoe(scene, def, boss.x, boss.y);
+    }
+    expect(boss.alive).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(4);
+
+    // The 40th blast destroys it — no earlier blast skipped a phase.
+    applyAoe(scene, def, boss.x, boss.y);
+    expect(boss.alive).toBe(false);
   });
 
   it('scenario — boss bullets are collected as enemy bullets', async () => {

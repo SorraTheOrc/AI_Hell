@@ -746,6 +746,20 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
     expect(scene.formationBoss.alive).toBe(false);
     expect(scene.getMinions().length).toBe(expected);
   });
+
+  it('AC6/AC3 — 39 DAMAGE clicks leave the boss alive; the 40th destroys it (PlayScene parity)', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    const damageBtn = findButton(scene, 'DAMAGE');
+    const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+
+    for (let i = 0; i < totalHits - 1; i++) damageBtn.emit('pointerdown');
+    expect(boss.alive).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+
+    damageBtn.emit('pointerdown');
+    expect(boss.alive).toBe(false);
+  });
 });
 
 describe('GymBoss — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
