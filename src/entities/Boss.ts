@@ -16,8 +16,15 @@
  * Each attack phase begins with a clear telegraph (glow + audio cue) at
  * least 500 ms before the visual event fires.
  *
- * 4-phase health — the Boss is destroyed only when all four phases are
- * depleted. The gym scene provides a damage button for testing phase
+ * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (10)
+ * player hits, so the Boss is destroyed only after 40 hits total. A hit
+ * that does not deplete the current phase leaves the phase unchanged and
+ * only reduces the health-bar fill; a depleting hit advances the phase
+ * (or destroys the Boss after phase 4). `takeDamage()` returns
+ * `{ destroyed, phaseAdvanced, phase, hpRemaining }` so callers gate
+ * score and minion rewards on `phaseAdvanced`. The health-bar fill is
+ * proportional to remaining total HP; the four phase-segment dividers
+ * remain. The gym scene provides a damage button for testing phase
  * transitions.
  *
  * Audio cues: spawn, phase transition, each phase's unique attack cue,
@@ -342,8 +349,11 @@ export class Boss extends Phaser.GameObjects.Container {
     this.coreGlowGraphics.strokeCircle(0, 0, radius);
   }
 
-  /** Draws the multi-phase health bar at the top of the screen. */
-  /** Draws the multi-phase health bar at the top of the screen. */
+  /**
+   * Draws the multi-phase health bar at the top of the screen. The fill
+   * width is proportional to remaining total HP (`_currentHp / _totalHp`),
+   * so every hit is visible; the four phase-segment dividers are retained.
+   */
   _drawHealthBar(): void {
     this.healthBarGraphics.clear();
     const scene = this.scene as Phaser.Scene;
