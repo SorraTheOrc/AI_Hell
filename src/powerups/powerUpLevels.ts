@@ -103,6 +103,20 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'scoopStacks',
 ];
 
+/**
+ * Level variables whose effect-path **consumption** is deferred to sibling
+ * item AH-0MUVM9RAO004Y3LB ("Wire P3 shield absorption and P4 bomb charge
+ * level axes into the effect path").
+ *
+ * The level store still tracks both axes, but the effect path does not yet
+ * consume them (no multi-hit shield mechanism; no P4 charge trigger). A
+ * `power-up-level` change summary therefore **excludes** these variables so
+ * the hold-full choice never promises a delta the effect path does not
+ * apply (AC4, producer decision Q2=B).
+ */
+export const DEFERRED_POWER_UP_LEVEL_VARIABLES: ReadonlySet<PowerUpLevelVariable> =
+  new Set<PowerUpLevelVariable>(['shieldAbsorptions', 'bombCharges']);
+
 // ── Level specification ─────────────────────────────────────────────
 
 /**
@@ -499,6 +513,11 @@ export function summarisePowerUpLevelChange(
 
   const parts: string[] = [];
   for (const spec of POWER_UP_LEVEL_SPECS[powerUpId]) {
+    // Deferred axes are tracked by the store but not yet applied by the
+    // effect path, so they must not appear in the promised delta (AC4).
+    if (DEFERRED_POWER_UP_LEVEL_VARIABLES.has(spec.variable)) {
+      continue;
+    }
     const before = fromBucket[spec.variable];
     const after = (to as unknown as Record<string, number>)[spec.variable];
     const delta = after - before;
@@ -680,6 +699,17 @@ export class PowerUpLevelStore {
   /** Current lives (P8 model); starts at the configured start, capped. */
   lives(): number {
     return this._lives;
+  }
+
+  /**
+   * Sets the lives counter directly (clamped to `[0, livesCap]`). Lets the
+   * playable game push its authoritative run state (`GameState`) into the
+   * single level store when the player is hit; P8 collection still uses
+   * {@link collect}. The cap is level-derived (base 5), so an authoritative
+   * push can never exceed it.
+   */
+  setLives(value: number): void {
+    this._lives = Math.max(0, Math.min(this._livesCap(), Math.floor(value)));
   }
 
   /** The level-derived hard lives cap. */

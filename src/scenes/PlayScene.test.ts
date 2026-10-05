@@ -25,6 +25,7 @@ import { Scout } from '../entities/Scout';
 import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
+import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -2121,9 +2122,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isActive('P5')).toBe(true);
     const remaining2 = registry.remaining('P5')!;
 
-    // The second collection refreshed the timer to near full duration.
+    // The second collection refreshed the timer to the near-full level-1
+    // duration (level-derived, so longer than the base 10 s window).
     expect(remaining2).toBeGreaterThan(remainingBeforeSecond);
-    expect(remaining2).toBeCloseTo(10, 1);
+    expect(remaining2).toBeCloseTo(
+      resolvePowerUpAtLevel('P5', 1).speedDuration!,
+      1,
+    );
   });
 
   it('P5 active → fire-rate multiplier applied to the player (AC1)', async () => {

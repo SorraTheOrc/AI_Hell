@@ -4,6 +4,7 @@ import Phaser from 'phaser';
 import { bootScene } from '../test/gameHarness';
 import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT, PERMANENT_VALUE, formatValue, type HUDOptions } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
+import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
 import { PowerUpType } from '../powerups/types';
 
 /**
@@ -155,20 +156,20 @@ describe('HUD AC2: stack counts for stackable types', () => {
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
   it('shows a finite charge as xN and decrements live on trigger', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P6');
-    reg.applyCollect('P6'); // two pickups → x2
+    reg.applyCollect('P6'); // level 1 → +1
+    reg.applyCollect('P6'); // level 2 → +2 (level-derived grant)
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().find((r) => r.id === 'P6')!.value).toBe('x2');
+    expect(hud.getRows().find((r) => r.id === 'P6')!.value).toBe('x3');
 
     // Consume one charge (the phase is now active, so a timer row also
-    // appears; the charge row must read x1).
+    // appears; the charge row must read x2).
     reg.updateDanger(true, 0.016);
     hud.refresh();
     const chargeRow = hud
       .getRows()
       .find((r) => r.id === 'P6' && r.value.startsWith('x'))!;
-    expect(chargeRow.value).toBe('x1');
+    expect(chargeRow.value).toBe('x2');
     destroy(game);
   });
 
@@ -263,9 +264,12 @@ describe('HUD AC5: reacts to registry changes', () => {
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('4s');
 
-    reg.applyCollect('P5'); // re-collect → refresh to full 10 s
+    reg.applyCollect('P5'); // re-collect → refresh to the level-1 duration
     hud.refresh();
-    expect(hud.getRows()[0].value).toBe('10s');
+    const upgraded = Math.ceil(
+      resolvePowerUpAtLevel('P5', 1).speedDuration!,
+    );
+    expect(hud.getRows()[0].value).toBe(`${upgraded}s`);
     destroy(game);
   });
 

@@ -788,6 +788,16 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * The player's single run-scoped power-up level store. Scenes inject this
+   * **same instance** into their `EffectsRegistry` so the effect path and the
+   * hold-full choice consume one level model with no double-counting
+   * (AH-0MUV5CLW6005VF7K, Q1=A).
+   */
+  getPowerUpLevelStore(): PowerUpLevelStore {
+    return this._powerUpLevelStore;
+  }
+
+  /**
    * Snapshot of every power-up the player has collected this run, with its
    * current level (id → level ≥ 1). Used by the hold-full choice to offer
    * power-up level-ups that reflect the run's progress (AH-0MUV5CLVO002ZHS9).

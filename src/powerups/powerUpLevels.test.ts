@@ -18,14 +18,6 @@ import { describe, expect, it } from 'vitest';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { POWER_UP_LEVEL_SPECS } from './powerUpLevels';
 import {
-  P3_SHIELD_DURATION,
-  P5_SPEED_MULTIPLIER,
-  P8_LIVES_MAX,
-  P9_MAX_STACKS,
-  P10_MAX_STACKS,
-} from './effects';
-import { PHASE_DURATION } from '../core/constants';
-import {
   POWER_UP_LEVEL_IDS,
   POWER_UP_LEVEL_VARIABLES,
   POWER_UP_LIVES_START,
@@ -95,15 +87,17 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     }
   });
 
-  it('anchors each base/cap to the shipped effect constants (AC3)', () => {
-    // The level model reproduces today's tuned values at the base/cap: there
-    // is no parallel source of truth for the effect constants.
-    expect(POWER_UP_LEVEL_SPECS.P3[0].base).toBe(P3_SHIELD_DURATION);
-    expect(POWER_UP_LEVEL_SPECS.P5[0].base).toBe(P5_SPEED_MULTIPLIER);
-    expect(POWER_UP_LEVEL_SPECS.P6[0].base).toBe(PHASE_DURATION);
-    expect(POWER_UP_LEVEL_SPECS.P8[1].cap).toBe(P8_LIVES_MAX);
-    expect(POWER_UP_LEVEL_SPECS.P9[0].cap).toBe(P9_MAX_STACKS);
-    expect(POWER_UP_LEVEL_SPECS.P10[0].cap).toBe(P10_MAX_STACKS);
+  it('pins the shipped balance values at base/cap — the catalogue is the single source (AC2)', () => {
+    // The level model reproduces the shipped tuned values at base/cap. Since
+    // AH-0MUV5CLW6005VF7K the catalogue — not a set of parallel effect
+    // constants — is the source of truth, so these are hard-coded balance
+    // anchors: changing one is a deliberate balance change.
+    expect(POWER_UP_LEVEL_SPECS.P3[0].base).toBe(15); // shield duration (s)
+    expect(POWER_UP_LEVEL_SPECS.P5[0].base).toBe(1.5); // speed multiplier
+    expect(POWER_UP_LEVEL_SPECS.P6[0].base).toBe(1.5); // phase duration (s)
+    expect(POWER_UP_LEVEL_SPECS.P8[1].cap).toBe(5); // lives cap
+    expect(POWER_UP_LEVEL_SPECS.P9[0].cap).toBe(5); // magnet stack cap
+    expect(POWER_UP_LEVEL_SPECS.P10[0].cap).toBe(5); // scoop stack cap
   });
 });
 
@@ -194,6 +188,18 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
 
   it('returns an empty string when the curve has flattened', () => {
     expect(summarisePowerUpLevelChange('P8', 1_000, 1_001)).toBe('');
+  });
+
+  it('excludes deferred axes so a summary never promises an unwired delta (AC4)', () => {
+    // P4's only axis (bombCharges) is deferred to AH-0MUVM9RAO004Y3LB, so a
+    // P4 level-up carries no change summary.
+    expect(summarisePowerUpLevelChange('P4', 0, 1)).toBe('');
+
+    // P3's shieldAbsorptions is deferred and excluded, but its wired
+    // shieldDuration still appears in the summary.
+    const p3 = summarisePowerUpLevelChange('P3', 0, 1);
+    expect(p3).toContain('Shield time');
+    expect(p3).not.toContain('Shield hits');
   });
 });
 

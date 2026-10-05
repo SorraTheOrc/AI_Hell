@@ -42,6 +42,49 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     return booted.scene as PlayScene;
   }
 
+  it('a field pickup levels the power-up in the player store (AC1/AC5)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const effects = scene.getEffectsRegistry();
+    expect(player.getPowerUpLevel('P5')).toBe(0);
+
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+
+    // The shared `applyCollect` advanced the single player-owned store, so
+    // the field pickup levels the power-up exactly once.
+    expect(player.getPowerUpLevel('P5')).toBe(1);
+    expect(effects.isActive('P5')).toBe(true);
+    expect(effects.speedMultiplier()).toBeGreaterThan(1);
+  });
+
+  it('a hold-full level-up raises the level by exactly one, no double-count (AC1/AC3)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const effects = scene.getEffectsRegistry();
+
+    // Field pickup → level 1.
+    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(player.getPowerUpLevel('P5')).toBe(1);
+
+    // Hold-full power-up-level reward → level 2 (exactly one more).
+    scene.setMineralChoiceStrategy(
+      fixedStrategy([
+        { id: 'P5', name: 'Speed Boost Lv.2', kind: 'power-up-level', level: 2 },
+      ]),
+    );
+    scene.openMineralChoice();
+    scene.selectMineralChoice(0);
+
+    expect(player.getPowerUpLevel('P5')).toBe(2);
+    expect(effects.isActive('P5')).toBe(true);
+  });
+
   it('the mineral choice receives the player power-up levels (context)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Mineral } from '../../entities/Mineral';
 import { EffectsRegistry } from '../../powerups/effects';
+import { PowerUpLevelStore } from '../../powerups/powerUpLevels';
 import type { ChoiceOption } from '../../powerups/choice';
 import { applyMineralChoiceReward, collectMinerals } from './mineralLayer';
 
@@ -174,7 +175,7 @@ describe('applyMineralChoiceReward', () => {
   it('permanently equips a chosen weapon', () => {
     const registry = new EffectsRegistry();
     const applyWeapon = vi.spyOn(registry, 'applyWeapon');
-    const player = { equipWeapon: vi.fn(), collectPowerUp: vi.fn() };
+    const player = { equipWeapon: vi.fn() };
     const option: ChoiceOption = {
       id: 'spread',
       name: 'Spread Shot',
@@ -190,7 +191,7 @@ describe('applyMineralChoiceReward', () => {
   it('permanently levels up a chosen owned weapon via the shared equip path (AC3)', () => {
     const registry = new EffectsRegistry();
     const applyWeapon = vi.spyOn(registry, 'applyWeapon');
-    const player = { equipWeapon: vi.fn(), collectPowerUp: vi.fn() };
+    const player = { equipWeapon: vi.fn() };
     const option: ChoiceOption = {
       id: 'spread',
       name: 'Spread Shot Lv.3',
@@ -206,11 +207,14 @@ describe('applyMineralChoiceReward', () => {
     expect(player.equipWeapon).toHaveBeenCalledWith('spread', true);
   });
 
-  it('permanently applies a chosen power-up (no weapon equip)', () => {
-    const registry = new EffectsRegistry();
+  it('permanently applies a chosen power-up through the single registry path', () => {
+    // The registry owns the injected store, so `applyCollect` is the single
+    // mutation point — no separate `player.collectPowerUp` call exists to
+    // double-count (AH-0MUV5CLW6005VF7K, AC1/AC3).
+    const store = new PowerUpLevelStore();
+    const registry = new EffectsRegistry(store);
     const applyCollect = vi.spyOn(registry, 'applyCollect');
-    const collectPowerUp = vi.fn(() => 1);
-    const player = { equipWeapon: vi.fn(), collectPowerUp };
+    const player = { equipWeapon: vi.fn() };
     const option: ChoiceOption = {
       id: 'P5',
       name: 'Speed Boost',
@@ -220,15 +224,16 @@ describe('applyMineralChoiceReward', () => {
     applyMineralChoiceReward(option, registry, player);
 
     expect(applyCollect).toHaveBeenCalledWith('P5', true);
-    expect(collectPowerUp).toHaveBeenCalledWith('P5', true);
+    expect(applyCollect).toHaveBeenCalledTimes(1);
+    expect(store.getLevel('P5')).toBe(1); // advanced exactly once
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 
-  it('applies a power-up-level offer (effect + level increment)', () => {
-    const registry = new EffectsRegistry();
+  it('applies a power-up-level offer (single effect + level increment)', () => {
+    const store = new PowerUpLevelStore();
+    const registry = new EffectsRegistry(store);
     const applyCollect = vi.spyOn(registry, 'applyCollect');
-    const collectPowerUp = vi.fn(() => 2);
-    const player = { equipWeapon: vi.fn(), collectPowerUp };
+    const player = { equipWeapon: vi.fn() };
     const option: ChoiceOption = {
       id: 'P3',
       name: 'Shield Lv.2',
@@ -239,7 +244,8 @@ describe('applyMineralChoiceReward', () => {
     applyMineralChoiceReward(option, registry, player);
 
     expect(applyCollect).toHaveBeenCalledWith('P3', true);
-    expect(collectPowerUp).toHaveBeenCalledWith('P3', true);
+    expect(applyCollect).toHaveBeenCalledTimes(1);
+    expect(store.getLevel('P3')).toBe(1); // advanced exactly once
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 

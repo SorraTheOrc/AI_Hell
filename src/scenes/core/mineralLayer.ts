@@ -180,14 +180,16 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
  * @param player — the ship to equip, or null when no player exists.
  */
 /**
- * Minimal player contract: must support weapon equip (for weapon-level
- * offers) and power-up collection (for power-up/level-up offers, parent
- * AH-0MUV5CLVO002ZHS9). Structurally satisfied by {@link Player} in both
- * the game and every gym.
+ * Minimal player contract: weapon equip for weapon/weapon-level offers.
+ * Structurally satisfied by {@link Player} in both the game and every gym.
+ *
+ * Power-up options no longer call into the player directly: the registry's
+ * `applyCollect` advances the **single** run-scoped store the scene injected
+ * from the player (AH-0MUV5CLW6005VF7K, Q1=A), so the level rises exactly
+ * once with no double-count.
  */
 interface MineralChoicePlayer {
   equipWeapon(weaponId: WeaponId, permanent?: boolean): void;
-  collectPowerUp(id: PowerUpId, permanent?: boolean): number;
 }
 
 export function applyMineralChoiceReward(
@@ -203,12 +205,13 @@ export function applyMineralChoiceReward(
     effectsRegistry.applyWeapon(weaponId, true);
     player?.equipWeapon(weaponId, true);
   } else {
-    // Power-up options (both `powerup` and `power-up-level`): apply the
-    // hold-full effect and track the collection level so future choices
-    // can offer level-ups (parent AH-0MUV5CLVO002ZHS9).
+    // Power-up options (both `powerup` and `power-up-level`): the registry
+    // applies the hold-full effect **and** advances the single run-scoped
+    // store (it was injected from the player), so future choices can offer
+    // level-ups with no double-count (parent AH-0MUV5CLVO002ZHS9;
+    // AH-0MUV5CLW6005VF7K AC1/AC3).
     const powerUpId = option.id as PowerUpId;
     effectsRegistry.applyCollect(powerUpId, true);
-    player?.collectPowerUp(powerUpId, true);
   }
 }
 

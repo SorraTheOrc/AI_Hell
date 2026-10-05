@@ -220,6 +220,24 @@ export class CombatCoreScene<
   /** Registry used by subclasses that do not supply their own. */
   private readonly defaultEffectsRegistry = new EffectsRegistry();
 
+  /**
+   * Binds `registry` to the scene's live player store — the single
+   * run-scoped power-up level model (AH-0MUV5CLW6005VF7K, Q1=A).
+   *
+   * The resolver is dynamic, so a player created after the bind (or a
+   * respawned player) is picked up automatically; `getPlayer()` returning
+   * null falls back to the registry's private store. Safe to call before the
+   * player exists and idempotent, so scenes with their own registry can
+   * invoke it from their `create()`/`resetRunState()`.
+   *
+   * @param registry — the registry to bind (the scene's own or the default).
+   */
+  protected _bindPowerUpLevelStore(registry: EffectsRegistry): void {
+    registry.setStoreResolver(
+      () => this.getPlayer()?.getPowerUpLevelStore() ?? null,
+    );
+  }
+
   // ── Participant contract (safe concrete defaults) ─────────────────
 
   /** The keyboard-controlled player ship (null when the scene has none). */
@@ -227,8 +245,14 @@ export class CombatCoreScene<
     return null;
   }
 
-  /** The shared active-effect registry. */
+  /**
+   * The shared active-effect registry (default implementation). Binds the
+   * registry to this scene's live player store (dynamic resolver) so a stub
+   * scene that does not override this accessor still consumes the single
+   * run-scoped level model (AH-0MUV5CLW6005VF7K). Idempotent and cheap.
+   */
   protected getEffectsRegistry(): EffectsRegistry {
+    this._bindPowerUpLevelStore(this.defaultEffectsRegistry);
     return this.defaultEffectsRegistry;
   }
 
@@ -732,7 +756,13 @@ export class CombatCoreScene<
    * `super.resetRunState()` first. Called at the top of `create()`.
    */
   protected resetRunState(): void {
-    this.getEffectsRegistry().reset();
+    // Bind the registry to this scene's live player store, then reset both
+    // the timing state and the level store together (AC6). The dynamic
+    // resolver means a player created later in `create()` is picked up with
+    // no further wiring — the single shared injection point.
+    const registry = this.getEffectsRegistry();
+    this._bindPowerUpLevelStore(registry);
+    registry.reset();
     this.playerBullets = [];
     this.playerExplosions = [];
     this.playerDeathEffects = [];

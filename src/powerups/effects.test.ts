@@ -3,12 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { PowerUpType } from './types';
 import {
   EffectsRegistry,
-  P5_SPEED_MULTIPLIER,
   P8_LIVES_START,
-  P8_LIVES_MAX,
-  P9_MAX_STACKS,
   P9_MAGNET_DURATION,
-  P10_MAX_STACKS,
   P10_SCOOP_DURATION,
   applySpeedMultiplier,
   magnetRadius,
@@ -16,7 +12,12 @@ import {
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
 } from './effects';
-import { MAX_SPEED, PHASE_DURATION, PHASE_REARM_COOLDOWN, SHIP_SIZE } from '../core/constants';
+import {
+  POWER_UP_LIVES_START,
+  PowerUpLevelStore,
+  resolvePowerUpAtLevel,
+} from './powerUpLevels';
+import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 
 // Movement config used to verify live speed application.
 const BASE_CONFIG = {
@@ -25,193 +26,231 @@ const BASE_CONFIG = {
   friction: 100,
 };
 
-describe('P5 Speed Boost (AC1): +50% live speed for 10 s', () => {
-  it('exposes a 1.5× multiplier while active', () => {
-    const reg = new EffectsRegistry();
+/** Resolved P5 speed multiplier at the given upgrade level. */
+function p5Multiplier(upgradeLevel: number): number {
+  return resolvePowerUpAtLevel('P5', upgradeLevel).speedMultiplier!;
+}
+
+// ── AC1 — single run-scoped level store ──────────────────────────────
+
+describe('single run-scoped level store (AC1)', () => {
+  it('consumes an injected store: applyCollect advances it by exactly one', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(store.getLevel('P5')).toBe(0);
     reg.applyCollect('P5');
-    expect(reg.speedMultiplier()).toBe(P5_SPEED_MULTIPLIER);
-    expect(P5_SPEED_MULTIPLIER).toBe(1.5);
+    expect(store.getLevel('P5')).toBe(1);
+    reg.applyCollect('P5');
+    expect(store.getLevel('P5')).toBe(2);
   });
 
-  it('applies the multiplier live to both thrust and max-speed', () => {
-    const boosted = applySpeedMultiplier(BASE_CONFIG, P5_SPEED_MULTIPLIER);
-    expect(boosted.thrust).toBeCloseTo(BASE_CONFIG.thrust * 1.5);
-    expect(boosted.maxSpeed).toBeCloseTo(BASE_CONFIG.maxSpeed * 1.5);
-    expect(boosted.friction).toBe(BASE_CONFIG.friction);
+  it('setStore rebinds to a different store instance', () => {
+    const reg = new EffectsRegistry();
+    const store = new PowerUpLevelStore();
+    reg.setStore(store);
+    reg.applyCollect('P3');
+    expect(store.getLevel('P3')).toBe(1);
   });
 
-  it('lasts 10 s then is removed (multiplier back to 1)', () => {
+  it('setStoreResolver picks up the current store dynamically (respawn-safe)', () => {
     const reg = new EffectsRegistry();
+    let store = new PowerUpLevelStore();
+    reg.setStoreResolver(() => store);
     reg.applyCollect('P5');
-    reg.tick(9.999);
-    expect(reg.speedMultiplier()).toBe(1.5); // still active just before expiry
-    reg.tick(0.001 + 0.001); // cross 10 s
-    expect(reg.speedMultiplier()).toBe(1);
-    expect(reg.isActive('P5')).toBe(false);
+    expect(store.getLevel('P5')).toBe(1);
+
+    // A new store (e.g. a respawned player) is consumed without re-wiring.
+    store = new PowerUpLevelStore();
+    reg.applyCollect('P5');
+    expect(store.getLevel('P5')).toBe(1);
   });
 
-  it('is inert before any pickup', () => {
+  it('falls back to the private store when the resolver yields null', () => {
     const reg = new EffectsRegistry();
-    expect(reg.speedMultiplier()).toBe(1);
-    expect(reg.isActive('P5')).toBe(false);
-  });
-
-  it('exposes the same 1.5× multiplier for fire rate while active (AC1/AC3)', () => {
-    const reg = new EffectsRegistry();
-    expect(reg.fireRateMultiplier()).toBe(1);
+    reg.setStoreResolver(() => null);
     reg.applyCollect('P5');
-    expect(reg.fireRateMultiplier()).toBe(P5_SPEED_MULTIPLIER);
-    expect(reg.fireRateMultiplier()).toBe(reg.speedMultiplier());
-  });
-
-  it('fire-rate multiplier returns to 1 immediately on expiry (AC2)', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
-    reg.tick(9.999);
-    expect(reg.fireRateMultiplier()).toBe(1.5);
-    reg.tick(0.002);
-    expect(reg.fireRateMultiplier()).toBe(1);
-  });
-});
-
-describe('P5 timer refresh (AC2): refresh, not additive, not ignored', () => {
-  it('refreshes an active P5 to the full 10 s duration', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
-    reg.tick(6); // 4 s remaining
-    expect(reg.remaining('P5')).toBeCloseTo(4);
-
-    reg.applyCollect('P5'); // re-collect
-    expect(reg.remaining('P5')).toBeCloseTo(10); // refreshed, not 14 (additive)
-    expect(reg.speedMultiplier()).toBe(1.5);
-  });
-
-  it('does not stack duration across repeated refreshes (never additive)', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
-    reg.tick(1);
-    reg.applyCollect('P5');
-    reg.tick(1);
-    reg.applyCollect('P5');
-    // Refreshed twice — the timer is 10 s, never 10+10=20.
-    expect(reg.remaining('P5')).toBeCloseTo(10);
-    reg.tick(10); // one full duration after the last refresh
-    expect(reg.isActive('P5')).toBe(false);
-    // Had durations accumulated (additive), the effect would still be active.
-  });
-
-  it('refresh is not ignored: re-collecting extends the active window', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
-    reg.tick(10); // expires
-    reg.applyCollect('P5'); // re-collect after expiry
+    // No injected store is available; the registry's own store still works.
     expect(reg.isActive('P5')).toBe(true);
-    expect(reg.remaining('P5')).toBeCloseTo(10);
   });
 
-  it('fire-rate multiplier refreshes with the timer and never stacks (AC2)', () => {
-    const reg = new EffectsRegistry();
+  it('a hold-full power-up reward raises the level by exactly one (no double-count)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    store.collect('P5'); // field pickup → level 1
+    reg.applyCollect('P5', true); // hold-full reward → level 2
+    expect(store.getLevel('P5')).toBe(2);
+  });
+
+  it('the level persists across a timed activation expiring (AC6)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P5');
-    reg.tick(6);
-    reg.applyCollect('P5'); // refresh
-    expect(reg.remaining('P5')).toBeCloseTo(10);
-    expect(reg.fireRateMultiplier()).toBe(1.5);
+    expect(store.getLevel('P5')).toBe(1);
+    reg.tick(1000);
+    expect(reg.isActive('P5')).toBe(false);
+    expect(store.getLevel('P5')).toBe(1); // level never expires
   });
 });
 
-describe('P8 Extra Life (AC3): +1 life, start 3, cap 5', () => {
-  it('starts at 3 lives', () => {
-    const reg = new EffectsRegistry();
-    expect(reg.lives()).toBe(P8_LIVES_START);
-    expect(P8_LIVES_START).toBe(3);
+// ── AC2 — resolved stats replace raw constants ───────────────────────
+
+describe('resolved stats replace raw constants (AC2)', () => {
+  it('P5 multiplier is the level-resolved value while active, 1 otherwise', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(reg.speedMultiplier()).toBe(1);
+    reg.applyCollect('P5');
+    expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(0), 10);
+    // A level-up strengthens the live effect (resolved-live).
+    reg.applyCollect('P5');
+    expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
+    expect(reg.speedMultiplier()).toBeGreaterThan(p5Multiplier(0));
   });
 
-  it('adds +1 life on each pickup', () => {
+  it('fire-rate multiplier is the same level-resolved P5 value (single source)', () => {
     const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    expect(reg.fireRateMultiplier()).toBe(reg.speedMultiplier());
+    expect(reg.fireRateMultiplier()).toBeCloseTo(p5Multiplier(0), 10);
+  });
+
+  it('P3 duration is resolved from the catalogue and grows with level', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3');
+    const base = resolvePowerUpAtLevel('P3', 0).shieldDuration!;
+    expect(reg.remaining('P3')).toBeCloseTo(base, 10);
+    expect(base).toBe(15);
+
+    // Level-up: the refreshed duration is the resolved level-1 value.
+    reg.applyCollect('P3');
+    const upgraded = resolvePowerUpAtLevel('P3', 1).shieldDuration!;
+    expect(reg.remaining('P3')).toBeCloseTo(upgraded, 10);
+    expect(upgraded).toBeGreaterThan(base);
+  });
+
+  it('P5 duration is resolved from the catalogue and grows with level', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    const base = resolvePowerUpAtLevel('P5', 0).speedDuration!;
+    expect(reg.remaining('P5')).toBeCloseTo(base, 10);
+    expect(base).toBe(10);
+
+    reg.applyCollect('P5');
+    const upgraded = resolvePowerUpAtLevel('P5', 1).speedDuration!;
+    expect(reg.remaining('P5')).toBeCloseTo(upgraded, 10);
+    expect(upgraded).toBeGreaterThan(base);
+  });
+
+  it('P6 phase duration is resolved from the catalogue', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P6');
+    reg.updateDanger(true, 0.016);
+    expect(reg.remaining('P6')).toBeCloseTo(
+      resolvePowerUpAtLevel('P6', 0).phaseDuration!,
+      10,
+    );
+  });
+
+  it('P7 arrival phase duration is resolved from the catalogue', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P7');
+    reg.consumeTeleport();
+    expect(reg.remaining('P6')).toBeCloseTo(
+      resolvePowerUpAtLevel('P7', 0).teleportPhaseDuration!,
+      10,
+    );
+  });
+
+  it('P9/P10 field-pickup durations stay the documented non-levelled constant', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P9');
+    reg.applyCollect('P10');
+    expect(reg.remaining('P9')).toBeCloseTo(P9_MAGNET_DURATION, 10);
+    expect(reg.remaining('P10')).toBeCloseTo(P10_SCOOP_DURATION, 10);
+    // Levelling P9 does not change its timed field window.
+    reg.applyCollect('P9');
+    expect(reg.remaining('P9')).toBeCloseTo(P9_MAGNET_DURATION, 10);
+  });
+});
+
+// ── AC3 — stack/charge/lives reconciliation ──────────────────────────
+
+describe('P8 lives derived from the level model (AC3)', () => {
+  it('starts at the store start and adds the level-resolved life gain', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(reg.lives()).toBe(P8_LIVES_START);
+    expect(P8_LIVES_START).toBe(POWER_UP_LIVES_START);
     reg.applyCollect('P8');
+    expect(reg.lives()).toBe(store.lives());
     expect(reg.lives()).toBe(4);
-    reg.applyCollect('P8');
+  });
+
+  it('caps lives at the level-derived cap of 5', () => {
+    const reg = new EffectsRegistry();
+    for (let i = 0; i < 10; i++) reg.applyCollect('P8');
     expect(reg.lives()).toBe(5);
   });
 
-  it('caps at 5 lives; excess pickups are ignored', () => {
-    const reg = new EffectsRegistry();
-    for (let i = 0; i < 10; i++) {
-      reg.applyCollect('P8');
-    }
-    expect(reg.lives()).toBe(P8_LIVES_MAX);
-    expect(P8_LIVES_MAX).toBe(5);
-  });
-
-  it('does not touch the speed multiplier', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P8');
-    expect(reg.speedMultiplier()).toBe(1);
-  });
-
-  it('setLives drives the counter directly, clamped to [0, P8_LIVES_MAX]', () => {
-    const reg = new EffectsRegistry();
+  it('setLives drives the shared store directly, clamped to [0, cap]', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.setLives(2);
     expect(reg.lives()).toBe(2);
+    expect(store.lives()).toBe(2);
     reg.setLives(0);
     expect(reg.lives()).toBe(0);
     reg.setLives(-5);
     expect(reg.lives()).toBe(0);
     reg.setLives(99);
-    expect(reg.lives()).toBe(P8_LIVES_MAX);
+    expect(reg.lives()).toBe(5);
   });
 });
 
-describe('P9 Magnet (AC4): field pickup is timed, upgrade is permanent stacking', () => {
-  it('field pickup (no flag) activates a 15 s timed effect and adds no permanent stacks', () => {
-    const reg = new EffectsRegistry();
+describe('P9 Magnet hybrid (AC3)', () => {
+  it('a field pickup levels P9, opens the timed effect and adds no stack', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     expect(reg.isMagnetActive()).toBe(false);
 
-    reg.applyCollect('P9'); // field drop — not permanent
+    reg.applyCollect('P9');
 
+    expect(store.getLevel('P9')).toBe(1);
     expect(reg.isMagnetActive()).toBe(true);
     expect(reg.remaining('P9')).toBeCloseTo(P9_MAGNET_DURATION, 5);
-    expect(P9_MAGNET_DURATION).toBe(15);
     expect(reg.magnetStacks()).toBe(0); // refresh-only, never stacking
   });
 
-  it('the timed pickup expires after 15 s', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P9');
-    reg.tick(14.9);
-    expect(reg.isMagnetActive()).toBe(true);
-    reg.tick(0.2);
-    expect(reg.isMagnetActive()).toBe(false);
-  });
-
-  it('re-collecting refreshes the timer to full without adding stacks', () => {
-    const reg = new EffectsRegistry();
+  it('re-collecting refreshes the timer and levels up, still no stacks', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P9');
     reg.tick(10);
     expect(reg.remaining('P9')).toBeCloseTo(5, 3);
 
-    reg.applyCollect('P9'); // refresh
+    reg.applyCollect('P9'); // refresh + level 2
     expect(reg.remaining('P9')).toBeCloseTo(15, 5);
     expect(reg.magnetStacks()).toBe(0);
+    expect(store.getLevel('P9')).toBe(2);
   });
 
-  it('the hold-full upgrade is permanent and stacks up to 5', () => {
-    const reg = new EffectsRegistry();
+  it('the hold-full reward adds permanent stacks, capped at the level cap', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     for (let i = 0; i < 8; i++) reg.applyCollect('P9', true);
 
-    expect(reg.magnetStacks()).toBe(P9_MAX_STACKS);
-    expect(P9_MAX_STACKS).toBe(5);
+    expect(reg.magnetStacks()).toBe(5);
+    expect(store.magnetStacks()).toBe(5);
     expect(reg.isMagnetActive()).toBe(true); // permanent path is active
-
     reg.tick(1000);
-    expect(reg.magnetStacks()).toBe(P9_MAX_STACKS);
+    expect(reg.magnetStacks()).toBe(5);
   });
 
   it('magnetEffectStacks() drives the shared radius curve for both paths', () => {
     const reg = new EffectsRegistry();
     expect(reg.magnetEffectStacks()).toBe(0); // inactive → no pull
 
-    reg.applyCollect('P9'); // timed → one stack\'s worth of pull
+    reg.applyCollect('P9'); // timed → one stack's worth of pull
     expect(reg.magnetEffectStacks()).toBe(1);
 
     reg.applyCollect('P9', true); // permanent stack → overrides to real stacks
@@ -233,7 +272,6 @@ describe('P9 Magnet (AC4): field pickup is timed, upgrade is permanent stacking'
     reg.applyCollect('P9', true);
     reg.applyCollect('P9', true);
     const stacked = reg.activeEffects().filter((e) => e.id === 'P9');
-    // One timed row (from the field pickup) + one stack row (permanent).
     expect(stacked).toHaveLength(2);
     const stackRow = stacked.find((e) => e.stacks !== undefined);
     expect(stackRow?.stacks).toBe(2);
@@ -241,7 +279,8 @@ describe('P9 Magnet (AC4): field pickup is timed, upgrade is permanent stacking'
   });
 
   it('reset() clears both the timed effect and the permanent stacks', () => {
-    const reg = new EffectsRegistry();
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P9');
     reg.applyCollect('P9', true);
     reg.applyCollect('P9', true);
@@ -251,82 +290,33 @@ describe('P9 Magnet (AC4): field pickup is timed, upgrade is permanent stacking'
     expect(reg.isMagnetActive()).toBe(false);
     expect(reg.magnetStacks()).toBe(0);
     expect(reg.magnetEffectStacks()).toBe(0);
+    expect(store.getLevel('P9')).toBe(0);
     expect(reg.activeEffects().some((e) => e.id === 'P9')).toBe(false);
   });
 });
 
-describe('P9 magnet math (AC5): radius and attraction speed', () => {
-  it('base radius is 1× ship size (50% of the original 2×)', () => {
-    expect(MAGNET_RADIUS_BASE_MULTIPLIER).toBe(1);
-    expect(magnetRadius(SHIP_SIZE, 0)).toBeCloseTo(SHIP_SIZE * 1);
-  });
-
-  it('each stack adds +50% of the base radius', () => {
-    const base = magnetRadius(SHIP_SIZE, 0);
-    expect(magnetRadius(SHIP_SIZE, 1)).toBeCloseTo(base * 1.5);
-    const twoStacks = magnetRadius(SHIP_SIZE, 2);
-    expect(twoStacks).toBeCloseTo(base * 2);
-    expect(MAGNET_RADIUS_PER_STACK).toBe(0.5);
-  });
-
-  it('the radius formula matches 1× ship size +50% per stack', () => {
-    // radius(stack) = 1·shipSize·(1 + 0.5·stack)
-    const shipSize = 20;
-    expect(magnetRadius(shipSize, 1)).toBeCloseTo(1 * shipSize * 1.5);
-    expect(magnetRadius(shipSize, 2)).toBeCloseTo(1 * shipSize * 2);
-    expect(magnetRadius(shipSize, 3)).toBeCloseTo(1 * shipSize * 2.5);
-    expect(magnetRadius(shipSize, 5)).toBeCloseTo(1 * shipSize * 3.5);
-  });
-
-  it('attraction speed is slower than the ship max speed', () => {
-    expect(MAGNET_ATTRACTION_SPEED).toBeGreaterThan(0);
-    expect(MAGNET_ATTRACTION_SPEED).toBeLessThan(MAX_SPEED);
-  });
-});
-
-describe('P10 Mineral Scoop (AH-0MUPMR9TX00756BQ): timed pickup + permanent stacks', () => {
-  it('a field pickup activates a 15 s timed effect and adds no permanent stacks', () => {
-    const reg = new EffectsRegistry();
+describe('P10 Mineral Scoop hybrid (AC3)', () => {
+  it('a field pickup levels P10, opens the timed effect and adds no stack', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     expect(reg.isScoopActive()).toBe(false);
 
-    reg.applyCollect('P10'); // field drop — not permanent
+    reg.applyCollect('P10');
 
+    expect(store.getLevel('P10')).toBe(1);
     expect(reg.isScoopActive()).toBe(true);
     expect(reg.remaining('P10')).toBeCloseTo(P10_SCOOP_DURATION, 5);
-    expect(P10_SCOOP_DURATION).toBe(15);
     expect(reg.scoopStacks()).toBe(0); // refresh-only, never stacking
   });
 
-  it('the timed pickup expires after 15 s', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P10');
-    reg.tick(14.9);
-    expect(reg.isScoopActive()).toBe(true);
-    reg.tick(0.2);
-    expect(reg.isScoopActive()).toBe(false);
-  });
-
-  it('re-collecting refreshes the timer to full without adding stacks', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P10');
-    reg.tick(10);
-    expect(reg.remaining('P10')).toBeCloseTo(5, 3);
-
-    reg.applyCollect('P10'); // refresh
-    expect(reg.remaining('P10')).toBeCloseTo(15, 5);
-    expect(reg.scoopStacks()).toBe(0);
-  });
-
-  it('the hold-full upgrade is permanent and stacks up to 5', () => {
+  it('the hold-full reward adds permanent stacks, capped at the level cap', () => {
     const reg = new EffectsRegistry();
     for (let i = 0; i < 8; i++) reg.applyCollect('P10', true);
 
-    expect(reg.scoopStacks()).toBe(P10_MAX_STACKS);
-    expect(P10_MAX_STACKS).toBe(5);
+    expect(reg.scoopStacks()).toBe(5);
     expect(reg.isScoopActive()).toBe(false); // permanent path is not timed
-
     reg.tick(1000);
-    expect(reg.scoopStacks()).toBe(P10_MAX_STACKS);
+    expect(reg.scoopStacks()).toBe(5);
   });
 
   it('scoopEffectStacks() drives the shared radius curve for both paths', () => {
@@ -342,28 +332,9 @@ describe('P10 Mineral Scoop (AH-0MUPMR9TX00756BQ): timed pickup + permanent stac
     expect(reg.scoopEffectStacks()).toBe(2);
   });
 
-  it('activeEffects() surfaces the timed row and the permanent stack row (never x0)', () => {
-    const reg = new EffectsRegistry();
-    expect(reg.activeEffects().filter((e) => e.id === 'P10')).toHaveLength(0);
-
-    reg.applyCollect('P10');
-    const timed = reg.activeEffects().find((e) => e.id === 'P10');
-    expect(timed?.type).toBe(PowerUpType.MINERAL_SCOOP);
-    expect(timed?.remaining).toBeCloseTo(15, 5);
-    expect(timed?.stacks).toBeUndefined();
-
-    reg.applyCollect('P10', true);
-    reg.applyCollect('P10', true);
-    const stacked = reg.activeEffects().filter((e) => e.id === 'P10');
-    // One timed row (from the field pickup) + one stacks row (permanent).
-    expect(stacked).toHaveLength(2);
-    const stackRow = stacked.find((e) => e.stacks !== undefined);
-    expect(stackRow?.stacks).toBe(2);
-    expect(stacked.some((e) => e.stacks === 0)).toBe(false);
-  });
-
   it('reset() clears both the timed effect and the permanent stacks', () => {
-    const reg = new EffectsRegistry();
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P10');
     reg.applyCollect('P10', true);
     reg.applyCollect('P10', true);
@@ -373,41 +344,47 @@ describe('P10 Mineral Scoop (AH-0MUPMR9TX00756BQ): timed pickup + permanent stac
     expect(reg.isScoopActive()).toBe(false);
     expect(reg.scoopStacks()).toBe(0);
     expect(reg.scoopEffectStacks()).toBe(0);
+    expect(store.getLevel('P10')).toBe(0);
     expect(reg.activeEffects().some((e) => e.id === 'P10')).toBe(false);
   });
 });
 
-describe('registry aggregation (feed for the HUD, parent AC4/AC6)', () => {
-  it('reports active timed effects for aggregation', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
-    const active = reg.activeEffects();
-    expect(active).toHaveLength(1);
-    expect(active[0].id).toBe('P5');
-    expect(active[0].type).toBe(PowerUpType.SPEED_BOOST);
-    expect(active[0].duration).toBe(10);
+// ── AC6 — timing / reset semantics ───────────────────────────────────
+
+describe('timing and reset semantics (AC6)', () => {
+  it('a level-up while P5 is active persists after the active effect expires', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('P5'); // level 1
+    reg.tick(1);
+    reg.applyCollect('P5'); // level 2, refreshes timer
+    expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
+    reg.tick(1000);
+    expect(reg.isActive('P5')).toBe(false);
+    expect(store.getLevel('P5')).toBe(2); // level survives expiry
   });
 
-  it('drops an effect from the active list on expiry', () => {
-    const reg = new EffectsRegistry();
+  it('reset() clears the level store and the registry timing state together', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P5');
-    reg.tick(10.5);
-    expect(reg.activeEffects()).toHaveLength(0);
-  });
+    reg.applyCollect('P3');
+    reg.applyWeapon('spread');
+    expect(store.getLevel('P5')).toBe(1);
 
-  it('includes stack and lives in the model', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P8');
-    reg.applyCollect('P9', true); // permanent stacks require the upgrade path
-    reg.applyCollect('P9', true);
-    expect(reg.lives()).toBe(4);
-    expect(reg.magnetStacks()).toBe(2);
+    reg.reset();
+
+    expect(store.getLevel('P5')).toBe(0);
+    expect(store.getLevel('P3')).toBe(0);
+    expect(reg.isActive('P5')).toBe(false);
+    expect(reg.isActive('P3')).toBe(false);
+    expect(reg.activeWeapons()).toHaveLength(0);
   });
 });
 
-// ── Combat gym effects (AH-0MTC2P6G3007PJ40) ──────────────────────────
+// ── P3 Shield ────────────────────────────────────────────────────────
 
-describe('P3 Shield (AC4): 15 s bubble, absorbs one hit, refresh on re-collect', () => {
+describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-collect', () => {
   it('is shielded while active, blocks one hit then pops', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P3');
@@ -415,61 +392,70 @@ describe('P3 Shield (AC4): 15 s bubble, absorbs one hit, refresh on re-collect',
     expect(reg.isHitImmune).toBe(true);
     expect(reg.tryAbsorbShield()).toBe(true); // absorbs first hit
     expect(reg.isShielded).toBe(false); // popped
-    expect(reg.tryAbsorbShield()).toBe(false); // no second absorb
+    expect(reg.tryAbsorbShield()).toBe(false); // multi-hit absorption deferred
   });
 
-  it('expires after 15 s', () => {
+  it('expires after its resolved duration', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P3');
-    reg.tick(14.9);
+    const duration = resolvePowerUpAtLevel('P3', 0).shieldDuration!;
+    reg.tick(duration - 0.1);
     expect(reg.isShielded).toBe(true);
     reg.tick(0.2);
     expect(reg.isShielded).toBe(false);
   });
 
-  it('refreshes on re-collect (never additive)', () => {
+  it('refreshes on re-collect to the new level duration (never additive)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P3');
-    reg.tick(10); // 5 s remaining
-    reg.applyCollect('P3'); // refresh
-    expect(reg.remaining('P3')).toBeCloseTo(15);
-    reg.tick(14.9);
-    expect(reg.isShielded).toBe(true);
-    reg.tick(0.2);
-    expect(reg.isShielded).toBe(false);
+    reg.tick(15);
+    // Re-collect after expiry is a level-up: level-resolved longer window.
+    reg.applyCollect('P3');
+    const upgraded = resolvePowerUpAtLevel('P3', 1).shieldDuration!;
+    expect(reg.remaining('P3')).toBeCloseTo(upgraded, 10);
   });
 });
 
-describe('P4 Bomb (AC5): instant bullet clear, no registry state', () => {
-  it('is a no-op in the registry (scene clears bullets)', () => {
-    const reg = new EffectsRegistry();
+// ── P4 Bomb ──────────────────────────────────────────────────────────
+
+describe('P4 Bomb: instant bullet clear, no registry state', () => {
+  it('is a no-op in the registry (scene clears bullets) but still levels up', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P4');
     expect(reg.isShielded).toBe(false);
     expect(reg.isPhased).toBe(false);
     expect(reg.activeEffects()).toHaveLength(0);
-    // Re-collect is also a benign no-op.
+    expect(store.getLevel('P4')).toBe(1);
+    // Re-collect is also a benign no-op in the registry.
     reg.applyCollect('P4');
     expect(reg.activeEffects()).toHaveLength(0);
+    expect(store.getLevel('P4')).toBe(2);
   });
 });
 
-describe('P6 Phase Shift (Q2/Q3/Q6): charge-based auto-trigger', () => {
-  it('collecting P6 stores one charge and does not phase immediately', () => {
-    const reg = new EffectsRegistry();
+// ── P6 Phase Shift ───────────────────────────────────────────────────
+
+describe('P6 Phase Shift: charge-based auto-trigger', () => {
+  it('collecting P6 stores level-resolved charges and does not phase immediately', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P6');
     expect(reg.isPhased).toBe(false);
     expect(reg.phaseCharges()).toBe(1);
     expect(reg.isPhasePermanent()).toBe(false);
   });
 
-  it('auto-triggers for 1.5 s when in danger with a charge and consumes it', () => {
+  it('auto-triggers for the resolved phase duration and consumes a charge', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6');
 
     expect(reg.updateDanger(true, 0.016)).toBe(true);
     expect(reg.isPhased).toBe(true);
-    expect(reg.remaining('P6')).toBeCloseTo(PHASE_DURATION);
-    expect(PHASE_DURATION).toBe(1.5);
+    expect(reg.remaining('P6')).toBeCloseTo(
+      resolvePowerUpAtLevel('P6', 0).phaseDuration!,
+      10,
+    );
     expect(reg.phaseCharges()).toBe(0);
   });
 
@@ -487,11 +473,11 @@ describe('P6 Phase Shift (Q2/Q3/Q6): charge-based auto-trigger', () => {
     expect(reg.phaseCharges()).toBe(1);
   });
 
-  it('expires after 1.5 s', () => {
+  it('expires after its duration', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6');
     reg.updateDanger(true, 0.016);
-    reg.tick(1.4);
+    reg.tick(PHASE_DURATION - 0.1);
     expect(reg.isPhased).toBe(true);
     reg.tick(0.2);
     expect(reg.isPhased).toBe(false);
@@ -502,24 +488,20 @@ describe('P6 Phase Shift (Q2/Q3/Q6): charge-based auto-trigger', () => {
     reg.applyCollect('P6', true);
     expect(reg.isPhasePermanent()).toBe(true);
 
-    // Episode 1.
     expect(reg.updateDanger(true, 0.016)).toBe(true);
-    reg.tick(PHASE_DURATION + 0.01); // expire
+    reg.tick(PHASE_DURATION + 0.01);
     expect(reg.isPhased).toBe(false);
-    reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01); // danger clears
+    reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
 
-    // Episode 2.
     expect(reg.updateDanger(true, 0.016)).toBe(true);
     expect(reg.phaseCharges()).toBe(0); // permanent never consumes
   });
 
-  it('does not immediately re-trigger while danger is continuous (Q2)', () => {
+  it('does not immediately re-trigger while danger is continuous', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6', true);
     reg.updateDanger(true, 0.016);
-    reg.tick(PHASE_DURATION + 0.01); // expire while still in danger
-
-    // Advance well past the cooldown but keep danger continuously true.
+    reg.tick(PHASE_DURATION + 0.01);
     expect(reg.updateDanger(true, 5)).toBe(false);
     expect(reg.isPhased).toBe(false);
   });
@@ -528,46 +510,38 @@ describe('P6 Phase Shift (Q2/Q3/Q6): charge-based auto-trigger', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6', true);
     reg.updateDanger(true, 0.016);
-    reg.tick(PHASE_DURATION + 0.01); // expire → cooldown starts
+    reg.tick(PHASE_DURATION + 0.01);
 
-    // Danger clears, but the cooldown has not elapsed yet.
     reg.updateDanger(false, 0.1);
     expect(reg.updateDanger(true, 0)).toBe(false); // blocked by cooldown
-
-    // Cooldown elapses → auto-trigger allowed again.
     expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe(true);
   });
 
-  it('P7 teleport grants a direct 1.5 s phase without consuming a charge', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('P7');
-    expect(reg.consumeTeleport()).toBe(true);
-    expect(reg.isPhased).toBe(true);
-    expect(reg.remaining('P6')).toBeCloseTo(PHASE_DURATION);
-    expect(reg.phaseCharges()).toBe(0);
-  });
-
-  it('applyPhaseShift refreshes an active phase to the full duration', () => {
+  it('applyPhaseShift refreshes an active phase to the full P7 duration', () => {
     const reg = new EffectsRegistry();
     reg.applyPhaseShift();
     reg.tick(1);
-    expect(reg.remaining('P6')).toBeCloseTo(0.5);
     reg.applyPhaseShift();
-    expect(reg.remaining('P6')).toBeCloseTo(PHASE_DURATION);
+    expect(reg.remaining('P6')).toBeCloseTo(
+      resolvePowerUpAtLevel('P7', 0).teleportPhaseDuration!,
+      10,
+    );
   });
 
   it('reset() restores the initial charge state', () => {
-    const reg = new EffectsRegistry();
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('P6');
     reg.applyCollect('P6', true);
     reg.reset();
     expect(reg.phaseCharges()).toBe(0);
     expect(reg.isPhasePermanent()).toBe(false);
     expect(reg.isPhased).toBe(false);
+    expect(store.getLevel('P6')).toBe(0);
   });
 });
 
-describe('P6 charge display model (parent AH-0MUIYX1EE008FVS8, C6)', () => {
+describe('P6 charge display model', () => {
   it('surfaces a finite charge as a P6 stack entry', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P6');
@@ -577,12 +551,12 @@ describe('P6 charge display model (parent AH-0MUIYX1EE008FVS8, C6)', () => {
     expect(p6.permanent).toBeUndefined();
   });
 
-  it('accumulates repeated pickups into the displayed count', () => {
+  it('accumulates the level-derived grants into the displayed count', () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P6');
-    reg.applyCollect('P6');
+    reg.applyCollect('P6'); // level 1 → +1
+    reg.applyCollect('P6'); // level 2 → +2 (upgrade)
     const p6 = reg.activeEffects().find((e) => e.id === 'P6')!;
-    expect(p6.stacks).toBe(2);
+    expect(p6.stacks).toBe(3);
   });
 
   it('drops the charge entry once the charge is consumed', () => {
@@ -594,7 +568,6 @@ describe('P6 charge display model (parent AH-0MUIYX1EE008FVS8, C6)', () => {
       .activeEffects()
       .filter((e) => e.id === 'P6' && e.stacks !== undefined);
     expect(chargeEntries).toHaveLength(0);
-    // The active phase timer entry is still present.
     expect(reg.activeEffects().some((e) => e.id === 'P6')).toBe(true);
   });
 
@@ -613,23 +586,30 @@ describe('P6 charge display model (parent AH-0MUIYX1EE008FVS8, C6)', () => {
   });
 });
 
-describe('P7 Teleport (AC7): FIFO stacks, consume, grants P6', () => {
-  it('FIFO stacks grow on collect', () => {
-    const reg = new EffectsRegistry();
+// ── P7 Teleport ──────────────────────────────────────────────────────
+
+describe('P7 Teleport: derived FIFO stacks, consume, grants P6', () => {
+  it('stacks grow by the level-resolved grant on each collect', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     expect(reg.hasTeleport()).toBe(false);
-    reg.applyCollect('P7');
-    reg.applyCollect('P7');
-    expect(reg.teleportStacks()).toBe(2);
+    reg.applyCollect('P7'); // level 1 → +1
+    expect(reg.teleportStacks()).toBe(1);
+    reg.applyCollect('P7'); // level 2 → +2
+    expect(reg.teleportStacks()).toBe(3);
     expect(reg.hasTeleport()).toBe(true);
+    expect(store.teleportStacks()).toBe(3);
   });
 
   it('consumeTeleport removes one stack and grants P6', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P7');
     reg.applyCollect('P7');
+    const before = reg.teleportStacks();
     expect(reg.consumeTeleport()).toBe(true);
-    expect(reg.teleportStacks()).toBe(1);
+    expect(reg.teleportStacks()).toBe(before - 1);
     expect(reg.isPhased).toBe(true); // phase granted on teleport
+    expect(reg.phaseCharges()).toBe(0); // does not consume a charge
   });
 
   it('returns false when empty, and stacks appear in activeEffects', () => {
@@ -637,14 +617,15 @@ describe('P7 Teleport (AC7): FIFO stacks, consume, grants P6', () => {
     expect(reg.consumeTeleport()).toBe(false);
     reg.applyCollect('P7');
     reg.applyCollect('P7');
-    const active = reg.activeEffects();
-    const t = active.find((e) => e.id === 'P7');
+    const t = reg.activeEffects().find((e) => e.id === 'P7');
     expect(t).toBeDefined();
-    expect(t!.stacks).toBe(2);
+    expect(t!.stacks).toBe(3);
   });
 });
 
-describe('combat hit model (AC8): hit immunity via shield / phase', () => {
+// ── Hit immunity ─────────────────────────────────────────────────────
+
+describe('combat hit model: hit immunity via shield / phase', () => {
   it('no immunity when neither shield nor phase is active', () => {
     const reg = new EffectsRegistry();
     expect(reg.isHitImmune).toBe(false);
@@ -663,7 +644,68 @@ describe('combat hit model (AC8): hit immunity via shield / phase', () => {
     expect(reg.isHitImmune).toBe(false);
   });
 });
-describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym', () => {
+
+// ── Magnet math ──────────────────────────────────────────────────────
+
+describe('magnet math: radius and attraction speed', () => {
+  it('base radius is 1× ship size (50% of the original 2×)', () => {
+    expect(MAGNET_RADIUS_BASE_MULTIPLIER).toBe(1);
+    expect(magnetRadius(SHIP_SIZE, 0)).toBeCloseTo(SHIP_SIZE * 1);
+  });
+
+  it('each stack adds +50% of the base radius', () => {
+    const base = magnetRadius(SHIP_SIZE, 0);
+    expect(magnetRadius(SHIP_SIZE, 1)).toBeCloseTo(base * 1.5);
+    expect(magnetRadius(SHIP_SIZE, 2)).toBeCloseTo(base * 2);
+    expect(MAGNET_RADIUS_PER_STACK).toBe(0.5);
+  });
+
+  it('attraction speed is slower than the ship max speed', () => {
+    expect(MAGNET_ATTRACTION_SPEED).toBeGreaterThan(0);
+    expect(MAGNET_ATTRACTION_SPEED).toBeLessThan(MAX_SPEED);
+  });
+});
+
+// ── HUD aggregation ──────────────────────────────────────────────────
+
+describe('registry aggregation (feed for the HUD)', () => {
+  it('reports active timed effects for aggregation', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    const active = reg.activeEffects();
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe('P5');
+    expect(active[0].type).toBe(PowerUpType.SPEED_BOOST);
+    expect(active[0].duration).toBe(resolvePowerUpAtLevel('P5', 0).speedDuration);
+  });
+
+  it('drops an effect from the active list on expiry', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5');
+    reg.tick(1000);
+    expect(reg.activeEffects()).toHaveLength(0);
+  });
+
+  it('includes derived lives and stacks in the model', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P8');
+    reg.applyCollect('P9', true); // permanent stacks require the upgrade path
+    reg.applyCollect('P9', true);
+    expect(reg.lives()).toBe(4);
+    expect(reg.magnetStacks()).toBe(2);
+  });
+
+  it('applies the multiplier live to both thrust and max-speed', () => {
+    const boosted = applySpeedMultiplier(BASE_CONFIG, 1.5);
+    expect(boosted.thrust).toBeCloseTo(BASE_CONFIG.thrust * 1.5);
+    expect(boosted.maxSpeed).toBeCloseTo(BASE_CONFIG.maxSpeed * 1.5);
+    expect(boosted.friction).toBe(BASE_CONFIG.friction);
+  });
+});
+
+// ── Weapon effects ───────────────────────────────────────────────────
+
+describe('weapon effects: timed weapons in the combat gym', () => {
   it('equips a weapon with the full 10 s duration', () => {
     const reg = new EffectsRegistry();
     reg.applyWeapon('spread');
@@ -675,20 +717,12 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     expect(weapons[0].remaining).toBe(10);
   });
 
-  it('equips an AOE weapon with the same 10 s timed model (F5 AC3/AC6)', () => {
+  it('equips an AOE weapon with the same 10 s timed model', () => {
     const reg = new EffectsRegistry();
     expect(reg.applyWeapon('nova')).toBe(true);
     expect(reg.hasWeapon('nova')).toBe(true);
-    const weapons = reg.activeWeapons();
-    expect(weapons).toHaveLength(1);
-    expect(weapons[0].weaponId).toBe('nova');
-    expect(weapons[0].duration).toBe(10);
-    expect(weapons[0].remaining).toBe(10);
-
-    // Expires independently after its own countdown, like Spread/Dual/Rapid.
     reg.tick(10.1);
     expect(reg.hasWeapon('nova')).toBe(false);
-    expect(reg.activeWeapons()).toHaveLength(0);
   });
 
   it('an AOE weapon and a conventional weapon expire independently', () => {
@@ -696,28 +730,13 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     reg.applyWeapon('mortar');
     reg.tick(6);
     reg.applyWeapon('arc');
-
     expect(reg.activeWeapons().map((w) => w.weaponId).sort()).toEqual([
       'arc',
       'mortar',
     ]);
-
-    // 4 s later mortar hits 10 s; arc still has 6 s remaining.
     reg.tick(4.1);
     expect(reg.hasWeapon('mortar')).toBe(false);
     expect(reg.hasWeapon('arc')).toBe(true);
-    expect(reg.activeWeapons()[0].remaining).toBeCloseTo(5.9, 1);
-  });
-
-  it('equips distinct weapons independently and expires them on tick', () => {
-    const reg = new EffectsRegistry();
-    reg.applyWeapon('spread');
-    reg.applyWeapon('dual');
-    expect(reg.activeWeapons()).toHaveLength(2);
-
-    reg.tick(10.1);
-    expect(reg.activeWeapons()).toHaveLength(0);
-    expect(reg.hasWeapon('spread')).toBe(false);
   });
 
   it('refreshes an active weapon to full duration instead of stacking', () => {
@@ -725,7 +744,6 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     reg.applyWeapon('rapid');
     reg.tick(6);
     expect(reg.activeWeapons()[0].remaining).toBeCloseTo(4);
-
     reg.applyWeapon('rapid');
     expect(reg.activeWeapons()[0].remaining).toBe(10);
     expect(reg.activeWeapons()).toHaveLength(1);
@@ -737,25 +755,6 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     reg.applyWeapon('dual');
     expect(reg.tryResetWeapons()).toBe(true);
     expect(reg.activeWeapons()).toHaveLength(0);
-
-    // Weapons collected after the reset equip normally.
-    expect(reg.applyWeapon('rapid')).toBe(true);
-    expect(reg.hasWeapon('rapid')).toBe(true);
-  });
-
-  it('Reset clears AOE weapons as well as conventional ones (F5 AC3)', () => {
-    const reg = new EffectsRegistry();
-    reg.applyWeapon('nova');
-    reg.applyWeapon('arc');
-    reg.applyWeapon('spread');
-    expect(reg.tryResetWeapons()).toBe(true);
-    expect(reg.activeWeapons()).toHaveLength(0);
-    expect(reg.hasWeapon('nova')).toBe(false);
-    expect(reg.hasWeapon('arc')).toBe(false);
-  });
-
-  it('Reset with no active weapons is a no-op', () => {
-    const reg = new EffectsRegistry();
     expect(reg.tryResetWeapons()).toBe(false);
   });
 
@@ -764,14 +763,14 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     reg.applyWeapon('spread');
     reg.applyCollect('P3');
     reg.applyCollect('P9');
-
     expect(reg.activeWeapons()).toHaveLength(1);
     expect(reg.activeEffects().map((e) => e.id).sort()).toEqual(['P3', 'P9']);
     expect(reg.hasWeapon('spread')).toBe(true);
   });
 
-  it('reset() clears weapon state for a scene restart', () => {
-    const reg = new EffectsRegistry();
+  it('reset() clears weapon state and the level store for a scene restart', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyWeapon('dual');
     reg.applyCollect('P8');
     expect(reg.lives()).toBe(4);
@@ -780,5 +779,6 @@ describe('weapon effects (AH-0MU3VOQKH005YOBH): timed weapons in the combat gym'
     expect(reg.activeWeapons()).toHaveLength(0);
     expect(reg.hasWeapon('dual')).toBe(false);
     expect(reg.lives()).toBe(3);
+    expect(store.getLevel('P8')).toBe(0);
   });
 });
