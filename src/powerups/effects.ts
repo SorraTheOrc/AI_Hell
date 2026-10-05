@@ -11,7 +11,10 @@
  *   for 10 s (both use the same 1.5× multiplier); re-collecting refreshes
  *   the timer to full duration (never additive).
  * - **P8 Extra Life** — immediate: +1 life (starts 3, cap 5).
- * - **P9 Magnet** — permanent stack (cap 5); radius 1× ship size +50%/stack.
+ * - **P9 Magnet** — attracts nearby drops: a timed 15 s effect when
+ *   collected as a field drop (refresh-only, never stacking), or a
+ *   permanent stacking effect (cap 5) when granted as a hold-full reward.
+ *   Shares the P9/P10 attraction radius curve (base 1× ship size, +50%/stack).
  * - **P10 Mineral Scoop** — attracts nearby minerals: a timed 15 s effect
  *   when collected as a field drop (refresh-only, never stacking), or a
  *   permanent stacking effect (cap 5) when granted as a hold-full reward.
@@ -77,6 +80,9 @@ export const P9_MAX_STACKS = 5;
 
 /** Hard cap on permanent mineral-scoop stacks (P10). */
 export const P10_MAX_STACKS = 5;
+
+/** Duration in seconds of the P9 field-pickup drop attraction. */
+export const P9_MAGNET_DURATION = 15;
 
 /** Duration in seconds of the P10 field-pickup mineral attraction. */
 export const P10_SCOOP_DURATION = 15;
@@ -253,8 +259,25 @@ export class EffectsRegistry {
         }
         break;
       case PowerUpType.MAGNET:
-        if (this._magnetStacks < P9_MAX_STACKS) {
-          this._magnetStacks += 1;
+        // P9 is a hybrid: a field pickup grants a timed, refresh-only
+        // attraction, while the hold-full reward grants permanent stacks.
+        if (permanent) {
+          if (this._magnetStacks < P9_MAX_STACKS) {
+            this._magnetStacks += 1;
+          }
+        } else {
+          const magnet = this._timed.get(id);
+          if (magnet) {
+            // Refresh to full duration — never additive, never stacking.
+            magnet.remaining = magnet.duration;
+          } else {
+            this._timed.set(id, {
+              id,
+              type: PowerUpType.MAGNET,
+              duration: P9_MAGNET_DURATION,
+              remaining: P9_MAGNET_DURATION,
+            });
+          }
         }
         break;
       case PowerUpType.MINERAL_SCOOP:
@@ -484,6 +507,23 @@ export class EffectsRegistry {
     return this._magnetStacks;
   }
 
+  /** Whether any magnet effect (timed or permanent) is currently active. */
+  isMagnetActive(): boolean {
+    return this._timed.has('P9') || this._magnetStacks > 0;
+  }
+
+  /**
+   * Effective magnet stacks driving the attraction radius: the permanent
+   * stack count when any upgrade was chosen, otherwise one stack while the
+   * timed field pickup is active (mirroring "one magnet\'s worth" of pull),
+   * otherwise zero (no attraction). The shared helper consumes this so the
+   * timed and permanent paths use the exact same radius curve.
+   */
+  magnetEffectStacks(): number {
+    if (this._magnetStacks > 0) return this._magnetStacks;
+    return this._timed.has('P9') ? 1 : 0;
+  }
+
   /** Current permanent mineral-scoop stack count (P10); caps at 5. */
   scoopStacks(): number {
     return this._scoopStacks;
@@ -570,6 +610,9 @@ export class EffectsRegistry {
         remaining: effect.remaining,
       });
     }
+    // P9 permanent upgrades render as a stack row; the timed field pickup
+    // is already surfaced from `_timed` above. A zero stack count is never
+    // surfaced (no misleading "x0").
     if (this._magnetStacks > 0) {
       result.push({
         id: 'P9' as PowerUpId,

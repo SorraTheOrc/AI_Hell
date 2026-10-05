@@ -108,9 +108,9 @@ describe('HUD AC1: aggregated model for timed power-ups', () => {
 describe('HUD AC2: stack counts for stackable types', () => {
   it('shows the P9 magnet stack count as a pickup count', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
@@ -125,15 +125,29 @@ describe('HUD AC2: stack counts for stackable types', () => {
 
   it('increments the count as more stacks are collected', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x1');
 
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x3');
+    destroy(game);
+  });
+
+  it('shows a timed P9 field pickup as remaining seconds, not a stack count', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P9'); // field pickup → 15 s timed effect
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const rows = hud.getRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('P9');
+    expect(rows[0].name).toBe('Magnet');
+    expect(rows[0].value).toBe('15s');
     destroy(game);
   });
 });
@@ -262,8 +276,8 @@ describe('HUD AC5: reacts to registry changes', () => {
     expect(hud.getRows()).toHaveLength(0);
 
     reg.applyCollect('P5');
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
     hud.refresh();
     const rows = hud.getRows();
     expect(rows).toHaveLength(2); // P5 timed row + P9 stack row

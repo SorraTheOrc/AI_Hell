@@ -7,6 +7,7 @@ import {
   P8_LIVES_START,
   P8_LIVES_MAX,
   P9_MAX_STACKS,
+  P9_MAGNET_DURATION,
   P10_MAX_STACKS,
   P10_SCOOP_DURATION,
   applySpeedMultiplier,
@@ -161,37 +162,96 @@ describe('P8 Extra Life (AC3): +1 life, start 3, cap 5', () => {
   });
 });
 
-describe('P9 Magnet (AC4): one permanent stack per pickup, cap 5', () => {
-  it('starts at 0 stacks', () => {
+describe('P9 Magnet (AC4): field pickup is timed, upgrade is permanent stacking', () => {
+  it('field pickup (no flag) activates a 15 s timed effect and adds no permanent stacks', () => {
     const reg = new EffectsRegistry();
+    expect(reg.isMagnetActive()).toBe(false);
+
+    reg.applyCollect('P9'); // field drop — not permanent
+
+    expect(reg.isMagnetActive()).toBe(true);
+    expect(reg.remaining('P9')).toBeCloseTo(P9_MAGNET_DURATION, 5);
+    expect(P9_MAGNET_DURATION).toBe(15);
+    expect(reg.magnetStacks()).toBe(0); // refresh-only, never stacking
+  });
+
+  it('the timed pickup expires after 15 s', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P9');
+    reg.tick(14.9);
+    expect(reg.isMagnetActive()).toBe(true);
+    reg.tick(0.2);
+    expect(reg.isMagnetActive()).toBe(false);
+  });
+
+  it('re-collecting refreshes the timer to full without adding stacks', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P9');
+    reg.tick(10);
+    expect(reg.remaining('P9')).toBeCloseTo(5, 3);
+
+    reg.applyCollect('P9'); // refresh
+    expect(reg.remaining('P9')).toBeCloseTo(15, 5);
     expect(reg.magnetStacks()).toBe(0);
   });
 
-  it('adds one stack per pickup', () => {
+  it('the hold-full upgrade is permanent and stacks up to 5', () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9');
-    expect(reg.magnetStacks()).toBe(1);
-    reg.applyCollect('P9');
-    expect(reg.magnetStacks()).toBe(2);
-    reg.applyCollect('P9');
-    expect(reg.magnetStacks()).toBe(3);
-  });
+    for (let i = 0; i < 8; i++) reg.applyCollect('P9', true);
 
-  it('caps at 5 stacks; pickups beyond 5 are no-ops', () => {
-    const reg = new EffectsRegistry();
-    for (let i = 0; i < 8; i++) {
-      reg.applyCollect('P9');
-    }
     expect(reg.magnetStacks()).toBe(P9_MAX_STACKS);
     expect(P9_MAX_STACKS).toBe(5);
+    expect(reg.isMagnetActive()).toBe(true); // permanent path is active
+
+    reg.tick(1000);
+    expect(reg.magnetStacks()).toBe(P9_MAX_STACKS);
   });
 
-  it('stacks are permanent — ticking does not decay them', () => {
+  it('magnetEffectStacks() drives the shared radius curve for both paths', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.magnetEffectStacks()).toBe(0); // inactive → no pull
+
+    reg.applyCollect('P9'); // timed → one stack\'s worth of pull
+    expect(reg.magnetEffectStacks()).toBe(1);
+
+    reg.applyCollect('P9', true); // permanent stack → overrides to real stacks
+    expect(reg.magnetEffectStacks()).toBe(1);
+    reg.applyCollect('P9', true);
+    expect(reg.magnetEffectStacks()).toBe(2);
+  });
+
+  it('activeEffects() surfaces the timed row and the permanent stack row (never x0)', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.activeEffects().filter((e) => e.id === 'P9')).toHaveLength(0);
+
+    reg.applyCollect('P9');
+    const timed = reg.activeEffects().find((e) => e.id === 'P9');
+    expect(timed?.type).toBe(PowerUpType.MAGNET);
+    expect(timed?.remaining).toBeCloseTo(15, 5);
+    expect(timed?.stacks).toBeUndefined();
+
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
+    const stacked = reg.activeEffects().filter((e) => e.id === 'P9');
+    // One timed row (from the field pickup) + one stack row (permanent).
+    expect(stacked).toHaveLength(2);
+    const stackRow = stacked.find((e) => e.stacks !== undefined);
+    expect(stackRow?.stacks).toBe(2);
+    expect(stacked.some((e) => e.stacks === 0)).toBe(false);
+  });
+
+  it('reset() clears both the timed effect and the permanent stacks', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P9');
-    reg.applyCollect('P9');
-    reg.tick(100);
-    expect(reg.magnetStacks()).toBe(2);
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
+
+    reg.reset();
+
+    expect(reg.isMagnetActive()).toBe(false);
+    expect(reg.magnetStacks()).toBe(0);
+    expect(reg.magnetEffectStacks()).toBe(0);
+    expect(reg.activeEffects().some((e) => e.id === 'P9')).toBe(false);
   });
 });
 
@@ -338,8 +398,8 @@ describe('registry aggregation (feed for the HUD, parent AC4/AC6)', () => {
   it('includes stack and lives in the model', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P8');
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true); // permanent stacks require the upgrade path
+    reg.applyCollect('P9', true);
     expect(reg.lives()).toBe(4);
     expect(reg.magnetStacks()).toBe(2);
   });

@@ -3,7 +3,8 @@
  *
  * - **P5 Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
  * - **P8 Extra Life** — +1 life immediately (start 3, cap 5)
- * - **P9 Magnet** — permanent stacking effect (cap 5)
+ * - **P9 Magnet** — attracts nearby drops toward the ship; a 15 s
+ *   refreshing field pickup or a permanent stacking upgrade (cap 5)
  * - **P10 Mineral Scoop** — attracts minerals toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
  * - **P3 Shield** — 15 s bubble, absorbs one hit (timed)
@@ -154,8 +155,10 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P9: {
     id: 'P9',
     name: 'Magnet',
-    description: 'Permanently pulls nearby drops toward the ship (stacks up to 5).',
+    description:
+      'Pulls nearby drops toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
     type: PowerUpType.MAGNET,
+    duration: 15,
     maxStacks: 5,
   },
   P10: {

@@ -2680,13 +2680,14 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     };
 
     // Collect one of each effect category: timed (P5 speed, P8 life,
-    // P3 shield, P6 phase), permanent stacks (P9 magnet, P7 teleport) and a
-    // weapon pickup ('spread').
+    // P3 shield, P6 phase, P9 magnet field-pickup), permanent stacks (P9
+    // magnet upgrade, P7 teleport) and a weapon pickup ('spread').
     collect('P5');
     collect('P8');
     collect('P3');
     collect('P6');
     collect('P9');
+    registry.applyCollect('P9', true); // permanent magnet upgrade
     collect('P7');
     collect('spread');
 
@@ -2695,6 +2696,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isShielded).toBe(true);
     expect(registry.phaseCharges()).toBe(1);
     expect(registry.lives()).toBe(4);
+    expect(registry.isMagnetActive()).toBe(true);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);
     expect(registry.activeWeapons().length).toBeGreaterThan(0);
@@ -2719,7 +2721,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(restartedRegistry.isPhased).toBe(false);
     expect(restartedRegistry.phaseCharges()).toBe(0);
     expect(restartedRegistry.speedMultiplier()).toBe(1);
+    expect(restartedRegistry.isMagnetActive()).toBe(false);
     expect(restartedRegistry.magnetStacks()).toBe(0);
+    expect(restartedRegistry.magnetEffectStacks()).toBe(0);
     expect(restartedRegistry.hasTeleport()).toBe(false);
     expect(restartedRegistry.activeWeapons()).toHaveLength(0);
     expect(restartedRegistry.lives()).toBe(3);

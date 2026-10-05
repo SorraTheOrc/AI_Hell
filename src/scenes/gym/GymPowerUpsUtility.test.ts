@@ -200,7 +200,8 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     scene.spawnDrop('P9', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
-    expect(registry.magnetStacks()).toBe(1);
+    // Field pickup is timed: effective stack count is 1.
+    expect(registry.magnetEffectStacks()).toBe(1);
 
     // Place a fresh P5 drop some distance away (inside the 1-stack magnet
     // radius of 1×20×(1+0.5) = 30 px; use a drop 20 px away and step the
@@ -222,7 +223,8 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     scene.spawnDrop('P9', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
-    expect(registry.magnetStacks()).toBe(1);
+    // Field pickup is timed: effective stack count is 1.
+    expect(registry.magnetEffectStacks()).toBe(1);
 
     // Place a P5 drop 20 px right of the ship (inside the 30 px 1-stack radius).
     const drop = scene.spawnDrop('P5', 500, 270);

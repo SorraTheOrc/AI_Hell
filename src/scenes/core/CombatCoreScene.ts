@@ -609,13 +609,15 @@ export class CombatCoreScene<
 
   /**
    * Applies the P9 magnet pull (shared range/speed) to every collectible
-   * drop within range, using the scene's active magnet stacks.
+   * drop within range, using the scene's effective magnet stacks
+   * (permanent stacking or timed field-pickup). The hybrid accessor
+   * consumes the effective count so both paths drive the same radius curve.
    */
   protected _applyDropMagnet(drops: TDrop[], dt: number): void {
     applyDropMagnet(
       drops,
       this.getPlayer(),
-      this.getEffectsRegistry().magnetStacks(),
+      this.getEffectsRegistry().magnetEffectStacks(),
       dt,
     );
   }

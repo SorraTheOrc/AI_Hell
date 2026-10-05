@@ -2101,12 +2101,13 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   it('AC2 — collecting applies the effect through the shared EffectsRegistry', async () => {
     const scene = await boot(layer('P9', CLEAR));
     const player = scene.getPlayer()!;
-    expect(scene.getEffectsRegistry().magnetStacks()).toBe(0);
+    expect(scene.getEffectsRegistry().magnetEffectStacks()).toBe(0);
 
     scene.spawnPowerUpDrop('P9', player.x, player.y);
     scene.tick(0.1);
 
-    expect(scene.getEffectsRegistry().magnetStacks()).toBe(1);
+    // Field pickup is now timed: 1 effective stack (one-stack radius).
+    expect(scene.getEffectsRegistry().magnetEffectStacks()).toBe(1);
   });
 
   it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
@@ -2162,16 +2163,17 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getEffectsRegistry().lives()).toBe(4);
   });
 
-  it('AC4 — P9 stacks (capped at five)', async () => {
+  it('AC4 — P9 permanent stacks capped at five', async () => {
+    // Field pickups no longer stack; permanent stacks require the upgrade path.
+    // Test the permanent path directly on the registry.
     const scene = await boot(layer('P9', CLEAR));
-    const player = scene.getPlayer()!;
-
-    for (let i = 0; i < 6; i += 1) {
-      scene.spawnPowerUpDrop('P9', player.x, player.y);
-      scene.tick(0.1);
+    const reg = scene.getEffectsRegistry();
+    for (let i = 0; i < 8; i += 1) {
+      reg.applyCollect('P9', true);
     }
 
-    expect(scene.getEffectsRegistry().magnetStacks()).toBe(5);
+    expect(reg.magnetStacks()).toBe(5);
+    expect(reg.magnetEffectStacks()).toBe(5);
   });
 
   it('AC4 — P4 clears on-screen enemy bullets without damaging enemies', async () => {
