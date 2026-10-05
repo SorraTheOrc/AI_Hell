@@ -328,7 +328,10 @@ export class GymBoss extends GymFormationScene<
   // ── Damage button handler ───────────────────────────────────────
 
   /**
-   * Deals damage to the Boss, advancing the health bar through phases.
+   * Deals one hit of damage to the Boss. Reward gating mirrors
+   * `PlayScene._damageBoss()` (AH-0MUUJEB1D000GPX0): the next phase's
+   * minions are summoned only when the hit depletes the current phase
+   * (`phaseAdvanced`, GDD §4.3).
    */
   damageBoss(): void {
     const boss = this.formationBoss;

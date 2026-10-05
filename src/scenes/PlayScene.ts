@@ -1245,9 +1245,12 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Handles a player-bullet hit on the boss: consumes a phase, awards
-   * the phase score, summons that phase's minions, and completes the run
-   * as a victory when the boss dies (GDD §4.5).
+   * Handles a single player hit on the boss (bullet or AOE). Applies one
+   * hit; score and minions are gated on phase depletion via
+   * `Boss.takeDamage()`'s `phaseAdvanced` signal (AH-0MUUJEB1D000GPX0):
+   * only a depleting hit awards the phase score and summons the next
+   * phase's minions. The run is completed as a victory when the boss dies
+   * (GDD §4.5).
    */
   private _damageBoss(): void {
     const boss = this.boss;
@@ -1264,7 +1267,8 @@ export class PlayScene extends CombatScene<
       return;
     }
 
-    // Phase advanced: award the destroyed phase's points (GDD §4.5).
+    // Phase depleted: award the destroyed phase's points (GDD §4.5) and
+    // summon the next phase's minions. Partial-phase hits do neither.
     if (result.phaseAdvanced) {
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this._spawnMinions(boss.getPhaseNumber());
