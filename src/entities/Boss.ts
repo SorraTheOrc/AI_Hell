@@ -132,7 +132,7 @@ export enum BossPhase {
 /** Total number of health phases. */
 export const BOSS_PHASE_COUNT = 4;
 /** Number of hits required to deplete one boss phase. */
-export const BOSS_HITS_PER_PHASE = 10;
+export const BOSS_HIT_POINTS_PER_PHASE = 10;
 
 /** Health bar width in px. */
 export const BOSS_HEALTH_BAR_WIDTH = 300;
@@ -218,7 +218,7 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
-  private _totalHp = BOSS_PHASE_COUNT * BOSS_HITS_PER_PHASE;  // 40 total hits
+  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 40 total hits
   private _currentHp!: number;
   private _telegraphState: TelegraphState = TelegraphState.Idle;
   private _telegraphStartTime = 0;
@@ -271,7 +271,7 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics = scene.add.graphics();
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
-    this._totalHp = BOSS_PHASE_COUNT * BOSS_HITS_PER_PHASE;
+    this._totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
     this._currentHp = this._totalHp;
     this.add(this.healthBarGraphics);
 
@@ -673,7 +673,7 @@ export class Boss extends Phaser.GameObjects.Container {
    * Applies damage: decrements HP by one hit. Returns an object indicating
    * whether the boss was destroyed, whether the phase advanced, and remaining HP.
    *
-   * Each of the 4 phases requires BOSS_HITS_PER_PHASE hits to deplete.
+   * Each of the 4 phases requires BOSS_HIT_POINTS_PER_PHASE hits to deplete.
    * A non-depleting hit leaves the phase unchanged and returns
    * `{ destroyed: false, phaseAdvanced: false }`.
    * A depleting hit advances the phase (or destroys the boss after phase 4)
@@ -693,7 +693,7 @@ export class Boss extends Phaser.GameObjects.Container {
     }
 
     // Check if the current phase just depleted.
-    const phaseHpRemainder = this._currentHp % BOSS_HITS_PER_PHASE;
+    const phaseHpRemainder = this._currentHp % BOSS_HIT_POINTS_PER_PHASE;
     const phaseAdvanced = phaseHpRemainder === 0;
 
     if (phaseAdvanced) {

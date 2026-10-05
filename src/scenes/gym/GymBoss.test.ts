@@ -29,7 +29,7 @@ import {
 import { GymFormationScene } from './core/GymFormationScene';
 import {
   BOSS_PHASE_COUNT,
-  BOSS_HITS_PER_PHASE,
+  BOSS_HIT_POINTS_PER_PHASE,
   BOSS_TELEGRAPH_MS,
   BOSS_COLOR,
   BOSS_RADIUS,
@@ -55,9 +55,9 @@ function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text
   return found!;
 }
 
-/** Depletes the boss's current phase (BOSS_HITS_PER_PHASE hits). */
+/** Depletes the boss's current phase (BOSS_HIT_POINTS_PER_PHASE hits). */
 function damagePhase(scene: GymBoss): void {
-  for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) scene.damageBoss();
+  for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) scene.damageBoss();
 }
 
 describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
@@ -177,14 +177,14 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
 
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // Click damage BOSS_HITS_PER_PHASE times per phase to reach phase 4.
-    for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) damageBtn.emit('pointerdown');
+    // Click damage BOSS_HIT_POINTS_PER_PHASE times per phase to reach phase 4.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.getPhaseNumber()).toBe(2);
 
-    for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) damageBtn.emit('pointerdown');
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.getPhaseNumber()).toBe(3);
 
-    for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) damageBtn.emit('pointerdown');
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.getPhaseNumber()).toBe(4);
   });
 
@@ -193,14 +193,14 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const boss = scene.formationBoss;
     const damageBtn = findButton(scene, 'DAMAGE');
 
-    // Damage all 4 phases (BOSS_HITS_PER_PHASE hits each).
+    // Damage all 4 phases (BOSS_HIT_POINTS_PER_PHASE hits each).
     for (let phase = 1; phase <= 3; phase++) {
-      for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) damageBtn.emit('pointerdown');
+      for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     }
     expect(boss.getHealthSegments()).toBe(1);
 
     // Final phase's hits destroy the Boss.
-    for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) damageBtn.emit('pointerdown');
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) damageBtn.emit('pointerdown');
     expect(boss.alive).toBe(false);
     expect(boss.bodyVisible).toBe(false);
   });

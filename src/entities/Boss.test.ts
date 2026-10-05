@@ -13,7 +13,13 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
-import { BOSS_ATTACK_INTERVAL, Boss, playBossSpawnSound } from './Boss';
+import {
+  BOSS_ATTACK_INTERVAL,
+  BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_PHASE_COUNT,
+  Boss,
+  playBossSpawnSound,
+} from './Boss';
 
 class HarnessScene extends Phaser.Scene {
   constructor() {
@@ -254,6 +260,23 @@ describe('Boss — per-phase HP model: 10 hits per phase (AH-0MUTV3J7T006MZ4K)',
       formationOffset: { row: 0, col: 0 },
     });
   }
+
+  // AC1: 10 hits per phase; total HP derives from the phase constants.
+  it('AC1 — total hits to destroy = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+
+    for (let i = 0; i < totalHits - 1; i++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.destroyed).toBe(false);
+    }
+    expect(boss.alive).toBe(true);
+
+    const final = boss.takeDamage() as TakeDamageResult;
+    expect(final.destroyed).toBe(true);
+    expect(boss.alive).toBe(false);
+  });
 
   // AC1: 10 hits per phase
   it('after 9 hits the boss remains in phase 1', async () => {

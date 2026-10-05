@@ -22,7 +22,7 @@ import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
-import { BOSS_HITS_PER_PHASE } from '../entities/Boss';
+import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -192,14 +192,14 @@ function reachBoss(scene: PlayScene): void {
 }
 
 /**
- * Fires `BOSS_HITS_PER_PHASE` player bullets at the boss, one per tick,
+ * Fires `BOSS_HIT_POINTS_PER_PHASE` player bullets at the boss, one per tick,
  * depleting exactly one health phase (AH-0MUTV3J7T006MZ4K).
  */
 function damageBossPhase(
   scene: PlayScene,
   boss: { x: number; y: number },
 ): void {
-  for (let i = 0; i < BOSS_HITS_PER_PHASE; i++) {
+  for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
     scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
     scene.tick(0.016);
   }
@@ -1537,7 +1537,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // One phase requires BOSS_HITS_PER_PHASE player bullets.
+    // One phase requires BOSS_HIT_POINTS_PER_PHASE player bullets.
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
@@ -1572,7 +1572,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(scene.getGameState().score - scoreBefore).toBe(0);
 
     // The 10th (phase-depleting) hit awards the phase score exactly once.
-    for (let i = 1; i < BOSS_HITS_PER_PHASE; i++) {
+    for (let i = 1; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -1585,7 +1585,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HITS_PER_PHASE hits each (40 total).
+    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (40 total).
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -3674,7 +3674,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
   /**
    * Drives the boss through all four phases so the run is won
-   * (BOSS_HITS_PER_PHASE hits per phase, 40 total).
+   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 40 total).
    */
   function defeatBoss(scene: PlayScene): void {
     const boss = scene.getBoss()!;
