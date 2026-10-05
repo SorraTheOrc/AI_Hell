@@ -390,6 +390,8 @@ export class GymWeaponLeveling extends CombatScene<
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
       weaponLevels: this.player?.getWeaponLevels() ?? [],
+      // Offer level-ups for power-ups the player already owns (AH-0MUV5CLVO002ZHS9).
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {

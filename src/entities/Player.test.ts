@@ -1021,6 +1021,56 @@ describe('Player ship entity', () => {
     });
   });
 
+  describe('power-up level store (AH-0MUV5CLVO002ZHS9)', () => {
+    it('collectPowerUp increments the run-scoped level; getPowerUpLevel reads it', async () => {
+      const player = await freshPlayer();
+      expect(player.getPowerUpLevel('P3')).toBe(0);
+
+      expect(player.collectPowerUp('P3')).toBe(1);
+      expect(player.getPowerUpLevel('P3')).toBe(1);
+
+      expect(player.collectPowerUp('P3')).toBe(2);
+      expect(player.getPowerUpLevel('P3')).toBe(2);
+    });
+
+    it('getPowerUpLevels lists every owned power-up with its level (choice context)', async () => {
+      const player = await freshPlayer();
+      expect(player.getPowerUpLevels()).toEqual([]);
+
+      player.collectPowerUp('P3');
+      player.collectPowerUp('P3');
+      player.collectPowerUp('P5');
+
+      expect(player.getPowerUpLevels()).toEqual([
+        { id: 'P3', level: 2 },
+        { id: 'P5', level: 1 },
+      ]);
+    });
+
+    it('a permanent hold-full grant tracks the level and permanent stack (P9)', async () => {
+      const player = await freshPlayer();
+
+      player.collectPowerUp('P9', true);
+      player.collectPowerUp('P9', true);
+
+      expect(player.getPowerUpLevel('P9')).toBe(2);
+      // The derived P9 permanent stacks scale with the level model.
+      expect(player.getPowerUpLevels()).toEqual([{ id: 'P9', level: 2 }]);
+    });
+
+    it('resetPowerUpLevels clears every level (run restart)', async () => {
+      const player = await freshPlayer();
+      player.collectPowerUp('P3');
+      player.collectPowerUp('P6');
+
+      player.resetPowerUpLevels();
+
+      expect(player.getPowerUpLevel('P3')).toBe(0);
+      expect(player.getPowerUpLevel('P6')).toBe(0);
+      expect(player.getPowerUpLevels()).toEqual([]);
+    });
+  });
+
   // ── Phase-locked beat-grid auto-fire (AH-0MUAYB8EH005RJ8B) ──────
 
   /**

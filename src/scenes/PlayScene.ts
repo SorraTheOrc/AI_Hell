@@ -2157,6 +2157,9 @@ export class PlayScene extends CombatScene<
       // Offer level-ups for weapons the player already owns (parent
       // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
       weaponLevels: this.player?.getWeaponLevels() ?? [],
+      // Offer level-ups for power-ups the player already owns (parent
+      // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
     this.setPaused(true);

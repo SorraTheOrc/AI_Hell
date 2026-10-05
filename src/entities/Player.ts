@@ -98,6 +98,8 @@ import { resolveWeaponAtLevel, resolveWeaponDefinition, quantiseFireRateMs } fro
 import { BeatClock, createBeatClock } from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import { type PowerUpId } from '../powerups/types';
+import { PowerUpLevelStore } from '../powerups/powerUpLevels';
 
 /** Floating-point slack (ms) when comparing the beat clock against a grid tick. */
 const BEAT_EPSILON_MS = 1e-6;
@@ -220,6 +222,8 @@ export class Player extends Phaser.GameObjects.Graphics {
    * {@link resetWeaponLevels} on run restart (AC7).
    */
   private _weaponLevels: Map<WeaponId, number> = new Map();
+  /** Run-scoped power-up level store — every collection levels the power-up (parent AH-0MUV5CLVO002ZHS9). */
+  private _powerUpLevelStore: PowerUpLevelStore = new PowerUpLevelStore();
   /** Absolute beat-clock time (ms, a grid tick) of each active weapon's next shot. */
   private _weaponNextShot: Map<WeaponId, number> = new Map();
   /** Beat-clock time (ms, a grid tick) of each active weapon's most recent shot. */
@@ -762,6 +766,44 @@ export class Player extends Phaser.GameObjects.Graphics {
    */
   resetWeaponLevels(): void {
     this._weaponLevels.clear();
+  }
+
+  /**
+   * Collects a power-up: increments its run-scoped level (every
+   * collection levels the power-up up, parent AH-0MUV5CLVO002ZHS9).
+   * For `permanent` (hold-full) rewards, the permanent-grant count
+   * also increments — relevant for P9/P10 hybrid semantics.
+   *
+   * @param id — The power-up collected.
+   * @param permanent — True for a hold-full permanent reward.
+   * @returns The new collection level.
+   */
+  collectPowerUp(id: PowerUpId, permanent = false): number {
+    return this._powerUpLevelStore.collect(id, permanent);
+  }
+
+  /** The run-scoped collection level of `id` (0 when never collected). */
+  getPowerUpLevel(id: PowerUpId): number {
+    return this._powerUpLevelStore.getLevel(id);
+  }
+
+  /**
+   * Snapshot of every power-up the player has collected this run, with its
+   * current level (id → level ≥ 1). Used by the hold-full choice to offer
+   * power-up level-ups that reflect the run's progress (AH-0MUV5CLVO002ZHS9).
+   * A never-collected power-up is omitted (level 0).
+   */
+  getPowerUpLevels(): Array<{ id: PowerUpId; level: number }> {
+    return this._powerUpLevelStore.getLevels();
+  }
+
+  /**
+   * Clears every power-up level back to base — the run-scoped reset
+   * performed on run restart. Distinct from {@link resetWeapon}, which
+   * clears only timed *activations* and deliberately retains levels.
+   */
+  resetPowerUpLevels(): void {
+    this._powerUpLevelStore.reset();
   }
 
   /**

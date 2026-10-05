@@ -179,10 +179,21 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
  * @param effectsRegistry — the scene's effect registry.
  * @param player — the ship to equip, or null when no player exists.
  */
+/**
+ * Minimal player contract: must support weapon equip (for weapon-level
+ * offers) and power-up collection (for power-up/level-up offers, parent
+ * AH-0MUV5CLVO002ZHS9). Structurally satisfied by {@link Player} in both
+ * the game and every gym.
+ */
+interface MineralChoicePlayer {
+  equipWeapon(weaponId: WeaponId, permanent?: boolean): void;
+  collectPowerUp(id: PowerUpId, permanent?: boolean): number;
+}
+
 export function applyMineralChoiceReward(
   option: ChoiceOption,
   effectsRegistry: EffectsRegistry,
-  player: { equipWeapon(weaponId: WeaponId, permanent?: boolean): void } | null,
+  player: MineralChoicePlayer | null,
 ): void {
   if (option.kind === 'weapon-level' || isWeaponDrop(option.id)) {
     const weaponId = option.id as WeaponId;
@@ -192,7 +203,12 @@ export function applyMineralChoiceReward(
     effectsRegistry.applyWeapon(weaponId, true);
     player?.equipWeapon(weaponId, true);
   } else {
-    effectsRegistry.applyCollect(option.id as PowerUpId, true);
+    // Power-up options (both `powerup` and `power-up-level`): apply the
+    // hold-full effect and track the collection level so future choices
+    // can offer level-ups (parent AH-0MUV5CLVO002ZHS9).
+    const powerUpId = option.id as PowerUpId;
+    effectsRegistry.applyCollect(powerUpId, true);
+    player?.collectPowerUp(powerUpId, true);
   }
 }
 

@@ -174,7 +174,7 @@ describe('applyMineralChoiceReward', () => {
   it('permanently equips a chosen weapon', () => {
     const registry = new EffectsRegistry();
     const applyWeapon = vi.spyOn(registry, 'applyWeapon');
-    const player = { equipWeapon: vi.fn() };
+    const player = { equipWeapon: vi.fn(), collectPowerUp: vi.fn() };
     const option: ChoiceOption = {
       id: 'spread',
       name: 'Spread Shot',
@@ -190,7 +190,7 @@ describe('applyMineralChoiceReward', () => {
   it('permanently levels up a chosen owned weapon via the shared equip path (AC3)', () => {
     const registry = new EffectsRegistry();
     const applyWeapon = vi.spyOn(registry, 'applyWeapon');
-    const player = { equipWeapon: vi.fn() };
+    const player = { equipWeapon: vi.fn(), collectPowerUp: vi.fn() };
     const option: ChoiceOption = {
       id: 'spread',
       name: 'Spread Shot Lv.3',
@@ -209,7 +209,8 @@ describe('applyMineralChoiceReward', () => {
   it('permanently applies a chosen power-up (no weapon equip)', () => {
     const registry = new EffectsRegistry();
     const applyCollect = vi.spyOn(registry, 'applyCollect');
-    const player = { equipWeapon: vi.fn() };
+    const collectPowerUp = vi.fn(() => 1);
+    const player = { equipWeapon: vi.fn(), collectPowerUp };
     const option: ChoiceOption = {
       id: 'P5',
       name: 'Speed Boost',
@@ -219,6 +220,26 @@ describe('applyMineralChoiceReward', () => {
     applyMineralChoiceReward(option, registry, player);
 
     expect(applyCollect).toHaveBeenCalledWith('P5', true);
+    expect(collectPowerUp).toHaveBeenCalledWith('P5', true);
+    expect(player.equipWeapon).not.toHaveBeenCalled();
+  });
+
+  it('applies a power-up-level offer (effect + level increment)', () => {
+    const registry = new EffectsRegistry();
+    const applyCollect = vi.spyOn(registry, 'applyCollect');
+    const collectPowerUp = vi.fn(() => 2);
+    const player = { equipWeapon: vi.fn(), collectPowerUp };
+    const option: ChoiceOption = {
+      id: 'P3',
+      name: 'Shield Lv.2',
+      kind: 'power-up-level',
+      level: 2,
+    };
+
+    applyMineralChoiceReward(option, registry, player);
+
+    expect(applyCollect).toHaveBeenCalledWith('P3', true);
+    expect(collectPowerUp).toHaveBeenCalledWith('P3', true);
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 
