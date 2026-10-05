@@ -716,6 +716,36 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
 
     expect(minion!.alive).toBe(false);
   });
+
+  // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
+
+  it('AC5 — partial-phase DAMAGE hits spawn no new minions', async () => {
+    const scene = await bootGym();
+    const before = scene.getMinions().length;
+
+    // 9 partial hits: phase 1 must survive with no minions spawned.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) scene.damageBoss();
+
+    expect(scene.formationBoss.getPhaseNumber()).toBe(1);
+    expect(scene.getMinions().length).toBe(before);
+  });
+
+  it('AC4/AC5 — depletion spawns each phase’s minion wave exactly once (PlayScene parity)', async () => {
+    const scene = await bootGym();
+    let expected = scene.getMinions().length;
+
+    for (let phase = 1; phase <= 3; phase++) {
+      damagePhase(scene); // depletes the phase
+      expected += planMinionSpawns(phase + 1).length;
+      expect(scene.formationBoss.getPhaseNumber()).toBe(phase + 1);
+      expect(scene.getMinions().length).toBe(expected);
+    }
+
+    // Phase 4 depletes → boss destroyed, no further minions.
+    damagePhase(scene);
+    expect(scene.formationBoss.alive).toBe(false);
+    expect(scene.getMinions().length).toBe(expected);
+  });
 });
 
 describe('GymBoss — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {

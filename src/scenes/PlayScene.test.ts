@@ -23,6 +23,7 @@ import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
 import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
+import { minionCountForPhase } from '../waves/BossMinions';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -1599,6 +1600,58 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     await new Promise((r) => setTimeout(r, 900));
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
+
+  /** Live minion count (the boss is not part of `spawned`). */
+  function liveMinions(scene: PlayScene): number {
+    return scene.getEnemies().filter((e) => e.alive).length;
+  }
+
+  it('AC1/AC2 — partial-phase hits award no score and spawn no minions', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const scoreBefore = scene.getGameState().score;
+    const minionsBefore = liveMinions(scene);
+
+    // 9 partial hits: phase 1 must survive with no rewards.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
+
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(scene.getGameState().score).toBe(scoreBefore);
+    expect(liveMinions(scene)).toBe(minionsBefore);
+  });
+
+  it('AC3/AC4 — depletion awards the phase score and spawns minions exactly once', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const scoreBefore = scene.getGameState().score;
+    let expectedMinions = liveMinions(scene);
+    let expectedScore = 0;
+
+    for (let phase = 1; phase <= 4; phase++) {
+      // The 10th hit depletes the phase.
+      damageBossPhase(scene, boss);
+
+      // Score for the depleted phase is awarded exactly once.
+      expectedScore += BOSS_PHASE_SCORES[phase];
+      expect(scene.getGameState().score - scoreBefore).toBe(expectedScore);
+
+      if (phase < 4) {
+        // The next phase's minion wave is summoned once, on depletion.
+        expectedMinions += minionCountForPhase(phase + 1);
+        expect(liveMinions(scene)).toBe(expectedMinions);
+      }
+    }
+
+    expect(boss.alive).toBe(false);
+    expect(scene.getGameState().score - scoreBefore).toBe(11000);
   });
 
   it('scenario — boss bullets are collected as enemy bullets', async () => {
