@@ -63,9 +63,14 @@ export type WeaponId =
  * - `'onFire'` — the area resolves at the ship the instant the weapon fires
  *   (e.g. an expanding nova ring or a chaining arc — no travelling shot).
  * - `'onImpact'` — the weapon launches a projectile whose area resolves when
- *   it hits an enemy/bullet or expires (e.g. a mortar shell).
+ *   it hits an enemy/bullet or expires. Retained for potential future
+ *   weapons; no catalogue weapon currently uses it (the Mortar moved to
+ *   `'onRandom'`), but the projectile-detonation machinery stays in place.
+ * - `'onRandom'` — the area resolves immediately at one or more points
+ *   sampled uniformly at random within the weapon's effective range, centred
+ *   on the ship (no travelling shot, no forward bias; e.g. the Mortar).
  */
-export type AoETrigger = 'onFire' | 'onImpact';
+export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom';
 
 /**
  * Declarative area-of-effect descriptor attached to an AOE weapon
@@ -92,7 +97,10 @@ export interface AoEDescriptor {
    * Projectile speed (px/s) for an `'onImpact'` weapon. The shared auto-fire
    * loop launches the projectile at this speed; when omitted it falls back to
    * the shared `BULLET_SPEED`. An `'onFire'` descriptor never launches a
-   * projectile, so the field is ignored for it.
+   * projectile, so the field is ignored for it. For an `'onRandom'` weapon
+   * the field is **required** and supplies the range basis: the random
+   * detonation points are sampled within
+   * `projectileSpeed × def.bulletLifetime` px of the ship.
    */
   projectileSpeed?: number;
 }
@@ -215,8 +223,8 @@ export const WEAPON_NOVA_FIRE_RATE = beatSubdivisionMs(WEAPON_NOVA_SUBDIVISION);
 
 /**
  * Fire rate interval for the Mortar AOE weapon (ms) — 1 shot every 2 beats
- * (1500 ms at the default 80 BPM). The launched shell detonates on impact or
- * expiry.
+ * (1500 ms at the default 80 BPM). The blast resolves at a random point
+ * within range on fire.
  */
 export const WEAPON_MORTAR_FIRE_RATE = beatSubdivisionMs(WEAPON_MORTAR_SUBDIVISION);
 
@@ -253,7 +261,10 @@ export const WEAPON_BULLET_LIFETIME = {
   rapid: 0.375,
   /** Nova — the ring resolves instantly; no travelling bullet. */
   nova: 0.25,
-  /** Mortar — the shell lives ~1 s (its detonation window), wrapping meanwhile. */
+  /**
+   * Mortar — supplies the random-detonation range basis
+   * (`projectileSpeed × lifetime` = 180 px at level 0); no travelling shell.
+   */
   mortar: 1.0,
   /** Arc — the bolt resolves instantly; no travelling bullet. */
   arc: 0.25,
@@ -296,11 +307,13 @@ export const AOE_RADII = {
 
 /**
  * AOE `'onImpact'` projectile speeds (px/s). Slower than the standard
- * `BULLET_SPEED` (350), so the Mortar shell visibly arcs across the screen
- * and its detonation point stays legible.
+ * `BULLET_SPEED` (350), so a shell visibly arcs across the screen and its
+ * detonation point stays legible. Also the **range basis** for the Mortar's
+ * `'onRandom'` detonation spread: `projectileSpeed × bulletLifetime`
+ * (180 px at level 0).
  */
 export const AOE_PROJECTILE_SPEEDS = {
-  /** Mortar shell — deliberately slow, giving the blast a readable travel. */
+  /** Mortar — deliberate travel scale, and the random-detonation range basis. */
   mortar: 180,
 } as const;
 
@@ -449,7 +462,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'mortar',
     name: 'Mortar',
     description:
-      'AOE: launches a slow shell that detonates on impact, damaging enemies and clearing bullets in a blast.',
+      'AOE: detonates at a random point within range, damaging enemies and clearing bullets in a blast.',
     offsets: [0],
     fireRateMs: WEAPON_MORTAR_FIRE_RATE,
     bulletColor: BULLET_COLORS.mortar,
@@ -457,7 +470,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletSize: 1.1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.mortar,
     aoe: {
-      trigger: 'onImpact',
+      trigger: 'onRandom',
       radius: AOE_RADII.mortar,
       damagesEnemies: true,
       clearsEnemyBullets: true,

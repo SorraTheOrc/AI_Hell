@@ -305,6 +305,24 @@ export class CombatCoreScene<
   ): void {}
 
   /**
+   * Shared hook called once for every `'onRandom'` AOE weapon that fires
+   * (parent AH-0MUUF9GZV004WVT9): the area resolves immediately at one or
+   * more points sampled uniformly at random within the weapon's effective
+   * range, centred on the ship — no travelling projectile. Default no-op; the
+   * shared {@link CombatScene} overrides it to sample the points and resolve
+   * the effect (and VFX/cue) at each.
+   *
+   * @param _def - The firing weapon's catalogue definition.
+   * @param _x - Ship world x at the moment of firing.
+   * @param _y - Ship world y at the moment of firing.
+   */
+  protected onAoeRandomFired(
+    _def: WeaponDefinition,
+    _x: number,
+    _y: number,
+  ): void {}
+
+  /**
    * Shared hook called once for every `'onImpact'` AOE projectile the moment
    * it is spawned (parent AH-0MUOOB3OR001V8CD). Default no-op; the shared
    * {@link CombatScene} overrides it to attach the projectile's expiry
@@ -454,11 +472,16 @@ export class CombatCoreScene<
         // AOE dispatch: the shared core owns the hook, so the game and the
         // gyms resolve the same area effect from one implementation.
         this.onAoeFired(weaponId, def, player.x, player.y);
-        // An `onFire` effect (nova ring / arc chain) resolves at the ship
-        // and does not spawn a travelling bullet; an `onImpact` effect
-        // launches its projectile through the normal bullet path, and the
-        // projectile resolves its blast on impact/expiry.
+        // Neither an `onFire` effect (nova ring / arc chain) nor an
+        // `onRandom` effect (mortar blast) launches a travelling projectile:
+        // both resolve their area effect at fire time. Only an `onImpact`
+        // effect launches a projectile through the normal bullet path, and
+        // the projectile resolves its blast on impact/expiry.
         if (def.aoe.trigger === 'onFire') continue;
+        if (def.aoe.trigger === 'onRandom') {
+          this.onAoeRandomFired(def, player.x, player.y);
+          continue;
+        }
       }
       for (const bd of createBulletsFromHeading(
         def,

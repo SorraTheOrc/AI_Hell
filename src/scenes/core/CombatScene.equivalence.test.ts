@@ -2099,6 +2099,7 @@ describe('shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223)',
 /** The shared AOE dispatch/effect/VFX hooks. */
 const SHARED_AOE_METHODS = [
   'onAoeFired',
+  'onAoeRandomFired',
   'applyAoeEffect',
   'detonateAoeProjectile',
   'spawnAoeEffectVfx',

@@ -1113,14 +1113,14 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
-  it('Mortar launches its shell and detonates on expiry through the shared core', async () => {
+  it('Mortar detonates at a random point within range through the shared core', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;
     player.equipWeapon('mortar');
 
-    // Fire once, then advance past the 2 s shell lifetime so the shared
-    // expiry detonation resolves.
-    scene.tick(3.6);
+    // The ship sits at the play-area centre, so every sampled detonation point
+    // is on-screen and the shared blast VFX registers at fire time.
+    scene.tick(1.5); // Mortar's 1500 ms beat cadence
 
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
@@ -1152,6 +1152,7 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
   it('inherits the AOE dispatch/VFX from the shared core (no gym-local copy)', () => {
     for (const method of [
       'onAoeFired',
+      'onAoeRandomFired',
       'applyAoeEffect',
       'onAoeProjectileSpawned',
       'detonateAoeProjectile',
