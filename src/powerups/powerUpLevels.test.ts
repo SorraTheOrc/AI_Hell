@@ -1,0 +1,304 @@
+/**
+ * Power-up level-curve, resolver and store tests
+ * (parent AH-0MUU2QJE2007JNR6).
+ *
+ * Covers:
+ * - AC1: data-driven catalogue for every power-up P3–P10 with rationale.
+ * - AC2: run-scoped integer level, incremented on every collection and
+ *   cleared only on run restart.
+ * - AC3: stack/charge semantics derived from the level model.
+ * - AC4: the pure, deterministic, monotonic, capped shared resolver.
+ * - AC5: every power-up has at least one meaningful level axis.
+ * - AC6: the ownership/level contract for the hold-full choice.
+ * - AC7: these tests.
+ */
+
+import { describe, expect, it } from 'vitest';
+
+import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import { POWER_UP_LEVEL_SPECS } from './powerUpLevels';
+import {
+  P3_SHIELD_DURATION,
+  P5_SPEED_MULTIPLIER,
+  P8_LIVES_MAX,
+  P9_MAX_STACKS,
+  P10_MAX_STACKS,
+} from './effects';
+import { PHASE_DURATION } from '../core/constants';
+import {
+  POWER_UP_LEVEL_IDS,
+  POWER_UP_LEVEL_VARIABLES,
+  POWER_UP_LIVES_START,
+  PowerUpLevelStore,
+  resolvePowerUpAtLevel,
+  summarisePowerUpLevelChange,
+} from './powerUpLevels';
+import { curveValue } from '../utils/curve';
+
+const idsInCatalogue = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
+
+/** Reads a resolved stat by variable name (typed via the index signature). */
+function statAt(
+  id: PowerUpId,
+  variable: (typeof POWER_UP_LEVEL_VARIABLES)[number],
+  level: number,
+): number {
+  const stats = resolvePowerUpAtLevel(id, level) as unknown as Record<
+    string,
+    number | undefined
+  >;
+  const value = stats[variable];
+  if (value === undefined) {
+    throw new Error(`${id} has no ${variable} stat`);
+  }
+  return value;
+}
+
+// ── AC1 / AC5 — catalogue ───────────────────────────────────────────
+
+describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
+  it('has at least one levelled variable for every power-up P3–P10', () => {
+    expect(idsInCatalogue.sort()).toEqual([...POWER_UP_LEVEL_IDS].sort());
+    for (const id of idsInCatalogue) {
+      expect(POWER_UP_LEVEL_SPECS[id]).toBeDefined();
+      expect(POWER_UP_LEVEL_SPECS[id].length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('gives every spec a finite cap, valid rate and written rationale', () => {
+    for (const id of idsInCatalogue) {
+      for (const spec of POWER_UP_LEVEL_SPECS[id]) {
+        expect(spec.powerUpId).toBe(id);
+        expect(POWER_UP_LEVEL_VARIABLES).toContain(spec.variable);
+        expect(Number.isFinite(spec.cap)).toBe(true);
+        expect(spec.cap).toBeGreaterThanOrEqual(spec.base);
+        expect(spec.k).toBeGreaterThanOrEqual(0);
+        expect(spec.label.length).toBeGreaterThan(0);
+        expect(spec.rationale.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('lists each variable at most once per power-up', () => {
+    for (const id of idsInCatalogue) {
+      const variables = POWER_UP_LEVEL_SPECS[id].map((s) => s.variable);
+      expect(new Set(variables).size).toBe(variables.length);
+    }
+  });
+
+  it('gives every power-up at least one meaningful (growing) axis (AC5)', () => {
+    for (const id of idsInCatalogue) {
+      const grows = POWER_UP_LEVEL_SPECS[id].some(
+        (spec) => curveValue(spec, 1_000) > spec.base,
+      );
+      expect(grows, `${id} has no meaningful level axis`).toBe(true);
+    }
+  });
+
+  it('anchors each base/cap to the shipped effect constants (AC3)', () => {
+    // The level model reproduces today's tuned values at the base/cap: there
+    // is no parallel source of truth for the effect constants.
+    expect(POWER_UP_LEVEL_SPECS.P3[0].base).toBe(P3_SHIELD_DURATION);
+    expect(POWER_UP_LEVEL_SPECS.P5[0].base).toBe(P5_SPEED_MULTIPLIER);
+    expect(POWER_UP_LEVEL_SPECS.P6[0].base).toBe(PHASE_DURATION);
+    expect(POWER_UP_LEVEL_SPECS.P8[1].cap).toBe(P8_LIVES_MAX);
+    expect(POWER_UP_LEVEL_SPECS.P9[0].cap).toBe(P9_MAX_STACKS);
+    expect(POWER_UP_LEVEL_SPECS.P10[0].cap).toBe(P10_MAX_STACKS);
+  });
+});
+
+// ── AC4 — resolver ──────────────────────────────────────────────────
+
+describe('resolvePowerUpAtLevel (AC4 — pure shared resolver)', () => {
+  it('returns the catalogue base value at level 0', () => {
+    for (const id of idsInCatalogue) {
+      for (const spec of POWER_UP_LEVEL_SPECS[id]) {
+        expect(statAt(id, spec.variable, 0)).toBe(spec.base);
+      }
+    }
+  });
+
+  it('is monotonic non-decreasing and clamped to each cap', () => {
+    for (const id of idsInCatalogue) {
+      for (const spec of POWER_UP_LEVEL_SPECS[id]) {
+        let previous = statAt(id, spec.variable, 0);
+        for (let level = 1; level <= 40; level++) {
+          const current = statAt(id, spec.variable, level);
+          expect(current).toBeGreaterThanOrEqual(previous);
+          expect(current).toBeLessThanOrEqual(spec.cap);
+          previous = current;
+        }
+        expect(statAt(id, spec.variable, 1_000_000)).toBe(spec.cap);
+      }
+    }
+  });
+
+  it('returns whole numbers for discrete variables', () => {
+    for (const id of idsInCatalogue) {
+      for (const spec of POWER_UP_LEVEL_SPECS[id].filter((s) => s.discrete)) {
+        for (let level = 0; level <= 12; level++) {
+          expect(Number.isInteger(statAt(id, spec.variable, level))).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('is pure and deterministic for the same (id, level)', () => {
+    for (const id of idsInCatalogue) {
+      expect(resolvePowerUpAtLevel(id, 7)).toEqual(
+        resolvePowerUpAtLevel(id, 7),
+      );
+    }
+  });
+
+  it('exposes only the variables belonging to the resolved power-up (AC6)', () => {
+    for (const id of idsInCatalogue) {
+      const stats = resolvePowerUpAtLevel(id, 3) as unknown as Record<
+        string,
+        number | undefined
+      >;
+      const owned = new Set(POWER_UP_LEVEL_SPECS[id].map((s) => s.variable));
+      for (const variable of POWER_UP_LEVEL_VARIABLES) {
+        if (owned.has(variable)) {
+          expect(stats[variable]).toBeDefined();
+        } else {
+          expect(stats[variable]).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it('clamps non-finite and negative levels to 0', () => {
+    expect(resolvePowerUpAtLevel('P3', -5)).toEqual(
+      resolvePowerUpAtLevel('P3', 0),
+    );
+    expect(resolvePowerUpAtLevel('P3', Number.NaN)).toEqual(
+      resolvePowerUpAtLevel('P3', 0),
+    );
+    expect(resolvePowerUpAtLevel('P3', 2.9).level).toBe(2);
+  });
+
+  it('throws for an unknown power-up id', () => {
+    expect(() => resolvePowerUpAtLevel('P99' as PowerUpId, 1)).toThrow();
+  });
+});
+
+// ── AC6 — change summary ────────────────────────────────────────────
+
+describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
+  it('describes the variables that change between two levels', () => {
+    const summary = summarisePowerUpLevelChange('P3', 0, 1);
+    expect(summary.length).toBeGreaterThan(0);
+    expect(summary).toContain('Shield time');
+  });
+
+  it('returns an empty string when the curve has flattened', () => {
+    expect(summarisePowerUpLevelChange('P8', 1_000, 1_001)).toBe('');
+  });
+});
+
+// ── AC2 / AC3 — run-scoped store ────────────────────────────────────
+
+describe('PowerUpLevelStore (AC2 — run-scoped integer level)', () => {
+  it('starts every power-up uncollected at level 0', () => {
+    const store = new PowerUpLevelStore();
+    for (const id of idsInCatalogue) {
+      expect(store.getLevel(id)).toBe(0);
+      expect(store.getUpgradeLevel(id)).toBe(0);
+    }
+    expect(store.getLevels()).toEqual([]);
+  });
+
+  it('increments the level on every collection (field and permanent)', () => {
+    const store = new PowerUpLevelStore();
+    expect(store.collect('P5')).toBe(1);
+    expect(store.collect('P5')).toBe(2);
+    expect(store.collect('P5', true)).toBe(3);
+    expect(store.getLevel('P5')).toBe(3);
+    // First collection is base; each further collection is one upgrade.
+    expect(store.getUpgradeLevel('P5')).toBe(2);
+    expect(store.getLevels()).toContainEqual({ id: 'P5', level: 3 });
+  });
+
+  it('resolves stats from the current upgrade level', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P3'); // level 1 → upgrade 0 (base)
+    expect(store.stats('P3')).toEqual(resolvePowerUpAtLevel('P3', 0));
+    store.collect('P3'); // level 2 → upgrade 1
+    expect(store.stats('P3')).toEqual(resolvePowerUpAtLevel('P3', 1));
+  });
+
+  it('retains levels until reset — the only clearing operation (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P5');
+    store.collect('P9', true);
+    // Reading/deriving stats (the paths a timed expiry would run through)
+    // must not clear the run-scoped levels.
+    store.stats('P5');
+    store.stats('P9');
+    store.magnetStacks();
+    expect(store.getLevel('P5')).toBe(1);
+    expect(store.getLevel('P9')).toBe(1);
+
+    store.reset();
+    expect(store.getLevel('P5')).toBe(0);
+    expect(store.getLevel('P9')).toBe(0);
+    expect(store.getLevels()).toEqual([]);
+  });
+});
+
+describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
+  it('derives P9/P10 permanent stacks from permanent grants, capped at 5', () => {
+    const store = new PowerUpLevelStore();
+    // A field pickup levels P9 up but grants no permanent stack (hybrid).
+    store.collect('P9');
+    expect(store.getLevel('P9')).toBe(1);
+    expect(store.magnetStacks()).toBe(0);
+
+    for (let i = 0; i < 8; i++) store.collect('P9', true);
+    expect(store.magnetStacks()).toBe(5);
+    expect(store.scoopStacks()).toBe(0);
+
+    for (let i = 0; i < 8; i++) store.collect('P10', true);
+    expect(store.scoopStacks()).toBe(5);
+  });
+
+  it('grants level-derived P7 teleport stacks and consumes them', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P7');
+    expect(store.teleportStacks()).toBe(1);
+    store.collect('P7');
+    // Second collection is an upgrade: grants more than one use.
+    expect(store.teleportStacks()).toBeGreaterThan(1);
+    const before = store.teleportStacks();
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportStacks()).toBe(before - 1);
+    // Consuming a use never lowers the run-scoped level.
+    expect(store.getLevel('P7')).toBe(2);
+  });
+
+  it('grants level-derived P6 charges; the hold-full reward is unlimited', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P6');
+    expect(store.phaseCharges()).toBe(1);
+    expect(store.consumePhaseCharge()).toBe(true);
+    expect(store.phaseCharges()).toBe(0);
+    expect(store.consumePhaseCharge()).toBe(false);
+
+    store.collect('P6', true);
+    expect(store.isPhasePermanent()).toBe(true);
+    expect(store.consumePhaseCharge()).toBe(true);
+    expect(store.consumePhaseCharge()).toBe(true);
+  });
+
+  it('grants level-derived lives, clamped to the level-derived cap of 5', () => {
+    const store = new PowerUpLevelStore();
+    expect(store.lives()).toBe(POWER_UP_LIVES_START);
+    store.collect('P8');
+    expect(store.lives()).toBeGreaterThan(POWER_UP_LIVES_START);
+    for (let i = 0; i < 10; i++) store.collect('P8', true);
+    expect(store.lives()).toBe(5);
+    store.reset();
+    expect(store.lives()).toBe(POWER_UP_LIVES_START);
+  });
+});

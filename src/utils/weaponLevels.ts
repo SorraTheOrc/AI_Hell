@@ -55,6 +55,12 @@
 
 import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
 import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from './beat';
+import { curveValue, formatDelta, type CurveSpec, type UpgradeCurve } from './curve';
+
+// Re-exported so existing importers of this module keep working while the
+// maths lives once in `./curve` (single curve implementation — AC4).
+export { curveValue, formatDelta };
+export type { CurveSpec, UpgradeCurve };
 
 // ── Upgrade variables ───────────────────────────────────────────────
 
@@ -130,37 +136,20 @@ export const MVP_UPGRADE_VARIABLES: readonly WeaponUpgradeVariable[] = [
 // ── Upgrade specification ───────────────────────────────────────────
 
 /**
- * Curve family. Currently a single exponential-saturation curve is used;
- * the field is explicit so future curves (linear-capped, piecewise) can be
- * added without changing the spec shape.
- */
-export type UpgradeCurve = 'exponential-saturation';
-
-/**
  * Metadata for one upgrade variable: its level-0 value, its finite
  * asymptotic cap, the saturation rate `k`, whether it is a whole-number
  * count, and whether it is part of the MVP slice or merely specified.
+ *
+ * Extends the shared {@link CurveSpec} so the exponential-saturation maths
+ * lives once in `src/utils/curve.ts` (AC4 / single curve implementation).
  */
-export interface WeaponUpgradeSpec {
+export interface WeaponUpgradeSpec extends CurveSpec {
   /** The variable this spec describes. */
   variable: WeaponUpgradeVariable;
   /** Short human-readable label (for gym/HUD help). */
   label: string;
   /** One-line description of what the variable does to weapon behaviour. */
   description: string;
-  /** The curve family used to resolve this variable. */
-  curve: UpgradeCurve;
-  /** Effective value at level 0 (the un-upgraded weapon). */
-  base: number;
-  /** Finite asymptotic cap — the value is never exceeded. */
-  cap: number;
-  /**
-   * Saturation rate `k` (per level). Larger values approach the cap more
-   * quickly; the curve is strictly increasing for any `k > 0`.
-   */
-  k: number;
-  /** True when the variable is a whole-number count (rounded + clamped). */
-  discrete: boolean;
   /** `'mvp'` variables ship now; `'planned'` variables are specified only. */
   tier: 'mvp' | 'planned';
   /**
@@ -409,34 +398,11 @@ export const WEAPON_UPGRADE_SPECS: Record<
   },
 };
 
-// ── Curve maths ─────────────────────────────────────────────────────
-
-/**
- * Evaluates an upgrade spec's diminishing-returns curve at `level`.
- *
- * `effective(level) = cap − (cap − base) × e^(−k × level)`, snapped to a
- * whole number for discrete counts and clamped to `[base, cap]`.
- *
- * Negative or non-finite levels are treated as level 0.
- *
- * @param spec - The variable specification.
- * @param level - The weapon level (unbounded non-negative integer).
- * @returns The effective value at that level.
- */
-export function curveValue(spec: WeaponUpgradeSpec, level: number): number {
-  const safeLevel = Number.isFinite(level) ? Math.max(0, level) : 0;
-  const span = spec.cap - spec.base;
-  if (span <= 0) {
-    // A flat or inverted spec is defensively pinned to its base.
-    return spec.base;
-  }
-  const raw = spec.cap - span * Math.exp(-spec.k * safeLevel);
-  if (!spec.discrete) {
-    return Math.min(spec.cap, Math.max(spec.base, raw));
-  }
-  // Whole-number counts step up and then flatten at the cap.
-  return Math.min(spec.cap, Math.max(spec.base, Math.round(raw)));
-}
+// ── Curve maths (shared) ────────────────────────────────────────────
+//
+// `curveValue` and `formatDelta` live in `src/utils/curve.ts` so weapons
+// and power-ups share exactly one exponential-saturation implementation.
+// They are re-exported above for existing importers of this module.
 
 // ── Beat-grid quantisation ──────────────────────────────────────────
 
@@ -691,68 +657,6 @@ export function resolveVariable(
 }
 
 // ── Upgrade-change summariser ───────────────────────────────────────
-
-/**
- * Formats a single-variable delta for human consumption.
- *
- * - **Discrete** counts are shown as an absolute delta: `"+3 Projectiles"`.
- * - **Continuous** scalars are shown as a percentage increase against the
- *   base value: `"+15% Bullet size"` (the percentage is rounded to the
- *   nearest whole number so the summary stays brief).
- *
- * Returns `""` when the delta is zero (the caller only invokes this
- * for variables that actually change).
- *
- * @param label     - The human-readable variable label from
- *   {@link WeaponUpgradeSpec}.  
- * @param delta     - The numerical change (new value minus old value).
- * @param base      - The old value (used as the denominator for percentages).
- * @param discrete  - Whether this variable is a whole-number count.
- * @returns A formatted delta string such as `"+3 Projectiles"` or
- *   `"+15% Bullet size"`, or `""` when `delta` is zero.
- */
-export function formatDelta(
-  label: string,
-  delta: number,
-  base: number,
-  discrete: boolean = false,
-): string {
-  // Treat sub-pixel floating-point drift as zero.
-  if (Math.abs(delta) < 1e-9) {
-    return '';
-  }
-  if (!Number.isFinite(delta)) {
-    return '';
-  }
-  if (delta > 0) {
-    if (discrete) {
-      // Discrete counts shown as an absolute delta.
-      return `+${Math.round(delta)} ${label}`;
-    }
-    // Scalar shown as a percentage increase against the base.
-    if (Math.abs(base) > 1e-9) {
-      const pct = Math.round((delta / base) * 100);
-      // When the rounded percentage is 0%, the change is imperceptible —
-      // skip it so the summary only lists visible gains.
-      if (pct === 0) {
-        return '';
-      }
-      return `+${pct}% ${label}`;
-    }
-    // Base is zero — fall back to absolute delta.
-    return `+${delta} ${label}`;
-  }
-  // Negative deltas (shouldn't occur in normal level-up paths, but
-  // handled defensively for completeness).
-  if (discrete) {
-    return `${Math.round(delta)} ${label}`;
-  }
-  if (Math.abs(base) > 1e-9) {
-    const pct = Math.round((delta / base) * 100);
-    return `${pct}% ${label}`;
-  }
-  return `${delta} ${label}`;
-}
 
 /**
  * Computes a human-readable upgrade-summary string comparing a weapon's

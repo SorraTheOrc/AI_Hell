@@ -23,6 +23,7 @@ import {
 } from './types';
 import type { WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
+import { summarisePowerUpLevelChange } from './powerUpLevels';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
@@ -52,12 +53,18 @@ export const CHOICE_POOL: readonly DropId[] = [
 
 /**
  * The kind of option offered:
- * - `'powerup'` — a P3–P9 power-up,
+ * - `'powerup'` — a P3–P10 power-up grant,
  * - `'weapon'` — a collectable weapon drop (grant \*or\* re-activate),
  * - `'weapon-level'` — a permanent level-up of a weapon the player already
- *   owns (parent AH-0MUPMPCB2009J54J).
+ *   owns (parent AH-0MUPMPCB2009J54J),
+ * - `'power-up-level'` — a permanent level-up of a power-up the player
+ *   already owns (parent AH-0MUU2QJE2007JNR6).
  */
-export type ChoiceOptionKind = 'powerup' | 'weapon' | 'weapon-level';
+export type ChoiceOptionKind =
+  | 'powerup'
+  | 'weapon'
+  | 'weapon-level'
+  | 'power-up-level';
 
 /** One option offered by the hold-full choice. */
 export interface ChoiceOption {
@@ -65,17 +72,17 @@ export interface ChoiceOption {
   id: DropId;
   /** Human-readable display name. */
   name: string;
-  /** Whether the option is a power-up, a weapon drop or a weapon level-up. */
+  /** Whether the option is a power-up, a weapon drop or a level-up. */
   kind: ChoiceOptionKind;
   /**
-   * For `'weapon-level'` options: the weapon level this option grants
-   * (the current level + 1). Absent for power-up/weapon options.
+   * For `'weapon-level'`/`'power-up-level'` options: the level this option
+   * grants (the current level + 1). Absent for power-up/weapon options.
    */
   level?: number;
   /**
    * Optional change summary describing what improves at this level
    * (e.g. `"+1 Projectiles, +15% Bullet size"`). Populated for
-   * weapon-level upgrades and owned base-pool weapon offers.
+   * weapon-level, power-up-level and owned base-pool offers.
    */
   changeSummary?: string;
   /**
@@ -87,8 +94,8 @@ export interface ChoiceOption {
 }
 
 /**
- * Player context for the choice pool. Used to offer weapon **level-ups** that
- * reflect the run's current weapon levels (AC1/AC2).
+ * Player context for the choice pool. Used to offer weapon **and power-up**
+ * level-ups that reflect the run's current levels (AC1/AC2/AC6).
  */
 export interface ChoiceContext {
   /**
@@ -97,6 +104,14 @@ export interface ChoiceContext {
    * ignored.
    */
   weaponLevels?: ReadonlyArray<{ id: WeaponId; level: number }>;
+  /**
+   * Power-ups the player has collected this run (id → current level ≥ 1).
+   * Optional and backward compatible: when omitted, base-pool power-ups
+   * carry no `isNew` badge and no level-up offers are emitted. Supplied by
+   * the hold-full choice once the power-up level store is wired
+   * (AH-0MUU2QJE2007JNR6 AC6).
+   */
+  powerUpLevels?: ReadonlyArray<{ id: PowerUpId; level: number }>;
 }
 
 /** Weapon drops that can be levelled up (everything except the Reset utility). */
@@ -133,9 +148,12 @@ export function isWeaponDrop(id: DropId): id is WeaponDropId {
   );
 }
 
-/** Whether an option is a weapon option (a drop or a level-up). */
+/**
+ * Whether an option is a weapon option (a weapon drop or a weapon level-up).
+ * Power-up and power-up-level options are not weapon options.
+ */
 export function isWeaponOption(option: ChoiceOption): boolean {
-  return option.kind !== 'powerup';
+  return option.kind === 'weapon' || option.kind === 'weapon-level';
 }
 
 /** Builds the display descriptor for a drop id. */
@@ -184,15 +202,30 @@ export function buildChoiceCandidates(
   pool: readonly DropId[],
   context?: ChoiceContext,
 ): ChoiceOption[] {
-  // Build a lookup of owned weapon ids for New-badge detection.
+  // Build a lookup of owned weapon/power-up ids for New-badge detection.
   const ownedWeapons = new Set(
     context?.weaponLevels?.map((wl) => wl.id) ?? [],
   );
+  const ownedPowerUps = new Set(
+    context?.powerUpLevels?.map((pl) => pl.id) ?? [],
+  );
+  // Ownership is only known when the context supplies it; when omitted we
+  // must not bad a power-up as New (backward compatible).
+  const powerUpOwnershipKnown = context?.powerUpLevels !== undefined;
 
   const candidates = [...new Set(pool)].map((dropId) => {
     const option = toChoiceOption(dropId);
     // For base-pool weapon drops: mark as New when unowned.
     if (option.kind === 'weapon' && !ownedWeapons.has(dropId as WeaponId)) {
+      option.isNew = true;
+    }
+    // For base-pool power-ups: mark as New when ownership is known and the
+    // power-up is unowned.
+    if (
+      option.kind === 'powerup' &&
+      powerUpOwnershipKnown &&
+      !ownedPowerUps.has(dropId as PowerUpId)
+    ) {
       option.isNew = true;
     }
     return option;
@@ -214,6 +247,22 @@ export function buildChoiceCandidates(
         level,
         level + 1,
       ),
+    });
+  }
+
+  // Power-up level-up offers (parent AH-0MUU2QJE2007JNR6, AC6). Mirrors the
+  // weapon-level path: one offer per owned power-up, carrying the level it
+  // grants and a change summary derived from the shared power-up resolver.
+  for (const { id, level } of context?.powerUpLevels ?? []) {
+    if (level < 1 || !POWER_UP_CATALOGUE[id]) {
+      continue;
+    }
+    candidates.push({
+      id,
+      name: `${POWER_UP_CATALOGUE[id].name} Lv.${level + 1}`,
+      kind: 'power-up-level',
+      level: level + 1,
+      changeSummary: summarisePowerUpLevelChange(id, level, level + 1),
     });
   }
   return candidates;
