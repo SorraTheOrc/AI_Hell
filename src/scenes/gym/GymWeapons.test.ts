@@ -312,16 +312,18 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     expect(player.getActiveWeapons()).toEqual(['cannon', 'spread', 'dual']);
 
     // One full fire cycle with all weapons ready: cannon (1 bullet) +
-    // spread (3) + dual (2) = 6 bullets, each in its weapon's colour.
-    // (The booted game loop may leave a stray cannon bullet on screen, so
-    // assert the delta added by this controlled tick.)
+    // spread (3) + dual (2) = 6 fresh bullets, each in its weapon's colour.
+    // The booted game loop can leave a stray cannon bullet on screen; advance
+    // bullets alone until it expires (well past the 0.75 s player lifetime,
+    // AH-0MUU131PU006O7ZD) so the assertion measures only this tick's volley.
     player.setInput({ up: false, down: false, left: false, right: true });
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
-    const before = scene.getBullets().length;
+    scene.advanceBullets(1.0);
+    expect(scene.getBullets()).toHaveLength(0);
     scene.tick(0.6);
 
     const bullets = scene.getBullets();
-    expect(bullets.length - before).toBe(6);
+    expect(bullets.length).toBe(6);
     const colors = new Set(bullets.map((b) => b.color));
     expect(colors.has(0x00ffff)).toBe(true); // cannon cyan
     expect(colors.has(0xffaa00)).toBe(true); // spread orange
@@ -1085,8 +1087,9 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
 
     scene.tick(3.0); // Nova's 3000 ms beat cadence
 
-    // The nearest (centre) target is within the Nova ring radius (90 px);
-    // the upper two are ~134 px away and survive.
+    // The nearest (centre) target is within the halved Nova reach (45 px
+    // radius + 14 px target radius); the upper two are ~70 px from the ship
+    // (outside that reach) and survive.
     const targets = scene.getTargets();
     expect(targets[0].alive).toBe(false);
     expect(targets[1].alive).toBe(true);
@@ -1102,22 +1105,22 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
 
     scene.tick(0.75); // Arc's 750 ms beat cadence
 
-    // Nearest (centre) plus the two chained neighbours (120 px away, within
-    // the 120 px chain reach).
+    // Nearest (centre) plus the two chained neighbours (each within the
+    // halved 60 px Arc chain reach of the previous hop).
     for (const target of scene.getTargets()) {
       expect(target.alive).toBe(false);
     }
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
-  it('Mortar launches its shell and detonates on expiry through the shared core', async () => {
+  it('Mortar detonates at a random point within range through the shared core', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;
     player.equipWeapon('mortar');
 
-    // Fire once, then advance past the 2 s shell lifetime so the shared
-    // expiry detonation resolves.
-    scene.tick(3.6);
+    // The ship sits at the play-area centre, so every sampled detonation point
+    // is on-screen and the shared blast VFX registers at fire time.
+    scene.tick(1.5); // Mortar's 1500 ms beat cadence
 
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
@@ -1149,6 +1152,7 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
   it('inherits the AOE dispatch/VFX from the shared core (no gym-local copy)', () => {
     for (const method of [
       'onAoeFired',
+      'onAoeRandomFired',
       'applyAoeEffect',
       'onAoeProjectileSpawned',
       'detonateAoeProjectile',

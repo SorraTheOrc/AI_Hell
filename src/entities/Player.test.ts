@@ -18,6 +18,8 @@ import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
+import { isOnBeatGrid, WEAPON_CATALOGUE } from '../utils/weapons';
+import { resolveWeaponAtLevel } from '../utils/weaponLevels';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
 import * as effects from '../audio/effects';
@@ -858,6 +860,217 @@ describe('Player ship entity', () => {
     expect(player!.getWeaponDef().id).toBe('rapid');
   });
 
+  // ── Weapon leveling (parent AH-0MUPMPCB2009J54J) ────────────────
+
+  describe('weapon leveling (AH-0MUPMPCB2009J54J)', () => {
+    it('getWeaponLevel defaults to 0 and rises with every collection (AC1/AC2/AC5)', async () => {
+      const player = await freshPlayer();
+      expect(player.getWeaponLevel('rapid')).toBe(0);
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevel('rapid')).toBe(1);
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevel('rapid')).toBe(2);
+      // Levels are per-weapon and independent.
+      expect(player.getWeaponLevel('spread')).toBe(0);
+      expect(player.getWeaponLevel('cannon')).toBe(0);
+    });
+
+    it('collecting a temporary drop levels up and re-activates the timed duration (AC2)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      // Partially consume the 10 s timer.
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS - 100);
+      expect(player.hasWeapon('spread')).toBe(true);
+
+      player.equipWeapon('spread'); // re-collect → level up + fresh timer
+      expect(player.getWeaponLevel('spread')).toBe(2);
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS - 100);
+      expect(player.hasWeapon('spread')).toBe(true);
+    });
+
+    it('level persists across a timeout and re-collection raises it again (AC3)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('dual');
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(2);
+
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
+      expect(player.hasWeapon('dual')).toBe(false);
+      expect(player.getWeaponLevel('dual')).toBe(2); // retained
+
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(3);
+    });
+
+    it('getWeaponDef returns a level-resolved definition and never mutates the base (AC4)', async () => {
+      const player = await freshPlayer();
+      const base = WEAPON_CATALOGUE.rapid;
+      // Level 0 (and level 1, the first collection) → the exact base
+      // catalogue definition (AC8).
+      expect(player.getWeaponDef('rapid')).toBe(base);
+      player.equipWeapon('rapid');
+      expect(player.getWeaponDef('rapid')).toBe(base);
+
+      // The second collection is the first *upgrade* (upgrade index 1).
+      player.equipWeapon('rapid');
+      const stats = resolveWeaponAtLevel('rapid', 1);
+      const leveled = player.getWeaponDef('rapid');
+      expect(leveled.fireRateMs).toBe(stats.fireRateMs);
+      // The upgrade adds a bullet-radius multiplier (`levelBulletSize`) without
+      // changing the base visual size (AC8).
+      expect(leveled.levelBulletSize).toBe(stats.bulletSize);
+      expect(leveled.bulletSize).toBe(base.bulletSize);
+      expect(leveled.bulletLifetime).toBeCloseTo(
+        base.bulletLifetime * stats.bulletLifetime,
+        10,
+      );
+      // The shared catalogue entry is a fresh object, not the mutable base.
+      expect(leveled).not.toBe(base);
+      expect(WEAPON_CATALOGUE.rapid.fireRateMs).toBe(125);
+      expect(WEAPON_CATALOGUE.rapid.bulletSize).toBe(base.bulletSize);
+    });
+
+    it('an AOE weapon scales its blast radius with the first upgrade (AC4)', async () => {
+      const player = await freshPlayer();
+      const baseRadius = WEAPON_CATALOGUE.nova.aoe!.radius;
+      player.equipWeapon('nova');
+      expect(player.getWeaponDef('nova').aoe!.radius).toBe(baseRadius);
+
+      player.equipWeapon('nova'); // first upgrade
+      const stats = resolveWeaponAtLevel('nova', 1);
+      expect(player.getWeaponDef('nova').aoe!.radius).toBeCloseTo(
+        baseRadius * stats.aoeRadius,
+        10,
+      );
+      expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(baseRadius);
+    });
+
+    it('resetWeapon clears activations but retains levels (AC6)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      player.equipWeapon('dual');
+
+      player.resetWeapon();
+      expect(player.getActiveWeapons()).toEqual(['cannon']);
+      expect(player.getWeaponLevel('spread')).toBe(1);
+      expect(player.getWeaponLevel('dual')).toBe(1);
+    });
+
+    it('a permanent mineral choice levels the weapon up and keeps it (AC3)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread', true);
+      expect(player.getWeaponLevel('spread')).toBe(1);
+      expect(player.hasWeapon('spread')).toBe(true);
+
+      player.equipWeapon('spread', true);
+      expect(player.getWeaponLevel('spread')).toBe(2);
+      // The second collection is an upgrade, so the resolved definition grows.
+      expect(player.getWeaponDef('spread').levelBulletSize).toBeGreaterThan(1);
+      // Permanent: it never times out.
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS * 10);
+      expect(player.hasWeapon('spread')).toBe(true);
+    });
+
+    it('getWeaponLevels lists every owned weapon with its level (choice context)', async () => {
+      const player = await freshPlayer();
+      expect(player.getWeaponLevels()).toEqual([]);
+
+      player.equipWeapon('spread');
+      player.equipWeapon('spread');
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevels()).toEqual([
+        { id: 'spread', level: 2 },
+        { id: 'rapid', level: 1 },
+      ]);
+    });
+
+    it('resetWeaponLevels clears every level (AC7)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread');
+      player.equipWeapon('rapid');
+      expect(player.getWeaponLevel('rapid')).toBe(1);
+
+      player.resetWeaponLevels();
+      expect(player.getWeaponLevel('spread')).toBe(0);
+      expect(player.getWeaponLevel('rapid')).toBe(0);
+      expect(player.getWeaponDef('rapid')).toBe(WEAPON_CATALOGUE.rapid);
+    });
+
+    it('a fire-rate upgrade raises the cadence and stays on the beat grid (AH-0MUQOUKMW0063VBT)', async () => {
+      const player = await freshPlayer();
+      const base = player.getFireInterval('rapid');
+
+      player.equipWeapon('rapid'); // first collection: base (AC8)
+      expect(player.getFireInterval('rapid')).toBe(base);
+
+      player.equipWeapon('rapid'); // first upgrade
+      const levelOne = player.getFireInterval('rapid');
+      expect(levelOne).toBeLessThan(base);
+      expect(isOnBeatGrid(levelOne)).toBe(true);
+
+      player.equipWeapon('rapid'); // second upgrade
+      const levelTwo = player.getFireInterval('rapid');
+      expect(levelTwo).toBeLessThanOrEqual(levelOne);
+      expect(isOnBeatGrid(levelTwo)).toBe(true);
+
+      // The scheduler is armed on the upgraded interval.
+      player.tryFire(10);
+      const interval = player.getFireInterval('rapid');
+      const shot = player.getLastShotTime('rapid')!;
+      expect(isOnGrid(shot, interval, 0)).toBe(true);
+    });
+  });
+
+  describe('power-up level store (AH-0MUV5CLVO002ZHS9)', () => {
+    it('collectPowerUp increments the run-scoped level; getPowerUpLevel reads it', async () => {
+      const player = await freshPlayer();
+      expect(player.getPowerUpLevel('P3')).toBe(0);
+
+      expect(player.collectPowerUp('P3')).toBe(1);
+      expect(player.getPowerUpLevel('P3')).toBe(1);
+
+      expect(player.collectPowerUp('P3')).toBe(2);
+      expect(player.getPowerUpLevel('P3')).toBe(2);
+    });
+
+    it('getPowerUpLevels lists every owned power-up with its level (choice context)', async () => {
+      const player = await freshPlayer();
+      expect(player.getPowerUpLevels()).toEqual([]);
+
+      player.collectPowerUp('P3');
+      player.collectPowerUp('P3');
+      player.collectPowerUp('P5');
+
+      expect(player.getPowerUpLevels()).toEqual([
+        { id: 'P3', level: 2 },
+        { id: 'P5', level: 1 },
+      ]);
+    });
+
+    it('a permanent hold-full grant tracks the level and permanent stack (P9)', async () => {
+      const player = await freshPlayer();
+
+      player.collectPowerUp('P9', true);
+      player.collectPowerUp('P9', true);
+
+      expect(player.getPowerUpLevel('P9')).toBe(2);
+      // The derived P9 permanent stacks scale with the level model.
+      expect(player.getPowerUpLevels()).toEqual([{ id: 'P9', level: 2 }]);
+    });
+
+    it('resetPowerUpLevels clears every level (run restart)', async () => {
+      const player = await freshPlayer();
+      player.collectPowerUp('P3');
+      player.collectPowerUp('P6');
+
+      player.resetPowerUpLevels();
+
+      expect(player.getPowerUpLevel('P3')).toBe(0);
+      expect(player.getPowerUpLevel('P6')).toBe(0);
+      expect(player.getPowerUpLevels()).toEqual([]);
+    });
+  });
+
   // ── Phase-locked beat-grid auto-fire (AH-0MUAYB8EH005RJ8B) ──────
 
   /**
@@ -876,7 +1089,7 @@ describe('Player ship entity', () => {
 
   it('tryFire fires active weapons on the shared beat grid, phase-locked (AC1/AC2)', async () => {
     const player = await freshPlayer();
-    player.equipWeapon('rapid'); // rapid 125 ms (6/beat), cannon 375 ms (2/beat)
+    player.equipWeapon('rapid'); // first collection = base (125 ms, 6/beat)
 
     // t = 500 ms: both weapons' grid ticks have elapsed.
     expect(player.tryFire(0.5)).toEqual(['cannon', 'rapid']);
@@ -908,7 +1121,9 @@ describe('Player ship entity', () => {
     for (let i = 0; i < 40; i++) player.tryFire(0.05); // 2 s of 50 ms frames
 
     for (const id of player.getActiveWeapons()) {
-      const interval = player.getWeaponDef(id).fireRateMs;
+      // The scheduler interval (base rules until the shared core applies
+      // weapon levels); assert each shot lands on that exact grid tick.
+      const interval = player.getFireInterval(id);
       const shot = player.getLastShotTime(id);
       expect(shot).toBeDefined();
       expect(isOnGrid(shot!, interval)).toBe(true);

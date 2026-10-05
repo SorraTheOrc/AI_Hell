@@ -14,6 +14,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
 import * as effectsModule from '../audio/effects';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
+import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, type BootedGame } from '../test/gameHarness';
@@ -21,6 +22,10 @@ import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
+import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
+import { minionCountForPhase } from '../waves/BossMinions';
+import type { WeaponDefinition } from '../utils/weapons';
+import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
 import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
@@ -186,6 +191,20 @@ function reachBoss(scene: PlayScene): void {
         `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()} ` +
         `transitioning=${scene.isTransitioning()}`,
     );
+  }
+}
+
+/**
+ * Fires `BOSS_HIT_POINTS_PER_PHASE` player bullets at the boss, one per tick,
+ * depleting exactly one health phase (AH-0MUTV3J7T006MZ4K).
+ */
+function damageBossPhase(
+  scene: PlayScene,
+  boss: { x: number; y: number },
+): void {
+  for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+    scene.tick(0.016);
   }
 }
 
@@ -1521,9 +1540,8 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // One player bullet = one phase of damage.
-    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-    scene.tick(0.016);
+    // One phase requires BOSS_HIT_POINTS_PER_PHASE player bullets.
+    damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
   });
@@ -1534,8 +1552,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
 
     // Phase 1 → 2: Firestorm divers should arrive from the top.
-    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-    scene.tick(0.016);
+    damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
 
     const divers = scene.getEnemies().filter(
@@ -1544,7 +1561,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(divers.length).toBeGreaterThan(0);
   });
 
-  it('AC4 — a hit costs one life, not the whole phase (phase score per GDD §4.5)', async () => {
+  it('AC4 — phase score is awarded on phase depletion, not per hit (phase score per GDD §4.5)', async () => {
     // Separate scenario: the boss deals no bullets here; assert the score
     // awarded per destroyed phase follows the GDD table (1000/2000/3000/5000).
     const scene = await bootPlay();
@@ -1552,8 +1569,16 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
+    // Partial-phase hits award no score.
     scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
     scene.tick(0.016);
+    expect(scene.getGameState().score - scoreBefore).toBe(0);
+
+    // The 10th (phase-depleting) hit awards the phase score exactly once.
+    for (let i = 1; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
     expect(scene.getGameState().score - scoreBefore).toBe(BOSS_PHASE_SCORES[1]);
   });
 
@@ -1563,19 +1588,134 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phase-killing bullets (one per health segment).
-    for (let i = 0; i < 4; i++) {
-      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-      scene.tick(0.016);
+    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (40 total).
+    for (let phase = 0; phase < 4; phase++) {
+      damageBossPhase(scene, boss);
     }
     expect(boss.alive).toBe(false);
     expect(scene.getWaveManager().bossDefeated).toBe(true);
     // Phases 1–4 all awarded (1000+2000+3000+5000).
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
-    await new Promise((r) => setTimeout(r, 350));
+    // The transition is delayed by the short victory hold
+    // (VICTORY_TRANSITION_HOLD_MS); wait past it.
+    await new Promise((r) => setTimeout(r, 900));
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
+
+  /** Live minion count (the boss is not part of `spawned`). */
+  function liveMinions(scene: PlayScene): number {
+    return scene.getEnemies().filter((e) => e.alive).length;
+  }
+
+  it('AC1/AC2 — partial-phase hits award no score and spawn no minions', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const scoreBefore = scene.getGameState().score;
+    const minionsBefore = liveMinions(scene);
+
+    // 9 partial hits: phase 1 must survive with no rewards.
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
+
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(scene.getGameState().score).toBe(scoreBefore);
+    expect(liveMinions(scene)).toBe(minionsBefore);
+  });
+
+  it('AC3/AC4 — depletion awards the phase score and spawns minions exactly once', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const scoreBefore = scene.getGameState().score;
+    let expectedMinions = liveMinions(scene);
+    let expectedScore = 0;
+
+    for (let phase = 1; phase <= 4; phase++) {
+      // The 10th hit depletes the phase.
+      damageBossPhase(scene, boss);
+
+      // Score for the depleted phase is awarded exactly once.
+      expectedScore += BOSS_PHASE_SCORES[phase];
+      expect(scene.getGameState().score - scoreBefore).toBe(expectedScore);
+
+      if (phase < 4) {
+        // The next phase's minion wave is summoned once, on depletion.
+        expectedMinions += minionCountForPhase(phase + 1);
+        expect(liveMinions(scene)).toBe(expectedMinions);
+      }
+    }
+
+    expect(boss.alive).toBe(false);
+    expect(scene.getGameState().score - scoreBefore).toBe(11000);
+  });
+
+  // ── Levelled-weapon integration (AC6, AH-0MUUJEYZ7006UN5Z) ──────
+
+  /** Fully levels a weapon so its upgrade curve has saturated. */
+  function fullyLevelWeapon(scene: PlayScene, id: 'nova'): WeaponDefinition {
+    const player = scene.getPlayer()!;
+    for (let i = 0; i < 30; i++) player.equipWeapon(id, true);
+    return player.getWeaponDef(id);
+  }
+
+  /** Shared AOE application seam (the real path a levelled AOE weapon uses). */
+  function applyAoe(
+    scene: PlayScene,
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    (
+      scene as unknown as {
+        applyAoeEffect(def: WeaponDefinition, x: number, y: number): void;
+      }
+    ).applyAoeEffect(def, x, y);
+  }
+
+  it('AC6 — a fully levelled AOE weapon deals one hit per blast, not a whole phase', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const def = fullyLevelWeapon(scene, 'nova');
+    expect(def.aoe).toBeDefined();
+
+    // 9 max-level blasts: phase 1 survives (each blast is one hit).
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+      applyAoe(scene, def, boss.x, boss.y);
+    }
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(boss.alive).toBe(true);
+
+    // The 10th blast depletes exactly one phase — no phase is skipped.
+    applyAoe(scene, def, boss.x, boss.y);
+    expect(boss.getPhaseNumber()).toBe(2);
+    expect(boss.alive).toBe(true);
+  });
+
+  it('AC6 — a fully levelled weapon still requires 40 hits to destroy the boss', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const def = fullyLevelWeapon(scene, 'nova');
+    const totalHits = 4 * BOSS_HIT_POINTS_PER_PHASE;
+
+    // 39 blasts leave the boss alive on its final phase.
+    for (let i = 0; i < totalHits - 1; i++) {
+      applyAoe(scene, def, boss.x, boss.y);
+    }
+    expect(boss.alive).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(4);
+
+    // The 40th blast destroys it — no earlier blast skipped a phase.
+    applyAoe(scene, def, boss.x, boss.y);
+    expect(boss.alive).toBe(false);
   });
 
   it('scenario — boss bullets are collected as enemy bullets', async () => {
@@ -1982,9 +2122,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isActive('P5')).toBe(true);
     const remaining2 = registry.remaining('P5')!;
 
-    // The second collection refreshed the timer to near full duration.
+    // The second collection refreshed the timer to the near-full level-1
+    // duration (level-derived, so longer than the base 10 s window).
     expect(remaining2).toBeGreaterThan(remainingBeforeSecond);
-    expect(remaining2).toBeCloseTo(10, 1);
+    expect(remaining2).toBeCloseTo(
+      resolvePowerUpAtLevel('P5', 1).speedDuration!,
+      1,
+    );
   });
 
   it('P5 active → fire-rate multiplier applied to the player (AC1)', async () => {
@@ -2541,13 +2685,14 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     };
 
     // Collect one of each effect category: timed (P5 speed, P8 life,
-    // P3 shield, P6 phase), permanent stacks (P9 magnet, P7 teleport) and a
-    // weapon pickup ('spread').
+    // P3 shield, P6 phase, P9 magnet field-pickup), permanent stacks (P9
+    // magnet upgrade, P7 teleport) and a weapon pickup ('spread').
     collect('P5');
     collect('P8');
     collect('P3');
     collect('P6');
     collect('P9');
+    registry.applyCollect('P9', true); // permanent magnet upgrade
     collect('P7');
     collect('spread');
 
@@ -2556,6 +2701,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isShielded).toBe(true);
     expect(registry.phaseCharges()).toBe(1);
     expect(registry.lives()).toBe(4);
+    expect(registry.isMagnetActive()).toBe(true);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);
     expect(registry.activeWeapons().length).toBeGreaterThan(0);
@@ -2580,7 +2726,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(restartedRegistry.isPhased).toBe(false);
     expect(restartedRegistry.phaseCharges()).toBe(0);
     expect(restartedRegistry.speedMultiplier()).toBe(1);
+    expect(restartedRegistry.isMagnetActive()).toBe(false);
     expect(restartedRegistry.magnetStacks()).toBe(0);
+    expect(restartedRegistry.magnetEffectStacks()).toBe(0);
     expect(restartedRegistry.hasTeleport()).toBe(false);
     expect(restartedRegistry.activeWeapons()).toHaveLength(0);
     expect(restartedRegistry.lives()).toBe(3);
@@ -3624,5 +3772,102 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
       ),
     ).toBe(true);
     expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+});
+
+describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootPlay(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    return booted.scene as PlayScene;
+  }
+
+  /**
+   * Drives the boss through all four phases so the run is won
+   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 40 total).
+   */
+  function defeatBoss(scene: PlayScene): void {
+    const boss = scene.getBoss()!;
+    for (let phase = 0; phase < 4; phase++) {
+      damageBossPhase(scene, boss);
+    }
+  }
+
+  it('AC1/AC2 — defeating the boss plays the fanfare once and spawns the shared celebration once', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+
+    defeatBoss(scene);
+
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(victorySpy).toHaveBeenCalledTimes(1);
+    // The celebration is the shared F2 helper, owning the scene registry.
+    const options = victorySpy.mock.calls[0][1] as { registry?: unknown[] };
+    expect(options.registry).toBe(scene.getVictoryEffects());
+    expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AC1 — the fanfare and celebration fire exactly once even across extra ticks', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+
+    defeatBoss(scene);
+    scene.tick(0.016);
+    scene.tick(0.016);
+
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(victorySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC3 — the defeat path is unchanged: no fanfare, no victory celebration', async () => {
+    const scene = await bootPlay();
+    const gs = scene.getGameState();
+    gs.lives = 1;
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    expect(gs.lives).toBe(0);
+    expect(fanfareSpy).not.toHaveBeenCalled();
+    expect(victorySpy).not.toHaveBeenCalled();
+    expect(scene.getVictoryEffects()).toHaveLength(0);
+  });
+
+  it('AC4 — the victory celebration is destroyed on SHUTDOWN (no leaks)', async () => {
+    const scene = await bootPlay();
+    reachBoss(scene);
+    defeatBoss(scene);
+
+    const effects = scene.getVictoryEffects();
+    expect(effects.length).toBeGreaterThan(0);
+
+    // Wait for the short hold, then the GameOverScene transition fires
+    // SHUTDOWN on PlayScene.
+    await new Promise((r) => setTimeout(r, 900));
+
+    expect(scene.getVictoryEffects()).toHaveLength(0);
+    for (const effect of effects) {
+      expect(effect.active).toBe(false);
+    }
   });
 });

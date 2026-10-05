@@ -3,7 +3,10 @@
  *
  * - **P5 Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
  * - **P8 Extra Life** — +1 life immediately (start 3, cap 5)
- * - **P9 Magnet** — permanent stacking effect (cap 5)
+ * - **P9 Magnet** — attracts nearby drops toward the ship; a 15 s
+ *   refreshing field pickup or a permanent stacking upgrade (cap 5)
+ * - **P10 Mineral Scoop** — attracts minerals toward the ship; a 15 s
+ *   refreshing field pickup or a permanent stacking upgrade (cap 5)
  * - **P3 Shield** — 15 s bubble, absorbs one hit (timed)
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (no enemy damage)
  * - **P6 Phase Shift** — charge-based automatic pass-through (parent
@@ -17,7 +20,15 @@
 
 // ── Power-up IDs ─────────────────────────────────────────────────────
 
-export type PowerUpId = 'P3' | 'P4' | 'P5' | 'P6' | 'P7' | 'P8' | 'P9';
+export type PowerUpId =
+  | 'P3'
+  | 'P4'
+  | 'P5'
+  | 'P6'
+  | 'P7'
+  | 'P8'
+  | 'P9'
+  | 'P10';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -34,7 +45,7 @@ export type WeaponDropId =
   | 'arc';
 
 /**
- * Every drop the combat gyms can spawn: power-up IDs (P3–P9) plus the
+ * Every drop the combat gyms can spawn: power-up IDs (P3–P10) plus the
  * weapon drop IDs (spread, dual, rapid, reset).
  */
 export type DropId = PowerUpId | WeaponDropId;
@@ -56,6 +67,12 @@ export enum PowerUpType {
   EXTRA_LIFE = 'extra_life',
   /** Permanent magnet stacks attracting drops (cap 5). */
   MAGNET = 'magnet',
+  /**
+   * Attracts nearby minerals toward the ship: a timed 15 s effect when
+   * collected as a field drop, permanent and stacking (cap 5) when granted
+   * as a hold-full reward.
+   */
+  MINERAL_SCOOP = 'mineral_scoop',
 }
 
 // ── Catalogue entry ─────────────────────────────────────────────────
@@ -85,7 +102,7 @@ export interface PowerUpEntry {
 // ── Power-up catalogue ──────────────────────────────────────────────
 
 /**
- * Full power-up catalogue: P3–P9.
+ * Full power-up catalogue: P3–P10.
  *
  * Entries are ordered by ascending GDD ID so that round-robin spawners
  * cycle in GDD order. Non-combat gym uses a filtered subset; combat gym
@@ -138,8 +155,19 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P9: {
     id: 'P9',
     name: 'Magnet',
-    description: 'Permanently pulls nearby drops toward the ship (stacks up to 5).',
+    description:
+      'Pulls nearby drops toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
     type: PowerUpType.MAGNET,
+    duration: 15,
+    maxStacks: 5,
+  },
+  P10: {
+    id: 'P10',
+    name: 'Mineral Scoop',
+    description:
+      'Pulls nearby minerals toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
+    type: PowerUpType.MINERAL_SCOOP,
+    duration: 15,
     maxStacks: 5,
   },
 };

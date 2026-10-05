@@ -273,6 +273,7 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
       PowerUpType.TELEPORT,
       PowerUpType.EXTRA_LIFE,
       PowerUpType.MAGNET,
+      PowerUpType.MINERAL_SCOOP,
     ]) {
       const icon = scene.add.graphics();
       drawPowerUpIcon(icon, type, 0, 0, 32);

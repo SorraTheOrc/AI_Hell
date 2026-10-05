@@ -332,6 +332,37 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
   });
 
+  it('a field pickup advances the single player store identically in the game and a gym (AC5)', async () => {
+    const { play, gym } = await bootBoth();
+    const playPlayer = play.getPlayer()!;
+    const gymPlayer = gym.getPlayer()!;
+
+    // The registry consumes the player's run-scoped store in both scenes, so
+    // the shared `applyCollect` path levels the power-up up exactly once and
+    // resolves the same effect strength everywhere.
+    play.getEffectsRegistry().applyCollect('P5');
+    gym.getEffectsRegistry().applyCollect('P5');
+
+    expect(playPlayer.getPowerUpLevel('P5')).toBe(1);
+    expect(gymPlayer.getPowerUpLevel('P5')).toBe(1);
+    expect(play.getEffectsRegistry().speedMultiplier()).toBeCloseTo(
+      gym.getEffectsRegistry().speedMultiplier(),
+      10,
+    );
+  });
+
+  it('a hold-full power-up reward raises the level by exactly one in both scenes (AC1/AC5)', async () => {
+    const { play, gym } = await bootBoth();
+    const playPlayer = play.getPlayer()!;
+    const gymPlayer = gym.getPlayer()!;
+
+    play.getEffectsRegistry().applyCollect('P5', true);
+    gym.getEffectsRegistry().applyCollect('P5', true);
+
+    expect(playPlayer.getPowerUpLevel('P5')).toBe(1);
+    expect(gymPlayer.getPowerUpLevel('P5')).toBe(1);
+  });
+
   it('expires timed weapons identically in the game and a gym (timers before auto-fire)', async () => {
     const { play, gym } = await bootBoth();
     play.getPlayer()!.equipWeapon('spread');
@@ -1003,7 +1034,8 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       };
     }
 
-    // Two P7 stacks each so FIFO consumption is observable.
+    // Two P7 collects each → 3 stored uses (level-derived: +1 then +2), so
+    // FIFO consumption is observable.
     for (const registry of [
       playScene.getEffectsRegistry(),
       combatScene.getEffectsRegistry(),
@@ -1018,16 +1050,16 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     // Same inputs through the same shared algorithm → same landing spot.
     expect(combatScene.getPlayer()!.x).toBe(playScene.getPlayer()!.x);
     expect(combatScene.getPlayer()!.y).toBe(playScene.getPlayer()!.y);
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(1);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(1);
+    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(2);
+    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(2);
     expect(playScene.getEffectsRegistry().isPhased).toBe(true);
     expect(combatScene.getEffectsRegistry().isPhased).toBe(true);
 
     // The second teleport consumes the remaining stack on both.
     expect(playScene.triggerTeleport()).toBe(true);
     expect(combatScene.triggerTeleport()).toBe(true);
-    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(0);
-    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(0);
+    expect(playScene.getEffectsRegistry().teleportStacks()).toBe(1);
+    expect(combatScene.getEffectsRegistry().teleportStacks()).toBe(1);
   });
 
   it('danger auto-triggers Phase Shift identically in the game and both gyms (Q1/Q2/Q3)', async () => {
@@ -1708,6 +1740,7 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['collectOverlappingDrops', 'src/scenes/core/dropLayer.ts'],
   ['applyDropMagnet', 'src/scenes/core/dropLayer.ts'],
   ['playDropPickupCue', 'src/scenes/core/dropLayer.ts'],
+  ['applyMineralScoop', 'src/powerups/mineralScoop.ts'],
   ['collectMinerals', 'src/scenes/core/mineralLayer.ts'],
   ['applyMineralChoiceReward', 'src/scenes/core/mineralLayer.ts'],
   ['isMineralAbsorbingEnemy', 'src/scenes/core/mineralLayer.ts'],
@@ -1733,6 +1766,7 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_advanceDropLifecycles', 'src/scenes/core/CombatCoreScene.ts'],
   ['_collectOverlappingDrops', 'src/scenes/core/CombatCoreScene.ts'],
   ['_applyDropMagnet', 'src/scenes/core/CombatCoreScene.ts'],
+  ['_applyMineralScoop', 'src/scenes/core/CombatCoreScene.ts'],
   ['_updateDropLayer', 'src/scenes/core/CombatCoreScene.ts'],
   ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
@@ -2097,6 +2131,7 @@ describe('shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223)',
 /** The shared AOE dispatch/effect/VFX hooks. */
 const SHARED_AOE_METHODS = [
   'onAoeFired',
+  'onAoeRandomFired',
   'applyAoeEffect',
   'detonateAoeProjectile',
   'spawnAoeEffectVfx',

@@ -55,6 +55,7 @@ import {
   playRapidFireSound,
   playSpawnSound,
   playSpreadFireSound,
+  playVictoryFanfareSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
@@ -77,6 +78,7 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import { spawnVictoryJuice } from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
@@ -194,6 +196,14 @@ const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 
 /** Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %). */
 export const POWER_UP_DROP_CHANCE = 0.18;
+
+/**
+ * Short in-run hold (ms) after the victory celebration is triggered and
+ * before the `GameOverScene` transition. Keeps the moment-of-win flourish
+ * visible without a long blocking delay; the sustained celebration then
+ * continues on `GameOverScene`. Set to 0 to transition immediately.
+ */
+export const VICTORY_TRANSITION_HOLD_MS = 250;
 
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
@@ -336,6 +346,13 @@ export class PlayScene extends CombatScene<
 
   private transitionTimer = 0;
 
+  /**
+   * Registry for the in-run victory celebration display objects (the shared
+   * `spawnVictoryJuice` layers). Cleared — with every leftover object
+   * destroyed — on scene SHUTDOWN so a stop/restart leaks nothing.
+   */
+  private victoryEffects: Phaser.GameObjects.GameObject[] = [];
+
   // ── Wormhole spawn animation tracking ────────────────────────────
   /** The live wormhole handle for the current wave spawn, or null. */
   private _spawnWormhole: WormholeHandle | null = null;
@@ -429,7 +446,11 @@ export class PlayScene extends CombatScene<
     this.bombNotice = new BombNotice(this);
 
     // HUD (lives counter + active effects).
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
+    this.hud = new HUD(this, this.effectsRegistry, {
+      showLives: true,
+      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
+      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
+    });
 
     this._buildHudText();
 
@@ -522,6 +543,7 @@ export class PlayScene extends CombatScene<
    */
   protected override resetRunState(): void {
     super.resetRunState();
+    this.victoryEffects = [];
     this.spawned = [];
     this.enemyBullets = [];
     this.drops = [];
@@ -600,6 +622,10 @@ export class PlayScene extends CombatScene<
     this.waveTimerBar?.destroy();
     this.waveTimerBar = null;
 
+    // Destroy any in-run victory celebration still alive on shutdown.
+    for (const effect of this.victoryEffects) effect.destroy();
+    this.victoryEffects = [];
+
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
   }
@@ -675,6 +701,10 @@ export class PlayScene extends CombatScene<
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
       this._updateSpawnAnimations(dt);
+      // P10 Mineral Scoop attractor runs before the shared mineral collection
+      // inside _handleCollisions, so a mineral pulled into the hull this frame
+      // is collected this frame (parity with every gym).
+      this._applyMineralScoop(this.minerals, dt);
       this._handleCollisions();
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
@@ -1215,9 +1245,12 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Handles a player-bullet hit on the boss: consumes a phase, awards
-   * the phase score, summons that phase's minions, and completes the run
-   * as a victory when the boss dies (GDD §4.5).
+   * Handles a single player hit on the boss (bullet or AOE). Applies one
+   * hit; score and minions are gated on phase depletion via
+   * `Boss.takeDamage()`'s `phaseAdvanced` signal (AH-0MUUJEB1D000GPX0):
+   * only a depleting hit awards the phase score and summons the next
+   * phase's minions. The run is completed as a victory when the boss dies
+   * (GDD §4.5).
    */
   private _damageBoss(): void {
     const boss = this.boss;
@@ -1225,19 +1258,49 @@ export class PlayScene extends CombatScene<
 
     const previousPhase = boss.getPhaseNumber();
     const result = boss.takeDamage();
-    if (result === 0) {
+    if (result.destroyed) {
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
-      this._finishRun(true);
+      this._triggerVictoryCelebration();
+      this._finishRunWithPurpose(true);
       return;
     }
 
-    // Phase advanced: award the destroyed phase's points (GDD §4.5).
-    this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
-    if (result !== previousPhase) {
-      this._spawnMinions(result);
+    // Phase depleted: award the destroyed phase's points (GDD §4.5) and
+    // summon the next phase's minions. Partial-phase hits do neither.
+    if (result.phaseAdvanced) {
+      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this._spawnMinions(boss.getPhaseNumber());
     }
+  }
+
+  /**
+   * Fires the end-of-run victory treatment at the moment the boss dies
+   * (parent AH-0MUTV7632000ZWCB AC1/AC6): the dedicated fanfare plays once
+   * and the shared `spawnVictoryJuice` celebration is spawned into this
+   * scene's registry. The sustained celebration is re-rendered on
+   * `GameOverScene`, so the transition needs only a short tunable hold
+   * ({@link VICTORY_TRANSITION_HOLD_MS}) for the in-run flourish to read.
+   */
+  private _triggerVictoryCelebration(): void {
+    playVictoryFanfareSound();
+    spawnVictoryJuice(this, { registry: this.victoryEffects });
+  }
+
+  /**
+   * Transitions to `GameOverScene` for a won run after the short victory
+   * hold, so the in-run celebration is visible before the screen changes.
+   * A zero hold transitions immediately (keeps timing tests deterministic).
+   */
+  private _finishRunWithPurpose(won: boolean): void {
+    if (!won || VICTORY_TRANSITION_HOLD_MS <= 0) {
+      this._finishRun(won);
+      return;
+    }
+    this.time.delayedCall(VICTORY_TRANSITION_HOLD_MS, () =>
+      this._finishRun(won),
+    );
   }
 
   // ── Player input & fire ─────────────────────────────────────────
@@ -1591,12 +1654,14 @@ export class PlayScene extends CombatScene<
 
   /**
    * Updates effect visuals each tick: the P3 shield bubble is drawn around
-   * the ship while shielded (lineStyle + low-alpha fill, radius
-   * SHIP_SIZE × 1.6, mirrors GymPowerUpsCombat) and cleared otherwise, and
+   * the ship while shielded (shared helper — continuously pulsing rim +
+   * low-alpha fill, radius SHIP_SIZE × 1.6, with the shared ending fade in
+   * the final second, mirrors GymPowerUpsCombat) and cleared otherwise, and
    * the P6 phase ghost alpha is applied when phased.
    */
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while P3 is active (shared helper).
+    // Shield bubble: drawn around the ship while P3 is active (shared helper,
+    // including the continuous rim pulse and ending fade).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
         this.shieldBubble,
@@ -2088,7 +2153,14 @@ export class PlayScene extends CombatScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
-    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, this.rng);
+    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, this.rng, {
+      // Offer level-ups for weapons the player already owns (parent
+      // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      // Offer level-ups for power-ups the player already owns (parent
+      // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+    });
     this.mineralChoiceOpen = true;
     this.setPaused(true);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
@@ -2206,6 +2278,15 @@ export class PlayScene extends CombatScene<
   /** Active composed player-death juice effects (empty once torn down). */
   getPlayerDeathEffects(): Phaser.GameObjects.GameObject[] {
     return this.playerDeathEffects.slice();
+  }
+
+  /**
+   * The live in-run victory celebration display objects (shared
+   * `spawnVictoryJuice` layers). Shrinks as each tween completes and is
+   * emptied on SHUTDOWN. Exposed for victory-trigger / teardown tests.
+   */
+  getVictoryEffects(): Phaser.GameObjects.GameObject[] {
+    return this.victoryEffects;
   }
 
   /** True while the player is invulnerable after a hit. */

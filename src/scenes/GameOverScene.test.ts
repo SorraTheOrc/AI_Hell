@@ -8,9 +8,11 @@
  * return to the main menu.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effectsModule from '../audio/effects';
+import * as endOfRunModule from '../vfx/endOfRunJuice';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { addEntry, getEntries, MAX_ENTRIES } from '../core/Leaderboard';
 import {
@@ -556,5 +558,279 @@ describe('GameOverScene — live leaderboard preview (AH-0MUE86S5F002VVQD)', () 
     const persisted = getEntries().find((e) => e.initials === 'XYZ')!;
     expect(persisted.rank).toBe(previewRank);
     expect(persisted.score).toBe(400);
+  });
+});
+
+describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Boots the scene and restarts it with `data`, then settles ~350 ms. */
+  async function bootWith(data: {
+    won: boolean;
+    score?: number;
+  }): Promise<GameOverScene> {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', data);
+    await new Promise((r) => setTimeout(r, 350));
+    return booted.game.scene.getScene('GameOverScene') as GameOverScene;
+  }
+
+  /** The juice-layer tags still alive in the scene's effects registry. */
+  function liveLayers(scene: GameOverScene): string[] {
+    return scene
+      .getEndOfRunEffects()
+      .map((o) => (o.getData ? o.getData('juiceLayer') : undefined))
+      .filter((v): v is string => typeof v === 'string');
+  }
+
+  it('wires the victory celebration on the victory branch and not the defeat treatment', async () => {
+    booted = await bootGameOver();
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+    const defeatSpy = vi.spyOn(endOfRunModule, 'spawnDefeatScreenJuice');
+
+    booted.game.scene.start('GameOverScene', { won: true, score: 100 });
+    await new Promise((r) => setTimeout(r, 350));
+    const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+
+    expect(victorySpy).toHaveBeenCalledTimes(1);
+    expect(defeatSpy).not.toHaveBeenCalled();
+    // The victory layers are alive in the registry.
+    const layers = liveLayers(scene);
+    expect(layers.some((t) => t.startsWith('victory'))).toBe(true);
+    expect(layers.some((t) => t.startsWith('defeat'))).toBe(false);
+  });
+
+  it('wires the defeat treatment and plays the sting exactly once on the defeat branch', async () => {
+    booted = await bootGameOver();
+    const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+    const defeatSpy = vi.spyOn(endOfRunModule, 'spawnDefeatScreenJuice');
+    const stingSpy = vi.spyOn(effectsModule, 'playDefeatStingSound');
+
+    booted.game.scene.start('GameOverScene', { won: false, score: 100 });
+    await new Promise((r) => setTimeout(r, 350));
+    const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+
+    expect(defeatSpy).toHaveBeenCalledTimes(1);
+    expect(victorySpy).not.toHaveBeenCalled();
+    expect(stingSpy).toHaveBeenCalledTimes(1);
+    const layers = liveLayers(scene);
+    expect(layers.some((t) => t.startsWith('defeat'))).toBe(true);
+    expect(layers.some((t) => t.startsWith('victory'))).toBe(false);
+  });
+
+  it('does not play the defeat sting on the victory branch', async () => {
+    booted = await bootGameOver();
+    const stingSpy = vi.spyOn(effectsModule, 'playDefeatStingSound');
+
+    booted.game.scene.start('GameOverScene', { won: true, score: 5000 });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(stingSpy).not.toHaveBeenCalled();
+  });
+
+  it('renders the treatment behind the UI (negative depth vs depth-0 UI)', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+
+    const effects = scene.getEndOfRunEffects();
+    expect(effects.length).toBeGreaterThan(0);
+    const header = findTextContaining(scene, 'DEFEAT');
+    expect(header).toBeDefined();
+    for (const effect of effects) {
+      const depth = (effect as unknown as { depth: number }).depth;
+      expect(depth).toBeLessThan(0);
+      expect(header!.depth).toBeGreaterThan(depth);
+    }
+  });
+
+  it('keeps initials entry and focus navigation usable while the treatment is active', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    // Keyboard initials: A–Z typing and Backspace all still work.
+    expect(scene.handleKey(new KeyboardEvent('keydown', { key: 'A' }))).toBe(true);
+    expect(scene.handleKey(new KeyboardEvent('keydown', { key: 'b' }))).toBe(true);
+    expect(scene.handleKey(new KeyboardEvent('keydown', { key: 'C' }))).toBe(true);
+    expect(scene.getInitials()).toBe('ABC');
+    expect(scene.handleKey(new KeyboardEvent('keydown', { key: 'Backspace' }))).toBe(true);
+    expect(scene.getInitials()).toBe('AB');
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'C' }));
+
+    // Focus navigation: Tab moves to the menu button and back.
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(scene.getFocusedIndex()).toBe(0);
+    // Return to Menu is still focusable.
+    expect(scene.getControlCount()).toBe(2);
+  });
+
+  it('keeps the Return to Menu pointer handler usable while the treatment is active', async () => {
+    const scene = await bootWith({ won: true, score: 12345 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    const button = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) =>
+        c instanceof Phaser.GameObjects.Text &&
+        c.text === '←  Return to Menu',
+    );
+    expect(button).toBeDefined();
+    expect(button!.input?.enabled).toBe(true);
+    button!.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted!.game.scene.isActive('GameOverScene')).toBe(false);
+  });
+
+  it('destroys every treatment object on SHUTDOWN and clears the registry', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+    const effects = scene.getEndOfRunEffects();
+    expect(effects.length).toBeGreaterThan(0);
+
+    // Restarting the scene fires SHUTDOWN on the old instance.
+    scene.scene.start('MenuScene');
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(scene.getEndOfRunEffects()).toHaveLength(0);
+    for (const effect of effects) {
+      expect(effect.active).toBe(false);
+    }
+  });
+
+  it('leaves no orphaned treatment objects across a defeat→victory restart', async () => {
+    const defeatScene = await bootWith({ won: false, score: 100 });
+    const defeatEffects = defeatScene.getEndOfRunEffects();
+    expect(defeatEffects.length).toBeGreaterThan(0);
+
+    booted!.game.scene.start('GameOverScene', { won: true, score: 200 });
+    await new Promise((r) => setTimeout(r, 350));
+    const victoryScene = booted!.game.scene.getScene('GameOverScene') as GameOverScene;
+
+    // The old defeat treatment is gone…
+    for (const effect of defeatEffects) {
+      expect(effect.active).toBe(false);
+    }
+    // …and the new scene only owns victory layers.
+    const layers = liveLayers(victoryScene);
+    expect(layers.some((t) => t.startsWith('victory'))).toBe(true);
+    expect(layers.some((t) => t.startsWith('defeat'))).toBe(false);
+  });
+});
+
+// ── Verification sweep (AH-0MUTYKR1O007XE2N) ────────────────────────
+
+describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUTYKR1O007XE2N)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  async function bootWith(data: {
+    won: boolean;
+    score?: number;
+  }): Promise<GameOverScene> {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', data);
+    await new Promise((r) => setTimeout(r, 350));
+    return booted.game.scene.getScene('GameOverScene') as GameOverScene;
+  }
+
+  it('arrows and Shift+Tab move focus while the treatment is active', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    expect(scene.getFocusedIndex()).toBe(0);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect(scene.getFocusedIndex()).toBe(0);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    expect(scene.getFocusedIndex()).toBe(0);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true }));
+    expect(scene.getFocusedIndex()).toBe(1);
+  });
+
+  it('Enter activates the focused Return to Menu control while the treatment is active', async () => {
+    const scene = await bootWith({ won: true, score: 12345 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    // Focus the Return to Menu button (index 1), then activate with Enter.
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
+    expect(scene.getFocusedIndex()).toBe(1);
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('Space activates the focused control while the treatment is active', async () => {
+    const scene = await bootWith({ won: false, score: 200 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
+    scene.handleKey(new KeyboardEvent('keydown', { key: ' ' }));
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('the Skip pointer handler works for a non-qualifying score while the treatment is active', async () => {
+    // Fill the board so this low score cannot qualify.
+    for (let i = 1; i <= 10; i++) addEntry('AAA', i * 1000);
+    const scene = await bootWith({ won: false, score: 50 });
+    expect(scene.getEndOfRunEffects().length).toBeGreaterThan(0);
+
+    const skip = (scene.children.list as Phaser.GameObjects.Text[]).find(
+      (c) => c instanceof Phaser.GameObjects.Text && c.text === '←  Skip',
+    );
+    expect(skip).toBeDefined();
+    skip!.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  it('the treatment objects are non-interactive and cannot intercept input', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+
+    const effects = scene.getEndOfRunEffects();
+    expect(effects.length).toBeGreaterThan(0);
+    for (const effect of effects) {
+      // No input component → the object cannot capture a pointer event.
+      expect(effect.input ?? null).toBeNull();
+    }
+  });
+
+  it('a stop/restart sweep leaves no orphaned treatment objects in the scene', async () => {
+    const scene = await bootWith({ won: false, score: 12345 });
+    const effects = scene.getEndOfRunEffects();
+    expect(effects.length).toBeGreaterThan(0);
+
+    // Restart the scene: SHUTDOWN destroys the old treatment.
+    scene.scene.restart({ won: true, score: 999 });
+    await new Promise((r) => setTimeout(r, 350));
+
+    for (const effect of effects) expect(effect.active).toBe(false);
+
+    // No leftover juice layer from the previous defeat treatment survives.
+    const restarted = booted!.game.scene.getScene('GameOverScene') as GameOverScene;
+    const layers = restarted
+      .getEndOfRunEffects()
+      .map((o) => (o.getData ? o.getData('juiceLayer') : undefined));
+    expect(layers.some((t) => typeof t === 'string' && t.startsWith('defeat'))).toBe(false);
+    expect(layers.some((t) => typeof t === 'string' && t.startsWith('victory'))).toBe(true);
   });
 });

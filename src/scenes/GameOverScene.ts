@@ -32,10 +32,18 @@ import {
   type LeaderboardPreviewRow,
 } from '../core/Leaderboard';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { playDefeatStingSound } from '../audio/effects';
+import { spawnDefeatScreenJuice, spawnVictoryJuice } from '../vfx/endOfRunJuice';
 import { renderLeaderboard } from '../ui/leaderboardView';
 import { FocusManager } from '../utils/focusManager';
 
 export { INITIALS_LENGTH };
+
+/**
+ * Depth of the opaque background — below every end-of-run juice layer
+ * (which sit at negative depth) and the default-depth (0) UI.
+ */
+const BACKGROUND_DEPTH = -100;
 
 /** Neon-cyan colour for game over text. */
 const GAME_OVER_COLOR = '#00ffff';
@@ -96,6 +104,13 @@ export class GameOverScene extends Phaser.Scene {
   /** Shared in-canvas focus manager (AH-0MU9LKQEP008LCX9-C1). */
   private focusManager = new FocusManager();
 
+  /**
+   * Caller-owned registry of end-of-run juice display objects (victory
+   * celebration or defeat treatment). Anything still alive at SHUTDOWN is
+   * destroyed here; layers remove themselves as their tweens complete.
+   */
+  private endOfRunEffects: Phaser.GameObjects.GameObject[] = [];
+
   /** Focus index of the initials field (−1 when the score does not qualify). */
   private initialsFocusIndex = -1;
 
@@ -119,9 +134,27 @@ export class GameOverScene extends Phaser.Scene {
     this.focusManager = new FocusManager();
     this.initials = '';
     this.qualifies = isQualifying(this.finalScore);
+    this.endOfRunEffects = [];
 
     // ── Background ───────────────────────────────────────────────
-    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
+    // The background sits below the juice layers (negative depth) so the
+    // victory/defeat treatment is visible over it, while the default-depth
+    // (0) UI stays above the treatment. See src/vfx/endOfRunJuice.ts.
+    this.add
+      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
+      .setOrigin(0)
+      .setDepth(BACKGROUND_DEPTH);
+
+    // ── End-of-run juice (victory celebration / defeat treatment) ──
+    // Rendered behind the UI; purely cosmetic and never interactive, so it
+    // cannot intercept keyboard or pointer input.
+    if (this.won) {
+      spawnVictoryJuice(this, { registry: this.endOfRunEffects });
+    } else {
+      const defeat = spawnDefeatScreenJuice(this, { registry: this.endOfRunEffects });
+      // Defeat sting — exactly once, gated by the shared sound toggle.
+      if (defeat.params.soundEnabled) playDefeatStingSound();
+    }
 
     // ── Game over header ─────────────────────────────────────────
     const headerColor = this.won ? VICTORY_COLOR : DEFEAT_COLOR;
@@ -217,6 +250,10 @@ export class GameOverScene extends Phaser.Scene {
       this.initials = '';
       this.initialsText = null;
       this.leaderboardRows = [];
+      // Destroy any juice objects still alive (tween still running) so a
+      // scene restart leaves no orphaned display objects behind.
+      for (const effect of this.endOfRunEffects) effect.destroy();
+      this.endOfRunEffects = [];
     });
   }
 
@@ -267,6 +304,15 @@ export class GameOverScene extends Phaser.Scene {
   /** Whether the final score qualifies for the leaderboard. */
   getQualifies(): boolean {
     return this.qualifies;
+  }
+
+  /**
+   * The live end-of-run juice display objects (victory celebration or defeat
+   * treatment) still owned by the scene. Shrinks as each tween completes and
+   * is emptied on SHUTDOWN. Exposed for teardown/leak tests.
+   */
+  getEndOfRunEffects(): Phaser.GameObjects.GameObject[] {
+    return this.endOfRunEffects;
   }
 
   /** Snapshot of the entries currently rendered on the leaderboard. */

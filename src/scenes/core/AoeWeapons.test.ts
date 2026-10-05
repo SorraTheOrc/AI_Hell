@@ -5,8 +5,9 @@
  * These exercise the real `CombatScene` implementation through a minimal
  * stub subclass: the `_autoFire` dispatch hook, enemy damage through the
  * shared kill seam, enemy-bullet clearing with shared impact feedback, the
- * boss hook, and the `onFire`/`onImpact` trigger split. Every assertion is
- * on observable behaviour (entity state, registered hooks, spawned bullets).
+ * boss hook, and the `onFire`/`onImpact`/`onRandom` trigger split. Every
+ * assertion is on observable behaviour (entity state, registered hooks,
+ * spawned bullets).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +24,7 @@ import { advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { isOnGrid } from '../../utils/beat';
-import { WEAPON_CATALOGUE, AOE_PROJECTILE_SPEEDS, type WeaponDefinition } from '../../utils/weapons';
+import { WEAPON_CATALOGUE, type WeaponDefinition } from '../../utils/weapons';
 import {
   CombatScene,
   type CombatDrop,
@@ -267,30 +268,59 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(spawned).not.toContain(WEAPON_CATALOGUE.nova.bulletColor);
   });
 
-  it('AC2 — an onImpact AOE weapon launches a projectile and does not resolve immediately', async () => {
+  it('AC1 — firing the Mortar spawns no travelling projectile', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
-    const enemy = new StubEnemy(scene, 110, 100);
-    scene.entities.push(enemy);
     player.equipWeapon('mortar');
 
-    const spawned: Array<number | undefined> = [];
+    const spawned: PlayerBullet[] = [];
     const original = scene.spawnPlayerBullet.bind(scene);
     vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
-      (x, y, vx, vy, color, lifetime) => {
-        spawned.push(color);
-        return original(x, y, vx, vy, color, lifetime);
+      (x, y, vx, vy, color, lifetime, radius) => {
+        const bullet = original(x, y, vx, vy, color, lifetime, radius);
+        spawned.push(bullet);
+        return bullet;
       },
     );
 
     scene.runAutoFire(1.5);
 
-    // Mortar fired (hook recorded) and launched its own projectile...
-    expect(scene.hooks).toContain('onAoeFired:mortar:onImpact:100,100');
-    expect(spawned).toContain(WEAPON_CATALOGUE.mortar.bulletColor);
-    // ...but the blast has not resolved yet (it detonates on impact).
-    expect(enemy.destroyed).toBe(false);
-    expect(scene.hooks).not.toContain('onEnemyDestroyed:true');
+    // The permanent cannon still fires its own bullets, but none is a Mortar
+    // projectile: every spawned bullet travels at the shared speed and carries
+    // no AOE tag (the Mortar resolves instantly instead).
+    expect(spawned.length).toBeGreaterThan(0);
+    for (const bullet of spawned) {
+      expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
+        PLAYER_BULLET_SPEED,
+        5,
+      );
+      expect(bullet.aoeWeapon).toBeUndefined();
+    }
+  });
+
+  it('AC2 — firing the Mortar resolves its blast immediately at a random in-range point', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+    const def = WEAPON_CATALOGUE.mortar;
+    const range = def.aoe!.projectileSpeed! * def.bulletLifetime;
+
+    // Deterministic sampling: u = 0.25 → r = range/2; v = 0.25 → θ = π/2
+    // (straight down) → the point is (100, 100 + range/2).
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+
+    scene.runAutoFire(1.5);
+
+    // The blast resolved at fire time (hook recorded for the sampled point)...
+    expect(scene.hooks).toContain('onAoeFired:mortar:onRandom:100,100');
+    expect(scene.hooks).toContain(`onAoeHitsBoss:100,${100 + range / 2},35`);
+    // ...exactly once, at a point inside the disc of radius `range`...
+    expect(
+      scene.hooks.filter((h) => h.startsWith('onAoeHitsBoss')),
+    ).toHaveLength(1);
+    expect(range / 2).toBeLessThanOrEqual(range);
+    // ...and the on-screen blast registered its VFX immediately.
+    expect(scene.getAoeEffects()).toHaveLength(1);
   });
 
   // ── AC3 — enemy damage through the shared kill seam ───────────────
@@ -383,7 +413,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     scene.runApplyAoe(WEAPON_CATALOGUE.nova, 250, 300);
 
-    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,90');
+    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,45');
     expect(scene.bossHitCount).toBe(0); // no boss present
   });
 
@@ -394,7 +424,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     scene.runApplyAoe(WEAPON_CATALOGUE.mortar, 250, 300);
 
     expect(scene.bossHitCount).toBe(1);
-    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,70');
+    expect(scene.hooks).toContain('onAoeHitsBoss:250,300,35');
   });
 
   // ── AC7 — beat-quantised triggering ───────────────────────────────
@@ -463,40 +493,94 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(ring.y).toBe(100);
   });
 
-  it('F2 AC3 — an onImpact weapon spawns no onFire ring', async () => {
+  it('F2 AC3 — a non-onFire weapon spawns no onFire ring at the ship', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('mortar');
 
+    // Deterministic sampling keeps the Mortar blast away from the ship, so no
+    // effect is centred there (where a Nova onFire ring would be drawn).
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
     scene.runAutoFire(1.5);
 
-    // Mortar detonates later (F3); no Nova ring is drawn at fire time.
+    const effects = scene.getAoeEffects();
+    expect(effects.length).toBeGreaterThanOrEqual(1);
+    for (const effect of effects) {
+      expect(effect.x === 100 && effect.y === 100).toBe(false);
+    }
+  });
+
+  // ── F3 — Mortar random detonation (no travelling projectile) ───────
+
+  it('AC3 — a leveled Mortar detonates once per pattern bullet', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+    player.equipWeapon('mortar'); // level 2 → +2 projectiles → 3 bullets
+    const def = player.getWeaponDef('mortar');
+    expect(def.offsets.length).toBe(3);
+
+    // rng=0 samples the ship centre each time → every detonation is on-screen,
+    // so every blast draws VFX and hits the boss hook.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    scene.runAutoFire(1.5);
+
+    expect(
+      scene.hooks.filter((h) => h.startsWith('onAoeHitsBoss')),
+    ).toHaveLength(3);
+    expect(scene.getAoeEffects()).toHaveLength(3);
+  });
+
+  it('AC4 — an off-screen detonation plays the cue but draws no VFX', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 900, y: 100 });
+    player.equipWeapon('mortar');
+    const cue = vi.spyOn(effectsModule, 'playMortarDetonationSound');
+
+    // rng≈1 → r≈range and θ≈0 → the point lands near (900 + 180, 100), beyond
+    // the 960 px play area's right edge.
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+
+    scene.runAutoFire(1.5);
+
+    // The detonation cue still fires, but no off-screen graphics are created.
+    expect(cue).toHaveBeenCalledTimes(1);
     expect(scene.getAoeEffects()).toHaveLength(0);
   });
 
-  // ── F3 — Mortar onImpact projectile + detonation ───────────────────
-
-  it('F3 AC3 — the Mortar projectile travels at the slower AOE projectile speed', async () => {
+  it('AC5 — a random detonation damages enemies and clears bullets at the sampled point', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('mortar');
+    const def = WEAPON_CATALOGUE.mortar;
+    const range = def.aoe!.projectileSpeed! * def.bulletLifetime;
+
+    // Deterministic point: (100, 100 + range/2) = (100, 190).
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    const hit = new StubEnemy(scene, 100, 100 + range / 2);
+    const missed = new StubEnemy(scene, 400, 400);
+    scene.entities.push(hit, missed);
+    const bulletHit = new StubBullet(scene, 100, 100 + range / 2);
+    const bulletMiss = new StubBullet(scene, 400, 400);
+    scene.bullets.push(bulletHit, bulletMiss);
 
     scene.runAutoFire(1.5);
 
-    const shell = scene
-      .getPlayerBullets()
-      .find((b) => b.color === WEAPON_CATALOGUE.mortar.bulletColor);
-    expect(shell).toBeDefined();
-    expect(Math.hypot(shell!.vx, shell!.vy)).toBeCloseTo(
-      AOE_PROJECTILE_SPEEDS.mortar,
-      5,
-    );
-    // Deliberately slower than a conventional bullet, so the blast point is
-    // readable.
-    expect(AOE_PROJECTILE_SPEEDS.mortar).toBeLessThan(PLAYER_BULLET_SPEED);
+    // The blast caught the enemy and bullet at the sampled point only.
+    expect(hit.destroyed).toBe(true);
+    expect(missed.destroyed).toBe(false);
+    expect(scene.bullets).toEqual([bulletMiss]);
+    expect(bulletHit.graphics.active).toBe(false);
   });
 
-  it('F3 AC4 — the Mortar shell detonates on lifetime expiry', async () => {
+  // ── Retained onImpact projectile-detonation machinery (dead code) ──
+  // No catalogue weapon uses the `onImpact` trigger after the Mortar moved
+  // to `onRandom`, but the dispatch resolves through the same
+  // `onAoeProjectileSpawned` → `detonateAoeProjectile` path; these tests pin
+  // that retained behaviour so it cannot silently rot.
+
+  it('onImpact AC4 — a manually spawned projectile detonates on lifetime expiry', async () => {
     const scene = await boot();
     const def = WEAPON_CATALOGUE.mortar;
     const enemy = new StubEnemy(scene, 100, 100);
@@ -521,7 +605,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.getAoeEffects()).toHaveLength(1);
   });
 
-  it('F3 AC4 — the Mortar shell detonates when it hits an enemy', async () => {
+  it('onImpact AC4 — the projectile detonates when it hits an enemy', async () => {
     const scene = await boot();
     const def = WEAPON_CATALOGUE.mortar;
     const enemy = new StubEnemy(scene, 120, 100);
@@ -546,13 +630,13 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
   });
 
-  it('F3 AC4 — the Mortar shell detonates when it intercepts an enemy bullet', async () => {
+  it('onImpact AC4 — the projectile detonates when it intercepts an enemy bullet', async () => {
     const scene = await boot();
     const def = WEAPON_CATALOGUE.mortar;
     scene.bullets.push(new StubBullet(scene, 120, 100));
     // Far enough not to be hit directly by the projectile's pass-1 scan, but
-    // inside the Mortar blast radius (70 px) from the interception point.
-    const enemy = new StubEnemy(scene, 170, 100);
+    // inside the Mortar blast radius (35 px) from the interception point.
+    const enemy = new StubEnemy(scene, 150, 100);
     scene.entities.push(enemy);
     const bullet = scene.spawnPlayerBullet(
       120,
@@ -572,7 +656,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.getAoeEffects()).toHaveLength(1);
   });
 
-  it('F3 AC4 — a projectile detonates at most once (collision + expiry)', async () => {
+  it('onImpact AC4 — a projectile detonates at most once (collision + expiry)', async () => {
     const scene = await boot();
     const def = WEAPON_CATALOGUE.mortar;
     const tough = new ToughEnemy(scene, 100, 100, 3);
@@ -595,7 +679,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.getAoeEffects()).toHaveLength(1);
   });
 
-  it('F3 AC6 — the detonation plays the dedicated Mortar detonation cue', async () => {
+  it('onImpact AC6 — the detonation plays the dedicated Mortar detonation cue', async () => {
     const scene = await boot();
     const cue = vi.spyOn(effectsModule, 'playMortarDetonationSound');
     const def = WEAPON_CATALOGUE.mortar;

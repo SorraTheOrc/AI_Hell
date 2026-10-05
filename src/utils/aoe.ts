@@ -34,6 +34,49 @@ export interface AoEGeometryTarget {
   alive?: boolean;
 }
 
+/** A plain world-space point (px). */
+export interface AoEPoint {
+  /** World x position (px). */
+  x: number;
+  /** World y position (px). */
+  y: number;
+}
+
+/**
+ * Selects a point uniformly at random over the **disc** of the given radius
+ * centred on (centreX, centreY) — i.e. **area-uniform** across the disc, not
+ * uniform over angle × distance (which would cluster points at the centre).
+ *
+ * Uses inverse-transform sampling: `r = range × √u` (so the radial
+ * probability density is proportional to `r`), `θ = 2π × v` with two
+ * independent uniform `[0, 1)` draws from `rng`. Pure and deterministic for
+ * a given RNG sequence, so the game and every gym sample identically and a
+ * test can inject a seeded RNG.
+ *
+ * @param centreX - Disc centre x (px).
+ * @param centreY - Disc centre y (px).
+ * @param range - Disc radius (px). A non-positive/non-finite range resolves
+ *   to the centre point.
+ * @param rng - Uniform `[0, 1)` source (defaults to `Math.random`).
+ * @returns The sampled point, always within `range` px of the centre.
+ */
+export function selectRandomPoint(
+  centreX: number,
+  centreY: number,
+  range: number,
+  rng: () => number = Math.random,
+): AoEPoint {
+  if (!Number.isFinite(range) || range <= 0) {
+    return { x: centreX, y: centreY };
+  }
+  const distance = range * Math.sqrt(rng());
+  const angle = 2 * Math.PI * rng();
+  return {
+    x: centreX + distance * Math.cos(angle),
+    y: centreY + distance * Math.sin(angle),
+  };
+}
+
 /** Returns the squared distance between (ax, ay) and (bx, by). */
 export function distanceSquared(
   ax: number,

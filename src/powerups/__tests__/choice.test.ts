@@ -12,14 +12,17 @@ import { describe, expect, it } from 'vitest';
 import {
   CHOICE_POOL,
   ChoiceStrategy,
+  buildChoiceCandidates,
   chooseOptions,
   createRandomChoiceStrategy,
   isWeaponOption,
   randomChoiceStrategy,
 } from '../choice';
+import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
+import { summarisePowerUpLevelChange } from '../powerUpLevels';
 
 describe('power-up choice strategy', () => {
-  it('offers the full drop pool: P3–P9 plus the collectable weapon drops', () => {
+  it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
     expect([...CHOICE_POOL].sort()).toEqual(
       [
         'P3',
@@ -29,6 +32,7 @@ describe('power-up choice strategy', () => {
         'P7',
         'P8',
         'P9',
+        'P10',
         'dual',
         'rapid',
         'spread',
@@ -39,6 +43,10 @@ describe('power-up choice strategy', () => {
     );
     // The reset utility drop is not a power-up choice.
     expect(CHOICE_POOL).not.toContain('reset');
+  });
+
+  it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {
+    expect(CHOICE_POOL).toContain('P10');
   });
 
   it('the default strategy offers three distinct options from the pool', () => {
@@ -94,5 +102,157 @@ describe('power-up choice strategy', () => {
     };
     const options = chooseOptions(3, fixed);
     expect(options.map((o) => o.id)).toEqual(['spread', 'P5', 'P9']);
+  });
+
+  describe('weapon level-up offers (AH-0MUPOVYZU0073OUV)', () => {
+    const context = {
+      weaponLevels: [
+        { id: 'spread' as const, level: 2 },
+        { id: 'rapid' as const, level: 1 },
+        { id: 'cannon' as const, level: 0 },
+      ],
+    };
+
+    it('adds a level-up offer for each owned weapon, reflecting its level (AC1/AC2/AC4)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUps = candidates.filter((o) => o.kind === 'weapon-level');
+      expect(levelUps.map((o) => o.id).sort()).toEqual(['rapid', 'spread']);
+
+      const spread = levelUps.find((o) => o.id === 'spread')!;
+      expect(spread.level).toBe(3);
+      expect(spread.name).toContain('Lv.3');
+      const rapid = levelUps.find((o) => o.id === 'rapid')!;
+      expect(rapid.level).toBe(2);
+    });
+
+    it('ignores unowned/level-0 weapons and the cannon (AC5)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [{ id: 'cannon', level: 0 }],
+      });
+      expect(candidates.some((o) => o.kind === 'weapon-level')).toBe(false);
+    });
+
+    it('keeps the base pool unchanged when the player owns no weapons (AC5)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, { weaponLevels: [] });
+      expect(candidates.map((o) => o.id).sort()).toEqual([...CHOICE_POOL].sort());
+      expect(candidates.every((o) => o.kind !== 'weapon-level')).toBe(true);
+    });
+
+    it('still offers exactly three distinct options with contextual level-ups (AC6)', () => {
+      const options = createRandomChoiceStrategy().choose(3, () => 0.5, context);
+      expect(options).toHaveLength(3);
+      expect(new Set(options.map((o) => `${o.kind}:${o.id}`)).size).toBe(3);
+    });
+  });
+
+  describe('upgrade change summary & New badge (AH-0MUU1GOAU007RFVR)', () => {
+    it('populates changeSummary for weapon-level offers', () => {
+      const context = {
+        weaponLevels: [{ id: 'spread' as const, level: 2 }],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUp = candidates.find(
+        (o) => o.kind === 'weapon-level' && o.id === 'spread',
+      );
+      expect(levelUp).toBeDefined();
+      expect(levelUp!.changeSummary).toBeDefined();
+      expect(levelUp!.changeSummary!.length).toBeGreaterThan(0);
+      // The summary is derived from the shared resolver.
+      expect(levelUp!.changeSummary).toBe(
+        summariseWeaponLevelChange('spread', 2, 3),
+      );
+    });
+
+    it('marks base-pool weapons as New when the player does not own them', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+      });
+      const spread = candidates.find((o) => o.id === 'spread');
+      expect(spread).toBeDefined();
+      expect(spread!.isNew).toBe(true);
+      const rapid = candidates.find((o) => o.id === 'rapid');
+      expect(rapid!.isNew).toBe(true);
+    });
+
+    it('does not mark a weapon as New when the player owns it', () => {
+      const context = { weaponLevels: [{ id: 'spread' as const, level: 1 }] };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const spread = candidates.find(
+        (o) => o.id === 'spread' && o.kind === 'weapon',
+      );
+      expect(spread).toBeDefined();
+      expect(spread!.isNew).toBeUndefined();
+    });
+
+    it('power-up options have no isNew or changeSummary from base candidates', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, { weaponLevels: [] });
+      const powerUps = candidates.filter((o) => o.kind === 'powerup');
+      for (const pu of powerUps) {
+        expect(pu.isNew).toBeUndefined();
+        expect(pu.changeSummary).toBeUndefined();
+      }
+    });
+  });
+
+  describe('power-up level-up offers (AH-0MUU2QJE2007JNR6 AC6)', () => {
+    const context = {
+      powerUpLevels: [
+        { id: 'P3' as const, level: 2 },
+        { id: 'P9' as const, level: 1 },
+      ],
+    };
+
+    it('adds a level-up offer for each owned power-up, reflecting its level', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUps = candidates.filter((o) => o.kind === 'power-up-level');
+      expect(levelUps.map((o) => o.id).sort()).toEqual(['P3', 'P9']);
+
+      const p3 = levelUps.find((o) => o.id === 'P3')!;
+      expect(p3.level).toBe(3);
+      expect(p3.name).toContain('Lv.3');
+      const p9 = levelUps.find((o) => o.id === 'P9')!;
+      expect(p9.level).toBe(2);
+    });
+
+    it('derives the change summary from the shared power-up resolver', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const p3 = candidates.find(
+        (o) => o.kind === 'power-up-level' && o.id === 'P3',
+      )!;
+      expect(p3.changeSummary).toBe(summarisePowerUpLevelChange('P3', 2, 3));
+      expect(p3.changeSummary!.length).toBeGreaterThan(0);
+    });
+
+    it('marks base-pool power-ups as New when ownership is known and unowned', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        powerUpLevels: [],
+      });
+      const p5 = candidates.find((o) => o.kind === 'powerup' && o.id === 'P5');
+      expect(p5).toBeDefined();
+      expect(p5!.isNew).toBe(true);
+    });
+
+    it('does not mark an owned power-up as New', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        powerUpLevels: [{ id: 'P5' as const, level: 1 }],
+      });
+      const base = candidates.find((o) => o.kind === 'powerup' && o.id === 'P5');
+      expect(base).toBeDefined();
+      expect(base!.isNew).toBeUndefined();
+    });
+
+    it('keeps the base pool unchanged when no power-up context is supplied', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, { weaponLevels: [] });
+      expect(candidates.some((o) => o.kind === 'power-up-level')).toBe(false);
+      for (const pu of candidates.filter((o) => o.kind === 'powerup')) {
+        expect(pu.isNew).toBeUndefined();
+      }
+    });
+
+    it('still offers distinct options with contextual power-up level-ups', () => {
+      const options = createRandomChoiceStrategy().choose(3, () => 0.5, context);
+      expect(options).toHaveLength(3);
+      expect(new Set(options.map((o) => `${o.kind}:${o.id}`)).size).toBe(3);
+    });
   });
 });

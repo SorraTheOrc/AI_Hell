@@ -13,7 +13,13 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
-import { BOSS_ATTACK_INTERVAL, Boss, playBossSpawnSound } from './Boss';
+import {
+  BOSS_ATTACK_INTERVAL,
+  BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_PHASE_COUNT,
+  Boss,
+  playBossSpawnSound,
+} from './Boss';
 
 class HarnessScene extends Phaser.Scene {
   constructor() {
@@ -226,5 +232,232 @@ describe('Boss audio shares the effects.ts AudioContext (AH-0MU4KPQHR008WX4R)', 
     playBossSpawnSound();
 
     expect(CountingAudioContext.instances).toBe(1);
+  });
+});
+
+// ── Per-phase HP model: 10 hits per phase (AH-0MUTV3J7T006MZ4K) ──────
+
+interface TakeDamageResult {
+  destroyed: boolean;
+  phaseAdvanced: boolean;
+  phase: number;
+  hpRemaining: number;
+}
+
+describe('Boss — per-phase HP model: 10 hits per phase (AH-0MUTV3J7T006MZ4K)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  // AC1: 10 hits per phase; total HP derives from the phase constants.
+  it('AC1 — total hits to destroy = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+
+    for (let i = 0; i < totalHits - 1; i++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.destroyed).toBe(false);
+    }
+    expect(boss.alive).toBe(true);
+
+    const final = boss.takeDamage() as TakeDamageResult;
+    expect(final.destroyed).toBe(true);
+    expect(boss.alive).toBe(false);
+  });
+
+  // AC1: 10 hits per phase
+  it('after 9 hits the boss remains in phase 1', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    expect(boss.getPhaseNumber()).toBe(1);
+
+    for (let i = 0; i < 9; i++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.destroyed).toBe(false);
+      expect(result.phaseAdvanced).toBe(false);
+    }
+
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(boss.alive).toBe(true);
+  });
+
+  it('the 10th hit advances to phase 2', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    for (let i = 0; i < 9; i++) {
+      boss.takeDamage();
+    }
+
+    const result = boss.takeDamage() as TakeDamageResult;
+    expect(result.phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(2);
+    expect(boss.alive).toBe(true);
+  });
+
+  // AC2: all 4 phases traversed, 40th hit destroys boss
+  it('40 hits destroys the boss (phase 4 -> destroyed)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    for (let i = 0; i < 39; i++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.destroyed).toBe(false);
+    }
+
+    expect(boss.getPhaseNumber()).toBe(4);
+    expect(boss.alive).toBe(true);
+
+    const result = boss.takeDamage() as TakeDamageResult;
+    expect(result.destroyed).toBe(true);
+    expect(boss.alive).toBe(false);
+  });
+
+  // AC3: return contract
+  it('takeDamage returns { destroyed, phaseAdvanced, hpRemaining }', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    // Hit 1: not destroyed, no phase advance
+    const r1 = boss.takeDamage() as TakeDamageResult;
+    expect(r1).toHaveProperty('destroyed', false);
+    expect(r1).toHaveProperty('phaseAdvanced', false);
+    expect(r1).toHaveProperty('hpRemaining');
+    expect(typeof r1.hpRemaining).toBe('number');
+
+    // Hits 2-9: no phase advance
+    for (let i = 1; i < 9; i++) {
+      boss.takeDamage();
+    }
+    // Hit 10: phase advanced
+    const r10 = boss.takeDamage() as TakeDamageResult;
+    expect(r10.phaseAdvanced).toBe(true);
+    expect(r10.phase).toBe(2);
+
+    // Hits 11-39
+    for (let i = 10; i < 39; i++) {
+      boss.takeDamage();
+    }
+    // Hit 40: destroyed
+    const r40 = boss.takeDamage() as TakeDamageResult;
+    expect(r40.destroyed).toBe(true);
+  });
+
+  // AC4: health-bar fraction accessors
+  it('getHpFraction() returns remaining HP / total HP', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    // 0 hits = full health
+    expect(boss.getHpFraction()).toBeCloseTo(1.0);
+
+    // 1 hit = 39/40 remaining
+    boss.takeDamage();
+    expect(boss.getHpFraction()).toBeCloseTo(39 / 40);
+
+    // 9 hits = 31/40 remaining
+    for (let i = 1; i < 9; i++) {
+      boss.takeDamage();
+    }
+    expect(boss.getHpFraction()).toBeCloseTo(31 / 40);
+
+    // 10 hits = phase 2 starts = 30/40 remaining
+    const r10 = boss.takeDamage() as TakeDamageResult;
+    expect(r10.phaseAdvanced).toBe(true);
+    expect(boss.getHpFraction()).toBeCloseTo(30 / 40);
+
+    // 29 hits (phase 3 start) = 11/40 remaining
+    for (let i = 11; i < 30; i++) {
+      boss.takeDamage();
+    }
+    expect(boss.getHpFraction()).toBeCloseTo(11 / 40);
+
+    // 39 hits = 1/40 remaining
+    for (let i = 30; i < 40; i++) {
+      boss.takeDamage();
+    }
+    expect(boss.getHpFraction()).toBeCloseTo(1 / 40);
+
+    // 40 hits = destroyed, 0 HP
+    const r40 = boss.takeDamage() as TakeDamageResult;
+    expect(r40.destroyed).toBe(true);
+    expect(boss.getHpFraction()).toBeCloseTo(0.0);
+  });
+
+  // AC5: phaseAdvanced signal
+  it('phaseAdvanced is false for hits 1-9 of each phase, true for the 10th', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    // Phase 1
+    for (let hit = 1; hit <= 9; hit++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.phaseAdvanced).toBe(false);
+    }
+
+    const hit10 = boss.takeDamage() as TakeDamageResult;
+    expect(hit10.phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(2);
+
+    // Phase 2
+    for (let hit = 11; hit <= 19; hit++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.phaseAdvanced).toBe(false);
+    }
+
+    const hit20 = boss.takeDamage() as TakeDamageResult;
+    expect(hit20.phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(3);
+
+    // Phase 3
+    for (let hit = 21; hit <= 29; hit++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.phaseAdvanced).toBe(false);
+    }
+
+    const hit30 = boss.takeDamage() as TakeDamageResult;
+    expect(hit30.phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(4);
+
+    // Phase 4
+    for (let hit = 31; hit <= 39; hit++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.phaseAdvanced).toBe(false);
+    }
+
+    const hit40 = boss.takeDamage() as TakeDamageResult;
+    expect(hit40.phaseAdvanced).toBe(true);
+    expect(hit40.destroyed).toBe(true);
+    expect(boss.alive).toBe(false);
+  });
+
+  // AC5b: extra boundary checks on phaseAdvanced
+  it('phaseAdvanced at hits 5, 9, 10', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    for (let i = 0; i < 4; i++) boss.takeDamage();
+    const r5 = boss.takeDamage() as TakeDamageResult;
+    expect(r5.phaseAdvanced).toBe(false);
+
+    for (let i = 5; i < 8; i++) boss.takeDamage();
+    const r9 = boss.takeDamage() as TakeDamageResult;
+    expect(r9.phaseAdvanced).toBe(false);
+
+    const r10 = boss.takeDamage() as TakeDamageResult;
+    expect(r10.phaseAdvanced).toBe(true);
   });
 });

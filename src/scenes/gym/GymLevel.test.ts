@@ -16,6 +16,7 @@ import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
 import { MenuScene } from '../MenuScene';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import { sequenceVariedWaves } from './GymCurveSequencer';
 import {
   GYM_LEVEL_DEFAULT_LABEL,
   GymLevel,
@@ -143,6 +144,41 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
 
     expect(scene.isLevelComplete()).toBe(true);
     expect(scene.getWavesToPlayCount()).toBe(1);
+  });
+
+  it('AC3 — a generated level plays waves with different enemy types, not repeats', async () => {
+    // Regression for the producer-audit rejection of this work item: a level
+    // launched from a flat curve used to play the *same* wave three times.
+    // Build the level exactly as the curve editor does, from a flat curve.
+    const waves = sequenceVariedWaves([30, 30, 30]).map((wave) => ({
+      groups: wave.groups.map((group) => ({
+        enemyKey: group.enemyKey,
+        formation: group.formation,
+        count: group.count,
+        spacingX: group.spacingX,
+        spacingY: group.spacingY,
+        startX: group.startX,
+        startY: group.startY,
+      })),
+      shootEnabled: wave.shootEnabled,
+    }));
+    const scene = await bootWith({
+      level: makeLevel('Varied Level', waves),
+    });
+
+    // Enemy type name per wave, sampled as each wave is played.
+    const typeName = (entity: { constructor: { name: string } }): string =>
+      entity.constructor.name;
+
+    const firstWaveTypes = new Set(scene.getEnemies().map(typeName));
+    scene.getEnemies().forEach((e) => e.destroySelf());
+    scene.tick(0.016);
+    const secondWaveTypes = new Set(scene.getEnemies().map(typeName));
+
+    expect(scene.getWavesToPlayCount()).toBe(3);
+    expect(scene.getCurrentWaveIndex()).toBe(1);
+    // The second wave is not simply a repeat of the first.
+    expect([...secondWaveTypes].some((t) => !firstWaveTypes.has(t))).toBe(true);
   });
 
   it('AC3 — an empty launch data set is safe (no crash, empty label)', async () => {

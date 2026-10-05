@@ -40,7 +40,7 @@ import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
-import { isPointNearSegment, selectAoETargets, selectChainTargets } from '../../utils/aoe';
+import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -458,9 +458,11 @@ export abstract class CombatScene<
 
   /**
    * Shared AOE dispatch from `_autoFire`: resolves an `'onFire'` effect at
-   * the ship immediately and spawns its distinctive VFX. An `'onImpact'`
-   * effect (mortar shell) resolves later, when its projectile detonates and
-   * calls {@link CombatScene.applyAoeEffect}.
+   * the ship immediately and spawns its distinctive VFX. An `'onRandom'`
+   * effect (mortar blast) resolves at random points through
+   * {@link CombatScene.onAoeRandomFired}; an `'onImpact'` effect (retained
+   * dead-code path) resolves later, when its projectile detonates and calls
+   * {@link CombatScene.applyAoeEffect}.
    */
   protected override onAoeFired(
     _weaponId: WeaponId,
@@ -612,9 +614,13 @@ export abstract class CombatScene<
   }
 
   /**
-   * Spawns the distinctive detonation VFX/cue for an `'onImpact'` AOE weapon.
+   * Spawns the distinctive detonation VFX/cue for an AOE weapon at (x, y).
    * Mortar's radial burst is the F3 implementation; the shared core owns it so
-   * the game and every gym detonate identically.
+   * the game and every gym detonate identically. The detonation **cue always
+   * plays** (so an off-screen random blast is still audible), but the burst
+   * **graphics are culled** when the point lies outside the play bounds — the
+   * random Mortar can otherwise sample a point beyond the screen
+   * (AH-0MUUF9GZV004WVT9 AC4).
    */
   protected spawnAoeDetonationVfx(
     def: WeaponDefinition,
@@ -622,11 +628,49 @@ export abstract class CombatScene<
     y: number,
   ): void {
     if (def.id === 'mortar' && def.aoe) {
-      spawnMortarBurst(this, x, y, def.aoe.radius, {
-        registry: this.aoeEffects,
-      });
+      if (this.isPointInPlayBounds(x, y)) {
+        spawnMortarBurst(this, x, y, def.aoe.radius, {
+          registry: this.aoeEffects,
+        });
+      }
       playMortarDetonationSound();
     }
+  }
+
+  /**
+   * Shared hook for an `'onRandom'` AOE weapon (parent AH-0MUUF9GZV004WVT9):
+   * resolves the area effect **instantly** at one point per pattern bullet
+   * (`def.offsets.length`, so `projectileCount` leveling adds detonations),
+   * each sampled uniformly at random over the disc of radius
+   * `projectileSpeed × bulletLifetime` centred on the ship. No travelling
+   * projectile is spawned and there is no forward bias. Audio always fires;
+   * VFX off-screen is culled by {@link CombatScene.spawnAoeDetonationVfx}.
+   */
+  protected override onAoeRandomFired(
+    def: WeaponDefinition,
+    x: number,
+    y: number,
+  ): void {
+    const aoe = def.aoe;
+    if (aoe?.trigger !== 'onRandom') return;
+    // Effective range = existing projectile-speed × lifetime (scaled by the
+    // `bulletLifetime` leveling multiplier through `def.bulletLifetime`).
+    const range = (aoe.projectileSpeed ?? 0) * def.bulletLifetime;
+    const detonations = Math.max(1, def.offsets.length);
+    for (let i = 0; i < detonations; i++) {
+      const point = selectRandomPoint(x, y, range);
+      this.applyAoeEffect(def, point.x, point.y);
+      this.spawnAoeDetonationVfx(def, point.x, point.y);
+    }
+  }
+
+  /**
+   * True when (x, y) lies inside the scene's play bounds
+   * `[0, width] × [0, height]`. Used to cull off-screen AOE VFX while still
+   * playing the detonation cue (AH-0MUUF9GZV004WVT9 AC4).
+   */
+  private isPointInPlayBounds(x: number, y: number): boolean {
+    return x >= 0 && x <= this.scale.width && y >= 0 && y <= this.scale.height;
   }
 
   /**

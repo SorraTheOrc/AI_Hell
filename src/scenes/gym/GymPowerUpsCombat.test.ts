@@ -494,10 +494,10 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
     const registry = scene.getEffectsRegistry();
 
     expect(registry.hasTeleport()).toBe(false);
-    collectCombatDrop(scene, 'P7');
+    collectCombatDrop(scene, 'P7'); // level 1 → +1
     expect(registry.teleportStacks()).toBe(1);
-    collectCombatDrop(scene, 'P7');
-    expect(registry.teleportStacks()).toBe(2);
+    collectCombatDrop(scene, 'P7'); // level 2 → +2 (level-derived grant)
+    expect(registry.teleportStacks()).toBe(3);
     expect(registry.hasTeleport()).toBe(true);
   });
 
@@ -509,7 +509,7 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
 
     const consumed = registry.consumeTeleport();
     expect(consumed).toBe(true);
-    expect(registry.teleportStacks()).toBe(1);
+    expect(registry.teleportStacks()).toBe(2);
     expect(registry.isPhased).toBe(true);
   });
 });

@@ -63,9 +63,14 @@ export type WeaponId =
  * - `'onFire'` — the area resolves at the ship the instant the weapon fires
  *   (e.g. an expanding nova ring or a chaining arc — no travelling shot).
  * - `'onImpact'` — the weapon launches a projectile whose area resolves when
- *   it hits an enemy/bullet or expires (e.g. a mortar shell).
+ *   it hits an enemy/bullet or expires. Retained for potential future
+ *   weapons; no catalogue weapon currently uses it (the Mortar moved to
+ *   `'onRandom'`), but the projectile-detonation machinery stays in place.
+ * - `'onRandom'` — the area resolves immediately at one or more points
+ *   sampled uniformly at random within the weapon's effective range, centred
+ *   on the ship (no travelling shot, no forward bias; e.g. the Mortar).
  */
-export type AoETrigger = 'onFire' | 'onImpact';
+export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom';
 
 /**
  * Declarative area-of-effect descriptor attached to an AOE weapon
@@ -92,7 +97,10 @@ export interface AoEDescriptor {
    * Projectile speed (px/s) for an `'onImpact'` weapon. The shared auto-fire
    * loop launches the projectile at this speed; when omitted it falls back to
    * the shared `BULLET_SPEED`. An `'onFire'` descriptor never launches a
-   * projectile, so the field is ignored for it.
+   * projectile, so the field is ignored for it. For an `'onRandom'` weapon
+   * the field is **required** and supplies the range basis: the random
+   * detonation points are sampled within
+   * `projectileSpeed × def.bulletLifetime` px of the ship.
    */
   projectileSpeed?: number;
 }
@@ -215,8 +223,8 @@ export const WEAPON_NOVA_FIRE_RATE = beatSubdivisionMs(WEAPON_NOVA_SUBDIVISION);
 
 /**
  * Fire rate interval for the Mortar AOE weapon (ms) — 1 shot every 2 beats
- * (1500 ms at the default 80 BPM). The launched shell detonates on impact or
- * expiry.
+ * (1500 ms at the default 80 BPM). The blast resolves at a random point
+ * within range on fire.
  */
 export const WEAPON_MORTAR_FIRE_RATE = beatSubdivisionMs(WEAPON_MORTAR_SUBDIVISION);
 
@@ -236,23 +244,30 @@ export const DUAL_SIDE_OFFSET = 8;
  * Per-weapon bullet lifetime (seconds). Bullets wrap across all four screen
  * edges while alive and are destroyed once this many seconds elapse; the
  * effective range is therefore `BULLET_SPEED × bulletLifetime`. Each weapon
- * is tuned independently (AH-0MU960UTE001PTV0).
+ * is tuned independently (AH-0MU960UTE001PTV0); the base lifetimes were
+ * halved to bring engagements closer and reduce on-screen bullet saturation
+ * (AH-0MUU131PU006O7ZD). Because `resolveWeaponDefinition` applies the level
+ * multipliers to these base values, every weapon's range at every level is
+ * halved too.
  */
 export const WEAPON_BULLET_LIFETIME = {
-  /** Cannon — long reach for the default weapon (~525 px). */
-  cannon: 1.5,
-  /** Spread — slightly shorter than cannon (~490 px). */
-  spread: 1.4,
-  /** Dual — matches spread (~490 px). */
-  dual: 1.4,
-  /** Rapid — short reach balanced by its high fire rate (~262 px). */
-  rapid: 0.75,
+  /** Cannon — long reach for the default weapon (~262 px). */
+  cannon: 0.75,
+  /** Spread — slightly shorter than cannon (~245 px). */
+  spread: 0.7,
+  /** Dual — matches spread (~245 px). */
+  dual: 0.7,
+  /** Rapid — short reach balanced by its high fire rate (~131 px). */
+  rapid: 0.375,
   /** Nova — the ring resolves instantly; no travelling bullet. */
-  nova: 0.5,
-  /** Mortar — the shell lives ~2 s (its detonation window), wrapping meanwhile. */
-  mortar: 2.0,
+  nova: 0.25,
+  /**
+   * Mortar — supplies the random-detonation range basis
+   * (`projectileSpeed × lifetime` = 180 px at level 0); no travelling shell.
+   */
+  mortar: 1.0,
   /** Arc — the bolt resolves instantly; no travelling bullet. */
-  arc: 0.5,
+  arc: 0.25,
 } as const;
 
 // ── Bullet visual definitions ───────────────────────────────────────
@@ -277,24 +292,28 @@ export const BULLET_COLORS = {
 
 /**
  * AOE effect radii (px) — the single source of truth read by the catalogue
- * descriptors and (later) the distinctive VFX helpers.
+ * descriptors and (later) the distinctive VFX helpers. Halved alongside the
+ * conventional bullet ranges so AOE coverage is tighter and more positional
+ * (AH-0MUU131PU006O7ZD).
  */
 export const AOE_RADII = {
   /** Nova ring radius — a defensive pulse around the ship. */
-  nova: 90,
+  nova: 45,
   /** Mortar blast radius — a focused detonation at the impact point. */
-  mortar: 70,
+  mortar: 35,
   /** Arc chaining reach — the longest AOE, spanning nearby targets. */
-  arc: 120,
+  arc: 60,
 } as const;
 
 /**
  * AOE `'onImpact'` projectile speeds (px/s). Slower than the standard
- * `BULLET_SPEED` (350), so the Mortar shell visibly arcs across the screen
- * and its detonation point stays legible.
+ * `BULLET_SPEED` (350), so a shell visibly arcs across the screen and its
+ * detonation point stays legible. Also the **range basis** for the Mortar's
+ * `'onRandom'` detonation spread: `projectileSpeed × bulletLifetime`
+ * (180 px at level 0).
  */
 export const AOE_PROJECTILE_SPEEDS = {
-  /** Mortar shell — deliberately slow, giving the blast a readable travel. */
+  /** Mortar — deliberate travel scale, and the random-detonation range basis. */
   mortar: 180,
 } as const;
 
@@ -339,6 +358,14 @@ export interface WeaponDefinition {
   bulletShape: BulletShape;
   /** Bullet radius multiplier relative to the default. */
   bulletSize: number;
+  /**
+   * Additional bullet-radius multiplier granted by **weapon leveling**
+   * (parent AH-0MUPMPCB2009J54J). `1`/absent on a base definition; a
+   * level-resolved definition carries the level's `bulletSize` upgrade so the
+   * shared combat core can grow the bullet without changing the base visual
+   * size (AC8).
+   */
+  levelBulletSize?: number;
   /**
    * Bullet lifetime in seconds. The bullet wraps across all four screen
    * edges while alive and expires once this elapses; effective range is
@@ -435,7 +462,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'mortar',
     name: 'Mortar',
     description:
-      'AOE: launches a slow shell that detonates on impact, damaging enemies and clearing bullets in a blast.',
+      'AOE: detonates at a random point within range, damaging enemies and clearing bullets in a blast.',
     offsets: [0],
     fireRateMs: WEAPON_MORTAR_FIRE_RATE,
     bulletColor: BULLET_COLORS.mortar,
@@ -443,7 +470,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletSize: 1.1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.mortar,
     aoe: {
-      trigger: 'onImpact',
+      trigger: 'onRandom',
       radius: AOE_RADII.mortar,
       damagesEnemies: true,
       clearsEnemyBullets: true,
@@ -527,18 +554,22 @@ export function isOnBeatGrid(
     return false;
   }
   const period = beatPeriodMs(bpm);
-  // Use a small tolerance for float-safety when BPM is overridden.
-  const tolerance = 1e-9 * Math.max(1, period);
-  // Faster than (or equal to) the beat: the rate exactly subdivides the
-  // beat period (the conventional weapons, e.g. cannon 375 ms, rapid 125 ms).
-  if (period % fireRateMs < tolerance) return true;
+  // Compare in *ratio* space rather than via `%`: `period % fireRateMs` loses
+  // precision for high subdivisions (e.g. rapid at 11/beat = 68.18 ms), where
+  // 750 / 68.18… evaluates to 10.999… and the remainder check fails on a
+  // mathematically on-grid rate. A relative tolerance on the subdivision
+  // count is stable across the whole catalogue (AH-0MUQOV9JV00389E7).
+  const tolerance = 1e-6;
+  const subdivisions = period / fireRateMs;
+  if (subdivisions >= 1) {
+    return Math.abs(subdivisions - Math.round(subdivisions)) <= tolerance;
+  }
   // Slower than the beat: the rate is an exact integer multiple of the beat
   // period (the AOE family, e.g. Nova 3000 ms = 4 beats, Mortar 1500 ms = 2).
-  // This keeps an arbitrary off-grid rate (e.g. 200 ms) rejected.
-  if (fireRateMs > period && Math.abs(fireRateMs % period) < tolerance) {
-    return true;
-  }
-  return false;
+  // This keeps an arbitrary off-grid rate (e.g. 200 ms, or 1000 ms = 1⅓
+  // beats) rejected.
+  const beats = fireRateMs / period;
+  return Math.abs(beats - Math.round(beats)) <= tolerance;
 }
 
 // ── Round-robin drop order ──────────────────────────────────────────

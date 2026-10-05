@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
-import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT, PERMANENT_VALUE, formatValue } from './HUD';
+import { HUD, HUD_DEPTH, HUD_ROW_HEIGHT, PERMANENT_VALUE, formatValue, type HUDOptions } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
+import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
 import { PowerUpType } from '../powerups/types';
 
 /**
@@ -21,10 +22,17 @@ class BareScene extends Phaser.Scene {
 }
 
 /** Boots a BareScene and attaches a HUD wired to `registry`. */
-async function bootWithHUD(registry?: EffectsRegistry) {
+async function bootWithHUD(registry?: EffectsRegistry, options?: HUDOptions) {
   const { game, scene } = await bootScene([BareScene]);
-  const hud = new HUD(scene, registry ?? null);
+  const hud = new HUD(scene, registry ?? null, options);
   return { game, scene, hud };
+}
+
+/** Text strings currently rendered by a HUD container. */
+function hudTexts(hud: HUD): string[] {
+  return (hud as unknown as { list: Phaser.GameObjects.GameObject[] }).list
+    .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
+    .map((c) => c.text);
 }
 
 const destroy = (game: Phaser.Game) => game.destroy(true);
@@ -101,9 +109,9 @@ describe('HUD AC1: aggregated model for timed power-ups', () => {
 describe('HUD AC2: stack counts for stackable types', () => {
   it('shows the P9 magnet stack count as a pickup count', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
@@ -118,15 +126,29 @@ describe('HUD AC2: stack counts for stackable types', () => {
 
   it('increments the count as more stacks are collected', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x1');
 
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x3');
+    destroy(game);
+  });
+
+  it('shows a timed P9 field pickup as remaining seconds, not a stack count', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P9'); // field pickup → 15 s timed effect
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const rows = hud.getRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('P9');
+    expect(rows[0].name).toBe('Magnet');
+    expect(rows[0].value).toBe('15s');
     destroy(game);
   });
 });
@@ -134,20 +156,20 @@ describe('HUD AC2: stack counts for stackable types', () => {
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
   it('shows a finite charge as xN and decrements live on trigger', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P6');
-    reg.applyCollect('P6'); // two pickups → x2
+    reg.applyCollect('P6'); // level 1 → +1
+    reg.applyCollect('P6'); // level 2 → +2 (level-derived grant)
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().find((r) => r.id === 'P6')!.value).toBe('x2');
+    expect(hud.getRows().find((r) => r.id === 'P6')!.value).toBe('x3');
 
     // Consume one charge (the phase is now active, so a timer row also
-    // appears; the charge row must read x1).
+    // appears; the charge row must read x2).
     reg.updateDanger(true, 0.016);
     hud.refresh();
     const chargeRow = hud
       .getRows()
       .find((r) => r.id === 'P6' && r.value.startsWith('x'))!;
-    expect(chargeRow.value).toBe('x1');
+    expect(chargeRow.value).toBe('x2');
     destroy(game);
   });
 
@@ -242,9 +264,12 @@ describe('HUD AC5: reacts to registry changes', () => {
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('4s');
 
-    reg.applyCollect('P5'); // re-collect → refresh to full 10 s
+    reg.applyCollect('P5'); // re-collect → refresh to the level-1 duration
     hud.refresh();
-    expect(hud.getRows()[0].value).toBe('10s');
+    const upgraded = Math.ceil(
+      resolvePowerUpAtLevel('P5', 1).speedDuration!,
+    );
+    expect(hud.getRows()[0].value).toBe(`${upgraded}s`);
     destroy(game);
   });
 
@@ -255,8 +280,8 @@ describe('HUD AC5: reacts to registry changes', () => {
     expect(hud.getRows()).toHaveLength(0);
 
     reg.applyCollect('P5');
-    reg.applyCollect('P9');
-    reg.applyCollect('P9');
+    reg.applyCollect('P9', true);
+    reg.applyCollect('P9', true);
     hud.refresh();
     const rows = hud.getRows();
     expect(rows).toHaveLength(2); // P5 timed row + P9 stack row
@@ -365,6 +390,57 @@ describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
           c.text === 'Weapon: rapid',
       ),
     ).toBe(false);
+    destroy(game);
+  });
+});
+
+describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
+  it('shows Lv.N for an upgraded weapon and updates reactively (AC1/AC3/AC5)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread');
+    let level = 1;
+    const { game, hud } = await bootWithHUD(reg, {
+      getWeaponLevel: () => level,
+    });
+    hud.refresh();
+
+    // A level-1 weapon shows no suffix (AC4) alongside its timer (AC5).
+    expect(hudTexts(hud)).toContain('Weapon: spread');
+    expect(hudTexts(hud)).toContain('10s');
+    expect(hudTexts(hud).some((t) => t.includes('Lv.'))).toBe(false);
+
+    // A level-up is reflected on the next refresh (AC3), timer unchanged.
+    level = 3;
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('Weapon: spread Lv.3');
+    expect(hudTexts(hud)).toContain('10s');
+    destroy(game);
+  });
+
+  it('reads the level from the provider by weapon id (AC2)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('dual');
+    const seen: string[] = [];
+    const { game, hud } = await bootWithHUD(reg, {
+      getWeaponLevel: (id) => {
+        seen.push(id);
+        return id === 'dual' ? 4 : 0;
+      },
+    });
+    hud.refresh();
+
+    expect(seen).toContain('dual');
+    expect(hudTexts(hud)).toContain('Weapon: dual Lv.4');
+    destroy(game);
+  });
+
+  it('shows no level suffix without a provider (backward compatible)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('rapid');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('Weapon: rapid');
+    expect(hudTexts(hud).some((t) => t.includes('Lv.'))).toBe(false);
     destroy(game);
   });
 });

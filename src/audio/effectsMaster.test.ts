@@ -24,160 +24,23 @@ import {
   MAJOR_EXPLOSION_TAIL_VOLUME,
 } from './effects';
 
-// ── Recording Web Audio mock ────────────────────────────────────────
+import {
+  RecordingAudioContext,
+  lastGainValue,
+  masterGain,
+  resetRecordingAudioContext,
+} from '../test/audioTestDouble';
 
-interface RecordedGain {
-  gainEvents: {
-    method: 'setValueAtTime' | 'linearRampToValueAtTime' | 'exponentialRampToValueAtTime';
-    value: number;
-    time: number;
-  }[];
-  /** The node object returned to callers (for identity/routing assertions). */
-  node?: unknown;
-  /** Objects passed to `connect()` on this gain node. */
-  connectTargets: unknown[];
-}
-
-class RecordingAudioContext {
-  static instances: RecordingAudioContext[] = [];
-  currentTime = 0;
-  sampleRate = 44100;
-  destination = {};
-
-  oscillators: Array<{ type: string }> = [];
-  gains: RecordedGain[] = [];
-  /** Every `connect(target)` call made on this context's nodes. */
-  connections: unknown[] = [];
-
-  constructor() {
-    RecordingAudioContext.instances.push(this);
-  }
-
-  createOscillator(): unknown {
-    const rec: { type: string } = { type: 'sine' };
-    this.oscillators.push(rec);
-    const self = this;
-    return {
-      get type(): string { return rec.type; },
-      set type(v: string) { rec.type = v; },
-      frequency: {
-        setValueAtTime: (_value: number, _time: number) => {},
-        exponentialRampToValueAtTime: (_value: number, _time: number) => {},
-        linearRampToValueAtTime: (_value: number, _time: number) => {},
-      },
-      detune: { setValueAtTime: () => {} },
-      connect: (target: unknown) => {
-        self.connections.push(target);
-        return {
-          connect: (next: unknown) => {
-            self.connections.push(next);
-            return {};
-          },
-        };
-      },
-      start: (_t: number) => {},
-      stop: (_t: number) => {},
-    };
-  }
-
-  createGain(): unknown {
-    const rec: RecordedGain = { gainEvents: [], connectTargets: [] };
-    const self = this;
-    this.gains.push(rec);
-    const node = {
-      context: self,
-      gain: {
-        setValueAtTime: (value: number, time: number) => {
-          rec.gainEvents.push({ method: 'setValueAtTime', value, time });
-        },
-        linearRampToValueAtTime: (value: number, time: number) => {
-          rec.gainEvents.push({ method: 'linearRampToValueAtTime', value, time });
-        },
-        exponentialRampToValueAtTime: (value: number, time: number) => {
-          rec.gainEvents.push({ method: 'exponentialRampToValueAtTime', value, time });
-        },
-        cancelScheduledValues: (time: number) => {
-          rec.gainEvents.push({ method: 'setValueAtTime', value: -1, time });
-        },
-      },
-      connect: (target: unknown) => {
-        rec.connectTargets.push(target);
-        self.connections.push(target);
-        return {};
-      },
-    };
-    rec.node = node;
-    return node;
-  }
-
-  createBuffer(_channels: number, length: number, _sampleRate: number): unknown {
-    const data = new Float32Array(length);
-    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
-    return { getChannelData: () => data };
-  }
-
-  createBufferSource(): unknown {
-    this.oscillators.push({ type: 'noise' });
-    const self = this;
-    return {
-      buffer: null,
-      loop: false,
-      connect: (target: unknown) => {
-        self.connections.push(target);
-        return {
-          connect: (next: unknown) => {
-            self.connections.push(next);
-            return {};
-          },
-        };
-      },
-      start: (_t: number) => {},
-      stop: (_t: number) => {},
-    };
-  }
-
-  createBiquadFilter(): unknown {
-    const self = this;
-    return {
-      type: 'lowpass' as const,
-      frequency: {
-        setValueAtTime: () => {},
-        exponentialRampToValueAtTime: () => {},
-        linearRampToValueAtTime: () => {},
-      },
-      Q: { setValueAtTime: () => {} },
-      connect: (target: unknown) => {
-        self.connections.push(target);
-        return {};
-      },
-    };
-  }
-}
-
-// ── Test helpers ────────────────────────────────────────────────────
-
-/** The master gain is the FIRST gain created per context (in ensureMasterGain). */
-function masterGain(): RecordedGain | undefined {
-  return RecordingAudioContext.instances[0].gains[0];
-}
-
-function lastGainValue(gain: RecordedGain): number | undefined {
-  for (const ev of [...gain.gainEvents].reverse()) {
-    if (ev.method === 'setValueAtTime' || ev.method === 'linearRampToValueAtTime') {
-      return ev.value;
-    }
-  }
-  return undefined;
-}
+// ── Shared headless audio test double ───────────────────────────────
+// The recording AudioContext lives in src/test/audioTestDouble.ts so the
+// master volume/mute suite and the cue-contract suite use one double.
 
 /** Prime the mock context (effects.ts caches the context after first cue). */
 function prime(): void {
-  (window as unknown as { AudioContext: typeof RecordingAudioContext }).AudioContext =
-    RecordingAudioContext;
+  (window as unknown as { AudioContext?: unknown }).AudioContext =
+    RecordingAudioContext as unknown as typeof AudioContext;
   _resetAudioContextForTests();
-  RecordingAudioContext.instances.length = 0;
-  (window as unknown as { AudioContext: typeof RecordingAudioContext }).AudioContext =
-    RecordingAudioContext;
+  resetRecordingAudioContext();
   // First cue primes the module-scoped context + master gain.
   playSpawnSound();
 }

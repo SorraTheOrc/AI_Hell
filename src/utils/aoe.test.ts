@@ -16,6 +16,7 @@ import {
   isPointNearSegment,
   selectAoETargets,
   selectChainTargets,
+  selectRandomPoint,
   type AoEGeometryTarget,
 } from './aoe';
 
@@ -32,6 +33,64 @@ class Target implements AoEGeometryTarget {
     return this.radius;
   }
 }
+
+describe('selectRandomPoint', () => {
+  /** Cycles a fixed queue of RNG draws, then repeats the last draw. */
+  function sequenceRng(draws: number[]): () => number {
+    let index = 0;
+    return () => draws[Math.min(index++, draws.length - 1)];
+  }
+
+  test('a zero draw lands exactly on the disc centre', () => {
+    const point = selectRandomPoint(120, 80, 180, sequenceRng([0, 0]));
+    expect(point).toEqual({ x: 120, y: 80 });
+  });
+
+  test('samples area-uniformly via inverse-transform (r = range × √u, θ = 2π × v)', () => {
+    // u = 0.25 → r = 0.5 × range; v = 0.25 → θ = π/2 (straight down).
+    const point = selectRandomPoint(100, 100, 200, sequenceRng([0.25, 0.25]));
+    expect(point.x).toBeCloseTo(100, 10);
+    expect(point.y).toBeCloseTo(200, 10);
+  });
+
+  test('every sample lies within the disc radius of the centre', () => {
+    const draws = [
+      [0.1, 0.9],
+      [0.5, 0.5],
+      [0.9, 0.1],
+      [0.999, 0.999],
+      [0, 0.5],
+    ];
+    for (const [u, v] of draws) {
+      const point = selectRandomPoint(50, 60, 180, sequenceRng([u, v]));
+      const distance = Math.hypot(point.x - 50, point.y - 60);
+      expect(distance).toBeLessThanOrEqual(180 + 1e-9);
+    }
+  });
+
+  test('a full-radius draw reaches the disc boundary', () => {
+    // u = 1 → r = range; v = 0 → θ = 0 (straight right).
+    const point = selectRandomPoint(0, 0, 180, sequenceRng([1, 0]));
+    expect(point.x).toBeCloseTo(180, 10);
+    expect(point.y).toBeCloseTo(0, 10);
+  });
+
+  test('a non-positive or non-finite range resolves to the centre', () => {
+    const rng = () => 0.5;
+    expect(selectRandomPoint(10, 20, 0, rng)).toEqual({ x: 10, y: 20 });
+    expect(selectRandomPoint(10, 20, -5, rng)).toEqual({ x: 10, y: 20 });
+    expect(selectRandomPoint(10, 20, Number.NaN, rng)).toEqual({
+      x: 10,
+      y: 20,
+    });
+  });
+
+  test('the injected RNG fully determines the result (deterministic)', () => {
+    const a = selectRandomPoint(30, 40, 180, sequenceRng([0.3, 0.7]));
+    const b = selectRandomPoint(30, 40, 180, sequenceRng([0.3, 0.7]));
+    expect(a).toEqual(b);
+  });
+});
 
 describe('distanceSquared', () => {
   test('is zero for a point and symmetric', () => {

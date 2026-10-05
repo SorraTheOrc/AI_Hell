@@ -41,7 +41,7 @@ describe('applyMagnetAttraction', () => {
   });
 
   it('does not move a drop beyond the magnet radius', () => {
-    // Magnet radius for 1 stack: 2 * 20 * (1 + 0.5) = 60 px.
+    // Magnet radius for 1 stack: 1 * 20 * (1 + 0.5) = 30 px.
     // Place the drop 70 px away (outside radius).
     const drop = makeDrop(550, 270); // 70 px right of player
     const drops = [drop];
@@ -64,22 +64,22 @@ describe('applyMagnetAttraction', () => {
   });
 
   it('grows radius with stacks', () => {
-    // 1 stack: 60 px. 2 stacks: 90 px.
+    // 1 stack: 30 px. 2 stacks: 40 px.
     const radius1 = magnetRadius(SHIP_SIZE, 1);
     const radius2 = magnetRadius(SHIP_SIZE, 2);
     expect(radius2).toBeGreaterThan(radius1);
 
-    // Place a drop at 75 px (inside 2-stack radius but outside 1-stack).
-    const drop = makeDrop(555, 270); // 75 px right
+    // Place a drop at 35 px (inside 2-stack radius but outside 1-stack).
+    const drop = makeDrop(515, 270); // 35 px right
     const drops = [drop];
 
     applyMagnetAttraction(drops, player, 1, 0.5);
-    expect(drop.x).toBe(555); // not pulled (outside 1-stack radius)
+    expect(drop.x).toBe(515); // not pulled (outside 1-stack radius)
 
-    const drop2 = makeDrop(555, 270);
+    const drop2 = makeDrop(515, 270);
     const drops2 = [drop2];
     applyMagnetAttraction(drops2, player, 2, 0.5);
-    expect(drop2.x).toBeLessThan(555); // pulled (inside 2-stack radius)
+    expect(drop2.x).toBeLessThan(515); // pulled (inside 2-stack radius)
   });
 
   it('moves multiple drops toward the player', () => {
@@ -97,14 +97,15 @@ describe('applyMagnetAttraction', () => {
   });
 
   it('respects the max step distance (not teleporting)', () => {
-    // Place drop 100 px away; at speed 120 px/s for 0.5 s, max step = 60.
-    const drop = makeDrop(580, 270);
+    // 5-stack radius is 1 * 20 * (1 + 0.5 * 5) = 70 px. Place the drop 65 px
+    // away (inside the radius); at speed 120 px/s for 0.5 s the max step is 60.
+    const drop = makeDrop(545, 270);
     const drops = [drop];
 
     applyMagnetAttraction(drops, player, 5, 0.5);
 
-    // Should move by at most 60 px, not the full 100.
-    expect(drop.x).toBeGreaterThanOrEqual(520); // 580 - 60
+    // Should move by at most 60 px, not the full 65.
+    expect(drop.x).toBeGreaterThanOrEqual(485); // 545 - 60
   });
 
   it('skips drops that are not collectible', () => {

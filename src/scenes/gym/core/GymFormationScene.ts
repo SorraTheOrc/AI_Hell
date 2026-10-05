@@ -123,6 +123,7 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
+import { type WeaponId } from '../../../utils/weapons';
 import {
   spawnWormholeOpen,
   spawnWormholeClose,
@@ -208,7 +209,7 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * `onEnemyDestroyed`) by observing `alive` after the call. Non-lethal hits
    * consume the bullet with no destruction side effects.
    */
-  takeDamage?(): number | void;
+  takeDamage?(): number | void | { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number; };
   /**
    * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
    * base scene pushes its live mineral field to the entity each frame so a
@@ -830,7 +831,11 @@ export class GymFormationScene<
     // so it is already clean here; only the standalone HUD is rebuilt per
     // scene start (lives visible so P8 is observable). Sharing the one
     // reset path stops the registry drifting on restart (gap 10).
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: true });
+    this.hud = new HUD(this, this.effectsRegistry, {
+      showLives: true,
+      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
+      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
+    });
 
     // Shared P4 bomb notice — shown by the shared collect path when the
     // scene collects a P4 (gap 4, AC3).
@@ -1183,7 +1188,11 @@ export class GymFormationScene<
     this.mineralChoiceOptions = [];
     this.mineralsSeeded = 0;
     if (!this.hud) {
-      this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+      this.hud = new HUD(this, this.effectsRegistry, {
+        showLives: false,
+        // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
+        getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
+      });
     }
     this._syncMineralHud();
     this.seedMinerals(100);
@@ -1193,10 +1202,13 @@ export class GymFormationScene<
    * Player collects overlapping minerals into the hold; non-asteroid
    * enemies absorb them. Asteroids are inert to minerals. Runs the shared
    * `collectMinerals` routine — the same code the game runs
-   * (AH-0MUII3DHM008L7JF · AC1).
+   * (AH-0MUII3DHM008L7JF · AC1). The P10 Mineral Scoop attraction pass runs
+   * first (shared `_applyMineralScoop`), so a mineral pulled into the hull
+   * this frame is collected this frame — matching `PlayScene`.
    */
-  private _updateMinerals(): void {
+  private _updateMinerals(dt: number): void {
     if (this.minerals.length === 0) return;
+    this._applyMineralScoop(this.minerals, dt);
     // Only mineral-absorbing, non-asteroid entities collect minerals
     // (asteroids are inert — GDD §4.5).
     const absorbers = this.entities.filter(
@@ -1234,7 +1246,14 @@ export class GymFormationScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
-    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3);
+    this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
+      // Offer level-ups for weapons the player already owns (parent
+      // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      // Offer level-ups for power-ups the player already owns (parent
+      // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+    });
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
@@ -1476,7 +1495,7 @@ export class GymFormationScene<
     }
 
     // ── Mineral layer: collection + hold-full choice ────────────────
-    this._updateMinerals();
+    this._updateMinerals(dt);
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
