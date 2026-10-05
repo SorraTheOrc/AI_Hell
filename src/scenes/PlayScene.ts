@@ -1255,7 +1255,7 @@ export class PlayScene extends CombatScene<
 
     const previousPhase = boss.getPhaseNumber();
     const result = boss.takeDamage();
-    if (result === 0) {
+    if (result.destroyed) {
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
@@ -1265,9 +1265,9 @@ export class PlayScene extends CombatScene<
     }
 
     // Phase advanced: award the destroyed phase's points (GDD §4.5).
-    this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
-    if (result !== previousPhase) {
-      this._spawnMinions(result);
+    if (result.phaseAdvanced) {
+      this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this._spawnMinions(boss.getPhaseNumber());
     }
   }
 

@@ -23,6 +23,7 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
+import { BOSS_HITS_PER_PHASE } from '../entities/Boss';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
@@ -283,7 +284,8 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       );
     }
     expect(boss).not.toBeNull();
-    for (let i = 0; i < 4; i++) {
+    // 4 phases, BOSS_HITS_PER_PHASE hits each (40 total).
+    for (let i = 0; i < 4 * BOSS_HITS_PER_PHASE; i++) {
       play.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);
       play.tick(0.016);
     }

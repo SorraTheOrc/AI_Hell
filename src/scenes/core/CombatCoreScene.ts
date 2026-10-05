@@ -123,7 +123,7 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * `alive` flag on the lethal hit; the scene then finalises the kill exactly
    * once (destruction audio + `onEnemyDestroyed`) by observing `alive`.
    */
-  takeDamage?(): number | void;
+  takeDamage?(): number | void | { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number; };
   /**
    * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
    * shared tick hands the scene's live mineral field to the entity so it can

@@ -209,7 +209,7 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
    * `onEnemyDestroyed`) by observing `alive` after the call. Non-lethal hits
    * consume the bullet with no destruction side effects.
    */
-  takeDamage?(): number | void;
+  takeDamage?(): number | void | { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number; };
   /**
    * Optional roaming-seek seam (Harvester, GDD §4.1 — E7). When present, the
    * base scene pushes its live mineral field to the entity each frame so a

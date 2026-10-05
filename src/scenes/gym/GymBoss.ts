@@ -334,23 +334,25 @@ export class GymBoss extends GymFormationScene<
     const boss = this.formationBoss;
     if (!boss.alive) return;
 
-    const previousPhase = boss.getPhaseNumber();
-    const newPhase = boss.takeDamage();
+    const result = boss.takeDamage();
 
-    // Update the status line with the new phase.
-    if (newPhase > 0) {
-      // Phase advanced: summon that phase's minion wave through the shared
-      // planner, mirroring `PlayScene._damageBoss` (AC3).
-      if (newPhase !== previousPhase) this._spawnBossMinions(newPhase);
-      this.statusText.setText(
-        `DAMAGED — Phase ${boss.getPhaseNumber()}/${BOSS_PHASE_COUNT} | boss: ${this.aliveCount}`,
-      );
-    } else {
+    if (result.destroyed) {
       // Boss destroyed.
       this.statusText.setText(
         `Boss destroyed! — boss: ${this.aliveCount}`,
       );
+      return;
     }
+
+    // Update the status line with the new phase.
+    if (result.phaseAdvanced) {
+      // Phase advanced: summon that phase's minion wave through the shared
+      // planner, mirroring `PlayScene._damageBoss` (AC3).
+      this._spawnBossMinions(boss.getPhaseNumber());
+    }
+    this.statusText.setText(
+      `DAMAGED — Phase ${boss.getPhaseNumber()}/${BOSS_PHASE_COUNT} | boss: ${this.aliveCount}`,
+    );
   }
 
   // ── Public test accessors ───────────────────────────────────────

@@ -131,6 +131,8 @@ export enum BossPhase {
 
 /** Total number of health phases. */
 export const BOSS_PHASE_COUNT = 4;
+/** Number of hits required to deplete one boss phase. */
+export const BOSS_HITS_PER_PHASE = 10;
 
 /** Health bar width in px. */
 export const BOSS_HEALTH_BAR_WIDTH = 300;
@@ -216,7 +218,8 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
-  private _healthSegmentsRemaining = BOSS_PHASE_COUNT;
+  private _totalHp = BOSS_PHASE_COUNT * BOSS_HITS_PER_PHASE;  // 40 total hits
+  private _currentHp!: number;
   private _telegraphState: TelegraphState = TelegraphState.Idle;
   private _telegraphStartTime = 0;
   private _lastAttackTime = 0;
@@ -268,6 +271,8 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics = scene.add.graphics();
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
+    this._totalHp = BOSS_PHASE_COUNT * BOSS_HITS_PER_PHASE;
+    this._currentHp = this._totalHp;
     this.add(this.healthBarGraphics);
 
     this._drawBody();
@@ -356,7 +361,7 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics.strokeRect(x, y, w, h);
 
     // Health fill — green in phase 1, yellow in 2, orange in 3, red in 4.
-    const fillWidth = (this._healthSegmentsRemaining / BOSS_PHASE_COUNT) * w;
+    const fillWidth = (this._currentHp / this._totalHp) * w;
     const healthColors: Record<number, number> = {
       4: 0xff0000,
       3: 0xff8800,
@@ -364,7 +369,7 @@ export class Boss extends Phaser.GameObjects.Container {
       1: 0x00ff00,
     };
     const healthColor =
-      healthColors[this._healthSegmentsRemaining] ?? 0xff0000;
+      healthColors[this._currentPhaseNumber] ?? 0xff0000;
     this.healthBarGraphics.fillStyle(healthColor, 0.85);
     this.healthBarGraphics.fillRect(x, y, fillWidth, h);
 
@@ -664,37 +669,52 @@ export class Boss extends Phaser.GameObjects.Container {
     };
   }
 
-  // ── Phase management ────────────────────────────────────────────
-
   /**
-   * Applies damage: decrements health by one segment and advances the
-   * phase number. Returns the new phase number (or 0 if destroyed).
+   * Applies damage: decrements HP by one hit. Returns an object indicating
+   * whether the boss was destroyed, whether the phase advanced, and remaining HP.
+   *
+   * Each of the 4 phases requires BOSS_HITS_PER_PHASE hits to deplete.
+   * A non-depleting hit leaves the phase unchanged and returns
+   * `{ destroyed: false, phaseAdvanced: false }`.
+   * A depleting hit advances the phase (or destroys the boss after phase 4)
+   * and returns `{ phaseAdvanced: true }` or `{ destroyed: true }`.
    */
-  takeDamage(): number {
-    if (!this._alive) return 0;
-    this._healthSegmentsRemaining--;
+  takeDamage(): { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number } {
+    if (!this._alive) return { destroyed: false, phaseAdvanced: false, phase: this._currentPhaseNumber, hpRemaining: 0 };
 
-    if (this._healthSegmentsRemaining <= 0) {
-      // Boss destroyed — play destruction animation + sound.
+    this._currentHp--;
+
+    if (this._currentHp <= 0) {
+      // Boss destroyed.
+      this._currentHp = 0;
       this.destroySelf();
       playBossDestructionSound();
-      return 0;
+      return { destroyed: true, phaseAdvanced: true, phase: 0, hpRemaining: 0 };
     }
 
-    // Advance to the next phase.
-    this._currentPhaseNumber++;
-    if (this._currentPhaseNumber > BOSS_PHASE_COUNT) {
-      this._currentPhaseNumber = BOSS_PHASE_COUNT;
+    // Check if the current phase just depleted.
+    const phaseHpRemainder = this._currentHp % BOSS_HITS_PER_PHASE;
+    const phaseAdvanced = phaseHpRemainder === 0;
+
+    if (phaseAdvanced) {
+      // Advance to the next phase.
+      this._currentPhaseNumber++;
+      if (this._currentPhaseNumber > BOSS_PHASE_COUNT) {
+        this._currentPhaseNumber = BOSS_PHASE_COUNT;
+      }
+      this._currentPhase = this._currentPhaseNumber as BossPhase;
     }
-    this._currentPhase = this._currentPhaseNumber as BossPhase;
 
     // Update visuals.
     this._drawBody();
     this._drawHealthBar();
 
-    playBossPhaseTransitionSound();
-    return this._currentPhaseNumber;
+    if (phaseAdvanced) {
+      playBossPhaseTransitionSound();
+    }
+    return { destroyed: false, phaseAdvanced, phase: this._currentPhaseNumber, hpRemaining: this._currentHp };
   }
+
 
   /** Returns the current phase number (1–4). */
   getPhaseNumber(): number {
@@ -706,9 +726,21 @@ export class Boss extends Phaser.GameObjects.Container {
     return this._currentPhase;
   }
 
-  /** Returns remaining health segments. */
+  /** Returns remaining health segments (legacy accessor). */
   getHealthSegments(): number {
-    return this._healthSegmentsRemaining;
+    // Returns the number of phases remaining as a legacy accessor (0 when
+    // the boss is destroyed).
+    if (!this._alive) return 0;
+    const phasesRemaining = BOSS_PHASE_COUNT - this._currentPhaseNumber + 1;
+    return phasesRemaining > 0 ? phasesRemaining : 0;
+  }
+
+  /**
+   * Returns the boss HP as a fraction of total HP (0.0–1.0).
+   * Used by the health bar renderer to draw proportional fill.
+   */
+  getHpFraction(): number {
+    return this._alive ? this._currentHp / this._totalHp : 0;
   }
 
   /** Returns true if in desperation phase. */
