@@ -78,4 +78,114 @@ describe('MineralChoiceScene', () => {
     expect(scene.getOptions().map((o) => o.id)).toEqual(['P5', 'spread']);
     expect(scene.getOptionLabels()).toHaveLength(2);
   });
+
+  describe('upgrade summary and New badge (AH-0MUU1GOAU007RFVR)', () => {
+    it('renders a change-summary detail line for weapon-level options', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'spread',
+            name: 'Spread Shot Lv.3',
+            kind: 'weapon-level',
+            level: 3,
+            changeSummary: '+1 Projectiles',
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      const details = scene.getDetailLines();
+      expect(details).toHaveLength(1);
+      expect(details[0]).toBe('+1 Projectiles');
+      // Primary label is unchanged.
+      expect(scene.getOptionLabels()[0]).toContain('Spread Shot Lv.3');
+    });
+
+    it('renders a "New" badge for options marked isNew', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'nova',
+            name: 'Nova',
+            kind: 'weapon',
+            isNew: true,
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      const details = scene.getDetailLines();
+      expect(details).toHaveLength(1);
+      expect(details[0]).toBe('\u2605 New');
+    });
+
+    it('renders no detail line when neither changeSummary nor isNew is set', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      expect(scene.getDetailLines()).toHaveLength(0);
+    });
+
+    it('shows both a change summary and no New badge for owned weapons', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'spread',
+            name: 'Spread Shot Lv.3',
+            kind: 'weapon-level',
+            level: 3,
+            changeSummary: '+1 Projectiles',
+            isNew: false,
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      const details = scene.getDetailLines();
+      expect(details).toHaveLength(1);
+      expect(details[0]).toBe('+1 Projectiles');
+      // "New" takes priority over a summary when both are set.
+    });
+
+    it('"New" badge takes display priority over changeSummary', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'spread',
+            name: 'Spread Shot',
+            kind: 'weapon',
+            isNew: true,
+            changeSummary: '+1 Projectiles',
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      expect(scene.getDetailLines()[0]).toBe('\u2605 New');
+    });
+  });
 });

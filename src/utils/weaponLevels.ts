@@ -690,6 +690,122 @@ export function resolveVariable(
   return resolveWeaponAtLevel(weaponId, level)[variable];
 }
 
+// ── Upgrade-change summariser ───────────────────────────────────────
+
+/**
+ * Formats a single-variable delta for human consumption.
+ *
+ * - **Discrete** counts are shown as an absolute delta: `"+3 Projectiles"`.
+ * - **Continuous** scalars are shown as a percentage increase against the
+ *   base value: `"+15% Bullet size"` (the percentage is rounded to the
+ *   nearest whole number so the summary stays brief).
+ *
+ * Returns `""` when the delta is zero (the caller only invokes this
+ * for variables that actually change).
+ *
+ * @param label     - The human-readable variable label from
+ *   {@link WeaponUpgradeSpec}.  
+ * @param delta     - The numerical change (new value minus old value).
+ * @param base      - The old value (used as the denominator for percentages).
+ * @param discrete  - Whether this variable is a whole-number count.
+ * @returns A formatted delta string such as `"+3 Projectiles"` or
+ *   `"+15% Bullet size"`, or `""` when `delta` is zero.
+ */
+export function formatDelta(
+  label: string,
+  delta: number,
+  base: number,
+  discrete: boolean = false,
+): string {
+  // Treat sub-pixel floating-point drift as zero.
+  if (Math.abs(delta) < 1e-9) {
+    return '';
+  }
+  if (!Number.isFinite(delta)) {
+    return '';
+  }
+  if (delta > 0) {
+    if (discrete) {
+      // Discrete counts shown as an absolute delta.
+      return `+${Math.round(delta)} ${label}`;
+    }
+    // Scalar shown as a percentage increase against the base.
+    if (Math.abs(base) > 1e-9) {
+      const pct = Math.round((delta / base) * 100);
+      // When the rounded percentage is 0%, the change is imperceptible —
+      // skip it so the summary only lists visible gains.
+      if (pct === 0) {
+        return '';
+      }
+      return `+${pct}% ${label}`;
+    }
+    // Base is zero — fall back to absolute delta.
+    return `+${delta} ${label}`;
+  }
+  // Negative deltas (shouldn't occur in normal level-up paths, but
+  // handled defensively for completeness).
+  if (discrete) {
+    return `${Math.round(delta)} ${label}`;
+  }
+  if (Math.abs(base) > 1e-9) {
+    const pct = Math.round((delta / base) * 100);
+    return `${pct}% ${label}`;
+  }
+  return `${delta} ${label}`;
+}
+
+/**
+ * Computes a human-readable upgrade-summary string comparing a weapon's
+ * stats at `fromLevel` with those at `toLevel`.
+ *
+ * Only the MVP-visible variables
+ * ({@link MVP_UPGRADE_VARIABLES}) are considered.  Each variable that
+ * actually changes between the two levels contributes one formatted
+ * fragment (see {@link formatDelta}); fragments are joined with `", "`.
+ *
+ * When no MVP variable changes (the curve has flattened at the cap) the
+ * result is the empty string.
+ *
+ * This is the single source of truth for the hold-full choice overlay
+ * (AH-0MUU1GOAU007RFVR).  The game and every gym consume the same
+ * function so the displayed numbers can never drift from the level
+ * maths.
+ *
+ * @param weaponId - The weapon to compare.
+ * @param fromLevel - The current (pre-upgrade) level.
+ * @param toLevel   - The next (post-upgrade) level.
+ * @returns A summary such as `"+1 Projectiles, +15% Bullet size"`, or
+ *   `""` when nothing changes.
+ */
+export function summariseWeaponLevelChange(
+  weaponId: WeaponId,
+  fromLevel: number,
+  toLevel: number,
+): string {
+  const from = resolveWeaponAtLevel(weaponId, fromLevel);
+  const to = resolveWeaponAtLevel(weaponId, toLevel);
+
+  const parts: string[] = [];
+  for (const variable of MVP_UPGRADE_VARIABLES) {
+    const delta = to[variable] - from[variable];
+    if (Math.abs(delta) < 1e-9) {
+      continue;
+    }
+    const spec = WEAPON_UPGRADE_SPECS[variable];
+    const formatted = formatDelta(
+      spec.label,
+      delta,
+      from[variable],
+      spec.discrete,
+    );
+    if (formatted) {
+      parts.push(formatted);
+    }
+  }
+
+  return parts.join(', ');
+}
+
 /**
  * The catalogue's base (level-0) definitions. Re-exported here so callers
  * that already depend on the level module can read both from one place

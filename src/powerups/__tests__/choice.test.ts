@@ -18,6 +18,7 @@ import {
   isWeaponOption,
   randomChoiceStrategy,
 } from '../choice';
+import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
 
 describe('power-up choice strategy', () => {
   it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
@@ -140,6 +141,55 @@ describe('power-up choice strategy', () => {
       const options = createRandomChoiceStrategy().choose(3, () => 0.5, context);
       expect(options).toHaveLength(3);
       expect(new Set(options.map((o) => `${o.kind}:${o.id}`)).size).toBe(3);
+    });
+  });
+
+  describe('upgrade change summary & New badge (AH-0MUU1GOAU007RFVR)', () => {
+    it('populates changeSummary for weapon-level offers', () => {
+      const context = {
+        weaponLevels: [{ id: 'spread' as const, level: 2 }],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUp = candidates.find(
+        (o) => o.kind === 'weapon-level' && o.id === 'spread',
+      );
+      expect(levelUp).toBeDefined();
+      expect(levelUp!.changeSummary).toBeDefined();
+      expect(levelUp!.changeSummary!.length).toBeGreaterThan(0);
+      // The summary is derived from the shared resolver.
+      expect(levelUp!.changeSummary).toBe(
+        summariseWeaponLevelChange('spread', 2, 3),
+      );
+    });
+
+    it('marks base-pool weapons as New when the player does not own them', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+      });
+      const spread = candidates.find((o) => o.id === 'spread');
+      expect(spread).toBeDefined();
+      expect(spread!.isNew).toBe(true);
+      const rapid = candidates.find((o) => o.id === 'rapid');
+      expect(rapid!.isNew).toBe(true);
+    });
+
+    it('does not mark a weapon as New when the player owns it', () => {
+      const context = { weaponLevels: [{ id: 'spread' as const, level: 1 }] };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const spread = candidates.find(
+        (o) => o.id === 'spread' && o.kind === 'weapon',
+      );
+      expect(spread).toBeDefined();
+      expect(spread!.isNew).toBeUndefined();
+    });
+
+    it('power-up options have no isNew or changeSummary from base candidates', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, { weaponLevels: [] });
+      const powerUps = candidates.filter((o) => o.kind === 'powerup');
+      for (const pu of powerUps) {
+        expect(pu.isNew).toBeUndefined();
+        expect(pu.changeSummary).toBeUndefined();
+      }
     });
   });
 });

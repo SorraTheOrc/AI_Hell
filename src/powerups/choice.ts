@@ -22,6 +22,7 @@ import {
   type WeaponDropId,
 } from './types';
 import type { WeaponId } from '../utils/weapons';
+import { summariseWeaponLevelChange } from '../utils/weaponLevels';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
@@ -71,6 +72,18 @@ export interface ChoiceOption {
    * (the current level + 1). Absent for power-up/weapon options.
    */
   level?: number;
+  /**
+   * Optional change summary describing what improves at this level
+   * (e.g. `"+1 Projectiles, +15% Bullet size"`). Populated for
+   * weapon-level upgrades and owned base-pool weapon offers.
+   */
+  changeSummary?: string;
+  /**
+   * Whether this option represents a brand-new item the player does
+   * not yet own. Set for base-pool weapons and power-ups the player
+   * has never collected.
+   */
+  isNew?: boolean;
 }
 
 /**
@@ -161,12 +174,30 @@ export interface ChoiceStrategy {
  * Builds the candidate option list: the base pool plus a **level-up** offer
  * for every weapon the player owns (AC1/AC4). When the player owns no weapons
  * the list is exactly the base pool (AC5).
+ *
+ * Populates optional display metadata (AH-0MUU1GOAU007RFVR):
+ * - `changeSummary` for owned/levelled weapons, derived from the shared
+ *   level maths.
+ * - `isNew` for base-pool weapons the player does not yet own.
  */
 export function buildChoiceCandidates(
   pool: readonly DropId[],
   context?: ChoiceContext,
 ): ChoiceOption[] {
-  const candidates = [...new Set(pool)].map(toChoiceOption);
+  // Build a lookup of owned weapon ids for New-badge detection.
+  const ownedWeapons = new Set(
+    context?.weaponLevels?.map((wl) => wl.id) ?? [],
+  );
+
+  const candidates = [...new Set(pool)].map((dropId) => {
+    const option = toChoiceOption(dropId);
+    // For base-pool weapon drops: mark as New when unowned.
+    if (option.kind === 'weapon' && !ownedWeapons.has(dropId as WeaponId)) {
+      option.isNew = true;
+    }
+    return option;
+  });
+
   for (const { id, level } of context?.weaponLevels ?? []) {
     if (!LEVELABLE_WEAPON_IDS.includes(id as WeaponDropId) || level < 1) {
       continue;
@@ -177,6 +208,12 @@ export function buildChoiceCandidates(
       name: `${WEAPON_NAMES[weaponId]} Lv.${level + 1}`,
       kind: 'weapon-level',
       level: level + 1,
+      // AC1: change summary derived from the shared level maths.
+      changeSummary: summariseWeaponLevelChange(
+        weaponId as WeaponId,
+        level,
+        level + 1,
+      ),
     });
   }
   return candidates;

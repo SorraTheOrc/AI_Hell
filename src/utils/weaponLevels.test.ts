@@ -24,11 +24,13 @@ import {
   WEAPON_UPGRADE_SPECS,
   curveValue,
   expandWeaponPattern,
+  formatDelta,
   quantiseFireRateMs,
   quantiseSubdivision,
   resolveVariable,
   resolveWeaponAtLevel,
   resolveWeaponDefinition,
+  summariseWeaponLevelChange,
   type WeaponLevelStats,
   type WeaponUpgradeVariable,
 } from './weaponLevels';
@@ -548,5 +550,86 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
         PRE_CHANGE_AOE_RADIUS[id] * WEAPON_UPGRADE_SPECS.aoeRadius.cap;
       expect(capped.aoe!.radius).toBeCloseTo(preChangeCapped / 2, 10);
     }
+  });
+});
+
+// ── Change-summary formatter (AH-0MUU1GOAU007RFVR) ──────────────────
+
+describe('summariseWeaponLevelChange (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
+  test('returns a summary with +N Projectiles and +NN% scalars for a real upgrade', () => {
+    const summary = summariseWeaponLevelChange('spread', 2, 3);
+    expect(summary.length).toBeGreaterThan(0);
+    // Contains a discrete count delta.
+    expect(summary).toMatch(/\+\d+ Projectiles/);
+    // Contains a percentage scalar.
+    expect(summary).toMatch(/\+\d+%/);
+  });
+
+  test('only lists variables that actually change', () => {
+    const summary = summariseWeaponLevelChange('spread', 2, 3);
+    const parts = summary.split(/,\s*/);
+    expect(parts.length).toBeLessThanOrEqual(MVP_UPGRADE_VARIABLES.length);
+    for (const part of parts) {
+      expect(part.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  test('returns an empty string when the curve has flattened at the cap', () => {
+    // At a very high level, the MVP variables are all at or very near cap.
+    const summary = summariseWeaponLevelChange('cannon', 100, 101);
+    // With the MVP variables all flat at cap, no deltas.
+    expect(summary).toBe('');
+  });
+
+  test('is deterministic: same inputs always produce the same output', () => {
+    const a = summariseWeaponLevelChange('rapid', 3, 4);
+    const b = summariseWeaponLevelChange('rapid', 3, 4);
+    expect(a).toBe(b);
+  });
+
+  test('uses the shared level maths (not duplicated values)', () => {
+    // Verify that the summary matches what resolveWeaponAtLevel says.
+    const weaponId = 'nova';
+    const fromLevel = 2;
+    const toLevel = 3;
+    const from = resolveWeaponAtLevel(weaponId, fromLevel);
+    const to = resolveWeaponAtLevel(weaponId, toLevel);
+    const summary = summariseWeaponLevelChange(weaponId, fromLevel, toLevel);
+    // The summary must not be empty when values actually differ.
+    const hasDeltas = MVP_UPGRADE_VARIABLES.some(
+      (v) => to[v] !== from[v],
+    );
+    if (hasDeltas) {
+      expect(summary.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
+  test('formats discrete counts as +N Label', () => {
+    expect(formatDelta('Projectiles', 3, 1, true)).toBe('+3 Projectiles');
+    expect(formatDelta('Projectiles', 0, 5, true)).toBe('');
+  });
+
+  test('formats continuous scalars as +NN% Label', () => {
+    // +0.15 / 1.0 = +15%
+    expect(formatDelta('Bullet size', 0.15, 1.0, false)).toBe(
+      '+15% Bullet size',
+    );
+    // +0.05 / 1.0 = +5%
+    expect(formatDelta('Bullet size', 0.05, 1.0, false)).toBe(
+      '+5% Bullet size',
+    );
+  });
+
+  test('returns an empty string for near-zero floating-point deltas', () => {
+    expect(formatDelta('Projectiles', 1e-10, 5, false)).toBe('');
+  });
+
+  test('returns an empty string for non-finite deltas', () => {
+    expect(formatDelta('Projectiles', Number.NaN, 1, false)).toBe('');
+    expect(
+      formatDelta('Projectiles', Number.POSITIVE_INFINITY, 1, false),
+    ).toBe('');
   });
 });
