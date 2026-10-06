@@ -63,8 +63,10 @@ export type PowerUpLevelVariable =
   | 'shieldDuration'
   /** P3 Shield — hits absorbed before the bubble pops. */
   | 'shieldAbsorptions'
-  /** P4 Bomb — stored auto-clear charges granted per pickup. */
-  | 'bombCharges'
+  /** P4 Bomb — clear radius in pixels. */
+  | 'bombRange'
+  /** P4 Bomb — permanent pulse rate in pulses per second. */
+  | 'bombFrequency'
   /** P5 Speed Boost — movement/fire-rate multiplier. */
   | 'speedMultiplier'
   /** P5 Speed Boost — duration in seconds. */
@@ -90,7 +92,8 @@ export type PowerUpLevelVariable =
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'shieldDuration',
   'shieldAbsorptions',
-  'bombCharges',
+  'bombRange',
+  'bombFrequency',
   'speedMultiplier',
   'speedDuration',
   'phaseDuration',
@@ -104,18 +107,18 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
 ];
 
 /**
- * Level variables whose effect-path **consumption** is deferred to sibling
- * item AH-0MUVM9RAO004Y3LB ("Wire P3 shield absorption and P4 bomb charge
- * level axes into the effect path").
+ * Level variables whose effect-path **consumption** is not yet wired, and
+ * which a `power-up-level` change summary must therefore exclude so the
+ * hold-full choice never promises a delta the effect path does not apply
+ * (AC4).
  *
- * The level store still tracks both axes, but the effect path does not yet
- * consume them (no multi-hit shield mechanism; no P4 charge trigger). A
- * `power-up-level` change summary therefore **excludes** these variables so
- * the hold-full choice never promises a delta the effect path does not
- * apply (AC4, producer decision Q2=B).
+ * **Empty since AH-0MUVM9RAO004Y3LB** wired both the P3 `shieldAbsorptions`
+ * axis (multi-hit shield) and the redesigned P4 `bombRange`/`bombFrequency`
+ * axes (ranged periodic bomb) into the effect path. The set is retained as
+ * the single seam for any future deferred axis.
  */
 export const DEFERRED_POWER_UP_LEVEL_VARIABLES: ReadonlySet<PowerUpLevelVariable> =
-  new Set<PowerUpLevelVariable>(['shieldAbsorptions', 'bombCharges']);
+  new Set<PowerUpLevelVariable>();
 
 // ── Level specification ─────────────────────────────────────────────
 
@@ -190,24 +193,40 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // P4 Bomb — instant on-screen enemy-bullet clear.
+  // P4 Bomb — ranged clear, single on a field pickup; periodic when permanent.
   P4: [
     {
-      variable: 'bombCharges',
+      variable: 'bombRange',
       powerUpId: 'P4',
-      label: 'Bomb charges',
-      unit: '',
-      description: 'Auto-clear charges stored per pickup.',
+      label: 'Bomb range',
+      unit: 'px',
+      description: 'Radius of the bomb clear, centred on the ship.',
       curve: 'exponential-saturation',
-      base: 1,
-      cap: 3,
-      k: 0.5,
-      discrete: true,
+      base: 120,
+      cap: 320,
+      k: 0.3,
+      discrete: false,
       rationale:
-        'Bomb is instant, so its only meaningful axis is how many clears a ' +
-        'pickup banks; the cap is small (3) and k=0.5 grants a second charge ' +
-        'at the first upgrade, keeping the clear useful without trivialising ' +
-        'bullet-hell phases.',
+        'A 320 px ceiling clears a substantial slice of the 960×540 field ' +
+        'without covering it entirely; k=0.3 adds ~52 px at the first ' +
+        'upgrade, so early levels feel responsive before diminishing.',
+    },
+    {
+      variable: 'bombFrequency',
+      powerUpId: 'P4',
+      label: 'Bomb rate',
+      unit: '/s',
+      description: 'Pulses per second for a permanent bomb.',
+      curve: 'exponential-saturation',
+      base: 0.33,
+      cap: 1,
+      k: 0.35,
+      discrete: false,
+      rationale:
+        'Stored as pulses/second so the axis stays monotonic non-decreasing ' +
+        '(the effect computes 1/frequency). One pulse per second at the cap ' +
+        'keeps a permanent bomb a strong but readable clear, never a ' +
+        'continuous shield; k=0.35 front-loads the first upgrade (~0.53/s).',
     },
   ],
 
@@ -427,8 +446,10 @@ export interface PowerUpLevelStats {
   shieldDuration?: number;
   /** P3 — hits the shield absorbs. */
   shieldAbsorptions?: number;
-  /** P4 — stored auto-clear charges per pickup. */
-  bombCharges?: number;
+  /** P4 — clear radius in pixels. */
+  bombRange?: number;
+  /** P4 — permanent pulse rate in pulses per second. */
+  bombFrequency?: number;
   /** P5 — movement/fire-rate multiplier. */
   speedMultiplier?: number;
   /** P5 — boost duration in seconds. */

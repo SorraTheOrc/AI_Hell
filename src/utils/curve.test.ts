@@ -37,6 +37,19 @@ describe('shared curve module (AC4 — single implementation)', () => {
     expect(curveValue(spec, 1_000_000)).toBeCloseTo(10, 6);
   });
 
+  it('returns the base exactly at level 0 even for non-representable bases', () => {
+    const spec: CurveSpec = {
+      curve: 'exponential-saturation',
+      base: 0.33,
+      cap: 1,
+      k: 0.35,
+      discrete: false,
+    };
+    // `cap - (cap - base)` drifts in binary floating point; level 0 must be
+    // the exact declared base so resolver/curve equality holds.
+    expect(curveValue(spec, 0)).toBe(0.33);
+  });
+
   it('pins a flat or inverted spec to its base value', () => {
     const flat: CurveSpec = {
       curve: 'exponential-saturation',

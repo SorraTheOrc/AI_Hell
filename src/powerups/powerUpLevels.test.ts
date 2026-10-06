@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { POWER_UP_LEVEL_SPECS } from './powerUpLevels';
 import {
+  DEFERRED_POWER_UP_LEVEL_VARIABLES,
   POWER_UP_LEVEL_IDS,
   POWER_UP_LEVEL_VARIABLES,
   POWER_UP_LIVES_START,
@@ -190,16 +191,83 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
     expect(summarisePowerUpLevelChange('P8', 1_000, 1_001)).toBe('');
   });
 
-  it('excludes deferred axes so a summary never promises an unwired delta (AC4)', () => {
-    // P4's only axis (bombCharges) is deferred to AH-0MUVM9RAO004Y3LB, so a
-    // P4 level-up carries no change summary.
-    expect(summarisePowerUpLevelChange('P4', 0, 1)).toBe('');
+  it('no longer defers P3/P4 axes: their deltas now appear in the summary (AC4)', () => {
+    // Every axis is wired since AH-0MUVM9RAO004Y3LB.
+    expect(DEFERRED_POWER_UP_LEVEL_VARIABLES.size).toBe(0);
 
-    // P3's shieldAbsorptions is deferred and excluded, but its wired
-    // shieldDuration still appears in the summary.
+    // P4's range and frequency now contribute a promised delta.
+    const p4 = summarisePowerUpLevelChange('P4', 0, 1);
+    expect(p4).toContain('Bomb range');
+    expect(p4).toContain('Bomb rate');
+
+    // P3's multi-hit axis is included alongside its duration.
     const p3 = summarisePowerUpLevelChange('P3', 0, 1);
     expect(p3).toContain('Shield time');
-    expect(p3).not.toContain('Shield hits');
+    expect(p3).toContain('Shield hits');
+  });
+});
+
+// ── P4 model: range/frequency axes (AH-0MUVM9RAO004Y3LB) ────────────
+
+describe('P4 Bomb model: bombRange/bombFrequency replace bombCharges', () => {
+  it('exposes the Q2=A specs with labels, units and a rationale', () => {
+    const byVariable = Object.fromEntries(
+      POWER_UP_LEVEL_SPECS.P4.map((spec) => [spec.variable, spec]),
+    );
+    const range = byVariable.bombRange;
+    const frequency = byVariable.bombFrequency;
+    expect(range).toBeDefined();
+    expect(frequency).toBeDefined();
+
+    expect(range.base).toBe(120);
+    expect(range.cap).toBe(320);
+    expect(range.k).toBe(0.3);
+    expect(range.unit).toBe('px');
+    expect(range.discrete).toBe(false);
+    expect(range.label.length).toBeGreaterThan(0);
+    expect(range.rationale.length).toBeGreaterThan(0);
+
+    expect(frequency.base).toBe(0.33);
+    expect(frequency.cap).toBe(1);
+    expect(frequency.k).toBe(0.35);
+    expect(frequency.unit).toBe('/s');
+    expect(frequency.discrete).toBe(false);
+    expect(frequency.label.length).toBeGreaterThan(0);
+    expect(frequency.rationale.length).toBeGreaterThan(0);
+  });
+
+  it('removes bombCharges from the variable space and the resolved stats', () => {
+    expect(POWER_UP_LEVEL_VARIABLES).not.toContain('bombCharges' as never);
+
+    const stats = resolvePowerUpAtLevel('P4', 1) as unknown as Record<
+      string,
+      number | undefined
+    >;
+    expect(stats.bombCharges).toBeUndefined();
+    expect(Object.keys(stats).sort()).toEqual([
+      'bombFrequency',
+      'bombRange',
+      'level',
+      'powerUpId',
+    ]);
+  });
+
+  it('resolves the base values at level 0 and clamps to the caps', () => {
+    expect(statAt('P4', 'bombRange', 0)).toBe(120);
+    expect(statAt('P4', 'bombRange', 1_000_000)).toBe(320);
+    expect(statAt('P4', 'bombFrequency', 0)).toBe(0.33);
+    expect(statAt('P4', 'bombFrequency', 1_000_000)).toBe(1);
+  });
+
+  it('keeps both axes monotonic non-decreasing and within their caps', () => {
+    for (const variable of ['bombRange', 'bombFrequency'] as const) {
+      let previous = statAt('P4', variable, 0);
+      for (let level = 1; level <= 40; level++) {
+        const current = statAt('P4', variable, level);
+        expect(current).toBeGreaterThanOrEqual(previous);
+        previous = current;
+      }
+    }
   });
 });
 

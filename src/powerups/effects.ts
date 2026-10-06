@@ -42,9 +42,11 @@
  *   `reset()` and surfaced to the HUD via `activeEffects()` (`stacks`); the
  *   run-scoped **level** still persists after the bubble expires
  *   (AH-0MUVM9RAO004Y3LB).
- * - **P4 Bomb** — instant: clears on-screen enemy bullets on collect (does
- *   not damage 1-HP enemies, GDD §4.4); the store tracks `bombCharges` but
- *   consumption is deferred to AH-0MUVM9RAO004Y3LB.
+ * - **P4 Bomb** — ranged periodic clear (AH-0MUVM9RAO004Y3LB): the model
+ *   exposes `bombRange` (px) and `bombFrequency` (pulses/s); the effect path
+ *   clears on-screen enemy bullets within the resolved range (a single pulse
+ *   for a field pickup, an immediate-then-periodic pulse when permanent),
+ *   without damaging 1-HP enemies (GDD §4.4).
  * - **P6 Phase Shift** — charge-based auto-trigger (parent
  *   AH-0MUIYX1EE008FVS8). Collecting P6 stores the level-resolved
  *   `phaseCharges` auto-activation charges (or grants unlimited activations

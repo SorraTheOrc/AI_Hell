@@ -82,6 +82,12 @@ export function curveValue(spec: CurveSpec, level: number): number {
     // A flat or inverted spec is defensively pinned to its base.
     return spec.base;
   }
+  // Level 0 is exactly the spec's base by definition; returning it directly
+  // avoids floating-point drift from `cap - span` for bases that are not
+  // exactly representable (e.g. 0.33).
+  if (safeLevel === 0) {
+    return spec.base;
+  }
   const raw = spec.cap - span * Math.exp(-spec.k * safeLevel);
   if (!spec.discrete) {
     return Math.min(spec.cap, Math.max(spec.base, raw));
