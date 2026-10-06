@@ -16,8 +16,8 @@
  * Each attack phase begins with a clear telegraph (glow + audio cue) at
  * least 500 ms before the visual event fires.
  *
- * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (10)
- * player hits, so the Boss is destroyed only after 40 hits total. A hit
+ * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (100)
+ * player hits, so the Boss is destroyed only after 400 hits total. A hit
  * that does not deplete the current phase leaves the phase unchanged and
  * only reduces the health-bar fill; a depleting hit advances the phase
  * (or destroys the Boss after phase 4). `takeDamage()` returns
@@ -119,7 +119,7 @@ export enum BossPhase {
 /** Total number of health phases. */
 export const BOSS_PHASE_COUNT = 4;
 /** Number of hits required to deplete one boss phase. */
-export const BOSS_HIT_POINTS_PER_PHASE = 10;
+export const BOSS_HIT_POINTS_PER_PHASE = 100;
 
 /** Health bar width in px. */
 export const BOSS_HEALTH_BAR_WIDTH = 300;
@@ -205,7 +205,7 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
-  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 40 total hits
+  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 400 total hits
   private _currentHp!: number;
   private _telegraphState: TelegraphState = TelegraphState.Idle;
   private _telegraphStartTime = 0;

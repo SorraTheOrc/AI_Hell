@@ -747,7 +747,7 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
     expect(scene.getMinions().length).toBe(expected);
   });
 
-  it('AC6/AC3 — 39 DAMAGE clicks leave the boss alive; the 40th destroys it (PlayScene parity)', async () => {
+  it('AC6/AC3 — 399 DAMAGE clicks leave the boss alive; the 400th destroys it (PlayScene parity)', async () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;
     const damageBtn = findButton(scene, 'DAMAGE');

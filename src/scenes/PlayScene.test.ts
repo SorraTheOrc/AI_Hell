@@ -197,14 +197,33 @@ function reachBoss(scene: PlayScene): void {
 /**
  * Fires `BOSS_HIT_POINTS_PER_PHASE` player bullets at the boss, one per tick,
  * depleting exactly one health phase (AH-0MUTV3J7T006MZ4K).
+ *
+ * The batch is isolated from the boss's minions — which spawn on phase
+ * depletion and would otherwise intercept test bullets and be killed for
+ * score — and from the player's auto-fire, so the boss takes exactly one hit
+ * per spawned bullet. Minions already alive are left untouched, so callers
+ * can still assert the minion waves that accumulate after each phase (AC3).
  */
 function damageBossPhase(
   scene: PlayScene,
   boss: { x: number; y: number },
 ): void {
-  for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
-    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-    scene.tick(0.016);
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [];
+  isolated.autoFireEnabled = () => false;
+  try {
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
+  } finally {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
   }
 }
 
@@ -1564,7 +1583,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     scene.tick(0.016);
     expect(scene.getGameState().score - scoreBefore).toBe(0);
 
-    // The 10th (phase-depleting) hit awards the phase score exactly once.
+    // The phase-depleting hit awards the phase score exactly once.
     for (let i = 1; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
@@ -1578,7 +1597,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (40 total).
+    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (400 total).
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -1608,7 +1627,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const scoreBefore = scene.getGameState().score;
     const minionsBefore = liveMinions(scene);
 
-    // 9 partial hits: phase 1 must survive with no rewards.
+    // Non-depleting partial hits: phase 1 must survive with no rewards.
     for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
@@ -1628,7 +1647,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     let expectedScore = 0;
 
     for (let phase = 1; phase <= 4; phase++) {
-      // The 10th hit depletes the phase.
+      // The depleting hit ends the phase.
       damageBossPhase(scene, boss);
 
       // Score for the depleted phase is awarded exactly once.
@@ -1676,34 +1695,34 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const def = fullyLevelWeapon(scene, 'nova');
     expect(def.aoe).toBeDefined();
 
-    // 9 max-level blasts: phase 1 survives (each blast is one hit).
+    // Non-depleting max-level blasts: phase 1 survives (each blast is one hit).
     for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
       applyAoe(scene, def, boss.x, boss.y);
     }
     expect(boss.getPhaseNumber()).toBe(1);
     expect(boss.alive).toBe(true);
 
-    // The 10th blast depletes exactly one phase — no phase is skipped.
+    // The depleting blast ends exactly one phase — no phase is skipped.
     applyAoe(scene, def, boss.x, boss.y);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(boss.alive).toBe(true);
   });
 
-  it('AC6 — a fully levelled weapon still requires 40 hits to destroy the boss', async () => {
+  it('AC6 — a fully levelled weapon still requires 400 hits to destroy the boss', async () => {
     const scene = await bootPlay();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
     const totalHits = 4 * BOSS_HIT_POINTS_PER_PHASE;
 
-    // 39 blasts leave the boss alive on its final phase.
+    // Leave the boss alive on its final phase (one hit short).
     for (let i = 0; i < totalHits - 1; i++) {
       applyAoe(scene, def, boss.x, boss.y);
     }
     expect(boss.alive).toBe(true);
     expect(boss.getPhaseNumber()).toBe(4);
 
-    // The 40th blast destroys it — no earlier blast skipped a phase.
+    // The final blast destroys it — no earlier blast skipped a phase.
     applyAoe(scene, def, boss.x, boss.y);
     expect(boss.alive).toBe(false);
   });
@@ -3780,7 +3799,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
   /**
    * Drives the boss through all four phases so the run is won
-   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 40 total).
+   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 400 total).
    */
   function defeatBoss(scene: PlayScene): void {
     const boss = scene.getBoss()!;

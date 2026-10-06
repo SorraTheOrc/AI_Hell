@@ -380,7 +380,7 @@ on entry (AH-0MUJM746P000QAEO).
 **Boss: The Central AI**
 
 - **Appearance**: A large, glowing neon geometric structure (e.g., a rotating dodecahedron or layered ring system) at the center of the screen, with the name "AI_Hell" or a stylized symbol.
-- **Health**: Single health bar divided into **4 phases**, each requiring **10 player hits** (**40 hits total**, `BOSS_HIT_POINTS_PER_PHASE = 10`). The fill is proportional to remaining total HP (`getHpFraction()`), so every hit visibly reduces it, and the four phase-segment dividers are retained. A hit that does not deplete the current phase leaves the phase unchanged; score and the next phase's minions are granted only on the **depleting** hit (hits 10, 20, 30 and 40).
+- **Health**: Single health bar divided into **4 phases**, each requiring **100 player hits** (**400 hits total**, `BOSS_HIT_POINTS_PER_PHASE = 100`). The fill is proportional to remaining total HP (`getHpFraction()`), so every hit visibly reduces it, and the four phase-segment dividers are retained. A hit that does not deplete the current phase leaves the phase unchanged; score and the next phase's minions are granted only on the **depleting** hit (hits 100, 200, 300 and 400).
 - **Phases**:
   1. **Scan**: Fires slow, predictable aimed shots; formation enemies spawn on the sides.
   2. **Firestorm**: Rapid radial bursts in all directions; enemies dive from top and bottom.
@@ -537,7 +537,7 @@ Every cap/rate is recorded with a written rationale beside it in `POWER_UP_LEVEL
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
 
-> **Boss phase scoring (AH-0MUTV3J7T006MZ4K):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **10 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **10, 20, 30 and 40** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **40 player hits** regardless of weapon level.
+> **Boss phase scoring (AH-0MUTV3J7T006MZ4K, scaled by AH-0MUWTS07L008KVP9):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **100 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **100, 200, 300 and 400** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **400 player hits** regardless of weapon level.
 
 ### 4.6 Level Progression Mechanics
 
