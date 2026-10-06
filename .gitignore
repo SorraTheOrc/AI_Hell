@@ -22,6 +22,10 @@ dist/
 # Vite dev server
 *.local
 
+# Automated gameplay capture output (spike AH-0MUWMFF3C002WOBK) —
+# generated locally by `npm run capture`, never committed.
+capture-output/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

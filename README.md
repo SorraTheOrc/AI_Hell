@@ -468,6 +468,34 @@ load, which makes assertions taken right after boot flaky.
   the helper instead of as an unrelated assertion later
   (AH-0MUNVVWWC0015JTM).
 
+#### Automated gameplay capture (dev tooling)
+
+Gameplay video can be produced automatically — no manual screen recording —
+with the opt-in `npm run capture` command (spike AH-0MUWMFF3C002WOBK):
+
+- **One command:** after `npm install` + `npm run capture:install`,
+  `npm run capture` boots the game in headless Chromium (Playwright), plays a
+  deterministic scripted segment and writes a playable WebM to
+  `capture-output/` (git-ignored). Options: `--duration <ms>`, `--output
+  <path>`, `--headed`, `--warmup <ms>`, `--port <n>`. The command probes the
+  produced clip (resolution, duration, non-black fraction, colour variety,
+  frame motion) and **exits non-zero** if it is black/static, so it can gate a
+  future job.
+- **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server
+  programmatically, drives `canvas.captureStream(60)` → `MediaRecorder` inside
+  the page, and replays the scripted key plan from `scripts/capture-bot.mjs`
+  as real Playwright input (Enter starts **Play Game**; the auto-firing ship is
+  steered across `PlayScene` level 1). Both the plan builder and the
+  clip-verification predicate are pure and unit-tested in
+  `scripts/capture-gameplay.test.ts`.
+- **Fully opt-in:** the tool lives under `scripts/` and is never imported by
+  `src/`, `playwright` is a devDependency, and `npm test` / `npm run build` are
+  unchanged. Output is WebM/VP9 (no MP4 — no full ffmpeg in the Playwright
+  bundle); audio is explicitly deferred; runs are not yet frame-reproducible
+  because wave/spawn RNG is unseeded.
+- **Recommendation, rejected alternatives and measured CI cost:** see
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md).
+
 #### Configuration (CSV)
 
 Enemy and ship tuning is held in committed CSV files — the **single, human-editable source of truth**. No code edit is needed to retune or add an archetype.
