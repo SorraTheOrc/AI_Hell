@@ -54,6 +54,27 @@ tf sequence generate --preset audio/toneforge/presets/aihell-defeat-sting.sequen
 Every recipe declares its full render length in `meta.duration`, so no external
 duration argument is required.
 
+## Deterministic build pipeline
+
+The committed game assets under [`public/audio/sfx/`](../../../public/audio/sfx)
+are produced by [`scripts/build-audio.sh`](../../../scripts/build-audio.sh), which
+renders every cue in [`manifest.json`](./manifest.json) and records the SHA-256 of
+each WAV in `public/audio/sfx/checksums.json`:
+
+```bash
+npm run build-audio         # render when ToneForge is available, else verify
+npm run build-audio:render  # force a full render (needs the ToneForge CLI)
+npm run build-audio:verify  # verify committed assets against checksums.json
+```
+
+`manifest.json` is the single source of truth shared by the build and the audio
+tests (`src/audio/cueManifest.ts` imports it), so the rendered set can never
+drift from the cue→asset contract. Every recipe is rendered twice and the two
+digests compared before the asset is written, guaranteeing reproducible output.
+`npm run build` invokes `npm run build-audio` before the Vite bundle, and CI
+fails on any checksum drift. The build is a build-time-only dependency; no
+ToneForge module is imported into the browser entry graph.
+
 ## Recipes
 
 Seed block **32100–32199** is reserved for game-specific recipes. One-shots use

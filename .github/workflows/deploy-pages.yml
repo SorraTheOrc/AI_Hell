@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify audio assets
+        run: npm run build-audio:verify
+
       - name: Build
         run: npm run build
 

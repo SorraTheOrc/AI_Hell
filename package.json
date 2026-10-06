@@ -6,7 +6,10 @@
   "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build-audio": "scripts/build-audio.sh",
+    "build-audio:render": "scripts/build-audio.sh --render",
+    "build-audio:verify": "scripts/build-audio.sh --verify",
+    "build": "npm run build-audio && tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
