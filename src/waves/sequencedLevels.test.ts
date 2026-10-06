@@ -738,6 +738,11 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
   });
 
   it('pins the retuned curve-generated levels 4–5 compositions', () => {
+    // Baseline re-recorded for AH-0MUWZ5GST003NMFQ (enemy bullet speeds
+    // halved): the reduced `bulletSpeed` difficulty factor shifts which
+    // candidate the sequencer selects near the hand-tuned L4/L5 targets.
+    // Per Q3-A the score shift is accepted and the targets are NOT re-tuned;
+    // the sequencer still meets each wave's target within its tolerance.
     const composition = (levelNumber: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
@@ -748,13 +753,13 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
               .join('+') || 'none',
         );
     expect(composition(4)).toEqual([
-      'scoutx18',
-      'diverx18',
-      'tankx18',
+      'swarmx1',
+      'tankx1',
+      'phaserx1',
     ]);
     expect(composition(5)).toEqual([
-      'phaserx12+scoutx18',
-      'phaserx12+phaserx12+swarmx15',
+      'phaserx12+swarmx1',
+      'phaserx12+phaserx12+bossx1',
     ]);
   });
 

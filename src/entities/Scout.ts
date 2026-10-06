@@ -47,7 +47,7 @@ export const SCOUT_BULLET_COLOR = 0xff4444;
 export const SCOUT_BULLET_SIZE = 3;
 
 /** Bullet speed in px/s. */
-export const SCOUT_BULLET_SPEED = 200;
+export const SCOUT_BULLET_SPEED = 100;
 
 /** Milliseconds a scout waits between aimed shots. */
 export const SCOUT_FIRE_INTERVAL = 1200;

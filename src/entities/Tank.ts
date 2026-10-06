@@ -42,7 +42,7 @@ export const TANK_BULLET_COLOR = 0xffaa00;
 export const TANK_BULLET_SIZE = 4;
 
 /** Bullet speed in px/s. */
-export const TANK_BULLET_SPEED = 150;
+export const TANK_BULLET_SPEED = 75;
 
 /** Number of projectiles in a radial burst (8–12 range). */
 export const TANK_BURST_COUNT = 10;

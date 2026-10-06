@@ -74,7 +74,7 @@ export const BOSS_BULLET_COLOR = 0xffffff;
 export const BOSS_BULLET_SIZE = 4;
 
 /** Boss bullet base speed in px/s. */
-export const BOSS_BULLET_SPEED = 160;
+export const BOSS_BULLET_SPEED = 80;
 /**
  * Boss bullet lifetime in seconds. Bullets wrap across all four screen
  * edges while alive and expire once this elapses (AH-0MU960UTE001PTV0).

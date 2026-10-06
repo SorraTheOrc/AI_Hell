@@ -163,7 +163,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._color = config.color ?? 0x000000;
     this._bulletColor = config.bulletColor ?? 0xffffff;
     this._bulletSize = config.bulletSize ?? 3;
-    this._bulletSpeed = config.bulletSpeed ?? 200;
+    this._bulletSpeed = config.bulletSpeed ?? 100;
     this._bulletLifetime = config.bulletLifetime ?? 1.5;
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;

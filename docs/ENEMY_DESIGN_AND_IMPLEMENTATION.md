@@ -1011,7 +1011,7 @@ animated by the shared `FormationGlide` helper
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
 | `fireInterval` | `number` | ms between volleys. |
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
-| `bulletSpeed` | `number` | px/s. |
+| `bulletSpeed` | `number` | Bullet velocity (px/s). Enemy archetype values were halved by AH-0MUWZ5GST003NMFQ (Scout **90**, Diver **110**, Tank **75**, Phaser **90**, Swarm **90**, Boss **80**, Asteroid **50**, Harvester **50**); because `bulletLifetime` is unchanged, each enemy's effective range (`bulletSpeed × lifetime`) is halved too. The player's `PLAYER_BULLET_SPEED` (350 px/s) is unchanged. |
 | `burstCount` | `number` | Burst / radial spoke count. |
 | `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. **Not representable in a flat CSV row and dropped for CSV-sourced configs** (documented limitation). |
 

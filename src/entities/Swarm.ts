@@ -40,7 +40,7 @@ export const SWARM_BULLET_COLOR = 0x00ccff;
 export const SWARM_BULLET_SIZE = 3;
 
 /** Bullet speed in px/s for coordinated bursts. */
-export const SWARM_BULLET_SPEED = 180;
+export const SWARM_BULLET_SPEED = 90;
 
 /** Milliseconds between coordinated burst volleys. */
 export const SWARM_BURST_INTERVAL = 900;

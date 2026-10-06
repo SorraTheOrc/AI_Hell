@@ -59,7 +59,7 @@ describe('EnemyConfig schema', () => {
     expect(DEFAULT_ENEMY_CONFIGS.scout.color).toBe(0x00ff00);
     expect(DEFAULT_ENEMY_CONFIGS.diver.color).toBe(0xffff00);
     expect(DEFAULT_ENEMY_CONFIGS.tank.color).toBe(0xff6600);
-    expect(DEFAULT_ENEMY_CONFIGS.scout.bulletSpeed).toBe(200);
+    expect(DEFAULT_ENEMY_CONFIGS.scout.bulletSpeed).toBe(100);
     expect(DEFAULT_ENEMY_CONFIGS.diver.burstCount).toBe(4);
     expect(DEFAULT_ENEMY_CONFIGS.tank.burstCount).toBe(10);
     expect(DEFAULT_ENEMY_CONFIGS.swarm.bulletColor).toBe(0x00ccff);

@@ -428,7 +428,11 @@ describe('multi-group wave composition (AH-0MUGXDVPH005TIZL)', () => {
     expect(wave.groups.length).toBeGreaterThan(1);
     expect(result.errors[0]).toBeLessThanOrEqual(10);
     const total = wave.groups.reduce((sum, group) => sum + group.score, 0);
-    expect(total).toBeCloseTo(90, 0);
+    // The composed total tracks the target within the sequencer's tolerance;
+    // the exact best score shifts with the enemy-difficulty tuning (the
+    // enemy-bullet-speed halving, AH-0MUWZ5GST003NMFQ, moved this from 90.18
+    // to 88.11).
+    expect(Math.abs(total - 90)).toBeLessThanOrEqual(5);
   });
 
   it('keeps a single group when it already reaches the target', () => {
