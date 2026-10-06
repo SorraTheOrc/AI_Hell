@@ -9,7 +9,8 @@
     "build-audio": "scripts/build-audio.sh",
     "build-audio:render": "scripts/build-audio.sh --render",
     "build-audio:verify": "scripts/build-audio.sh --verify",
-    "build": "npm run build-audio && tsc --noEmit && vite build",
+    "check-bundle": "node scripts/check-bundle-hygiene.mjs",
+    "build": "npm run build-audio && tsc --noEmit && vite build && npm run check-bundle",
     "preview": "vite preview --port 4173",
     "capture": "node scripts/capture-gameplay.mjs",
     "capture:install": "playwright install chromium",
@@ -28,5 +29,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
+  },
+  "optionalDependencies": {
+    "toneforge": "file:../ToneForge"
   }
 }

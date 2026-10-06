@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "description": "Pinned ToneForge toolchain revision (AH-0MUTYVA2C000SNPO). The game consumes the ToneForge CLI at BUILD time only; the browser bundle never imports ToneForge, and the Node-only parts must not enter the entry graph (enforced by scripts/check-bundle-hygiene.mjs).",
+  "repository": "https://github.com/TheWizardsCode/ToneForge.git",
+  "revision": "5934fb0a0835e8b6ee8297a3a28f51e811b50b0b",
+  "licence": "MIT",
+  "licenceWorkItem": "TF-0MUTVQSI6003VPAD",
+  "cli": "bin/dev-cli.js",
+  "dependencySpecifier": "file:../ToneForge"
+}

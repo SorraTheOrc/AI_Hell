@@ -50,10 +50,37 @@ export interface VerifyResult {
   errors: string[];
 }
 
+export interface ToneForgePin {
+  version: number;
+  description?: string;
+  repository: string;
+  revision: string;
+  licence: string;
+  licenceWorkItem?: string;
+  cli: string;
+  dependencySpecifier: string;
+}
+
+export interface PinCheckResult {
+  ok: boolean;
+  errors: string[];
+  pin: ToneForgePin | undefined;
+}
+
 export const REPO_ROOT: string;
 export const MANIFEST_PATH: string;
 
 export function loadManifest(path?: string): BuildManifest;
+export function pinPathFor(repoRoot?: string): string;
+export function loadPin(path?: string): ToneForgePin;
+export function verifyPinnedDependency(options?: {
+  repoRoot?: string;
+  pin?: ToneForgePin;
+}): PinCheckResult;
+export function resolvePinnedSiblingRevision(options?: {
+  repoRoot?: string;
+  spawn?: typeof import('node:child_process').spawnSync;
+}): string | null;
 export function planRenderJobs(manifest: BuildManifest): RenderJob[];
 export function sha256(buffer: Buffer): string;
 export function assetFsPath(repoRoot: string, assetPath: string): string;

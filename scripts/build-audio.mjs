@@ -66,6 +66,88 @@ export function loadManifest(path = MANIFEST_PATH) {
   return parsed;
 }
 
+/** Path to the pinned ToneForge revision manifest for `repoRoot`. */
+export function pinPathFor(repoRoot = REPO_ROOT) {
+  return join(repoRoot, 'audio', 'toneforge', 'pin.json');
+}
+
+/**
+ * Loads and parses the pinned ToneForge revision manifest
+ * (`audio/toneforge/pin.json`). Fails closed on a malformed revision or a
+ * missing dependency specifier so a floating checkout can never be consumed
+ * silently (AH-0MUTYVA2C000SNPO).
+ */
+export function loadPin(path = pinPathFor()) {
+  const parsed = JSON.parse(readFileSync(path, 'utf8'));
+  if (typeof parsed.revision !== 'string' || !/^[0-9a-f]{40}$/.test(parsed.revision)) {
+    throw new Error(`Pin ${path} has no 40-char hex "revision"`);
+  }
+  if (typeof parsed.dependencySpecifier !== 'string' || parsed.dependencySpecifier === '') {
+    throw new Error(`Pin ${path} has no "dependencySpecifier"`);
+  }
+  return parsed;
+}
+
+/**
+ * Verifies the game's declared ToneForge dependency matches the pin:
+ *   - `package.json` `optionalDependencies.toneforge` equals the pin specifier;
+ *   - `package-lock.json` records `node_modules/toneforge` at that specifier.
+ * Returns `{ ok, errors, pin }`.
+ */
+export function verifyPinnedDependency({ repoRoot = REPO_ROOT, pin } = {}) {
+  const errors = [];
+  let resolvedPin = pin;
+  if (resolvedPin === undefined) {
+    try {
+      resolvedPin = loadPin(pinPathFor(repoRoot));
+    } catch (error) {
+      return { ok: false, errors: [`cannot load ToneForge pin: ${error.message}`], pin: undefined };
+    }
+  }
+
+  try {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    const spec = (pkg.optionalDependencies ?? {}).toneforge;
+    if (spec !== resolvedPin.dependencySpecifier) {
+      errors.push(
+        `package.json optionalDependencies.toneforge is ${JSON.stringify(spec)}, ` +
+          `expected ${JSON.stringify(resolvedPin.dependencySpecifier)}`,
+      );
+    }
+  } catch (error) {
+    errors.push(`cannot read package.json: ${error.message}`);
+  }
+
+  try {
+    const lock = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf8'));
+    const entry = lock.packages?.['node_modules/toneforge'];
+    if (!entry) {
+      errors.push('package-lock.json does not record node_modules/toneforge');
+    } else if (entry.resolved !== resolvedPin.dependencySpecifier) {
+      errors.push(
+        `package-lock.json toneforge resolved ${JSON.stringify(entry.resolved)}, ` +
+          `expected ${JSON.stringify(resolvedPin.dependencySpecifier)}`,
+      );
+    }
+  } catch (error) {
+    errors.push(`cannot read package-lock.json: ${error.message}`);
+  }
+
+  return { ok: errors.length === 0, errors, pin: resolvedPin };
+}
+
+/**
+ * Returns the git revision of the sibling `../ToneForge` checkout, or null
+ * when it is absent / not a git checkout. Used to detect a drifting sibling.
+ */
+export function resolvePinnedSiblingRevision({ repoRoot = REPO_ROOT, spawn = spawnSync } = {}) {
+  const siblingDir = join(repoRoot, '..', 'ToneForge');
+  if (!existsSync(join(siblingDir, '.git'))) return null;
+  const result = spawn('git', ['-C', siblingDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  if (result.status !== 0) return null;
+  return result.stdout.trim();
+}
+
 /**
  * Computes the deterministic render jobs from the manifest.
  *
@@ -360,6 +442,24 @@ export function main(argv = process.argv.slice(2), { logger = console, env = pro
 
   const manifest = loadManifest(args.manifestPath);
   const repoRoot = args.repoRoot;
+
+  // Enforce the pinned ToneForge dependency before any render/verify work, so
+  // an unpinned or drifted toolchain is never consumed silently.
+  const pinCheck = verifyPinnedDependency({ repoRoot });
+  if (!pinCheck.ok) {
+    logger.error('ToneForge pin check failed:');
+    for (const error of pinCheck.errors) logger.error(`  - ${error}`);
+    return 1;
+  }
+  const pin = pinCheck.pin;
+  logger.log(`ToneForge pinned revision ${pin.revision} (${pin.repository}, ${pin.licence}).`);
+  const siblingRevision = resolvePinnedSiblingRevision({ repoRoot });
+  if (siblingRevision !== null && siblingRevision !== pin.revision) {
+    logger.warn(
+      `ToneForge sibling checkout is at ${siblingRevision}, pinned ${pin.revision} ` +
+        '(the declared file: dependency and lockfile pin are authoritative).',
+    );
+  }
 
   if (args.mode === 'verify') {
     const result = verifyAssets({ manifest, repoRoot });
