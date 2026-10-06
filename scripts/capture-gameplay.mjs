@@ -47,11 +47,14 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CAPTURE_MIME_CANDIDATES,
   DEFAULT_CAPTURE_DURATION_MS,
   DEFAULT_WARMUP_MS,
   buildScriptedPlan,
+  installGameAudioTap,
   isNonTrivialClip,
   planDurationMs,
+  resolveCaptureMimeType,
 } from './capture-bot.mjs';
 import {
   formatDuration,
@@ -65,6 +68,23 @@ const INTER_STEP_MS = 30;
 
 /** Progress heartbeat interval during recording, in milliseconds. */
 const PROGRESS_INTERVAL_MS = 2_000;
+
+/**
+ * Bounded wait, in milliseconds, for the Enter gesture to resume the game's
+ * shared `AudioContext` and for the page-side tap to see its master gain.
+ * Audio stays optional: if the bound elapses the capture records video only
+ * (AH-0MUWYQQYU001G6OG, AC4).
+ */
+const AUDIO_TAP_WAIT_MS = 3_000;
+
+/**
+ * Video-only `MediaRecorder` mime candidates, derived from the audio-capable
+ * list by dropping the Opus pairing. Used when no game audio is available so
+ * the recorder never advertises an audio codec it will not produce.
+ */
+const VIDEO_ONLY_MIME_CANDIDATES = Object.freeze(
+  CAPTURE_MIME_CANDIDATES.map((type) => type.replace(',opus', '')),
+);
 
 /**
  * Raised when an opt-in capture dependency is missing, so `main()` can print
@@ -209,6 +229,91 @@ function resolveOutputPath(requested) {
 }
 
 /**
+ * Waits (bounded) for the game's shared `AudioContext` to be resumed by the
+ * Enter gesture and for the page-side tap to have seen the master gain, then
+ * returns how many audio tracks the tap currently exposes.
+ *
+ * Both waits are best-effort: when the bound elapses the capture continues
+ * with a video-only stream rather than failing (AH-0MUWYQQYU001G6OG, AC4).
+ *
+ * @param {import('playwright').Page} page
+ * @param {number} timeoutMs
+ * @returns {Promise<number>}
+ */
+async function waitForGameAudio(page, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const remaining = () => Math.max(1, deadline - Date.now());
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const tap = window.__aiHellAudioTap;
+        return (
+          !!tap &&
+          typeof tap.isContextRunning === 'function' &&
+          tap.isContextRunning()
+        );
+      },
+      { timeout: remaining() },
+    );
+  } catch {
+    /* Autoplay-blocked or no audio device: fall through to video-only. */
+  }
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const tap = window.__aiHellAudioTap;
+        return (
+          !!tap &&
+          typeof tap.audioTrackCount === 'function' &&
+          tap.audioTrackCount() > 0
+        );
+      },
+      { timeout: remaining() },
+    );
+  } catch {
+    /* No tapped audio: fall through to video-only. */
+  }
+
+  return page.evaluate(() => {
+    const tap = window.__aiHellAudioTap;
+    return tap && typeof tap.audioTrackCount === 'function'
+      ? tap.audioTrackCount()
+      : 0;
+  });
+}
+
+/**
+ * Reports which mime candidates the page supports, then resolves the capture
+ * mime through the pure `resolveCaptureMimeType` preference order: VP9+Opus,
+ * then VP8+Opus, then a plain WebM container. When no game audio is available
+ * the video-only candidate list is used instead so the recorded container
+ * never claims an Opus track it will not contain (AH-0MUWYQQYU001G6OG, AC3).
+ *
+ * @param {import('playwright').Page} page
+ * @param {boolean} hasAudio
+ * @returns {Promise<string | null>}
+ */
+async function resolvePageCaptureMimeType(page, hasAudio) {
+  const candidates = hasAudio
+    ? CAPTURE_MIME_CANDIDATES
+    : VIDEO_ONLY_MIME_CANDIDATES;
+  const supported = await page.evaluate(
+    (types) =>
+      types.filter((type) => {
+        try {
+          return MediaRecorder.isTypeSupported(type);
+        } catch {
+          return false;
+        }
+      }),
+    [...candidates],
+  );
+  return resolveCaptureMimeType((type) => supported.includes(type));
+}
+
+/**
  * Runs the whole capture. Exported so an integration harness (or a future
  * CLI wrapper) can drive it without spawning a process.
  */
@@ -253,6 +358,11 @@ export async function runCapture(
 
     const page = await browser.newPage({ viewport: VIEWPORT });
 
+    // Install the page-side Web Audio tap *before* any game script runs, so
+    // the wrapper is in place when the game first connects its master gain to
+    // the shared context.destination (AH-0MUWYQQYU001G6OG).
+    await page.addInitScript(installGameAudioTap);
+
     // Stream encoded chunks to Node as they are produced (avoids one huge
     // base64 return value over the CDP bridge).
     const chunks = [];
@@ -279,10 +389,22 @@ export async function runCapture(
     await page.keyboard.press('Enter');
     await page.waitForTimeout(options.warmupMs);
 
+    // The Enter gesture resumes the shared context; wait (bounded) for the
+    // tap to see it and expose an audio track, then record audio if present.
+    const audioTrackCount = await waitForGameAudio(page, AUDIO_TAP_WAIT_MS);
+    const hasAudio = audioTrackCount > 0;
+    reporter.step(
+      hasAudio
+        ? `Game audio tap ready (${audioTrackCount} track(s)).`
+        : 'No game audio detected; recording video only.',
+    );
+    const mimeType = await resolvePageCaptureMimeType(page, hasAudio);
+    if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
+
     reporter.step(
       `Recording ${formatDuration(planDurationMs(plan))} of scripted gameplay…`,
     );
-    await startRecording(page);
+    await startRecording(page, mimeType);
 
     // The recording spans the plan plus one inter-step gap after each step.
     const recordingMs = planDurationMs(plan) + plan.length * INTER_STEP_MS;
@@ -330,24 +452,38 @@ export async function runCapture(
   }
 }
 
-/** Installs the captureStream/MediaRecorder pipeline on the game canvas. */
-async function startRecording(page) {
-  await page.evaluate(() => {
+/**
+ * Installs the captureStream/MediaRecorder pipeline on the game canvas.
+ *
+ * The recorder stream muxes the canvas video tracks with any audio tracks the
+ * page-side tap exposed on the game's shared context, and the caller supplies
+ * a mime already resolved by `resolveCaptureMimeType`. When the tap found no
+ * audio the stream is video-only and the caller picks a video-only mime, so
+ * the pipeline never throws on the no-audio path (AH-0MUWYQQYU001G6OG).
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} mimeType
+ */
+async function startRecording(page, mimeType) {
+  await page.evaluate((resolvedMimeType) => {
     // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
     const captureChunk = window.__aiHellCaptureChunk;
     const canvas = document.querySelector('#game-container canvas');
     if (!canvas) throw new Error('game canvas not found');
 
-    const mimeType = [
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
-      'video/webm',
-    ].find((type) => MediaRecorder.isTypeSupported(type));
-    if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
+    const tap = window.__aiHellAudioTap;
+    const audioTracks =
+      tap && typeof tap.getAudioTracks === 'function'
+        ? tap.getAudioTracks()
+        : [];
 
-    const stream = canvas.captureStream(60);
+    const canvasStream = canvas.captureStream(60);
+    const stream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...audioTracks,
+    ]);
     const recorder = new MediaRecorder(stream, {
-      mimeType,
+      mimeType: resolvedMimeType,
       videoBitsPerSecond: 8_000_000,
     });
 
@@ -366,9 +502,14 @@ async function startRecording(page) {
       await captureChunk(btoa(binary));
     };
 
-    window.__aiHellCapture = { recorder, chunks, mimeType };
+    window.__aiHellCapture = {
+      recorder,
+      chunks,
+      mimeType: resolvedMimeType,
+      audioTrackCount: audioTracks.length,
+    };
     recorder.start(1000);
-  });
+  }, mimeType);
 }
 
 /**
@@ -380,7 +521,7 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
     const capture = window.__aiHellCapture;
     if (!capture) throw new Error('capture pipeline was never started');
 
-    const { recorder, chunks, mimeType } = capture;
+    const { recorder, chunks, mimeType, audioTrackCount } = capture;
     const stopped = new Promise((resolve) => {
       recorder.addEventListener('stop', resolve, { once: true });
     });
@@ -526,6 +667,8 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
       uniqueColours: colours.size,
       motion,
       bytes: blob.size,
+      mimeType,
+      audioTrackCount,
       renderer: (() => {
         const canvas = document.querySelector('#game-container canvas');
         const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));

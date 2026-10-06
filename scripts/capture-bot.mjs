@@ -225,6 +225,112 @@ export function evaluateAudioTrack(audio) {
 }
 
 /**
+ * Installs the page-side Web Audio tap used by the gameplay capture
+ * (AH-0MUWYQQYU001G6OG, approach A1).
+ *
+ * The game owns a single shared `AudioContext` whose master SFX gain is
+ * connected to `context.destination` (`src/audio/sfxPlayback.ts`). To capture
+ * that output **without touching `src/` or the shipped bundle**, this
+ * installer wraps `AudioNode.prototype.connect`: whenever a node is connected
+ * to `context.destination`, the same source is *also* connected to a
+ * `MediaStreamAudioDestinationNode` created on that same context. The capture
+ * destination's audio track can then be muxed with the canvas video track.
+ *
+ * Only connections to `context.destination` are mirrored, so the tap cannot
+ * feed back into itself and a node bridging several inputs is still tapped
+ * once per context. The wrapper mirrors the original `connect` return value
+ * and never throws — a tap failure must not break the game's own audio.
+ *
+ * The function is deliberately self-contained (it reads everything it needs
+ * from `scope` and references no module bindings) so Playwright can serialise
+ * it straight into `page.addInitScript`, and the very same shape lets the
+ * unit tests drive it with a fake audio graph, with no browser required.
+ *
+ * @param {object} [scope] — global to install onto (defaults to `globalThis`).
+ * @returns {{
+ *   contexts: () => unknown[],
+ *   captureDestinations: () => unknown[],
+ *   getAudioTracks: () => unknown[],
+ *   audioTrackCount: () => number,
+ *   isContextRunning: () => boolean,
+ * } | null} the installed tap, or `null` when there is no `AudioNode` to wrap.
+ */
+export function installGameAudioTap(scope = globalThis) {
+  if (!scope || typeof scope !== 'object') return null;
+  if (scope.__aiHellAudioTap) return scope.__aiHellAudioTap;
+
+  const nodePrototype = scope.AudioNode && scope.AudioNode.prototype;
+  if (!nodePrototype || typeof nodePrototype.connect !== 'function') return null;
+
+  const originalConnect = nodePrototype.connect;
+  const contexts = new Set();
+  const captureByContext = new Map();
+
+  const createCaptureDestination = (context) => {
+    const existing = captureByContext.get(context);
+    if (existing) return existing;
+
+    let created = null;
+    try {
+      if (typeof context.createMediaStreamDestination === 'function') {
+        created = context.createMediaStreamDestination();
+      } else if (typeof scope.MediaStreamAudioDestinationNode === 'function') {
+        created = new scope.MediaStreamAudioDestinationNode(context);
+      }
+    } catch {
+      created = null;
+    }
+
+    if (created) captureByContext.set(context, created);
+    return created;
+  };
+
+  nodePrototype.connect = function connect(destination, output, input) {
+    if (this && this.context) contexts.add(this.context);
+
+    const result = originalConnect.call(this, destination, output, input);
+
+    try {
+      const context = destination && destination.context;
+      if (context && destination === context.destination) {
+        contexts.add(context);
+        const capture = createCaptureDestination(context);
+        if (capture) originalConnect.call(this, capture, output, input);
+      }
+    } catch {
+      // The tap is best-effort: it must never break the game's own audio.
+    }
+
+    return result;
+  };
+
+  const getAudioTracks = () => {
+    const tracks = [];
+    for (const capture of captureByContext.values()) {
+      const stream = capture && capture.stream;
+      if (stream && typeof stream.getAudioTracks === 'function') {
+        tracks.push(...stream.getAudioTracks());
+      }
+    }
+    return tracks;
+  };
+
+  const tap = {
+    contexts: () => Array.from(contexts),
+    captureDestinations: () => Array.from(captureByContext.values()),
+    getAudioTracks,
+    audioTrackCount: () => getAudioTracks().length,
+    isContextRunning: () =>
+      Array.from(contexts).some(
+        (context) => context && context.state === 'running',
+      ),
+  };
+
+  scope.__aiHellAudioTap = tap;
+  return tap;
+}
+
+/**
  * Merges the existing video "non-trivial" verdict with the audio verdict so
  * a clip is accepted only when both halves pass.
  *

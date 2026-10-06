@@ -37,9 +37,12 @@ export interface AudioTrackVerdict {
   reasons: string[];
 }
 
-export interface CombinedClipVerdict {
-  nonTrivial: boolean;
-  reasons: string[];
+export interface GameAudioTap {
+  contexts(): unknown[];
+  captureDestinations(): unknown[];
+  getAudioTracks(): unknown[];
+  audioTrackCount(): number;
+  isContextRunning(): boolean;
 }
 
 export const MOVE_KEYS: readonly string[];
@@ -64,3 +67,4 @@ export function combineClipVerdict(
   videoVerdict?: NonTrivialVerdict,
   audioVerdict?: AudioTrackVerdict,
 ): CombinedClipVerdict;
+export function installGameAudioTap(scope?: object): GameAudioTap | null;

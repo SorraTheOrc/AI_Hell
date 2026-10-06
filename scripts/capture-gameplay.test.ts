@@ -24,6 +24,7 @@ import {
   buildScriptedPlan,
   combineClipVerdict,
   evaluateAudioTrack,
+  installGameAudioTap,
   isNonTrivialClip,
   planDurationMs,
   resolveCaptureMimeType,
@@ -386,5 +387,158 @@ describe('capture progress helpers', () => {
     const hint = setupHint();
     expect(hint).toContain('playwright');
     expect(hint).toContain('npm install && npm run capture:install');
+  });
+});
+
+/**
+ * Builds a minimal fake Web Audio graph so `installGameAudioTap` can be
+ * exercised hermetically (no browser). Every call creates fresh classes so a
+ * test never inherits another test's prototype wrapper.
+ */
+function makeAudioScope() {
+  class FakeAudioNode {
+    constructor(context: unknown) {
+      this.context = context;
+      this.connections = [];
+    }
+
+    connections: Array<{ destination: unknown; output?: number; input?: number }>;
+    context: unknown;
+
+    connect(destination: unknown, output?: number, input?: number) {
+      this.connections.push({ destination, output, input });
+      return destination;
+    }
+  }
+
+  class FakeMediaStreamDestination {
+    context: unknown;
+    stream: { getAudioTracks: () => unknown[] };
+
+    constructor(context: unknown) {
+      this.context = context;
+      this.stream = { getAudioTracks: () => [{ kind: 'audio' }] };
+    }
+  }
+
+  class FakeAudioContext {
+    state = 'suspended';
+    destination: FakeAudioNode;
+    streamDestinations: FakeMediaStreamDestination[] = [];
+
+    constructor() {
+      this.destination = new FakeAudioNode(this);
+    }
+
+    createMediaStreamDestination() {
+      const destination = new FakeMediaStreamDestination(this);
+      this.streamDestinations.push(destination);
+      return destination;
+    }
+  }
+
+  const scope = {
+    AudioNode: FakeAudioNode,
+    MediaStreamAudioDestinationNode: FakeMediaStreamDestination,
+  };
+
+  return { scope, FakeAudioNode, FakeAudioContext };
+}
+
+describe('installGameAudioTap', () => {
+  it('returns null when the environment has no AudioNode to wrap', () => {
+    expect(installGameAudioTap({})).toBeNull();
+  });
+
+  it('mirrors a connection to context.destination into a capture destination', () => {
+    const { scope, FakeAudioNode, FakeAudioContext } = makeAudioScope();
+    const tap = installGameAudioTap(scope)!;
+    const context = new FakeAudioContext();
+    const source = new FakeAudioNode(context);
+
+    const returned = source.connect(context.destination);
+
+    expect(returned).toBe(context.destination);
+    expect(context.streamDestinations).toHaveLength(1);
+    expect(source.connections.map((call) => call.destination)).toContain(
+      context.streamDestinations[0],
+    );
+    expect(tap.audioTrackCount()).toBe(1);
+  });
+
+  it('leaves connections to non-destination nodes untapped', () => {
+    const { scope, FakeAudioNode, FakeAudioContext } = makeAudioScope();
+    const tap = installGameAudioTap(scope)!;
+    const context = new FakeAudioContext();
+    const source = new FakeAudioNode(context);
+    const other = new FakeAudioNode(context);
+
+    source.connect(other);
+
+    expect(context.streamDestinations).toHaveLength(0);
+    expect(tap.audioTrackCount()).toBe(0);
+  });
+
+  it('reuses one capture destination per context across sources', () => {
+    const { scope, FakeAudioNode, FakeAudioContext } = makeAudioScope();
+    const tap = installGameAudioTap(scope)!;
+    const context = new FakeAudioContext();
+
+    new FakeAudioNode(context).connect(context.destination);
+    new FakeAudioNode(context).connect(context.destination);
+
+    expect(context.streamDestinations).toHaveLength(1);
+    expect(tap.audioTrackCount()).toBe(1);
+  });
+
+  it('is idempotent — installing twice keeps the original wrapper', () => {
+    const { scope, FakeAudioNode, FakeAudioContext } = makeAudioScope();
+    const first = installGameAudioTap(scope);
+    const second = installGameAudioTap(scope);
+    const context = new FakeAudioContext();
+
+    new FakeAudioNode(context).connect(context.destination);
+
+    expect(second).toBe(first);
+    expect(context.streamDestinations).toHaveLength(1);
+  });
+
+  it('falls back to the MediaStreamAudioDestinationNode constructor', () => {
+    const { scope, FakeAudioNode, FakeAudioContext } = makeAudioScope();
+    const tap = installGameAudioTap(scope)!;
+    const context = new FakeAudioContext();
+    // Force the constructor path by removing the context factory.
+    (context as { createMediaStreamDestination?: unknown }).createMediaStreamDestination =
+      undefined;
+
+    new FakeAudioNode(context).connect(context.destination);
+
+    expect(tap.audioTrackCount()).toBe(1);
+  });
+
+  it('never throws and reports no audio when no capture destination can be built', () => {
+    const { scope, FakeAudioNode } = makeAudioScope();
+    (scope as { MediaStreamAudioDestinationNode?: unknown }).MediaStreamAudioDestinationNode =
+      undefined;
+    const tap = installGameAudioTap(scope)!;
+    const context = { state: 'running' } as Record<string, unknown>;
+    context.destination = new FakeAudioNode(context);
+
+    expect(() =>
+      new FakeAudioNode(context).connect(context.destination),
+    ).not.toThrow();
+    expect(tap.audioTrackCount()).toBe(0);
+  });
+
+  it('reports whether the shared context is running', () => {
+    const { scope, FakeAudioNode, FakeAudioContext } = makeAudioScope();
+    const tap = installGameAudioTap(scope)!;
+    const context = new FakeAudioContext();
+
+    new FakeAudioNode(context).connect(context.destination);
+    expect(tap.isContextRunning()).toBe(false);
+
+    context.state = 'running';
+    expect(tap.isContextRunning()).toBe(true);
   });
 });
