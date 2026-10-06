@@ -471,7 +471,8 @@ load, which makes assertions taken right after boot flaky.
 #### Automated gameplay capture (dev tooling)
 
 Gameplay video can be produced automatically — no manual screen recording —
-with the opt-in `npm run capture` command (spike AH-0MUWMFF3C002WOBK):
+with the opt-in `npm run capture` command (spike AH-0MUWMFF3C002WOBK; audio
+added by AH-0MUWTNPYJ0031FQE):
 
 - **One command:** after `npm install` + `npm run capture:install`,
   `npm run capture` boots the game in headless Chromium (Playwright), plays a
@@ -481,20 +482,26 @@ with the opt-in `npm run capture` command (spike AH-0MUWMFF3C002WOBK):
   prints progress milestones and a recording heartbeat (with an ETA) to
   stderr so a long capture never looks hung, and fails fast with the fix if
   `playwright`/Chromium is missing. It probes the produced clip (resolution,
-  duration, non-black fraction, colour variety, frame motion) and **exits
-  non-zero** if it is black/static, so it can gate a future job.
+  duration, non-black fraction, colour variety, frame motion) and decodes the
+  recorded **Opus audio** (track count, peak, RMS), then **exits non-zero** if
+  the clip is black/static **or** has no non-silent audio track, so it can
+  gate a future job.
 - **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server
-  programmatically, drives `canvas.captureStream(60)` → `MediaRecorder` inside
-  the page, and replays the scripted key plan from `scripts/capture-bot.mjs`
-  as real Playwright input (Enter starts **Play Game**; the auto-firing ship is
-  steered across `PlayScene` level 1). Both the plan builder and the
-  clip-verification predicate are pure and unit-tested in
-  `scripts/capture-gameplay.test.ts`.
+  programmatically, installs a page-side Web Audio tap (wrapping
+  `AudioNode.prototype.connect` so the game's shared master gain is mirrored
+  into a `MediaStreamAudioDestinationNode`), muxes that audio with
+  `canvas.captureStream(60)`, drives `MediaRecorder` inside the page, and
+  replays the scripted key plan from `scripts/capture-bot.mjs` as real
+  Playwright input (Enter starts **Play Game** and resumes the audio context;
+  the auto-firing ship is steered across `PlayScene` level 1). The plan
+  builder and the video/audio verification predicates are pure and
+  unit-tested in `scripts/capture-gameplay.test.ts`.
 - **Fully opt-in:** the tool lives under `scripts/` and is never imported by
-  `src/`, `playwright` is a devDependency, and `npm test` / `npm run build` are
-  unchanged. Output is WebM/VP9 (no MP4 — no full ffmpeg in the Playwright
-  bundle); audio is explicitly deferred; runs are not yet frame-reproducible
-  because wave/spawn RNG is unseeded.
+  `src/` (the audio tap is injected page-side, so the shipped bundle is
+  untouched), `playwright` is a devDependency, and `npm test` / `npm run build`
+  are unchanged. Output is WebM/VP9 **with the game's own Opus audio** (no MP4
+  — no full ffmpeg in the Playwright bundle); runs are not yet
+  frame-reproducible because wave/spawn RNG is unseeded.
 - **Recommendation, rejected alternatives and measured CI cost:** see
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md).
 
