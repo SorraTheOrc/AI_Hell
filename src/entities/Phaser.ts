@@ -188,6 +188,11 @@ export class PhaserEntity extends BaseEnemy {
   }
 
   /** VFX pattern name for Phaser explosions. */
+  /** Archetype key (`'phaser'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'phaser';
+  }
+
   protected getExplosionPatternName(): string {
     return 'phaser';
   }

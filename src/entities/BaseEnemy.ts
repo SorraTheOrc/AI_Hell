@@ -285,6 +285,19 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     return this._alive;
   }
 
+  /**
+   * The enemy archetype key (e.g. `'scout'`, `'diver'`, `'asteroid'`).
+   *
+   * Matches the `enemyKey` used by the scene/formation data and is exposed
+   * for read-only consumers such as the bot snapshot builder
+   * (`src/ai/botSnapshot.ts`). Concrete subclasses override it with their
+   * canonical key; an unknown subclass falls back to `'unknown'` so the
+   * value is always a string.
+   */
+  get archetype(): string {
+    return 'unknown';
+  }
+
   // ── Mineral accounting (AH-0MUBVGI62004ED9Q) ─────────────────────
 
   /** Number of minerals this enemy has absorbed. */

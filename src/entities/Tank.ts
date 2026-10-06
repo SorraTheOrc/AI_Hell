@@ -134,6 +134,11 @@ export class Tank extends BaseEnemy {
   }
 
   /** VFX pattern name for Tank explosions. */
+  /** Archetype key (`'tank'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'tank';
+  }
+
   protected getExplosionPatternName(): string {
     return 'tank';
   }

@@ -105,6 +105,11 @@ export class Harvester extends BaseEnemy {
   }
 
   /** VFX pattern name for Harvester explosions. */
+  /** Archetype key (`'harvester'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'harvester';
+  }
+
   protected getExplosionPatternName(): string {
     return 'tank';
   }

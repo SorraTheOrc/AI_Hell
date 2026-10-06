@@ -157,6 +157,11 @@ export class Swarm extends BaseEnemy {
   }
 
   /** VFX pattern name for Swarm explosions. */
+  /** Archetype key (`'swarm'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'swarm';
+  }
+
   protected getExplosionPatternName(): string {
     return 'swarm';
   }

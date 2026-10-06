@@ -148,6 +148,11 @@ export class Scout extends BaseEnemy {
     this.addSharedGraphics();
   }
 
+  /** Archetype key (`'scout'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'scout';
+  }
+
   /** VFX pattern name for Scout explosions. */
   protected getExplosionPatternName(): string {
     return 'scout';

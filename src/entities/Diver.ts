@@ -208,6 +208,11 @@ export class Diver extends BaseEnemy {
   }
 
   /** VFX pattern name for Diver explosions. */
+  /** Archetype key (`'diver'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'diver';
+  }
+
   protected getExplosionPatternName(): string {
     return 'diver';
   }

@@ -245,6 +245,11 @@ export class Asteroid extends BaseEnemy {
   }
 
   /** VFX pattern name for Asteroid explosions. */
+  /** Archetype key (`'asteroid'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'asteroid';
+  }
+
   protected getExplosionPatternName(): string {
     return 'swarm'; // Reuse the swarm particle pattern — it's a good fit for rock explosions.
   }
