@@ -906,7 +906,7 @@ src/
 │   └── leaderboardView.ts — Shared leaderboard rendering (implemented): formatLeaderboardRow +
 │                            renderLeaderboard, used by GameOverScene and LeaderboardScene
 ├── audio/
-│   └── AudioManager.ts  — Sound effects (procedural Web Audio API synthesis)
+│   └── AudioManager.ts  — Sound effects (ToneForge baked-asset playback via src/audio/effects.ts)
 ├── data/
 │   ├── enemyData.ts     — Enemy stat definitions
 │   ├── bossData.ts      — Boss phase definitions
@@ -928,7 +928,7 @@ src/
                            running scene and persists it via the rules config (stable DOM id)
 assets/
 ├── images/              — Neon vector graphics (placeholder_ prefix)
-└── audio/               — No external audio assets (all SFX are procedural; see §7.3)
+└── audio/               — ToneForge recipes/presets (rendered to public/audio/sfx/ by scripts/build-audio.sh; see §7.3)
 docs/
 └── Game Design Document.md
 ```
@@ -1086,7 +1086,9 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 
 ### 7.3 Audio Direction (MVP: In Scope — Simple SFX)
 
-**Approach**: All sound effects use **procedural synthesis via the Web Audio API** (zero external audio assets). Sound is code-generated — crisp, digital, neon-style "blips, zaps, and hums" consistent with the Tron-inspired aesthetic. Phaser's built-in Web Audio support is available but the spec remains engine-agnostic.
+**Approach**: All one-shot sound effects are **build-time baked WAV assets rendered by ToneForge** and played through Phaser's shared `AudioContext` (parent epic *Switch game audio from procedural Web Audio to ToneForge*, AH-0MUTUOB7X007PR9J). Each cue is authored as a data-only ToneForge recipe/preset under `audio/toneforge/`, rendered **deterministically** (a reserved seed per cue) by `scripts/build-audio.sh` into `public/audio/sfx/`, and verified by the SHA-256 checksums committed alongside the assets. The **authoritative cue→recipe catalogue** is [Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md); the runtime is a thin manifest-driven playback layer in `src/audio/effects.ts`.
+
+The former procedural Web Audio synthesis has been **removed**. The **one** runtime-synthesised exception is the continuous, thrust-coupled **thruster hum** (`src/audio/thrusterShim.ts`), which a baked one-shot cannot reproduce; every other cue is a baked asset. Cues that used per-invocation pitch jitter are baked as a small **multi-seed variant range** (see *Destruction Variation* below). The audible character is unchanged — each recipe reproduces the documented character and is auditioned during authoring (Author game-specific ToneForge recipes, AH-0MUTYV8480019Z51). ToneForge is consumed reproducibly at build time only (pinned revision in `audio/toneforge/pin.json`); the browser bundle imports no ToneForge or Node-only code (`npm run check-bundle`).
 
 #### SFX Event Catalog
 
@@ -1107,9 +1109,9 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | **Run flow** | Victory (boss defeated) | Bright **two-phrase** major fanfare: rising arpeggio (C5 → E5 → G5 → C6) then a faster rising cadence (C6 → E6 → G6 → C7) resolving into a sustained major chord over a C4/G4 bass bed, with a high sparkle flourish and a soft high-pass shimmer crackle tail (`playVictoryFanfareSound()`), ~3.3 s | Medium | Immediate |
 | **Run flow** | Defeat (run lost) | Slow **five-note** descending sombre line (G4 → F4 → D4 → B3 → G3) over a sinking 98 Hz drone with a dark low-pass rumble tail (`playDefeatStingSound()`), distinct from the player-destruction cue, ~2.9 s | Medium | Immediate |
 
-#### Explosion Pitch Randomisation
+#### Destruction Variation (baked variants)
 
-Explosion destruction sweeps are intentionally non-identical between kills: each invocation draws a single pitch factor uniformly in **[0.85, 1.15]** (±15 %, tunable via `EXPLOSION_PITCH_JITTER` in `src/audio/effects.ts`) and multiplies **all** sweep endpoints by it, so the cue varies while its descending character and tonal relationships are preserved. This applies to the shared enemy-destruction burst (`playDestructionSound()`, 440 → 60 Hz sawtooth) and the Diver's heavier destruction cue (`playDiverDestructionSound()`, 280 → 40 Hz sawtooth plus the 80 → 25 Hz sine undertone). The intentionally-unwired Tank destruction variant (`playTankDestructionSound()`) is unchanged, and volume, waveform and duration are unaffected. Unlike the VFX path (which reuses the seeded particle PRNG for deterministic replays), audio pitch jitter uses `Math.random()` — audio is outside the deterministic VFX seed contract.
+Destruction sweeps are intentionally non-identical between kills. The original per-invocation pitch jitter (a single ±15 % factor applied to all endpoints) is now **approximated at build time**: `aihell-enemy-destruction` is baked as a **3-seed variant range** (32110–32112) and `aihell-diver-destruction` as 32193–32195, and one variant is chosen at random per play in `src/audio/effects.ts`. The descending character and tonal relationships are preserved, and every variant is seed-deterministic. Audio remains outside the deterministic VFX seed contract, so the runtime variant choice uses `Math.random()`. The retired `playTankDestructionSound()` cue and the runtime `EXPLOSION_PITCH_JITTER` / `explosionPitchFactor()` helpers no longer exist (see the [cue mapping](AUDIO_TONEFORGE_CUE_MAPPING.md)).
 
 #### Per-Enemy Audio Character
 
@@ -1128,11 +1130,16 @@ pattern).
 
 #### Player Audio Character
 
-The player ship has its own procedural audio palette (all in
+The player ship has its own ToneForge-rendered audio palette (all played via
 `src/audio/effects.ts`), giving the player the same by-ear feedback the
 enemies get:
 
-| Cue | Sound Character | Synthesis (wave, contour) | Volume |
+> The `Recipe character` column documents the audibly-reproduced character of
+each baked recipe (the wave family, frequency contour and duration the recipe
+targets); it is no longer synthesised at runtime. Amplitude is baked into the
+asset and the master SFX gain applies on top.
+
+| Cue | Sound Character | Recipe character (wave, contour) | Volume |
 |-----|-----------------|---------------------------|--------|
 | Cannon fire | Solid medium blip | Square 800 → 400 Hz, ~80 ms | 0.15 |
 | Spread fire | Wide multi-tone sweep | Triangle 600 → 1200 → 800 Hz, ~120 ms | 0.15 |
@@ -1156,7 +1163,7 @@ enemies get:
 - **Player destruction** — the dedicated `playPlayerDestructionSound()` in `src/audio/effects.ts` is a heavier, layered cue distinct from the generic enemy `playDestructionSound()` (440 → 60 Hz sawtooth): a sawtooth impact thump (120 → 32 Hz, ~0.4 s) plus a slower triangle body sliding 260 → 42 Hz (~0.6 s) and a short high-pass filtered noise tail (~0.28 s) for the shrapnel hiss. It is played **exactly once** per player destruction by the shared `spawnPlayerDeathJuice` helper (§7.2) and fully replaces the generic enemy cue on the player-death paths (`PlayScene._loseLife`, `CombatScene.applyPlayerHit`, and the inherited `GymPowerUpsCombat` hit lifecycle). Its amplitudes and lengths are exported `PLAYER_DESTRUCTION_*` constants, and every layer stays within the ≤ 0.2 player-cue volume ceiling. The wave timeout no longer costs a life (AH-0MUNS3ZQ1002DJ9S); shield absorption keeps the generic cue, and the dedicated cue is a safe no-op without an `AudioContext`.
 - **End-of-run victory fanfare** — `playVictoryFanfareSound()` in `src/audio/effects.ts` is a long, multi-layer celebration built as a two-phrase fanfare. The **call** is a rising major arpeggio (triangle C5 → E5 → G5 → C6, `VICTORY_ARPEGGIO_FREQS`, `VICTORY_ARPEGGIO_STEP` 0.2 s, each note ringing `VICTORY_ARPEGGIO_NOTE_DURATION` 0.36 s at `VICTORY_ARPEGGIO_VOLUME` 0.15); the **answer** is a faster rising cadence (triangle C6 → E6 → G6 → C7, `VICTORY_CADENCE_FREQS`, `VICTORY_CADENCE_STEP` 0.16 s at `VICTORY_CADENCE_VOLUME` 0.17) that resolves into a sustained major chord (sine C6/E6/G6/C7, `VICTORY_CHORD_FREQS`, held `VICTORY_CHORD_DURATION` 1.6 s at `VICTORY_CHORD_VOLUME` 0.1) with a low bass bed (sine C4/G4, `VICTORY_BASS_FREQS`, `VICTORY_BASS_DURATION` 1.8 s at `VICTORY_BASS_VOLUME` 0.08), a high sparkle flourish (sine 2349–4186 Hz, `VICTORY_SPARKLE_FREQS`) and a soft high-passed shimmer crackle tail (`VICTORY_SHIMMER_FILTER_HZ` 6000 Hz at `VICTORY_SHIMMER_VOLUME` 0.045). It plays **exactly once** at the moment the boss dies (`PlayScene._damageBoss`), while the sustained visual celebration lives on `GameOverScene` (§7.2); total duration is ~3.3 s, every layer peaks at ≤ 0.2, and it is a safe no-op without an `AudioContext`. Deliberately SFX-only — no background music (§7.3 out of MVP scope). A producer audit (2026-10-04) rejected the original single-scale cue as "nothing more than a monotonic peep"; the two-phrase rebuild directly addresses that.
 - **End-of-run defeat sting** — `playDefeatStingSound()` in `src/audio/effects.ts` is the sombre counterpart: a slow five-note descending minor line (triangle G4 → F4 → D4 → B3 → G3, `DEFEAT_STING_FREQS`, `DEFEAT_STING_STEP` 0.3 s, each note ringing `DEFEAT_STING_NOTE_DURATION` 0.55 s at `DEFEAT_STING_NOTE_VOLUME` 0.14) over a sustained low drone (sine 98 Hz, `DEFEAT_STING_DRONE_HZ`) that **sinks in pitch** to `DEFEAT_STING_DRONE_END_HZ` 73.42 Hz as it fades over `DEFEAT_STING_DRONE_DURATION` 2.2 s, with a dark low-pass filtered noise tail (`DEFEAT_STING_TAIL_FILTER_HZ` 280 Hz, `DEFEAT_STING_TAIL_DURATION` 1.4 s). It is triggered **exactly once** on the defeat branch of `GameOverScene` (gated by the shared `ENDOFRUN_ENABLE_SOUND` toggle) and is structurally distinct from `playPlayerDestructionSound()` — a slow discrete descending line with a **low-pass** rumble wash versus that cue's fast sawtooth sweep with a **high-pass** shrapnel hiss. Total duration is ~2.9 s, every layer peaks at ≤ 0.2 and it is a safe no-op without an `AudioContext`.
-- **Wave timeout carry-over (no detonation)** — when the wave timer expires, survivors are **kept** and carry over into the next wave (AH-0MUNS3ZQ1002DJ9S); the previous 10× detonation and the per-ship `playMajorExplosionSound()` cue were retired with the punitive penalty. `playMajorExplosionSound()` and its `MAJOR_EXPLOSION_*` limiter remain in `src/audio/effects.ts` (a safe no-op without an `AudioContext`), and the shared `detonateWaveTimeoutSurvivors` helper (`src/scenes/core/waveTimeout.ts`) is now a no-op so `PlayScene._timeoutWave` and the **enemy gyms** (`GymEnemies` / `GymMinerals` / `GymPowerUpsCombat`, AH-0MUNR5LM1004B223, AH-0MUK5ONAA0007YEX) run one carry-over path. The boss (`GymBoss` and the `boss` config) still opts out of the timeout.
+- **Wave timeout carry-over (no detonation, AH-0MUNS3ZQ1002DJ9S)** — when the wave timer expires, survivors are **kept** and carry over into the next wave; the previous 10× detonation and the per-ship `playMajorExplosionSound()` cue were **retired** (the cue and its `MAJOR_EXPLOSION_*` limiter no longer exist). The shared `detonateWaveTimeoutSurvivors` helper (`src/scenes/core/waveTimeout.ts`) is a no-op so `PlayScene._timeoutWave` and the **enemy gyms** (`GymEnemies` / `GymMinerals` / `GymPowerUpsCombat`) run one carry-over path. The boss (`GymBoss` and the `boss` config) still opts out of the timeout.
 - **Phase Shift activation** — every automatic danger-triggered activation and every P7-teleport activation plays the dedicated `playPhaseShiftSound()` (parent AH-0MUIYX1EE008FVS8): a rising triangle chirp (320 → 1560 Hz, ~0.28 s) layered with a bandpass noise whoosh sweeping 600 → 3200 Hz (~0.24 s), so the cue reads as "phase engaged" and is distinct from the descending destruction cues. Every layer stays within the ≤ 0.2 player-cue ceiling, the cue is triggered from the single shared `CombatScene` activation sites (`_updatePhaseShiftAutoTrigger` and `triggerTeleport` — never per scene), and it is a safe no-op without an `AudioContext`.
 - **Volume-change feedback** — adjusting the SFX volume slider in `SettingsScene` plays the existing player-explosion cue via `playVolumeFeedback()` (AH-0MUADK77K008RBMB): its pitch/synthesis is unchanged and only the gain is scaled by the selected volume, so the player hears the hull-breach boom at a loudness matching the setting. The cue fires after each keyboard left/right nudge and exactly once on slider-drag release (never during the drag, so a drag does not emit a stream of overlapping booms). Like every other cue it routes through the master SFX gain node, so it respects the current mute state and volume (silent while muted). Mute-toggle feedback is intentionally out of scope. Safe no-op without an `AudioContext`.
 - **Shoot cues play once per shot** (not once per bullet), keyed off each

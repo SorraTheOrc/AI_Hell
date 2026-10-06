@@ -1472,8 +1472,14 @@ the wiring is `AH-0MUH6LEYY0054E63`; per-level generated-vs-scripted mixing was
 
 All enemy audio functions live in
 [`src/audio/effects.ts`](../src/audio/effects.ts) — the **single source of
-truth**; never inline an audio call anywhere else. The audio event catalog and
-default sound characters are defined in
+truth**; never inline an audio call anywhere else. Each cue is a **build-time
+baked ToneForge WAV asset** (one recipe slug per cue) played by the thin
+manifest-driven layer in `effects.ts`; the continuous thruster hum is the only
+runtime-synthesised exception and is player-only. The authoritative
+cue→recipe catalogue is the
+[Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md), and the assets
+are rendered by `scripts/build-audio.sh` into `public/audio/sfx/`. The audio
+event catalog and default sound characters are defined in
 [GDD §7.3](Game%20Design%20Document.md); per-enemy audio characters are decided
 **at implementation time** and may deviate from the catalog defaults (see §3.1
 checklist item 6). Scope rules matter — base-class-owned sounds are played
@@ -1502,6 +1508,17 @@ Orchestration rule: entity-specific fire sounds are invoked **where the shots
 are produced** — the entity's own fire/tell logic (Tank's `tryFireRadialBurst`,
 Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
 Scout's two-phase tell) — never re-added in a thin scene class.
+
+**ToneForge recipes per cue:** Scout advance `aihell-scout-advance`, Scout fire
+`weapon-laser-zap`; Diver dive-start `aihell-diver-dive-start`, dive loop
+`aihell-diver-dive-loop`, fire `aihell-diver-fire`, destruction
+`aihell-diver-destruction` (multi-seed 32193–32195); Tank advance
+`aihell-tank-advance`, fire `aihell-tank-fire`; Phaser advance
+`aihell-phaser-advance`, fire `aihell-phaser-fire`; Swarm burst
+`aihell-swarm-burst`; Boss phase cue `aihell-boss-phase-cue` (per-phase seeds
+32204–32207), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
+destruction `aihell-enemy-destruction` (multi-seed 32110–32112). Full catalogue:
+[Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md).
 
 ### Explode / destruction
 
