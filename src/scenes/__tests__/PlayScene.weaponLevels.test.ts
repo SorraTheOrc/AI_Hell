@@ -109,6 +109,34 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     expect(player.hasWeapon('spread')).toBe(true);
   });
 
+  it('a default-strategy hold-full draw never offers two options for the same item (AC1/AC4)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+
+    // Own two weapons and two power-ups so both suppression paths are live.
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+    player.collectPowerUp('P5');
+    player.collectPowerUp('P9');
+
+    // The scene uses its default random strategy with the real player
+    // context, so every draw must offer each underlying item at most once.
+    for (let i = 0; i < 20; i++) {
+      const options = scene.openMineralChoice();
+      expect(options).toHaveLength(3);
+      const ids = options.map((o) => o.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      // An owned weapon is only ever offered as its level-up, never as a
+      // bare base-pool `weapon` entry.
+      expect(
+        options.some(
+          (o) => o.kind === 'weapon' && (o.id === 'spread' || o.id === 'dual'),
+        ),
+      ).toBe(false);
+      scene.selectMineralChoice(0);
+    }
+  });
+
   it('the mineral choice receives the player weapon levels (context)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

@@ -8,9 +8,11 @@
  * choice scene or the PlayScene wiring.
  *
  * The default strategy draws `count` **distinct** entries uniformly at random
- * from the full drop pool (P3–P10 plus the collectable weapon drops
- * spread/dual/rapid), degrading gracefully (returning fewer options) when the
- * pool cannot supply the requested count.
+ * from the candidate list — the base drop pool (P3–P10 plus the collectable
+ * weapon drops spread/dual/rapid/nova/mortar/arc) with each owned item's
+ * base entry replaced by its level-up offer (see
+ * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
+ * options) when the list cannot supply the requested count.
  *
  * @module src/powerups/choice
  */
@@ -189,47 +191,67 @@ export interface ChoiceStrategy {
 }
 
 /**
- * Builds the candidate option list: the base pool plus a **level-up** offer
- * for every weapon the player owns (AC1/AC4). When the player owns no weapons
- * the list is exactly the base pool (AC5).
+ * Builds the candidate option list: the base pool (with owned items
+ * suppressed) plus a **level-up** offer for every weapon/power-up the player
+ * owns (AC1/AC2/AC4). An owned item is therefore offered **once**, as its
+ * correctly-labelled levelled offer; an unowned item is offered once, as a
+ * **New** base entry. When the player owns nothing the list is exactly the
+ * base pool (AC5).
+ *
+ * De-duplication lives here and only here, so the game (`PlayScene`) and every
+ * gym that opens the hold-full choice share one implementation and can never
+ * offer a base entry alongside its level-up counterpart for the same id
+ * (AH-0MUVRACE9001WVT2 AC3).
  *
  * Populates optional display metadata (AH-0MUU1GOAU007RFVR):
- * - `changeSummary` for owned/levelled weapons, derived from the shared
+ * - `changeSummary` for owned/levelled items, derived from the shared
  *   level maths.
- * - `isNew` for base-pool weapons the player does not yet own.
+ * - `isNew` for surviving base-pool items the player does not yet own.
  */
 export function buildChoiceCandidates(
   pool: readonly DropId[],
   context?: ChoiceContext,
 ): ChoiceOption[] {
-  // Build a lookup of owned weapon/power-up ids for New-badge detection.
+  // Ownership lookups (run-scoped level ≥ 1) drive both the New badge and the
+  // suppression of the base-pool entry for an owned id. `getWeaponLevels()` /
+  // `getPowerUpLevels()` only ever return level ≥ 1 entries, but filtering
+  // here keeps the semantics explicit and robust to hand-built contexts.
   const ownedWeapons = new Set(
-    context?.weaponLevels?.map((wl) => wl.id) ?? [],
+    (context?.weaponLevels ?? [])
+      .filter((wl) => wl.level >= 1)
+      .map((wl) => wl.id),
   );
   const ownedPowerUps = new Set(
-    context?.powerUpLevels?.map((pl) => pl.id) ?? [],
+    (context?.powerUpLevels ?? [])
+      .filter((pl) => pl.level >= 1)
+      .map((pl) => pl.id),
   );
   // Ownership is only known when the context supplies it; when omitted we
-  // must not bad a power-up as New (backward compatible).
+  // must not badge a power-up as New (backward compatible).
   const powerUpOwnershipKnown = context?.powerUpLevels !== undefined;
 
-  const candidates = [...new Set(pool)].map((dropId) => {
+  const candidates: ChoiceOption[] = [];
+  for (const dropId of new Set(pool)) {
     const option = toChoiceOption(dropId);
-    // For base-pool weapon drops: mark as New when unowned.
-    if (option.kind === 'weapon' && !ownedWeapons.has(dropId as WeaponId)) {
-      option.isNew = true;
+    // Suppress the base-pool entry for an owned item: it is offered once, as
+    // its level-up offer (appended below), never twice (AC1/AC2).
+    if (option.kind === 'weapon' && ownedWeapons.has(dropId as WeaponId)) {
+      continue;
     }
-    // For base-pool power-ups: mark as New when ownership is known and the
-    // power-up is unowned.
     if (
       option.kind === 'powerup' &&
       powerUpOwnershipKnown &&
-      !ownedPowerUps.has(dropId as PowerUpId)
+      ownedPowerUps.has(dropId as PowerUpId)
     ) {
-      option.isNew = true;
+      continue;
     }
-    return option;
-  });
+    // Every surviving base entry is unowned, so it carries the New badge
+    // whenever ownership is known (weapons always; power-ups only when the
+    // context supplies `powerUpLevels`).
+    if (option.kind === 'weapon') option.isNew = true;
+    if (option.kind === 'powerup' && powerUpOwnershipKnown) option.isNew = true;
+    candidates.push(option);
+  }
 
   for (const { id, level } of context?.weaponLevels ?? []) {
     if (!LEVELABLE_WEAPON_IDS.includes(id as WeaponDropId) || level < 1) {
@@ -270,9 +292,10 @@ export function buildChoiceCandidates(
 
 /**
  * Creates a strategy that draws `count` distinct options uniformly at random
- * from `pool` (extended with owned-weapon level-up offers from `context`).
- * When the candidate list holds fewer than `count` entries, all of them are
- * returned (graceful degradation).
+ * from `pool` — with each owned item's base-pool entry suppressed and its
+ * level-up offer appended (see {@link buildChoiceCandidates}). When the
+ * candidate list holds fewer than `count` entries, all of them are returned
+ * (graceful degradation).
  */
 export function createRandomChoiceStrategy(
   pool: readonly DropId[] = CHOICE_POOL,

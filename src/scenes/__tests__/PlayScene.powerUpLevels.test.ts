@@ -147,4 +147,27 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     expect(player.getPowerUpLevel('P3')).toBe(1);
     expect(effects.isActive('P3')).toBe(true);
   });
+
+  it('a default-strategy hold-full draw never offers a base and a level-up power-up (AC2/AC4)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    // Own two power-ups so the base-pool suppression path is exercised.
+    player.collectPowerUp('P3');
+    player.collectPowerUp('P5');
+
+    for (let i = 0; i < 20; i++) {
+      const options = scene.openMineralChoice();
+      expect(options).toHaveLength(3);
+      const ids = options.map((o) => o.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      // An owned power-up is only ever offered as its level-up, never as a
+      // bare base-pool `powerup` entry.
+      expect(
+        options.some(
+          (o) => o.kind === 'powerup' && (o.id === 'P3' || o.id === 'P5'),
+        ),
+      ).toBe(false);
+      scene.selectMineralChoice(0);
+    }
+  });
 });

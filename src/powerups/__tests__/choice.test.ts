@@ -174,13 +174,18 @@ describe('power-up choice strategy', () => {
       expect(rapid!.isNew).toBe(true);
     });
 
-    it('does not mark a weapon as New when the player owns it', () => {
+    it('suppresses the base-pool weapon entry once owned, leaving only the level-up offer (AC1)', () => {
       const context = { weaponLevels: [{ id: 'spread' as const, level: 1 }] };
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
-      const spread = candidates.find(
-        (o) => o.id === 'spread' && o.kind === 'weapon',
-      );
+      // No base-pool `weapon` entry for the owned id …
+      expect(
+        candidates.some((o) => o.id === 'spread' && o.kind === 'weapon'),
+      ).toBe(false);
+      // … only the correctly-labelled level-up offer.
+      const spread = candidates.find((o) => o.id === 'spread');
       expect(spread).toBeDefined();
+      expect(spread!.kind).toBe('weapon-level');
+      expect(spread!.level).toBe(2);
       expect(spread!.isNew).toBeUndefined();
     });
 
@@ -232,13 +237,18 @@ describe('power-up choice strategy', () => {
       expect(p5!.isNew).toBe(true);
     });
 
-    it('does not mark an owned power-up as New', () => {
+    it('suppresses the base-pool power-up entry once owned, leaving only the level-up offer (AC2)', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
         powerUpLevels: [{ id: 'P5' as const, level: 1 }],
       });
-      const base = candidates.find((o) => o.kind === 'powerup' && o.id === 'P5');
-      expect(base).toBeDefined();
-      expect(base!.isNew).toBeUndefined();
+      expect(
+        candidates.some((o) => o.kind === 'powerup' && o.id === 'P5'),
+      ).toBe(false);
+      const levelUp = candidates.find((o) => o.id === 'P5');
+      expect(levelUp).toBeDefined();
+      expect(levelUp!.kind).toBe('power-up-level');
+      expect(levelUp!.level).toBe(2);
+      expect(levelUp!.isNew).toBeUndefined();
     });
 
     it('keeps the base pool unchanged when no power-up context is supplied', () => {
@@ -253,6 +263,84 @@ describe('power-up choice strategy', () => {
       const options = createRandomChoiceStrategy().choose(3, () => 0.5, context);
       expect(options).toHaveLength(3);
       expect(new Set(options.map((o) => `${o.kind}:${o.id}`)).size).toBe(3);
+    });
+  });
+
+  describe('owned-item de-duplication (AH-0MUVRACE9001WVT2)', () => {
+    it('never lists a base and a level-up entry for the same weapon id (AC1)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [
+          { id: 'spread' as const, level: 2 },
+          { id: 'rapid' as const, level: 1 },
+        ],
+      });
+      const ids = candidates.map((o) => o.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      // The owned weapons appear exactly once each, as level-up offers.
+      expect(candidates.filter((o) => o.id === 'spread')).toHaveLength(1);
+      expect(candidates.filter((o) => o.id === 'rapid')).toHaveLength(1);
+    });
+
+    it('never lists a base and a level-up entry for the same power-up id (AC2)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        powerUpLevels: [
+          { id: 'P3' as const, level: 1 },
+          { id: 'P9' as const, level: 4 },
+        ],
+      });
+      const ids = candidates.map((o) => o.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(candidates.filter((o) => o.id === 'P3')).toHaveLength(1);
+      expect(candidates.filter((o) => o.id === 'P9')).toHaveLength(1);
+    });
+
+    it('keeps an unowned weapon offered exactly once as a New base entry (AC1)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [{ id: 'spread' as const, level: 1 }],
+      });
+      const dual = candidates.filter((o) => o.id === 'dual');
+      expect(dual).toHaveLength(1);
+      expect(dual[0].kind).toBe('weapon');
+      expect(dual[0].isNew).toBe(true);
+    });
+
+    it('keeps an unowned power-up offered exactly once as a New base entry (AC2)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        powerUpLevels: [{ id: 'P5' as const, level: 1 }],
+      });
+      const p6 = candidates.filter((o) => o.id === 'P6');
+      expect(p6).toHaveLength(1);
+      expect(p6[0].kind).toBe('powerup');
+      expect(p6[0].isNew).toBe(true);
+    });
+
+    it('leaves the full base pool intact when nothing is owned (AC1/AC2)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      expect(candidates.map((o) => o.id).sort()).toEqual([...CHOICE_POOL].sort());
+      expect(candidates.every((o) => o.isNew === true)).toBe(true);
+    });
+
+    it('a default-strategy draw with a real context never offers two options for the same item (AC4)', () => {
+      const context = {
+        weaponLevels: [
+          { id: 'spread' as const, level: 2 },
+          { id: 'dual' as const, level: 1 },
+        ],
+        powerUpLevels: [
+          { id: 'P5' as const, level: 3 },
+          { id: 'P9' as const, level: 1 },
+        ],
+      };
+      for (let i = 0; i < 200; i++) {
+        const options = randomChoiceStrategy.choose(3, Math.random, context);
+        const ids = options.map((o) => o.id);
+        // A duplicate id would mean the same underlying item was offered
+        // twice (base + level-up), which is exactly the reported bug.
+        expect(new Set(ids).size).toBe(ids.length);
+      }
     });
   });
 });
