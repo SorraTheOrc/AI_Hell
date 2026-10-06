@@ -25,10 +25,30 @@ export interface NonTrivialVerdict {
   reasons: string[];
 }
 
+export interface AudioTrackProbe {
+  trackCount?: number;
+  peak?: number;
+  rms?: number;
+}
+
+export interface AudioTrackVerdict {
+  hasAudioTrack: boolean;
+  nonSilent: boolean;
+  reasons: string[];
+}
+
+export interface CombinedClipVerdict {
+  nonTrivial: boolean;
+  reasons: string[];
+}
+
 export const MOVE_KEYS: readonly string[];
 export const DEFAULT_CAPTURE_DURATION_MS: number;
 export const DEFAULT_WARMUP_MS: number;
 export const BASE_SWEEP_PATTERN: readonly BotStep[];
+export const CAPTURE_MIME_CANDIDATES: readonly string[];
+export const AUDIO_SILENCE_PEAK_FLOOR: number;
+export const AUDIO_SILENCE_RMS_FLOOR: number;
 
 export function buildScriptedPlan(
   durationMs?: number,
@@ -36,3 +56,11 @@ export function buildScriptedPlan(
 ): BotStep[];
 export function planDurationMs(plan: readonly BotStep[]): number;
 export function isNonTrivialClip(probe?: VideoClipProbe): NonTrivialVerdict;
+export function resolveCaptureMimeType(
+  isSupported: (mimeType: string) => boolean,
+): string | null;
+export function evaluateAudioTrack(probe?: AudioTrackProbe): AudioTrackVerdict;
+export function combineClipVerdict(
+  videoVerdict?: NonTrivialVerdict,
+  audioVerdict?: AudioTrackVerdict,
+): CombinedClipVerdict;

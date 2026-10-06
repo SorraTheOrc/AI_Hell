@@ -131,3 +131,125 @@ export function isNonTrivialClip(probe) {
 
   return { nonTrivial: reasons.length === 0, reasons };
 }
+
+/**
+ * MediaRecorder WebM mime candidates in preference order: VP9 video with
+ * Opus audio is richest, then VP8 video with Opus audio, then a bare WebM
+ * container with no codec preference. `resolveCaptureMimeType` returns the
+ * first candidate the browser reports as supported.
+ */
+export const CAPTURE_MIME_CANDIDATES = Object.freeze([
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+]);
+
+/**
+ * Picks the richest WebM mime type that pairs a video codec with Opus audio,
+ * so the recorded clip carries an audio track (AH-0MUWTNPYJ0031FQE).
+ *
+ * Candidates are tried richest-first: VP9+Opus, then VP8+Opus, then a plain
+ * `video/webm` container as the last resort. Returns `null` when the probe
+ * rejects every candidate (no WebM recording is possible) or when no probe
+ * is supplied.
+ *
+ * @param {(mimeType: string) => boolean} isSupported
+ *   Predicate standing in for `MediaRecorder.isTypeSupported`.
+ * @returns {string | null}
+ */
+export function resolveCaptureMimeType(isSupported) {
+  if (typeof isSupported !== 'function') return null;
+
+  for (const mimeType of CAPTURE_MIME_CANDIDATES) {
+    try {
+      if (isSupported(mimeType)) return mimeType;
+    } catch {
+      // A throwing probe counts as "unsupported"; keep looking.
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Peak-amplitude floor (fraction of full scale) below which a track is
+ * treated as silent.
+ *
+ * AI_Hell's early levels are deliberately sparse: level 1 opens with almost
+ * no enemies, so long stretches of near-silence are punctuated by short,
+ * quiet SFX bursts. Over a whole clip that makes the RMS tiny even though
+ * the clip is audibly non-silent, so the primary gate is the *peak*: any low
+ * but non-zero peak above this floor passes. The floor sits well above the
+ * recorder's noise floor and far below full scale, so it rejects only
+ * genuine digital silence.
+ */
+export const AUDIO_SILENCE_PEAK_FLOOR = 0.005;
+
+/**
+ * Companion RMS floor (fraction of full scale), lower than the peak floor,
+ * used to catch a sustained quiet signal that never develops a sharp peak. A
+ * track is non-silent when *either* floor is cleared.
+ */
+export const AUDIO_SILENCE_RMS_FLOOR = 0.0005;
+
+/**
+ * Evaluates the audio half of a recorded clip from the in-page probe stats
+ * produced by `scripts/capture-gameplay.mjs`.
+ *
+ * A track is non-silent only when it exists *and* its peak or RMS clears the
+ * corresponding documented floor; a missing probe is treated as "no audio
+ * track".
+ *
+ * @param {{ trackCount?: number, peak?: number, rms?: number }} [audio]
+ * @returns {{ hasAudioTrack: boolean, nonSilent: boolean, reasons: string[] }}
+ */
+export function evaluateAudioTrack(audio) {
+  const trackCount = Number(audio?.trackCount ?? 0);
+  const peak = Number(audio?.peak ?? 0);
+  const rms = Number(audio?.rms ?? 0);
+
+  const hasAudioTrack = Number.isFinite(trackCount) && trackCount > 0;
+  const abovePeakFloor =
+    Number.isFinite(peak) && peak > AUDIO_SILENCE_PEAK_FLOOR;
+  const aboveRmsFloor = Number.isFinite(rms) && rms > AUDIO_SILENCE_RMS_FLOOR;
+  const nonSilent = hasAudioTrack && (abovePeakFloor || aboveRmsFloor);
+
+  const reasons = [];
+  if (!hasAudioTrack) {
+    reasons.push('no audio track in the recording');
+  } else if (!nonSilent) {
+    reasons.push('audio track is silent (peak and RMS at or below the floor)');
+  }
+
+  return { hasAudioTrack, nonSilent, reasons };
+}
+
+/**
+ * Merges the existing video "non-trivial" verdict with the audio verdict so
+ * a clip is accepted only when both halves pass.
+ *
+ * Reasons from both verdicts are concatenated so the human report and
+ * `--json` payload explain every failing half; a missing verdict contributes
+ * an explicit reason rather than silently passing.
+ *
+ * @param {{ nonTrivial?: boolean, reasons?: string[] }} [videoVerdict]
+ * @param {{ hasAudioTrack?: boolean, nonSilent?: boolean, reasons?: string[] }} [audioVerdict]
+ * @returns {{ nonTrivial: boolean, reasons: string[] }}
+ */
+export function combineClipVerdict(videoVerdict, audioVerdict) {
+  const video = videoVerdict ?? {};
+  const audio = audioVerdict ?? {};
+
+  const reasons = [];
+  if (Array.isArray(video.reasons)) reasons.push(...video.reasons);
+  if (Array.isArray(audio.reasons)) reasons.push(...audio.reasons);
+  if (!videoVerdict) reasons.push('missing video verdict');
+  if (!audioVerdict) reasons.push('missing audio verdict');
+
+  const nonTrivial =
+    video.nonTrivial === true &&
+    audio.hasAudioTrack === true &&
+    audio.nonSilent === true;
+
+  return { nonTrivial, reasons };
+}

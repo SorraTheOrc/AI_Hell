@@ -15,12 +15,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AUDIO_SILENCE_PEAK_FLOOR,
+  AUDIO_SILENCE_RMS_FLOOR,
   BASE_SWEEP_PATTERN,
+  CAPTURE_MIME_CANDIDATES,
   DEFAULT_CAPTURE_DURATION_MS,
   MOVE_KEYS,
   buildScriptedPlan,
+  combineClipVerdict,
+  evaluateAudioTrack,
   isNonTrivialClip,
   planDurationMs,
+  resolveCaptureMimeType,
 } from './capture-bot.mjs';
 import {
   estimateRemainingMs,
@@ -144,6 +150,185 @@ describe('isNonTrivialClip', () => {
 
   it('rejects a missing probe', () => {
     expect(isNonTrivialClip(undefined).nonTrivial).toBe(false);
+  });
+});
+
+describe('resolveCaptureMimeType', () => {
+  const supportOnly = (supported: readonly string[]) =>
+    (mimeType: string) => supported.includes(mimeType);
+
+  it('prefers VP9 video with Opus audio when every candidate is supported', () => {
+    const resolve = supportOnly([...CAPTURE_MIME_CANDIDATES]);
+    expect(resolveCaptureMimeType(resolve)).toBe(
+      'video/webm;codecs=vp9,opus',
+    );
+  });
+
+  it('falls back to VP8 video with Opus audio when VP9+Opus is unsupported', () => {
+    const resolve = supportOnly([
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+    ]);
+    expect(resolveCaptureMimeType(resolve)).toBe(
+      'video/webm;codecs=vp8,opus',
+    );
+  });
+
+  it('falls back to a plain WebM container when no audio codec is supported', () => {
+    expect(resolveCaptureMimeType(supportOnly(['video/webm']))).toBe(
+      'video/webm',
+    );
+  });
+
+  it('returns null when no WebM mime is supported', () => {
+    expect(resolveCaptureMimeType(supportOnly([]))).toBeNull();
+  });
+
+  it('probes candidates richest-first and stops at the first supported one', () => {
+    const seen: string[] = [];
+    const result = resolveCaptureMimeType((mimeType) => {
+      seen.push(mimeType);
+      return mimeType === 'video/webm';
+    });
+
+    expect(result).toBe('video/webm');
+    expect(seen).toEqual([...CAPTURE_MIME_CANDIDATES]);
+  });
+
+  it('returns null when the support probe is missing', () => {
+    const missing = undefined as unknown as (mimeType: string) => boolean;
+    expect(resolveCaptureMimeType(missing)).toBeNull();
+  });
+
+  it('treats a throwing support probe as unsupported and keeps looking', () => {
+    const result = resolveCaptureMimeType((mimeType) => {
+      if (mimeType === 'video/webm;codecs=vp9,opus') {
+        throw new Error('probe failed');
+      }
+      return mimeType === 'video/webm;codecs=vp8,opus';
+    });
+
+    expect(result).toBe('video/webm;codecs=vp8,opus');
+  });
+});
+
+describe('evaluateAudioTrack', () => {
+  it('passes a present, non-silent track', () => {
+    expect(evaluateAudioTrack({ trackCount: 1, peak: 0.4, rms: 0.1 })).toEqual({
+      hasAudioTrack: true,
+      nonSilent: true,
+      reasons: [],
+    });
+  });
+
+  it('reports no audio track when none was recorded', () => {
+    const verdict = evaluateAudioTrack({ trackCount: 0, peak: 0.4, rms: 0.1 });
+
+    expect(verdict.hasAudioTrack).toBe(false);
+    expect(verdict.nonSilent).toBe(false);
+    expect(verdict.reasons).toContain('no audio track in the recording');
+  });
+
+  it('reports silence when peak and RMS are at or below the floor', () => {
+    const verdict = evaluateAudioTrack({
+      trackCount: 1,
+      peak: AUDIO_SILENCE_PEAK_FLOOR,
+      rms: AUDIO_SILENCE_RMS_FLOOR,
+    });
+
+    expect(verdict.hasAudioTrack).toBe(true);
+    expect(verdict.nonSilent).toBe(false);
+    expect(verdict.reasons).toContain(
+      'audio track is silent (peak and RMS at or below the floor)',
+    );
+  });
+
+  it('passes sparse early-level SFX with a low but non-zero peak', () => {
+    const verdict = evaluateAudioTrack({
+      trackCount: 1,
+      peak: AUDIO_SILENCE_PEAK_FLOOR * 4,
+      rms: 0,
+    });
+
+    expect(verdict.hasAudioTrack).toBe(true);
+    expect(verdict.nonSilent).toBe(true);
+    expect(verdict.reasons).toEqual([]);
+  });
+
+  it('treats a missing audio probe as no track', () => {
+    expect(evaluateAudioTrack(undefined)).toEqual({
+      hasAudioTrack: false,
+      nonSilent: false,
+      reasons: ['no audio track in the recording'],
+    });
+  });
+});
+
+describe('combineClipVerdict', () => {
+  const passingVideo = { nonTrivial: true, reasons: [] };
+  const passingAudio = { hasAudioTrack: true, nonSilent: true, reasons: [] };
+
+  it('passes only when both the video and audio verdicts pass', () => {
+    expect(combineClipVerdict(passingVideo, passingAudio)).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+  });
+
+  it('fails and keeps the video reasons when the video is trivial', () => {
+    const verdict = combineClipVerdict(
+      { nonTrivial: false, reasons: ['empty recording (0 bytes)'] },
+      passingAudio,
+    );
+
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain('empty recording (0 bytes)');
+  });
+
+  it('fails and keeps the audio reasons when no track was recorded', () => {
+    const verdict = combineClipVerdict(
+      passingVideo,
+      evaluateAudioTrack({ trackCount: 0 }),
+    );
+
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain('no audio track in the recording');
+  });
+
+  it('fails when the audio track is silent', () => {
+    const verdict = combineClipVerdict(
+      passingVideo,
+      evaluateAudioTrack({ trackCount: 1, peak: 0, rms: 0 }),
+    );
+
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain(
+      'audio track is silent (peak and RMS at or below the floor)',
+    );
+  });
+
+  it('merges the reasons from both failing halves', () => {
+    const verdict = combineClipVerdict(
+      { nonTrivial: false, reasons: ['frame is essentially black'] },
+      evaluateAudioTrack({ trackCount: 0 }),
+    );
+
+    expect(verdict.reasons).toContain('frame is essentially black');
+    expect(verdict.reasons).toContain('no audio track in the recording');
+  });
+
+  it('fails safely when the video verdict is missing', () => {
+    const verdict = combineClipVerdict(undefined, passingAudio);
+
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain('missing video verdict');
+  });
+
+  it('fails safely when the audio verdict is missing', () => {
+    const verdict = combineClipVerdict(passingVideo, undefined);
+
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain('missing audio verdict');
   });
 });
 
