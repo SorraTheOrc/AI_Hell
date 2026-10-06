@@ -71,6 +71,38 @@ errors**.
 8. Streams the encoded chunks to Node over an `exposeFunction` binding and
    writes them to the output file.
 
+## Progress output & dependency preflight
+
+A capture spends ~20 s producing no output (Vite + browser startup, warm-up,
+recording, decode), which is easy to mistake for a hang. The command therefore
+writes **milestone lines and a recording heartbeat to stderr** while reserving
+stdout for the final report / `--json` payload
+(AH-0MUWTNPY8003GGAA):
+
+```
+[capture] Starting Vite dev server…
+[capture] Launching headless Chromium…
+[capture] Loading http://127.0.0.1:46321/…
+[capture] Starting PlayScene (Enter)…
+[capture] Recording 15.0s of scripted gameplay…
+Recording [########----------------]  34%  5.1s/15.5s  ETA 10.4s
+Recording [################--------]  67%  10.4s/15.5s  ETA 5.1s
+Recording [########################] 100%  15.5s/15.5s  ETA 0.0s
+[capture] Encoding and probing the clip…
+```
+
+On a TTY the heartbeat overwrites itself in place; when redirected (logs, CI)
+each heartbeat is a separate line. `--json` suppresses the human report and
+prints only the JSON payload on stdout.
+
+If the `playwright` devDependency or its Chromium binary is missing, the
+command fails fast with the fix instead of a raw module-resolution stack:
+
+```
+playwright is required for automated gameplay capture but is not available.
+Run: npm install && npm run capture:install
+```
+
 ## The automated player (the bot)
 
 `scripts/capture-bot.mjs` owns the player. It deliberately does **not** reach
@@ -228,9 +260,11 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 
 | File | Purpose |
 |---|---|
-| `scripts/capture-gameplay.mjs` | Orchestrator: Vite server, headless Chromium, record, drive bot, probe, write WebM |
+| `scripts/capture-gameplay.mjs` | Orchestrator: Vite server, headless Chromium, record, drive bot, probe, write WebM; progress + preflight |
 | `scripts/capture-bot.mjs` | Deterministic bot plan + `isNonTrivialClip` predicate (pure, testable) |
 | `scripts/capture-bot.d.mts` | Types for the plain-JS bot module |
-| `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder and probe predicate |
+| `scripts/capture-progress.mjs` | Pure duration / ETA / progress-bar formatting + setup hint |
+| `scripts/capture-progress.d.mts` | Types for the progress module |
+| `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe predicate and progress helpers |
 | `package.json` | `capture` / `capture:install` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
