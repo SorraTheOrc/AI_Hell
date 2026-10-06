@@ -50,6 +50,15 @@ export interface BotEnemy {
   readonly alive: boolean;
   /** Archetype key, e.g. `'scout'`, `'diver'`, `'asteroid'`. */
   readonly archetype: string;
+  /**
+   * Whether the enemy is inside a fire "tell" (advance cue) window and is
+   * therefore about to shoot.  Exposed by the firing archetypes that use a
+   * tell (Scout, Phaser); absent for enemies that fire without a tell
+   * (Diver, Tank) and for non-firing entities.  The bot uses this to steer
+   * off an aimed shot's line before it is fired (best-effort
+   * fire-pattern avoidance).
+   */
+  readonly isTelling?: boolean;
 }
 
 /** An in-flight projectile with position and velocity. */
@@ -115,6 +124,8 @@ export interface BotEnemySource {
   readonly y: number;
   readonly alive: boolean;
   readonly archetype: string;
+  /** Present on tell-using archetypes (Scout, Phaser); see {@link BotEnemy.isTelling}. */
+  readonly isTelling?: boolean;
 }
 
 /** Minimal enemy-bullet source: position lives on the drawn `graphics`. */
@@ -201,6 +212,9 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
       y: enemy.y,
       alive: enemy.alive,
       archetype: enemy.archetype,
+      // Carry the tell flag only when the source exposes it, so snapshots
+      // from non-tell archetypes keep their original shape.
+      ...(enemy.isTelling !== undefined ? { isTelling: enemy.isTelling } : {}),
     })),
     enemyBullets: scene.getEnemyBullets().map((bullet) => ({
       x: bullet.graphics.x,

@@ -72,6 +72,22 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
     expect(snapshot.aliveCount).toBe(1);
   });
 
+  it('carries the fire-tell flag when the enemy source exposes it', () => {
+    const scene = makeScene({
+      getEnemies: () => [
+        { x: 100, y: 200, alive: true, archetype: 'scout', isTelling: true },
+        { x: 120, y: 220, alive: true, archetype: 'phaser', isTelling: false },
+        { x: 300, y: 400, alive: true, archetype: 'diver' },
+      ],
+    });
+
+    const snapshot = buildBotSnapshot(scene);
+
+    expect(snapshot.enemies[0].isTelling).toBe(true);
+    expect(snapshot.enemies[1].isTelling).toBe(false);
+    expect(snapshot.enemies[2].isTelling).toBeUndefined();
+  });
+
   it('maps enemy bullets from their graphics position plus velocity', () => {
     const scene = makeScene({
       getEnemyBullets: () => [
