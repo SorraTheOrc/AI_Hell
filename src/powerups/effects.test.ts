@@ -516,19 +516,62 @@ describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
 
 // ── P4 Bomb ──────────────────────────────────────────────────────────
 
-describe('P4 Bomb: instant bullet clear, no registry state', () => {
-  it('is a no-op in the registry (scene clears bullets) but still levels up', () => {
+describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y3LB)', () => {
+  it('a field pickup queues exactly one pulse and leaves no permanent state', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
     reg.applyCollect('P4');
-    expect(reg.isShielded).toBe(false);
-    expect(reg.isPhased).toBe(false);
+
+    expect(reg.isBombPermanent()).toBe(false);
     expect(reg.activeEffects()).toHaveLength(0);
     expect(store.getLevel('P4')).toBe(1);
-    // Re-collect is also a benign no-op in the registry.
+
+    // The queued pulse fires once, then never again.
+    expect(reg.updateBomb(0.016)).toBe(true);
+    expect(reg.updateBomb(10)).toBe(false);
+    expect(reg.updateBomb(10)).toBe(false);
+  });
+
+  it('a hold-full reward is permanent: immediate pulse then the resolved interval', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P4', true);
+    expect(reg.isBombPermanent()).toBe(true);
+    expect(
+      reg.activeEffects().some((e) => e.id === 'P4' && e.permanent),
+    ).toBe(true);
+
+    const interval = reg.bombInterval();
+    expect(interval).toBeCloseTo(
+      1 / resolvePowerUpAtLevel('P4', 0).bombFrequency!,
+      10,
+    );
+
+    expect(reg.updateBomb(0.016)).toBe(true); // immediate
+    expect(reg.updateBomb(interval - 0.1)).toBe(false);
+    expect(reg.updateBomb(0.2)).toBe(true); // interval elapsed
+  });
+
+  it('resolves bombRange/bombInterval live so a level-up strengthens later pulses', () => {
+    const reg = new EffectsRegistry();
     reg.applyCollect('P4');
-    expect(reg.activeEffects()).toHaveLength(0);
-    expect(store.getLevel('P4')).toBe(2);
+    const baseRange = reg.bombRange();
+    const baseInterval = reg.bombInterval();
+
+    reg.applyCollect('P4');
+
+    expect(reg.bombRange()).toBeGreaterThan(baseRange);
+    expect(reg.bombInterval()).toBeLessThan(baseInterval);
+  });
+
+  it('reset() clears the permanent flag and any pending pulse', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P4', true);
+
+    reg.reset();
+
+    expect(reg.isBombPermanent()).toBe(false);
+    expect(reg.activeEffects().some((e) => e.id === 'P4')).toBe(false);
+    expect(reg.updateBomb(1)).toBe(false);
   });
 });
 

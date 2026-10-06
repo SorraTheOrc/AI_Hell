@@ -30,7 +30,7 @@
  * **Shared power-up drop layer:** the opt-in power-up layer runs the same
  * lifecycle, collection gate, P9 magnet, P4 bomb notice and per-type pickup
  * cues as the game, via the shared `src/scenes/core/dropLayer.ts` template
- * methods (`_updateDropLayer` etc.) and `BombNotice`; only the spawn *source*
+ * methods (`_updateDropLayer` etc.); only the spawn *source*
  * (a timer, not a kill chance) is gym-specific (AH-0MUII3CXX0023H24, gap 4).
  *
  * **Shared mineral collection + hold + choice:** the collection/absorption
@@ -92,7 +92,6 @@ import {
   type PowerUpPlacement,
 } from '../../../powerups/placement';
 import { type PowerUpSpawner } from '../../../powerups/spawner';
-import { BombNotice } from '../../core/BombNotice';
 import {
   getPowerUpById,
   isWeaponDrop,
@@ -470,8 +469,6 @@ export class GymFormationScene<
   private powerUpSpawnInterval = 0;
   private powerUpSpawnTimer = 0;
   private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
-  /** Shared P4 bomb notice (created with the opt-in drop layer). */
-  private bombNotice: BombNotice | null = null;
   private powerUpSpawnCount = 0;
   /** Shared active-effect registry (effects applied by collected drops). */
   private effectsRegistry = new EffectsRegistry();
@@ -695,7 +692,6 @@ export class GymFormationScene<
     this.powerUpSpawnInterval = 0;
     this.powerUpSpawnTimer = 0;
     this.powerUpSpawnCount = 0;
-    this.bombNotice = null;
     this.hud = null;
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
@@ -737,8 +733,6 @@ export class GymFormationScene<
     for (const drop of this.powerUpDrops) drop.graphics.destroy();
     this.powerUpDrops = [];
     this.powerUpSpawnCount = 0;
-    this.bombNotice?.destroy();
-    this.bombNotice = null;
 
     for (const mineral of this.minerals) mineral.destroy();
     this.minerals = [];
@@ -837,22 +831,8 @@ export class GymFormationScene<
       getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
     });
 
-    // Shared P4 bomb notice — shown by the shared collect path when the
-    // scene collects a P4 (gap 4, AC3).
-    this.bombNotice = new BombNotice(this, {
-      x: GAME_WIDTH / 2,
-      y: 24,
-      fontSize: '14px',
-      padding: { x: 6, y: 2 },
-    });
-
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
-  }
-
-  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
-  protected override _getBombNotice(): BombNotice | null {
-    return this.bombNotice;
   }
 
   /**
@@ -1289,11 +1269,6 @@ export class GymFormationScene<
   /** In-flight absorb animations for collected drops (test seam). */
   getCollectAnimations(): CollectAnimationHandle[] {
     return [...this.collectAnimations];
-  }
-
-  /** Whether the P4 bomb notice is currently visible (for tests). */
-  isBombNoticeVisible(): boolean {
-    return this.bombNotice?.isVisible() ?? false;
   }
 
   /** Cumulative number of drops spawned since the scene started. */

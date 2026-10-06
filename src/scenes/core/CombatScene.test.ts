@@ -254,6 +254,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   runClearEnemyBullets() {
     this._clearEnemyBullets();
   }
+  runUpdateP4Bomb(dt: number) {
+    this._updateP4Bomb(dt);
+  }
   runHandleTeleport() {
     this._handleTeleport();
   }
@@ -422,15 +425,22 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(drop.absorbing).toBe(true);
   });
 
-  it('AC3 — _collectDrop clears enemy bullets for a P4 bomb', async () => {
+  it('AC3 — _collectDrop queues a P4 pulse; the shared bomb step clears in range', async () => {
     const scene = await boot();
-    scene.bullets.push(new StubBullet(scene, 1, 1), new StubBullet(scene, 2, 2));
+    scene.addPlayer({ x: 120, y: 120 });
+    const inside = new StubBullet(scene, 130, 120);
+    const outside = new StubBullet(scene, 900, 900);
+    scene.bullets.push(inside, outside);
     const drop = scene.addDrop('P4');
 
     scene.runCollectDrop(drop);
-
-    expect(scene.bullets).toHaveLength(0);
+    // Collection queues the pulse but does not clear anything itself.
+    expect(scene.bullets).toHaveLength(2);
     expect(scene.hooks).toContain('onPowerUpCollected:P4');
+
+    scene.runUpdateP4Bomb(0.016);
+    expect(scene.bullets).toEqual([outside]);
+    expect(inside.graphics.active).toBe(false);
   });
 
   it('AC3 — _clearEnemyBullets destroys and empties the enemy bullets', async () => {

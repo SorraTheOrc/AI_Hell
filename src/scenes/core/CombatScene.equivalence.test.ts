@@ -1454,29 +1454,50 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     });
   });
 
-  it('shows the P4 bomb notice in every scene that can collect a P4', async () => {
+  it('drives the P4 ranged bomb pulse identically in the game and every gym', async () => {
     const { play, formation, combat } = await bootDrops();
+    const owners: EnemyBulletOwner[] = [play, formation, combat];
 
-    const playDrop = play.spawnPowerUpDrop('P4', play.getPlayer()!.x, play.getPlayer()!.y)!;
-    const fDrop = formation.spawnPowerUpDrop('P4', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
-    const cDrop = combat.spawnDrop('P4', combat.getPlayer()!.x, combat.getPlayer()!.y);
-    for (const drop of [playDrop, fDrop, cDrop]) drop.powerUp.advance(0.5);
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
 
-    play.tick(0.001);
-    formation.tick(0.001);
-    combat.tick(0.001);
+    for (const owner of owners) {
+      const player = owner.getPlayer()!;
+      // The level-0 bomb range is 120 px: 50 px is inside, 400 px outside.
+      inside.set(
+        owner,
+        pushEnemyBullet(owner, {
+          x: player.x + 50,
+          y: player.y,
+          vx: 0,
+          vy: 0,
+          lifetime: 5,
+        }),
+      );
+      outside.set(
+        owner,
+        pushEnemyBullet(owner, {
+          x: player.x + 400,
+          y: player.y,
+          vx: 0,
+          vy: 0,
+          lifetime: 5,
+        }),
+      );
+      // Grant the permanent (hold-full) bomb — the shared pulse path fires it.
+      owner.getEffectsRegistry().applyCollect('P4', true);
+    }
 
-    expect(play.isBombNoticeVisible()).toBe(true);
-    expect(formation.isBombNoticeVisible()).toBe(true);
-    expect(combat.isBombNoticeVisible()).toBe(true);
+    play.tick(0.016);
+    formation.tick(0.016);
+    combat.tick(0.016);
 
-    // The shared component auto-hides after its 1.2 s timer everywhere.
-    play.tick(2);
-    formation.tick(2);
-    combat.tick(2);
-    expect(play.isBombNoticeVisible()).toBe(false);
-    expect(formation.isBombNoticeVisible()).toBe(false);
-    expect(combat.isBombNoticeVisible()).toBe(false);
+    for (const owner of owners) {
+      const live = enemyBulletGraphics(owner);
+      expect(live, 'in-range bullet cleared').not.toContain(inside.get(owner));
+      expect(live, 'out-of-range bullet survives').toContain(outside.get(owner));
+      expect(owner.getEffectsRegistry().isBombPermanent()).toBe(true);
+    }
   });
 
   it('plays the same per-type cue for the same drop in every scene', async () => {

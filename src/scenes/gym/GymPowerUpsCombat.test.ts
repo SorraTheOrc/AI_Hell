@@ -382,43 +382,45 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
     booted = null;
   });
 
-  it('collecting P4 clears all on-screen enemy bullets', async () => {
+  it('collecting P4 clears enemy bullets within range and spares those outside', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
     // Place enemy bullets deterministically so the assertion tests the P4
-    // clear itself, not scout fire cadence vs bullet lifetime
+    // ranged clear itself, not scout fire cadence vs bullet lifetime
     // (AH-0MU960UTE001PTV0 — shorter lifetimes made the previous
     // tick-until-bullets-exist approach timing-fragile).
-    scene.spawnEnemyBullet(200, 100, 0, 0);
-    scene.spawnEnemyBullet(300, 150, 0, 0);
-    const bulletsBefore = scene.getEnemyBullets();
-    expect(bulletsBefore.length).toBeGreaterThan(0);
+    scene.spawnEnemyBullet(530, 270, 0, 0); // 50 px → inside the 120 px base range
+    scene.spawnEnemyBullet(100, 100, 0, 0); // well outside
+    expect(scene.getEnemyBullets()).toHaveLength(2);
 
-    // Collect P4.
+    // Collect P4 on the first tick, then advance one more so the shared bomb
+    // step fires the queued pulse.
     scene.spawnDrop('P4', 480, 270);
     scene.advanceDrops(0.5);
-    scene.tick(1 / 60);
+    scene.tick(1 / 60); // collection queues the pulse
+    scene.tick(1 / 60); // the shared bomb step fires it
 
     const bulletsAfter = scene.getEnemyBullets();
-    expect(bulletsAfter).toHaveLength(0);
+    expect(bulletsAfter).toHaveLength(1);
+    expect(bulletsAfter[0].graphics.x).toBeCloseTo(100, 5);
   });
 
-  it('P4 triggers a brief bomb notice', async () => {
+  it('a P4 field pickup is a one-shot and leaves no permanent effect', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    for (let i = 0; i < 200; i++) {
-      scene.tick(1 / 60);
-    }
-
     scene.spawnDrop('P4', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
+    scene.tick(1 / 60);
 
-    expect(scene.isBombNoticeVisible()).toBe(true);
+    expect(scene.getEffectsRegistry().isBombPermanent()).toBe(false);
+    expect(
+      scene.getEffectsRegistry().activeEffects().some((e) => e.id === 'P4'),
+    ).toBe(false);
   });
 });
 

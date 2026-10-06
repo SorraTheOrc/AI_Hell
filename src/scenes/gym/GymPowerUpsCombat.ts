@@ -51,7 +51,7 @@
  *
  * The drop lifecycle, collection gate, P9 magnet, P4 bomb notice and
  * per-type pickup cues run through the shared `src/scenes/core/dropLayer.ts`
- * template methods and `BombNotice`, so this gym cannot drift from the game;
+ * template methods, so this gym cannot drift from the game;
  * only the round-robin spawn *source* is gym-specific
  * (AH-0MUII3CXX0023H24, gap 4).
  *
@@ -82,7 +82,6 @@ import {
   getPowerUpById,
 } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
-import { BombNotice } from '../core/BombNotice';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
 import { playSpawnSound } from '../../audio/effects';
@@ -163,7 +162,6 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
-  private bombNotice: BombNotice | null = null;
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
@@ -201,12 +199,6 @@ export class GymPowerUpsCombat extends CombatScene<
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    this.bombNotice = new BombNotice(this, {
-      x: GAME_WIDTH / 2,
-      y: 24,
-      fontSize: '14px',
-      padding: { x: 6, y: 2 },
-    });
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
@@ -265,7 +257,6 @@ export class GymPowerUpsCombat extends CombatScene<
     this.formationBaseY = COMBAT_START_Y;
     this.shootEnabled = true;
     this.shieldBubble = null;
-    this.bombNotice = null;
     this.shootButton = null;
     this.helpHandle = null;
   }
@@ -288,8 +279,6 @@ export class GymPowerUpsCombat extends CombatScene<
     this.hud = null;
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNotice?.destroy();
-    this.bombNotice = null;
     this.shootButton?.destroy();
     this.shootButton = null;
     this.helpHandle = null;
@@ -554,11 +543,6 @@ export class GymPowerUpsCombat extends CombatScene<
     return COMBAT_HIT_INVULNERABLE_DURATION;
   }
 
-  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
-  protected override _getBombNotice(): BombNotice | null {
-    return this.bombNotice;
-  }
-
   /** Scouts are persistent threats — ramming does not destroy them. */
   protected override onPlayerRamsEnemy(_enemy: Scout): void {}
 
@@ -598,10 +582,6 @@ export class GymPowerUpsCombat extends CombatScene<
   /** Whether the phase ghost is currently active (for tests). */
   isPhaseGhostActive(): boolean {
     return this.effectsRegistry.isPhased;
-  }
-  /** Whether the bomb notice is currently visible (for tests). */
-  isBombNoticeVisible(): boolean {
-    return this.bombNotice?.isVisible() ?? false;
   }
   /** Player explosion VFX graphics (empty once tweens end; for tests). */
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {

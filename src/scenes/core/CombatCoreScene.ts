@@ -98,9 +98,12 @@ import {
   applyMineralScoop,
   type MovableMineral,
 } from '../../powerups/mineralScoop';
-import type { BombNotice } from './BombNotice';
+import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { BeatClock, createBeatClock } from '../../utils/beat';
+
+/** Ring colour for the P4 bomb pulse VFX (hot magenta-red). */
+export const BOMB_PULSE_COLOR = 0xff5577;
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -189,6 +192,12 @@ export class CombatCoreScene<
    * shared effect registries.
    */
   protected phaseShiftEffects: Phaser.GameObjects.GameObject[] = [];
+  /**
+   * Live P4 bomb-pulse ring VFX (AH-0MUVM9RAO004Y3LB). The ring removes
+   * itself on completion; the registry is also cleared on restart/shutdown
+   * so an in-flight pulse leaks nothing.
+   */
+  protected bombPulseEffects: Phaser.GameObjects.Graphics[] = [];
   /** Lazily-created Phase Shift treatment controller. */
   private phaseShiftJuice: PhaseShiftJuice | null = null;
 
@@ -362,15 +371,6 @@ export class CombatCoreScene<
   ): void {}
 
   /**
-   * The scene's P4 bomb notice, or null when the scene has none. Default
-   * null; every scene that can collect P4 supplies its {@link BombNotice}
-   * so the shared collect path shows the notice (AC3).
-   */
-  protected _getBombNotice(): BombNotice | null {
-    return null;
-  }
-
-  /**
    * Plays the per-type pickup activation cue through the single shared
    * `playDropPickupCue` dispatcher, so every scene plays the same cue set
    * (generic pop + P5/P8/P9 + weapon/Reset, generic chime fallback).
@@ -380,13 +380,13 @@ export class CombatCoreScene<
   }
 
   /**
-   * Hook run after a power-up (non-weapon) drop is collected. Default:
-   * show the P4 bomb notice when the scene supplies one; scenes override
-   * to add their lifecycle extras (and call `super`).
+   * Hook run after a power-up (non-weapon) drop is collected. Default
+   * no-op; scenes override to add their lifecycle extras (and call
+   * `super`). The P4 bomb is handled entirely by the shared pulse path
+   * ({@link CombatCoreScene._updateP4Bomb}), so no notice is shown here
+   * (AH-0MUVM9RAO004Y3LB, producer Q3=A).
    */
-  protected onPowerUpCollected(drop: TDrop): void {
-    if (drop.dropId === 'P4') this._getBombNotice()?.show();
-  }
+  protected onPowerUpCollected(_drop: TDrop): void {}
 
   /**
    * Hook run after a weapon drop is collected. Default no-op; scenes
@@ -451,7 +451,9 @@ export class CombatCoreScene<
    * 3. read the scheme-appropriate input,
    * 4. step physics (screen-wrap),
    * 5. auto-fire the active weapons (unless the scene opts out via
-   *    {@link CombatCoreScene.autoFireEnabled}).
+   *    {@link CombatCoreScene.autoFireEnabled}),
+   * 6. advance the P4 bomb pulse and fire a ranged clear when due
+   *    ({@link CombatCoreScene._updateP4Bomb}).
    *
    * Scenes call this instead of a local copy, so a control/ordering fix
    * reaches the game and every gym at once. A scene with no player is a
@@ -471,6 +473,11 @@ export class CombatCoreScene<
     if (input) player.setInput(input);
     player.physicsTick(dt, this.scale.width, this.scale.height);
     if (this.autoFireEnabled()) this._autoFire(dt);
+    // P4 bomb: advance the shared pulse state and fire a ranged clear when
+    // one is due. Runs after physics so the pulse is centred on the player's
+    // current position, and from this single shared step so the game and
+    // every gym cannot diverge (AH-0MUVM9RAO004Y3LB).
+    this._updateP4Bomb(dt);
   }
 
   /**
@@ -601,9 +608,10 @@ export class CombatCoreScene<
     } else {
       const effect = drop.powerUp.tryCollect();
       if (!effect) return;
-      if (drop.dropId === 'P4') {
-        this._clearEnemyBullets();
-      }
+      // P4's ranged clear/pulse is driven from the registry by the shared
+      // per-frame bomb step ({@link CombatCoreScene._updateP4Bomb}) — a
+      // field pickup queues one pulse, a hold-full reward a permanent one
+      // (AH-0MUVM9RAO004Y3LB).
       registry.applyCollect(drop.dropId as PowerUpId);
       this.onPowerUpCollected(drop);
     }
@@ -688,17 +696,16 @@ export class CombatCoreScene<
   }
 
   /**
-   * The complete shared per-frame drop sequence: advance the P4 notice,
-   * apply the P9 magnet, advance the lifecycle, collect overlaps, then
-   * advance the absorb animations. Scenes that interleave a spawn source
-   * call the individual shared steps instead.
+   * The complete shared per-frame drop sequence: apply the P9 magnet,
+   * advance the lifecycle, collect overlaps, then advance the absorb
+   * animations. Scenes that interleave a spawn source call the individual
+   * shared steps instead.
    */
   protected _updateDropLayer(
     drops: TDrop[],
     dt: number,
     options?: { onDespawn?: (drop: TDrop) => void },
   ): TDrop[] {
-    this._getBombNotice()?.update(dt);
     this._applyDropMagnet(drops, dt);
     const kept = this._advanceDropLifecycles(drops, dt, options?.onDespawn);
     const remaining = this._collectOverlappingDrops(kept);
@@ -740,6 +747,65 @@ export class CombatCoreScene<
     this.setEnemyBullets([]);
   }
 
+  /**
+   * Clears every enemy bullet whose centre lies within `range` px of the
+   * point `(x, y)`, keeping the rest — the shared P4 ranged clear
+   * (AH-0MUVM9RAO004Y3LB, AC4). Bullets only: enemy entities are never
+   * touched, so the bomb deals no damage (AC3).
+   *
+   * Position is read from each bullet's `graphics` object (the shared
+   * bullet lifecycle keeps it authoritative) so the same implementation
+   * serves the game and every gym.
+   *
+   * @param x - Blast centre x (px).
+   * @param y - Blast centre y (px).
+   * @param range - Blast radius (px, inclusive).
+   */
+  protected _clearEnemyBulletsInRange(x: number, y: number, range: number): void {
+    const survivors: TBullet[] = [];
+    for (const bullet of this.getEnemyBullets()) {
+      if (Math.hypot(bullet.graphics.x - x, bullet.graphics.y - y) <= range) {
+        bullet.graphics.destroy();
+      } else {
+        survivors.push(bullet);
+      }
+    }
+    this.setEnemyBullets(survivors);
+  }
+
+  /**
+   * Advances the shared P4 bomb pulse and, when the registry reports a pulse
+   * is due, clears enemy bullets within the resolved range around the player
+   * and spawns the expanding-ring VFX (AH-0MUVM9RAO004Y3LB).
+   *
+   * Called from {@link CombatCoreScene._tickPlayer} so the game and every
+   * gym drive the pulse from exactly one implementation; a scene with no
+   * player is a no-op.
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateP4Bomb(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    if (!registry.updateBomb(dt)) return;
+    const player = this.getPlayer();
+    if (!player) return;
+    const range = registry.bombRange();
+    this._clearEnemyBulletsInRange(player.x, player.y, range);
+    this._spawnBombPulse(player.x, player.y, range);
+  }
+
+  /**
+   * Spawns the P4 expanding-ring pulse VFX at the cleared radius. Reuses the
+   * shared `spawnNovaRing` helper (tracked in {@link bombPulseEffects}) so
+   * the game and every gym show the same feedback.
+   */
+  protected _spawnBombPulse(x: number, y: number, range: number): void {
+    spawnNovaRing(this, x, y, range, {
+      registry: this.bombPulseEffects,
+      color: BOMB_PULSE_COLOR,
+    });
+  }
+
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
 
   /**
@@ -774,6 +840,9 @@ export class CombatCoreScene<
     // only teardown path is here.
     for (const anim of this.collectAnimations) anim.destroy();
     this.collectAnimations = [];
+    // In-flight P4 pulse rings are likewise owned by their registry.
+    for (const effect of this.bombPulseEffects) effect.destroy();
+    this.bombPulseEffects = [];
   }
 
   /**
@@ -794,6 +863,8 @@ export class CombatCoreScene<
     this.phaseShiftEffects = [];
     for (const anim of this.collectAnimations) anim.destroy();
     this.collectAnimations = [];
+    for (const effect of this.bombPulseEffects) effect.destroy();
+    this.bombPulseEffects = [];
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();

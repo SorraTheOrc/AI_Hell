@@ -2348,41 +2348,31 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(player.alpha).not.toBeCloseTo(0.45);
   });
 
-  // ── P4 Bomb-clear visual notice (AH-0MU8QVH3A009RS1G) ───────────
+  // ── P4 Bomb ranged clear (AH-0MUVM9RAO004Y3LB) ───────────────────
 
-  it('P4 collection shows the bomb notice and clears enemy bullets', async () => {
+  it('P4 field pickup clears enemy bullets within range exactly once', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
-    // Park an enemy bullet on screen so the bomb has something to clear.
+    // One bullet inside the base 120 px range, one well outside it.
     scene.spawnEnemyBullet(player.x + 50, player.y, 0, 0);
+    scene.spawnEnemyBullet(player.x + 400, player.y, 0, 0);
+    expect(scene.getEnemyBullets().length).toBe(2);
+
+    // Collect a P4 bomb.
+    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016); // collection queues the one-shot pulse
+    scene.tick(0.016); // the shared bomb step fires it exactly once
+
+    // Field pickup: only the in-range bullet is cleared and no persistent
+    // effect row remains.
     expect(scene.getEnemyBullets().length).toBe(1);
-
-    // Collect a P4 bomb.
-    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
-
-    // Bullets cleared and the notice is visible.
-    expect(scene.getEnemyBullets().length).toBe(0);
-    expect(scene.isBombNoticeVisible()).toBe(true);
-  });
-
-  it('P4 bomb notice auto-hides after its timeout', async () => {
-    const scene = await bootPlay();
-    const player = scene.getPlayer()!;
-
-    // Collect a P4 bomb.
-    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
-    expect(scene.isBombNoticeVisible()).toBe(true);
-
-    // Advance past the ~1.2 s notice duration.
-    for (let i = 0; i < 80; i++) scene.tick(0.05); // ~4 s
-    expect(scene.isBombNoticeVisible()).toBe(false);
+    expect(scene.getEffectsRegistry().isBombPermanent()).toBe(false);
+    expect(
+      scene.getEffectsRegistry().activeEffects().some((e) => e.id === 'P4'),
+    ).toBe(false);
   });
 
   it('P4 blast does not damage enemies (bullets cleared only)', async () => {
@@ -2394,6 +2384,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
     scene.tick(0.016);
 
     // No enemies harmed by the bomb.

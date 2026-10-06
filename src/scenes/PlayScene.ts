@@ -19,10 +19,10 @@
  * the game and gyms cannot diverge.
  *
  * **Shared power-up drop layer:** the drop lifecycle, collection gate, P9
- * magnet, P4 bomb notice and per-type pickup cues are inherited from the
- * shared drop layer (`src/scenes/core/dropLayer.ts`, `BombNotice.ts`); this
- * scene supplies only the kill-chance spawn *source* (AH-0MUII3CXX0023H24,
- * gap 4).
+ * magnet and per-type pickup cues are inherited from the shared drop layer
+ * (`src/scenes/core/dropLayer.ts`); the P4 ranged bomb pulse is driven by
+ * the shared `CombatCoreScene._updateP4Bomb` path. This scene supplies only
+ * the kill-chance spawn *source* (AH-0MUII3CXX0023H24, gap 4).
  *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
  *
@@ -93,7 +93,6 @@ import {
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
-import { BombNotice } from './core/BombNotice';
 import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
@@ -326,8 +325,6 @@ export class PlayScene extends CombatScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
-  /** P4 Bomb notice — shared component (gap 4), hidden until collected. */
-  private bombNotice: BombNotice | null = null;
 
   private driftX = 0;
   private driftDir = 1;
@@ -442,8 +439,6 @@ export class PlayScene extends CombatScene<
     // P3 Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    // P4 Bomb notice — shared component (gap 4), hidden until collected.
-    this.bombNotice = new BombNotice(this);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, {
@@ -609,8 +604,6 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNotice?.destroy();
-    this.bombNotice = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -1677,14 +1670,6 @@ export class PlayScene extends CombatScene<
 
   // ── Power-up drops ──────────────────────────────────────────────
 
-  /**
-   * The scene's P4 bomb notice (shared component, gap 4) — the shared
-   * collect path shows it through this accessor (AC3).
-   */
-  protected override _getBombNotice(): BombNotice | null {
-    return this.bombNotice;
-  }
-
   /** Rolls (and possibly spawns) a power-up drop at a kill position. */
   private _maybeDropPowerUp(x: number, y: number): void {
     if (!this.dropSpawner) return;
@@ -1743,9 +1728,9 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Game extras after a power-up is collected: the shared P4 bomb notice
-   * plus the P8 extra life (keeping the HUD lives counter aligned with run
-   * state). The base shows the notice through `_getBombNotice()`.
+   * Game extras after a power-up is collected: the P8 extra life (keeping
+   * the HUD lives counter aligned with run state). The P4 bomb is handled
+   * by the shared pulse path, not here.
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
     super.onPowerUpCollected(drop);
@@ -1978,11 +1963,6 @@ export class PlayScene extends CombatScene<
   /** Whether the P3 shield bubble was drawn in the last visual update (for tests). */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
-  }
-
-  /** Whether the P4 bomb notice is currently visible (for tests). */
-  isBombNoticeVisible(): boolean {
-    return this.bombNotice?.isVisible() ?? false;
   }
 
   /** Whether the P6 phase ghost is currently active (for tests). */

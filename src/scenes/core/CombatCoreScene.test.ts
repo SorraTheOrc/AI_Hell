@@ -19,6 +19,7 @@ import {
   type CombatDrop,
   type CombatEnemyBullet,
 } from './CombatCoreScene';
+import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
 // These base tests exercise the fourDirectional input mapping; the app
 // default is Asteroids, so seed the scheme explicitly for the suite.
@@ -166,6 +167,15 @@ class StubCoreScene extends BareCoreScene {
   }
   runClearEnemyBullets(): void {
     this._clearEnemyBullets();
+  }
+  runClearEnemyBulletsInRange(x: number, y: number, range: number): void {
+    this._clearEnemyBulletsInRange(x, y, range);
+  }
+  runUpdateP4Bomb(dt: number): void {
+    this._updateP4Bomb(dt);
+  }
+  getBombPulseEffects(): Phaser.GameObjects.Graphics[] {
+    return this.bombPulseEffects;
   }
   runSpawnPlayerExplosion(x: number, y: number): void {
     this._spawnPlayerExplosion(x, y);
@@ -466,18 +476,125 @@ describe('CombatCoreScene — shared base class', () => {
     expect(drop.absorbing).toBe(true);
   });
 
-  it('AC4 — _collectDrop clears enemy bullets for a P4 bomb', async () => {
+  it('AC4 — _collectDrop queues a P4 pulse; the shared bomb step resolves it', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
-    scene.bullets.push(
-      new StubBullet(scene, 1, 1),
-      new StubBullet(scene, 2, 2),
-    );
+    scene.addPlayer({ x: 120, y: 120 });
+    const inside = new StubBullet(scene, 130, 120);
+    const outside = new StubBullet(scene, 900, 900);
+    scene.bullets.push(inside, outside);
     const drop = scene.addDrop('P4');
 
     scene.runCollectDrop(drop);
 
-    expect(scene.bullets).toHaveLength(0);
+    // Collection queues the pulse but does not clear anything itself.
+    expect(scene.bullets).toHaveLength(2);
     expect(scene.hooks).toContain('onPowerUpCollected:P4');
+
+    // The shared per-frame bomb step fires the queued ranged clear.
+    scene.runUpdateP4Bomb(0.016);
+    expect(scene.bullets).toEqual([outside]);
+    expect(inside.graphics.active).toBe(false);
+  });
+
+  it('AC4 (P4) — _clearEnemyBulletsInRange clears only in-range bullets (inclusive boundary)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const inside = new StubBullet(scene, 100, 100);
+    const edge = new StubBullet(scene, 120, 100); // exactly range → cleared
+    const outside = new StubBullet(scene, 121, 100);
+    scene.bullets.push(inside, edge, outside);
+
+    scene.runClearEnemyBulletsInRange(100, 100, 20);
+
+    expect(scene.bullets).toEqual([outside]);
+    expect(inside.graphics.active).toBe(false);
+    expect(edge.graphics.active).toBe(false);
+    expect(outside.graphics.active).toBe(true);
+
+    // The shared range oracle agrees with the clear.
+    expectRangedClear(
+      [
+        { x: 100, y: 100, destroyed: !inside.graphics.active },
+        { x: 120, y: 100, destroyed: !edge.graphics.active },
+        { x: 121, y: 100, destroyed: !outside.graphics.active },
+      ],
+      100,
+      100,
+      20,
+    );
+  });
+
+  it('AC1 (P4) — a field pickup fires exactly one pulse (no persistent state)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    const inside = new StubBullet(scene, 150, 100);
+    const outside = new StubBullet(scene, 900, 100);
+    scene.bullets.push(inside, outside);
+
+    scene.runCollectDrop(scene.addDrop('P4'));
+    expect(scene.effects.isBombPermanent()).toBe(false);
+    expect(scene.effects.activeEffects().some((e) => e.id === 'P4')).toBe(false);
+
+    scene.runUpdateP4Bomb(0.016);
+    expect(scene.bullets).toEqual([outside]);
+
+    // One-shot: no later pulse fires.
+    scene.bullets.push(new StubBullet(scene, 150, 100));
+    scene.runUpdateP4Bomb(10);
+    expect(scene.bullets).toHaveLength(2);
+  });
+
+  it('AC2/AC4 (P4) — a permanent bomb fires immediately, then every interval', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('P4', true);
+    expect(scene.effects.isBombPermanent()).toBe(true);
+
+    // Immediate pulse on the first update (hold-full reward).
+    scene.bullets.push(new StubBullet(scene, 150, 100));
+    scene.runUpdateP4Bomb(0.016);
+    expect(scene.bullets).toHaveLength(0);
+
+    // No pulse again before the resolved interval elapses.
+    scene.bullets.push(new StubBullet(scene, 150, 100));
+    scene.runUpdateP4Bomb(1);
+    expect(scene.bullets).toHaveLength(1);
+
+    // A pulse at the interval boundary clears the refreshed bullet.
+    scene.runUpdateP4Bomb(scene.effects.bombInterval());
+    expect(scene.bullets).toHaveLength(0);
+  });
+
+  it('AC3 (P4) — range resolves live so a level-up enlarges later pulses', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('P4', true);
+    const baseRange = scene.effects.bombRange();
+
+    // A second collection is a level-up; the live range grows.
+    scene.effects.applyCollect('P4', true);
+    expect(scene.effects.bombRange()).toBeGreaterThan(baseRange);
+  });
+
+  it('AC5 (P4) — each pulse spawns the shared expanding-ring VFX', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    expect(scene.getBombPulseEffects()).toHaveLength(0);
+
+    scene.effects.applyCollect('P4', true);
+    scene.runUpdateP4Bomb(0.016);
+
+    expect(scene.getBombPulseEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AC7 (P4) — reset() clears the permanent flag and pulse state', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.effects.applyCollect('P4', true);
+    expect(scene.effects.isBombPermanent()).toBe(true);
+
+    scene.effects.reset();
+
+    expect(scene.effects.isBombPermanent()).toBe(false);
+    expect(scene.effects.activeEffects().some((e) => e.id === 'P4')).toBe(false);
   });
 
   it('AC4 — _collectDrop ignores a drop that is not yet collectible', async () => {

@@ -227,6 +227,22 @@ export class EffectsRegistry {
    */
   private _shieldRemaining = 0;
 
+  // ── P4 bomb pulse state (AH-0MUVM9RAO004Y3LB) ────────────────────
+  /**
+   * True when a hold-full P4 granted a permanent bomb for the run: it never
+   * expires and pulses every {@link bombInterval} seconds. Cleared only by
+   * `reset()`.
+   */
+  private _bombPermanent = false;
+  /** Seconds until the next permanent-bomb pulse (unused when not permanent). */
+  private _bombPulseTimer = 0;
+  /**
+   * One-shot pulse request queued by a field pickup: the next
+   * {@link updateBomb} fires exactly once and clears it. A field pickup
+   * stores no other persistent state (AC1).
+   */
+  private _bombPulsePending = false;
+
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
   private _store: PowerUpLevelStore;
@@ -277,8 +293,10 @@ export class EffectsRegistry {
    *
    * - P3/P5: starts the timed `shieldDuration`/`speedDuration`, or refreshes
    *   it to the new full duration if already active.
-   * - P4: instant bomb — no registry state (scene clears bullets); the store
-   *   still tracks the collection.
+   * - P4: a field pickup queues a single ranged explosion (no persistent
+   *   state); the hold-full reward sets the run-scoped permanent flag and
+   *   pulses every resolved interval. The shared combat core performs the
+   *   actual clear from these requests (it alone knows the player/bullets).
    * - P6: stores the level-resolved `phaseCharges` (or marks the permanent
    *   reward); the phase itself is applied later by the shared combat core
    *   via `updateDanger`.
@@ -344,9 +362,19 @@ export class EffectsRegistry {
           this._startOrRefreshTimed(id, entry.type, P10_SCOOP_DURATION, false);
         }
         break;
+      case PowerUpType.BOMB:
+        // P4: a field pickup queues one ranged explosion; the hold-full
+        // reward additionally makes it permanent and pulses immediately
+        // (AH-0MUVM9RAO004Y3LB).
+        this._bombPulsePending = true;
+        if (permanent) {
+          this._bombPermanent = true;
+          this._bombPulseTimer = this.bombInterval();
+        }
+        break;
       default:
-        // P4 bomb, P6 phase, P7 teleport, P8 life: no registry-local timed
-        // state — the level store owns charges/stacks/lives.
+        // P6 phase, P7 teleport, P8 life: no registry-local timed state —
+        // the level store owns charges/stacks/lives.
         break;
     }
   }
@@ -465,6 +493,62 @@ export class EffectsRegistry {
    */
   shieldAbsorptionsRemaining(): number {
     return this._shieldRemaining;
+  }
+
+  // ── P4 bomb pulse (AH-0MUVM9RAO004Y3LB) ────────────────────────────
+
+  /** Whether a permanent (hold-full) P4 bomb is active for the run. */
+  isBombPermanent(): boolean {
+    return this._bombPermanent;
+  }
+
+  /**
+   * The resolved P4 clear radius in px at the current level. Resolved live,
+   * so a level-up mid-run enlarges every subsequent pulse (AC3).
+   */
+  bombRange(): number {
+    return this._levelStore.stats('P4').bombRange ?? 120;
+  }
+
+  /**
+   * The resolved P4 pulse interval in seconds (`1 / bombFrequency`). The
+   * model stores a monotonic pulses/second rate; the effect inverts it.
+   */
+  bombInterval(): number {
+    const frequency = this._levelStore.stats('P4').bombFrequency ?? 0.33;
+    return frequency > 0 ? 1 / frequency : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Advances the P4 bomb pulse state by `dt` and reports whether a pulse is
+   * due this frame.
+   *
+   * - A field-pickup request fires exactly once and is then gone (AC1).
+   * - A permanent bomb fires immediately on grant and then once per
+   *   {@link bombInterval} seconds for the rest of the run (AC2).
+   *
+   * The registry owns the decision; the shared combat core performs the
+   * actual ranged clear and VFX (it alone knows the player and the bullets),
+   * so the game and every gym run the same code (AC4).
+   *
+   * @param dt - Frame delta in seconds.
+   * @returns True when a pulse should be applied this frame.
+   */
+  updateBomb(dt: number): boolean {
+    if (this._bombPulsePending) {
+      this._bombPulsePending = false;
+      if (this._bombPermanent) {
+        this._bombPulseTimer = this.bombInterval();
+      }
+      return true;
+    }
+    if (!this._bombPermanent) return false;
+    this._bombPulseTimer -= dt;
+    if (this._bombPulseTimer <= 0) {
+      this._bombPulseTimer = this.bombInterval();
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -738,6 +822,15 @@ export class EffectsRegistry {
         stacks: scoopStacks,
       });
     }
+    // A permanent P4 bomb is a run-scoped active effect (never expires); a
+    // field pickup leaves no row (AC6).
+    if (this._bombPermanent) {
+      result.push({
+        id: 'P4' as PowerUpId,
+        type: PowerUpType.BOMB,
+        permanent: true,
+      });
+    }
     const teleportStacks = this._levelStore.teleportStacks();
     if (teleportStacks > 0) {
       result.push({
@@ -779,6 +872,9 @@ export class EffectsRegistry {
     this._phaseDangerCleared = true;
     this._phaseRearmCooldown = 0;
     this._shieldRemaining = 0;
+    this._bombPermanent = false;
+    this._bombPulseTimer = 0;
+    this._bombPulsePending = false;
     this._levelStore.reset();
   }
 }

@@ -2168,8 +2168,14 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(reg.magnetEffectStacks()).toBe(5);
   });
 
-  it('AC4 — P4 clears on-screen enemy bullets without damaging enemies', async () => {
-    const collect = (enemy: StubEnemy) => [new StubBullet(enemy.scene, 0, 0)];
+  it('AC4 — P4 clears in-range enemy bullets without damaging enemies', async () => {
+    // Spawn bullets on the ship (480, 270) so they sit inside the base
+    // 120 px bomb range for the ranged clear.
+    const collect = (enemy: StubEnemy) => {
+      const bullet = new StubBullet(enemy.scene);
+      bullet.graphics.setPosition(480, 270);
+      return [bullet];
+    };
     const scene = await boot(layer('P4', CLEAR), collect);
 
     // Let the formation produce a batch of on-screen enemy bullets.
@@ -2177,10 +2183,12 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.activeBullets.length).toBeGreaterThan(0);
     const aliveBefore = scene.aliveCount;
 
-    // Collect a P4 on the ship — the bomb clears every on-screen bullet.
+    // Collect a P4 on the ship — the bomb clears in-range bullets.
     const player = scene.getPlayer()!;
-    scene.spawnPowerUpDrop('P4', player.x, player.y);
-    scene.tick(0.05);
+    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+    scene.tick(0.05); // collection queues the pulse
+    scene.tick(0.05); // the shared bomb step fires it
 
     expect(scene.activeBullets).toHaveLength(0);
     expect(scene.aliveCount).toBe(aliveBefore);
