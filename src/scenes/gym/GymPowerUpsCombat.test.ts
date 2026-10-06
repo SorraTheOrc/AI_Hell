@@ -3,7 +3,7 @@
  * children AC1–AC10): discovery by the gym index, scene boot + player ship
  * with thrust movement and screen-wrap, scout V-formation + SHOOT toggle,
  * combat power-up collection, hit response, round-robin spawn, back button,
- * and visual feedback (shield bubble, phase ghost, bomb notice).
+ * and visual feedback (shield bubble, phase ghost, P4 pulse ring).
  *
  * Uses gameHarness (Phaser headless via happy-dom) — no rasterised canvas
  * checks; visuals tested via commandBuffer where applicable.

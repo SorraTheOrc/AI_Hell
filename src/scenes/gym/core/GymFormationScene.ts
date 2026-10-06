@@ -28,9 +28,10 @@
  * fraction of the minerals it absorbed, exactly as in `PlayScene`.
  *
  * **Shared power-up drop layer:** the opt-in power-up layer runs the same
- * lifecycle, collection gate, P9 magnet, P4 bomb notice and per-type pickup
- * cues as the game, via the shared `src/scenes/core/dropLayer.ts` template
- * methods (`_updateDropLayer` etc.); only the spawn *source*
+ * lifecycle, collection gate, P9 magnet and per-type pickup cues as the
+ * game, via the shared `src/scenes/core/dropLayer.ts` template methods
+ * (`_updateDropLayer` etc.); the P4 ranged bomb pulse is driven by the
+ * shared `CombatCoreScene._updateP4Bomb` path. Only the spawn *source*
  * (a timer, not a kill chance) is gym-specific (AH-0MUII3CXX0023H24, gap 4).
  *
  * **Shared mineral collection + hold + choice:** the collection/absorption

@@ -7,8 +7,9 @@
  *
  * - **P3 Shield** — 15 s bubble, absorbs its level-resolved number of hits
  *   (base 1, cap 3) before popping.
- * - **P4 Bomb** — instant clear of on-screen enemy bullets (does not damage
- *   1-HP scouts, GDD §4.4); no enemy damage.
+ * - **P4 Bomb** — ranged periodic enemy-bullet clear (does not damage
+ *   1-HP scouts, GDD §4.4); a field pickup fires one explosion, a hold-full
+ *   reward pulses at a level-resolved rate.
  * - **P6 Phase Shift** — charge-based auto-trigger: collecting P6 stores one
  *   use, and the shared danger feed activates a 1.5 s pass-through when three
  *   or more hostile bodies/bullets close within 40 px (parent
@@ -49,8 +50,8 @@
  * consumption and the P6-on-arrival grant are shared (gap 7,
  * AH-0MUII3EPU0039R5O).
  *
- * The drop lifecycle, collection gate, P9 magnet, P4 bomb notice and
- * per-type pickup cues run through the shared `src/scenes/core/dropLayer.ts`
+ * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * run through the shared `src/scenes/core/dropLayer.ts`
  * template methods, so this gym cannot drift from the game;
  * only the round-robin spawn *source* is gym-specific
  * (AH-0MUII3CXX0023H24, gap 4).
@@ -349,7 +350,7 @@ export class GymPowerUpsCombat extends CombatScene<
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
 
-    // ── Visuals (shield bubble + phase ghost + bomb notice) ─
+    // ── Visuals (shield bubble + phase ghost + P4 pulse ring) ─
     this._updateVisuals();
     this._updatePhaseShiftJuice(dt);
 
