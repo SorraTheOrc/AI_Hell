@@ -17,6 +17,18 @@
  * Context and master-gain access are injected by `effects.ts` so the shim
  * routes through the same shared context/master gain as the baked cues and
  * never constructs a context of its own.
+ *
+ * ## Dependency choice (AH-0MUTYV9ES003A3HJ)
+ *
+ * The plan originally specified a Tone.js shim. It is implemented directly on
+ * the shared Web Audio API instead: Tone.js was evaluated but **not adopted**,
+ * because it would add a new browser runtime dependency for no functional
+ * gain, and the runtime-generation evaluation
+ * (`docs/AUDIO_RUNTIME_GENERATION_EVALUATION.md`) recommends keeping this
+ * lightweight shim. Every functional requirement — continuous gain tracking
+ * bounded by {@link THRUSTER_HUM_MAX_VOLUME}, click-free retrigger with the
+ * documented growth/decay timing, a safe no-op without audio, and no retained
+ * nodes after stop — is met by this implementation.
  */
 
 /** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "all player cues"). */
