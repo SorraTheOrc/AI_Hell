@@ -477,10 +477,12 @@ with the opt-in `npm run capture` command (spike AH-0MUWMFF3C002WOBK):
   `npm run capture` boots the game in headless Chromium (Playwright), plays a
   deterministic scripted segment and writes a playable WebM to
   `capture-output/` (git-ignored). Options: `--duration <ms>`, `--output
-  <path>`, `--headed`, `--warmup <ms>`, `--port <n>`. The command probes the
-  produced clip (resolution, duration, non-black fraction, colour variety,
-  frame motion) and **exits non-zero** if it is black/static, so it can gate a
-  future job.
+  <path>`, `--headed`, `--warmup <ms>`, `--port <n>`, `--json`. The command
+  prints progress milestones and a recording heartbeat (with an ETA) to
+  stderr so a long capture never looks hung, and fails fast with the fix if
+  `playwright`/Chromium is missing. It probes the produced clip (resolution,
+  duration, non-black fraction, colour variety, frame motion) and **exits
+  non-zero** if it is black/static, so it can gate a future job.
 - **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server
   programmatically, drives `canvas.captureStream(60)` → `MediaRecorder` inside
   the page, and replays the scripted key plan from `scripts/capture-bot.mjs`

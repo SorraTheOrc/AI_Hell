@@ -42,7 +42,6 @@
  */
 
 import { createServer } from 'vite';
-import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,10 +53,97 @@ import {
   isNonTrivialClip,
   planDurationMs,
 } from './capture-bot.mjs';
+import {
+  formatDuration,
+  formatProgress,
+  setupHint,
+} from './capture-progress.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 960, height: 540 };
 const INTER_STEP_MS = 30;
+
+/** Progress heartbeat interval during recording, in milliseconds. */
+const PROGRESS_INTERVAL_MS = 2_000;
+
+/**
+ * Raised when an opt-in capture dependency is missing, so `main()` can print
+ * a short actionable message instead of a raw resolution/launch stack.
+ */
+export class CaptureSetupError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = 'CaptureSetupError';
+  }
+}
+
+/**
+ * Writes milestone lines and a single-line recording heartbeat to stderr,
+ * keeping stdout reserved for the final report / `--json` payload.
+ *
+ * On a TTY the heartbeat overwrites itself in place; when redirected (logs,
+ * CI) each heartbeat is appended on its own line.
+ *
+ * @param {NodeJS.WriteStream} [stream]
+ */
+export function createReporter(stream = process.stderr) {
+  const interactive = Boolean(stream.isTTY);
+  let progressOpen = false;
+
+  const closeProgressLine = () => {
+    if (progressOpen) {
+      stream.write('\n');
+      progressOpen = false;
+    }
+  };
+
+  return {
+    /** Milestone / status line (always newline-terminated). */
+    step(message) {
+      closeProgressLine();
+      stream.write(`[capture] ${message}\n`);
+    },
+    /** Recording heartbeat: overwritten in place on a TTY, appended otherwise. */
+    progress(message) {
+      if (interactive) {
+        stream.write(`\r${message}`);
+        progressOpen = true;
+      } else {
+        stream.write(`${message}\n`);
+      }
+    },
+    /** Ends any open heartbeat line so later output starts cleanly. */
+    done() {
+      closeProgressLine();
+    },
+  };
+}
+
+/**
+ * Loads Playwright lazily so a missing devDependency yields an actionable
+ * setup hint instead of a raw `ERR_MODULE_NOT_FOUND` stack
+ * (AH-0MUWTNPY8003GGAA).
+ */
+async function loadChromium() {
+  try {
+    const playwright = await import('playwright');
+    return playwright.chromium;
+  } catch (error) {
+    throw new CaptureSetupError(setupHint('playwright'), { cause: error });
+  }
+}
+
+/** Converts a missing-Chromium launch failure into an actionable error. */
+function asSetupError(error) {
+  const text = String(error?.message ?? error);
+  if (/executable doesn'?t exist|playwright install|browser.*not found/i.test(text)) {
+    return new CaptureSetupError(
+      `${setupHint('the Playwright Chromium browser')}\n\n${text}`,
+      { cause: error },
+    );
+  }
+  return error;
+}
 
 /** Parses `process.argv`-style flags into an options object. */
 export function parseCaptureArgs(argv = process.argv.slice(2)) {
@@ -68,6 +154,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     port: 0,
     headed: false,
     keepServer: false,
+    json: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -94,6 +181,9 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         break;
       case '--headed':
         options.headed = true;
+        break;
+      case '--json':
+        options.json = true;
         break;
       case '--keep-server':
         options.keepServer = true;
@@ -122,7 +212,10 @@ function resolveOutputPath(requested) {
  * Runs the whole capture. Exported so an integration harness (or a future
  * CLI wrapper) can drive it without spawning a process.
  */
-export async function runCapture(options = parseCaptureArgs()) {
+export async function runCapture(
+  options = parseCaptureArgs(),
+  reporter = createReporter(),
+) {
   const outputPath = resolveOutputPath(options.output);
   const plan = buildScriptedPlan(options.durationMs);
 
@@ -130,6 +223,7 @@ export async function runCapture(options = parseCaptureArgs()) {
   let browser;
 
   try {
+    reporter.step('Starting Vite dev server…');
     server = await createServer({
       root: REPO_ROOT,
       logLevel: 'warn',
@@ -141,15 +235,21 @@ export async function runCapture(options = parseCaptureArgs()) {
       address && typeof address === 'object' ? address.port : options.port;
     const url = `http://127.0.0.1:${port}/`;
 
-    browser = await chromium.launch({
-      headless: !options.headed,
-      args: [
-        '--no-sandbox',
-        // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
-        // the software (SwiftShader) WebGL backend.
-        '--enable-unsafe-swiftshader',
-      ],
-    });
+    reporter.step('Launching headless Chromium…');
+    const chromium = await loadChromium();
+    try {
+      browser = await chromium.launch({
+        headless: !options.headed,
+        args: [
+          '--no-sandbox',
+          // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
+          // the software (SwiftShader) WebGL backend.
+          '--enable-unsafe-swiftshader',
+        ],
+      });
+    } catch (error) {
+      throw asSetupError(error);
+    }
 
     const page = await browser.newPage({ viewport: VIEWPORT });
 
@@ -163,6 +263,7 @@ export async function runCapture(options = parseCaptureArgs()) {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
 
+    reporter.step(`Loading ${url}…`);
     await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
     await page.waitForSelector('#game-container canvas', { timeout: 20_000 });
     await page.waitForFunction(
@@ -174,18 +275,38 @@ export async function runCapture(options = parseCaptureArgs()) {
     );
 
     // Enter activates the focused "Play Game" control in MenuScene.
+    reporter.step('Starting PlayScene (Enter)…');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(options.warmupMs);
 
+    reporter.step(
+      `Recording ${formatDuration(planDurationMs(plan))} of scripted gameplay…`,
+    );
     await startRecording(page);
 
+    // The recording spans the plan plus one inter-step gap after each step.
+    const recordingMs = planDurationMs(plan) + plan.length * INTER_STEP_MS;
+    const startedAt = Date.now();
+    let lastProgressAt = 0;
+    let lastReportedMs = -1;
     for (const step of plan) {
       await page.keyboard.down(step.key);
       await page.waitForTimeout(step.holdMs);
       await page.keyboard.up(step.key);
       await page.waitForTimeout(INTER_STEP_MS);
+      const elapsed = Date.now() - startedAt;
+      if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+        lastProgressAt = elapsed;
+        lastReportedMs = elapsed;
+        reporter.progress(formatProgress(elapsed, recordingMs));
+      }
+    }
+    // Guarantee a final 100% heartbeat when the loop did not already reach it.
+    if (lastReportedMs < recordingMs) {
+      reporter.progress(formatProgress(recordingMs, recordingMs));
     }
 
+    reporter.step('Encoding and probing the clip…');
     const probe = await stopRecordingAndProbe(page, planDurationMs(plan) + 500);
 
     const video = Buffer.concat(chunks);
@@ -203,6 +324,7 @@ export async function runCapture(options = parseCaptureArgs()) {
       pageErrors,
     };
   } finally {
+    reporter.done();
     if (browser && !options.keepServer) await browser.close().catch(() => {});
     if (server && !options.keepServer) await server.close().catch(() => {});
   }
@@ -432,18 +554,22 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--keep-server]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server]',
     );
     return;
   }
 
   const result = await runCapture(options);
-  console.log(formatReport(result));
-  if (result.pageErrors.length > 0) {
-    console.warn(`Page errors (${result.pageErrors.length}):`);
-    for (const error of result.pageErrors) console.warn(`  - ${error}`);
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(formatReport(result));
+    if (result.pageErrors.length > 0) {
+      console.warn(`Page errors (${result.pageErrors.length}):`);
+      for (const error of result.pageErrors) console.warn(`  - ${error}`);
+    }
+    console.log(JSON.stringify(result, null, 2));
   }
-  console.log(JSON.stringify(result, null, 2));
 
   if (!result.nonTrivial) {
     console.error('Capture produced a trivial clip; see reasons above.');
@@ -455,7 +581,11 @@ const invokedDirectly =
   process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch((error) => {
-    console.error(error);
+    if (error instanceof CaptureSetupError) {
+      console.error(`\n${error.message}`);
+    } else {
+      console.error(error);
+    }
     process.exitCode = 1;
   });
 }

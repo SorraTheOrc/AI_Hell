@@ -22,6 +22,12 @@ import {
   isNonTrivialClip,
   planDurationMs,
 } from './capture-bot.mjs';
+import {
+  estimateRemainingMs,
+  formatDuration,
+  formatProgress,
+  setupHint,
+} from './capture-progress.mjs';
 
 describe('buildScriptedPlan', () => {
   it('covers the requested duration exactly and uses only movement keys', () => {
@@ -138,5 +144,62 @@ describe('isNonTrivialClip', () => {
 
   it('rejects a missing probe', () => {
     expect(isNonTrivialClip(undefined).nonTrivial).toBe(false);
+  });
+});
+
+describe('capture progress helpers', () => {
+  it('formats a duration in seconds to one decimal place', () => {
+    expect(formatDuration(1_500)).toBe('1.5s');
+    expect(formatDuration(15_000)).toBe('15.0s');
+  });
+
+  it('formats non-finite or negative durations as 0.0s', () => {
+    expect(formatDuration(Number.NaN)).toBe('0.0s');
+    expect(formatDuration(-1)).toBe('0.0s');
+  });
+
+  it('estimates the remaining time and clamps it to the duration', () => {
+    expect(estimateRemainingMs(3_000, 10_000)).toBe(7_000);
+    expect(estimateRemainingMs(0, 10_000)).toBe(10_000);
+    expect(estimateRemainingMs(12_000, 10_000)).toBe(0);
+    expect(estimateRemainingMs(-500, 10_000)).toBe(10_000);
+  });
+
+  it('returns 0 remaining when an input is not finite', () => {
+    expect(estimateRemainingMs(Number.NaN, 10_000)).toBe(0);
+    expect(estimateRemainingMs(1_000, Number.NaN)).toBe(0);
+  });
+
+  it('renders a heartbeat with a bar, percent, elapsed/total and ETA', () => {
+    const line = formatProgress(5_000, 10_000, 10);
+
+    expect(line).toContain('Recording [');
+    expect(line).toContain(' 50%');
+    expect(line).toContain('5.0s/10.0s');
+    expect(line).toContain('ETA 5.0s');
+    expect(line).toContain('#####-----');
+  });
+
+  it('shows 0% at the start and 100% once complete', () => {
+    expect(formatProgress(0, 10_000)).toContain('  0%');
+    const complete = formatProgress(10_000, 10_000);
+    expect(complete).toContain('100%');
+    expect(complete).toContain('ETA 0.0s');
+  });
+
+  it('clamps an over-running capture to 100%', () => {
+    expect(formatProgress(25_000, 10_000)).toContain('100%');
+  });
+
+  it('never divides by zero when the total is unknown', () => {
+    const line = formatProgress(2_000, 0);
+    expect(line).toContain('  0%');
+    expect(line).toContain('ETA 0.0s');
+  });
+
+  it('names the install command in the dependency setup hint', () => {
+    const hint = setupHint();
+    expect(hint).toContain('playwright');
+    expect(hint).toContain('npm install && npm run capture:install');
   });
 });
