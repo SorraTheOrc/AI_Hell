@@ -153,6 +153,41 @@ describe('HUD AC2: stack counts for stackable types', () => {
   });
 });
 
+describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
+  it('shows the remaining absorptions as xN and decrements as hits are absorbed', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3'); // level 0 → 1 absorption
+    reg.applyCollect('P3'); // level 1 → 2 absorptions
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'P3')!;
+    expect(row.name).toBe('Shield');
+    expect(row.value).toBe(
+      `x${resolvePowerUpAtLevel('P3', 1).shieldAbsorptions!}`,
+    );
+
+    reg.tryAbsorbShield();
+    hud.refresh();
+    const updated = hud.getRows().find((r) => r.id === 'P3')!;
+    expect(updated.value).toBe(`x${reg.shieldAbsorptionsRemaining()}`);
+    destroy(game);
+  });
+
+  it('drops the P3 row once the last absorption pops the shield', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P3'); // level 0 → 1 absorption
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'P3')).toBe(true);
+
+    reg.tryAbsorbShield();
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'P3')).toBe(false);
+    destroy(game);
+  });
+});
+
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
   it('shows a finite charge as xN and decrements live on trigger', async () => {
     const reg = new EffectsRegistry();

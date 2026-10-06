@@ -7,7 +7,8 @@
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
  * - **P10 Mineral Scoop** — attracts minerals toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
- * - **P3 Shield** — 15 s bubble, absorbs one hit (timed)
+ * - **P3 Shield** — 15 s bubble; absorbs a level-resolved number of hits
+ *   (base 1, cap 3) before popping (timed)
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (no enemy damage)
  * - **P6 Phase Shift** — charge-based automatic pass-through (parent
  *   AH-0MUIYX1EE008FVS8): collecting stores one auto-activation; the shared

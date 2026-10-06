@@ -18,6 +18,10 @@ import {
   resolvePowerUpAtLevel,
 } from './powerUpLevels';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
+import {
+  activateEffectAtUpgradeLevel,
+  createEffectRegistry,
+} from '../test/powerUpEffectFixtures';
 
 // Movement config used to verify live speed application.
 const BASE_CONFIG = {
@@ -385,14 +389,14 @@ describe('timing and reset semantics (AC6)', () => {
 // ── P3 Shield ────────────────────────────────────────────────────────
 
 describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-collect', () => {
-  it('is shielded while active, blocks one hit then pops', () => {
+  it('is shielded while active, blocks one hit then pops at level 0', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('P3');
     expect(reg.isShielded).toBe(true);
     expect(reg.isHitImmune).toBe(true);
     expect(reg.tryAbsorbShield()).toBe(true); // absorbs first hit
     expect(reg.isShielded).toBe(false); // popped
-    expect(reg.tryAbsorbShield()).toBe(false); // multi-hit absorption deferred
+    expect(reg.tryAbsorbShield()).toBe(false); // no shield left
   });
 
   it('expires after its resolved duration', () => {
@@ -413,6 +417,100 @@ describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-colle
     reg.applyCollect('P3');
     const upgraded = resolvePowerUpAtLevel('P3', 1).shieldDuration!;
     expect(reg.remaining('P3')).toBeCloseTo(upgraded, 10);
+  });
+});
+
+// ── P3 multi-hit absorption (AH-0MUVM9RAO004Y3LB) ───────────────────
+
+describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
+  it('absorbs exactly the level-resolved count before popping', () => {
+    for (let upgradeLevel = 0; upgradeLevel <= 3; upgradeLevel++) {
+      const fixture = createEffectRegistry();
+      const stats = activateEffectAtUpgradeLevel(fixture, 'P3', upgradeLevel);
+      const expected = stats.shieldAbsorptions!;
+
+      expect(fixture.registry.isShielded).toBe(true);
+      expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(expected);
+
+      // Every hit up to (and including) the last is absorbed, and the
+      // shield stays active until that final absorb pops it.
+      for (let hit = 1; hit <= expected; hit++) {
+        expect(fixture.registry.tryAbsorbShield()).toBe(true);
+        if (hit < expected) {
+          expect(fixture.registry.isShielded).toBe(true);
+          expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(
+            expected - hit,
+          );
+        } else {
+          expect(fixture.registry.isShielded).toBe(false);
+          expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(0);
+        }
+      }
+      // One hit after the last is no longer absorbed.
+      expect(fixture.registry.tryAbsorbShield()).toBe(false);
+    }
+  });
+
+  it('grows the absorptions count with the level (base 1 → cap 3)', () => {
+    const base = resolvePowerUpAtLevel('P3', 0).shieldAbsorptions!;
+    const upgraded = resolvePowerUpAtLevel('P3', 1).shieldAbsorptions!;
+    const capped = resolvePowerUpAtLevel('P3', 1000).shieldAbsorptions!;
+    expect(base).toBe(1);
+    expect(upgraded).toBeGreaterThan(base);
+    expect(capped).toBe(3);
+  });
+
+  it('refresh-not-stack: re-collecting resets remaining to the resolved count', () => {
+    const fixture = createEffectRegistry();
+    activateEffectAtUpgradeLevel(fixture, 'P3', 0);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(1);
+
+    // A second collection is a level-up; the count is refreshed to the
+    // level-1 resolved value, never the old count plus the new one.
+    fixture.registry.applyCollect('P3');
+    const level1 = resolvePowerUpAtLevel('P3', 1).shieldAbsorptions!;
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(level1);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).not.toBe(1 + level1);
+  });
+
+  it('clears remaining absorptions on expiry but keeps the run-scoped level', () => {
+    const fixture = createEffectRegistry();
+    activateEffectAtUpgradeLevel(fixture, 'P3', 1);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBeGreaterThan(1);
+
+    fixture.registry.tick(1000);
+
+    expect(fixture.registry.isShielded).toBe(false);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(0);
+    expect(fixture.store.getUpgradeLevel('P3')).toBe(1); // level survives
+  });
+
+  it('reset() clears the remaining absorptions and the level', () => {
+    const fixture = createEffectRegistry();
+    activateEffectAtUpgradeLevel(fixture, 'P3', 2);
+    fixture.registry.tryAbsorbShield();
+
+    fixture.registry.reset();
+
+    expect(fixture.registry.isShielded).toBe(false);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(0);
+    expect(fixture.store.getUpgradeLevel('P3')).toBe(0);
+  });
+
+  it('activeEffects() surfaces P3 with the remaining absorptions and updates on absorb', () => {
+    const fixture = createEffectRegistry();
+    activateEffectAtUpgradeLevel(fixture, 'P3', 1);
+
+    const before = fixture.registry
+      .activeEffects()
+      .find((e) => e.id === 'P3')!;
+    expect(before.stacks).toBe(fixture.registry.shieldAbsorptionsRemaining());
+
+    fixture.registry.tryAbsorbShield();
+    const after = fixture.registry
+      .activeEffects()
+      .find((e) => e.id === 'P3')!;
+    expect(after.stacks).toBe(before.stacks! - 1);
   });
 });
 

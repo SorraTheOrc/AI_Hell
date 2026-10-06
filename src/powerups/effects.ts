@@ -35,10 +35,13 @@
  *   when collected as a field drop (refresh-only, never stacking), or a
  *   permanent stacking effect when granted as a hold-full reward.
  *   Shares the P9 attraction radius curve (base 1× ship size, +50%/stack).
- * - **P3 Shield** — timed `shieldDuration` bubble; absorbs one hit, popped
- *   on absorb, refreshes on re-collect before expiry. The multi-hit
- *   `shieldAbsorptions` axis is tracked by the store but its consumption is
- *   deferred to AH-0MUVM9RAO004Y3LB.
+ * - **P3 Shield** — timed `shieldDuration` bubble; absorbs the level-resolved
+ *   `shieldAbsorptions` hits (base 1, cap 3) before popping, refreshing the
+ *   bubble and its remaining-hit count on re-collect before expiry. The
+ *   remaining absorptions are run-scoped registry state, cleared by
+ *   `reset()` and surfaced to the HUD via `activeEffects()` (`stacks`); the
+ *   run-scoped **level** still persists after the bubble expires
+ *   (AH-0MUVM9RAO004Y3LB).
  * - **P4 Bomb** — instant: clears on-screen enemy bullets on collect (does
  *   not damage 1-HP enemies, GDD §4.4); the store tracks `bombCharges` but
  *   consumption is deferred to AH-0MUVM9RAO004Y3LB.
@@ -137,7 +140,10 @@ export interface ActiveEffect {
   duration?: number;
   /** Remaining seconds (timed types). */
   remaining?: number;
-  /** Stack count (stackable types, e.g. P9 magnet, P7 teleport). */
+  /**
+   * Stack count (stackable types, e.g. P9 magnet, P7 teleport) or, for the
+   * P3 shield, the remaining absorptions before the bubble pops.
+   */
   stacks?: number;
   /**
    * True when the effect has unlimited uses for the run (e.g. the hold-full
@@ -210,6 +216,14 @@ export class EffectsRegistry {
   private _phaseDangerCleared = true;
   /** Seconds of re-arm cooldown remaining after the last phase expired. */
   private _phaseRearmCooldown = 0;
+
+  // ── P3 shield remaining-absorptions state (AH-0MUVM9RAO004Y3LB) ──
+  /**
+   * Hits the active P3 shield can still absorb before it pops, resolved from
+   * the level store on every collection (base 1, cap 3). Run-scoped: reset()
+   * and P3 expiry clear it. Zero means "no shield active".
+   */
+  private _shieldRemaining = 0;
 
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
@@ -302,6 +316,10 @@ export class EffectsRegistry {
           stats.shieldDuration ?? 15,
           permanent,
         );
+        // Refresh (never add) the remaining absorptions to the newly
+        // resolved count — a level-up mid-bubble strengthens the shield
+        // (AC1/AC3).
+        this._shieldRemaining = stats.shieldAbsorptions ?? 1;
         break;
       case PowerUpType.SPEED_BOOST:
         this._startOrRefreshTimed(
@@ -382,6 +400,11 @@ export class EffectsRegistry {
         if (id === 'P6') {
           this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
         }
+        // The shield's remaining absorptions end with its bubble; the
+        // run-scoped *level* persists (AC3).
+        if (id === 'P3') {
+          this._shieldRemaining = 0;
+        }
       }
     }
     // Expire timed weapons (permanent weapons are skipped).
@@ -415,18 +438,31 @@ export class EffectsRegistry {
   }
 
   /**
-   * Absorbs a hit with the shield (P3): removes P3 if active and returns
-   * true (hit absorbed); otherwise returns false (hit not absorbed).
+   * Absorbs a hit with the shield (P3): while a shield is active, decrements
+   * its remaining-absorptions count and returns true (hit absorbed). The
+   * shield stays active until its last absorption (the count resolved from
+   * `store.stats('P3').shieldAbsorptions`: base 1, cap 3), when it pops.
+   * Returns false when no shield is active.
+   *
    * Phase does NOT absorb — it prevents hits via pass-through before they
    * are tested (scene should skip collision checks when phased).
-   *
-   * The multi-hit `shieldAbsorptions` axis is deferred to
-   * AH-0MUVM9RAO004Y3LB, so the shield still absorbs exactly one hit.
    */
   tryAbsorbShield(): boolean {
     if (!this._timed.has('P3')) return false;
-    this._timed.delete('P3');
+    this._shieldRemaining -= 1;
+    if (this._shieldRemaining <= 0) {
+      this._timed.delete('P3');
+      this._shieldRemaining = 0;
+    }
     return true;
+  }
+
+  /**
+   * Hits the active P3 shield can still absorb before it pops (0 when no
+   * shield is active). Surfaced for the HUD's `Shield ×N` row.
+   */
+  shieldAbsorptionsRemaining(): number {
+    return this._shieldRemaining;
   }
 
   /**
@@ -666,11 +702,16 @@ export class EffectsRegistry {
   activeEffects(): ActiveEffect[] {
     const result: ActiveEffect[] = [];
     for (const effect of this._timed.values()) {
+      // P3 carries its remaining absorptions so the HUD renders `Shield xN`
+      // and updates as hits are absorbed (AC6).
+      const stacks =
+        effect.id === 'P3' ? this._shieldRemaining : undefined;
       result.push({
         id: effect.id,
         type: effect.type,
         duration: effect.duration,
         remaining: effect.remaining,
+        ...(stacks !== undefined ? { stacks } : {}),
       });
     }
     // P9 permanent upgrades render as a stack row; the timed field pickup
@@ -735,6 +776,7 @@ export class EffectsRegistry {
     this._weapons.clear();
     this._phaseDangerCleared = true;
     this._phaseRearmCooldown = 0;
+    this._shieldRemaining = 0;
     this._levelStore.reset();
   }
 }

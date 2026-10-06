@@ -5,7 +5,8 @@
  * Dedicated combat gym (companion to the threat-free `GymPowerUps` gym):
  * demonstrates P3/P4/P6/P7 FULL behaviour which requires threats:
  *
- * - **P3 Shield** — 15 s bubble, absorbs one hit before popping.
+ * - **P3 Shield** — 15 s bubble, absorbs its level-resolved number of hits
+ *   (base 1, cap 3) before popping.
  * - **P4 Bomb** — instant clear of on-screen enemy bullets (does not damage
  *   1-HP scouts, GDD §4.4); no enemy damage.
  * - **P6 Phase Shift** — charge-based auto-trigger: collecting P6 stores one
@@ -33,8 +34,9 @@
  *
  * Hit response (with threats): when a bullet/body hits the player
  * - if P6 phased → pass-through (no hit)
- * - else if P3 shielded → shield pops, bullet/body consumed, short
- *   invulnerability blink; no respawn damage
+ * - else if P3 shielded → one absorption consumed, bullet/body consumed,
+ *   short invulnerability blink (the bubble pops only on its last
+ *   absorption); no respawn damage
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *

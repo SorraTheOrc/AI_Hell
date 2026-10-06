@@ -212,11 +212,12 @@ export abstract class CombatScene<
   }
 
   /**
-   * P3 shield absorbs one hit: consume exactly one shield, run the
-   * scene-specific absorb cue ({@link CombatScene.onShieldAbsorbed}), start
-   * the shared post-hit invulnerability window and report the hit as
-   * absorbed. The shield is not re-applied, so the following hit lands
-   * normally.
+   * P3 shield absorbs a hit: consume one of the bubble's remaining
+   * absorptions (level-resolved), run the scene-specific absorb cue
+   * ({@link CombatScene.onShieldAbsorbed}), start the shared post-hit
+   * invulnerability window and report the hit as absorbed. A shield with
+   * absorptions to spare stays active; the last absorb pops it, after which
+   * the following hit lands normally (AH-0MUVM9RAO004Y3LB).
    */
   protected override tryAbsorbPlayerHit(_player: Player): boolean {
     if (!this.getEffectsRegistry().tryAbsorbShield()) return false;

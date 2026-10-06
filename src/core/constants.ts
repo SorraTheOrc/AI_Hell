@@ -174,7 +174,7 @@ export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 
 // ── Combat gym — threat-coupled power-ups (GDD §4.4, GymPowerUpsCombat) ─
 
-/** P3 Shield duration in seconds (15 s, absorbs one hit). */
+/** P3 Shield base duration in seconds (15 s; absorptions level separately). */
 export const COMBAT_SHIELD_DURATION = 15;
 
 /**
