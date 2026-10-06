@@ -24,6 +24,7 @@ import {
 } from '../gym/core/GymFormationScene';
 import { CombatScene } from './CombatScene';
 import { CombatCoreScene } from './CombatCoreScene';
+import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import {
   collectProductionSourceFiles,
   definesFunction,
@@ -257,6 +258,28 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       expect(definers.length).toBeGreaterThanOrEqual(1);
       for (const definer of definers) {
         expect(SHARED_CORE_FILES).toContain(definer);
+      }
+    }
+  });
+
+  it('P3 absorb / P4 pulse methods are defined only in the shared core repo-wide', () => {
+    const sharedMethods = [
+      '_clearEnemyBulletsInRange',
+      '_updateP4Bomb',
+      '_spawnBombPulse',
+    ] as const;
+    const files = productionSceneFiles();
+    for (const method of sharedMethods) {
+      const definers = files
+        .filter((file) => definesMethod(fs.readFileSync(file, 'utf8'), method))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      // The shared core owns it; no production scene re-implements it.
+      expect(definers, method).toContain(
+        'src/scenes/core/CombatCoreScene.ts',
+      );
+      for (const definer of definers) {
+        expect(SHARED_CORE_FILES, method).toContain(definer);
       }
     }
   });
@@ -1418,6 +1441,31 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     expect(formation.getEffectsRegistry().isShielded).toBe(true);
     expect(utility.getEffectsRegistry().isShielded).toBe(true);
     expect(combat.getEffectsRegistry().isShielded).toBe(true);
+  });
+
+  it('absorbs identical P3 hit counts in the game and every gym', async () => {
+    const { play, formation, utility, combat } = await bootDrops();
+    const owners = [play, formation, utility, combat];
+
+    // Two collections reach upgrade level 1 (base = one collection). The
+    // shared store is the single source, so every scene must resolve the
+    // same remaining-absorptions count.
+    for (const owner of owners) {
+      owner.getEffectsRegistry().applyCollect('P3');
+      owner.getEffectsRegistry().applyCollect('P3');
+    }
+
+    const expected = resolvePowerUpAtLevel('P3', 1).shieldAbsorptions!;
+    for (const owner of owners) {
+      const registry = owner.getEffectsRegistry();
+      expect(registry.shieldAbsorptionsRemaining()).toBe(expected);
+      // Absorb exactly `expected` hits; the shield then pops everywhere.
+      for (let hit = 0; hit < expected; hit++) {
+        expect(registry.tryAbsorbShield()).toBe(true);
+      }
+      expect(registry.isShielded).toBe(false);
+      expect(registry.tryAbsorbShield()).toBe(false);
+    }
   });
 
   it('pulls a grown drop toward the ship wherever drops exist (P9 magnet parity)', async () => {
