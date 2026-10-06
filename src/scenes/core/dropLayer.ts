@@ -4,14 +4,13 @@
  *
  * The power-up drop behaviour — the default weighted spawner, the
  * grow → hold → shrink → despawn lifecycle, the overlap collection gate
- * (≥ 3 % scale + hull radius), the P9 magnet pull, the P4 bomb notice and the
- * per-type pickup cues — was copy-pasted across five scenes with three
- * behavioural drifts (the P9 magnet ran only in `PlayScene`/`GymPowerUpsUtility`,
- * the P4 notice only in `PlayScene`/`GymPowerUpsCombat`, the per-type cues only
- * in `PlayScene`/`GymWeapons`/`GymPowerUpsUtility`). The pure helpers below own
- * each behaviour exactly once; the shared `CombatCoreScene` wraps them as
- * template methods so every scene consumes the same code and enabled drops
- * behave identically everywhere.
+ * (≥ 3 % scale + hull radius), the P9 magnet pull and the per-type pickup
+ * cues — was copy-pasted across five scenes with three behavioural drifts
+ * (the P9 magnet ran only in `PlayScene`/`GymPowerUpsUtility`, the per-type
+ * cues only in `PlayScene`/`GymWeapons`/`GymPowerUpsUtility`). The pure
+ * helpers below own each behaviour exactly once; the shared
+ * `CombatCoreScene` wraps them as template methods so every scene consumes
+ * the same code and enabled drops behave identically everywhere.
  *
  * The module is deliberately Phaser-scene-agnostic: it operates on the
  * structural drop shape (position + graphics + `PowerUp` lifecycle + the

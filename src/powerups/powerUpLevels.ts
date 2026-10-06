@@ -157,7 +157,7 @@ export interface PowerUpLevelSpec extends CurveSpec {
  * damage (AC1, producer risk note).
  */
 export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
-  // P3 Shield — absorbs one hit in a 15 s bubble.
+  // P3 Shield — absorbs its level-resolved hits (base 1, cap 3) in a 15 s bubble.
   P3: [
     {
       variable: 'shieldDuration',

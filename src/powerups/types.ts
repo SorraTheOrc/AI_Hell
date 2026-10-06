@@ -9,7 +9,8 @@
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
  * - **P3 Shield** — 15 s bubble; absorbs a level-resolved number of hits
  *   (base 1, cap 3) before popping (timed)
- * - **P4 Bomb** — instant clear of on-screen enemy bullets (no enemy damage)
+ * - **P4 Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
+ *   field pickup is a single explosion, a hold-full reward pulses
  * - **P6 Phase Shift** — charge-based automatic pass-through (parent
  *   AH-0MUIYX1EE008FVS8): collecting stores one auto-activation; the shared
  *   danger feed triggers a 1.5 s pass-through when 3+ hostile bodies/bullets
@@ -120,7 +121,8 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   P4: {
     id: 'P4',
     name: 'Bomb',
-    description: 'Instantly clears every on-screen enemy bullet (no enemy damage).',
+    description:
+      'Clears enemy bullets in a radius around the ship; a field pickup fires once, a hold-full reward pulses.',
     type: PowerUpType.BOMB,
   },
   P5: {
