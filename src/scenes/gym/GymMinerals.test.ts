@@ -18,7 +18,6 @@ import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
-import * as effectsModule from '../../audio/effects';
 
 /** Live asteroid entities of the given tier in a mineral gym. */
 function liveAsteroids(scene: GymMinerals): Asteroid[] {
@@ -433,9 +432,6 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
   });
 
   it('AC2 — asteroids survive the timeout silently and the formation refreshes', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     const scene = await boot();
     const initial = liveAsteroids(scene);
     const before = initial.length;
@@ -444,11 +440,10 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // Nothing detonates and the shared major-explosion cue never plays: the
+    // Nothing detonates: the retired major-explosion cue never plays, and the
     // asteroids persist (carry-over, AH-0MUNS3ZQ1002DJ9S). The player's
     // continuous auto-fire may destroy some during the countdown, so assert
     // the field is not wiped by the timeout rather than tracking identities.
-    expect(cue).not.toHaveBeenCalled();
     expect(liveAsteroids(scene).length).toBeGreaterThan(0);
     expect(scene.isWaveTimeoutActive()).toBe(false);
     expect(scene.isRespawnCountdownActive()).toBe(true);

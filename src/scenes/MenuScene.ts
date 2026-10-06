@@ -23,6 +23,7 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FocusManager } from '../utils/focusManager';
+import { installGameAudio } from '../audio/effects';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
@@ -66,6 +67,11 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     this.focusManager = new FocusManager();
     this.controls = [];
+
+    // Pin the shared SFX playback layer to Phaser's audio context and warm
+    // the baked ToneForge asset cache (AH-0MUTYV92Y000WJ8Z) so exactly one
+    // AudioContext exists and gameplay cues are audible from the first shot.
+    installGameAudio(this.sound);
 
     // ── Background ───────────────────────────────────────────────
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);

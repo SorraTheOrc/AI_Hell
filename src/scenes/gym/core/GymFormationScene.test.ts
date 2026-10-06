@@ -1453,19 +1453,15 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC2/AC4 — expiry keeps every survivor (no detonation), then starts the respawn countdown', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     const scene = await bootWithTimeout(1);
     const survivors = scene.formationEntities;
 
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // No survivor is detonated and the major-explosion cue never plays
+    // No survivor is detonated: the retired major-explosion cue never plays
     // (carry-over, AH-0MUNS3ZQ1002DJ9S).
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
-    expect(cue).not.toHaveBeenCalled();
     for (const entity of survivors) expect(entity.alive).toBe(true);
 
     // The timeout is spent and the shared wipe→respawn countdown began.
@@ -1556,16 +1552,12 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC4 — a disabled timeout never detonates the formation', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     booted = await bootScene([makeStubScene(() => [])]);
     const scene = booted!.scene as BootedScene;
 
     scene.tick(120);
 
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
-    expect(cue).not.toHaveBeenCalled();
   });
 });
 

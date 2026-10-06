@@ -971,9 +971,6 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC2 — expiry keeps every scout (no detonation), then refreshes the wave after the countdown', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     const scene = await boot();
     const scouts = scene.getScouts();
     expect(scouts.length).toBeGreaterThan(0);
@@ -981,10 +978,9 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // No scout is detonated and the shared major-explosion cue never plays
+    // No scout is detonated: the retired major-explosion cue never plays
     // (carry-over, AH-0MUNS3ZQ1002DJ9S).
     expect(scouts.every((scout) => scout.alive)).toBe(true);
-    expect(cue).not.toHaveBeenCalled();
     expect(scene.isWaveTimeoutActive()).toBe(false);
     expect(scene.isRespawnCountdownActive()).toBe(true);
 

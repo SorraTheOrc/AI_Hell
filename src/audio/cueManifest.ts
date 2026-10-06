@@ -85,6 +85,75 @@ export function bakedAssetFiles(entry: CueManifestEntry): string[] {
 }
 
 /**
+ * Seeds rendered for each recipe, pooled across every manifest entry that
+ * references it. A recipe shared by several cues (e.g. `aihell-player-hull-breach`,
+ * reused by both `playPlayerDestructionSound` and `playVolumeFeedback`) is
+ * rendered once, so a cue that declares no seeds of its own can still resolve
+ * the asset baked for its sibling.
+ */
+const seedsByRecipe = new Map<string, number[]>();
+for (const entry of CUE_MANIFEST) {
+  if (entry.seeds.length === 0) continue;
+  const existing = seedsByRecipe.get(entry.recipe) ?? [];
+  const merged = [...new Set([...existing, ...entry.seeds])];
+  seedsByRecipe.set(entry.recipe, merged);
+}
+
+/**
+ * The seed used to render an `existing-recipe` cue that declares no seeds of
+ * its own. Falls back to the sibling-rendered seed for the same recipe, then
+ * to the manifest's `defaultExistingRecipeSeed`.
+ */
+export function defaultSeedFor(entry: CueManifestEntry): number {
+  if (entry.seeds.length > 0) return entry.seeds[0];
+  const shared = seedsByRecipe.get(entry.recipe);
+  if (shared !== undefined && shared.length > 0) return shared[0];
+  return CUE_MANIFEST_META.defaultExistingRecipeSeed;
+}
+
+/**
+ * The baked WAV filename for a manifest entry, relative to `public/`.
+ *
+ * `seed` overrides the default (used by per-phase cues such as
+ * `playBossPhaseCue`); otherwise a seed is chosen from the entry's baked
+ * variants (the first of the shared pool for `existing-recipe` cues).
+ */
+export function assetUrlFor(entry: CueManifestEntry, seed?: number): string {
+  const chosen = seed ?? defaultSeedFor(entry);
+  return `audio/sfx/${entry.recipe}.${chosen}.wav`;
+}
+
+/**
+ * The baked WAV filename for a cue, or `undefined` when the cue is unmapped or
+ * delivered by a runtime shim (no baked asset).
+ */
+export function cueAssetUrl(cue: string, seed?: number): string | undefined {
+  const entry = getCueAsset(cue);
+  if (entry === undefined || entry.delivery === 'runtime-shim') return undefined;
+  return assetUrlFor(entry, seed);
+}
+
+/** The seeds baked for a cue (empty for `existing-recipe` / `runtime-shim`). */
+export function cueSeeds(cue: string): readonly number[] {
+  return getCueAsset(cue)?.seeds ?? [];
+}
+
+/**
+ * Every baked WAV asset URL the runtime may play, de-duplicated. Derived from
+ * the manifest so the preloader can never drift from the cue→asset contract.
+ * Runtime-shim entries (the thruster hum) contribute no asset.
+ */
+export function allSfxAssetUrls(): string[] {
+  const urls = new Set<string>();
+  for (const entry of CUE_MANIFEST) {
+    if (entry.delivery === 'runtime-shim') continue;
+    for (const url of bakedAssetFiles(entry)) urls.add(url);
+    if (entry.seeds.length === 0) urls.add(assetUrlFor(entry));
+  }
+  return [...urls];
+}
+
+/**
  * The JSON manifest metadata (directories, seeds) shared with the build
  * pipeline. Exposed for tests so the build and the runtime agree.
  */

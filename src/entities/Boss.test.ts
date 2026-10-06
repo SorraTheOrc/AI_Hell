@@ -202,11 +202,28 @@ class CountingAudioContext {
 
   createGain(): unknown {
     return {
+      context: this,
       gain: {
         setValueAtTime: () => {},
         exponentialRampToValueAtTime: () => {},
+        linearRampToValueAtTime: () => {},
+        cancelScheduledValues: () => {},
       },
       connect: () => ({}),
+    };
+  }
+
+  createBuffer(_channels: number, length: number, _sampleRate: number): unknown {
+    return { duration: 0, getChannelData: () => new Float32Array(length) };
+  }
+
+  createBufferSource(): unknown {
+    return {
+      buffer: null as unknown,
+      loop: false,
+      connect: () => ({}),
+      start: () => {},
+      stop: () => {},
     };
   }
 }

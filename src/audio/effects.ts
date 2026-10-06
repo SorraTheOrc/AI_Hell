@@ -1,2621 +1,455 @@
-
 /**
- * Procedural audio effects for enemy gym scenes and the player ship (GDD §7.3).
+ * Game SFX cues (GDD §7.3) — ToneForge baked-asset playback.
  *
- * Sounds are synthesised at runtime with the Web Audio API — no audio
- * assets to ship. Each enemy kind maps to distinct tones: spawn uses a
- * high rising blip, destruction a quick descending noise burst. The
- * player ship's thruster hum is a continuous jet-engine roar:
- * soft triangle + sine oscillators (low rumble) + band-pass
- * filtered white noise (whoosh) through one reused gain node
- * section below).
+ * Every sound-producing cue here is a thin wrapper that looks up its
+ * ToneForge recipe in the cue manifest (`audio/toneforge/manifest.json`) and
+ * plays the corresponding build-time baked WAV through the shared playback
+ * layer ({@link module:audio/sfxPlayback}). The procedural Web Audio synthesis
+ * this module used to contain was replaced by the migration tracked by
+ * Switch game audio from procedural Web Audio to ToneForge (AH-0MUTUOB7X007PR9J);
+ * the authoritative cue→recipe catalogue is
+ * `docs/AUDIO_TONEFORGE_CUE_MAPPING.md`.
  *
- * Thruster-scaling rationale: the hum gain tracks
- * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
- * (level in [0, 1] = min(1, thrustAcceleration / FLAME_REF_THRUST),
- * GDD §2.2 `ShipConfig`), so the tuning slider stays audible and
- * halved/doubled thrust halves/caps the hum — the same thrust value
- * that drives the flame animation drives audio.
+ * The export surface is intentionally unchanged: cue names, argument
+ * signatures, `setSfxVolume`/`setSfxMuted`, `getAudioContext`, the advance-cue
+ * duration constants and the `_*ForTests` accessors are all preserved, so
+ * consumers (`Player`, `CombatScene`, entity modules, `SettingsScene`) did not
+ * change.
  *
- * In environments without a working AudioContext (headless tests, some
- * browsers, autoplay-blocked) every function degrades to a safe no-op:
- * the game never depends on audio being available — `updateThrusterSound`
- * simply does nothing and never throws.
+ * Guarantees:
+ * - **Exactly one shared `AudioContext`** — owned by the playback provider,
+ *   pinned to Phaser's context at boot; a new scene/cue never constructs one
+ *   (parent AC6).
+ * - **Safe no-op without audio** — in headless tests and autoplay-blocked
+ *   browsers every cue degrades to a no-op and never throws (parent AC7).
+ * - **Gap-free advance cues** — the fire cue is scheduled at the advance
+ *   cue's end so the two flow together with no gap (parent AC8).
+ *
+ * The continuous thruster hum is the single runtime-synthesised exception and
+ * lives in `./thrusterShim`; `effects.ts` only delegates to it.
  */
 
+import {
+  allSfxAssetUrls,
+  cueAssetUrl,
+  cueSeeds,
+} from './cueManifest';
+import {
+  WebAudioSfxProvider,
+  webAudioSfxProvider,
+  type SfxPlayOptions,
+  type SfxSoundHandle,
+  type SfxSoundProvider,
+} from './sfxPlayback';
+import {
+  configureThrusterShim,
+  resetThrusterHumForTests,
+  stopThrusterHum,
+  updateThrusterHum,
+} from './thrusterShim';
 
-// ── Thruster hum (player SFX, AH-0MTFOSOHN001Q620, GDD §7.3) ───────
-//
-// Single ship-level continuous hum — NOT per-engine flame port (see
-// docs/Game Design Document.md §7.3 Player Audio Character). Driven
-// once per frame from Player.preUpdate via the level returned by
-// getEngineSoundLevel(state, input, thrustAcceleration) so audio stays
-// in lockstep with the tuning slider and both control schemes. Gain
-// never exceeds THRUSTER_HUM_MAX_VOLUME (0.075) and the smoothed envelope
-// mirrors the flame growth/shrink timing (30 ms growth, ~4× decay).
-// Safe no-op without an AudioContext (headless tests / autoplay-blocked).
-// Architecture: triangle (60 Hz) + sine (35 Hz) for soft low rumble +
-// white noise through a band-pass filter for jet-engine "whoosh"; no
-// harsh sawtooth — the filtered noise is the dominant jet texture.
+// Re-exported thruster-hum reference constants + test seams (moved to the shim
+// module, kept exported from here so consumers/tests are unchanged).
+export {
+  THRUSTER_HUM_BASE_FREQ,
+  THRUSTER_HUM_GROWTH_TIME,
+  THRUSTER_HUM_MAX_VOLUME,
+  THRUSTER_HUM_NOISE_FILTER_MAX,
+  THRUSTER_HUM_NOISE_FILTER_MIN,
+  THRUSTER_HUM_SHRINK_MULTIPLIER,
+  THRUSTER_HUM_UNDERTONE_FREQ,
+  _getThrusterHumStateForTests,
+  _resetThrusterHumForTests,
+} from './thrusterShim';
 
-/** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "All player cues keep volume ≤ 0.2"). Halved from 0.15 to 0.075 (AH-0MUAYB8S50029QB8). */
-export const THRUSTER_HUM_MAX_VOLUME = 0.075;
-/** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum, jet roar). */
-export const THRUSTER_HUM_BASE_FREQ = 60;
-/** Undertone frequency (sine) — adds body to the low jet rumble. */
-export const THRUSTER_HUM_UNDERTONE_FREQ = 35;
-/** Maximum detune drift range in cents for organic tonal variation. */
-const THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS = 8;
-/** Per-frame detune drift step size in cents (random-walk). */
-const THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS = 2;
-/** Noise filter centre range for jet texture (band-pass). */
-export const THRUSTER_HUM_NOISE_FILTER_MIN = 700;
-export const THRUSTER_HUM_NOISE_FILTER_MAX = 1100;
-/** Gain ramp time at FLAME_REF_THRUST: mirrors flame growth (mirrors FLAME_GROWTH_TIME_AT_REF). */
-export const THRUSTER_HUM_GROWTH_TIME = 0.03;
-/** Decay is ~4× growth, mirroring FLAME_SHRINK_MULTIPLIER (quick silence on release). */
-export const THRUSTER_HUM_SHRINK_MULTIPLIER = 4;
+// ── Playback provider seam ──────────────────────────────────────────
 
-/** Clamp level to [0, 1]. */
-function clampLevel(level: number): number {
-  if (level <= 0 || !Number.isFinite(level)) return 0;
-  if (level >= 1) return 1;
-  return level;
-}
+let provider: SfxSoundProvider = webAudioSfxProvider;
 
-let thrusterHum: ThrusterHumState | null = null;
-
-/**
- * Master SFX gain node — the single post-mix volume / mute control (parent
- * AH-0MU9LPZ0G0015292).  Created once when the AudioContext is first
- * instantiated; all SFX paths route through it before reaching
- * `ctx.destination`.  `sfxVolume` tracks the persisted volume level
- * (0–1) so `setSfxMuted(false)` can restore the last volume.
- */
-let masterSfxGain: GainNode | null = null;
-let sfxVolume: number = 1;
-let sfxMuted: boolean = false;
+configureThrusterShim({
+  getContext: () => provider.getAudioContext(),
+  getMasterGain: () =>
+    provider instanceof WebAudioSfxProvider ? provider.getMasterGain() : null,
+});
 
 /**
- * Lazily creates the master SFX gain node on the given AudioContext.
- * The master gain sits between every SFX path and `ctx.destination`.
+ * Replaces the playback provider. `null` restores the default Web Audio
+ * provider. Exposed so a scene can route playback onto Phaser's audio system
+ * and so tests can inject a recording provider.
  */
-function ensureMasterGain(ctx: AudioContext): GainNode {
-  if (masterSfxGain) return masterSfxGain;
-  masterSfxGain = ctx.createGain();
-  masterSfxGain.gain.setValueAtTime(sfxVolume, ctx.currentTime);
-  masterSfxGain.connect(ctx.destination);
-  return masterSfxGain;
+export function setSfxSoundProvider(next: SfxSoundProvider | null): void {
+  provider = next ?? webAudioSfxProvider;
 }
 
 /**
- * Set the master SFX volume (0–1).  Clamps to [0, 1].
- * Live-update: immediately changes the master gain value so
- * currently playing sounds are affected.
+ * Boot-time wiring: pin the shared playback layer to the given Phaser sound
+ * manager's context (when it exposes one) and warm the baked-asset cache.
+ * Called from `MenuScene.create` so audio is ready before gameplay cues fire.
+ */
+export function installGameAudio(sound: unknown): void {
+  const context =
+    (sound as { context?: AudioContext | null } | null | undefined)?.context ??
+    null;
+  if (context !== null) provider.useAudioContext(context);
+  void preloadSfxAssets();
+}
+
+/** Warms the decoded-buffer cache for every baked asset. Best-effort. */
+export async function preloadSfxAssets(): Promise<void> {
+  const active = provider;
+  if (!(active instanceof WebAudioSfxProvider)) return;
+  const context = active.getAudioContext();
+  if (context === null) return;
+  await Promise.all(
+    allSfxAssetUrls().map((url) => active.loadAsset(context, url)),
+  );
+}
+
+// ── Master volume / mute (parent AC5) ───────────────────────────────
+
+/**
+ * Sets the master SFX volume (0–1, clamped). Live: immediately affects
+ * currently playing cues because all playback routes through the shared
+ * master gain.
  */
 export function setSfxVolume(value: number): void {
-  const clamped = Math.max(0, Math.min(1, value));
-  sfxVolume = clamped;
-  if (!masterSfxGain) return;
-  try {
-    masterSfxGain.gain.cancelScheduledValues(
-      masterSfxGain.context.currentTime,
-    );
-    masterSfxGain.gain.setValueAtTime(
-      sfxMuted ? 0 : sfxVolume,
-      masterSfxGain.context.currentTime,
-    );
-  } catch { /* dead context — no-op */ }
+  provider.setVolume(value);
 }
 
 /**
- * Toggle SFX mute.  `true` silences all SFX; `false` restores the last
- * volume level.  Live-update: immediately changes the master gain value.
+ * Mutes/unmutes all SFX. `false` restores the last volume level. Live: the
+ * master gain is updated immediately so playing cues are affected.
  */
 export function setSfxMuted(on: boolean): void {
-  sfxMuted = on;
-  if (!masterSfxGain) return;
-  try {
-    masterSfxGain.gain.cancelScheduledValues(
-      masterSfxGain.context.currentTime,
-    );
-    masterSfxGain.gain.setValueAtTime(
-      on ? 0 : sfxVolume,
-      masterSfxGain.context.currentTime,
-    );
-  } catch { /* dead context — no-op */ }
+  provider.setMuted(on);
 }
 
-// ── Volume-change feedback (AH-0MUADK77K008RBMB) ───────────────────
-//
-// When the player adjusts the SFX volume slider, the player-explosion cue
-// (`playPlayerDestructionSound`) plays back as confirmation. Its synthesis
-// and pitch are unchanged — only the gain is scaled by the selected volume
-// — so the player hears the same hull-breach boom at a loudness that
-// matches the setting. Like every other cue it routes through the master
-// SFX gain node, so it also respects the mute state (silent while muted).
-// Safe no-op without an AudioContext (headless tests / autoplay-blocked
-// browsers).
+/** The shared `AudioContext`, or null when audio is unavailable. */
+export function getAudioContext(): AudioContext | null {
+  return provider.getAudioContext();
+}
+
+// ── Cue dispatch ────────────────────────────────────────────────────
 
 /**
- * Plays the player-explosion cue as volume-change feedback
- * (AH-0MUADK77K008RBMB): the pitch/synthesis is unchanged, and only the
- * gain is scaled by `volume` in [0, 1]. Values outside the range are
- * clamped; volume 0 plays nothing. Routed through the master SFX gain so
- * it respects mute/volume. Safe no-op without an AudioContext.
+ * Resolves and plays a cue's baked asset. A multi-seed cue (baked pitch-jitter
+ * variants) picks a variant at random so repeated kills still vary; a
+ * single-seed or shared-recipe cue uses its resolved seed.
+ */
+function playCue(
+  cue: string,
+  options: SfxPlayOptions & { seed?: number } = {},
+): SfxSoundHandle | null {
+  const seed = options.seed ?? pickCueSeed(cue);
+  const url = cueAssetUrl(cue, seed);
+  if (url === undefined) return null;
+  return provider.play(url, options);
+}
+
+/** Picks a baked seed variant for a cue (random when several are baked). */
+function pickCueSeed(cue: string): number | undefined {
+  const seeds = cueSeeds(cue);
+  if (seeds.length === 0) return undefined;
+  if (seeds.length === 1) return seeds[0];
+  return seeds[Math.floor(Math.random() * seeds.length)];
+}
+
+// ── Advance cues (parent AC8: ≥ 500 ms, gap-free) ───────────────────
+
+/**
+ * Duration (seconds) of the Tank advance whine. The fire cue is scheduled at
+ * this offset so the whine flows into the cannon thump with no dead gap.
+ */
+export const TANK_ADVANCE_CUE_DURATION = 0.6;
+
+/** Rising mechanical whine — E3 Tank firing advance cue. */
+export function playTankAdvanceCue(): void {
+  playCue('playTankAdvanceCue');
+}
+
+/** Heavy low cannon thump — E3 Tank fire, scheduled at the advance cue's end. */
+export function playTankFireSound(): void {
+  playCue('playTankFireSound', { delay: TANK_ADVANCE_CUE_DURATION });
+}
+
+/** Duration (seconds) of the Phaser advance tell. */
+export const PHASER_ADVANCE_CUE_DURATION = 0.6;
+
+/** Rising warning blip — E4 Phaser firing advance cue. */
+export function playPhaserAdvanceCue(): void {
+  playCue('playPhaserAdvanceCue');
+}
+
+/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end. */
+export function playPhaserFireSound(): void {
+  playCue('playPhaserFireSound', { delay: PHASER_ADVANCE_CUE_DURATION });
+}
+
+/** Duration (seconds) of the Scout advance tell. */
+export const SCOUT_ADVANCE_CUE_DURATION = 0.6;
+
+/** Rising warning blip — E1 Scout firing advance cue. */
+export function playScoutAdvanceCue(): void {
+  playCue('playScoutAdvanceCue');
+}
+
+/** Sharp laser blip — E1 Scout fire, scheduled at the advance cue's end. */
+export function playScoutFireSound(): void {
+  playCue('playScoutFireSound', { delay: SCOUT_ADVANCE_CUE_DURATION });
+}
+
+// ── Enemy cues ──────────────────────────────────────────────────────
+
+/** Rising square blip — enemy spawn cue. */
+export function playSpawnSound(): void {
+  playCue('playSpawnSound');
+}
+
+/** Descending saw burst — enemy destruction cue (multi-seed jitter). */
+export function playDestructionSound(): void {
+  playCue('playDestructionSound');
+}
+
+/** Heavier layered "hull breach" boom — player destruction (volume-scaled). */
+export function playPlayerDestructionSound(volumeScale = 1): void {
+  playCue('playPlayerDestructionSound', { volume: volumeScale });
+}
+
+/** Short high tick — player bullet destroys an enemy bullet. */
+export function playBulletDestructionSound(): void {
+  playCue('playBulletDestructionSound');
+}
+
+/** Buzzing whoosh — Swarm coordinated-burst volley. */
+export function playSwarmBurstSound(): void {
+  playCue('playSwarmBurstSound');
+}
+
+/** Rising whoosh — Diver dive-start cue. */
+export function playDiverDiveStartSound(): void {
+  playCue('playDiverDiveStartSound');
+}
+
+/** Duration (seconds) of the sustained dive sound (matches the ~2 s dive). */
+export const DIVER_DIVE_SOUND_DURATION = 2;
+
+/** Shared continuous dive whoosh. Concurrent dives reuse one playback. */
+let diveSound: SfxSoundHandle | null = null;
+
+/** Starts (or shares) the sustained dive whoosh — ~2 s. */
+export function playDiveSound(): void {
+  if (diveSound !== null) return;
+  diveSound = playCue('playDiveSound');
+}
+
+/** Releases the sustained dive whoosh. Safe no-op when none is active. */
+export function stopDiveSound(): void {
+  if (diveSound === null) return;
+  diveSound.stop();
+  diveSound = null;
+}
+
+/** For tests: the active dive-sound state, or null when not playing. */
+export function _getDiverDiveSoundStateForTests(): { active: boolean } | null {
+  return diveSound === null ? null : { active: true };
+}
+
+/** Short low crack — Diver fire cue. */
+export function playDiverFireSound(): void {
+  playCue('playDiverFireSound');
+}
+
+/** Deep resonant fall — Diver destruction cue (multi-seed jitter). */
+export function playDiverDestructionSound(): void {
+  playCue('playDiverDestructionSound');
+}
+
+/** Deep resonant boom — Boss fire cue. */
+export function playBossFireSound(): void {
+  playCue('playBossFireSound');
+}
+
+// ── Player weapon fire cues ─────────────────────────────────────────
+
+/** Solid medium blip — Cannon fire. */
+export function playCannonFireSound(): void {
+  playCue('playCannonFireSound');
+}
+
+/** Wide multi-tone sweep — Spread fire. */
+export function playSpreadFireSound(): void {
+  playCue('playSpreadFireSound');
+}
+
+/** Sharp crack — Dual fire. */
+export function playDualFireSound(): void {
+  playCue('playDualFireSound');
+}
+
+/** Tight staccato blip — Rapid fire. */
+export function playRapidFireSound(): void {
+  playCue('playRapidFireSound');
+}
+
+/** Deep expanding thump + rising ring — Nova fire. */
+export function playNovaFireSound(): void {
+  playCue('playNovaFireSound');
+}
+
+/** Muffled launch thump — Mortar fire. */
+export function playMortarFireSound(): void {
+  playCue('playMortarFireSound');
+}
+
+/** Heavy blast — Mortar detonation. */
+export function playMortarDetonationSound(): void {
+  playCue('playMortarDetonationSound');
+}
+
+/** Bright electric zap — Arc fire. */
+export function playArcFireSound(): void {
+  playCue('playArcFireSound');
+}
+
+// ── Pickup activation cues ──────────────────────────────────────────
+
+/** Cheerful two-tone chime — power-up collection. */
+export function playPowerUpCollectSound(): void {
+  playCue('playPowerUpCollectSound');
+}
+
+/** Bright ascending blip — power-up spawn. */
+export function playPowerUpSpawnSound(): void {
+  playCue('playPowerUpSpawnSound');
+}
+
+/** Quick descending blip — power-up despawn. */
+export function playPowerUpDespawnSound(): void {
+  playCue('playPowerUpDespawnSound');
+}
+
+/** Short percussive pop — power-up collection tactile feedback. */
+export function playPowerUpCollectPopSound(): void {
+  playCue('playPowerUpCollectPopSound');
+}
+
+/** Widening fan sweep — Spread pickup activation. */
+export function playSpreadPickupSound(): void {
+  playCue('playSpreadPickupSound');
+}
+
+/** Crisp two-note crack — Dual pickup activation. */
+export function playDualPickupSound(): void {
+  playCue('playDualPickupSound');
+}
+
+/** Accelerating rise — Rapid pickup activation. */
+export function playRapidPickupSound(): void {
+  playCue('playRapidPickupSound');
+}
+
+/** Gentle unwind to baseline — Reset (back to Cannon) activation. */
+export function playResetPickupSound(): void {
+  playCue('playResetPickupSound');
+}
+
+/** Quick ascending zip — P5 Speed Boost activation. */
+export function playSpeedBoostCollectSound(): void {
+  playCue('playSpeedBoostCollectSound');
+}
+
+/** Warm two-note chime — P8 Extra Life activation. */
+export function playExtraLifeCollectSound(): void {
+  playCue('playExtraLifeCollectSound');
+}
+
+/** Magnetic pulse-hum — P9 Magnet activation. */
+export function playMagnetCollectSound(): void {
+  playCue('playMagnetCollectSound');
+}
+
+/** Rising chirp + whoosh — P6 Phase Shift activation. */
+export function playPhaseShiftSound(): void {
+  playCue('playPhaseShiftSound');
+}
+
+// ── End-of-run cues ─────────────────────────────────────────────────
+
+/** Two-phrase fanfare — run victory. */
+export function playVictoryFanfareSound(): void {
+  playCue('playVictoryFanfareSound');
+}
+
+/** Descending sombre sting — run defeat. */
+export function playDefeatStingSound(): void {
+  playCue('playDefeatStingSound');
+}
+
+// ── Boss cues (migrated from Boss.ts inline `blip` synthesis) ────────
+
+/** Low rumble — Boss spawn. */
+export function playBossSpawnSound(): void {
+  playCue('playBossSpawnSound');
+}
+
+/** Rising tone — Boss phase transition. */
+export function playBossPhaseTransitionSound(): void {
+  playCue('playBossPhaseTransitionSound');
+}
+
+/** Heavy deep fall — Boss destruction. */
+export function playBossDestructionSound(): void {
+  playCue('playBossDestructionSound');
+}
+
+/**
+ * Per-phase Boss attack telegraph audio. Each of the four phases maps to its
+ * own baked variant (seeds 32204–32207), so the tell is distinct per phase.
+ */
+export function playBossPhaseCue(phase: number): void {
+  const seeds = cueSeeds('playBossPhaseCue');
+  const index =
+    seeds.length === 0
+      ? -1
+      : Math.min(Math.max(Math.floor(phase) - 1, 0), seeds.length - 1);
+  playCue('playBossPhaseCue', index < 0 ? {} : { seed: seeds[index] });
+}
+
+// ── Thruster hum (runtime shim delegation) ──────────────────────────
+
+/** Sustained thrust-driven hum. Delegates to the runtime shim (no-op headless). */
+export function updateThrusterSound(level: number): void {
+  updateThrusterHum(level);
+}
+
+/** Stops and frees the thruster hum. Delegates to the runtime shim. */
+export function stopThrusterSound(): void {
+  stopThrusterHum();
+}
+
+// ── Volume-change feedback ──────────────────────────────────────────
+
+/**
+ * Plays the player-destruction cue at the selected gain as volume feedback
+ * (AH-0MUADK77K008RBMB). Pitch is unchanged; `volume` in [0, 1] scales every
+ * layer and is clamped. Volume 0 plays nothing. Routed through the master
+ * gain so it respects mute/volume.
  */
 export function playVolumeFeedback(volume: number): void {
   playPlayerDestructionSound(volume);
 }
 
-interface ThrusterHumState {
-  ctx: AudioContext;
-  osc: OscillatorNode;
-  sub: OscillatorNode;
-  /** White-noise source for jet-engine whoosh character. */
-  noise: AudioBufferSourceNode;
-  /** Low-pass filter shaping the noise into jet-like roar. */
-  noiseFilter: BiquadFilterNode;
-  gain: GainNode;
-  /** Current gain — tracks the visual flame model analogously. */
-  currentGain: number;
-  /** Subtle detune drift in cents — slow random-walk variation for organic tonal character. */
-  detuneOsc: number;
-  /** Subtle detune drift in cents for the undertone oscillator. */
-  detuneSub: number;
-}
-
-/** For tests: returns the current thruster hum state (or null if not started). */
-export function _getThrusterHumStateForTests(): ThrusterHumState | null {
-  return thrusterHum;
-}
+// ── Test seams ──────────────────────────────────────────────────────
 
 /**
- * Internal: tears down all thruster hum AudioNodes and clears state.
- *
- * @param ctxTime    — the AudioContext.currentTime to schedule cancel/setValueAtTime.
- * @param stopOffset — additional time (seconds) after ctxTime to stop oscillators
- *                     (0 = immediate; 0.02 = graceful ramp tail).
- */
-function teardownThrusterHum(ctxTime: number, stopOffset: number): void {
-  try {
-    thrusterHum!.gain.gain.cancelScheduledValues(ctxTime);
-    thrusterHum!.gain.gain.setValueAtTime(0, ctxTime);
-    thrusterHum!.osc.stop(ctxTime + stopOffset);
-    thrusterHum!.sub.stop(ctxTime + stopOffset);
-    thrusterHum!.noise.stop(ctxTime + stopOffset);
-  } catch { /* already stopped / no ctx */ }
-  thrusterHum = null;
-}
-
-/**
- * Resets the thruster hum AudioNode lifecycle — stops any active hum and
- * clears module state. Exported under _ for tests so worktrees can re-test
- * the hum lifecycle in isolation.
- */
-export function _resetThrusterHumForTests(): void {
-  if (thrusterHum) {
-    teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
-  }
-  // Also allow tests to re-seed the AudioContext with a new mock.
-  // getAudioContext() caches the ctor instance; thruster tests need a fresh ctx.
-}
-
-/** Ensures the thruster hum has a live oscillator+gain. Lazily creates the nodes. */
-function ensureThrusterHum(ctx: AudioContext): ThrusterHumState {
-  if (thrusterHum && thrusterHum.ctx === ctx) return thrusterHum;
-  // Orphaned context → tear down old hum first.
-  if (thrusterHum) {
-    _resetThrusterHumForTests();
-  }
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(0, ctx.currentTime);
-  gain.connect(ensureMasterGain(ctx));
-
-  const osc = ctx.createOscillator();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ, ctx.currentTime);
-  osc.connect(gain);
-
-  const sub = ctx.createOscillator();
-  sub.type = 'sine';
-  sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ, ctx.currentTime);
-  sub.connect(gain);
-
-  // ── Jet-engine noise layer ──────────────────────────────────────
-  // White noise → lowpass filter → gain.  The noise gives the hum
-  // its jet-engine "whoosh" quality instead of a pure oscillator buzz.
-  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = true;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'bandpass';
-  // Initial jet texture: band-pass centre 700–1100 Hz, moderate Q.
-  const initCutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
-  const initQ = 0.6 + Math.random() * 0.5;
-  noiseFilter.frequency.setValueAtTime(initCutoff, ctx.currentTime);
-  noiseFilter.Q.setValueAtTime(initQ, ctx.currentTime);
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(gain);
-  noise.start(ctx.currentTime);
-
-  osc.start(ctx.currentTime);
-  sub.start(ctx.currentTime);
-
-  // ── Subtle detune drift — organic tonal variation (AC1, AH-0MTK9JP37003MJQ4) ──
-  // Small random-walk in cents, independent of thrust level.
-  const initDetuneOsc = (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS;
-  const initDetuneSub = (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS;
-  osc.detune.setValueAtTime(initDetuneOsc, ctx.currentTime);
-  sub.detune.setValueAtTime(initDetuneSub, ctx.currentTime);
-
-  thrusterHum = { ctx, osc, sub, noise, noiseFilter, gain, currentGain: 0, detuneOsc: initDetuneOsc, detuneSub: initDetuneSub };
-  return thrusterHum;
-}
-
-/**
- * Sustained thruster hum — player SFX (AH-0MTFOSOHN001Q620, GDD §7.3).
- *
- * A single reused soft triangle + sine undertone through one gain node
- * plus a dominant band-pass filtered white-noise whoosh (jet roar).
- * The gain envelope ramps smoothly so thrust onset/decay never clicks:
- * rise mirrors the flame growth time (30 ms at reference thrust),
- * decay is ~4× faster. `level` in [0, 1] comes from
- * `MovementModel.getEngineSoundLevel(state, input, thrustAcceleration)`
- * scaled by thrustAcceleration; the gain target is
- * `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.075).
- *
- * Call once per frame from `Player.preUpdate` — 0 silences the hum,
- * > 0 reuses the same nodes and ramps the gain. Does not leak oscillators.
- * Safe no-op without an AudioContext (headless tests / autoplay-blocked
- * browsers) — never throws.
- *
- * Thruster hum is NOT wired to per-engine flame ports — single ship-level
- * hum per the intake's single-hum assumption; VFX stays per-engine visual.
- */
-export function updateThrusterSound(level: number): void {
-  const clamped = clampLevel(level);
-  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME;
-
-  const ctx = getAudioContext();
-  if (!ctx) {
-    // Headless: track gain target so tests can still assert ramping
-    // semantics without real audio; without a ctx the hum stays no-op
-    // to the player but the module state mirrors "what the gain would be".
-    if (clamped === 0 && thrusterHum) {
-      // Silencing with no ctx — just forget the state, same as stop.
-      thrusterHum = null;
-      // Keep gainTracking for test assertions when headless (not used at runtime).
-    }
-    return;
-  }
-
-  if (clamped === 0) {
-    if (!thrusterHum) return;
-    // 4× decay: time to silence is growthTime / SHRINK_MULTIPLIER
-    const decayTime = THRUSTER_HUM_GROWTH_TIME / THRUSTER_HUM_SHRINK_MULTIPLIER;
-    const t = ctx.currentTime;
-    thrusterHum.gain.gain.cancelScheduledValues(t);
-    thrusterHum.gain.gain.setValueAtTime(thrusterHum.currentGain, t);
-    thrusterHum.gain.gain.linearRampToValueAtTime(0, t + decayTime);
-    thrusterHum.currentGain = 0;
-    // Leave nodes live so retriggering ramps up from the decay tail
-    // (no click) — stop only on explicit scene destroy via `stopThrusterSound`.
-    return;
-  }
-
-  const hum = ensureThrusterHum(ctx);
-  // Gentle pitch follows level — subtle, no buzzy jitter.
-  const pitchScale = 1 + clamped * 0.12;
-  hum.sub.frequency.setValueAtTime(THRUSTER_HUM_UNDERTONE_FREQ * pitchScale, ctx.currentTime);
-  hum.osc.frequency.setValueAtTime(THRUSTER_HUM_BASE_FREQ * pitchScale, ctx.currentTime);
-  // Subtle detune drift — slow random-walk for organic tonal variation (AC1).
-  try {
-    const driftOsc = Math.max(
-      -THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
-      Math.min(THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
-        hum.detuneOsc + (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS
-      )
-    );
-    const driftSub = Math.max(
-      -THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
-      Math.min(THRUSTER_HUM_DETUNE_DRIFT_MAX_CENTS,
-        hum.detuneSub + (Math.random() * 2 - 1) * THRUSTER_HUM_DETUNE_DRIFT_STEP_CENTS
-      )
-    );
-    hum.osc.detune.setValueAtTime(driftOsc, ctx.currentTime);
-    hum.sub.detune.setValueAtTime(driftSub, ctx.currentTime);
-    hum.detuneOsc = driftOsc;
-    hum.detuneSub = driftSub;
-  } catch { /* detune not supported */ }
-  // Gentle jet filter drift — small variance per frame, filtered noise stays dominant.
-  try {
-    const cutoff = THRUSTER_HUM_NOISE_FILTER_MIN + Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
-    hum.noiseFilter.frequency.setValueAtTime(cutoff, ctx.currentTime);
-  } catch { /* filter params not supported */ }
-
-  const t = ctx.currentTime;
-  // Rise time at this level = growthTime * (level's currentGain-distance / 1)
-  // — faster at higher thrust analogously, but we approximate with linear
-  // ramping from currentGain to target over growthTime scaled by remaining delta.
-  const delta = Math.abs(targetGain - hum.currentGain);
-  const ramp = THRUSTER_HUM_GROWTH_TIME * (delta / THRUSTER_HUM_MAX_VOLUME);
-  hum.gain.gain.cancelScheduledValues(t);
-  hum.gain.gain.setValueAtTime(hum.currentGain, t);
-  hum.gain.gain.linearRampToValueAtTime(targetGain, t + Math.max(0.005, ramp));
-  hum.currentGain = targetGain;
-}
-
-/**
- * Forces the thruster hum to stop and frees its AudioNodes.
- * Called when the ship is destroyed/respawned or the scene shuts down
- * (AC5 — no orphaned audio). Safe no-op without a live hum.
- */
-export function stopThrusterSound(): void {
-  if (!thrusterHum) return;
-  teardownThrusterHum(thrusterHum.ctx.currentTime, 0.02);
-}
-
-/**
- * Resets the internal AudioContext cache — needed only in tests when
- * window.AudioContext is swapped between the recording mock and the
- * absence case. Production code never calls this.
+ * Resets the playback layer: restores the default provider, forgets the
+ * context/master gain/decoded buffers and clears the runtime-shim voices.
+ * Production code never calls this; tests swap `window.AudioContext` between
+ * the recording double and the absence case.
  */
 export function _resetAudioContextForTests(): void {
-  if (thrusterHum) {
-    teardownThrusterHum(thrusterHum.ctx.currentTime, 0);
-  }
-  thrusterHum = null;
-  if (diverDiveSound) {
-    teardownDiveSound(diverDiveSound.ctx.currentTime, 0);
-  }
-  diverDiveSound = null;
-  diverDiveSoundRefCount = 0;
-  majorExplosionVoiceExpiries = [];
-  audioCtx = null;
-  masterSfxGain = null;
-  sfxVolume = 1;
-  sfxMuted = false;
-}
-
-let audioCtx: AudioContext | null = null;
-
-/**
- * Lazily creates the shared AudioContext, or returns null if unavailable.
- *
- * Exported so entity modules (e.g. Boss.ts) reuse the single cached
- * context instead of creating their own duplicate (AH-0MU4KPQHR008WX4R).
- */
-export function getAudioContext(): AudioContext | null {
-  if (audioCtx) return audioCtx;
-  try {
-    const Ctor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctor) return null;
-    audioCtx = new Ctor();
-    // Create the master SFX gain so all subsequent cues route through it.
-    ensureMasterGain(audioCtx);
-  } catch {
-    audioCtx = null;
-  }
-  return audioCtx;
-}
-
-/**
- * Plays a single oscillator blip with a gain envelope.
- *
- * Exported so entity modules (e.g. Boss.ts) reuse the shared synthesis
- * helper instead of duplicating it (AH-0MU4KPQHR008WX4R).
- */
-export function blip(
-  freqStart: number,
-  freqEnd: number,
-  duration: number,
-  type: OscillatorType,
-  volume: number,
-): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-
-  osc.type = type;
-  osc.frequency.setValueAtTime(freqStart, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(
-    Math.max(1, freqEnd),
-    ctx.currentTime + duration,
-  );
-
-  gain.gain.setValueAtTime(volume, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
-
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration + 0.02);
-}
-
-/** A short rising square-wave blip — enemy spawn cue. */
-export function playSpawnSound(): void {
-  blip(220, 880, 0.18, 'square', 0.12);
-}
-
-/**
- * Per-invocation pitch jitter for explosion destruction sweeps (±15 %).
- * A single factor is drawn per invocation and applied to **both** sweep
- * endpoints so the descending sweep character is preserved while repeated
- * kills sound slightly different. Volume, waveform and duration are
- * unchanged. The intentionally-unwired Tank variant is not jittered.
- */
-export const EXPLOSION_PITCH_JITTER = 0.15;
-
-/**
- * Returns a pitch multiplier uniformly in
- * `[1 - EXPLOSION_PITCH_JITTER, 1 + EXPLOSION_PITCH_JITTER]` (±15 %).
- * Uses `Math.random()` — the audio path has no seeded PRNG and is outside
- * the deterministic VFX particle-seed contract (see AC3/AC4).
- */
-export function explosionPitchFactor(): number {
-  return 1 + (Math.random() - 0.5) * 2 * EXPLOSION_PITCH_JITTER;
-}
-
-/**
- * A quick descending saw-wave burst — enemy destruction cue.
- *
- * The sweep endpoints are multiplied by a single per-invocation pitch
- * factor (±{@link EXPLOSION_PITCH_JITTER}), so the same cue varies a
- * little between kills without changing its character.
- */
-export function playDestructionSound(): void {
-  const pitch = explosionPitchFactor();
-  // Volume 0.3 (doubled from initial 0.15) so explosion feedback is
-  // clearly audible over the action (feedback from Swarm audio playtest).
-  blip(440 * pitch, 60 * pitch, 0.28, 'sawtooth', 0.3);
-}
-
-// ── Dedicated player-destruction cue (AH-0MUDY2ID7006VY3A) ─────────
-//
-// The player losing a ship is the most consequential event in the game,
-// so it gets its own heavier "hull breach" boom rather than the generic
-// enemy pop. Three layers: (1) a deep impact thump, (2) a slow
-// descending body sweep, (3) a short filtered-noise tail. All three
-// route through the master SFX gain and are no-ops without an
-// AudioContext (headless tests / autoplay-blocked browsers).
-//
-// This cue deliberately does NOT reuse `playDestructionSound()`: the
-// player-death paths call this instead, so the two never double-play
-// (parent AH-0MUAYB4R3002ZIZY AC3).
-
-/**
- * Impact-thump start frequency (Hz) for the player-destruction cue —
- * deeper and heavier than the generic enemy fall (440 Hz).
- */
-export const PLAYER_DESTRUCTION_THUMP_START_HZ = 120;
-
-/** Impact-thump end frequency (Hz) — a hard fall to sub-bass. */
-export const PLAYER_DESTRUCTION_THUMP_END_HZ = 32;
-
-/** Impact-thump duration (seconds). */
-export const PLAYER_DESTRUCTION_THUMP_DURATION = 0.4;
-
-/** Impact-thump layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const PLAYER_DESTRUCTION_THUMP_VOLUME = 0.2;
-
-/** Descending-body start frequency (Hz). */
-export const PLAYER_DESTRUCTION_BODY_START_HZ = 260;
-
-/** Descending-body end frequency (Hz) — a long, mournful slide. */
-export const PLAYER_DESTRUCTION_BODY_END_HZ = 42;
-
-/** Descending-body duration (seconds) — the longest layer, the "tail". */
-export const PLAYER_DESTRUCTION_BODY_DURATION = 0.6;
-
-/** Descending-body layer gain. */
-export const PLAYER_DESTRUCTION_BODY_VOLUME = 0.16;
-
-/** Filtered-noise tail duration (seconds). */
-export const PLAYER_DESTRUCTION_TAIL_DURATION = 0.28;
-
-/** Filtered-noise tail layer gain. */
-export const PLAYER_DESTRUCTION_TAIL_VOLUME = 0.12;
-
-/** High-pass centre (Hz) for the noise tail — a bright shrapnel hiss. */
-export const PLAYER_DESTRUCTION_TAIL_FILTER_HZ = 1200;
-
-/**
- * Heavier, layered player-destruction cue — "hull breach" boom
- * (AH-0MUDY2ID7006VY3A, parent AH-0MUAYB4R3002ZIZY AC3).
- *
- * Three layers played together so the player's death reads unmistakably
- * differently from an enemy kill:
- *   1. **Impact thump** — a sawtooth falling
- *      {@link PLAYER_DESTRUCTION_THUMP_START_HZ} →
- *      {@link PLAYER_DESTRUCTION_THUMP_END_HZ} over
- *      {@link PLAYER_DESTRUCTION_THUMP_DURATION}.
- *   2. **Descending body** — a triangle sliding
- *      {@link PLAYER_DESTRUCTION_BODY_START_HZ} →
- *      {@link PLAYER_DESTRUCTION_BODY_END_HZ} over
- *      {@link PLAYER_DESTRUCTION_BODY_DURATION}, giving the cue its
- *      heavier, longer character.
- *   3. **Noise tail** — a short high-pass filtered white-noise burst for
- *      the shrapnel hiss.
- *
- * Every layer's amplitude and length is an exported constant (no inline
- * literals), so the cue is fully tunable in one place. Scheduled at the
- * current time; called exactly once per player destruction. Safe no-op
- * without an AudioContext (never throws).
- *
- * An optional `volumeScale` (default 1) multiplies every layer's gain
- * **without changing any pitch/synthesis** — used by `playVolumeFeedback`
- * to play the cue at the selected SFX volume (AH-0MUADK77K008RBMB). A scale
- * of 0 plays nothing.
- */
-export function playPlayerDestructionSound(volumeScale = 1): void {
-  const ctx = getAudioContext();
-  const scale = Math.max(0, Math.min(1, volumeScale));
-  if (!ctx || scale <= 0) return;
-  const t = ctx.currentTime;
-
-  // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
-  const thump = ctx.createOscillator();
-  const thumpGain = ctx.createGain();
-  thump.type = 'sawtooth';
-  thump.frequency.setValueAtTime(PLAYER_DESTRUCTION_THUMP_START_HZ, t);
-  thump.frequency.exponentialRampToValueAtTime(
-    PLAYER_DESTRUCTION_THUMP_END_HZ,
-    t + PLAYER_DESTRUCTION_THUMP_DURATION,
-  );
-  thumpGain.gain.setValueAtTime(PLAYER_DESTRUCTION_THUMP_VOLUME * scale, t);
-  thumpGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + PLAYER_DESTRUCTION_THUMP_DURATION,
-  );
-  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
-  thump.start(t);
-  thump.stop(t + PLAYER_DESTRUCTION_THUMP_DURATION + 0.02);
-
-  // ── Layer 2: descending body (triangle slide) — the "tail". ───────
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = 'triangle';
-  body.frequency.setValueAtTime(PLAYER_DESTRUCTION_BODY_START_HZ, t);
-  body.frequency.exponentialRampToValueAtTime(
-    PLAYER_DESTRUCTION_BODY_END_HZ,
-    t + PLAYER_DESTRUCTION_BODY_DURATION,
-  );
-  bodyGain.gain.setValueAtTime(PLAYER_DESTRUCTION_BODY_VOLUME * scale, t);
-  bodyGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + PLAYER_DESTRUCTION_BODY_DURATION,
-  );
-  body.connect(bodyGain).connect(ensureMasterGain(ctx));
-  body.start(t);
-  body.stop(t + PLAYER_DESTRUCTION_BODY_DURATION + 0.02);
-
-  // ── Layer 3: shrapnel hiss (high-pass filtered white noise). ──────
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    Math.max(1, Math.floor(ctx.sampleRate * PLAYER_DESTRUCTION_TAIL_DURATION)),
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'highpass';
-  noiseFilter.frequency.setValueAtTime(PLAYER_DESTRUCTION_TAIL_FILTER_HZ, t);
-  noiseFilter.Q.setValueAtTime(0.8, t);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(PLAYER_DESTRUCTION_TAIL_VOLUME * scale, t);
-  noiseGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + PLAYER_DESTRUCTION_TAIL_DURATION,
-  );
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + PLAYER_DESTRUCTION_TAIL_DURATION + 0.02);
-}
-
-// ── Wave-timeout major-explosion cue (AH-0MUJ1YZJ9008O4RC) ─────────
-//
-// When the wave timer expires every surviving non-asteroid enemy detonates
-// at 10× scale. That wipe is the most dramatic event on the timeout path,
-// so it gets its own heavier "major explosion" cue rather than the generic
-// enemy pop. Same three-layer recipe as the player-destruction boom, but
-// deeper and longer.
-//
-// This cue deliberately does NOT reuse `playDestructionSound()` or
-// `playPlayerDestructionSound()` — the timeout path fires it once per
-// detonating ship, and the player's timeout life loss keeps the generic
-// cue, so the two never double-play (parent AH-0MUJ1YZJ9008O4RC AC1/AC3/AC4).
-
-/** Impact-thump start frequency (Hz) — deeper than the generic 440 Hz fall. */
-export const MAJOR_EXPLOSION_THUMP_START_HZ = 150;
-
-/** Impact-thump end frequency (Hz) — a hard fall to sub-bass. */
-export const MAJOR_EXPLOSION_THUMP_END_HZ = 26;
-
-/** Impact-thump duration (seconds). */
-export const MAJOR_EXPLOSION_THUMP_DURATION = 0.45;
-
-/** Impact-thump layer gain. */
-export const MAJOR_EXPLOSION_THUMP_VOLUME = 0.28;
-
-/** Descending-body start frequency (Hz). */
-export const MAJOR_EXPLOSION_BODY_START_HZ = 340;
-
-/** Descending-body end frequency (Hz) — the long, heavy slide. */
-export const MAJOR_EXPLOSION_BODY_END_HZ = 38;
-
-/** Descending-body duration (seconds) — the longest layer, the "tail". */
-export const MAJOR_EXPLOSION_BODY_DURATION = 0.7;
-
-/** Descending-body layer gain. */
-export const MAJOR_EXPLOSION_BODY_VOLUME = 0.22;
-
-/** Filtered-noise tail duration (seconds). */
-export const MAJOR_EXPLOSION_TAIL_DURATION = 0.35;
-
-/** Filtered-noise tail layer gain. */
-export const MAJOR_EXPLOSION_TAIL_VOLUME = 0.16;
-
-/** Low-pass centre (Hz) for the noise tail — a deep rumble wash. */
-export const MAJOR_EXPLOSION_TAIL_FILTER_HZ = 900;
-
-/** Low-pass filter resonance (Q) for the noise tail. */
-export const MAJOR_EXPLOSION_TAIL_FILTER_Q = 0.8;
-
-/**
- * Maximum concurrent major-explosion voices (GDD §7.3 "avoid stacking more
- * than 3–4 concurrent SFX instances"). A wave timeout fires one cue per
- * detonating ship; the cap keeps a large wipe from stacking into clipping
- * or mud. Playtest-tunable — enforced by the limiter in
- * {@link playMajorExplosionSound}.
- */
-export const MAJOR_EXPLOSION_MAX_VOICES = 4;
-
-/**
- * Gain multiplier applied to major-explosion voices triggered while the
- * {@link MAJOR_EXPLOSION_MAX_VOICES} cap is already saturated. Excess
- * triggers from the same wave timeout are attenuated rather than stacked
- * at full gain, keeping the burst from clipping or swamping other cues.
- */
-export const MAJOR_EXPLOSION_OVERFLOW_ATTENUATION = 0.35;
-
-/**
- * How long (seconds) a major-explosion voice counts against the concurrency
- * cap — the cue's longest layer (the descending body,
- * {@link MAJOR_EXPLOSION_BODY_DURATION}). Triggers that fall inside this
- * window are treated as concurrent; once it elapses the voice expires, so a
- * later timeout is never silently dropped.
- */
-export const MAJOR_EXPLOSION_VOICE_DURATION = MAJOR_EXPLOSION_BODY_DURATION;
-
-/**
- * Expiry timestamps (AudioContext time) of the currently-active
- * major-explosion voices. A voice holds a slot for
- * {@link MAJOR_EXPLOSION_VOICE_DURATION}; expired entries are pruned on each
- * trigger. Kept module-scoped so the cap applies across the per-ship calls
- * made by `PlayScene._timeoutWave()` in a single tick.
- */
-let majorExplosionVoiceExpiries: number[] = [];
-
-/** Removes voices whose active window has already elapsed. */
-function pruneMajorExplosionVoices(now: number): void {
-  majorExplosionVoiceExpiries = majorExplosionVoiceExpiries.filter(
-    (expiry) => expiry > now,
-  );
-}
-
-/**
- * Registers one major-explosion voice against the concurrency cap and
- * returns the gain multiplier to apply to that voice.
- *
- * A voice below the {@link MAJOR_EXPLOSION_MAX_VOICES} cap holds a slot for
- * {@link MAJOR_EXPLOSION_VOICE_DURATION} and plays at full gain (1). Once the
- * cap is saturated the trigger still sounds — so the wipe stays audible — but
- * at {@link MAJOR_EXPLOSION_OVERFLOW_ATTENUATION} so simultaneous detonations
- * do not stack at full gain.
- */
-function registerMajorExplosionVoice(now: number): number {
-  pruneMajorExplosionVoices(now);
-  if (majorExplosionVoiceExpiries.length >= MAJOR_EXPLOSION_MAX_VOICES) {
-    return MAJOR_EXPLOSION_OVERFLOW_ATTENUATION;
-  }
-  majorExplosionVoiceExpiries.push(now + MAJOR_EXPLOSION_VOICE_DURATION);
-  return 1;
-}
-
-/** For tests: number of active (full-gain) major-explosion voices. */
-export function _getMajorExplosionVoiceCountForTests(): number {
-  return majorExplosionVoiceExpiries.length;
-}
-
-/** For tests: clears the limiter state so suites stay isolated. */
-export function _resetMajorExplosionLimiterForTests(): void {
-  majorExplosionVoiceExpiries = [];
-}
-
-/**
- * Heavier, layered wave-timeout explosion cue — "major blast"
- * (AH-0MUJ1YZJ9008O4RC, parent AC1).
- *
- * Three layers played together so a timeout wipe reads unmistakably
- * heavier than a single enemy kill:
- *   1. **Impact thump** — a sawtooth falling
- *      {@link MAJOR_EXPLOSION_THUMP_START_HZ} →
- *      {@link MAJOR_EXPLOSION_THUMP_END_HZ} over
- *      {@link MAJOR_EXPLOSION_THUMP_DURATION}.
- *   2. **Descending body** — a triangle sliding
- *      {@link MAJOR_EXPLOSION_BODY_START_HZ} →
- *      {@link MAJOR_EXPLOSION_BODY_END_HZ} over
- *      {@link MAJOR_EXPLOSION_BODY_DURATION}, giving the cue its heavier,
- *      longer character.
- *   3. **Noise tail** — a short low-pass filtered white-noise burst for
- *      the deep rumble wash (distinct from the player cue's high-pass
- *      shrapnel hiss).
- *
- * Every layer's amplitude and length is an exported constant (no inline
- * tuning literals), so the cue is fully tunable in one place. All layers
- * route through the master SFX gain, so volume/mute apply. Called once per
- * detonating ship by `PlayScene._timeoutWave()`, under a concurrency cap:
- * at most {@link MAJOR_EXPLOSION_MAX_VOICES} full-gain voices sound at once,
- * with excess triggers attenuated by
- * {@link MAJOR_EXPLOSION_OVERFLOW_ATTENUATION} (GDD §7.3). Safe no-op without
- * an `AudioContext` (headless tests / autoplay-blocked browsers).
- */
-export function playMajorExplosionSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Concurrency/rate limiter (GDD §7.3 ≤ 3–4 concurrent SFX). Excess
-  // triggers in the same burst sound at reduced gain instead of stacking.
-  const voiceGain = registerMajorExplosionVoice(t);
-
-  // ── Layer 1: deep impact thump (sawtooth fall). ──────────────────
-  const thump = ctx.createOscillator();
-  const thumpGain = ctx.createGain();
-  thump.type = 'sawtooth';
-  thump.frequency.setValueAtTime(MAJOR_EXPLOSION_THUMP_START_HZ, t);
-  thump.frequency.exponentialRampToValueAtTime(
-    MAJOR_EXPLOSION_THUMP_END_HZ,
-    t + MAJOR_EXPLOSION_THUMP_DURATION,
-  );
-  thumpGain.gain.setValueAtTime(
-    MAJOR_EXPLOSION_THUMP_VOLUME * voiceGain,
-    t,
-  );
-  thumpGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + MAJOR_EXPLOSION_THUMP_DURATION,
-  );
-  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
-  thump.start(t);
-  thump.stop(t + MAJOR_EXPLOSION_THUMP_DURATION + 0.02);
-
-  // ── Layer 2: descending body (triangle slide) — the "tail". ───────
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = 'triangle';
-  body.frequency.setValueAtTime(MAJOR_EXPLOSION_BODY_START_HZ, t);
-  body.frequency.exponentialRampToValueAtTime(
-    MAJOR_EXPLOSION_BODY_END_HZ,
-    t + MAJOR_EXPLOSION_BODY_DURATION,
-  );
-  bodyGain.gain.setValueAtTime(
-    MAJOR_EXPLOSION_BODY_VOLUME * voiceGain,
-    t,
-  );
-  bodyGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + MAJOR_EXPLOSION_BODY_DURATION,
-  );
-  body.connect(bodyGain).connect(ensureMasterGain(ctx));
-  body.start(t);
-  body.stop(t + MAJOR_EXPLOSION_BODY_DURATION + 0.02);
-
-  // ── Layer 3: rumble wash (low-pass filtered white noise). ─────────
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    Math.max(1, Math.floor(ctx.sampleRate * MAJOR_EXPLOSION_TAIL_DURATION)),
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'lowpass';
-  noiseFilter.frequency.setValueAtTime(MAJOR_EXPLOSION_TAIL_FILTER_HZ, t);
-  noiseFilter.Q.setValueAtTime(MAJOR_EXPLOSION_TAIL_FILTER_Q, t);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(
-    MAJOR_EXPLOSION_TAIL_VOLUME * voiceGain,
-    t,
-  );
-  noiseGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + MAJOR_EXPLOSION_TAIL_DURATION,
-  );
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + MAJOR_EXPLOSION_TAIL_DURATION + 0.02);
-}
-
-/**
- * A short, high, low-volume tick — player bullet shoots down an enemy
- * bullet (AH-0MU43IIQV001S5JR / parent AH-0MUD8E015004C4JO AC5).
- *
- * Deliberately distinct from {@link playDestructionSound} (heavier, lower)
- * so an interception reads as a light "tick" and does not mask the
- * destruction cue. Safe no-op without an AudioContext.
- */
-export function playBulletDestructionSound(): void {
-  blip(1400, 900, 0.07, 'square', 0.12);
-}
-
-/**
- * A heavier, lower destruction cue — for Tank enemies.
- *
- * Intentionally UNWIRED (dead code): Tank destruction reuses the shared
- * `playDestructionSound()` owned by `GymFormationScene` so it plays
- * exactly once per destruction (see AH-0MTCNZAPS007WTQE / enemy design
- * doc §7). Do not wire this into the Tank explosion path — it would
- * double-play the destruction sound.
- */
-export function playTankDestructionSound(): void {
-  blip(220, 30, 0.45, 'sawtooth', 0.2);
-}
-
-/**
- * Duration (seconds) of the Tank advance-cue mechanical whine.
- *
- * The whine itself provides the ≥ 500 ms advance lead required by
- * GDD §7.3: the cue sounds for this long before the cannon thump lands,
- * and `playTankFireSound()` schedules its thump to start exactly at the
- * cue's end time so the two flow together with no gap.
- */
-export const TANK_ADVANCE_CUE_DURATION = 0.6;
-
-/**
- * Rising mechanical whine — E3 Tank firing advance cue (GDD §7.3).
- *
- * A grinding two-layer sawtooth/square whine (heavy, mechanical — like a
- * tank turret powering up) that rises over `TANK_ADVANCE_CUE_DURATION`
- * (≥ 500 ms) and flows directly into the cannon-thump fire sound.
- * Designed to be called immediately before `playTankFireSound()` in the
- * same tick: no dead gap between warning and shot (deliberate deviation
- * from the Scout two-phase tell). Safe no-op without an AudioContext.
- */
-export function playTankAdvanceCue(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  const dur = TANK_ADVANCE_CUE_DURATION;
-
-  // Whine layer: rising sawtooth (mechanical grind).
-  const whine = ctx.createOscillator();
-  const whineGain = ctx.createGain();
-  whine.type = 'sawtooth';
-  whine.frequency.setValueAtTime(150, t);
-  whine.frequency.exponentialRampToValueAtTime(320, t + dur);
-  whineGain.gain.setValueAtTime(0.12, t);
-  whineGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  whine.connect(whineGain).connect(ensureMasterGain(ctx));
-  whine.start(t);
-  whine.stop(t + dur + 0.02);
-
-  // Sub-octave square layer: adds the "heavy machinery" body.
-  const sub = ctx.createOscillator();
-  const subGain = ctx.createGain();
-  sub.type = 'square';
-  sub.frequency.setValueAtTime(75, t);
-  sub.frequency.exponentialRampToValueAtTime(160, t + dur);
-  subGain.gain.setValueAtTime(0.06, t);
-  subGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  sub.connect(subGain).connect(ensureMasterGain(ctx));
-  sub.start(t);
-  sub.stop(t + dur + 0.02);
-}
-
-/**
- * Heavy low cannon thump — E3 Tank fire sound (GDD §7.3).
- *
- * A deep sawtooth + sine body thumping down from ~90 Hz to ~25 Hz — the
- * "cannon" counterpart to the mechanical whine. Called exactly once per
- * radial burst (scene-level, not per projectile).
- *
- * The thump is scheduled at `currentTime + TANK_ADVANCE_CUE_DURATION`
- * (the cue's end time) so that, when called back-to-back with
- * `playTankAdvanceCue()` in the same tick, it lands exactly as the whine
- * ends — flowing into the shot with no dead gap. Safe no-op without an
- * AudioContext.
- */
-export function playTankFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime + TANK_ADVANCE_CUE_DURATION;
-
-  // Main thump: low sawtooth fall.
-  const thump = ctx.createOscillator();
-  const thumpGain = ctx.createGain();
-  thump.type = 'sawtooth';
-  thump.frequency.setValueAtTime(90, t);
-  thump.frequency.exponentialRampToValueAtTime(28, t + 0.35);
-  thumpGain.gain.setValueAtTime(0.35, t);
-  thumpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
-  thump.start(t);
-  thump.stop(t + 0.37);
-
-  // Sub-sine body for weight.
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = 'sine';
-  body.frequency.setValueAtTime(55, t);
-  body.frequency.exponentialRampToValueAtTime(24, t + 0.35);
-  bodyGain.gain.setValueAtTime(0.25, t);
-  bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-  body.connect(bodyGain).connect(ensureMasterGain(ctx));
-  body.start(t);
-  body.stop(t + 0.37);
-}
-
-// ── Power-up / weapon cues ─────────────────────────────────────────
-
-/**
- * A bright ascending blip — power-up / weapon drop spawn cue.
- * Higher pitch than the enemy spawn to signal "collectible item".
- */
-export function playPowerUpSpawnSound(): void {
-  blip(440, 1760, 0.25, 'sine', 0.1);
-}
-
-/**
- * A quick descending blip — power-up despawn cue (drop fades away).
- * Same pitch contour as spawn but lower volume and shorter.
- */
-export function playPowerUpDespawnSound(): void {
-  blip(880, 220, 0.15, 'sine', 0.08);
-}
-
-/**
- * A cheerful chime — power-up collection cue.
- * Two-tone ascending pattern to signal "success".
- */
-export function playPowerUpCollectSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // First tone: quick ascending blip.
-  blip(523, 659, 0.1, 'sine', 0.12); // C5 → E5
-  // Second tone: slightly after, higher.
-  const osc2 = ctx.createOscillator();
-  const gain2 = ctx.createGain();
-  osc2.type = 'sine';
-  osc2.frequency.setValueAtTime(784, ctx.currentTime + 0.08);
-  osc2.frequency.exponentialRampToValueAtTime(1047, ctx.currentTime + 0.2);
-  gain2.gain.setValueAtTime(0, ctx.currentTime + 0.08);
-  gain2.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.1);
-  gain2.gain.exponentialRampToValueAtTime(
-    0.0001,
-    ctx.currentTime + 0.2,
-  );
-  osc2.connect(gain2).connect(ensureMasterGain(ctx));
-  osc2.start(ctx.currentTime + 0.08);
-  osc2.stop(ctx.currentTime + 0.22);
-}
-
-/**
- * Short percussive pop — power-up collection cue (parent AH-0MUAYB3OU0087H9W).
- *
- * A very short (≤ 80 ms) sawtooth burst (600 → 100 Hz) layered with
- * filtered white noise for a tactile "pop" character — distinct from
- * the existing two-tone ascending chime (`playPowerUpCollectSound()`).
- * Designed to give players an immediate, satisfying tactile response
- * on collection. Safe no-op without an AudioContext.
- */
-export function playPowerUpCollectPopSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  const dur = 0.08; // ≤ 100 ms, 80 ms burst
-
-  // Main pop: quick sawtooth fall — punchy transient.
-  const osc = ctx.createOscillator();
-  const oscGain = ctx.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(600, t);
-  osc.frequency.exponentialRampToValueAtTime(100, t + dur);
-  oscGain.gain.setValueAtTime(0.15, t);
-  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(oscGain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + dur + 0.02);
-
-  // Noise texture: adds the sharp transient "thwack" of a pop.
-  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'highpass';
-  noiseFilter.frequency.setValueAtTime(2000, t);
-  noiseFilter.Q.setValueAtTime(1.0, t);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(0.1, t);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.8);
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + dur + 0.02);
-}
-
-/**
- * A distinctive whoosh — weapon change cue (weapon power-up collected,
- * replacing the current weapon).  Different from the collection chime
- * to signal "armed with new weapon".
- */
-export function playWeaponChangeSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // Rapid ascending arpeggio (three quick tones).
-  const tones = [523, 659, 784]; // C5, E5, G5
-  for (let i = 0; i < tones.length; i++) {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    const t = i * 0.06;
-    osc.frequency.setValueAtTime(tones[i], ctx.currentTime + t);
-    gain.gain.setValueAtTime(0, ctx.currentTime + t);
-    gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      ctx.currentTime + t + 0.08,
-    );
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(ctx.currentTime + t);
-    osc.stop(ctx.currentTime + t + 0.1);
-  }
-}
-
-// ── Swarm enemy cues (GDD §4.1 — E5 Swarm) ─────────────────────────
-
-/**
- * A buzzing / whoosh — Swarm coordinated-burst volley sound.
- * A rapid low-frequency pulse layered with a sweeping whoosh to evoke
- * a swarm of insects charging forward.
- */
-export function playSwarmBurstSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // Low buzzing pulse (simulates insect swarm).
-  const buzz = ctx.createOscillator();
-  const buzzGain = ctx.createGain();
-  buzz.type = 'sawtooth';
-  buzz.frequency.setValueAtTime(120, ctx.currentTime);
-  buzz.frequency.linearRampToValueAtTime(80, ctx.currentTime + 0.15);
-  buzzGain.gain.setValueAtTime(0.1, ctx.currentTime);
-  buzzGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.2);
-  buzz.connect(buzzGain).connect(ensureMasterGain(ctx));
-  buzz.start(ctx.currentTime);
-  buzz.stop(ctx.currentTime + 0.22);
-
-  // Sweeping whoosh on top.
-  const whoosh = ctx.createOscillator();
-  const whooshGain = ctx.createGain();
-  whoosh.type = 'sine';
-  whoosh.frequency.setValueAtTime(200, ctx.currentTime);
-  whoosh.frequency.exponentialRampToValueAtTime(
-    600,
-    ctx.currentTime + 0.15,
-  );
-  whooshGain.gain.setValueAtTime(0.06, ctx.currentTime);
-  whooshGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
-  whoosh.connect(whooshGain).connect(ensureMasterGain(ctx));
-  whoosh.start(ctx.currentTime);
-  whoosh.stop(ctx.currentTime + 0.2);
-}
-
-// ── Scout enemy cues (GDD §4.1 — E1 Scout) ─────────────────────────
-
-/**
- * Duration (seconds) of the Phaser advance-cue rising sine.
- *
- * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playPhaserFireSound()` can
- * schedule its shot to start exactly at the cue's end time, flowing
- * back-to-back with no dead gap between warning and shot.
- */
-export const PHASER_ADVANCE_CUE_DURATION = 0.6;
-
-/**
- * Rising warning blip — E4 Phaser firing advance cue (GDD §7.3).
- *
- * A rising sine (660 → 880 Hz) over `PHASER_ADVANCE_CUE_DURATION`
- * (≥ 500 ms) that replaces the inline `_playAdvanceCue()` previously
- * defined in `Phaser.ts`. Pitched lower than the Scout cue to stay
- * distinct. Called at tell start, before `playPhaserFireSound()`.
- * Safe no-op without an AudioContext.
- */
-export function playPhaserAdvanceCue(): void {
-  blip(660, 880, PHASER_ADVANCE_CUE_DURATION, 'sine', 0.08);
-}
-
-/**
- * Quick sharp blip — E4 Phaser fire sound (GDD §7.3).
- *
- * A short triangle-wave sweep (1000 → 500 Hz, ~80 ms) — sharper
- * than the Scout fire sound to distinguish the orbital phaser's
- * aimed shot. Very short (≤ 100 ms) to avoid cacophony when
- * multiple Phasers fire simultaneously. Scheduled at
- * `currentTime + PHASER_ADVANCE_CUE_DURATION` (the cue's end time)
- * so that, when called back-to-back with `playPhaserAdvanceCue()`
- * in the same tick, it flows with no dead gap. Safe no-op without
- * an AudioContext.
- */
-export function playPhaserFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime + PHASER_ADVANCE_CUE_DURATION;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(1000, t);
-  osc.frequency.exponentialRampToValueAtTime(
-    Math.max(1, 500),
-    t + 0.08,
-  );
-
-  gain.gain.setValueAtTime(0.12, t);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
-
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + 0.1);
-}
-
-/**
- * Duration (seconds) of the Scout advance-cue rising blip.
- *
- * Mirrors `TANK_ADVANCE_CUE_DURATION` so `playScoutFireSound()` can
- * schedule its shot to start exactly at the cue's end time, flowing
- * back-to-back with no dead gap between warning and shot.
- */
-export const SCOUT_ADVANCE_CUE_DURATION = 0.6;
-
-/**
- * Rising warning blip — E1 Scout firing advance cue.
- *
- * A rising sine mirroring the Phaser tell but pitched higher to stay
- * distinct. Plays at the start of the per-entity tell, ≥ 500 ms before
- * the aimed shot (GDD §7.3); duration must stay ≤ SCOUT_FIRE_INTERVAL
- * in src/entities/Scout.ts (600 ms tell, 1200 ms fire interval).
- *
- * Called immediately before `playScoutFireSound()` in the same tick:
- * no dead gap between warning and shot (the fire sound is scheduled
- * to start at `currentTime + SCOUT_ADVANCE_CUE_DURATION`, i.e. exactly
- * as the cue ends). Safe no-op without an AudioContext.
- */
-export function playScoutAdvanceCue(): void {
-  blip(880, 1320, SCOUT_ADVANCE_CUE_DURATION, 'sine', 0.08);
-}
-
-// ── Diver enemy cues (GDD §4.1 — E2 Diver) ─────────────────────────
-
-/**
- * Duration (seconds) of the sustained dive sound — matches `DIVER_DIVE_DURATION`.
- *
- * The dive sound plays from the FORMATION→DIVING transition until the
- * end of the dive (DIVING→PAUSING), so the envelope must cover the full
- * ~2 s dive arc. Tied to `Diver.DIVER_DIVE_DURATION` in `Diver.ts`.
- */
-export const DIVER_DIVE_SOUND_DURATION = 2;
-
-/**
- * Rising whoosh / crack — E2 Diver dive-start cue (AH-0MTVYC6E8005YN6F).
- *
- * A short rising sawtooth sweep (150 → 600 Hz, ~250 ms) layered with
- * filtered white noise for a "breach" character — evokes the diver
- * suddenly breaking formation and plunging toward the player. Played
- * exactly once at the FORMATION→DIVING transition (in `_startDive()`),
- * distinct from the fire crack, the destruction sound, and all other
- * enemy cues. Safe no-op without an AudioContext.
- */
-export function playDiverDiveStartSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  const dur = 0.25;
-
-  // Rising sawtooth: the "crack" / whoosh ascent.
-  const osc = ctx.createOscillator();
-  const oscGain = ctx.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(150, t);
-  osc.frequency.exponentialRampToValueAtTime(600, t + dur);
-  oscGain.gain.setValueAtTime(0.12, t);
-  oscGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(oscGain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + dur + 0.02);
-
-  // Noise layer: adds the "whoosh" texture of breaking through water.
-  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'bandpass';
-  noiseFilter.frequency.setValueAtTime(300, t);
-  noiseFilter.frequency.exponentialRampToValueAtTime(1200, t + dur);
-  noiseFilter.Q.setValueAtTime(0.8, t);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(0.06, t);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + dur + 0.02);
-}
-
-// ── Diver sustained dive sound ──────────────────────────────────────
-//
-// A continuous noise-sweep texture that plays while a diver is in
-// the DIVING state (≈ 2 s). Concurrent divers share one refcounted
-// voice: the first playDiveSound() creates the nodes, overlapping
-// dives only bump the refcount, and the nodes are torn down when the
-// last active dive calls stopDiveSound(). This keeps entity wiring
-// simple (plain start/stop calls, no per-dive handles) while tolerating
-// overlapping dives. The sound is bounded: start at FORMATION→DIVING,
-// stop at the end of the dive, destroySelf(), or destroy(). No oscillator
-// leak on destruction.
-
-interface DiverDiveSoundState {
-  ctx: AudioContext;
-  /** Band-pass filtered white-noise source for the dive whoosh texture. */
-  noise: AudioBufferSourceNode;
-  /** Filter shaping noise into a jet-like dive roar. */
-  filter: BiquadFilterNode;
-  gain: GainNode;
-}
-
-let diverDiveSound: DiverDiveSoundState | null = null;
-/** Active dive count holding the shared dive-sound voice. */
-let diverDiveSoundRefCount = 0;
-
-/** For tests: returns the current dive sound state (or null if not started). */
-export function _getDiverDiveSoundStateForTests(): DiverDiveSoundState | null {
-  return diverDiveSound;
-}
-
-/** For tests: returns how many active dives hold the shared voice. */
-export function _getDiverDiveSoundRefCountForTests(): number {
-  return diverDiveSoundRefCount;
-}
-
-/**
- * Internal: tears down all dive sound AudioNodes and clears state.
- */
-function teardownDiveSound(ctxTime: number, stopOffset: number): void {
-  try {
-    if (!diverDiveSound) return;
-    diverDiveSound.gain.gain.cancelScheduledValues(ctxTime);
-    diverDiveSound.gain.gain.setValueAtTime(0, ctxTime);
-    diverDiveSound.noise.stop(ctxTime + stopOffset);
-  } catch { /* already stopped / no ctx */ }
-  diverDiveSound = null;
-  diverDiveSoundRefCount = 0;
-}
-
-/**
- * Starts (or shares) the sustained dive sound — continuous whoosh texture
- * during the ~2 s dive (AH-0MTVYC6E8005YN6F).
- *
- * A band-pass filtered white-noise sweep (300 → 900 Hz) through a gain
- * node, producing a jet-engine-like roar that evokes the diver charging
- * through water toward the player. The voice is shared and refcounted:
- * a second concurrent dive only bumps the hold count instead of stealing
- * or duplicating the first diver's nodes.
- *
- * Safe no-op without an AudioContext.
- */
-export function playDiveSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // Shared voice already live (another diver mid-dive) → just refcount.
-  if (diverDiveSound) {
-    diverDiveSoundRefCount += 1;
-    return;
-  }
-
-  // Create a fresh noise source for this dive instance.
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    ctx.sampleRate * DIVER_DIVE_SOUND_DURATION,
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = true;
-
-  const filter = ctx.createBiquadFilter();
-  filter.type = 'bandpass';
-  filter.frequency.setValueAtTime(300, ctx.currentTime);
-  filter.frequency.exponentialRampToValueAtTime(
-    900,
-    ctx.currentTime + DIVER_DIVE_SOUND_DURATION,
-  );
-  filter.Q.setValueAtTime(0.6, ctx.currentTime);
-
-  const gain = ctx.createGain();
-  gain.gain.setValueAtTime(0.1, ctx.currentTime);
-  gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.1);
-  gain.gain.setValueAtTime(0.1, ctx.currentTime + DIVER_DIVE_SOUND_DURATION - 0.2);
-  gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + DIVER_DIVE_SOUND_DURATION);
-
-  noise.connect(filter);
-  filter.connect(gain);
-  gain.connect(ensureMasterGain(ctx));
-  noise.start(ctx.currentTime);
-  noise.stop(ctx.currentTime + DIVER_DIVE_SOUND_DURATION + 0.02);
-
-  diverDiveSound = { ctx, noise, filter, gain };
-  diverDiveSoundRefCount = 1;
-}
-
-/**
- * Releases one dive's hold on the sustained dive sound.
- *
- * Called when a dive ends, when the diver is
- * destroyed mid-dive, or on scene teardown. The shared voice is torn
- * down only when the last active dive releases it, so overlapping
- * dives never cut each other off. Safe no-op if no sound is playing.
- */
-export function stopDiveSound(): void {
-  if (!diverDiveSound) return;
-  // Other dives still active → release one hold, keep the voice live.
-  if (diverDiveSoundRefCount > 1) {
-    diverDiveSoundRefCount -= 1;
-    return;
-  }
-  teardownDiveSound(diverDiveSound.ctx.currentTime, 0.02);
-}
-
-/**
- * Short low/nasal crack — E2 Diver fire sound (GDD §7.3).
- *
- * A quick sawtooth burst that dips from ~280 Hz to ~120 Hz over 80 ms
- * — evokes a mechanical "crack" appropriate to a diver breaking formation
- * and firing. Played exactly once per spread burst (not per projectile).
- * Distinct from the Scout blip, the Swarm buzz, and the Tank thump.
- * Safe no-op without an AudioContext.
- */
-export function playDiverFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(280, ctx.currentTime);
-  osc.frequency.linearRampToValueAtTime(120, ctx.currentTime + 0.08);
-  gain.gain.setValueAtTime(0.15, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + 0.1);
-}
-
-/**
- * Distinct Diver destruction sound — deeper, more resonant than the
- * shared destruction burst.
- *
- * A slower, lower sawtooth fall (280 → 40 Hz over 0.35 s) with a
- * sine undertone, giving the diver's explosion a heavier, more
- * resonant quality than the generic enemy destruction. Both oscillators'
- * endpoints are multiplied by a single per-invocation pitch factor
- * (±{@link EXPLOSION_PITCH_JITTER}) — preserving the tonal relationship
- * and the "heavier, more resonant" character while varying between kills.
- * Played exactly
- * once per diver destruction via the optional `playDestructionAudio?()`
- * seam; the Diver entity must NOT call `playDestructionSound()` in
- * `playExplosion()` to avoid double-play (design doc §7). Safe no-op
- * without an AudioContext.
- */
-export function playDiverDestructionSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // One pitch factor per invocation, applied to every endpoint in both
-  // oscillators so the sweep and its undertone stay locked together.
-  const pitch = explosionPitchFactor();
-
-  // Main descent: deeper than the shared burst (440→60).
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(280 * pitch, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(40 * pitch, ctx.currentTime + 0.35);
-  gain.gain.setValueAtTime(0.25, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + 0.37);
-
-  // Sine undertone for weight.
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = 'sine';
-  body.frequency.setValueAtTime(80 * pitch, ctx.currentTime);
-  body.frequency.exponentialRampToValueAtTime(25 * pitch, ctx.currentTime + 0.35);
-  bodyGain.gain.setValueAtTime(0.15, ctx.currentTime);
-  bodyGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-  body.connect(bodyGain).connect(ensureMasterGain(ctx));
-  body.start(ctx.currentTime);
-  body.stop(ctx.currentTime + 0.37);
-}
-
-/**
- * Sharp laser-like blip — E1 Scout fire sound (GDD §7.3).
- *
- * A short high square-wave sweep, distinct from the destruction burst
- * and the Swarm buzz, fired exactly once per aimed shot. The blip is
- * scheduled at `currentTime + SCOUT_ADVANCE_CUE_DURATION` (the cue's
- * end time) so that, when called back-to-back with `playScoutAdvanceCue()`
- * in the same tick, it lands exactly as the cue ends — flowing into the
- * shot with no dead gap. Safe no-op without an AudioContext.
- */
-export function playScoutFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime + SCOUT_ADVANCE_CUE_DURATION;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-
-  osc.type = 'square';
-  osc.frequency.setValueAtTime(1400, t);
-  osc.frequency.exponentialRampToValueAtTime(
-    Math.max(1, 700),
-    t + 0.12,
-  );
-
-  gain.gain.setValueAtTime(0.12, t);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + 0.14);
-}
-
-// ── Boss enemy cues (GDD §4.3) ────────────────────────────────────
-
-/**
- * Deep resonant boom — Central AI Boss fire sound (GDD §7.3).
- *
- * A heavy sawtooth fall (200 → 50 Hz over 200 ms) layered with a
- * low sine undertone — evokes the Boss's overwhelming firepower.
- * Called once per volley (Spread / Spiral / Pulse / Desperation)
- * at the start of each attack phase, alongside the per-phase
- * `playBossPhaseCue()` telegraph. Safe no-op without an AudioContext.
- */
-export function playBossFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Main boom: low sawtooth fall.
-  const boom = ctx.createOscillator();
-  const boomGain = ctx.createGain();
-  boom.type = 'sawtooth';
-  boom.frequency.setValueAtTime(200, t);
-  boom.frequency.exponentialRampToValueAtTime(50, t + 0.2);
-  boomGain.gain.setValueAtTime(0.3, t);
-  boomGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-  boom.connect(boomGain).connect(ensureMasterGain(ctx));
-  boom.start(t);
-  boom.stop(t + 0.22);
-
-  // Low sine body for weight.
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = 'sine';
-  body.frequency.setValueAtTime(60, t);
-  body.frequency.exponentialRampToValueAtTime(30, t + 0.2);
-  bodyGain.gain.setValueAtTime(0.2, t);
-  bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-  body.connect(bodyGain).connect(ensureMasterGain(ctx));
-  body.start(t);
-  body.stop(t + 0.22);
-}
-
-// ── Player weapon shoot cues (GDD §2.3, §7.3) ─────────────────────
-
-/**
- * Solid medium blip — player Cannon fire sound (GDD §2.3, §7.3).
- *
- * A short square-wave sweep (800 → 400 Hz, ~80 ms) — the "default"
- * gun feel: punchy but not harsh, instantly readable as the baseline
- * weapon. Distinct from the Scout laser (1400 → 700 Hz square), the
- * Tank thump (90 → 28 Hz sawtooth), and the Swarm buzz. Safe no-op
- * without an AudioContext.
- */
-export function playCannonFireSound(): void {
-  blip(800, 400, 0.08, 'square', 0.15);
-}
-
-/**
- * Wide multi-tone sweep — player Spread fire sound (GDD §2.3, §7.3).
- *
- * A triangle-wave fan that sweeps up and down (600 → 1200 → 800 Hz,
- * ~120 ms) — wider and rounder than the cannon blip, evoking three
- * bullets fanning out. Distinct wave type (triangle) and longer
- * duration than the cannon/square. Safe no-op without an AudioContext.
- */
-export function playSpreadFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(600, t);
-  osc.frequency.exponentialRampToValueAtTime(1200, t + 0.06);
-  osc.frequency.exponentialRampToValueAtTime(800, t + 0.12);
-  gain.gain.setValueAtTime(0.15, t);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + 0.14);
-}
-
-/**
- * Sharp crack — player Dual fire sound (GDD §2.3, §7.3).
- *
- * A quick sawtooth burst (900 → 300 Hz, ~60 ms) with a layered sine
- * tick on top — a crisp double-punch crack evoking two side-by-side
- * bullets. Shortest and sharpest of the four shoot cues, so the rapid
- * fire-rate of the dual weapon stays legible. Safe no-op without an
- * AudioContext.
- */
-export function playDualFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Main crack: fast sawtooth fall.
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'sawtooth';
-  osc.frequency.setValueAtTime(900, t);
-  osc.frequency.exponentialRampToValueAtTime(300, t + 0.06);
-  gain.gain.setValueAtTime(0.15, t);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + 0.08);
-
-  // Second tick: short sine blip offset 20 ms — the "second barrel".
-  const tick = ctx.createOscillator();
-  const tickGain = ctx.createGain();
-  tick.type = 'sine';
-  tick.frequency.setValueAtTime(1200, t + 0.02);
-  tick.frequency.exponentialRampToValueAtTime(800, t + 0.06);
-  tickGain.gain.setValueAtTime(0, t + 0.02);
-  tickGain.gain.linearRampToValueAtTime(0.1, t + 0.025);
-  tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-  tick.connect(tickGain).connect(ensureMasterGain(ctx));
-  tick.start(t + 0.02);
-  tick.stop(t + 0.08);
-}
-
-/**
- * Tight staccato blip — player Rapid fire sound (GDD §2.3, §7.3).
- *
- * A very short triangle blip (500 → 900 Hz, ~50 ms) — soft and
- * percussive, tuned for the rapid weapon's 125 ms fire rate so
- * consecutive shots read as a staccato rattle rather than mush.
- * Lowest volume of the four (0.12) to avoid overpowering the
- * fast cadence. Safe no-op without an AudioContext.
- */
-export function playRapidFireSound(): void {
-  blip(500, 900, 0.05, 'triangle', 0.12);
-}
-
-// ── AOE weapon fire cues (parent AH-0MUOOB3OR001V8CD) ─────────────
-//
-// The AOE family needs fire cues that read as "an area opened up", not as
-// another bullet leaving the barrel. Nova is a low expanding thump layered
-// with a rising ring sweep — unmistakable next to the short cannon/spread/
-// dual/rapid blips and the rising P6 phase chirp. Every layer stays within
-// the GDD §7.3 player-cue ceiling (≤ 0.2) and the whole cue is a safe no-op
-// without an AudioContext (headless tests / autoplay-blocked browsers).
-
-/** Nova thump start frequency (Hz) — a deep sub-bass drop. */
-export const NOVA_FIRE_THUMP_START_HZ = 160;
-
-/** Nova thump end frequency (Hz). */
-export const NOVA_FIRE_THUMP_END_HZ = 40;
-
-/** Nova thump layer duration (seconds). */
-export const NOVA_FIRE_THUMP_DURATION = 0.35;
-
-/** Nova thump layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const NOVA_FIRE_THUMP_VOLUME = 0.18;
-
-/** Nova rising-ring sweep start frequency (Hz). */
-export const NOVA_FIRE_RING_START_HZ = 300;
-
-/** Nova rising-ring sweep end frequency (Hz) — the outward "expansion". */
-export const NOVA_FIRE_RING_END_HZ = 1800;
-
-/** Nova rising-ring layer duration (seconds). */
-export const NOVA_FIRE_RING_DURATION = 0.25;
-
-/** Nova rising-ring layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const NOVA_FIRE_RING_VOLUME = 0.12;
-
-/**
- * Minimum interval (seconds) between Nova fire cues — rate limiting so a
- * burst of background/simultaneous frames cannot stack identical cues on
- * top of each other (GDD §7.3). The 3 s beat cadence means this is rarely
- * reached in normal play.
- */
-export const NOVA_FIRE_MIN_INTERVAL = 0.05;
-
-/** Module-scoped timestamp of the last Nova cue (rate limiter state). */
-let lastNovaFireAt = Number.NEGATIVE_INFINITY;
-
-/** Resets the Nova fire-cue rate limiter (test seam). */
-export function _resetNovaFireLimiterForTests(): void {
-  lastNovaFireAt = Number.NEGATIVE_INFINITY;
-}
-
-/**
- * Plays the dedicated Nova fire cue: a deep expanding thump (sawtooth
- * falling 160 → 40 Hz) layered with a rising triangle ring sweep (300 →
- * 1800 Hz). Distinct from every other weapon cue by both its low-end body
- * and its rising contour. Rate-limited by {@link NOVA_FIRE_MIN_INTERVAL}
- * and routed through the master SFX gain. Safe no-op without an
- * AudioContext.
- */
-export function playNovaFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const now = ctx.currentTime;
-  if (now - lastNovaFireAt < NOVA_FIRE_MIN_INTERVAL) return;
-  lastNovaFireAt = now;
-  const t = now;
-
-  // Layer 1: deep expanding thump — the "pulse" body.
-  const thump = ctx.createOscillator();
-  const thumpGain = ctx.createGain();
-  thump.type = 'sawtooth';
-  thump.frequency.setValueAtTime(NOVA_FIRE_THUMP_START_HZ, t);
-  thump.frequency.exponentialRampToValueAtTime(
-    NOVA_FIRE_THUMP_END_HZ,
-    t + NOVA_FIRE_THUMP_DURATION,
-  );
-  thumpGain.gain.setValueAtTime(NOVA_FIRE_THUMP_VOLUME, t);
-  thumpGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + NOVA_FIRE_THUMP_DURATION,
-  );
-  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
-  thump.start(t);
-  thump.stop(t + NOVA_FIRE_THUMP_DURATION + 0.02);
-
-  // Layer 2: rising ring sweep — the outward "expansion" texture.
-  const ring = ctx.createOscillator();
-  const ringGain = ctx.createGain();
-  ring.type = 'triangle';
-  ring.frequency.setValueAtTime(NOVA_FIRE_RING_START_HZ, t);
-  ring.frequency.exponentialRampToValueAtTime(
-    NOVA_FIRE_RING_END_HZ,
-    t + NOVA_FIRE_RING_DURATION,
-  );
-  ringGain.gain.setValueAtTime(NOVA_FIRE_RING_VOLUME, t);
-  ringGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + NOVA_FIRE_RING_DURATION,
-  );
-  ring.connect(ringGain).connect(ensureMasterGain(ctx));
-  ring.start(t);
-  ring.stop(t + NOVA_FIRE_RING_DURATION + 0.02);
-}
-
-// ── Mortar AOE fire + detonation cues (F3, parent AH-0MUOOB3OR001V8CD) ─
-//
-// The Mortar has two distinct moments: the muffled launch of the shell and
-// the much heavier blast when it detonates. Both are deliberately lower and
-// rounder than the short conventional shoot blips so the pair reads as
-// "lobbed then exploded".
-
-/** Mortar launch pitch start (Hz) — a muffled, low launch pop. */
-export const MORTAR_FIRE_START_HZ = 220;
-
-/** Mortar launch pitch end (Hz). */
-export const MORTAR_FIRE_END_HZ = 90;
-
-/** Mortar launch cue duration (seconds). */
-export const MORTAR_FIRE_DURATION = 0.18;
-
-/** Mortar launch cue gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const MORTAR_FIRE_VOLUME = 0.15;
-
-/** Mortar detonation pitch start (Hz) — the blast body. */
-export const MORTAR_DETONATION_START_HZ = 180;
-
-/** Mortar detonation pitch end (Hz). */
-export const MORTAR_DETONATION_END_HZ = 40;
-
-/** Mortar detonation cue duration (seconds). */
-export const MORTAR_DETONATION_DURATION = 0.32;
-
-/** Mortar detonation cue gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const MORTAR_DETONATION_VOLUME = 0.19;
-
-/**
- * Plays the Mortar launch cue: a muffled triangle thump falling 220 → 90 Hz
- * with a short high tick for the shell leaving the barrel. Distinct from the
- * Nova thump (which is longer, deeper and paired with a rising ring). Safe
- * no-op without an AudioContext.
- */
-export function playMortarFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  const thump = ctx.createOscillator();
-  const thumpGain = ctx.createGain();
-  thump.type = 'triangle';
-  thump.frequency.setValueAtTime(MORTAR_FIRE_START_HZ, t);
-  thump.frequency.exponentialRampToValueAtTime(
-    MORTAR_FIRE_END_HZ,
-    t + MORTAR_FIRE_DURATION,
-  );
-  thumpGain.gain.setValueAtTime(MORTAR_FIRE_VOLUME, t);
-  thumpGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + MORTAR_FIRE_DURATION,
-  );
-  thump.connect(thumpGain).connect(ensureMasterGain(ctx));
-  thump.start(t);
-  thump.stop(t + MORTAR_FIRE_DURATION + 0.02);
-
-  // A brief high tick as the shell leaves the barrel.
-  const tick = ctx.createOscillator();
-  const tickGain = ctx.createGain();
-  tick.type = 'square';
-  tick.frequency.setValueAtTime(900, t);
-  tick.frequency.exponentialRampToValueAtTime(600, t + 0.04);
-  tickGain.gain.setValueAtTime(0.06, t);
-  tickGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
-  tick.connect(tickGain).connect(ensureMasterGain(ctx));
-  tick.start(t);
-  tick.stop(t + 0.06);
-}
-
-/**
- * Plays the Mortar detonation cue: a heavy sawtooth blast (180 → 40 Hz) with
- * a low-passed noise wash for the explosion tail. Distinct from every fire cue
- * (much heavier and longer) and from the Major explosion (shorter, single
- * layer). The 1.5 s beat cadence means detonations cannot stack, so no
- * explicit rate limiter is needed. Safe no-op without an AudioContext.
- */
-export function playMortarDetonationSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Layer 1: the blast body.
-  const blast = ctx.createOscillator();
-  const blastGain = ctx.createGain();
-  blast.type = 'sawtooth';
-  blast.frequency.setValueAtTime(MORTAR_DETONATION_START_HZ, t);
-  blast.frequency.exponentialRampToValueAtTime(
-    MORTAR_DETONATION_END_HZ,
-    t + MORTAR_DETONATION_DURATION,
-  );
-  blastGain.gain.setValueAtTime(MORTAR_DETONATION_VOLUME, t);
-  blastGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + MORTAR_DETONATION_DURATION,
-  );
-  blast.connect(blastGain).connect(ensureMasterGain(ctx));
-  blast.start(t);
-  blast.stop(t + MORTAR_DETONATION_DURATION + 0.02);
-
-  // Layer 2: low-passed noise wash for the debris tail.
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    Math.max(1, Math.floor(ctx.sampleRate * MORTAR_DETONATION_DURATION)),
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'lowpass';
-  noiseFilter.frequency.setValueAtTime(800, t);
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(0.08, t);
-  noiseGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + MORTAR_DETONATION_DURATION,
-  );
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + MORTAR_DETONATION_DURATION + 0.02);
-}
-
-// ── Arc AOE fire cue (F4, parent AH-0MUOOB3OR001V8CD) ───────────────
-
-/** Arc zap pitch start (Hz) — a bright electric strike. */
-export const ARC_FIRE_ZAP_START_HZ = 1400;
-
-/** Arc zap pitch end (Hz). */
-export const ARC_FIRE_ZAP_END_HZ = 500;
-
-/** Arc zap layer duration (seconds). */
-export const ARC_FIRE_ZAP_DURATION = 0.12;
-
-/** Arc zap layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const ARC_FIRE_ZAP_VOLUME = 0.13;
-
-/** Arc crackle noise layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const ARC_FIRE_CRACKLE_VOLUME = 0.08;
-
-/**
- * Plays the dedicated Arc fire cue: a bright square zap (1400 → 500 → 1120
- * Hz) layered with a high-passed noise crackle, reading as a chaining
- * electric strike. Distinct from every other weapon cue by its high, buzzy
- * texture. Safe no-op without an AudioContext.
- */
-export function playArcFireSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Layer 1: the bright electric zap.
-  const zap = ctx.createOscillator();
-  const zapGain = ctx.createGain();
-  zap.type = 'square';
-  zap.frequency.setValueAtTime(ARC_FIRE_ZAP_START_HZ, t);
-  zap.frequency.exponentialRampToValueAtTime(
-    ARC_FIRE_ZAP_END_HZ,
-    t + 0.06,
-  );
-  zap.frequency.exponentialRampToValueAtTime(
-    ARC_FIRE_ZAP_START_HZ * 0.8,
-    t + 0.1,
-  );
-  zapGain.gain.setValueAtTime(ARC_FIRE_ZAP_VOLUME, t);
-  zapGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + ARC_FIRE_ZAP_DURATION,
-  );
-  zap.connect(zapGain).connect(ensureMasterGain(ctx));
-  zap.start(t);
-  zap.stop(t + ARC_FIRE_ZAP_DURATION + 0.02);
-
-  // Layer 2: high-passed noise crackle — the electrical texture.
-  const crackleDuration = 0.08;
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    Math.max(1, Math.floor(ctx.sampleRate * crackleDuration)),
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'highpass';
-  noiseFilter.frequency.setValueAtTime(2000, t);
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(ARC_FIRE_CRACKLE_VOLUME, t);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + crackleDuration);
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + crackleDuration + 0.02);
-}
-
-// ── Player weapon pickup activation cues (GDD §4.4, §7.3) ──────────
-
-/**
- * Widening fan sweep — Spread weapon pickup activation sound.
- *
- * A triangle-wave fan that climbs then broadens (500 → 1500 → 800 Hz,
- * ~0.15 s) — distinct from the generic collection chime and weapon
- * change arpeggio, signalling "fan of bullets armed". Safe no-op
- * without an AudioContext.
- */
-export function playSpreadPickupSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(500, t);
-  osc.frequency.exponentialRampToValueAtTime(1500, t + 0.08);
-  osc.frequency.exponentialRampToValueAtTime(800, t + 0.15);
-  gain.gain.setValueAtTime(0.15, t);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + 0.17);
-}
-
-/**
- * Crisp two-note crack — Dual weapon pickup activation sound.
- *
- * A tight sawtooth drop (1000 → 500 Hz) followed 60 ms later by a
- * second, slightly higher drop (1200 → 700 Hz) — the audio twin of the
- * dual side-by-side barrels. Distinct from every other cue. Safe no-op
- * without an AudioContext.
- */
-export function playDualPickupSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  const notes: Array<{ delay: number; from: number; to: number }> = [
-    { delay: 0, from: 1000, to: 500 },
-    { delay: 0.06, from: 1200, to: 700 },
-  ];
-  for (const note of notes) {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(note.from, t + note.delay);
-    osc.frequency.exponentialRampToValueAtTime(note.to, t + note.delay + 0.08);
-    gain.gain.setValueAtTime(0, t + note.delay);
-    gain.gain.linearRampToValueAtTime(0.14, t + note.delay + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + note.delay + 0.08);
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(t + note.delay);
-    osc.stop(t + note.delay + 0.1);
-  }
-}
-
-/**
- * Accelerating rise — Rapid weapon pickup activation sound.
- *
- * A fast triangle climb (400 → 1600 Hz over 0.1 s) that gets brighter
- * as it goes — evoking the rapid weapon's escalating fire rate.
- * Short and energetic, distinct from all other cues. Safe no-op
- * without an AudioContext.
- */
-export function playRapidPickupSound(): void {
-  blip(400, 1600, 0.1, 'triangle', 0.14);
-}
-
-/**
- * Gentle unwind to baseline — Reset (back to Cannon) activation sound.
- *
- * A soft sine fall (900 → 300 Hz, ~0.2 s) — calmer than the weapon
- * pickups, signalling a return to the default cannon. Distinct from
- * the generic collection chime and weapon-change arpeggio. Safe no-op
- * without an AudioContext.
- */
-export function playResetPickupSound(): void {
-  blip(900, 300, 0.2, 'sine', 0.12);
-}
-
-// ── Non-combat pickup activation cues (GDD §4.4, §7.3) ─────────────
-
-/**
- * Quick ascending zip — P5 Speed Boost activation sound.
- *
- * A rapid square climb (600 → 1800 Hz, ~0.1 s) with a bright edge,
- * evoking the ship lurching forward faster. Distinct from weapon
- * pickups and the collection chime. Safe no-op without an
- * AudioContext.
- */
-export function playSpeedBoostCollectSound(): void {
-  blip(600, 1800, 0.1, 'square', 0.13);
-}
-
-/**
- * Warm two-note chime — P8 Extra Life activation sound.
- *
- * A slow, comforting sine pair (440 → 880 Hz then 660 → 990 Hz) —
- * warmer and more melodic than any other cue, signalling a life
- * gained. Distinct from the generic collection chime. Safe no-op
- * without an AudioContext.
- */
-export function playExtraLifeCollectSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  const notes: Array<{ delay: number; from: number; to: number }> = [
-    { delay: 0, from: 440, to: 880 },
-    { delay: 0.12, from: 660, to: 990 },
-  ];
-  for (const note of notes) {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(note.from, t + note.delay);
-    osc.frequency.exponentialRampToValueAtTime(note.to, t + note.delay + 0.18);
-    gain.gain.setValueAtTime(0, t + note.delay);
-    gain.gain.linearRampToValueAtTime(0.13, t + note.delay + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + note.delay + 0.18);
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(t + note.delay);
-    osc.stop(t + note.delay + 0.2);
-  }
-}
-
-/**
- * Magnetic pulse-hum — P9 Magnet activation sound.
- *
- * A low square pulse oscillating 180 → 90 → 180 Hz with a sine
- * undertone — a subtle "power field" hum evoking the attraction
- * effect. Deeper than the other non-combat cues, distinct from all
- * weapon pickups. Safe no-op without an AudioContext.
- */
-export function playMagnetCollectSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Low pulsing square: the "field" layer.
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'square';
-  osc.frequency.setValueAtTime(180, t);
-  osc.frequency.exponentialRampToValueAtTime(90, t + 0.12);
-  osc.frequency.exponentialRampToValueAtTime(180, t + 0.24);
-  gain.gain.setValueAtTime(0.12, t);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + 0.26);
-
-  // Soft sine undertone for body.
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = 'sine';
-  body.frequency.setValueAtTime(80, t);
-  body.frequency.exponentialRampToValueAtTime(50, t + 0.24);
-  bodyGain.gain.setValueAtTime(0.08, t);
-  bodyGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
-  body.connect(bodyGain).connect(ensureMasterGain(ctx));
-  body.start(t);
-  body.stop(t + 0.26);
-}
-
-// ── P6 Phase Shift activation cue (parent AH-0MUIYX1EE008FVS8) ──────
-//
-// Phase Shift is now triggered automatically when the player is surrounded,
-// so the cue must sell the activation instantly: a rising sci-fi chirp layered
-// with a bright noise whoosh. Volume stays within the GDD §7.3 player-cue
-// ceiling (≤ 0.2 per layer) and the whole cue is a safe no-op without an
-// AudioContext (headless tests / autoplay-blocked browsers).
-
-/** Rising chirp start frequency (Hz). */
-export const PHASE_SHIFT_CHIRP_START_HZ = 320;
-
-/** Rising chirp end frequency (Hz) — a bright upward sweep. */
-export const PHASE_SHIFT_CHIRP_END_HZ = 1560;
-
-/** Rising chirp duration (seconds). */
-export const PHASE_SHIFT_CHIRP_DURATION = 0.28;
-
-/** Rising chirp layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const PHASE_SHIFT_CHIRP_VOLUME = 0.16;
-
-/** Whoosh noise filter start centre frequency (Hz). */
-export const PHASE_SHIFT_WHOOSH_START_HZ = 600;
-
-/** Whoosh noise filter end centre frequency (Hz). */
-export const PHASE_SHIFT_WHOOSH_END_HZ = 3200;
-
-/** Whoosh layer duration (seconds). */
-export const PHASE_SHIFT_WHOOSH_DURATION = 0.24;
-
-/** Whoosh layer gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const PHASE_SHIFT_WHOOSH_VOLUME = 0.09;
-
-/**
- * Plays the dedicated P6 Phase Shift activation cue: a rising triangle chirp
- * (320 → 1560 Hz) layered with a bandpass noise whoosh that sweeps 600 →
- * 3200 Hz. Distinctly rising so it reads as "phase engaged", unlike the
- * descending destruction cues and the flat weapon pickups.
- *
- * Safe no-op without a working AudioContext — never throws.
- */
-export function playPhaseShiftSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-
-  // Layer 1: rising chirp — the tonal "engage" sweep.
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(PHASE_SHIFT_CHIRP_START_HZ, t);
-  osc.frequency.exponentialRampToValueAtTime(
-    PHASE_SHIFT_CHIRP_END_HZ,
-    t + PHASE_SHIFT_CHIRP_DURATION,
-  );
-  gain.gain.setValueAtTime(PHASE_SHIFT_CHIRP_VOLUME, t);
-  gain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t + PHASE_SHIFT_CHIRP_DURATION,
-  );
-  osc.connect(gain).connect(ensureMasterGain(ctx));
-  osc.start(t);
-  osc.stop(t + PHASE_SHIFT_CHIRP_DURATION + 0.02);
-
-  // Layer 2: rising bandpass noise — the sci-fi whoosh texture.
-  const whooshDuration = PHASE_SHIFT_WHOOSH_DURATION;
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    Math.floor(ctx.sampleRate * whooshDuration),
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'bandpass';
-  noiseFilter.frequency.setValueAtTime(PHASE_SHIFT_WHOOSH_START_HZ, t);
-  noiseFilter.frequency.exponentialRampToValueAtTime(
-    PHASE_SHIFT_WHOOSH_END_HZ,
-    t + whooshDuration,
-  );
-  noiseFilter.Q.setValueAtTime(0.8, t);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(PHASE_SHIFT_WHOOSH_VOLUME, t);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + whooshDuration);
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(t);
-  noise.stop(t + whooshDuration + 0.02);
-}
-
-// ── End-of-run victory fanfare (parent AH-0MUTV7632000ZWCB, F4) ─────
-//
-// The run-ending win is the most consequential *positive* moment in the
-// game, so it gets a full celebratory fanfare, not a single blip.  Five
-// stacked layers build a real "ta-daaa":
-//   1. a rising major arpeggio (the "call"),
-//   2. a faster rising cadence that pushes to the top of the range (the
-//      "answer"),
-//   3. a sustained major chord with a deep bass bed (the resolution),
-//   4. a high sparkle flourish (the shimmer),
-//   5. a soft high-passed noise crackle tail.
-// Every layer routes through the master SFX gain and is a no-op without an
-// AudioContext (headless tests / autoplay-blocked browsers).
-//
-// Producer audit (AH-0MUTV7632000ZWCB, 2026-10-04) rejected the original
-// single-scale cue as "nothing more than a monotonic peep" and asked for a
-// longer, grander celebration; the cue was rebuilt as a two-phrase fanfare
-// resolving into a held chord with a bass bed (~3.3 s total).
-//
-// Deliberately SFX-only: background music is out of MVP scope (GDD §7.3).
-
-/** Rising major arpeggio frequencies (Hz): C5 → E5 → G5 → C6 (the "call"). */
-export const VICTORY_ARPEGGIO_FREQS = [523.25, 659.25, 783.99, 1046.5] as const;
-
-/** Time (s) between successive arpeggio notes. */
-export const VICTORY_ARPEGGIO_STEP = 0.2;
-
-/** Per-note arpeggio ring time (s) — longer than the step for a legato call. */
-export const VICTORY_ARPEGGIO_NOTE_DURATION = 0.36;
-
-/** Per-note arpeggio peak gain (≤ 0.2 player-cue ceiling, GDD §7.3). */
-export const VICTORY_ARPEGGIO_VOLUME = 0.15;
-
-/** Rising cadence frequencies (Hz): C6 → E6 → G6 → C7 (the "answer"). */
-export const VICTORY_CADENCE_FREQS = [1046.5, 1318.51, 1567.98, 2093.0] as const;
-
-/** Time (s) between successive cadence notes — quicker than the call. */
-export const VICTORY_CADENCE_STEP = 0.16;
-
-/** Per-note cadence peak gain — the loudest melody layer (still ≤ 0.2). */
-export const VICTORY_CADENCE_VOLUME = 0.17;
-
-/** Sustained major chord frequencies (Hz): C6, E6, G6, C7. */
-export const VICTORY_CHORD_FREQS = [1046.5, 1318.51, 1567.98, 2093.0] as const;
-
-/** Per-voice sustained-chord peak gain. */
-export const VICTORY_CHORD_VOLUME = 0.1;
-
-/** Sustained-chord hold duration (s) — the triumphant "ta-daaa". */
-export const VICTORY_CHORD_DURATION = 1.6;
-
-/** Low bass-bed frequencies (Hz): C4, G4 — adds weight under the chord. */
-export const VICTORY_BASS_FREQS = [261.63, 392.0] as const;
-
-/** Per-voice bass-bed peak gain. */
-export const VICTORY_BASS_VOLUME = 0.08;
-
-/** Bass-bed hold duration (s) — slightly longer than the chord. */
-export const VICTORY_BASS_DURATION = 1.8;
-
-/** Sparkle-flourish frequencies (Hz), played in quick succession. */
-export const VICTORY_SPARKLE_FREQS = [
-  2349.32, 2793.83, 3520.0, 4186.01, 3520.0, 2793.83,
-] as const;
-
-/** Delay (s) between successive sparkle blips. */
-export const VICTORY_SPARKLE_STEP = 0.08;
-
-/** Sparkle-blip peak gain — deliberately light. */
-export const VICTORY_SPARKLE_VOLUME = 0.06;
-
-/** Sparkle-blip duration (s). */
-export const VICTORY_SPARKLE_DURATION = 0.2;
-
-/** Soft high shimmer (filtered noise) duration (s) — the crackle tail. */
-export const VICTORY_SHIMMER_DURATION = 1.2;
-
-/** Soft high shimmer peak gain. */
-export const VICTORY_SHIMMER_VOLUME = 0.045;
-
-/** High-pass centre (Hz) for the bright shimmer wash. */
-export const VICTORY_SHIMMER_FILTER_HZ = 6000;
-
-/**
- * End-of-run victory fanfare (parent AH-0MUTV7632000ZWCB AC1).
- *
- * Plays a rising major arpeggio (the call) into a faster rising cadence
- * (the answer), resolving into a sustained major chord over a deep bass bed,
- * with a high sparkle flourish and a soft high-passed noise crackle tail.
- * Total duration (~3.3 s) and every layer's pitch/gain/rhythm are exported
- * constants, so the cue is fully tunable in one place. All layers route
- * through the master SFX gain (mute/volume apply) and every layer peaks at
- * ≤ 0.2. Safe no-op without an AudioContext.
- */
-export function playVictoryFanfareSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t0 = ctx.currentTime;
-
-  // ── Layer 1: rising major arpeggio (the "call"). ─────────────────
-  for (let i = 0; i < VICTORY_ARPEGGIO_FREQS.length; i++) {
-    const t = t0 + i * VICTORY_ARPEGGIO_STEP;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(VICTORY_ARPEGGIO_FREQS[i], t);
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(VICTORY_ARPEGGIO_VOLUME, t + 0.012);
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      t + VICTORY_ARPEGGIO_NOTE_DURATION,
-    );
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(t);
-    osc.stop(t + VICTORY_ARPEGGIO_NOTE_DURATION + 0.02);
-  }
-
-  // ── Layer 2: faster rising cadence (the "answer"). ───────────────
-  const cadenceStart = t0 + VICTORY_ARPEGGIO_FREQS.length * VICTORY_ARPEGGIO_STEP;
-  for (let i = 0; i < VICTORY_CADENCE_FREQS.length; i++) {
-    const t = cadenceStart + i * VICTORY_CADENCE_STEP;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(VICTORY_CADENCE_FREQS[i], t);
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(VICTORY_CADENCE_VOLUME, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      t + VICTORY_CADENCE_STEP * 1.3,
-    );
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(t);
-    osc.stop(t + VICTORY_CADENCE_STEP * 1.3 + 0.02);
-  }
-
-  // ── Layer 3: sustained major chord (the "ta-daaa"). ──────────────
-  const chordStart =
-    cadenceStart + VICTORY_CADENCE_FREQS.length * VICTORY_CADENCE_STEP;
-  for (const freq of VICTORY_CHORD_FREQS) {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, chordStart);
-    gain.gain.setValueAtTime(0, chordStart);
-    gain.gain.linearRampToValueAtTime(VICTORY_CHORD_VOLUME, chordStart + 0.03);
-    gain.gain.setValueAtTime(
-      VICTORY_CHORD_VOLUME,
-      chordStart + VICTORY_CHORD_DURATION * 0.6,
-    );
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      chordStart + VICTORY_CHORD_DURATION,
-    );
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(chordStart);
-    osc.stop(chordStart + VICTORY_CHORD_DURATION + 0.02);
-  }
-
-  // ── Layer 3b: low bass bed (adds weight under the chord). ────────
-  for (const freq of VICTORY_BASS_FREQS) {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, chordStart);
-    gain.gain.setValueAtTime(0, chordStart);
-    gain.gain.linearRampToValueAtTime(VICTORY_BASS_VOLUME, chordStart + 0.04);
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      chordStart + VICTORY_BASS_DURATION,
-    );
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(chordStart);
-    osc.stop(chordStart + VICTORY_BASS_DURATION + 0.02);
-  }
-
-  // ── Layer 4: high sparkle flourish (the shimmer). ────────────────
-  const sparkleStart = chordStart + VICTORY_CHORD_DURATION * 0.25;
-  for (let i = 0; i < VICTORY_SPARKLE_FREQS.length; i++) {
-    const t = sparkleStart + i * VICTORY_SPARKLE_STEP;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(VICTORY_SPARKLE_FREQS[i], t);
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(VICTORY_SPARKLE_VOLUME, t + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + VICTORY_SPARKLE_DURATION);
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(t);
-    osc.stop(t + VICTORY_SPARKLE_DURATION + 0.02);
-  }
-
-  // ── Layer 5: soft high shimmer (filtered-noise crackle tail). ────
-  const shimmerBuffer = ctx.createBuffer(
-    1,
-    Math.max(1, Math.floor(ctx.sampleRate * VICTORY_SHIMMER_DURATION)),
-    ctx.sampleRate,
-  );
-  const shimmerData = shimmerBuffer.getChannelData(0);
-  for (let i = 0; i < shimmerData.length; i++) {
-    shimmerData[i] = Math.random() * 2 - 1;
-  }
-  const shimmer = ctx.createBufferSource();
-  shimmer.buffer = shimmerBuffer;
-  shimmer.loop = false;
-
-  const shimmerFilter = ctx.createBiquadFilter();
-  shimmerFilter.type = 'highpass';
-  shimmerFilter.frequency.setValueAtTime(VICTORY_SHIMMER_FILTER_HZ, chordStart);
-  shimmerFilter.Q.setValueAtTime(0.7, chordStart);
-
-  const shimmerGain = ctx.createGain();
-  shimmerGain.gain.setValueAtTime(VICTORY_SHIMMER_VOLUME, chordStart);
-  shimmerGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    chordStart + VICTORY_SHIMMER_DURATION,
-  );
-
-  shimmer.connect(shimmerFilter);
-  shimmerFilter.connect(shimmerGain);
-  shimmerGain.connect(ensureMasterGain(ctx));
-  shimmer.start(chordStart);
-  shimmer.stop(chordStart + VICTORY_SHIMMER_DURATION + 0.02);
-}
-
-// ── End-of-run defeat sting (parent AH-0MUTV7632000ZWCB, F4) ────────
-//
-// The counterpart to the fanfare: a descending, sombre sting so a lost run
-// reads instantly and unmistakably differently from a win.  Three layers:
-// (1) a slow descending minor line, (2) a sustained low drone that sinks
-// further as it fades, (3) a dark low-pass filtered noise tail.
-//
-// Producer audit (AH-0MUTV7632000ZWCB, 2026-10-04) asked for the cues to
-// last longer and carry more weight; the sting was extended to a five-note
-// descent and a longer sinking drone (~2.9 s total).
-//
-// Deliberately distinct from playPlayerDestructionSound() (parent AC3):
-// that cue is a fast sawtooth thump/body sweep with a *high-pass* shrapnel
-// hiss, whereas this sting is a slow discrete descending triangle line with
-// a *low-pass* rumble wash — different contour, waveform and filter.
-
-/** Descending sombre line (Hz): G4 → F4 → D4 → B3 → G3. */
-export const DEFEAT_STING_FREQS = [392, 349.23, 293.66, 246.94, 196] as const;
-
-/** Time (s) between successive descending notes. */
-export const DEFEAT_STING_STEP = 0.3;
-
-/** Per-note ring time (s) — the line is slow and heavy. */
-export const DEFEAT_STING_NOTE_DURATION = 0.55;
-
-/** Per-note descending-line peak gain (≤ 0.2 player-cue ceiling). */
-export const DEFEAT_STING_NOTE_VOLUME = 0.14;
-
-/** Sustained low drone frequency (Hz) — the mournful bed. */
-export const DEFEAT_STING_DRONE_HZ = 98;
-
-/** Frequency (Hz) the drone sinks to — the "bottom falls out". */
-export const DEFEAT_STING_DRONE_END_HZ = 73.42;
-
-/** Sustained drone peak gain. */
-export const DEFEAT_STING_DRONE_VOLUME = 0.1;
-
-/** Sustained drone duration (s). */
-export const DEFEAT_STING_DRONE_DURATION = 2.2;
-
-/** Low-pass filtered noise-tail duration (s). */
-export const DEFEAT_STING_TAIL_DURATION = 1.4;
-
-/** Low-pass filtered noise-tail peak gain. */
-export const DEFEAT_STING_TAIL_VOLUME = 0.08;
-
-/** Low-pass centre (Hz) for the dark rumble wash. */
-export const DEFEAT_STING_TAIL_FILTER_HZ = 280;
-
-/** Low-pass filter resonance (Q) for the rumble wash. */
-export const DEFEAT_STING_TAIL_FILTER_Q = 0.7;
-
-/**
- * End-of-run defeat sting (parent AH-0MUTV7632000ZWCB AC3).
- *
- * Plays a slow five-note descending minor line over a sustained low drone
- * that sinks in pitch as it fades, with a dark low-pass filtered noise tail.
- * Structurally distinct from both the victory fanfare (rising/celebratory)
- * and {@link playPlayerDestructionSound} (fast sawtooth sweep + high-pass
- * hiss). Every layer routes through the master SFX gain and peaks at ≤ 0.2.
- * Safe no-op without an AudioContext.
- */
-export function playDefeatStingSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const t0 = ctx.currentTime;
-
-  // ── Layer 1: slow descending minor line. ─────────────────────────
-  for (let i = 0; i < DEFEAT_STING_FREQS.length; i++) {
-    const t = t0 + i * DEFEAT_STING_STEP;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(DEFEAT_STING_FREQS[i], t);
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(DEFEAT_STING_NOTE_VOLUME, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      t + DEFEAT_STING_NOTE_DURATION,
-    );
-    osc.connect(gain).connect(ensureMasterGain(ctx));
-    osc.start(t);
-    osc.stop(t + DEFEAT_STING_NOTE_DURATION + 0.02);
-  }
-
-  // ── Layer 2: sustained low drone that sinks as it fades. ─────────
-  const drone = ctx.createOscillator();
-  const droneGain = ctx.createGain();
-  drone.type = 'sine';
-  drone.frequency.setValueAtTime(DEFEAT_STING_DRONE_HZ, t0);
-  drone.frequency.exponentialRampToValueAtTime(
-    DEFEAT_STING_DRONE_END_HZ,
-    t0 + DEFEAT_STING_DRONE_DURATION * 0.85,
-  );
-  droneGain.gain.setValueAtTime(0, t0);
-  droneGain.gain.linearRampToValueAtTime(DEFEAT_STING_DRONE_VOLUME, t0 + 0.08);
-  droneGain.gain.setValueAtTime(
-    DEFEAT_STING_DRONE_VOLUME,
-    t0 + DEFEAT_STING_DRONE_DURATION * 0.5,
-  );
-  droneGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    t0 + DEFEAT_STING_DRONE_DURATION,
-  );
-  drone.connect(droneGain).connect(ensureMasterGain(ctx));
-  drone.start(t0);
-  drone.stop(t0 + DEFEAT_STING_DRONE_DURATION + 0.02);
-
-  // ── Layer 3: dark low-pass filtered noise tail. ──────────────────
-  const tailStart = t0 + DEFEAT_STING_FREQS.length * DEFEAT_STING_STEP;
-  const noiseBuffer = ctx.createBuffer(
-    1,
-    Math.max(1, Math.floor(ctx.sampleRate * DEFEAT_STING_TAIL_DURATION)),
-    ctx.sampleRate,
-  );
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseData.length; i++) {
-    noiseData[i] = Math.random() * 2 - 1;
-  }
-  const noise = ctx.createBufferSource();
-  noise.buffer = noiseBuffer;
-  noise.loop = false;
-
-  const noiseFilter = ctx.createBiquadFilter();
-  noiseFilter.type = 'lowpass';
-  noiseFilter.frequency.setValueAtTime(DEFEAT_STING_TAIL_FILTER_HZ, tailStart);
-  noiseFilter.Q.setValueAtTime(DEFEAT_STING_TAIL_FILTER_Q, tailStart);
-
-  const noiseGain = ctx.createGain();
-  noiseGain.gain.setValueAtTime(0, tailStart);
-  noiseGain.gain.linearRampToValueAtTime(DEFEAT_STING_TAIL_VOLUME, tailStart + 0.02);
-  noiseGain.gain.exponentialRampToValueAtTime(
-    0.0001,
-    tailStart + DEFEAT_STING_TAIL_DURATION,
-  );
-
-  noise.connect(noiseFilter);
-  noiseFilter.connect(noiseGain);
-  noiseGain.connect(ensureMasterGain(ctx));
-  noise.start(tailStart);
-  noise.stop(tailStart + DEFEAT_STING_TAIL_DURATION + 0.02);
+  provider = webAudioSfxProvider;
+  webAudioSfxProvider.reset();
+  resetThrusterHumForTests();
+  diveSound = null;
 }

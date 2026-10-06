@@ -1140,12 +1140,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const scene = await bootPlay();
     const survivorsBefore = scene.getAliveCount();
     expect(survivorsBefore).toBeGreaterThan(0);
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).not.toHaveBeenCalled();
     expect(scene.getAliveCount()).toBe(survivorsBefore);
     vi.restoreAllMocks();
   });
@@ -1155,12 +1153,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).not.toHaveBeenCalled();
     for (const asteroid of asteroids) expect(asteroid.alive).toBe(true);
     vi.restoreAllMocks();
   });
@@ -1171,12 +1167,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     scene.setAsteroidSpawnerEnabled(false);
     for (const e of scene.getEnemies()) e.destroySelf();
     expect(scene.getAliveCount()).toBe(0);
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).not.toHaveBeenCalled();
     expect(scene.isWaveTimerActive()).toBe(false);
     vi.restoreAllMocks();
   });
@@ -1185,14 +1179,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     vi.restoreAllMocks();
     const scene = await bootPlay();
     const playerCue = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
     const livesBefore = scene.getGameState().lives;
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
     expect(playerCue).not.toHaveBeenCalled();
-    expect(majorCue).not.toHaveBeenCalled();
     expect(scene.getGameState().lives).toBe(livesBefore);
     vi.restoreAllMocks();
   });
@@ -1206,13 +1198,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const livesBefore = scene.getGameState().lives;
     const waveBefore = wm.waveNumber;
     waveVfx.scales.length = 0;
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
     // No 10x detonation VFX, no life loss, wave advanced.
-    expect(majorCue).not.toHaveBeenCalled();
     expect(waveVfx.scales).not.toContain(WAVE_TIMEOUT_EXPLOSION_SCALE);
     expect(scene.getGameState().lives).toBe(livesBefore);
     expect(wm.waveNumber).toBe(waveBefore + 1);

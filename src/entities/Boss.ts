@@ -36,7 +36,13 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
-import { playBossFireSound, getAudioContext, blip } from '../audio/effects';
+import {
+  playBossDestructionSound,
+  playBossFireSound,
+  playBossPhaseCue,
+  playBossPhaseTransitionSound,
+  playBossSpawnSound,
+} from '../audio/effects';
 import {
   resolvePatterns,
   spawnExplosionParticles,
@@ -86,41 +92,15 @@ const BOSS_DESPERATION_ATTACK_INTERVAL = 700;
 /** Telegraph duration in ms — minimum lead time before attack fires (GDD §7.3). */
 export const BOSS_TELEGRAPH_MS = 600;
 
-/** Boss spawn audio: low rumble (GDD §7.3). */
-export function playBossSpawnSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  // Low rumble ascending to signal boss entrance.
-  blip(80, 220, 0.45, 'sine', 0.18);
-}
-
-/** Boss phase transition: rising tone. */
-export function playBossPhaseTransitionSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  blip(220, 880, 0.35, 'square', 0.12);
-}
-
-/** Boss destruction: heavy, deep sound. */
-export function playBossDestructionSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  blip(180, 20, 0.6, 'sawtooth', 0.22);
-}
-
-/** Boss phase audio cue per attack phase (distinct per phase). */
-export function playBossPhaseCue(phase: BossPhase): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const cues: Record<number, [number, number]> = {
-    1: [440, 660],  // Spread — moderate rise
-    2: [330, 990],  // Spiral — steep rise
-    3: [220, 440],  // Pulse — slow rise
-    4: [660, 1320], // Desperation — sharp rise
-  };
-  const [start, end] = cues[phase] ?? cues[1];
-  blip(start, end, 0.3, 'square', 0.1);
-}
+// The four Boss-specific cues are delivered by the shared ToneForge playback
+// layer (AH-0MUTYV92Y000WJ8Z). They are re-exported here to preserve the
+// historical Boss.ts surface for callers and tests.
+export {
+  playBossDestructionSound,
+  playBossPhaseCue,
+  playBossPhaseTransitionSound,
+  playBossSpawnSound,
+};
 
 // ── Phase definitions ───────────────────────────────────────────────
 
