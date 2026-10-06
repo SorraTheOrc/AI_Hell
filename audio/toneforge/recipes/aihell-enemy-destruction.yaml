@@ -1,0 +1,59 @@
+# AI Hell cue: aihell-enemy-destruction — Enemy destroyed — descending saw 440 to 60 Hz with per-kill pitch jitter.
+# Seed range 32110-32112: renders three pitch-jittered variants (original +/-15% jitter).
+version: "0.1"
+meta:
+  name: aihell-enemy-destruction
+  description: Enemy destroyed — descending saw 440 to 60 Hz with per-kill pitch jitter.
+  category: AIHell
+  tags:
+    - enemy
+    - destruction
+  duration: 0.28
+  parameters:
+    - name: startFreq
+      type: number
+      min: 374
+      max: 506
+      unit: Hz
+      default: 440
+    - name: endFreq
+      type: number
+      min: 51
+      max: 69
+      unit: Hz
+      default: 60
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 440
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 440
+        - kind: exponentialRamp
+          time: 0.276
+          value: 60
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.272
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.3
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

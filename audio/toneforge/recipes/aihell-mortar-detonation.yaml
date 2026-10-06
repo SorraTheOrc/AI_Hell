@@ -1,0 +1,68 @@
+# AI Hell cue: aihell-mortar-detonation — Mortar detonation — heavy saw 180 to 40 Hz plus LP noise wash.
+version: "0.1"
+meta:
+  name: aihell-mortar-detonation
+  description: Mortar detonation — heavy saw 180 to 40 Hz plus LP noise wash.
+  category: AIHell
+  tags:
+    - weapon
+    - detonation
+  duration: 0.32
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 180
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 180
+        - kind: exponentialRamp
+          time: 0.32
+          value: 40
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.316
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.19
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 800
+      Q: 1
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.316
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

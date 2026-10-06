@@ -1,0 +1,84 @@
+# AI Hell cue: aihell-diver-destruction — Diver destroyed — descending saw 280 to 40 Hz plus sine undertone.
+# Seed range 32193-32195: renders three pitch-jittered variants.
+version: "0.1"
+meta:
+  name: aihell-diver-destruction
+  description: Diver destroyed — descending saw 280 to 40 Hz plus sine undertone.
+  category: AIHell
+  tags:
+    - diver
+    - destruction
+  duration: 0.37
+  parameters:
+    - name: startFreq
+      type: number
+      min: 238
+      max: 322
+      unit: Hz
+      default: 280
+    - name: endFreq
+      type: number
+      min: 34
+      max: 46
+      unit: Hz
+      default: 40
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 280
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 280
+        - kind: exponentialRamp
+          time: 0.35
+          value: 40
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.346
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.25
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 80
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 80
+        - kind: exponentialRamp
+          time: 0.35
+          value: 25
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.346
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.15
+  mix:
+    kind: gain
+    params:
+      gain: 0.85
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-diver-fire — Diver fire — saw drop 280 to 120 Hz.
+version: "0.1"
+meta:
+  name: aihell-diver-fire
+  description: Diver fire — saw drop 280 to 120 Hz.
+  category: AIHell
+  tags:
+    - diver
+    - fire
+  duration: 0.1
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 280
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 280
+        - kind: linearRamp
+          time: 0.08
+          value: 120
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.076
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.15
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

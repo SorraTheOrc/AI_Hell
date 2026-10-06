@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-pickup-spawn — Power-up spawn — bright ascending sine blip 440 to 1760 Hz.
+version: "0.1"
+meta:
+  name: aihell-pickup-spawn
+  description: Power-up spawn — bright ascending sine blip 440 to 1760 Hz.
+  category: AIHell
+  tags:
+    - pickup
+    - spawn
+  duration: 0.25
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 440
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 440
+        - kind: exponentialRamp
+          time: 0.246
+          value: 1760
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.242
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.1
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

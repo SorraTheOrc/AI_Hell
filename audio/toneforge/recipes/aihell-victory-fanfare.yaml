@@ -1,0 +1,683 @@
+# AI Hell cue: aihell-victory-fanfare — Victory fanfare — two-phrase arpeggio, cadence, sustained chord, bass, sparkle and shimmer.
+version: "0.1"
+meta:
+  name: aihell-victory-fanfare
+  description: Victory fanfare — two-phrase arpeggio, cadence, sustained chord, bass, sparkle and shimmer.
+  category: AIHell
+  tags:
+    - victory
+    - fanfare
+  duration: 3.42
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 523.25
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 523.25
+        - kind: exponentialRamp
+          time: 0.36
+          value: 523.25
+  e0:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g0:
+    kind: gain
+    params:
+      gain: 0.15
+  v1:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 659.25
+    automation:
+      frequency:
+        - kind: set
+          time: 0.2
+          value: 659.25
+        - kind: exponentialRamp
+          time: 0.56
+          value: 659.25
+  g1:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.2
+          value: 0
+        - kind: linearRamp
+          time: 0.204
+          value: 0.15
+        - kind: exponentialRamp
+          time: 0.56
+          value: 0.0001
+  v2:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 783.99
+    automation:
+      frequency:
+        - kind: set
+          time: 0.4
+          value: 783.99
+        - kind: exponentialRamp
+          time: 0.76
+          value: 783.99
+  g2:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.4
+          value: 0
+        - kind: linearRamp
+          time: 0.404
+          value: 0.15
+        - kind: exponentialRamp
+          time: 0.76
+          value: 0.0001
+  v3:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1046.5
+    automation:
+      frequency:
+        - kind: set
+          time: 0.6
+          value: 1046.5
+        - kind: exponentialRamp
+          time: 0.96
+          value: 1046.5
+  g3:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.6
+          value: 0
+        - kind: linearRamp
+          time: 0.604
+          value: 0.15
+        - kind: exponentialRamp
+          time: 0.96
+          value: 0.0001
+  v4:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1046.5
+    automation:
+      frequency:
+        - kind: set
+          time: 0.8
+          value: 1046.5
+        - kind: exponentialRamp
+          time: 1.01
+          value: 1046.5
+  g4:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.8
+          value: 0
+        - kind: linearRamp
+          time: 0.804
+          value: 0.17
+        - kind: exponentialRamp
+          time: 1.01
+          value: 0.0001
+  v5:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1318.51
+    automation:
+      frequency:
+        - kind: set
+          time: 0.96
+          value: 1318.51
+        - kind: exponentialRamp
+          time: 1.17
+          value: 1318.51
+  g5:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.96
+          value: 0
+        - kind: linearRamp
+          time: 0.964
+          value: 0.17
+        - kind: exponentialRamp
+          time: 1.17
+          value: 0.0001
+  v6:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1567.98
+    automation:
+      frequency:
+        - kind: set
+          time: 1.12
+          value: 1567.98
+        - kind: exponentialRamp
+          time: 1.33
+          value: 1567.98
+  g6:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.12
+          value: 0
+        - kind: linearRamp
+          time: 1.124
+          value: 0.17
+        - kind: exponentialRamp
+          time: 1.33
+          value: 0.0001
+  v7:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 2093
+    automation:
+      frequency:
+        - kind: set
+          time: 1.28
+          value: 2093
+        - kind: exponentialRamp
+          time: 1.49
+          value: 2093
+  g7:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.28
+          value: 0
+        - kind: linearRamp
+          time: 1.284
+          value: 0.17
+        - kind: exponentialRamp
+          time: 1.49
+          value: 0.0001
+  v8:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1046.5
+    automation:
+      frequency:
+        - kind: set
+          time: 1.6
+          value: 1046.5
+        - kind: exponentialRamp
+          time: 3.2
+          value: 1046.5
+  g8:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.6
+          value: 0
+        - kind: linearRamp
+          time: 1.604
+          value: 0.1
+        - kind: exponentialRamp
+          time: 3.2
+          value: 0.0001
+  v9:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1318.51
+    automation:
+      frequency:
+        - kind: set
+          time: 1.6
+          value: 1318.51
+        - kind: exponentialRamp
+          time: 3.2
+          value: 1318.51
+  g9:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.6
+          value: 0
+        - kind: linearRamp
+          time: 1.604
+          value: 0.1
+        - kind: exponentialRamp
+          time: 3.2
+          value: 0.0001
+  v10:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1567.98
+    automation:
+      frequency:
+        - kind: set
+          time: 1.6
+          value: 1567.98
+        - kind: exponentialRamp
+          time: 3.2
+          value: 1567.98
+  g10:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.6
+          value: 0
+        - kind: linearRamp
+          time: 1.604
+          value: 0.1
+        - kind: exponentialRamp
+          time: 3.2
+          value: 0.0001
+  v11:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 2093
+    automation:
+      frequency:
+        - kind: set
+          time: 1.6
+          value: 2093
+        - kind: exponentialRamp
+          time: 3.2
+          value: 2093
+  g11:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.6
+          value: 0
+        - kind: linearRamp
+          time: 1.604
+          value: 0.1
+        - kind: exponentialRamp
+          time: 3.2
+          value: 0.0001
+  v12:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 261.63
+    automation:
+      frequency:
+        - kind: set
+          time: 1.6
+          value: 261.63
+        - kind: exponentialRamp
+          time: 3.4
+          value: 261.63
+  g12:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.6
+          value: 0
+        - kind: linearRamp
+          time: 1.604
+          value: 0.08
+        - kind: exponentialRamp
+          time: 3.4
+          value: 0.0001
+  v13:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 392
+    automation:
+      frequency:
+        - kind: set
+          time: 1.6
+          value: 392
+        - kind: exponentialRamp
+          time: 3.4
+          value: 392
+  g13:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.6
+          value: 0
+        - kind: linearRamp
+          time: 1.604
+          value: 0.08
+        - kind: exponentialRamp
+          time: 3.4
+          value: 0.0001
+  v14:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 2349.32
+    automation:
+      frequency:
+        - kind: set
+          time: 2
+          value: 2349.32
+        - kind: exponentialRamp
+          time: 2.2
+          value: 2349.32
+  g14:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2
+          value: 0
+        - kind: linearRamp
+          time: 2.004
+          value: 0.06
+        - kind: exponentialRamp
+          time: 2.2
+          value: 0.0001
+  v15:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 2793.83
+    automation:
+      frequency:
+        - kind: set
+          time: 2.08
+          value: 2793.83
+        - kind: exponentialRamp
+          time: 2.28
+          value: 2793.83
+  g15:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2.08
+          value: 0
+        - kind: linearRamp
+          time: 2.084
+          value: 0.06
+        - kind: exponentialRamp
+          time: 2.28
+          value: 0.0001
+  v16:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 3520
+    automation:
+      frequency:
+        - kind: set
+          time: 2.16
+          value: 3520
+        - kind: exponentialRamp
+          time: 2.36
+          value: 3520
+  g16:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2.16
+          value: 0
+        - kind: linearRamp
+          time: 2.164
+          value: 0.06
+        - kind: exponentialRamp
+          time: 2.36
+          value: 0.0001
+  v17:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 4186.01
+    automation:
+      frequency:
+        - kind: set
+          time: 2.24
+          value: 4186.01
+        - kind: exponentialRamp
+          time: 2.44
+          value: 4186.01
+  g17:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2.24
+          value: 0
+        - kind: linearRamp
+          time: 2.244
+          value: 0.06
+        - kind: exponentialRamp
+          time: 2.44
+          value: 0.0001
+  v18:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 3520
+    automation:
+      frequency:
+        - kind: set
+          time: 2.32
+          value: 3520
+        - kind: exponentialRamp
+          time: 2.52
+          value: 3520
+  g18:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2.32
+          value: 0
+        - kind: linearRamp
+          time: 2.324
+          value: 0.06
+        - kind: exponentialRamp
+          time: 2.52
+          value: 0.0001
+  v19:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 2793.83
+    automation:
+      frequency:
+        - kind: set
+          time: 2.4
+          value: 2793.83
+        - kind: exponentialRamp
+          time: 2.6
+          value: 2793.83
+  g19:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2.4
+          value: 0
+        - kind: linearRamp
+          time: 2.404
+          value: 0.06
+        - kind: exponentialRamp
+          time: 2.6
+          value: 0.0001
+  v20:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f20:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 6000
+      Q: 1
+  g20:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 2
+          value: 0
+        - kind: linearRamp
+          time: 2.004
+          value: 0.045
+        - kind: exponentialRamp
+          time: 3.2
+          value: 0.0001
+  mix:
+    kind: gain
+    params:
+      gain: 0.6
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, g1, mix]
+  - chain: [v2, g2, mix]
+  - chain: [v3, g3, mix]
+  - chain: [v4, g4, mix]
+  - chain: [v5, g5, mix]
+  - chain: [v6, g6, mix]
+  - chain: [v7, g7, mix]
+  - chain: [v8, g8, mix]
+  - chain: [v9, g9, mix]
+  - chain: [v10, g10, mix]
+  - chain: [v11, g11, mix]
+  - chain: [v12, g12, mix]
+  - chain: [v13, g13, mix]
+  - chain: [v14, g14, mix]
+  - chain: [v15, g15, mix]
+  - chain: [v16, g16, mix]
+  - chain: [v17, g17, mix]
+  - chain: [v18, g18, mix]
+  - chain: [v19, g19, mix]
+  - chain: [v20, f20, g20, mix]
+  - from: mix
+    to: out

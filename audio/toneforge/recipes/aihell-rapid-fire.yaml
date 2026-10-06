@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-rapid-fire — Player rapid fire — triangle rise 500 to 900 Hz.
+version: "0.1"
+meta:
+  name: aihell-rapid-fire
+  description: Player rapid fire — triangle rise 500 to 900 Hz.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+  duration: 0.05
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 500
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 500
+        - kind: exponentialRamp
+          time: 0.048
+          value: 900
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.044
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-boss-phase-transition — Boss phase transition — square rise 220 to 880 Hz.
+version: "0.1"
+meta:
+  name: aihell-boss-phase-transition
+  description: Boss phase transition — square rise 220 to 880 Hz.
+  category: AIHell
+  tags:
+    - boss
+    - phase
+  duration: 0.35
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 220
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 220
+        - kind: exponentialRamp
+          time: 0.348
+          value: 880
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.344
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-pickup-speed — P5 Speed Boost — square rise 600 to 1800 Hz.
+version: "0.1"
+meta:
+  name: aihell-pickup-speed
+  description: P5 Speed Boost — square rise 600 to 1800 Hz.
+  category: AIHell
+  tags:
+    - pickup
+    - powerup
+  duration: 0.1
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 600
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 600
+        - kind: exponentialRamp
+          time: 0.098
+          value: 1800
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.094
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.13
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

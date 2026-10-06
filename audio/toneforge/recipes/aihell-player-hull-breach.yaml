@@ -1,0 +1,93 @@
+# AI Hell cue: aihell-player-hull-breach — Player hull breach — layered saw thump, triangle body and HP noise tail.
+version: "0.1"
+meta:
+  name: aihell-player-hull-breach
+  description: Player hull breach — layered saw thump, triangle body and HP noise tail.
+  category: AIHell
+  tags:
+    - player
+    - destruction
+  duration: 0.6
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 120
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 120
+        - kind: exponentialRamp
+          time: 0.4
+          value: 32
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.396
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.2
+  v1:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 260
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 260
+        - kind: exponentialRamp
+          time: 0.6
+          value: 42
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.596
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.16
+  v2:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f2:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 1200
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.276
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 0.85
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [v2, f2, e2, g2, mix]
+  - from: mix
+    to: out

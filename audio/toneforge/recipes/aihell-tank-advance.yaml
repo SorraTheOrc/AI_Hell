@@ -1,0 +1,70 @@
+# AI Hell cue: aihell-tank-advance — Tank advance cue — rising saw whine with square sub, 0.6 s.
+version: "0.1"
+meta:
+  name: aihell-tank-advance
+  description: Tank advance cue — rising saw whine with square sub, 0.6 s.
+  category: AIHell
+  tags:
+    - tank
+    - advance
+  duration: 0.6
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 150
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 150
+        - kind: exponentialRamp
+          time: 0.6
+          value: 320
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.596
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  v1:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 75
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 75
+        - kind: exponentialRamp
+          time: 0.6
+          value: 160
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.596
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.06
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

@@ -1,0 +1,76 @@
+# AI Hell cue: aihell-phase-shift — P6 Phase Shift — triangle chirp 320 to 1560 Hz plus bandpass noise swing.
+version: "0.1"
+meta:
+  name: aihell-phase-shift
+  description: P6 Phase Shift — triangle chirp 320 to 1560 Hz plus bandpass noise swing.
+  category: AIHell
+  tags:
+    - powerup
+    - phase
+  duration: 0.28
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 320
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 320
+        - kind: exponentialRamp
+          time: 0.28
+          value: 1560
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.276
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.16
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 600
+      Q: 1
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 600
+        - kind: exponentialRamp
+          time: 0.24
+          value: 3200
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.236
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.09
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out
