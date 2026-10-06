@@ -115,6 +115,90 @@ export const ENDOFRUN_RING_LINE_WIDTH = 3;
 /** Whether the victory ring layer is enabled (per-layer toggle). */
 export const ENDOFRUN_ENABLE_VICTORY_RING = true;
 
+// ── Victory fireworks sequence tunables (AH-0MUWZ5HCV0034H44) ───────
+//
+// A sustained, boss-position-anchored firework display that replaces the
+// brief screen-centred in-run burst. A pure, seeded planner
+// (`planVictoryFireworks`) decides *how many* bursts fire, *where* around the
+// death point and *when*; the Phaser renderer (`spawnVictoryFireworks`)
+// dispatches each planned burst to `spawnExplosionParticles` with a tween
+// delay. Every value below is an exported tunable.
+
+/** Whether the sustained victory fireworks sequence is enabled (layer toggle). */
+export const ENDOFRUN_ENABLE_VICTORY_FIREWORKS = true;
+
+/**
+ * Total in-run fireworks duration (ms). The operator asked for 3–5 s of
+ * explosions at the boss's death location before the victory screen
+ * (work-item AH-0MUWZ5HCV0034H44); `PlayScene`'s
+ * `VICTORY_TRANSITION_HOLD_MS` is derived from this so the scene does not
+ * transition until the display has played.
+ */
+export const ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS = 3500;
+
+/**
+ * Shorter fireworks duration (ms) used by the `GameOverScene` victory
+ * branch, which continues the celebration for an additional 1–2 s on top of
+ * the existing screen-centred confetti burst.
+ */
+export const ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS = 1500;
+
+/** Minimum stagger (ms) between successive firework bursts. */
+export const ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MIN_MS = 200;
+
+/** Maximum stagger (ms) between successive firework bursts. */
+export const ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MAX_MS = 800;
+
+/** Radius (px) around the anchor within which bursts are placed at random. */
+export const ENDOFRUN_VICTORY_FIREWORKS_SPREAD_RADIUS = 240;
+
+/** Particles per firework burst (before pattern splitting). */
+export const ENDOFRUN_VICTORY_FIREWORKS_PARTICLE_COUNT = 26;
+
+/**
+ * Base entity size handed to `spawnExplosionParticles` for a firework —
+ * together with {@link ENDOFRUN_VICTORY_FIREWORKS_SCALE} it sets the particle
+ * radius and speed (the count is passed explicitly per burst).
+ */
+export const ENDOFRUN_VICTORY_FIREWORKS_SIZE = 16;
+
+/** Geometry scale applied to each firework burst. */
+export const ENDOFRUN_VICTORY_FIREWORKS_SCALE = 1.6;
+
+/**
+ * Hard cap on the number of bursts in one sequence. Bounds the particle
+ * budget for a sustained 3–5 s display (performance mitigation from the
+ * work item's risk list).
+ */
+export const ENDOFRUN_VICTORY_FIREWORKS_MAX_BURSTS = 14;
+
+/**
+ * The per-burst firework effect types. Each maps to a distinct
+ * `spawnExplosionParticles` pattern set so at least three visually distinct
+ * firework types appear in a sequence (AC1).
+ */
+export type VictoryFireworkKind = 'burst' | 'ring' | 'implosion';
+
+/** Cycle of firework kinds; consecutive bursts cycle through all three. */
+export const ENDOFRUN_VICTORY_FIREWORK_KINDS: readonly VictoryFireworkKind[] = [
+  'burst',
+  'ring',
+  'implosion',
+];
+
+/** Particle pattern set for each firework kind. */
+export const ENDOFRUN_VICTORY_FIREWORK_PATTERNS: Record<VictoryFireworkKind, Pattern[]> = {
+  burst: ['radial'],
+  ring: ['ring'],
+  implosion: ['implosion'],
+};
+
+/**
+ * Render depth of a `GameOverScene` firework — front-most juice layer, still
+ * behind the default-depth-0 UI (see the depth convention above).
+ */
+export const ENDOFRUN_VICTORY_FIREWORK_DEPTH = -7;
+
 /** Whether the defeat ring layer is enabled (per-layer toggle). */
 export const ENDOFRUN_ENABLE_DEFEAT_RING = true;
 
@@ -181,6 +265,24 @@ export interface EndOfRunJuiceParams {
   victoryRingRadius: number;
   /** Whether to spawn the victory ring. */
   victoryRingEnabled: boolean;
+  /** Whether to spawn the sustained victory fireworks sequence. */
+  victoryFireworksEnabled: boolean;
+  /** Total in-run fireworks duration (ms). */
+  victoryFireworksDurationMs: number;
+  /** Shorter `GameOverScene` fireworks duration (ms). */
+  victoryScreenFireworksDurationMs: number;
+  /** Minimum stagger (ms) between firework bursts. */
+  victoryFireworksIntervalMinMs: number;
+  /** Maximum stagger (ms) between firework bursts. */
+  victoryFireworksIntervalMaxMs: number;
+  /** Radius (px) around the anchor for random burst positions. */
+  victoryFireworksSpreadRadius: number;
+  /** Particles per firework burst. */
+  victoryFireworksParticleCount: number;
+  /** Geometry scale applied to each firework burst. */
+  victoryFireworksScale: number;
+  /** Hard cap on bursts in one sequence. */
+  victoryFireworksMaxBursts: number;
   /** Ring expansion duration (ms). */
   ringDurationMs: number;
   /** Fraction of final radius to start from. */
@@ -252,6 +354,17 @@ export function resolveEndOfRunJuiceParams(
     victoryRingRadius: isVictory ? ENDOFRUN_VICTORY_RING_RADIUS : 0,
     victoryRingEnabled: isVictory && ENDOFRUN_ENABLE_VICTORY_RING,
 
+    // ── Victory fireworks ───────────────────────────────────────
+    victoryFireworksEnabled: isVictory && ENDOFRUN_ENABLE_VICTORY_FIREWORKS,
+    victoryFireworksDurationMs: ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
+    victoryScreenFireworksDurationMs: ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+    victoryFireworksIntervalMinMs: ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MIN_MS,
+    victoryFireworksIntervalMaxMs: ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MAX_MS,
+    victoryFireworksSpreadRadius: ENDOFRUN_VICTORY_FIREWORKS_SPREAD_RADIUS,
+    victoryFireworksParticleCount: isVictory ? ENDOFRUN_VICTORY_FIREWORKS_PARTICLE_COUNT : 0,
+    victoryFireworksScale: ENDOFRUN_VICTORY_FIREWORKS_SCALE,
+    victoryFireworksMaxBursts: ENDOFRUN_VICTORY_FIREWORKS_MAX_BURSTS,
+
     // ── Shared ring params ───────────────────────────────────────
     ringDurationMs: ENDOFRUN_RING_DURATION_MS,
     ringStartScale: ENDOFRUN_RING_START_SCALE,
@@ -299,7 +412,12 @@ export function resolveEndOfRunJuiceParams(
 
 import Phaser from 'phaser';
 
-import { createRng, type ExplosionHandle } from './explosionParticles';
+import {
+  createRng,
+  spawnExplosionParticles,
+  type ExplosionHandle,
+  type Pattern,
+} from './explosionParticles';
 import type { JuiceRegistry } from './playerDeathJuice';
 
 /** Depth of the victory flash — behind the GameOverScene UI. */
@@ -576,6 +694,235 @@ export function spawnVictoryJuice(
   });
 
   return { params, registry, flash, rings, confetti, particles: null };
+}
+
+// ── Victory fireworks sequence (AH-0MUWZ5HCV0034H44) ────────────────
+//
+// The sustained celebration the operator asked for: a 3–5 s sequence of
+// explosions/fireworks at random positions around the boss's death point,
+// continuing for a shorter burst on `GameOverScene`. The split mirrors the
+// rest of the module — a pure, seeded planner (`planVictoryFireworks`) and a
+// thin Phaser renderer (`spawnVictoryFireworks`) that delegates each burst to
+// the shared `spawnExplosionParticles` helper.
+
+/** One planned firework burst (pure, no Phaser types). */
+export interface VictoryFireworkBurst {
+  /** Which firework effect type to render. */
+  kind: VictoryFireworkKind;
+  /** Delay (ms) from sequence start before the burst animates. */
+  delayMs: number;
+  /** World X of the burst centre. */
+  x: number;
+  /** World Y of the burst centre. */
+  y: number;
+  /** Burst colour (from the victory palette). */
+  color: number;
+  /** Particles in the burst. */
+  particleCount: number;
+  /** Geometry scale for the burst. */
+  scale: number;
+}
+
+/** Optional overrides for {@link planVictoryFireworks}. */
+export interface VictoryFireworksPlanOptions {
+  /** PRNG seed (default `Date.now()`). */
+  seed?: number;
+  /** Total sequence duration (ms). */
+  durationMs?: number;
+  /** Minimum stagger between bursts (ms). */
+  intervalMinMs?: number;
+  /** Maximum stagger between bursts (ms). */
+  intervalMaxMs?: number;
+  /** Random-position spread radius (px). */
+  spreadRadius?: number;
+  /** Particles per burst. */
+  particleCount?: number;
+  /** Geometry scale per burst. */
+  scale?: number;
+  /** Hard cap on bursts. */
+  maxBursts?: number;
+  /** Colours cycled across bursts (defaults to the victory palette). */
+  colors?: readonly number[];
+  /** Kinds cycled across bursts (defaults to the three firework kinds). */
+  kinds?: readonly VictoryFireworkKind[];
+}
+
+/**
+ * Plans a sustained firework sequence around `(originX, originY)`.
+ *
+ * Pure, total and deterministic for a fixed seed: bursts are placed at
+ * uniformly-distributed random positions within `spreadRadius` of the origin
+ * (a `sqrt` radius keeps the disc scatter even) and scheduled at staggered
+ * `[intervalMinMs, intervalMaxMs]` intervals until `durationMs` elapses or
+ * `maxBursts` is reached. Kinds and colours cycle, so a sequence of three or
+ * more bursts uses every firework type. Returns `[]` for a non-positive
+ * duration.
+ *
+ * @param originX — anchor X (the boss's death position in-run).
+ * @param originY — anchor Y.
+ * @param options — seed, duration, interval, spread and per-burst tunables.
+ */
+export function planVictoryFireworks(
+  originX: number,
+  originY: number,
+  options: VictoryFireworksPlanOptions = {},
+): VictoryFireworkBurst[] {
+  const durationMs = options.durationMs ?? ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return [];
+
+  const rawMin = options.intervalMinMs ?? ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MIN_MS;
+  const rawMax = options.intervalMaxMs ?? ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MAX_MS;
+  const intervalMinMs = Math.max(1, Math.min(rawMin, rawMax));
+  const intervalMaxMs = Math.max(intervalMinMs, rawMax);
+
+  const spreadRadius = Math.max(
+    0,
+    options.spreadRadius ?? ENDOFRUN_VICTORY_FIREWORKS_SPREAD_RADIUS,
+  );
+  const particleCount = Math.max(
+    1,
+    Math.round(options.particleCount ?? ENDOFRUN_VICTORY_FIREWORKS_PARTICLE_COUNT),
+  );
+  const scale = options.scale ?? ENDOFRUN_VICTORY_FIREWORKS_SCALE;
+  const maxBursts = Math.max(
+    1,
+    Math.floor(options.maxBursts ?? ENDOFRUN_VICTORY_FIREWORKS_MAX_BURSTS),
+  );
+  const colors =
+    options.colors && options.colors.length > 0
+      ? [...options.colors]
+      : [ENDOFRUN_VICTORY_COLOR, ENDOFRUN_VICTORY_GREEN, ENDOFRUN_VICTORY_SPARKLE];
+  const kinds =
+    options.kinds && options.kinds.length > 0
+      ? [...options.kinds]
+      : [...ENDOFRUN_VICTORY_FIREWORK_KINDS];
+
+  const rng = createRng(options.seed ?? Date.now());
+  const bursts: VictoryFireworkBurst[] = [];
+  let delayMs = 0;
+
+  while (delayMs < durationMs && bursts.length < maxBursts) {
+    const angle = rng() * Math.PI * 2;
+    const radius = spreadRadius * Math.sqrt(rng());
+    bursts.push({
+      kind: kinds[bursts.length % kinds.length],
+      delayMs,
+      x: originX + Math.cos(angle) * radius,
+      y: originY + Math.sin(angle) * radius,
+      color: colors[bursts.length % colors.length],
+      particleCount,
+      scale,
+    });
+    delayMs += intervalMinMs + rng() * (intervalMaxMs - intervalMinMs);
+  }
+
+  return bursts;
+}
+
+/** Optional overrides for {@link spawnVictoryFireworks}. */
+export interface VictoryFireworksOptions extends VictoryFireworksPlanOptions {
+  /** Caller-owned registry every burst is added to / removed from. */
+  registry?: JuiceRegistry;
+  /** Resolved-parameter override (test seam / partial disable). */
+  params?: EndOfRunJuiceParams;
+  /**
+   * Render depth for the burst Graphics. Defaults to the GameOverScene juice
+   * depth ({@link ENDOFRUN_VICTORY_FIREWORK_DEPTH}, behind the UI); the in-run
+   * `PlayScene` passes a HUD-relative positive depth so the display is visible
+   * above the gameplay layer.
+   */
+  depth?: number;
+}
+
+/** Handle returned by {@link spawnVictoryFireworks}. */
+export interface VictoryFireworksHandle {
+  /** The resolved victory parameters the sequence ran with. */
+  params: EndOfRunJuiceParams;
+  /** Every firework-owned display object (one Graphics per burst). */
+  registry: JuiceRegistry;
+  /** The planned bursts (delays, positions, kinds). */
+  bursts: VictoryFireworkBurst[];
+  /** The spawned explosion handles (one per burst, in plan order). */
+  explosions: ExplosionHandle[];
+}
+
+/**
+ * Spawns the sustained victory fireworks sequence around `(x, y)`.
+ *
+ * Plans the bursts with {@link planVictoryFireworks} (pure/seeded) then
+ * dispatches each to `spawnExplosionParticles` with its planned delay,
+ * colour, count, pattern set and scale. Every burst Graphics is pushed to
+ * `options.registry` (or a fresh array) and removes itself on completion, so
+ * a `SHUTDOWN` teardown destroys any leftovers. Purely cosmetic and
+ * non-interactive — it can never occlude or intercept input.
+ *
+ * No-op (empty `bursts` / `explosions`) when
+ * `ENDOFRUN_ENABLE_VICTORY_FIREWORKS` is off in the resolved params, or when
+ * the duration is non-positive.
+ *
+ * @param scene   — the scene to render into.
+ * @param x       — anchor X (the boss's death position in-run).
+ * @param y       — anchor Y.
+ * @param options — registry, seed, depth and per-burst plan overrides.
+ */
+export function spawnVictoryFireworks(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  options: VictoryFireworksOptions = {},
+): VictoryFireworksHandle {
+  const params = options.params ?? resolveEndOfRunJuiceParams('victory');
+  const registry: JuiceRegistry = options.registry ?? [];
+  const depth = options.depth ?? ENDOFRUN_VICTORY_FIREWORK_DEPTH;
+
+  if (!params.victoryFireworksEnabled) {
+    return { params, registry, bursts: [], explosions: [] };
+  }
+
+  const seed = options.seed ?? Date.now();
+  const bursts = planVictoryFireworks(x, y, {
+    seed,
+    durationMs: options.durationMs ?? params.victoryFireworksDurationMs,
+    intervalMinMs: options.intervalMinMs ?? params.victoryFireworksIntervalMinMs,
+    intervalMaxMs: options.intervalMaxMs ?? params.victoryFireworksIntervalMaxMs,
+    spreadRadius: options.spreadRadius ?? params.victoryFireworksSpreadRadius,
+    particleCount: options.particleCount ?? params.victoryFireworksParticleCount,
+    scale: options.scale ?? params.victoryFireworksScale,
+    maxBursts: options.maxBursts ?? params.victoryFireworksMaxBursts,
+    colors: options.colors,
+    kinds: options.kinds,
+  });
+
+  const explosions: ExplosionHandle[] = [];
+  for (let i = 0; i < bursts.length; i++) {
+    const burst = bursts[i];
+    const handle = spawnExplosionParticles(
+      scene,
+      burst.x,
+      burst.y,
+      burst.color,
+      ENDOFRUN_VICTORY_FIREWORKS_SIZE,
+      {
+        patterns: ENDOFRUN_VICTORY_FIREWORK_PATTERNS[burst.kind],
+        count: burst.particleCount,
+        lifespan: params.victoryParticleLifespanMs,
+        scale: burst.scale,
+        delay: burst.delayMs,
+        depth,
+        seed: seed + i + 1,
+        registry,
+      },
+    );
+    if (!handle) continue;
+    // Tag the burst so registry tooling can identify a fireworks layer.
+    const tagged = handle.graphics as
+      | { setData?: (key: string, value: unknown) => unknown }
+      | null;
+    tagged?.setData?.('juiceLayer', 'victoryFirework');
+    explosions.push(handle);
+  }
+
+  return { params, registry, bursts, explosions };
 }
 
 // ── Rendering layers (F3 defeat screen treatment) ──────────────────

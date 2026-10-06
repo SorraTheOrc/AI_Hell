@@ -594,6 +594,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     booted = await bootGameOver();
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
     const defeatSpy = vi.spyOn(endOfRunModule, 'spawnDefeatScreenJuice');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
 
     booted.game.scene.start('GameOverScene', { won: true, score: 100 });
     await new Promise((r) => setTimeout(r, 350));
@@ -601,9 +602,21 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
 
     expect(victorySpy).toHaveBeenCalledTimes(1);
     expect(defeatSpy).not.toHaveBeenCalled();
+    // The shorter victory-screen fireworks continuation runs on the same
+    // registry with its dedicated 1–2 s duration (AC2).
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
+    const fireworksOptions = fireworksSpy.mock.calls[0][3] as {
+      registry?: unknown[];
+      durationMs?: number;
+    };
+    expect(fireworksOptions.registry).toBe(scene.getEndOfRunEffects());
+    expect(fireworksOptions.durationMs).toBe(
+      endOfRunModule.ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+    );
     // The victory layers are alive in the registry.
     const layers = liveLayers(scene);
     expect(layers.some((t) => t.startsWith('victory'))).toBe(true);
+    expect(layers.some((t) => t === 'victoryFirework')).toBe(true);
     expect(layers.some((t) => t.startsWith('defeat'))).toBe(false);
   });
 
@@ -611,6 +624,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     booted = await bootGameOver();
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
     const defeatSpy = vi.spyOn(endOfRunModule, 'spawnDefeatScreenJuice');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
     const stingSpy = vi.spyOn(effectsModule, 'playDefeatStingSound');
 
     booted.game.scene.start('GameOverScene', { won: false, score: 100 });
@@ -619,6 +633,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
 
     expect(defeatSpy).toHaveBeenCalledTimes(1);
     expect(victorySpy).not.toHaveBeenCalled();
+    expect(fireworksSpy).not.toHaveBeenCalled();
     expect(stingSpy).toHaveBeenCalledTimes(1);
     const layers = liveLayers(scene);
     expect(layers.some((t) => t.startsWith('defeat'))).toBe(true);

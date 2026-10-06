@@ -37,6 +37,7 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
+  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -1606,9 +1607,9 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // Phases 1–4 all awarded (1000+2000+3000+5000).
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
-    // The transition is delayed by the short victory hold
+    // The transition is delayed by the victory fireworks hold
     // (VICTORY_TRANSITION_HOLD_MS); wait past it.
-    await new Promise((r) => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
@@ -3813,14 +3814,26 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     reachBoss(scene);
     const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
 
     defeatBoss(scene);
 
     expect(fanfareSpy).toHaveBeenCalledTimes(1);
     expect(victorySpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
     // The celebration is the shared F2 helper, owning the scene registry.
     const options = victorySpy.mock.calls[0][1] as { registry?: unknown[] };
     expect(options.registry).toBe(scene.getVictoryEffects());
+
+    // The fireworks are anchored at the boss's death position (AC3) and share
+    // the same scene-owned registry (AC4).
+    const boss = scene.getBoss()!;
+    const fireworksCall = fireworksSpy.mock.calls[0];
+    expect(fireworksCall[1]).toBe(boss.x);
+    expect(fireworksCall[2]).toBe(boss.y);
+    expect((fireworksCall[3] as { registry?: unknown[] }).registry).toBe(
+      scene.getVictoryEffects(),
+    );
     expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
   });
 
@@ -3861,9 +3874,9 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     const effects = scene.getVictoryEffects();
     expect(effects.length).toBeGreaterThan(0);
 
-    // Wait for the short hold, then the GameOverScene transition fires
-    // SHUTDOWN on PlayScene.
-    await new Promise((r) => setTimeout(r, 900));
+    // Wait for the victory fireworks hold, then the GameOverScene transition
+    // fires SHUTDOWN on PlayScene.
+    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
 
     expect(scene.getVictoryEffects()).toHaveLength(0);
     for (const effect of effects) {

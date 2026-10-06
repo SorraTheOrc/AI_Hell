@@ -78,7 +78,11 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
-import { spawnVictoryJuice } from '../vfx/endOfRunJuice';
+import {
+  ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
+  spawnVictoryFireworks,
+  spawnVictoryJuice,
+} from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
@@ -197,12 +201,27 @@ const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 export const POWER_UP_DROP_CHANCE = 0.18;
 
 /**
- * Short in-run hold (ms) after the victory celebration is triggered and
- * before the `GameOverScene` transition. Keeps the moment-of-win flourish
- * visible without a long blocking delay; the sustained celebration then
- * continues on `GameOverScene`. Set to 0 to transition immediately.
+ * In-run hold (ms) after the victory celebration is triggered and before the
+ * `GameOverScene` transition. Set to the sustained fireworks duration
+ * ({@link ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS}, 3–5 s) so the whole
+ * boss-position-anchored explosion/firework display plays before the screen
+ * changes (AH-0MUWZ5HCV0034H44). Set to 0 to transition immediately.
  */
-export const VICTORY_TRANSITION_HOLD_MS = 250;
+export const VICTORY_TRANSITION_HOLD_MS = ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS;
+
+/**
+ * Render depth of the in-run victory fireworks: above the gameplay layer
+ * (depth 0) so the display reads at the boss's death position, but below the
+ * HUD ({@link HUD_DEPTH} 1000) and the banner/score text (500).
+ */
+export const VICTORY_FIREWORK_DEPTH = 300;
+
+/**
+ * Background depth for the play scene. Set well below the juice layers
+ * (negative −10…−7) so the in-run celebration renders above the playfield
+ * backdrop instead of behind it (mirrors `GameOverScene`'s −100 background).
+ */
+const PLAYSCENE_BACKGROUND_DEPTH = -1000;
 
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
@@ -424,7 +443,10 @@ export class PlayScene extends CombatScene<
     // the same scene instance — never leak stale enemies/bullets/timers).
     this.resetRunState();
 
-    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
+    this.add
+      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
+      .setOrigin(0)
+      .setDepth(PLAYSCENE_BACKGROUND_DEPTH);
 
     // Player ship (auto-fire, weapons, effects).
     this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
@@ -1252,10 +1274,14 @@ export class PlayScene extends CombatScene<
     const previousPhase = boss.getPhaseNumber();
     const result = boss.takeDamage();
     if (result.destroyed) {
+      // Capture the boss's death position before anything else can move or
+      // destroy it — the celebration is anchored here (AC3).
+      const deathX = boss.x;
+      const deathY = boss.y;
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
-      this._triggerVictoryCelebration();
+      this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
     }
@@ -1270,15 +1296,24 @@ export class PlayScene extends CombatScene<
 
   /**
    * Fires the end-of-run victory treatment at the moment the boss dies
-   * (parent AH-0MUTV7632000ZWCB AC1/AC6): the dedicated fanfare plays once
-   * and the shared `spawnVictoryJuice` celebration is spawned into this
-   * scene's registry. The sustained celebration is re-rendered on
-   * `GameOverScene`, so the transition needs only a short tunable hold
-   * ({@link VICTORY_TRANSITION_HOLD_MS}) for the in-run flourish to read.
+   * (parent AH-0MUTV7632000ZWCB AC1/AC6; extended by
+   * AH-0MUWZ5HCV0034H44): the dedicated fanfare plays once, the shared
+   * `spawnVictoryJuice` celebration is spawned at `(x, y)`, and the sustained
+   * `spawnVictoryFireworks` sequence explodes around the same boss-death
+   * anchor for {@link ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS}. The celebration
+   * then continues on `GameOverScene`, so the in-run transition waits
+   * {@link VICTORY_TRANSITION_HOLD_MS} for the display to play.
+   *
+   * @param x — boss death X (the firework anchor).
+   * @param y — boss death Y.
    */
-  private _triggerVictoryCelebration(): void {
+  private _triggerVictoryCelebration(x: number, y: number): void {
     playVictoryFanfareSound();
-    spawnVictoryJuice(this, { registry: this.victoryEffects });
+    spawnVictoryJuice(this, { registry: this.victoryEffects, x, y });
+    spawnVictoryFireworks(this, x, y, {
+      registry: this.victoryEffects,
+      depth: VICTORY_FIREWORK_DEPTH,
+    });
   }
 
   /**

@@ -13,6 +13,8 @@ import {
   spawnVictoryRings,
   spawnVictoryConfetti,
   spawnVictoryJuice,
+  planVictoryFireworks,
+  spawnVictoryFireworks,
   spawnDefeatVignette,
   spawnDefeatGlitch,
   spawnDefeatRing,
@@ -47,6 +49,14 @@ import {
   ENDOFRUN_DEFEAT_COLOR,
   ENDOFRUN_DEFEAT_RED,
   ENDOFRUN_DEFEAT_GRAY,
+  ENDOFRUN_ENABLE_VICTORY_FIREWORKS,
+  ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
+  ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MIN_MS,
+  ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MAX_MS,
+  ENDOFRUN_VICTORY_FIREWORKS_SPREAD_RADIUS,
+  ENDOFRUN_VICTORY_FIREWORKS_MAX_BURSTS,
+  ENDOFRUN_VICTORY_FIREWORK_KINDS,
+  ENDOFRUN_VICTORY_FIREWORK_DEPTH,
 } from './endOfRunJuice';
 
 // ── Fixture helpers ──────────────────────────────────────────────────
@@ -554,6 +564,230 @@ describe('spawnVictoryJuice — composition entry point (F2, parent AC2/AC4)', (
 
     expect(registry).toHaveLength(0);
     expect(handle.flash?.active).toBe(false);
+  });
+});
+
+// ── F6: sustained victory fireworks sequence (AH-0MUWZ5HCV0034H44) ─
+
+describe('planVictoryFireworks — pure seeded planner (AC1/AC3/AC6)', () => {
+  it('plans a multi-burst sequence whose delays stay within the duration', () => {
+    const bursts = planVictoryFireworks(100, 100, { seed: 1, durationMs: 3000 });
+
+    expect(bursts.length).toBeGreaterThanOrEqual(3);
+    expect(bursts[0].delayMs).toBe(0);
+    for (const burst of bursts) {
+      expect(burst.delayMs).toBeGreaterThanOrEqual(0);
+      expect(burst.delayMs).toBeLessThan(3000);
+    }
+  });
+
+  it('staggers consecutive bursts within the configured interval range', () => {
+    const bursts = planVictoryFireworks(0, 0, {
+      seed: 7,
+      durationMs: 4000,
+      intervalMinMs: 250,
+      intervalMaxMs: 500,
+    });
+
+    for (let i = 1; i < bursts.length; i++) {
+      const gap = bursts[i].delayMs - bursts[i - 1].delayMs;
+      expect(gap).toBeGreaterThanOrEqual(250 - 1e-6);
+      expect(gap).toBeLessThanOrEqual(500 + 1e-6);
+    }
+  });
+
+  it('places every burst within the spread radius of the anchor', () => {
+    const bursts = planVictoryFireworks(400, 300, {
+      seed: 3,
+      durationMs: 4000,
+      spreadRadius: 150,
+    });
+
+    expect(bursts.length).toBeGreaterThan(0);
+    for (const burst of bursts) {
+      const distance = Math.hypot(burst.x - 400, burst.y - 300);
+      expect(distance).toBeLessThanOrEqual(150 + 1e-6);
+    }
+  });
+
+  it('is deterministic for a fixed seed and varies by seed', () => {
+    const first = planVictoryFireworks(0, 0, { seed: 42, durationMs: 3000 });
+    const sameSeed = planVictoryFireworks(0, 0, { seed: 42, durationMs: 3000 });
+    const otherSeed = planVictoryFireworks(0, 0, { seed: 43, durationMs: 3000 });
+
+    expect(sameSeed).toEqual(first);
+    expect(otherSeed).not.toEqual(first);
+  });
+
+  it('caps the number of bursts at maxBursts', () => {
+    const bursts = planVictoryFireworks(0, 0, {
+      seed: 1,
+      durationMs: 100000,
+      intervalMinMs: 1,
+      intervalMaxMs: 1,
+      maxBursts: 5,
+    });
+
+    expect(bursts).toHaveLength(5);
+  });
+
+  it('cycles through all three firework kinds', () => {
+    const bursts = planVictoryFireworks(0, 0, { seed: 5, durationMs: 4000 });
+    const kinds = new Set(bursts.map((burst) => burst.kind));
+
+    for (const kind of ENDOFRUN_VICTORY_FIREWORK_KINDS) {
+      expect(kinds.has(kind)).toBe(true);
+    }
+    // Kinds cycle deterministically (burst / ring / implosion / burst ...).
+    expect(bursts[0].kind).toBe('burst');
+    expect(bursts[1].kind).toBe('ring');
+    expect(bursts[2].kind).toBe('implosion');
+  });
+
+  it('returns no bursts for a non-positive duration', () => {
+    expect(planVictoryFireworks(0, 0, { seed: 1, durationMs: 0 })).toHaveLength(0);
+    expect(planVictoryFireworks(0, 0, { seed: 1, durationMs: -100 })).toHaveLength(0);
+  });
+
+  it('uses the exported defaults when no options are supplied', () => {
+    const bursts = planVictoryFireworks(0, 0, { seed: 1 });
+
+    expect(bursts.length).toBeGreaterThan(0);
+    expect(bursts.length).toBeLessThanOrEqual(ENDOFRUN_VICTORY_FIREWORKS_MAX_BURSTS);
+    for (const burst of bursts) {
+      const distance = Math.hypot(burst.x, burst.y);
+      expect(distance).toBeLessThanOrEqual(ENDOFRUN_VICTORY_FIREWORKS_SPREAD_RADIUS + 1e-6);
+      expect(burst.delayMs).toBeLessThan(ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS);
+    }
+  });
+
+  it('exports the fireworks tunables used by the planner', () => {
+    expect(ENDOFRUN_ENABLE_VICTORY_FIREWORKS).toBe(true);
+    expect(ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MIN_MS).toBeLessThan(
+      ENDOFRUN_VICTORY_FIREWORKS_INTERVAL_MAX_MS,
+    );
+    expect(ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS).toBeGreaterThanOrEqual(3000);
+    expect(ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS).toBeLessThanOrEqual(5000);
+  });
+});
+
+describe('spawnVictoryFireworks — renderer (AC1/AC3/AC4/AC6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('spawns one registered explosion per planned burst', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    const handle = spawnVictoryFireworks(scene, 200, 200, {
+      registry,
+      seed: 1,
+      durationMs: 2000,
+    });
+
+    expect(handle.bursts.length).toBeGreaterThan(0);
+    expect(handle.explosions).toHaveLength(handle.bursts.length);
+    expect(registry).toHaveLength(handle.bursts.length);
+    for (const explosion of handle.explosions) {
+      expect(explosion.totalCount).toBeGreaterThan(0);
+    }
+  });
+
+  it('schedules each burst with its planned delay', async () => {
+    const scene = await boot();
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const handle = spawnVictoryFireworks(scene, 0, 0, { seed: 2, durationMs: 2000 });
+    const delays = tweenSpy.mock.calls.map(
+      (call) => (call[0] as Phaser.Types.Tweens.TweenBuilderConfig).delay,
+    );
+
+    expect(delays).toEqual(handle.bursts.map((burst) => burst.delayMs));
+  });
+
+  it('renders bursts behind the GameOverScene UI by default (negative depth)', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    spawnVictoryFireworks(scene, 0, 0, { registry, seed: 3 });
+
+    expect(registry.length).toBeGreaterThan(0);
+    for (const obj of registry) {
+      expect((obj as unknown as { depth: number }).depth).toBe(ENDOFRUN_VICTORY_FIREWORK_DEPTH);
+      expect((obj as unknown as { depth: number }).depth).toBeLessThan(0);
+    }
+  });
+
+  it('honours an explicit depth override', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    spawnVictoryFireworks(scene, 0, 0, { registry, seed: 3, depth: 300 });
+
+    expect(registry.length).toBeGreaterThan(0);
+    for (const obj of registry) {
+      expect((obj as unknown as { depth: number }).depth).toBe(300);
+    }
+  });
+
+  it('is a no-op when the victory fireworks toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const disabled = {
+      ...resolveEndOfRunJuiceParams('victory'),
+      victoryFireworksEnabled: false,
+    };
+
+    const handle = spawnVictoryFireworks(scene, 0, 0, { registry, params: disabled });
+
+    expect(handle.bursts).toHaveLength(0);
+    expect(handle.explosions).toHaveLength(0);
+    expect(registry).toHaveLength(0);
+  });
+
+  it('removes every burst from the registry as its tween completes (SHUTDOWN cleanup)', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const handle = spawnVictoryFireworks(scene, 0, 0, {
+      registry,
+      seed: 4,
+      durationMs: 2000,
+    });
+    expect(registry).toHaveLength(handle.bursts.length);
+
+    for (const call of tweenSpy.mock.calls) {
+      const onComplete = (call[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+        .onComplete as (() => void) | undefined;
+      onComplete?.();
+    }
+
+    expect(registry).toHaveLength(0);
+    for (const explosion of handle.explosions) {
+      expect(explosion.alive).toBe(false);
+    }
+  });
+
+  it('tags each burst with a victoryFirework juice layer', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+
+    spawnVictoryFireworks(scene, 0, 0, { registry, seed: 5, durationMs: 1500 });
+
+    expect(registry.length).toBeGreaterThan(0);
+    for (const obj of registry) {
+      expect(obj.getData('juiceLayer')).toBe('victoryFirework');
+    }
   });
 });
 

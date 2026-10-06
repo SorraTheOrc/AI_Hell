@@ -43,6 +43,17 @@ describe('End-of-run victory/defeat treatment is documented (AC4/AC5)', () => {
     expect(gdd).toMatch(/SHUTDOWN/);
   });
 
+  it('GDD §7.2 documents the sustained victory fireworks sequence (AH-0MUWZ5HCV0034H44)', () => {
+    expect(gdd).toContain('spawnVictoryFireworks');
+    expect(gdd).toMatch(/ENDOFRUN_ENABLE_VICTORY_FIREWORKS/);
+    expect(gdd).toMatch(/ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS/);
+    expect(gdd).toMatch(/ENDOFRUN_VICTORY_FIREWORKS_SPREAD_RADIUS/);
+    expect(gdd).toMatch(/ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS/);
+    // Boss-position anchoring and the fireworks kinds.
+    expect(gdd).toMatch(/boss/i);
+    expect(gdd).toMatch(/implosion/i);
+  });
+
   it('GDD §7.2 records the gym-parity decision (no gym run-end screen)', () => {
     expect(gdd).toMatch(/GameOverScene` is reached only from `PlayScene/);
     expect(gdd).toMatch(/no gym scene has a run-end screen/i);

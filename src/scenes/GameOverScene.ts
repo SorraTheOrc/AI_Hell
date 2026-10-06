@@ -33,7 +33,12 @@ import {
 } from '../core/Leaderboard';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { playDefeatStingSound } from '../audio/effects';
-import { spawnDefeatScreenJuice, spawnVictoryJuice } from '../vfx/endOfRunJuice';
+import {
+  ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+  spawnDefeatScreenJuice,
+  spawnVictoryFireworks,
+  spawnVictoryJuice,
+} from '../vfx/endOfRunJuice';
 import { renderLeaderboard } from '../ui/leaderboardView';
 import { FocusManager } from '../utils/focusManager';
 
@@ -150,6 +155,13 @@ export class GameOverScene extends Phaser.Scene {
     // cannot intercept keyboard or pointer input.
     if (this.won) {
       spawnVictoryJuice(this, { registry: this.endOfRunEffects });
+      // Continue the celebration for a shorter beat (1–2 s): a screen-centred
+      // firework/explosion sequence layered on top of the confetti burst
+      // (AH-0MUWZ5HCV0034H44 AC2). Bursts render behind the UI (negative depth).
+      spawnVictoryFireworks(this, GAME_WIDTH / 2, GAME_HEIGHT / 2, {
+        registry: this.endOfRunEffects,
+        durationMs: ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+      });
     } else {
       const defeat = spawnDefeatScreenJuice(this, { registry: this.endOfRunEffects });
       // Defeat sting — exactly once, gated by the shared sound toggle.
