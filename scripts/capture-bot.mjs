@@ -200,23 +200,38 @@ export const AUDIO_SILENCE_RMS_FLOOR = 0.0005;
  * corresponding documented floor; a missing probe is treated as "no audio
  * track".
  *
- * @param {{ trackCount?: number, peak?: number, rms?: number }} [audio]
+ * When the probe reports a `decodeError` (the in-page
+ * `AudioContext.decodeAudioData` fallback could not decode the recorded
+ * WebM/Opus), the track is never reported as non-silent — an unmeasured
+ * track must not silently pass — and the decode failure is surfaced as an
+ * explicit reason (AH-0MUWYQRAS0054VO5, AC4).
+ *
+ * @param {{ trackCount?: number, peak?: number, rms?: number, decodeError?: string }} [audio]
  * @returns {{ hasAudioTrack: boolean, nonSilent: boolean, reasons: string[] }}
  */
 export function evaluateAudioTrack(audio) {
   const trackCount = Number(audio?.trackCount ?? 0);
   const peak = Number(audio?.peak ?? 0);
   const rms = Number(audio?.rms ?? 0);
+  const decodeError =
+    typeof audio?.decodeError === 'string' && audio.decodeError
+      ? audio.decodeError
+      : '';
 
   const hasAudioTrack = Number.isFinite(trackCount) && trackCount > 0;
   const abovePeakFloor =
     Number.isFinite(peak) && peak > AUDIO_SILENCE_PEAK_FLOOR;
   const aboveRmsFloor = Number.isFinite(rms) && rms > AUDIO_SILENCE_RMS_FLOOR;
-  const nonSilent = hasAudioTrack && (abovePeakFloor || aboveRmsFloor);
+  const nonSilent =
+    hasAudioTrack && !decodeError && (abovePeakFloor || aboveRmsFloor);
 
   const reasons = [];
   if (!hasAudioTrack) {
     reasons.push('no audio track in the recording');
+  } else if (decodeError) {
+    reasons.push(
+      `audio track could not be decoded (${decodeError}); its level is unverified`,
+    );
   } else if (!nonSilent) {
     reasons.push('audio track is silent (peak and RMS at or below the floor)');
   }

@@ -72,6 +72,36 @@ export function formatProgress(elapsedMs, totalMs, width = 24) {
 }
 
 /**
+ * Renders the `Audio:` row of the capture report from a probe result.
+ *
+ * Keeps the report's audio line pure and hermetically testable (the report
+ * otherwise lives in `capture-gameplay.mjs`, which imports Vite and
+ * Playwright). Returns `none recorded` when the probe has no audio track, the
+ * measured level when it does, and appends the decode-failure detail when the
+ * in-page decode fallback could not measure the track — so an unverified track
+ * is never displayed as a clean pass (AH-0MUWYQRAS0054VO5, AC3/AC4).
+ *
+ * @param {{ audioTrackCount?: number, audioPeak?: number, audioRms?: number, audioDecodeError?: string }} [probe]
+ * @returns {string}
+ */
+export function formatAudioSummary(probe) {
+  const trackCount = Number(probe?.audioTrackCount ?? 0);
+  if (!Number.isFinite(trackCount) || trackCount <= 0) return 'none recorded';
+
+  const peak = Number(probe?.audioPeak ?? 0);
+  const rms = Number(probe?.audioRms ?? 0);
+  const metrics =
+    `${trackCount} track(s), peak ${peak.toFixed(4)}, ` +
+    `rms ${rms.toFixed(4)}`;
+
+  const decodeError =
+    typeof probe?.audioDecodeError === 'string' && probe.audioDecodeError
+      ? probe.audioDecodeError
+      : '';
+  return decodeError ? `${metrics} (decode error: ${decodeError})` : metrics;
+}
+
+/**
  * Actionable setup hint shown when an opt-in capture dependency (the
  * `playwright` package or its Chromium binary) is missing, so the user
  * sees the fix instead of a raw module-resolution stack.

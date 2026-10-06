@@ -12,4 +12,10 @@ export function formatProgress(
   totalMs: number,
   width?: number,
 ): string;
+export function formatAudioSummary(probe?: {
+  audioTrackCount?: number;
+  audioPeak?: number;
+  audioRms?: number;
+  audioDecodeError?: string;
+}): string;
 export function setupHint(dependency?: string): string;

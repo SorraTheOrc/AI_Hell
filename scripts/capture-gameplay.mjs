@@ -51,12 +51,15 @@ import {
   DEFAULT_CAPTURE_DURATION_MS,
   DEFAULT_WARMUP_MS,
   buildScriptedPlan,
+  combineClipVerdict,
+  evaluateAudioTrack,
   installGameAudioTap,
   isNonTrivialClip,
   planDurationMs,
   resolveCaptureMimeType,
 } from './capture-bot.mjs';
 import {
+  formatAudioSummary,
   formatDuration,
   formatProgress,
   setupHint,
@@ -435,13 +438,21 @@ export async function runCapture(
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, video);
 
-    const verdict = isNonTrivialClip({ ...probe, bytes: video.length });
+    const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
+    const audioVerdict = evaluateAudioTrack({
+      trackCount: probe.audioTrackCount,
+      peak: probe.audioPeak,
+      rms: probe.audioRms,
+      decodeError: probe.audioDecodeError,
+    });
+    const verdict = combineClipVerdict(videoVerdict, audioVerdict);
     return {
       output: outputPath,
       bytes: video.length,
       durationMs: planDurationMs(plan),
       renderer: probe.renderer,
       ...probe,
+      audioVerdict,
       ...verdict,
       pageErrors,
     };
@@ -530,6 +541,66 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
 
     const blob = new Blob(chunks, { type: mimeType });
     const url = URL.createObjectURL(blob);
+
+    // Decode the recorded blob's Opus track and measure its peak/RMS so the
+    // clip's audio is verifiable without auditioning it
+    // (AH-0MUWYQRAS0054VO5, AC1/AC2). The recording destination renders
+    // without any system audio device, but decoding can still fail (an
+    // unsupported codec, a truncated recording); that fallback is reported
+    // explicitly rather than silently passing (AC4).
+    let audioPeak = 0;
+    let audioRms = 0;
+    let audioDecodeError = '';
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (audioTrackCount > 0 && !AudioContextCtor) {
+      audioDecodeError = 'AudioContext is unavailable for decoding';
+    } else if (audioTrackCount > 0) {
+      const sharedTap = window.__aiHellAudioTap;
+      const sharedContexts =
+        sharedTap && typeof sharedTap.contexts === 'function'
+          ? sharedTap.contexts()
+          : [];
+      let decodeContext = sharedContexts[0] || null;
+      const ownsDecodeContext = !decodeContext;
+      try {
+        if (!decodeContext) decodeContext = new AudioContextCtor();
+        const decoded = await decodeContext.decodeAudioData(
+          await blob.arrayBuffer(),
+        );
+        let sumSquares = 0;
+        let sampleCount = 0;
+        for (
+          let channel = 0;
+          channel < decoded.numberOfChannels;
+          channel += 1
+        ) {
+          const samples = decoded.getChannelData(channel);
+          for (let i = 0; i < samples.length; i += 1) {
+            const magnitude = Math.abs(samples[i]);
+            if (magnitude > audioPeak) audioPeak = magnitude;
+            sumSquares += samples[i] * samples[i];
+            sampleCount += 1;
+          }
+        }
+        audioRms =
+          sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+      } catch (error) {
+        audioDecodeError =
+          error && error.message ? error.message : String(error);
+      } finally {
+        if (
+          ownsDecodeContext &&
+          decodeContext &&
+          typeof decodeContext.close === 'function'
+        ) {
+          try {
+            await decodeContext.close();
+          } catch {
+            /* noop: closing a scratch decode context must not fail the capture */
+          }
+        }
+      }
+    }
     const video = document.createElement('video');
     video.src = url;
     video.muted = true;
@@ -669,6 +740,9 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
       bytes: blob.size,
       mimeType,
       audioTrackCount,
+      audioPeak,
+      audioRms,
+      audioDecodeError,
       renderer: (() => {
         const canvas = document.querySelector('#game-container canvas');
         const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
@@ -689,6 +763,7 @@ function formatReport(result) {
     `Non-black:  ${(result.nonBlackFraction * 100).toFixed(2)}% of pixels`,
     `Colours:    ${result.uniqueColours} distinct (16-level buckets)`,
     `Motion:     ${result.motion.toFixed(4)} mean frame delta`,
+    `Audio:      ${formatAudioSummary(result)}`,
     `Non-trivial:${result.nonTrivial ? ' yes' : ` no (${result.reasons.join('; ')})`}`,
   ].join('\n');
 }

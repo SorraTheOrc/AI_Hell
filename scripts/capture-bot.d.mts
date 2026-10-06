@@ -29,11 +29,17 @@ export interface AudioTrackProbe {
   trackCount?: number;
   peak?: number;
   rms?: number;
+  decodeError?: string;
 }
 
 export interface AudioTrackVerdict {
   hasAudioTrack: boolean;
   nonSilent: boolean;
+  reasons: string[];
+}
+
+export interface CombinedClipVerdict {
+  nonTrivial: boolean;
   reasons: string[];
 }
 

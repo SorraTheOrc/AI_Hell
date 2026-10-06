@@ -31,6 +31,7 @@ import {
 } from './capture-bot.mjs';
 import {
   estimateRemainingMs,
+  formatAudioSummary,
   formatDuration,
   formatProgress,
   setupHint,
@@ -263,6 +264,21 @@ describe('evaluateAudioTrack', () => {
       reasons: ['no audio track in the recording'],
     });
   });
+
+  it('reports a decode failure explicitly instead of silently passing', () => {
+    const verdict = evaluateAudioTrack({
+      trackCount: 1,
+      peak: 0.4,
+      rms: 0.1,
+      decodeError: 'Unable to decode audio data',
+    });
+
+    expect(verdict.hasAudioTrack).toBe(true);
+    expect(verdict.nonSilent).toBe(false);
+    expect(verdict.reasons).toContain(
+      'audio track could not be decoded (Unable to decode audio data); its level is unverified',
+    );
+  });
 });
 
 describe('combineClipVerdict', () => {
@@ -330,6 +346,53 @@ describe('combineClipVerdict', () => {
 
     expect(verdict.nonTrivial).toBe(false);
     expect(verdict.reasons).toContain('missing audio verdict');
+  });
+
+  it('fails the combined verdict when the audio could not be decoded', () => {
+    const verdict = combineClipVerdict(
+      passingVideo,
+      evaluateAudioTrack({
+        trackCount: 1,
+        peak: 0.4,
+        rms: 0.1,
+        decodeError: 'boom',
+      }),
+    );
+
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain(
+      'audio track could not be decoded (boom); its level is unverified',
+    );
+  });
+});
+
+describe('formatAudioSummary', () => {
+  it('reports a missing or empty track as none recorded', () => {
+    expect(formatAudioSummary(undefined)).toBe('none recorded');
+    expect(formatAudioSummary({ audioTrackCount: 0 })).toBe('none recorded');
+  });
+
+  it('renders the measured peak and RMS for a present track', () => {
+    expect(
+      formatAudioSummary({
+        audioTrackCount: 1,
+        audioPeak: 0.45,
+        audioRms: 0.08,
+      }),
+    ).toBe('1 track(s), peak 0.4500, rms 0.0800');
+  });
+
+  it('appends the decode failure when the track could not be measured', () => {
+    expect(
+      formatAudioSummary({
+        audioTrackCount: 2,
+        audioPeak: 0,
+        audioRms: 0,
+        audioDecodeError: 'Unable to decode audio data',
+      }),
+    ).toBe(
+      '2 track(s), peak 0.0000, rms 0.0000 (decode error: Unable to decode audio data)',
+    );
   });
 });
 
