@@ -111,6 +111,13 @@ import {
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
+  clearDevScenarioHandle,
+  installDevScenarioHandle,
+  isDevScenarioEnabled,
+  resolveDevScenario,
+  type DevScenario,
+} from '../core/devScenario';
+import {
   DEFAULT_BINDINGS,
   keyFor,
   loadSettings,
@@ -126,7 +133,7 @@ import {
   computeHarvesterSpawns,
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
-import { Boss } from '../entities/Boss';
+import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
@@ -614,6 +621,10 @@ export class PlayScene extends CombatScene<
     // A rebind made in SettingsScene must take effect when the player
     // returns to the paused game (parent AH-0MU9LPZ0G0015292).
     this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
+
+    // Dev-gated recorder scenario (AH-0MUWZ5HCV0034H44): when the URL asks
+    // for one, drop straight into the boss encounter. No-op in production.
+    this._applyDevScenarioFromUrl();
   }
 
   /**
@@ -709,6 +720,7 @@ export class PlayScene extends CombatScene<
    */
   protected override teardownRunState(): void {
     super.teardownRunState();
+    clearDevScenarioHandle();
     this._disableDemoTakeOver();
     for (const s of this.spawned) s.entity.destroy(true);
     this.spawned = [];
@@ -1355,18 +1367,136 @@ export class PlayScene extends CombatScene<
   /**
    * Spawns the Central AI boss at the screen centre and summons its
    * Phase-1 minion wave (GDD §4.3).
+   *
+   * @param options — dev/test overrides: `initialHp` / `initialPhase` tune the
+   *   starting health/phase, and `spawnMinions: false` skips the Phase-1 minion
+   *   wave (used by the dev boss scenario so the fight is deterministic).
    */
-  protected spawnBoss(): void {
+  protected spawnBoss(
+    options: {
+      initialHp?: number;
+      initialPhase?: number;
+      spawnMinions?: boolean;
+    } = {},
+  ): void {
     this.boss = new Boss(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
+      initialHp: options.initialHp,
+      initialPhase: options.initialPhase,
     });
     this.add.existing(this.boss);
-    this._spawnMinions(1);
+    if (options.spawnMinions !== false) this._spawnMinions(1);
     // No per-wave time limit applies to the boss encounter.
     this._hideWaveTimer();
+  }
+
+  // ── Dev scenarios (AH-0MUWZ5HCV0034H44) ──────────────────────────
+
+  /**
+   * Drops the run straight into the boss encounter with `hitsRemaining`
+   * further hits required to win (the dev-gated recorder scenario).
+   *
+   * The current regular wave is cleared without awarding score or triggering a
+   * transition, the boss spawns in its final phase with no minions and its
+   * attacks disabled, and the ship is placed directly below the boss facing it
+   * so the auto-fire lands on its own. The run is then frozen so the recorder
+   * can start capturing before the (short) fight begins; the pause key resumes
+   * it (see `docs/dev/gameplay-capture.md`).
+   *
+   * Public so tests and the capture tool can drive it directly; the URL query
+   * path in `create()` calls this only when the dev flag is on.
+   *
+   * @param hitsRemaining — further boss hits before the run is won.
+   */
+  startDevBossScenario(hitsRemaining: number): void {
+    this._clearWaveForScenario();
+    this.waveManager.beginBoss();
+    this.spawnBoss({
+      initialHp: hitsRemaining,
+      // Show the final, desperation visuals: a low-HP boss reads as an
+      // about-to-explode boss rather than a healthy Phase-1 one.
+      initialPhase: BossPhase.Desperation,
+      spawnMinions: false,
+    });
+    if (this.boss) {
+      // No attacks: the display is the spectacle, and a stray volley could
+      // kill the ship (or the minions could soak the player's fire) before
+      // the 4 hits land. Draw the core once so the paused boss is fully
+      // rendered before the first tick.
+      this.boss.shootEnabled = false;
+      this.boss.update(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    }
+    this._positionPlayerForBossScenario();
+    this._refreshHudText();
+    this.setPaused(true);
+    // Expose a deterministic release hook so the recorder can start the short
+    // fight after recording is live, without simulating the pause key
+    // (AH-0MUWZ5HCV0034H44). No-op in production.
+    installDevScenarioHandle({
+      hitsRemaining,
+      resume: () => this.setPaused(false),
+    });
+  }
+
+  /**
+   * Clears the active regular wave for the dev boss scenario without scoring
+   * or advancing the campaign: destroys the spawned enemies, drops their
+   * bullets, cancels planned asteroid/Harvester releases, closes any open
+   * wormhole and hides the wave timer.
+   */
+  private _clearWaveForScenario(): void {
+    if (this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
+      this._spawnWormhole = null;
+    }
+    for (const s of this.spawned) {
+      if (s.entity.alive) s.entity.destroySelf();
+    }
+    this.spawned = [];
+    for (const bullet of this.enemyBullets) bullet.graphics.destroy();
+    this.enemyBullets = [];
+    this.pendingAsteroidSpawns = [];
+    this.pendingHarvesterSpawns = [];
+    this.asteroidsSpawnedThisWave = 0;
+    this.harvestersSpawnedThisWave = 0;
+    this._hideWaveTimer();
+  }
+
+  /**
+   * Places the ship to the boss's left at the same height and leaves it
+   * stationary, aiming the auto-fire at the boss with no player input.
+   *
+   * The default heading is to the right in **both** control schemes (the
+   * Asteroids scheme starts at `facing: 0`; the 4-directional scheme's
+   * stationary default heading is also 0), so the scenario never has to touch
+   * the ship's facing or control scheme.
+   */
+  private _positionPlayerForBossScenario(): void {
+    const boss = this.boss;
+    const player = this.player;
+    if (!boss || !player) return;
+    const x = Math.max(40, boss.x - 260);
+    player.respawn(x, boss.y);
+  }
+
+  /**
+   * Applies a URL-selected dev scenario at the end of {@link create} when the
+   * dev flag is on. No-op in production and for an absent/unknown scenario, so
+   * a normal run is byte-for-byte unchanged.
+   */
+  private _applyDevScenarioFromUrl(): void {
+    if (!isDevScenarioEnabled()) return;
+    if (typeof window === 'undefined') return;
+    const scenario: DevScenario | null = resolveDevScenario(
+      window.location?.search ?? '',
+    );
+    if (!scenario) return;
+    if (scenario.kind === 'boss') {
+      this.startDevBossScenario(scenario.bossHitsRemaining);
+    }
   }
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */

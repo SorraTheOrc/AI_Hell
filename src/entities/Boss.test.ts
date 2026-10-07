@@ -475,3 +475,66 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
     expect(boss.getPhaseNumber()).toBe(2);
   });
 });
+
+describe('Boss — dev scenario starting health (AH-0MUWZ5HCV0034H44)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(config: {
+    initialHp?: number;
+    initialPhase?: number;
+  } = {}): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+      ...config,
+    });
+  }
+
+  it('defaults to the full four-phase pool', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    expect(boss.getHpFraction()).toBe(1);
+    expect(boss.getPhaseNumber()).toBe(1);
+  });
+
+  it('destroys after exactly the configured number of hits', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({ initialHp: 4, initialPhase: 4 });
+
+    for (let hit = 1; hit < 4; hit++) {
+      const result = boss.takeDamage();
+      expect(result.destroyed).toBe(false);
+    }
+    const final = boss.takeDamage();
+    expect(final.destroyed).toBe(true);
+    expect(boss.alive).toBe(false);
+  });
+
+  it('honours the starting phase for the low-HP visuals', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({ initialHp: 4, initialPhase: 4 });
+    expect(boss.getPhaseNumber()).toBe(4);
+    expect(boss.isDesperation()).toBe(true);
+  });
+
+  it('clamps an initialHp above the pool and an out-of-range phase', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({ initialHp: 10_000, initialPhase: 99 });
+    expect(boss.getHpFraction()).toBe(1);
+    expect(boss.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+  });
+
+  it('clamps a non-positive initialHp to one hit and a phase below one to one', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss({ initialHp: 0, initialPhase: -3 });
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(boss.takeDamage().destroyed).toBe(true);
+  });
+});

@@ -20,11 +20,13 @@ export interface CaptureOptions {
   keepServer: boolean;
   json: boolean;
   scripted: boolean;
+  /** Dev scenario name passed to the game URL, or null (AH-0MUWZ5HCV0034H44). */
+  scenario: string | null;
   help?: boolean;
 }
 
 /** Which capture path the options select. */
-export type CaptureMode = 'demo' | 'scripted';
+export type CaptureMode = 'demo' | 'scripted' | 'scenario';
 
 /** One capture-start key and the delay to apply after dispatching it. */
 export interface CaptureStartStep {
@@ -54,7 +56,14 @@ export interface RunEndedListenerStore {
 }
 
 export function parseCaptureArgs(argv?: string[]): CaptureOptions;
-export function resolveCaptureMode(options?: { scripted?: boolean }): CaptureMode;
+export function resolveCaptureMode(options?: {
+  scripted?: boolean;
+  scenario?: string | null;
+}): CaptureMode;
+export function captureUrl(
+  baseUrl: string,
+  options?: { scenario?: string | null },
+): string;
 export function captureStartKeys(mode: CaptureMode): string[];
 export function captureStartPlan(
   mode: CaptureMode,

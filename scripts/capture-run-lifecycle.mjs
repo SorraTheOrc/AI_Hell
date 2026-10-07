@@ -276,7 +276,10 @@ export async function waitForRunEnd(options = {}) {
 
   while (!decision.done) {
     if (signal === null) {
-      const decoded = decodeRunEndedDetail(readSignal());
+      // `readSignal` may be async (the capture passes a `page.evaluate`
+      // promise); awaiting a plain value is a no-op, so sync callers and
+      // tests are unaffected (AH-0MUWZ5HCV0034H44).
+      const decoded = decodeRunEndedDetail(await readSignal());
       if (decoded) {
         signal = decoded;
         signalTimeMs = clock() - startMs;
