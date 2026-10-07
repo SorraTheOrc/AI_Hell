@@ -333,7 +333,8 @@ export class PlayScene extends CombatScene<
 
   /**
    * Human-like input layer for the demo bot (AH-0MUXXQ1MN002RXGB): samples
-   * the pure decision at a human reaction cadence and clamps it to W/A/D.
+   * the pure decision at a human reaction cadence and resolves it to the
+   * ship's own control scheme (W/A/D — never a reverse key).
    */
   private botGovernor = new BotInputGovernor();
 
@@ -491,12 +492,11 @@ export class PlayScene extends CombatScene<
     // Player ship (auto-fire, weapons, effects).
     this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
     this.add.existing(this.player);
-    if (this.demoMode) {
-      // The bot decision steers in absolute screen directions (four-
-      // directional input); pin the demo ship to that scheme so the decision
-      // maps directly to thrust. Normal play keeps the configured scheme.
-      this.player.setScheme('fourDirectional');
-    }
+    // The demo drives whichever control scheme the ship is configured with
+    // (the shipped default is `asteroids`); the human-like governor resolves
+    // the bot's steering intent to that scheme, so the demo ship looks and
+    // handles like the player's ship rather than a four-directional impostor
+    // (AH-0MUX2NENC008AHOQ producer review).
     this.cursors = this.input.keyboard?.createCursorKeys();
     // Movement / layer-drop / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
@@ -1415,7 +1415,15 @@ export class PlayScene extends CombatScene<
    */
   private _advanceDemoBot(dt: number): void {
     if (!this.demoMode) return;
-    this.botGovernor.update(decideBotInput(buildBotSnapshot(this)), dt);
+    const player = this.getPlayer();
+    this.botGovernor.update(
+      decideBotInput(buildBotSnapshot(this)),
+      dt,
+      {
+        scheme: player?.getScheme() ?? 'asteroids',
+        facing: player?.getMovementState().facing ?? 0,
+      },
+    );
   }
 
   /**
@@ -2169,14 +2177,11 @@ export class PlayScene extends CombatScene<
   setDemoMode(demo: boolean): void {
     this.demoMode = demo;
     if (demo) {
-      // Start the human-like input layer from a clean slate.
+      // Start the human-like input layer from a clean slate. The demo keeps
+      // the ship's configured control scheme (default `asteroids`); the
+      // governor resolves the bot's steering intent to it
+      // (AH-0MUX2NENC008AHOQ producer review).
       this.botGovernor.reset();
-      if (this.player) {
-        // Match the create-time demo setup: the bot's four-directional
-        // decision must map to the ship's active scheme (idempotent when
-        // already set).
-        this.player.setScheme('fourDirectional');
-      }
       this._enableDemoTakeOver();
     } else {
       this._disableDemoTakeOver();

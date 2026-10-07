@@ -8,23 +8,58 @@
  *
  * - **samples** the decision at a human reaction cadence and holds the
  *   committed input between samples, and
- * - **restricts** the bot to the keys a human actually uses — **W/A/D**
- *   (up/left/right), never the down/S direction.
+ * - **executes the decision under the ship's own control scheme** — the
+ *   shipped `asteroids` controls by default (W = forward thrust, A/Left and
+ *   D/Right = turn), or four-directional when the player configured it —
+ *   while restricting the bot to the keys a human uses (never a reverse/S
+ *   key).
  *
  * The governor advances by the caller-supplied `dt`, never the wall clock,
  * so demo behaviour stays deterministic and unit-testable.
  *
+ * ## Scheme execution
+ *
+ * `decideBotInput` is scheme-agnostic: it returns a four-directional
+ * *steering intent* — the absolute screen direction the bot wants to travel
+ * (up/left/right, or down when a descent is the safest move). The governor
+ * resolves that intent into the input shape the ship's movement model
+ * actually consumes:
+ *
+ * - `fourDirectional`: the intent maps 1:1 to `{ up, down, left, right }`
+ *   with the **down** key stripped (a human drives W/A/D only).
+ * - `asteroids`: {@link toAsteroidsInput} turns the ship to **face** the
+ *   desired direction (A/Left and D/Right) and then thrusts **forward** (W).
+ *   The emitted `AsteroidsInput` has no reverse key at all, so W/A/D is a
+ *   structural guarantee rather than a clamp.
+ *
+ * `PlayScene` never forces a scheme: the demo drives whichever scheme the
+ * ship is configured with, so the demo ship looks and handles like the
+ * player's ship rather than a four-directional impostor
+ * (AH-0MUX2NENC008AHOQ producer review).
+ *
  * @module src/ai/botHumanLike
  */
 
-import type { FourDirectionalInput } from '../utils/movementModel';
+import type {
+  AsteroidsInput,
+  ControlInput,
+  ControlSchemeType,
+  FourDirectionalInput,
+} from '../utils/movementModel';
 
-/** All-false input (the bot holds station). */
+/** All-false four-directional intent (the bot holds station). */
 const IDLE_INPUT: FourDirectionalInput = Object.freeze({
   up: false,
   down: false,
   left: false,
   right: false,
+});
+
+/** All-false asteroid input (the bot holds station). */
+const IDLE_ASTEROIDS_INPUT: AsteroidsInput = Object.freeze({
+  forward: false,
+  turnLeft: false,
+  turnRight: false,
 });
 
 // ── Tunables (single source) ─────────────────────────────────────────
@@ -38,16 +73,26 @@ export interface BotHumanInputTunables {
    */
   reactionTimeMs: number;
   /**
-   * Whether the bot may use the **down** (S) direction. Humans drive with
-   * W/A/D (forward + left/right thrusters) only, so this defaults to false.
+   * Whether the bot may use the **down** (S) direction in four-directional
+   * mode. Humans drive with W/A/D only, so this defaults to false. In
+   * `asteroids` mode the input shape has no down field at all, so the bot
+   * never reverses regardless of this flag.
    */
   allowDown: boolean;
+  /**
+   * Heading error (radians) within which the asteroids actuator stops
+   * turning and thrusts forward instead. Keeps the ship from oscillating
+   * around the target heading while still aiming close enough to travel
+   * toward it.
+   */
+  alignmentToleranceRad: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
 export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reactionTimeMs: 250,
   allowDown: false,
+  alignmentToleranceRad: 0.15,
 };
 
 /**
@@ -57,29 +102,81 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
  */
 export const BOT_MINERAL_CHOICE_DELAY_MS = 900;
 
+// ── Asteroids scheme adapter ─────────────────────────────────────────
+
+/** The ship context the governor needs to execute a steering intent. */
+export interface BotControlContext {
+  /** The ship's active control scheme. */
+  scheme: ControlSchemeType;
+  /** The ship's current facing angle in radians (0 = right, positive = clockwise). */
+  facing: number;
+}
+
+/**
+ * Resolves a scheme-agnostic four-directional steering intent into the
+ * ship's `AsteroidsInput` (W/A/D): rotate toward the desired direction until
+ * the ship is within `toleranceRad` of it, then thrust forward.
+ *
+ * The result never contains a reverse key — `AsteroidsInput` has none — and
+ * an idle intent (all four directions false) yields an all-false input.
+ *
+ * @param intent — the bot's four-directional steering intent.
+ * @param facing — the ship's current facing angle in radians.
+ * @param toleranceRad — heading error within which forward thrust begins.
+ * @returns the `AsteroidsInput` for the current tick.
+ */
+export function toAsteroidsInput(
+  intent: FourDirectionalInput,
+  facing: number,
+  toleranceRad: number = BOT_HUMAN_INPUT_TUNABLES.alignmentToleranceRad,
+): AsteroidsInput {
+  const dx = (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
+  const dy = (intent.down ? 1 : 0) - (intent.up ? 1 : 0);
+  if (dx === 0 && dy === 0) return { ...IDLE_ASTEROIDS_INPUT };
+
+  const desired = Math.atan2(dy, dx);
+  // Normalise the heading error to (-π, π] so turning always takes the
+  // shortest way round and the sign matches the model's turn polarity
+  // (positive = clockwise = turnRight).
+  const error = Math.atan2(
+    Math.sin(desired - facing),
+    Math.cos(desired - facing),
+  );
+  if (Math.abs(error) <= toleranceRad) {
+    return { forward: true, turnLeft: false, turnRight: false };
+  }
+  return {
+    forward: false,
+    turnLeft: error < 0,
+    turnRight: error > 0,
+  };
+}
+
 // ── Governor ─────────────────────────────────────────────────────────
 
 /**
  * Stateful governor that limits a per-tick four-directional decision to a
- * human response cadence (AC1/AC2).
+ * human response cadence and resolves it to the ship's scheme input
+ * (AC1/AC2).
  *
  * Usage: each tick call {@link BotInputGovernor.update} with the pure
- * decision and the frame time, then feed {@link BotInputGovernor.current}
- * (or the returned value) into the shared input seam. The first call commits
- * immediately; afterwards a new decision is committed only once at least
- * `reactionTimeMs` has elapsed, and the committed input is held in between.
+ * decision, the frame time and the ship context, then feed
+ * {@link BotInputGovernor.current} (or the returned value) into the shared
+ * input seam. The first call commits immediately; afterwards a new decision
+ * is committed only once at least `reactionTimeMs` has elapsed, and the
+ * committed input is held in between.
  */
 export class BotInputGovernor {
-  /** The input currently held between reactions. */
-  private committed: FourDirectionalInput = IDLE_INPUT;
+  /** The scheme input currently held between reactions. */
+  private committed: ControlInput = IDLE_INPUT;
 
   /** Time (ms) since the last commit; starts "due" so the first commits. */
   private sinceCommitMs = Number.POSITIVE_INFINITY;
 
   private readonly tunables: BotHumanInputTunables;
 
-  constructor(tunables: BotHumanInputTunables = BOT_HUMAN_INPUT_TUNABLES) {
-    this.tunables = tunables;
+  constructor(tunables: Partial<BotHumanInputTunables> = {}) {
+    this.tunables = { ...BOT_HUMAN_INPUT_TUNABLES, ...tunables };
   }
 
   /**
@@ -95,33 +192,47 @@ export class BotInputGovernor {
    * Advances by `dtSeconds`, samples `decision`, and returns the input the
    * bot actually holds this tick.
    *
-   * The sampled decision is committed (clamped to the human key set) only
+   * The sampled decision is committed (resolved to the ship's scheme) only
    * when at least `reactionTimeMs` has elapsed since the previous commit;
-   * otherwise the previously committed input is held.
+   * otherwise the previously committed input is held. The asteroids adapter
+   * reads `context.facing` at the moment of commitment, so the held turn
+   * carries the ship toward the intended heading.
    *
-   * @param decision — the pure decision for this tick.
+   * @param decision — the pure four-directional steering intent for this tick.
    * @param dtSeconds — elapsed time since the previous tick (seconds).
-   * @returns the committed four-directional input for this tick.
+   * @param context — the ship's active scheme and facing angle.
+   * @returns the committed scheme input for this tick.
    */
   update(
     decision: FourDirectionalInput,
     dtSeconds: number,
-  ): FourDirectionalInput {
+    context: BotControlContext = { scheme: 'fourDirectional', facing: 0 },
+  ): ControlInput {
     this.sinceCommitMs += Math.max(0, dtSeconds) * 1000;
     if (this.sinceCommitMs >= this.tunables.reactionTimeMs) {
-      this.committed = this.sanitise(decision);
+      this.committed = this.resolve(decision, context);
       this.sinceCommitMs = 0;
     }
-    return this.committed;
+    return this.current();
   }
 
-  /** The currently committed input (defensive copy). */
-  current(): FourDirectionalInput {
+  /** The currently committed scheme input (defensive copy). */
+  current(): ControlInput {
     return { ...this.committed };
   }
 
-  /** Clamps a decision to the human-allowed key set (AC2). */
-  private sanitise(decision: FourDirectionalInput): FourDirectionalInput {
+  /** Resolves a steering intent to the ship's scheme input. */
+  private resolve(
+    decision: FourDirectionalInput,
+    context: BotControlContext,
+  ): ControlInput {
+    if (context.scheme === 'asteroids') {
+      return toAsteroidsInput(
+        decision,
+        context.facing,
+        this.tunables.alignmentToleranceRad,
+      );
+    }
     return {
       up: decision.up,
       down: this.tunables.allowDown ? decision.down : false,

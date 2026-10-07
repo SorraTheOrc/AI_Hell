@@ -89,7 +89,8 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
 - **The bot:** a **survival-first** heuristic in `src/ai/`. A read-only,
   deep-frozen `BotSnapshot` (`buildBotSnapshot`) is built each decision tick
   from the scene's existing getters, and the pure `decideBotInput(snapshot)`
-  returns a four-directional `ControlInput`. The movement goal order is fixed
+  returns a scheme-agnostic four-directional *steering intent* (the absolute
+  screen direction the bot wants to travel). The movement goal order is fixed
   and legible (minerals first, then power-ups, then enemies, then asteroids):
   1. **Survive** — never steer into a bullet, asteroid, enemy or wall when a
      safe alternative exists (best-effort fire-pattern avoidance from fire
@@ -107,12 +108,19 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
   before the keyboard — so the demo ship obeys exactly the same
   `_tickPlayer` movement/auto-fire path as a human.
-- **Human input limits (AH-0MUXXQ1MN002RXGB):** the bot is restricted to the
-  keys a person uses — **W/A/D** (up/left/right thrusters; never down/S) — and
-  its committed input changes no faster than a human reaction cadence
-  (`BotInputGovernor` / `BOT_HUMAN_INPUT_TUNABLES` in `src/ai/botHumanLike.ts`,
-  default **250 ms**), holding a thruster between reactions instead of
-  flip-flopping every frame. The governor advances by the frame `dt`, so demo
+- **Human input limits (AH-0MUXXQ1MN002RXGB):** the demo drives whatever
+  control scheme the ship is configured with — the shipped default is the
+  **asteroids** controls, so the bot is limited to the keys a person uses:
+  **W** (forward thrust in the ship's facing direction) and **A/Left** and
+  **D/Right** (turn), never a reverse/S key. The governor resolves the
+  scheme-agnostic steering intent to the ship's own input shape
+  (`toAsteroidsInput` turns the hull toward the desired heading and then
+  thrusts; the four-directional path strips down), and its committed input
+  changes no faster than a human reaction cadence (`BotInputGovernor` /
+  `BOT_HUMAN_INPUT_TUNABLES` in `src/ai/botHumanLike.ts`, default **250 ms**),
+  holding a command between reactions instead of flip-flopping every frame.
+  `PlayScene` never forces a scheme, so the demo ship looks and handles like
+  the player's ship. The governor advances by the frame `dt`, so demo
   behaviour stays deterministic.
 - **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
   the modal hold-full choice overlay auto-selects its first option after

@@ -10,10 +10,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { FourDirectionalInput } from '../utils/movementModel';
+import type {
+  AsteroidsInput,
+  FourDirectionalInput,
+} from '../utils/movementModel';
 import {
   BOT_HUMAN_INPUT_TUNABLES,
   BotInputGovernor,
+  toAsteroidsInput,
 } from './botHumanLike';
 
 /** Builds a four-directional input with only the named directions set. */
@@ -125,14 +129,158 @@ describe('BotInputGovernor — human key set (AC2)', () => {
   it('current() returns a defensive copy', () => {
     const governor = new BotInputGovernor();
     governor.update(input('up'), 1 / 60);
-    const copy = governor.current();
+    const copy = governor.current() as FourDirectionalInput;
     copy.up = false;
-    expect(governor.current().up).toBe(true);
+    expect((governor.current() as FourDirectionalInput).up).toBe(true);
   });
 
   it('defaults to a ~250 ms reaction time and no down key', () => {
     expect(BOT_HUMAN_INPUT_TUNABLES.reactionTimeMs).toBeGreaterThanOrEqual(200);
     expect(BOT_HUMAN_INPUT_TUNABLES.reactionTimeMs).toBeLessThanOrEqual(400);
     expect(BOT_HUMAN_INPUT_TUNABLES.allowDown).toBe(false);
+  });
+});
+
+describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
+  /** Builds an asteroid input with only the named controls set. */
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+    };
+  }
+
+  it('an idle intent produces an all-false asteroid input', () => {
+    expect(toAsteroidsInput(input(), 0)).toEqual(asteroid());
+  });
+
+  it('turns left to face an upward intent from a rightward facing', () => {
+    // Screen coordinates: up is -π/2; from facing 0 (right) that is the
+    // counter-clockwise (turnLeft) way round.
+    expect(toAsteroidsInput(input('up'), 0)).toEqual(asteroid('turnLeft'));
+  });
+
+  it('turns right to face a downward intent from a rightward facing', () => {
+    // Down is +π/2; from facing 0 (right) that is clockwise (turnRight).
+    expect(toAsteroidsInput(input('down'), 0)).toEqual(asteroid('turnRight'));
+  });
+
+  it('thrusts forward once the ship faces the desired direction', () => {
+    // Intent up, already facing up (-π/2).
+    expect(toAsteroidsInput(input('up'), -Math.PI / 2)).toEqual(
+      asteroid('forward'),
+    );
+    // Intent right, facing right.
+    expect(toAsteroidsInput(input('right'), 0)).toEqual(asteroid('forward'));
+  });
+
+  it('thrusts forward within the alignment tolerance and turns outside it', () => {
+    // 0.3 rad off — inside a 0.5 rad tolerance, outside a 0.1 rad tolerance.
+    const offBy = 0.3;
+    expect(toAsteroidsInput(input('up'), -Math.PI / 2 + offBy, 0.5)).toEqual(
+      asteroid('forward'),
+    );
+    // 0.3 rad clockwise past up → rotate counter-clockwise (turnLeft).
+    expect(toAsteroidsInput(input('up'), -Math.PI / 2 + offBy, 0.1)).toEqual(
+      asteroid('turnLeft'),
+    );
+  });
+
+  it('takes the shortest way round when the raw error exceeds π', () => {
+    // facing −3.2 rad ≡ 3.08 rad; desired right (0). The short way is
+    // counter-clockwise (turnLeft), not the long clockwise turnRight.
+    expect(toAsteroidsInput(input('right'), -3.2)).toEqual(
+      asteroid('turnLeft'),
+    );
+  });
+
+  it('never turns while thrusting and never emits a reverse control', () => {
+    for (const facing of [-3, -1.5, 0, 1.5, 3]) {
+      for (const intent of [
+        input('up'),
+        input('down'),
+        input('left'),
+        input('right'),
+      ]) {
+        const out = toAsteroidsInput(intent, facing);
+        // The asteroid input shape has exactly W/A/D — no reverse field.
+        expect(Object.keys(out).sort()).toEqual([
+          'forward',
+          'turnLeft',
+          'turnRight',
+        ]);
+        // A turning command is never paired with forward thrust.
+        if (out.turnLeft || out.turnRight) expect(out.forward).toBe(false);
+      }
+    }
+  });
+});
+
+describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
+  it('emits asteroid input (W/A/D) when the ship uses the asteroids scheme', () => {
+    const governor = new BotInputGovernor();
+    const committed = governor.update(input('right'), 1 / 60, {
+      scheme: 'asteroids',
+      facing: 0,
+    });
+    expect(committed).toEqual({
+      forward: true,
+      turnLeft: false,
+      turnRight: false,
+    });
+    // The asteroid input has no four-directional fields at all.
+    expect('up' in committed).toBe(false);
+    expect('down' in committed).toBe(false);
+  });
+
+  it('strips down in four-directional mode but honours it in asteroids mode', () => {
+    const governor = new BotInputGovernor();
+
+    // four-directional: S/down is never emitted.
+    expect(
+      governor.update(input('down'), 1 / 60, {
+        scheme: 'fourDirectional',
+        facing: 0,
+      }),
+    ).toEqual(input());
+
+    // asteroids: a downward *intent* is a legal heading (turns the ship to
+    // face down); it is not a reverse key.
+    governor.reset();
+    expect(
+      governor.update(input('down'), 1 / 60, {
+        scheme: 'asteroids',
+        facing: 0,
+      }),
+    ).toEqual({ forward: false, turnLeft: false, turnRight: true });
+  });
+
+  it('holds the committed asteroid input until the reaction window elapses', () => {
+    const governor = new BotInputGovernor({
+      reactionTimeMs: 100,
+      allowDown: false,
+      alignmentToleranceRad: 0.15,
+    });
+    const dt = 0.02; // 20 ms per tick
+
+    // First call commits immediately: idle steering → no thrust.
+    expect(
+      governor.update(input(), dt, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual({ forward: false, turnLeft: false, turnRight: false });
+
+    // Inside the reaction window a new "go right" intent is ignored.
+    for (let i = 0; i < 4; i += 1) {
+      expect(
+        governor.update(input('right'), dt, { scheme: 'asteroids', facing: 0 }),
+      ).toEqual({ forward: false, turnLeft: false, turnRight: false });
+    }
+
+    // At 100 ms the latest intent commits as forward thrust.
+    expect(
+      governor.update(input('right'), dt, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual({ forward: true, turnLeft: false, turnRight: false });
   });
 });

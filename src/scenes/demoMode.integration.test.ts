@@ -26,6 +26,7 @@ import {
   buildBotSnapshot,
   type BotSnapshotScene,
 } from '../ai/botSnapshot';
+import type { ControlInput } from '../utils/movementModel';
 import {
   decideBotInput,
 } from '../ai/botDecision';
@@ -58,11 +59,11 @@ function killPlayer(scene: PlayScene): void {
   (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
 }
 
-/** Invokes the protected bot seam to inspect the live decision. */
-function botInputOf(scene: PlayScene) {
+/** Invokes the protected bot seam to inspect the live scheme input. */
+function botInputOf(scene: PlayScene): ControlInput | null {
   return (
     scene as unknown as {
-      getBotInput(): { up: boolean; down: boolean; left: boolean; right: boolean } | null;
+      getBotInput(): ControlInput | null;
     }
   ).getBotInput();
 }
@@ -220,6 +221,66 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     await wait(150);
     const restarted = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(restarted.isDemoMode()).toBe(false);
+  });
+
+  // ── Asteroid scheme (producer review AH-0MUX2NENC008AHOQ) ──────────
+  // The demo must drive the ship's own control scheme — the shipped
+  // default is `asteroids` (W = forward thrust, A/D = turn) — not a forced
+  // four-directional impostor. These tests seed the asteroid scheme and
+  // assert the live demo ship keeps it and receives asteroid input.
+
+  describe('Asteroids scheme — demo drives the shipped controls', () => {
+    beforeEach(() => {
+      seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+    });
+
+    it('keeps the ship on its configured asteroid scheme', async () => {
+      const menu = await bootMenu();
+      menu.startDemo();
+      await wait(150);
+
+      const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+      expect(play.isDemoMode()).toBe(true);
+      expect(play.getPlayer()!.getScheme()).toBe('asteroids');
+    });
+
+    it('emits asteroid input (W/A/D) — never a reverse/S key', async () => {
+      const menu = await bootMenu();
+      menu.startDemo();
+      await wait(150);
+
+      const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+      const input = botInputOf(play);
+      expect(input).not.toBeNull();
+      // The asteroid input shape is exactly W/A/D — no four-directional and
+      // therefore no down/S field at all.
+      expect(Object.keys(input!).sort()).toEqual([
+        'forward',
+        'turnLeft',
+        'turnRight',
+      ]);
+      expect('down' in input!).toBe(false);
+      expect('up' in input!).toBe(false);
+    });
+
+    it('rotates the hull under asteroid controls (a four-directional ship never turns)', async () => {
+      const menu = await bootMenu();
+      menu.startDemo();
+      await wait(150);
+
+      const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+      const player = play.getPlayer()!;
+      // Clean start: zero the facing so any rotation is the asteroid model
+      // turning the hull toward the bot's steering intent.
+      player.respawn(player.x, player.y);
+      expect(player.getMovementState().facing ?? 0).toBe(0);
+
+      for (let i = 0; i < 60; i += 1) play.tick(1 / 60);
+
+      // Wave-1 enemies sit above the spawn, so the bot's intent points away
+      // from the spawn facing and the ship turns.
+      expect(player.getMovementState().facing ?? 0).not.toBe(0);
+    });
   });
 });
 
