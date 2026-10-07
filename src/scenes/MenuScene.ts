@@ -323,9 +323,14 @@ export class MenuScene extends Phaser.Scene {
    * `Systems.start(data)` only writes `settings.data` for a truthy `data`, so
    * a no-argument `scene.start('PlayScene')` reuses this demo payload and
    * re-enables the bot. See {@link PlayScene.init}.
+   *
+   * `demoDwellMs` optionally overrides the demo game-over dwell forwarded to
+   * `GameOverScene` (AH-0MUXZ4CAE008QRFZ). Production calls it with no
+   * argument and uses the single-source default; exposed so tests can drive a
+   * short dwell without wall-clock waits (mirrors `scheduleAttractTimer`).
    */
-  startDemo(): void {
-    this.scene.start('PlayScene', { demo: true });
+  startDemo(demoDwellMs?: number): void {
+    this.scene.start('PlayScene', { demo: true, demoDwellMs });
   }
 
   /**

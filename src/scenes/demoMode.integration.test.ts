@@ -41,6 +41,20 @@ import { GymIndex } from './GymIndex';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Short demo game-over dwell driven through `MenuScene.startDemo(...)` so the
+ * integration tests observe the demo hold + auto-return without waiting the
+ * 5 s production dwell (AH-0MUXZ4CAE008QRFZ).
+ */
+const TEST_DWELL_MS = 800;
+
+/**
+ * Extra wall-clock margin on top of the demo dwell so the queued
+ * `scene.start('MenuScene')` has certainly run before asserting (the create
+ * frame and scene transition add a few frames on top of the timer).
+ */
+const DWELL_MARGIN_MS = 500;
+
 // The shipped default control scheme is `asteroids`; keyboard-movement
 // assertions need the four-directional scheme the rest of the PlayScene suite
 // seeds (AH-0MUBZU8IL0067GOU).
@@ -104,26 +118,40 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     return booted.scene as MenuScene;
   }
 
-  it('AC1/AC3 — the menu starts the demo and a demo death returns to the menu without scoring', async () => {
+  it('AC1/AC3 — the menu starts the demo and a demo death dwells then returns to the menu without scoring', async () => {
     const addEntrySpy = vi.spyOn(leaderboardModule, 'addEntry');
     const menu = await bootMenu();
 
-    menu.startDemo();
+    menu.startDemo(TEST_DWELL_MS);
     await wait(150);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
-    // End the run — on the final life the hit finishes the demo.
+    // End the run — on the final life the hit finishes the demo. The demo
+    // holds on the outcome screen for the demo dwell (AH-0MUXZ4CAE008QRFZ),
+    // so shortly after the death it is NOT yet back at the menu.
     play.getGameState().lives = 1;
     killPlayer(play);
     await wait(250);
 
-    // AC1 — the demo returns to the menu, never the score-entry scene.
+    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+    const over = booted!.game.scene.getScene('GameOverScene') as GameOverScene;
+    expect(over.isDemoMode()).toBe(true);
+    // AC3 — the demo outcome screen is non-scoring: no leaderboard or
+    // session write, even though the screen is shown.
+    expect(addEntrySpy).not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem(leaderboardModule.LEADERBOARD_STORAGE_KEY),
+    ).toBeNull();
+
+    // AC1 — after the dwell the demo loops back to the menu, never the
+    // interactive score-entry flow.
+    await wait(TEST_DWELL_MS + DWELL_MARGIN_MS);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(false);
-    // AC3 — a demo run is non-scoring: no leaderboard or session write.
     expect(addEntrySpy).not.toHaveBeenCalled();
     expect(
       window.localStorage.getItem(leaderboardModule.LEADERBOARD_STORAGE_KEY),
@@ -246,17 +274,18 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const menu = await bootMenu();
 
     // 1. Watch Demo — `{ demo: true }` is written to the reused PlayScene.
-    menu.startDemo();
+    menu.startDemo(TEST_DWELL_MS);
     await wait(150);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
     expect(botInputOf(play)).not.toBeNull();
 
     // 2. End the demo on the final life: PlayScene shuts down (Phaser keeps
-    //    its settings.data) and the menu becomes active again.
+    //    its settings.data), the demo dwells on the outcome screen, then the
+    //    menu becomes active again (AH-0MUXZ4CAE008QRFZ).
     play.getGameState().lives = 1;
     killPlayer(play);
-    await wait(250);
+    await wait(TEST_DWELL_MS + DWELL_MARGIN_MS);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
 
     // 3. Normal Play Game via the pointer handler.
@@ -281,15 +310,16 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1/AC5 — Watch Demo then Play Game (keyboard) does not re-enter demo mode', async () => {
     const menu = await bootMenu();
 
-    menu.startDemo();
+    menu.startDemo(TEST_DWELL_MS);
     await wait(150);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
-    // End the demo, returning to the menu (PlayScene's settings.data is kept).
+    // End the demo (after its dwell), returning to the menu (PlayScene's
+    // settings.data is kept).
     play.getGameState().lives = 1;
     killPlayer(play);
-    await wait(250);
+    await wait(TEST_DWELL_MS + DWELL_MARGIN_MS);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
 
     // Activate the focused Play Game control (the FocusManager entry point).

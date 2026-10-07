@@ -3966,34 +3966,35 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   describe('Demo lifecycle (AC3/AC6)', () => {
-    it('AC3 — demo run returns to MenuScene when the player dies', async () => {
+    it('AC4 — demo run holds on the game-over screen, then returns to MenuScene', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
         { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
 
-      // Start the demo
-      scene.scene.start('PlayScene', { demo: true });
+      // Start the demo with a short dwell so the test is quick
+      // (AH-0MUXZ4CAE008QRFZ AC4 test override).
+      scene.scene.start('PlayScene', { demo: true, demoDwellMs: 600 });
       await new Promise((r) => setTimeout(r, 50));
       expect(scene.isDemoMode()).toBe(true);
 
-      // Kill the player on the final life so the hit ends the run
+      // Kill the player on the final life so the hit ends the run.
       scene.getGameState().lives = 1;
       (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
 
-      // Wait for the game-over / menu transition
-      await new Promise((r) => setTimeout(r, 300));
-
-      // The demo should have returned to MenuScene, NOT GameOverScene.
-      // Verify by checking the current active scene key.
-      const activeKey = scene.scene.isActive('GameOverScene')
-        ? 'GameOverScene'
-        : scene.scene.isActive('MenuScene')
-          ? 'MenuScene'
-          : 'other';
-      expect(activeKey).toBe('MenuScene');
+      // Mid-dwell the demo holds on the outcome screen (not the menu).
+      await new Promise((r) => setTimeout(r, 200));
+      expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
+      expect(booted.game.scene.isActive('MenuScene')).toBe(false);
+      const over = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+      expect(over.isDemoMode()).toBe(true);
       expect(scene.isDemoMode()).toBe(false);
+
+      // After the dwell it loops back to the menu.
+      await new Promise((r) => setTimeout(r, 800));
+      expect(booted.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted.game.scene.isActive('GameOverScene')).toBe(false);
     });
 
     it('AC3 — normal play navigates to GameOverScene when the player dies', async () => {

@@ -326,6 +326,13 @@ export class PlayScene extends CombatScene<
   private demoMode = false;
 
   /**
+   * Optional demo game-over dwell override in milliseconds, forwarded to
+   * `GameOverScene` for a demo run (AH-0MUXZ4CAE008QRFZ). `undefined` uses the
+   * single-source production default; tests inject a short/zero value.
+   */
+  private demoDwellMs?: number;
+
+  /**
    * Press-to-take-over handler active only while the demo runs
    * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
    * carries no extra input listener.
@@ -500,8 +507,9 @@ export class PlayScene extends CombatScene<
    * explicit `{ demo: false }` (see `MenuScene`). This guard only protects a
    * genuinely absent payload; it cannot distinguish a stale one.
    */
-  init(data?: { demo?: boolean; seed?: number }): void {
+  init(data?: { demo?: boolean; seed?: number; demoDwellMs?: number }): void {
     this.demoMode = data?.demo === true;
+    this.demoDwellMs = data?.demoDwellMs;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
   }
 
@@ -2109,11 +2117,20 @@ export class PlayScene extends CombatScene<
     // `window.__aiHellRunState` fallback; `npm run capture` consumes both.
     emitRunEndedSignal(won, this.gameState.score);
     if (this.demoMode) {
-      // Non-scoring demo (AC5): skip GameOverScene entirely — no score entry
-      // and no persisted session state — and return to the menu, which can
-      // start another demo. Demo runs never touch the leaderboard.
+      // Non-scoring demo (AC2): start the shared GameOverScene in demo mode so
+      // it renders VICTORY/DEFEAT + final score without leaderboard
+      // qualification or initials, then auto-returns to the menu after the
+      // demo dwell (AH-0MUXZ4CAE008QRFZ). Demo runs never touch the
+      // leaderboard, and normal play still reaches the interactive
+      // GameOverScene unchanged (AC3).
       this.demoMode = false;
-      this.scene.start('MenuScene');
+      this._disableDemoTakeOver();
+      this.scene.start('GameOverScene', {
+        won,
+        score: this.gameState.score,
+        demo: true,
+        demoDwellMs: this.demoDwellMs,
+      });
       return;
     }
     this.scene.start('GameOverScene', { won, score: this.gameState.score });
