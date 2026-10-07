@@ -93,12 +93,12 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     // AH-0MUV5CLW6005VF7K the catalogue — not a set of parallel effect
     // constants — is the source of truth, so these are hard-coded balance
     // anchors: changing one is a deliberate balance change.
-    expect(POWER_UP_LEVEL_SPECS.P3[0].base).toBe(15); // shield duration (s)
-    expect(POWER_UP_LEVEL_SPECS.P5[0].base).toBe(1.5); // speed multiplier
-    expect(POWER_UP_LEVEL_SPECS.P6[0].base).toBe(1.5); // phase duration (s)
-    expect(POWER_UP_LEVEL_SPECS.P8[1].cap).toBe(5); // lives cap
-    expect(POWER_UP_LEVEL_SPECS.P9[0].cap).toBe(5); // magnet stack cap
-    expect(POWER_UP_LEVEL_SPECS.P10[0].cap).toBe(5); // scoop stack cap
+    expect(POWER_UP_LEVEL_SPECS.shield[0].base).toBe(15); // shield duration (s)
+    expect(POWER_UP_LEVEL_SPECS.speed_boost[0].base).toBe(1.5); // speed multiplier
+    expect(POWER_UP_LEVEL_SPECS.phase_shift[0].base).toBe(1.5); // phase duration (s)
+    expect(POWER_UP_LEVEL_SPECS.extra_life[1].cap).toBe(5); // lives cap
+    expect(POWER_UP_LEVEL_SPECS.magnet[0].cap).toBe(5); // magnet stack cap
+    expect(POWER_UP_LEVEL_SPECS.mineral_scoop[0].cap).toBe(5); // scoop stack cap
   });
 });
 
@@ -164,13 +164,13 @@ describe('resolvePowerUpAtLevel (AC4 — pure shared resolver)', () => {
   });
 
   it('clamps non-finite and negative levels to 0', () => {
-    expect(resolvePowerUpAtLevel('P3', -5)).toEqual(
-      resolvePowerUpAtLevel('P3', 0),
+    expect(resolvePowerUpAtLevel('shield', -5)).toEqual(
+      resolvePowerUpAtLevel('shield', 0),
     );
-    expect(resolvePowerUpAtLevel('P3', Number.NaN)).toEqual(
-      resolvePowerUpAtLevel('P3', 0),
+    expect(resolvePowerUpAtLevel('shield', Number.NaN)).toEqual(
+      resolvePowerUpAtLevel('shield', 0),
     );
-    expect(resolvePowerUpAtLevel('P3', 2.9).level).toBe(2);
+    expect(resolvePowerUpAtLevel('shield', 2.9).level).toBe(2);
   });
 
   it('throws for an unknown power-up id', () => {
@@ -182,13 +182,13 @@ describe('resolvePowerUpAtLevel (AC4 — pure shared resolver)', () => {
 
 describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
   it('describes the variables that change between two levels', () => {
-    const summary = summarisePowerUpLevelChange('P3', 0, 1);
+    const summary = summarisePowerUpLevelChange('shield', 0, 1);
     expect(summary.length).toBeGreaterThan(0);
     expect(summary).toContain('Shield time');
   });
 
   it('returns an empty string when the curve has flattened', () => {
-    expect(summarisePowerUpLevelChange('P8', 1_000, 1_001)).toBe('');
+    expect(summarisePowerUpLevelChange('extra_life', 1_000, 1_001)).toBe('');
   });
 
   it('no longer defers P3/P4 axes: their deltas now appear in the summary (AC4)', () => {
@@ -196,12 +196,12 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
     expect(DEFERRED_POWER_UP_LEVEL_VARIABLES.size).toBe(0);
 
     // P4's range and frequency now contribute a promised delta.
-    const p4 = summarisePowerUpLevelChange('P4', 0, 1);
+    const p4 = summarisePowerUpLevelChange('bomb', 0, 1);
     expect(p4).toContain('Bomb range');
     expect(p4).toContain('Bomb rate');
 
     // P3's multi-hit axis is included alongside its duration.
-    const p3 = summarisePowerUpLevelChange('P3', 0, 1);
+    const p3 = summarisePowerUpLevelChange('shield', 0, 1);
     expect(p3).toContain('Shield time');
     expect(p3).toContain('Shield hits');
   });
@@ -212,7 +212,7 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
 describe('P4 Bomb model: bombRange/bombFrequency replace bombCharges', () => {
   it('exposes the Q2=A specs with labels, units and a rationale', () => {
     const byVariable = Object.fromEntries(
-      POWER_UP_LEVEL_SPECS.P4.map((spec) => [spec.variable, spec]),
+      POWER_UP_LEVEL_SPECS.bomb.map((spec) => [spec.variable, spec]),
     );
     const range = byVariable.bombRange;
     const frequency = byVariable.bombFrequency;
@@ -239,7 +239,7 @@ describe('P4 Bomb model: bombRange/bombFrequency replace bombCharges', () => {
   it('removes bombCharges from the variable space and the resolved stats', () => {
     expect(POWER_UP_LEVEL_VARIABLES).not.toContain('bombCharges' as never);
 
-    const stats = resolvePowerUpAtLevel('P4', 1) as unknown as Record<
+    const stats = resolvePowerUpAtLevel('bomb', 1) as unknown as Record<
       string,
       number | undefined
     >;
@@ -253,17 +253,17 @@ describe('P4 Bomb model: bombRange/bombFrequency replace bombCharges', () => {
   });
 
   it('resolves the base values at level 0 and clamps to the caps', () => {
-    expect(statAt('P4', 'bombRange', 0)).toBe(120);
-    expect(statAt('P4', 'bombRange', 1_000_000)).toBe(320);
-    expect(statAt('P4', 'bombFrequency', 0)).toBe(0.33);
-    expect(statAt('P4', 'bombFrequency', 1_000_000)).toBe(1);
+    expect(statAt('bomb', 'bombRange', 0)).toBe(120);
+    expect(statAt('bomb', 'bombRange', 1_000_000)).toBe(320);
+    expect(statAt('bomb', 'bombFrequency', 0)).toBe(0.33);
+    expect(statAt('bomb', 'bombFrequency', 1_000_000)).toBe(1);
   });
 
   it('keeps both axes monotonic non-decreasing and within their caps', () => {
     for (const variable of ['bombRange', 'bombFrequency'] as const) {
-      let previous = statAt('P4', variable, 0);
+      let previous = statAt('bomb', variable, 0);
       for (let level = 1; level <= 40; level++) {
-        const current = statAt('P4', variable, level);
+        const current = statAt('bomb', variable, level);
         expect(current).toBeGreaterThanOrEqual(previous);
         previous = current;
       }
@@ -285,42 +285,42 @@ describe('PowerUpLevelStore (AC2 — run-scoped integer level)', () => {
 
   it('increments the effective level on every collection; the permanent level tracks hold-full grants', () => {
     const store = new PowerUpLevelStore();
-    expect(store.collect('P5')).toBe(1); // field pickup → temporary
-    expect(store.collect('P5')).toBe(2); // field pickup → temporary
-    expect(store.collect('P5', true)).toBe(3); // hold-full → permanent
-    expect(store.getLevel('P5')).toBe(3); // effective
+    expect(store.collect('speed_boost')).toBe(1); // field pickup → temporary
+    expect(store.collect('speed_boost')).toBe(2); // field pickup → temporary
+    expect(store.collect('speed_boost', true)).toBe(3); // hold-full → permanent
+    expect(store.getLevel('speed_boost')).toBe(3); // effective
     // First collection is base; each further collection is one upgrade.
-    expect(store.getUpgradeLevel('P5')).toBe(2);
-    expect(store.getTempStacks('P5')).toBe(2);
-    expect(store.getPermanentLevel('P5')).toBe(1);
-    expect(store.getPermanentUpgradeLevel('P5')).toBe(0);
+    expect(store.getUpgradeLevel('speed_boost')).toBe(2);
+    expect(store.getTempStacks('speed_boost')).toBe(2);
+    expect(store.getPermanentLevel('speed_boost')).toBe(1);
+    expect(store.getPermanentUpgradeLevel('speed_boost')).toBe(0);
     // The hold-full choice reflects the permanent grant only (AC4).
-    expect(store.getLevels()).toContainEqual({ id: 'P5', level: 1 });
+    expect(store.getLevels()).toContainEqual({ id: 'speed_boost', level: 1 });
   });
 
   it('resolves stats from the current upgrade level', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P3'); // level 1 → upgrade 0 (base)
-    expect(store.stats('P3')).toEqual(resolvePowerUpAtLevel('P3', 0));
-    store.collect('P3'); // level 2 → upgrade 1
-    expect(store.stats('P3')).toEqual(resolvePowerUpAtLevel('P3', 1));
+    store.collect('shield'); // level 1 → upgrade 0 (base)
+    expect(store.stats('shield')).toEqual(resolvePowerUpAtLevel('shield', 0));
+    store.collect('shield'); // level 2 → upgrade 1
+    expect(store.stats('shield')).toEqual(resolvePowerUpAtLevel('shield', 1));
   });
 
   it('retains levels until reset — the only clearing operation (AC2)', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P5');
-    store.collect('P9', true);
+    store.collect('speed_boost');
+    store.collect('magnet', true);
     // Reading/deriving stats (the paths a timed expiry would run through)
     // must not clear the run-scoped levels.
-    store.stats('P5');
-    store.stats('P9');
+    store.stats('speed_boost');
+    store.stats('magnet');
     store.magnetStacks();
-    expect(store.getLevel('P5')).toBe(1);
-    expect(store.getLevel('P9')).toBe(1);
+    expect(store.getLevel('speed_boost')).toBe(1);
+    expect(store.getLevel('magnet')).toBe(1);
 
     store.reset();
-    expect(store.getLevel('P5')).toBe(0);
-    expect(store.getLevel('P9')).toBe(0);
+    expect(store.getLevel('speed_boost')).toBe(0);
+    expect(store.getLevel('magnet')).toBe(0);
     expect(store.getLevels()).toEqual([]);
   });
 });
@@ -329,41 +329,41 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
   it('derives P9/P10 permanent stacks from permanent grants, capped at 5', () => {
     const store = new PowerUpLevelStore();
     // A field pickup levels P9 up but grants no permanent stack (hybrid).
-    store.collect('P9');
-    expect(store.getLevel('P9')).toBe(1);
+    store.collect('magnet');
+    expect(store.getLevel('magnet')).toBe(1);
     expect(store.magnetStacks()).toBe(0);
 
-    for (let i = 0; i < 8; i++) store.collect('P9', true);
+    for (let i = 0; i < 8; i++) store.collect('magnet', true);
     expect(store.magnetStacks()).toBe(5);
     expect(store.scoopStacks()).toBe(0);
 
-    for (let i = 0; i < 8; i++) store.collect('P10', true);
+    for (let i = 0; i < 8; i++) store.collect('mineral_scoop', true);
     expect(store.scoopStacks()).toBe(5);
   });
 
   it('grants level-derived P7 teleport stacks and consumes them', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P7');
+    store.collect('teleport');
     expect(store.teleportStacks()).toBe(1);
-    store.collect('P7');
+    store.collect('teleport');
     // Second collection is an upgrade: grants more than one use.
     expect(store.teleportStacks()).toBeGreaterThan(1);
     const before = store.teleportStacks();
     expect(store.consumeTeleport()).toBe(true);
     expect(store.teleportStacks()).toBe(before - 1);
     // Consuming a use never lowers the run-scoped level.
-    expect(store.getLevel('P7')).toBe(2);
+    expect(store.getLevel('teleport')).toBe(2);
   });
 
   it('grants level-derived P6 charges; the hold-full reward is unlimited', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P6');
+    store.collect('phase_shift');
     expect(store.phaseCharges()).toBe(1);
     expect(store.consumePhaseCharge()).toBe(true);
     expect(store.phaseCharges()).toBe(0);
     expect(store.consumePhaseCharge()).toBe(false);
 
-    store.collect('P6', true);
+    store.collect('phase_shift', true);
     expect(store.isPhasePermanent()).toBe(true);
     expect(store.consumePhaseCharge()).toBe(true);
     expect(store.consumePhaseCharge()).toBe(true);
@@ -372,9 +372,9 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
   it('grants level-derived lives, clamped to the level-derived cap of 5', () => {
     const store = new PowerUpLevelStore();
     expect(store.lives()).toBe(POWER_UP_LIVES_START);
-    store.collect('P8');
+    store.collect('extra_life');
     expect(store.lives()).toBeGreaterThan(POWER_UP_LIVES_START);
-    for (let i = 0; i < 10; i++) store.collect('P8', true);
+    for (let i = 0; i < 10; i++) store.collect('extra_life', true);
     expect(store.lives()).toBe(5);
     store.reset();
     expect(store.lives()).toBe(POWER_UP_LIVES_START);
@@ -393,89 +393,89 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
 describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => {
   it('routes a field pickup to temporary stacks and a hold-full reward to permanent grants', () => {
     const store = new PowerUpLevelStore();
-    expect(store.getEffectiveLevel('P5')).toBe(0);
-    expect(store.getTempStacks('P5')).toBe(0);
-    expect(store.getPermanentLevel('P5')).toBe(0);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(0);
+    expect(store.getTempStacks('speed_boost')).toBe(0);
+    expect(store.getPermanentLevel('speed_boost')).toBe(0);
 
-    store.collect('P5'); // field pickup
-    expect(store.getTempStacks('P5')).toBe(1);
-    expect(store.getPermanentLevel('P5')).toBe(0);
-    expect(store.getEffectiveLevel('P5')).toBe(1);
+    store.collect('speed_boost'); // field pickup
+    expect(store.getTempStacks('speed_boost')).toBe(1);
+    expect(store.getPermanentLevel('speed_boost')).toBe(0);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(1);
 
-    store.collect('P5'); // second field pickup
-    expect(store.getTempStacks('P5')).toBe(2);
-    expect(store.getEffectiveLevel('P5')).toBe(2);
+    store.collect('speed_boost'); // second field pickup
+    expect(store.getTempStacks('speed_boost')).toBe(2);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(2);
 
-    store.collect('P5', true); // hold-full reward
-    expect(store.getPermanentLevel('P5')).toBe(1);
-    expect(store.getTempStacks('P5')).toBe(2); // untouched by the reward
-    expect(store.getEffectiveLevel('P5')).toBe(3);
+    store.collect('speed_boost', true); // hold-full reward
+    expect(store.getPermanentLevel('speed_boost')).toBe(1);
+    expect(store.getTempStacks('speed_boost')).toBe(2); // untouched by the reward
+    expect(store.getEffectiveLevel('speed_boost')).toBe(3);
   });
 
   it('clearTemporary reverts the effective level to the permanent level', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P3');
-    store.collect('P3');
-    store.collect('P3', true);
-    expect(store.getEffectiveLevel('P3')).toBe(3);
-    expect(store.getUpgradeLevel('P3')).toBe(2);
+    store.collect('shield');
+    store.collect('shield');
+    store.collect('shield', true);
+    expect(store.getEffectiveLevel('shield')).toBe(3);
+    expect(store.getUpgradeLevel('shield')).toBe(2);
 
-    store.clearTemporary('P3');
+    store.clearTemporary('shield');
 
-    expect(store.getTempStacks('P3')).toBe(0);
-    expect(store.getPermanentLevel('P3')).toBe(1);
-    expect(store.getEffectiveLevel('P3')).toBe(1);
-    expect(store.getUpgradeLevel('P3')).toBe(0);
-    expect(store.getPermanentUpgradeLevel('P3')).toBe(0);
+    expect(store.getTempStacks('shield')).toBe(0);
+    expect(store.getPermanentLevel('shield')).toBe(1);
+    expect(store.getEffectiveLevel('shield')).toBe(1);
+    expect(store.getUpgradeLevel('shield')).toBe(0);
+    expect(store.getPermanentUpgradeLevel('shield')).toBe(0);
   });
 
   it('an item with no permanent level becomes inactive when its window expires', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P3');
-    expect(store.getEffectiveLevel('P3')).toBe(1);
-    store.clearTemporary('P3');
-    expect(store.getEffectiveLevel('P3')).toBe(0);
-    expect(store.getPermanentLevel('P3')).toBe(0);
+    store.collect('shield');
+    expect(store.getEffectiveLevel('shield')).toBe(1);
+    store.clearTemporary('shield');
+    expect(store.getEffectiveLevel('shield')).toBe(0);
+    expect(store.getPermanentLevel('shield')).toBe(0);
   });
 
   it('reports the permanent level only to the hold-full choice', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P9'); // field-only: never permanently owned
+    store.collect('magnet'); // field-only: never permanently owned
     expect(store.getLevels()).toEqual([]);
 
-    store.collect('P9', true);
-    expect(store.getLevels()).toEqual([{ id: 'P9', level: 1 }]);
-    expect(store.getPermanentLevel('P9')).toBe(1);
+    store.collect('magnet', true);
+    expect(store.getLevels()).toEqual([{ id: 'magnet', level: 1 }]);
+    expect(store.getPermanentLevel('magnet')).toBe(1);
   });
 
   it('persists unconsumed consumable grants across clearTemporary (Resolved decision 1b)', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P7');
+    store.collect('teleport');
     const teleports = store.teleportStacks();
     expect(teleports).toBeGreaterThan(0);
-    store.clearTemporary('P7');
-    expect(store.getEffectiveLevel('P7')).toBe(0);
+    store.clearTemporary('teleport');
+    expect(store.getEffectiveLevel('teleport')).toBe(0);
     expect(store.teleportStacks()).toBe(teleports); // not clawed back
 
-    store.collect('P6');
+    store.collect('phase_shift');
     const charges = store.phaseCharges();
     expect(charges).toBeGreaterThan(0);
-    store.clearTemporary('P6');
-    expect(store.getEffectiveLevel('P6')).toBe(0);
+    store.clearTemporary('phase_shift');
+    expect(store.getEffectiveLevel('phase_shift')).toBe(0);
     expect(store.phaseCharges()).toBe(charges);
   });
 
   it('reset clears both the permanent and temporary level state', () => {
     const store = new PowerUpLevelStore();
-    store.collect('P5');
-    store.collect('P5', true);
-    expect(store.getEffectiveLevel('P5')).toBe(2);
+    store.collect('speed_boost');
+    store.collect('speed_boost', true);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(2);
 
     store.reset();
 
-    expect(store.getTempStacks('P5')).toBe(0);
-    expect(store.getPermanentLevel('P5')).toBe(0);
-    expect(store.getEffectiveLevel('P5')).toBe(0);
+    expect(store.getTempStacks('speed_boost')).toBe(0);
+    expect(store.getPermanentLevel('speed_boost')).toBe(0);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(0);
     expect(store.getLevels()).toEqual([]);
   });
 });

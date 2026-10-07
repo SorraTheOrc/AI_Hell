@@ -9,17 +9,15 @@
  * fails with the exact `file:line` of every quoted legacy code that survives
  * outside the documented allow-list.
  *
- * ## Test-first status (read before editing)
+ * ## Status (F2 has landed)
  *
- * This child is deliberately **test-first**: the guard is written *before* the
- * rename (F2) lands, so on the unmodified tree the offender set is non-empty
- * and the assertion is genuinely red. The suite must nevertheless stay green
- * for the pre-push full-suite gate, so the offender assertion is wrapped in
- * Vitest's `it.fails(...)` (an *expected* failure — no opt-in flag, it runs in
- * the standard `vitest run` suite). Once F2 removes the last legacy literal the
- * assertion stops throwing and `it.fails` will fail with "expected test to
- * fail, but it passed" — remove the `.fails` then to turn this into a hard
- * gate. See the parent plan for the red-before/green-after evidence.
+ * This guard was originally written **test-first** (F1): the offender
+ * assertion was wrapped in Vitest's `it.fails(...)` so the suite stayed green
+ * while the legacy codes were still present. F2 has now renamed every
+ * `P3`–`P10` literal, so the guard is a hard gate — the offender assertion is
+ * a plain `it(...)` and fails on any surviving legacy code.
+ *
+ * See the parent plan for the red-before/green-after evidence.
  *
  * ## Allow-list
  *
@@ -196,9 +194,9 @@ describe('power-up ID naming guard (AH-0MUY0GLPF009H0LE)', () => {
     }
   });
 
-  // Expected failure: the legacy codes are still present on the unmodified
-  // tree and F2 has not yet renamed them. Remove `.fails` once F2 lands.
-  it.fails('contains no legacy P3-P10 power-up ID literal', () => {
+  // Hard gate (F2 landed): no legacy `P3`–`P10` power-up ID literal may
+  // survive outside the documented allow-list.
+  it('contains no legacy P3-P10 power-up ID literal', () => {
     const offenders = findLegacyOccurrences(SCANNED_FILES).filter(
       (occurrence) => !isAllowListed(occurrence),
     );

@@ -117,7 +117,7 @@ export interface PowerUpEffect {
  * applies no effect (AC5).
  */
 export class PowerUp {
-  /** The power-up ID (e.g. "P5"). */
+  /** The power-up ID (e.g. "speed_boost"). */
   readonly id: string;
 
   /** The current phase of the lifecycle. */

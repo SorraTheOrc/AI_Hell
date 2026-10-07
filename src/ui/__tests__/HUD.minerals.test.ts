@@ -150,7 +150,7 @@ describe('HUD mineral bar layout', () => {
 
   it('pushes effect rows below the bar', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootHud(reg);
     hud.setMineralStore(3, 20);
     hud.refresh();
@@ -163,7 +163,7 @@ describe('HUD mineral bar layout', () => {
 
   it('keeps effect rows at the top when capacity is 0', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootHud(reg);
     hud.setMineralStore(0, 0);
     hud.refresh();

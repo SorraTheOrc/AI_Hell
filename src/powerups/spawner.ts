@@ -14,7 +14,7 @@
  * via `WeightedRandomSpawner.setWeight()` when needed (AC4).
  *
  * Gym scenes: import `RoundRobinSpawner` and create an instance with
- * the catalogue keys to cycle through (e.g. `new RoundRobinSpawner(['P5','P8','P9'])`).
+ * the catalogue keys to cycle through (e.g. `new RoundRobinSpawner(['speed_boost','extra_life','magnet'])`).
  *
  * @module powerups/spawner
  */
@@ -27,7 +27,7 @@ import { PowerUpId } from './types';
  * The fixed spawn order for non-combat power-ups, ascending by GDD ID
  * (P5 → P8 → P9). Used by the gym scenes.
  */
-export const NON_COMBAT_SPAWN_ORDER: readonly PowerUpId[] = ['P5', 'P8', 'P9'];
+export const NON_COMBAT_SPAWN_ORDER: readonly PowerUpId[] = ['speed_boost', 'extra_life', 'magnet'];
 
 /**
  * Backward-compatible helper (AC2): returns a new array with the fixed
@@ -74,7 +74,7 @@ export interface PowerUpSpawner<T extends string = PowerUpId> {
  * Mirrors the existing `roundRobinSpawner(count)` / `spawnOrder()`
  * behaviour: ascending GDD ID order (P5 → P8 → P9).
  *
- * Usage: `const spawner = new RoundRobinSpawner(['P5', 'P8', 'P9']);`
+ * Usage: `const spawner = new RoundRobinSpawner(['speed_boost', 'extra_life', 'magnet']);`
  */
 export class RoundRobinSpawner<T extends string = PowerUpId> implements PowerUpSpawner<T> {
   private readonly _order: T[];
@@ -116,8 +116,8 @@ export class RoundRobinSpawner<T extends string = PowerUpId> implements PowerUpS
  *
  * Usage:
  * ```ts
- * const spawner = new WeightedRandomSpawner(['P5', 'P8', 'P9']);
- * spawner.setWeight('P8', 0.5);  // make Extra Life rarer
+ * const spawner = new WeightedRandomSpawner(['speed_boost', 'extra_life', 'magnet']);
+ * spawner.setWeight('extra_life', 0.5);  // make Extra Life rarer
  * const id = spawner.next();
  * ```
  */
@@ -183,7 +183,7 @@ export class WeightedRandomSpawner<T extends string = PowerUpId> implements Powe
 
     if (total <= 0 || firstId === null) {
       // Deterministic fallback: return the first tracked entry (preserves pre-existing tests
-      // that construct the spawner with ['P5','P8','P9'] — fallback must be P5, not P3).
+      // that construct the spawner with ['speed_boost','extra_life','magnet'] — fallback must be P5, not P3).
       if (firstId !== null) return firstId;
       return this._firstId;
     }

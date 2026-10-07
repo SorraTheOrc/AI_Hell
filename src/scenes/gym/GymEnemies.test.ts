@@ -927,7 +927,7 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
-          spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+          spawner: new RoundRobinSpawner<PowerUpId>(['shield', 'bomb', 'phase_shift', 'teleport']),
           placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
           spawnInterval: INTERVAL,
         };
@@ -1098,7 +1098,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
-          spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+          spawner: new RoundRobinSpawner<PowerUpId>(['extra_life']),
           placement: atPlayer,
           spawnInterval: 1000,
         };
@@ -1441,7 +1441,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
   }
 
   it('AC1 — collecting P6 in the diver gym phases the player through an enemy bullet', async () => {
-    booted = await bootScene([makeGatedScene('diver', 'P6')]);
+    booted = await bootScene([makeGatedScene('diver', 'phase_shift')]);
     const scene = booted.scene as unknown as GymEnemies;
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
@@ -1461,7 +1461,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
   });
 
   it('AC2 — collecting P3 in the diver gym absorbs the next enemy bullet', async () => {
-    booted = await bootScene([makeGatedScene('diver', 'P3')]);
+    booted = await bootScene([makeGatedScene('diver', 'shield')]);
     const scene = booted.scene as unknown as GymEnemies;
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
@@ -1497,8 +1497,8 @@ describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
     const scene = booted.scene as GymEnemies;
     const registry = scene.getEffectsRegistry();
 
-    registry.applyCollect('P9', true);
-    registry.applyCollect('P3', true);
+    registry.applyCollect('magnet', true);
+    registry.applyCollect('shield', true);
     registry.applyWeapon('dual', true);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.isShielded).toBe(true);

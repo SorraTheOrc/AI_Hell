@@ -28,9 +28,9 @@ import { GymMinerals } from '../gym/GymMinerals';
 
 /** A fixed choice every launcher can offer and apply. */
 const FIXED_OPTIONS: ChoiceOption[] = [
-  { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-  { id: 'P9', name: 'Magnet', kind: 'powerup' },
-  { id: 'P3', name: 'Shield', kind: 'powerup' },
+  { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+  { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+  { id: 'shield', name: 'Shield', kind: 'powerup' },
 ];
 
 /**

@@ -358,7 +358,7 @@ describe('GymBoss — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
       this.config = {
         ...this.config,
         powerUps: {
-          spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+          spawner: new RoundRobinSpawner<PowerUpId>(['shield', 'bomb', 'phase_shift', 'teleport']),
           placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
           spawnInterval: INTERVAL,
         },
@@ -481,7 +481,7 @@ describe('GymBoss — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => 
       this.config = {
         ...this.config,
         powerUps: {
-          spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+          spawner: new RoundRobinSpawner<PowerUpId>(['extra_life']),
           placement: atPlayer,
           spawnInterval: 1000,
         },
@@ -664,7 +664,7 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
       vy: 0,
       facing: 0,
     };
-    scene.getEffectsRegistry().applyCollect('P7');
+    scene.getEffectsRegistry().applyCollect('teleport');
 
     expect(scene.triggerTeleport()).toBe(true);
 
@@ -779,9 +779,9 @@ describe('GymBoss — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', ()
   it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
     const scene = await bootGym();
     const registry = scene.getEffectsRegistry();
-    registry.applyCollect('P9', true);
-    registry.applyCollect('P3', true);
-    registry.applyCollect('P7');
+    registry.applyCollect('magnet', true);
+    registry.applyCollect('shield', true);
+    registry.applyCollect('teleport');
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.isShielded).toBe(true);
     expect(registry.hasTeleport()).toBe(true);

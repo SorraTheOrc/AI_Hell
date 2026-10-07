@@ -61,7 +61,7 @@ import {
 } from '../../core/constants';
 
 /** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9 → P10). */
-const NON_COMBAT_ORDER: readonly PowerUpId[] = ['P5', 'P8', 'P9', 'P10'];
+const NON_COMBAT_ORDER: readonly PowerUpId[] = ['speed_boost', 'extra_life', 'magnet', 'mineral_scoop'];
 
 /** Number of minerals seeded on the gym's demonstration mineral field. */
 export const UTILITY_MINERAL_SEED_COUNT = 40;

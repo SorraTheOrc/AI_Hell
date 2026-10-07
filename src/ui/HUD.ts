@@ -96,7 +96,7 @@ export const PERMANENT_VALUE = '∞';
 
 /** One display row in the HUD model (one per power-up/weapon). */
 export interface HUDEntry {
-  /** Power-up ID (e.g. "P5"). */
+  /** Power-up ID (e.g. "speed_boost"). */
   id: string;
   /** Catalogue display name (e.g. "Speed Boost"). */
   name: string;
@@ -394,7 +394,7 @@ export class HUD extends Phaser.GameObjects.Container {
     if (!reg) return [];
     const rows: HUDEntry[] = [];
     for (const id of POWER_UP_LEVEL_IDS) {
-      if (id === 'P8') continue; // lives are shown by the dedicated counter
+      if (id === 'extra_life') continue; // lives are shown by the dedicated counter
       if (!this._isPowerUpRowVisible(id)) continue;
       const entry = getPowerUpById(id);
       const level = reg.powerUpLevel(id);
@@ -419,23 +419,23 @@ export class HUD extends Phaser.GameObjects.Container {
   private _isPowerUpRowVisible(id: PowerUpId): boolean {
     const reg = this._registry!;
     switch (id) {
-      case 'P3':
-        return reg.isActive('P3');
-      case 'P4':
+      case 'shield':
+        return reg.isActive('shield');
+      case 'bomb':
         return reg.isBombPermanent();
-      case 'P5':
-        return reg.isActive('P5');
-      case 'P6':
+      case 'speed_boost':
+        return reg.isActive('speed_boost');
+      case 'phase_shift':
         return (
           reg.isPhasePermanent() ||
           reg.phaseCharges() > 0 ||
-          reg.isActive('P6')
+          reg.isActive('phase_shift')
         );
-      case 'P7':
+      case 'teleport':
         return reg.teleportStacks() > 0;
-      case 'P9':
+      case 'magnet':
         return reg.isMagnetActive();
-      case 'P10':
+      case 'mineral_scoop':
         return reg.isScoopActive() || reg.scoopStacks() > 0;
       default:
         return false;
@@ -449,11 +449,11 @@ export class HUD extends Phaser.GameObjects.Container {
   private _powerUpStacks(id: PowerUpId): number | undefined {
     const reg = this._registry!;
     switch (id) {
-      case 'P3':
+      case 'shield':
         return reg.shieldAbsorptionsRemaining() || undefined;
-      case 'P6':
+      case 'phase_shift':
         return reg.isPhasePermanent() ? undefined : reg.phaseCharges() || undefined;
-      case 'P7':
+      case 'teleport':
         return reg.teleportStacks() || undefined;
       default:
         return undefined;

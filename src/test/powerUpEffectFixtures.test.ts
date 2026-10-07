@@ -33,36 +33,36 @@ describe('powerUpEffectFixtures — shared P3/P4 test infrastructure', () => {
 
   describe('createSeededLevelStore / seedUpgradeLevel', () => {
     it('seeds the requested upgrade level (0 = one collection = base)', () => {
-      const store = createSeededLevelStore({ P3: 2, P4: 0 });
-      expect(store.getUpgradeLevel('P3')).toBe(2);
-      expect(store.getUpgradeLevel('P4')).toBe(0);
-      expect(store.getLevel('P3')).toBe(3); // collections = upgrades + 1
-      expect(store.stats('P3')).toEqual(resolvePowerUpAtLevel('P3', 2));
+      const store = createSeededLevelStore({ shield: 2, bomb: 0 });
+      expect(store.getUpgradeLevel('shield')).toBe(2);
+      expect(store.getUpgradeLevel('bomb')).toBe(0);
+      expect(store.getLevel('shield')).toBe(3); // collections = upgrades + 1
+      expect(store.stats('shield')).toEqual(resolvePowerUpAtLevel('shield', 2));
       // Unlisted power-ups stay untouched.
-      expect(store.getLevel('P5')).toBe(0);
+      expect(store.getLevel('speed_boost')).toBe(0);
     });
 
     it('is idempotent and clamps negative/fractional levels', () => {
       const store = createSeededLevelStore();
-      seedUpgradeLevel(store, 'P4', 1.9);
-      expect(store.getUpgradeLevel('P4')).toBe(1);
-      seedUpgradeLevel(store, 'P4', 1); // no further collections
-      expect(store.getLevel('P4')).toBe(2);
-      seedUpgradeLevel(store, 'P4', -5);
-      expect(store.getUpgradeLevel('P4')).toBe(1);
+      seedUpgradeLevel(store, 'bomb', 1.9);
+      expect(store.getUpgradeLevel('bomb')).toBe(1);
+      seedUpgradeLevel(store, 'bomb', 1); // no further collections
+      expect(store.getLevel('bomb')).toBe(2);
+      seedUpgradeLevel(store, 'bomb', -5);
+      expect(store.getUpgradeLevel('bomb')).toBe(1);
     });
   });
 
   describe('createEffectRegistry', () => {
     it('binds the registry to the returned store', () => {
       const { registry, store } = createEffectRegistry();
-      registry.applyCollect('P5');
-      expect(store.getLevel('P5')).toBe(1);
+      registry.applyCollect('speed_boost');
+      expect(store.getLevel('speed_boost')).toBe(1);
     });
 
     it('pre-seeds levels without activating a timed effect', () => {
-      const { registry, store } = createEffectRegistry({ P3: 1 });
-      expect(store.getUpgradeLevel('P3')).toBe(1);
+      const { registry, store } = createEffectRegistry({ shield: 1 });
+      expect(store.getUpgradeLevel('shield')).toBe(1);
       expect(registry.isShielded).toBe(false); // seeding is store-only
     });
   });
@@ -70,19 +70,19 @@ describe('powerUpEffectFixtures — shared P3/P4 test infrastructure', () => {
   describe('activateEffectAtUpgradeLevel', () => {
     it('activates P3 at the requested upgrade level and resolves its stats', () => {
       const fixture = createEffectRegistry();
-      const stats = activateEffectAtUpgradeLevel(fixture, 'P3', 2);
+      const stats = activateEffectAtUpgradeLevel(fixture, 'shield', 2);
 
       expect(fixture.registry.isShielded).toBe(true);
-      expect(fixture.store.getUpgradeLevel('P3')).toBe(2);
-      expect(stats).toEqual(resolvePowerUpAtLevel('P3', 2));
+      expect(fixture.store.getUpgradeLevel('shield')).toBe(2);
+      expect(stats).toEqual(resolvePowerUpAtLevel('shield', 2));
     });
 
     it('activates the permanent (hold-full) form when requested', () => {
       const fixture = createEffectRegistry();
-      activateEffectAtUpgradeLevel(fixture, 'P4', 1, { permanent: true });
+      activateEffectAtUpgradeLevel(fixture, 'bomb', 1, { permanent: true });
 
-      expect(fixture.store.getUpgradeLevel('P4')).toBe(1);
-      expect(fixture.store.permanentGrants('P4')).toBe(1);
+      expect(fixture.store.getUpgradeLevel('bomb')).toBe(1);
+      expect(fixture.store.permanentGrants('bomb')).toBe(1);
     });
   });
 

@@ -1114,60 +1114,60 @@ describe('Player ship entity', () => {
   describe('power-up level store (AH-0MUV5CLVO002ZHS9)', () => {
     it('collectPowerUp increments the run-scoped level; getPowerUpLevel reads it', async () => {
       const player = await freshPlayer();
-      expect(player.getPowerUpLevel('P3')).toBe(0);
+      expect(player.getPowerUpLevel('shield')).toBe(0);
 
-      expect(player.collectPowerUp('P3')).toBe(1);
-      expect(player.getPowerUpLevel('P3')).toBe(1);
+      expect(player.collectPowerUp('shield')).toBe(1);
+      expect(player.getPowerUpLevel('shield')).toBe(1);
 
-      expect(player.collectPowerUp('P3')).toBe(2);
-      expect(player.getPowerUpLevel('P3')).toBe(2);
+      expect(player.collectPowerUp('shield')).toBe(2);
+      expect(player.getPowerUpLevel('shield')).toBe(2);
     });
 
     it('getPowerUpLevels lists every permanently owned power-up with its permanent level (choice context)', async () => {
       const player = await freshPlayer();
       expect(player.getPowerUpLevels()).toEqual([]);
 
-      player.collectPowerUp('P3', true);
-      player.collectPowerUp('P3', true);
-      player.collectPowerUp('P5', true);
+      player.collectPowerUp('shield', true);
+      player.collectPowerUp('shield', true);
+      player.collectPowerUp('speed_boost', true);
 
       expect(player.getPowerUpLevels()).toEqual([
-        { id: 'P3', level: 2 },
-        { id: 'P5', level: 1 },
+        { id: 'shield', level: 2 },
+        { id: 'speed_boost', level: 1 },
       ]);
 
       // A field-only power-up is not permanently owned (Resolved decision 2).
-      player.collectPowerUp('P6');
-      expect(player.getPowerUpLevels().some((p) => p.id === 'P6')).toBe(false);
+      player.collectPowerUp('phase_shift');
+      expect(player.getPowerUpLevels().some((p) => p.id === 'phase_shift')).toBe(false);
     });
 
     it('a permanent hold-full grant tracks the level and permanent stack (P9)', async () => {
       const player = await freshPlayer();
 
-      player.collectPowerUp('P9', true);
-      player.collectPowerUp('P9', true);
+      player.collectPowerUp('magnet', true);
+      player.collectPowerUp('magnet', true);
 
-      expect(player.getPowerUpLevel('P9')).toBe(2);
+      expect(player.getPowerUpLevel('magnet')).toBe(2);
       // The derived P9 permanent stacks scale with the level model.
-      expect(player.getPowerUpLevels()).toEqual([{ id: 'P9', level: 2 }]);
+      expect(player.getPowerUpLevels()).toEqual([{ id: 'magnet', level: 2 }]);
     });
 
     it('resetPowerUpLevels clears both permanent and temporary levels (run restart)', async () => {
       const player = await freshPlayer();
       const store = player.getPowerUpLevelStore();
-      player.collectPowerUp('P3', true); // permanent grant
-      player.collectPowerUp('P3'); // temporary stack
-      player.collectPowerUp('P6'); // temporary only
-      expect(store.getEffectiveLevel('P3')).toBe(2);
-      expect(store.getPermanentLevel('P3')).toBe(1);
-      expect(store.getTempStacks('P3')).toBe(1);
+      player.collectPowerUp('shield', true); // permanent grant
+      player.collectPowerUp('shield'); // temporary stack
+      player.collectPowerUp('phase_shift'); // temporary only
+      expect(store.getEffectiveLevel('shield')).toBe(2);
+      expect(store.getPermanentLevel('shield')).toBe(1);
+      expect(store.getTempStacks('shield')).toBe(1);
 
       player.resetPowerUpLevels();
 
-      expect(player.getPowerUpLevel('P3')).toBe(0);
-      expect(player.getPowerUpLevel('P6')).toBe(0);
-      expect(store.getTempStacks('P3')).toBe(0);
-      expect(store.getPermanentLevel('P3')).toBe(0);
+      expect(player.getPowerUpLevel('shield')).toBe(0);
+      expect(player.getPowerUpLevel('phase_shift')).toBe(0);
+      expect(store.getTempStacks('shield')).toBe(0);
+      expect(store.getPermanentLevel('shield')).toBe(0);
       expect(player.getPowerUpLevels()).toEqual([]);
     });
   });

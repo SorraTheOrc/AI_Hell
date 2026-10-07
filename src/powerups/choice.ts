@@ -35,14 +35,14 @@ import { summarisePowerUpLevelChange } from './powerUpLevels';
  * intentionally excluded — it removes weapons rather than granting one.
  */
 export const CHOICE_POOL: readonly DropId[] = [
-  'P3',
-  'P4',
-  'P5',
-  'P6',
-  'P7',
-  'P8',
-  'P9',
-  'P10',
+  'shield',
+  'bomb',
+  'speed_boost',
+  'phase_shift',
+  'teleport',
+  'extra_life',
+  'magnet',
+  'mineral_scoop',
   'spread',
   'dual',
   'rapid',

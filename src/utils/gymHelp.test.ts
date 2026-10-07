@@ -45,7 +45,7 @@ class HelpHostStub extends Phaser.Scene {
     addBackToIndexButton(this);
     this.handle = addHelpButton(this, {
       gymKey: 'HelpHostStub',
-      drops: ['P5', 'P8', 'P9'],
+      drops: ['speed_boost', 'extra_life', 'magnet'],
     });
   }
 }
@@ -73,7 +73,7 @@ describe('gymHelp — catalogue descriptions are the single source of truth (AC3
 
 describe('gymHelp — id → { name, description, drawIcon } lookup', () => {
   it('resolves power-up rows from POWER_UP_CATALOGUE', () => {
-    const ids: PowerUpId[] = ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10'];
+    const ids: PowerUpId[] = ['shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet', 'mineral_scoop'];
     for (const id of ids) {
       const help = getHelpEntry(id);
       expect(help.id).toBe(id);
@@ -110,7 +110,7 @@ describe('gymHelp — id → { name, description, drawIcon } lookup', () => {
   });
 
   it('preserves the requested order in getHelpEntries', () => {
-    const drops: HelpDropId[] = ['cannon', 'spread', 'reset', 'P5'];
+    const drops: HelpDropId[] = ['cannon', 'spread', 'reset', 'speed_boost'];
     expect(getHelpEntries(drops).map((e) => e.id)).toEqual(drops);
   });
 });
@@ -127,7 +127,7 @@ describe('gymHelp — every resolved entry draws a code-drawn icon', () => {
     booted = await bootScene([BareScene]);
     const graphics = (booted.scene as Phaser.Scene).add.graphics();
     const drops: HelpDropId[] = [
-      'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10',
+      'shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet', 'mineral_scoop',
       'cannon', 'spread', 'dual', 'rapid', 'reset',
     ];
     for (const id of drops) {

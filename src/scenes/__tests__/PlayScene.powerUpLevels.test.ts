@@ -46,17 +46,17 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const effects = scene.getEffectsRegistry();
-    expect(player.getPowerUpLevel('P5')).toBe(0);
+    expect(player.getPowerUpLevel('speed_boost')).toBe(0);
 
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
 
     // The shared `applyCollect` advanced the single player-owned store, so
     // the field pickup levels the power-up exactly once.
-    expect(player.getPowerUpLevel('P5')).toBe(1);
-    expect(effects.isActive('P5')).toBe(true);
+    expect(player.getPowerUpLevel('speed_boost')).toBe(1);
+    expect(effects.isActive('speed_boost')).toBe(true);
     expect(effects.speedMultiplier()).toBeGreaterThan(1);
   });
 
@@ -66,23 +66,23 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const effects = scene.getEffectsRegistry();
 
     // Field pickup → level 1.
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(player.getPowerUpLevel('P5')).toBe(1);
+    expect(player.getPowerUpLevel('speed_boost')).toBe(1);
 
     // Hold-full power-up-level reward → level 2 (exactly one more).
     scene.setMineralChoiceStrategy(
       fixedStrategy([
-        { id: 'P5', name: 'Speed Boost Lv.2', kind: 'power-up-level', level: 2 },
+        { id: 'speed_boost', name: 'Speed Boost Lv.2', kind: 'power-up-level', level: 2 },
       ]),
     );
     scene.openMineralChoice();
     scene.selectMineralChoice(0);
 
-    expect(player.getPowerUpLevel('P5')).toBe(2);
-    expect(effects.isActive('P5')).toBe(true);
+    expect(player.getPowerUpLevel('speed_boost')).toBe(2);
+    expect(effects.isActive('speed_boost')).toBe(true);
   });
 
   it('the mineral choice receives the player permanent power-up levels (context)', async () => {
@@ -90,19 +90,19 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const player = scene.getPlayer()!;
     // Own a power-up permanently (the choice's ownership source). A field
     // pickup adds only a temporary stack, so it is not owned for the choice.
-    player.collectPowerUp('P6');
-    player.collectPowerUp('P5', true);
+    player.collectPowerUp('phase_shift');
+    player.collectPowerUp('speed_boost', true);
 
     let context: ChoiceContext | undefined;
     scene.setMineralChoiceStrategy({
       choose: (_count, _rng, ctx) => {
         context = ctx;
-        return [{ id: 'P5', name: 'Speed Boost', kind: 'powerup' }];
+        return [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }];
       },
     });
     scene.openMineralChoice();
 
-    expect(context?.powerUpLevels).toEqual([{ id: 'P5', level: 1 }]);
+    expect(context?.powerUpLevels).toEqual([{ id: 'speed_boost', level: 1 }]);
   });
 
   it('a permanent power-up-level choice strengthens an owned power-up for the run', async () => {
@@ -111,25 +111,25 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const effects = scene.getEffectsRegistry();
 
     // Own P5 at level 1.
-    player.collectPowerUp('P5');
-    expect(player.getPowerUpLevel('P5')).toBe(1);
+    player.collectPowerUp('speed_boost');
+    expect(player.getPowerUpLevel('speed_boost')).toBe(1);
 
     // Offer a permanent level-up and choose it.
     scene.setMineralChoiceStrategy(
       fixedStrategy([
-        { id: 'P5', name: 'Speed Boost Lv.2', kind: 'power-up-level', level: 2 },
+        { id: 'speed_boost', name: 'Speed Boost Lv.2', kind: 'power-up-level', level: 2 },
       ]),
     );
     scene.openMineralChoice();
     scene.selectMineralChoice(0);
 
     // The level rose and the immediate effect is applied permanently.
-    expect(player.getPowerUpLevel('P5')).toBe(2);
-    expect(effects.isActive('P5')).toBe(true);
+    expect(player.getPowerUpLevel('speed_boost')).toBe(2);
+    expect(effects.isActive('speed_boost')).toBe(true);
     expect(effects.speedMultiplier()).toBeGreaterThan(1);
     // Permanent — it never times out.
     effects.tick(120);
-    expect(effects.isActive('P5')).toBe(true);
+    expect(effects.isActive('speed_boost')).toBe(true);
   });
 
   it('a base power-up choice records ownership so future choices can offer a level-up', async () => {
@@ -137,17 +137,17 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const player = scene.getPlayer()!;
     const effects = scene.getEffectsRegistry();
 
-    expect(player.getPowerUpLevel('P3')).toBe(0);
+    expect(player.getPowerUpLevel('shield')).toBe(0);
 
     scene.setMineralChoiceStrategy(
-      fixedStrategy([{ id: 'P3', name: 'Shield', kind: 'powerup' }]),
+      fixedStrategy([{ id: 'shield', name: 'Shield', kind: 'powerup' }]),
     );
     scene.openMineralChoice();
     scene.selectMineralChoice(0);
 
     // Ownership is recorded (level 1) and the effect applied.
-    expect(player.getPowerUpLevel('P3')).toBe(1);
-    expect(effects.isActive('P3')).toBe(true);
+    expect(player.getPowerUpLevel('shield')).toBe(1);
+    expect(effects.isActive('shield')).toBe(true);
   });
 
   it('a default-strategy hold-full draw never offers a base and a level-up power-up (AC2/AC4)', async () => {
@@ -155,8 +155,8 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const player = scene.getPlayer()!;
     // Own two power-ups permanently so the base-pool suppression path is
     // exercised.
-    player.collectPowerUp('P3', true);
-    player.collectPowerUp('P5', true);
+    player.collectPowerUp('shield', true);
+    player.collectPowerUp('speed_boost', true);
 
     for (let i = 0; i < 20; i++) {
       const options = scene.openMineralChoice();
@@ -167,7 +167,7 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
       // bare base-pool `powerup` entry.
       expect(
         options.some(
-          (o) => o.kind === 'powerup' && (o.id === 'P3' || o.id === 'P5'),
+          (o) => o.kind === 'powerup' && (o.id === 'shield' || o.id === 'speed_boost'),
         ),
       ).toBe(false);
       scene.selectMineralChoice(0);
