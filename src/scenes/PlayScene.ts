@@ -319,6 +319,13 @@ export class PlayScene extends CombatScene<
    */
   private demoMode = false;
 
+  /**
+   * Press-to-take-over handler active only while the demo runs
+   * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
+   * carries no extra input listener.
+   */
+  private demoTakeOverHandler: (() => void) | null = null;
+
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -504,6 +511,11 @@ export class PlayScene extends CombatScene<
       if (event.key === this.pauseKeyName && !event.repeat) this.togglePause();
     });
 
+    // Press-to-take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3):
+    // the first keyboard/pointer input hands control to the player without
+    // restarting the run.
+    if (this.demoMode) this._enableDemoTakeOver();
+
     // Power-up drop pool.
     const rules = loadRules();
     this.dropSpawner = this._buildDefaultDropSpawner(
@@ -642,6 +654,7 @@ export class PlayScene extends CombatScene<
    */
   protected override teardownRunState(): void {
     super.teardownRunState();
+    this._disableDemoTakeOver();
     for (const s of this.spawned) s.entity.destroy(true);
     this.spawned = [];
     for (const b of this.enemyBullets) b.graphics.destroy();
@@ -2112,11 +2125,42 @@ export class PlayScene extends CombatScene<
    */
   setDemoMode(demo: boolean): void {
     this.demoMode = demo;
-    if (demo && this.player) {
-      // Match the create-time demo setup: the bot's four-directional decision
-      // must map to the ship's active scheme (idempotent when already set).
-      this.player.setScheme('fourDirectional');
+    if (demo) {
+      if (this.player) {
+        // Match the create-time demo setup: the bot's four-directional
+        // decision must map to the ship's active scheme (idempotent when
+        // already set).
+        this.player.setScheme('fourDirectional');
+      }
+      this._enableDemoTakeOver();
+    } else {
+      this._disableDemoTakeOver();
     }
+  }
+
+  /**
+   * Wires press-to-take-over while the demo runs (AC3): any keyboard or
+   * pointer input leaves demo mode **in place** — the run keeps going, only
+   * the input source changes from the bot to the player. Idempotent.
+   */
+  private _enableDemoTakeOver(): void {
+    if (this.demoTakeOverHandler) return;
+    const handler = () => this.setDemoMode(false);
+    this.demoTakeOverHandler = handler;
+    this.input.keyboard?.on('keydown', handler);
+    this.input.on('pointerdown', handler);
+  }
+
+  /**
+   * Removes the demo take-over listeners. Called on take-over and on scene
+   * shutdown, so no listener leaks across sessions (AC3/AC4).
+   */
+  private _disableDemoTakeOver(): void {
+    const handler = this.demoTakeOverHandler;
+    if (!handler) return;
+    this.input.keyboard?.off('keydown', handler);
+    this.input.off('pointerdown', handler);
+    this.demoTakeOverHandler = null;
   }
 
   // ── Pause control (parent AH-0MU9LPZ0G0015292) ──────────────────
