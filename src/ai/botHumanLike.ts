@@ -40,13 +40,15 @@
  * turn is closed-loop: a held "aim at the mineral" intent tracks the target
  * precisely and never overshoots the way an open-loop held turn key would.
  *
- * ## Human-like thrust presses (AC15)
+ * ## Human-like thrust presses (AC15/AC16)
  *
  * The forward-model throttle can flip the thrust key every tick near the
  * braking boundary, which reads as mechanical `on/off/on/off`.  A human
  * presses for a perceptible burst, so the governor holds each forward-thrust
- * press for its base duration extended by a random **+25 % to +60 %** (drawn
- * per press from the run-seeded RNG).  This lengthens the "on" runs without
+ * press for a duration drawn from `[thrustPressMinMs, thrustPressMaxMs]`
+ * (200–225 ms) — extended to `thrustPressMaxMsLong` (400 ms) when the intent
+ * marks the leg as a long travel (`longTravel`).  Durations are drawn per
+ * press from the run-seeded RNG.  This lengthens the "on" runs without
  * changing the chosen target/heading; the ship may overshoot its standoff a
  * little more, which is the deliberate human-feel trade-off.
  *
@@ -105,16 +107,19 @@ export interface BotHumanInputTunables {
    */
   alignmentToleranceRad: number;
   /**
-   * Base duration (ms) of a forward-thrust press.  Each press is extended by
-   * a random factor in
-   * `[thrustPressExtensionMin, thrustPressExtensionMax]` so the bot holds the
-   * key in human-like bursts instead of toggling every tick (AC15).
+   * Minimum duration (ms) of a forward-thrust press.  Each press is drawn
+   * from `[thrustPressMinMs, thrustPressMaxMs]` so the bot holds the key in
+   * human-like bursts instead of toggling every tick (AC15).
    */
-  thrustPressBaseMs: number;
-  /** Minimum random extension applied to a thrust press (1 = none). */
-  thrustPressExtensionMin: number;
-  /** Maximum random extension applied to a thrust press. */
-  thrustPressExtensionMax: number;
+  thrustPressMinMs: number;
+  /** Maximum duration (ms) of a forward-thrust press normally (AC15/AC16). */
+  thrustPressMaxMs: number;
+  /**
+   * Maximum duration (ms) of a forward-thrust press when the bot is
+   * **travelling far** — the chosen target lies beyond the decision layer's
+   * `longTravelDistance` — so long legs get longer bursts (AC16).
+   */
+  thrustPressMaxMsLong: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -122,9 +127,9 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reactionTimeMs: 250,
   allowDown: false,
   alignmentToleranceRad: 0.15,
-  thrustPressBaseMs: 160,
-  thrustPressExtensionMin: 1.25,
-  thrustPressExtensionMax: 1.6,
+  thrustPressMinMs: 200,
+  thrustPressMaxMs: 225,
+  thrustPressMaxMsLong: 400,
 };
 
 /** Default seed for the governor's press-duration RNG (deterministic). */
@@ -163,6 +168,11 @@ export interface SteeredIntent extends FourDirectionalInput {
   readonly dirY?: number;
   /** Whether to apply forward thrust; `false` coasts (aims without thrusting). */
   readonly thrust?: boolean;
+  /**
+   * Whether the committed steering target is far (a long travel leg).  Long
+   * legs may use the extended thrust-press cap (AC16).
+   */
+  readonly longTravel?: boolean;
 }
 
 /** The ship context the governor needs to execute a steering intent. */
@@ -328,14 +338,16 @@ export class BotInputGovernor {
       this.committed = { ...this.committed, thrust: decision.thrust };
     }
 
-    // Human-like thrust presses (AC15): hold each press for its (randomly
-    // extended) duration so the braking reflex cannot flip the key every
-    // tick.  The chosen heading is unaffected.
+    // Human-like thrust presses (AC15/AC16): hold each press for its
+    // (randomly extended) duration so the braking reflex cannot flip the key
+    // every tick.  Long-travel legs draw from the extended cap.  The chosen
+    // heading is unaffected.
     this.committed = {
       ...this.committed,
       thrust: this.resolveThrustPress(
         this.committed.thrust !== false,
         dtMs,
+        this.committed.longTravel === true,
       ),
     };
 
@@ -344,11 +356,17 @@ export class BotInputGovernor {
   }
 
   /**
-   * Applies the human-like thrust-press hold (AC15): once thrust is on it
-   * stays on for a base duration extended by a random +25–60%, then it
-   * follows the live request.  Returns the effective thrust for this tick.
+   * Applies the human-like thrust-press hold (AC15/AC16): once thrust is on
+   * it stays on for a duration drawn from
+   * `[thrustPressMinMs, thrustPressMaxMs]`, or up to `thrustPressMaxMsLong`
+   * on a long-travel leg, then it follows the live request.  Returns the
+   * effective thrust for this tick.
    */
-  private resolveThrustPress(desiredThrust: boolean, dtMs: number): boolean {
+  private resolveThrustPress(
+    desiredThrust: boolean,
+    dtMs: number,
+    longTravel: boolean,
+  ): boolean {
     if (this.thrustPressRemainingMs > 0) {
       this.thrustPressRemainingMs = Math.max(
         0,
@@ -357,17 +375,11 @@ export class BotInputGovernor {
       return true;
     }
     if (!desiredThrust) return false;
-    const {
-      thrustPressBaseMs,
-      thrustPressExtensionMin,
-      thrustPressExtensionMax,
-    } = this.tunables;
-    const span = Math.max(
-      0,
-      thrustPressExtensionMax - thrustPressExtensionMin,
-    );
-    const extension = thrustPressExtensionMin + this.random() * span;
-    this.thrustPressRemainingMs = thrustPressBaseMs * extension;
+    const { thrustPressMinMs, thrustPressMaxMs, thrustPressMaxMsLong } =
+      this.tunables;
+    const maxMs = longTravel ? thrustPressMaxMsLong : thrustPressMaxMs;
+    const span = Math.max(0, maxMs - thrustPressMinMs);
+    this.thrustPressRemainingMs = thrustPressMinMs + this.random() * span;
     return true;
   }
 

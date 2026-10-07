@@ -456,17 +456,31 @@ describe('precise steering intent — point at the target (rejection)', () => {
 // when thrusting would carry it past the target.
 
 describe('predictive braking — plan the stopping distance (AC10)', () => {
-  it('coasts instead of thrusting when thrusting would overshoot', () => {
-    // 100 px from the mineral but already moving at 170 px/s: stopping
-    // distance is 170²/(2·100) = 144 px > gap (100 − 18) → coast.
+  it('coasts instead of thrusting when thrusting would overshoot (below retro-brake speed)', () => {
+    // 30 px from the mineral at 60 px/s: stopping distance 60²/(2·100) = 18 px
+    // > gap (30 − 18) → coast.  Below `retroBrakeMinSpeed`, so it does not
+    // spin — it just coasts.
     const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 170, vy: 0 },
-      minerals: [mineral(500, 300)],
+      player: { x: 400, y: 300, vx: 60, vy: 0 },
+      minerals: [mineral(430, 300)],
     });
     const intent = decideBotIntent(snapshot);
     expect(intent.thrust).toBe(false);
     // Still aims at the mineral, so the ship coasts straight at it.
     expect(intent.dirX).toBeGreaterThan(0);
+  });
+
+  it('retro-brakes instead of coasting when fast and overshooting (AC17)', () => {
+    // 100 px from the mineral at 170 px/s: stopping distance 144 px > gap 82.
+    // Fast enough to spin ~180° and thrust against the motion.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    const intent = decideBotIntent(snapshot);
+    expect(intent.thrust).toBe(true);
+    // Heading is opposite the velocity (the ship spins ~180° to brake).
+    expect(intent.dirX).toBeLessThan(0);
   });
 
   it('thrusts when it can still stop within the remaining distance', () => {
@@ -489,11 +503,12 @@ describe('predictive braking — plan the stopping distance (AC10)', () => {
 
   it('plans the standoff when engaging: coasts rather than ramming', () => {
     const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      player: { x: 400, y: 300, vx: 100, vy: 0 },
       enemies: [enemy(500, 300, 'tank')], // 100 px away; standoff is 70
     });
     const intent = decideBotIntent(snapshot);
-    // gap = 100 − 70 = 30; stopping distance 144 > 30 → coast (do not ram).
+    // gap = 100 − 70 = 30; stopping distance 50 > 30 → coast (below retro-brake
+    // speed, so it does not spin — it just does not thrust).
     expect(intent.thrust).toBe(false);
   });
 
@@ -505,6 +520,52 @@ describe('predictive braking — plan the stopping distance (AC10)', () => {
     expect(
       decideBotIntent(snapshot, { frictionDeceleration: 0 }).thrust,
     ).toBe(true);
+  });
+});
+
+// ── Hard retro-brake + long-travel legs (AC16/AC17) ─────────────────
+//
+// On a long/fast approach that would overshoot, the bot spins ~180° and
+// thrusts against its motion instead of merely coasting; long targets are
+// flagged so the governor can extend the thrust-press cap.
+
+describe('hard retro-brake and long-travel legs (AC16/AC17)', () => {
+  it('AC17 — retro-brakes along the heading opposite the velocity', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 120, vy: -120 }, // up-right, ~170 px/s
+      minerals: [mineral(480, 200)], // 128 px up-right; overshoot imminent
+    });
+    const intent = decideBotIntent(snapshot);
+    expect(intent.thrust).toBe(true);
+    // Opposite the up-right motion → down-left (spin ~180°).
+    expect(intent.dirX).toBeLessThan(0);
+    expect(intent.dirY).toBeGreaterThan(0);
+  });
+
+  it('AC17 — a slow overshoot merely coasts (no spin)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 60, vy: 0 },
+      minerals: [mineral(430, 300)],
+    });
+    const intent = decideBotIntent(snapshot);
+    expect(intent.thrust).toBe(false);
+    expect(intent.dirX).toBeGreaterThan(0);
+  });
+
+  it('AC16 — marks a far target as a long-travel leg', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(800, 300, 'scout')], // 400 px away
+    });
+    expect(decideBotIntent(snapshot).longTravel).toBe(true);
+  });
+
+  it('AC16 — does not mark a near target as long travel', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(550, 300, 'scout')], // 150 px away
+    });
+    expect(decideBotIntent(snapshot).longTravel).toBe(false);
   });
 });
 

@@ -60,6 +60,8 @@ interface SimulationTrace {
   minDistance: number;
   /** The ship's facing at the closest approach to the target. */
   minFacing: number;
+  /** Least angular error between the ship's facing and the target bearing. */
+  minFacingError: number;
   /** The ship's speed at the closest approach to the target. */
   minSpeed: number;
   /**
@@ -108,6 +110,7 @@ function simulateToward(
   let minDistance = startDistance;
   let maxDistance = startDistance;
   let minFacing = state.facing;
+  let minFacingError = Math.abs(angleDiff(state.facing, bearing(state, target)));
   let minSpeed = Math.hypot(state.vx, state.vy);
   let overshoot = 0;
 
@@ -132,6 +135,10 @@ function simulateToward(
       minSpeed = Math.hypot(state.vx, state.vy);
     }
     if (d > maxDistance) maxDistance = d;
+    const facingError = Math.abs(
+      angleDiff(state.facing, bearing(state, target)),
+    );
+    if (facingError < minFacingError) minFacingError = facingError;
     const projection =
       (state.x - target.x) * axisX + (state.y - target.y) * axisY;
     if (projection > overshoot) overshoot = projection;
@@ -142,6 +149,7 @@ function simulateToward(
     maxDistance,
     minDistance,
     minFacing,
+    minFacingError,
     minSpeed,
     overshoot,
     startDistance,
@@ -178,9 +186,11 @@ describe('closed-loop steering (rejection AH-0MUXYOV4C008MV0L)', () => {
 
     // The ship closed on the mineral substantially.
     expect(trace.minDistance).toBeLessThan(trace.startDistance * 0.5);
-    // And at closest approach it aimed at the exact bearing — not a cardinal.
+    // It aimed at the exact bearing at some point — not a cardinal.  (The
+    // retro-brake later spins the hull away from the target to shed speed,
+    // AC17, so the error is measured over the whole run, not at the end.)
     const expected = bearing(START, target);
-    expect(Math.abs(angleDiff(trace.minFacing, expected))).toBeLessThan(0.35);
+    expect(trace.minFacingError).toBeLessThan(0.35);
     expect(Math.abs(angleDiff(expected, 0))).toBeGreaterThan(0.3);
     expect(Math.abs(angleDiff(expected, -Math.PI / 2))).toBeGreaterThan(0.3);
     expect(Math.abs(angleDiff(expected, Math.PI))).toBeGreaterThan(0.3);

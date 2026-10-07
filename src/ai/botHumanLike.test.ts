@@ -435,9 +435,9 @@ describe('forward-model throttle (AC10)', () => {
     const governor = new BotInputGovernor(
       {
         reactionTimeMs: 1000,
-        thrustPressBaseMs: 160,
-        thrustPressExtensionMin: 1.25,
-        thrustPressExtensionMax: 1.6,
+        thrustPressMinMs: 200,
+        thrustPressMaxMs: 225,
+        thrustPressMaxMsLong: 400,
       },
       1,
     );
@@ -473,27 +473,31 @@ describe('forward-model throttle (AC10)', () => {
   });
 });
 
-// ── Human-like thrust presses (AC15) ────────────────────────────────
+// ── Human-like thrust presses (AC15/AC16) ───────────────────────────
 //
 // The operator reported the bot toggling the thruster "on/off/on/off" to
-// avoid overshooting and asked for human-length presses extended by a random
-// +25–60% per press.
+// avoid overshooting and asked for human-length presses (200–225 ms, extended
+// to 400 ms on a long-travel leg).
 
-describe('human-like thrust presses (AC15)', () => {
+describe('human-like thrust presses (AC15/AC16)', () => {
   const DT = 1 / 60;
   const DT_MS = DT * 1000;
   const T = {
-    thrustPressBaseMs: 160,
-    thrustPressExtensionMin: 1.25,
-    thrustPressExtensionMax: 1.6,
+    thrustPressMinMs: 200,
+    thrustPressMaxMs: 225,
+    thrustPressMaxMsLong: 400,
     reactionTimeMs: 1000,
   };
   const thrustIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
+  const longThrustIntent = { ...thrustIntent, longTravel: true };
   const coastIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: false };
 
   /** Measures the on-run (ms) of the press started by a rising thrust edge. */
-  function measurePressMs(governor: BotInputGovernor): number {
-    governor.update(thrustIntent, DT, { scheme: 'asteroids', facing: 0 });
+  function measurePressMs(
+    governor: BotInputGovernor,
+    intent: FourDirectionalInput & { dirX: number; dirY: number; thrust: boolean; longTravel?: boolean } = thrustIntent,
+  ): number {
+    governor.update(intent, DT, { scheme: 'asteroids', facing: 0 });
     let ticks = 1;
     for (let i = 0; i < 60; i += 1) {
       const out = governor.update(coastIntent, DT, {
@@ -508,23 +512,36 @@ describe('human-like thrust presses (AC15)', () => {
 
   it('extends a one-tick thrust request into a full press', () => {
     const ms = measurePressMs(new BotInputGovernor(T, 1));
-    // Base 160 ms + 25–60% → 200–256 ms (allow two ticks of measurement
-    // slack: the press spans from the rising edge to the tick it expires).
+    // 200–225 ms (allow two ticks of measurement slack: the press spans from
+    // the rising edge to the tick it expires).
     expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
-    expect(ms).toBeLessThanOrEqual(256 + 2 * DT_MS);
+    expect(ms).toBeLessThanOrEqual(225 + 2 * DT_MS);
     // A full press is many ticks, not the raw one-tick blip.
     expect(ms / DT_MS).toBeGreaterThan(8);
   });
 
-  it('randomises each press within the +25–60% band', () => {
+  it('randomises each press within the 200–225 ms band', () => {
     const governor = new BotInputGovernor(T, 7);
     const durations = [0, 1, 2, 3, 4].map(() => measurePressMs(governor));
     for (const ms of durations) {
       expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
-      expect(ms).toBeLessThanOrEqual(256 + 2 * DT_MS);
+      expect(ms).toBeLessThanOrEqual(225 + 2 * DT_MS);
     }
     // Random per press: not all presses are the same length.
     expect(new Set(durations.map((d) => Math.round(d))).size).toBeGreaterThan(1);
+  });
+
+  it('AC16 — extends the press cap to 400 ms on a long-travel leg', () => {
+    const governor = new BotInputGovernor(T, 11);
+    const durations = [0, 1, 2, 3, 4, 5, 6, 7].map(() =>
+      measurePressMs(governor, longThrustIntent),
+    );
+    for (const ms of durations) {
+      expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+      expect(ms).toBeLessThanOrEqual(400 + 2 * DT_MS);
+    }
+    // The long cap is genuinely larger than the normal one.
+    expect(Math.max(...durations)).toBeGreaterThan(225 + DT_MS);
   });
 
   it('is deterministic for a given seed', () => {

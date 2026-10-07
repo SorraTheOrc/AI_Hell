@@ -52,7 +52,7 @@
  * unit-tested with plain stubbed snapshots.  Every tunable lives in
  * {@link BotDecisionTunables} (AC5) — there are no scattered magic numbers.
  *
- * ## Forward model (AC10 — no thruster overshoot)
+ * ## Forward model (AC10 — no thruster overshoot, AC17 — hard retro-brake)
  *
  * The ship is Newtonian and has no brakes, so a bot that simply points at its
  * target and holds the throttle flies past it.  `decideBotIntent` therefore
@@ -65,7 +65,13 @@
  * while `thrust` is `false`, so the ship coasts to a controlled stop rather
  * than overshooting.  The governor re-evaluates this thrust flag every tick
  * (a fast reflex) while the chosen heading stays committed for the human
- * reaction window.
+ * reaction window, holding each press for a human-like burst (AC15/AC16).
+ *
+ * When the ship is moving fast ({@link BotDecisionTunables.retroBrakeMinSpeed})
+ * and coasting cannot stop it in time, it does not merely coast: it **spins
+ * ~180°** (the intent heading is opposite its current velocity) and
+ * **thrusts against the motion** to brake hard, resuming the approach once it
+ * can stop in time (AC17).  The survival tier still bounds the brake bearing.
  *
  * @module src/ai/botDecision
  */
@@ -164,6 +170,17 @@ export interface BotDecisionTunables {
    * focuses on clearing the wave (AC14).
    */
   waveClearBoost: number;
+  /**
+   * Distance (px) beyond which the chosen target counts as a **long travel**
+   * leg.  Long legs may use the extended thrust-press cap (AC16).
+   */
+  longTravelDistance: number;
+  /**
+   * Minimum speed (px/s) at which the bot will actively **retro-brake**
+   * (spin ~180° and thrust against its motion) instead of coasting when the
+   * forward model says it would overshoot (AC17).
+   */
+  retroBrakeMinSpeed: number;
   /** Playfield width (px) — the right wall sits at this x. */
   playfieldWidth: number;
   /** Playfield height (px) — the bottom wall sits at this y. */
@@ -194,6 +211,8 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   powerUpDivertWeight: 1.4,
   divertThreshold: 0.5,
   waveClearBoost: 1,
+  longTravelDistance: 250,
+  retroBrakeMinSpeed: 120,
   playfieldWidth: 960,
   playfieldHeight: 540,
 };
@@ -224,6 +243,12 @@ export interface BotSteeringIntent extends FourDirectionalInput {
    * (aim but do not accelerate) — used when thrusting would overshoot.
    */
   readonly thrust: boolean;
+  /**
+   * Whether the chosen target is a **long travel** leg (distance beyond
+   * `longTravelDistance`).  The governor uses it to extend the thrust-press
+   * cap for long trips (AC16).
+   */
+  readonly longTravel: boolean;
 }
 
 // ── Direction primitives ────────────────────────────────────────────
@@ -800,6 +825,7 @@ export function decideBotInput(
     dirX: _dirX,
     dirY: _dirY,
     thrust: _thrust,
+    longTravel: _longTravel,
     ...cardinal
   } = decideBotIntent(snapshot, tunableOverrides);
   return cardinal;
@@ -827,6 +853,7 @@ function approachIntent(
   safeDirections: readonly BotDirection[],
   arrivalRadius: number,
 ): BotSteeringIntent | null {
+  const longTravel = target.distance >= t.longTravelDistance;
   const rx = target.x - px;
   const ry = target.y - py;
   const d = Math.hypot(rx, ry) || 1;
@@ -835,17 +862,64 @@ function approachIntent(
   // Forward model (AC10): only accelerate when the ship can still shed the
   // speed it has by the time it reaches the target; otherwise coast.  A
   // retreat always thrusts (it is trying to escape, not arrive).
-  const thrust =
+  const canThrust =
     direction === 1
       ? mayThrust(snapshot, t, target.distance, arrivalRadius)
       : true;
 
+  // Hard retro-brake (AC17): when moving fast and coasting cannot stop in
+  // time, spin ~180° and thrust against the motion instead of merely coasting.
+  if (direction === 1 && !canThrust) {
+    const brake = retroBrakeIntent(snapshot, t, px, py, safeDirections);
+    if (brake) return brake;
+  }
+
   if (evaluateVector(dirX, dirY, snapshot, t, px, py).safe) {
-    return buildIntent(dirX, dirY, thrust);
+    return buildIntent(dirX, dirY, canThrust, longTravel);
   }
 
   const safe = steerToward(target, safeDirections, px, py, direction);
-  return safe ? buildCardinalIntent(safe, thrust) : null;
+  return safe ? buildCardinalIntent(safe, canThrust, longTravel) : null;
+}
+
+/**
+ * Builds the hard retro-brake intent (AC17): the ship turns to face the
+ * direction **opposite its current motion** and thrusts, shedding speed far
+ * faster than coasting.
+ *
+ * Returns `null` when the ship is too slow for a retro-brake to be worthwhile
+ * (it coasts instead).  When the exact reverse bearing is unsafe, the safe
+ * cardinal that most opposes the velocity is used; if no safe direction
+ * opposes it, `null` and the caller falls back to the normal approach.
+ */
+function retroBrakeIntent(
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  px: number,
+  py: number,
+  safeDirections: readonly BotDirection[],
+): BotSteeringIntent | null {
+  const player = snapshot.player;
+  if (!player) return null;
+  const speed = Math.hypot(player.vx, player.vy);
+  if (speed < t.retroBrakeMinSpeed) return null;
+  const dirX = -player.vx / speed;
+  const dirY = -player.vy / speed;
+  if (evaluateVector(dirX, dirY, snapshot, t, px, py).safe) {
+    // Braking is a long-travel manoeuvre: allow the extended press cap.
+    return buildIntent(dirX, dirY, true, true);
+  }
+  let best: BotDirection | null = null;
+  let bestDot = 0;
+  for (const dir of safeDirections) {
+    const vec = DIR_VECTORS[dir];
+    const dotWithBrake = vec.dx * dirX + vec.dy * dirY;
+    if (dotWithBrake > bestDot + EPS) {
+      bestDot = dotWithBrake;
+      best = dir;
+    }
+  }
+  return best ? buildCardinalIntent(best, true, true) : null;
 }
 
 /**
@@ -953,7 +1027,12 @@ function mostClearDirection(
  * normalised and the cardinal booleans are its nearest-cardinal projection,
  * so `decideBotInput` stays a faithful four-directional approximation.
  */
-function buildIntent(dirX: number, dirY: number, thrust = true): BotSteeringIntent {
+function buildIntent(
+  dirX: number,
+  dirY: number,
+  thrust = true,
+  longTravel = false,
+): BotSteeringIntent {
   const len = Math.hypot(dirX, dirY) || 1;
   const ux = dirX / len;
   const uy = dirY / len;
@@ -965,13 +1044,23 @@ function buildIntent(dirX: number, dirY: number, thrust = true): BotSteeringInte
       : uy >= 0
         ? { up: false, down: true, left: false, right: false }
         : { up: true, down: false, left: false, right: false };
-  return { ...cardinal, dirX: ux, dirY: uy, thrust };
+  return { ...cardinal, dirX: ux, dirY: uy, thrust, longTravel };
 }
 
 /** Builds an intent along a cardinal direction. */
-function buildCardinalIntent(dir: BotDirection, thrust = true): BotSteeringIntent {
+function buildCardinalIntent(
+  dir: BotDirection,
+  thrust = true,
+  longTravel = false,
+): BotSteeringIntent {
   const vec = DIR_VECTORS[dir];
-  return { ...buildInput(dir), dirX: vec.dx, dirY: vec.dy, thrust };
+  return {
+    ...buildInput(dir),
+    dirX: vec.dx,
+    dirY: vec.dy,
+    thrust,
+    longTravel,
+  };
 }
 
 /** Builds a `FourDirectionalInput` from a direction. */
@@ -994,5 +1083,6 @@ function idleIntent(): BotSteeringIntent {
     dirX: 0,
     dirY: 0,
     thrust: false,
+    longTravel: false,
   };
 }
