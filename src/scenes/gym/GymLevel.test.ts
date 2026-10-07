@@ -195,6 +195,19 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(secondWave).not.toBe(firstWave);
   });
 
+  it('AC1 gym-parity — the re-derived L4–L5 targets are non-degenerate in the gym', () => {
+    // Gym↔game parity (AH-0MUX60S9L0006NJ0): the gym's `sequenceVariedWaves`
+    // shares `sequencer()` with the campaign, so the re-derived L4–L5 targets
+    // must not produce degenerate single-enemy waves on the gym path either
+    // (the gym passes its tighter `CURVE_TARGET_TOLERANCE = 3`).
+    const waves = sequenceVariedWaves([14, 22, 27.5, 43.5, 62]);
+    expect(waves).toHaveLength(5);
+    for (const wave of waves) {
+      const total = wave.groups.reduce((sum, group) => sum + group.count, 0);
+      expect(total, `target ${wave.targetDifficulty}`).toBeGreaterThan(1);
+    }
+  });
+
   it('AC3 — an empty launch data set is safe (no crash, empty label)', async () => {
     booted = await bootScene([GymLevel]);
     const scene = booted.scene as GymLevel;

@@ -11,10 +11,13 @@
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
 
-import { buildSequencedLevels } from './sequencedLevels';
+import { buildSequencedLevels, dynamicTarget } from './sequencedLevels';
 import { LEVELS, LEVEL_COUNT } from './Formations';
+import type { WaveDefinition } from './Formations';
 import { WaveManager } from './WaveManager';
 import { defaultCandidatePool, sequencer } from '../core/difficultySequencer';
+import { FACTOR_RANGES, FACTOR_WEIGHTS } from '../core/enemyDifficulty';
+import { DEFAULT_ENEMY_CONFIGS } from '../core/configDefaults';
 import type {
   DifficultyCurveRow,
   DifficultyGeneration,
@@ -738,11 +741,12 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
   });
 
   it('pins the retuned curve-generated levels 4–5 compositions', () => {
-    // Baseline re-recorded for AH-0MUWZ5GST003NMFQ (enemy bullet speeds
-    // halved): the reduced `bulletSpeed` difficulty factor shifts which
-    // candidate the sequencer selects near the hand-tuned L4/L5 targets.
-    // Per Q3-A the score shift is accepted and the targets are NOT re-tuned;
-    // the sequencer still meets each wave's target within its tolerance.
+    // Baseline re-recorded for AH-0MUX60S9L0006NJ0 (L4–L5 re-calibration):
+    // the targets were re-derived against the post-halving enemyDifficulty
+    // scores so the sequencer re-selects the pre-halving high-quality
+    // compositions instead of the degenerate single-enemy waves
+    // (AH-0MUWZ5GST003NMFQ). Each wave still meets its target within the
+    // sequencer's ±1.0 acceptance band.
     const composition = (levelNumber: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
@@ -753,12 +757,12 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
               .join('+') || 'none',
         );
     expect(composition(4)).toEqual([
-      'swarmx1',
-      'tankx1',
-      'phaserx1',
+      'scoutx18',
+      'diverx18',
+      'tankx18',
     ]);
     expect(composition(5)).toEqual([
-      'phaserx12+swarmx1',
+      'phaserx12+scoutx18',
       'phaserx12+phaserx12+bossx1',
     ]);
   });
@@ -776,6 +780,119 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     const seedB = buildSequencedLevels(undefined, undefined, { seed: 2 });
     expect(seedARepeat).toEqual(seedA);
     expect(seedB).not.toEqual(seedA);
+  });
+});
+
+// ── L4–L5 re-calibration after bullet-speed halving (AH-0MUX60S9L0006NJ0) ──
+
+/**
+ * Halving every enemy `bulletSpeed` (AH-0MUWZ5GST003NMFQ) lowered each
+ * archetype's `enemyDifficulty` by ~0.5–1 point (bulletSpeed weight 5/116),
+ * which flipped the sequencer's `argmin` near the hand-tuned L4–L5 targets and
+ * produced degenerate single-enemy waves (`swarmx1`/`tankx1`/`phaserx1`).
+ * Re-deriving the L4–L5 targets against the post-halving scores restores the
+ * pre-halving high-quality compositions without touching the difficulty model.
+ *
+ * AC2's "measured difficulty" is the sequencer's summed `enemyDifficulty` —
+ * its documented 0–100 target scale — not the saturating `waveDifficulty()`
+ * transform (see the work-item decision comment). Every assertion here is made
+ * through the public `buildSequencedLevels` / `sequencer` API.
+ */
+describe('L4–L5 re-calibration after bullet-speed halving (AH-0MUX60S9L0006NJ0)', () => {
+  const FIRING_LEVELS = [4, 5] as const;
+  const SEEDS = [0, 1, 2, 3, 7, 42, 100, 255, 777, 999];
+
+  function levelOf(levels: ReturnType<typeof buildSequencedLevels>, level: number) {
+    return levels.find((l) => l.level === level)!;
+  }
+
+  /** The default campaign for a seed (the baked-in curve). */
+  function camp(seed = 0) {
+    return buildSequencedLevels(undefined, undefined, { seed });
+  }
+
+  /** `enemyKeyxcount` per group, joined with `+` (or `none`). */
+  function compositionOf(wave: WaveDefinition): string {
+    return (
+      wave.groups
+        .map((group) => `${group.enemyKey}x${group.count}`)
+        .join('+') || 'none'
+    );
+  }
+
+  function totalCount(wave: WaveDefinition): number {
+    return wave.groups.reduce((sum, group) => sum + group.count, 0);
+  }
+
+  it('AC1 — no L4–L5 generated wave is a single firing enemy', () => {
+    for (const levelNumber of FIRING_LEVELS) {
+      for (const wave of levelOf(camp(), levelNumber).waves) {
+        expect(
+          totalCount(wave),
+          `L${levelNumber} ${compositionOf(wave)}`,
+        ).toBeGreaterThan(1);
+      }
+    }
+  });
+
+  it('AC1 — the L4–L5 compositions differ within each level at the default seed', () => {
+    for (const levelNumber of FIRING_LEVELS) {
+      const compositions = levelOf(camp(), levelNumber).waves.map(compositionOf);
+      expect(new Set(compositions).size, `L${levelNumber}`).toBe(
+        compositions.length,
+      );
+    }
+  });
+
+  it('AC1 — every seed yields non-degenerate L4–L5 waves', () => {
+    for (const seed of SEEDS) {
+      for (const levelNumber of FIRING_LEVELS) {
+        for (const wave of levelOf(camp(seed), levelNumber).waves) {
+          expect(
+            totalCount(wave),
+            `seed=${seed} L${levelNumber} ${compositionOf(wave)}`,
+          ).toBeGreaterThan(1);
+        }
+      }
+    }
+  });
+
+  it('AC1 — restores the pre-halving L4 compositions (scout/diver/tank ×18)', () => {
+    const compositions = levelOf(camp(), 4).waves.map(compositionOf);
+    expect(compositions).toEqual(['scoutx18', 'diverx18', 'tankx18']);
+  });
+
+  it('AC2 — the sequencer meets each L4–L5 target within ±1.0 of its difficulty scale', () => {
+    const pool = defaultCandidatePool();
+    const rows = defaultDifficultyCurves().filter(
+      (row) => row.level === 4 || row.level === 5,
+    );
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      // The `dynamic` L5 W2 target is seed-jittered; at seed 0 its effective
+      // target is the configured value shifted by the run seed.
+      const effectiveTarget =
+        row.generation === 'dynamic'
+          ? dynamicTarget(row.targetDifficulty, 0, row.level, row.wave)
+          : row.targetDifficulty;
+      const result = sequencer([effectiveTarget], pool, {
+        defaultShootEnabled: true,
+      });
+      expect(
+        Math.abs(result.errors[0]),
+        `L${row.level} W${row.wave} target ${effectiveTarget}`,
+      ).toBeLessThanOrEqual(1.0);
+    }
+  });
+
+  it('AC3 — the halved bullet-speed difficulty inputs are unchanged', () => {
+    expect(FACTOR_RANGES.bulletSpeed).toEqual({ min: 40, max: 600 });
+    expect(FACTOR_WEIGHTS.bulletSpeed).toBe(5);
+    // Every enemy archetype keeps its halved speed (exact values are pinned by
+    // the dedicated AH-0MUWZ5GST003NMFQ test).
+    for (const key of Object.keys(DEFAULT_ENEMY_CONFIGS)) {
+      expect(DEFAULT_ENEMY_CONFIGS[key].bulletSpeed, key).toBeLessThanOrEqual(110);
+    }
   });
 });
 
