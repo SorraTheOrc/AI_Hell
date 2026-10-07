@@ -124,7 +124,11 @@ export class MenuScene extends Phaser.Scene {
     playButton.on('pointerdown', () => {
       // Initialise the Web Audio context on user gesture (autoplay policy).
       resumeAudioContext(this.sound);
-      this.scene.start('PlayScene');
+      // Explicit non-demo payload: Phaser only rewrites `settings.data` for a
+      // truthy `data`, so a no-argument start after a demo would reuse the
+      // stale `{ demo: true }` payload and leave the bot in control
+      // (AH-0MUY4881P007FJ8R).
+      this.scene.start('PlayScene', { demo: false });
     });
 
     this.controls.push({ label: '▶  Play Game', text: playButton });
@@ -264,7 +268,9 @@ export class MenuScene extends Phaser.Scene {
     // activation — the scene contains no ad-hoc key routing.
     this.focusManager.register(playButton, () => {
       resumeAudioContext(this.sound);
-      this.scene.start('PlayScene');
+      // Explicit non-demo payload (see the pointerdown handler above) so a
+      // normal start after a demo never inherits `{ demo: true }`.
+      this.scene.start('PlayScene', { demo: false });
     });
     this.focusManager.register(demoButton, () => {
       resumeAudioContext(this.sound);
@@ -311,6 +317,12 @@ export class MenuScene extends Phaser.Scene {
    * Starts the bot-driven attract/demo run (AC2). The `{ demo: true }` flag
    * is the only difference from a normal start, so the engine owns all demo
    * behaviour.
+   *
+   * Scene-start data contract (AH-0MUY4881P007FJ8R): every *normal* start
+   * must pass an explicit non-demo payload (`{ demo: false }`). Phaser's
+   * `Systems.start(data)` only writes `settings.data` for a truthy `data`, so
+   * a no-argument `scene.start('PlayScene')` reuses this demo payload and
+   * re-enables the bot. See {@link PlayScene.init}.
    */
   startDemo(): void {
     this.scene.start('PlayScene', { demo: true });
