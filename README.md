@@ -353,12 +353,14 @@ wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. Thi
 
 #### The Playable Game (primary entry point)
 
-The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): five progressively harder levels (Levels 1–3 are formation-only, Level 4 introduces enemy fire, Level 5 is fewer enemies with predictable patterns) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via P8 Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. On game over the **GameOverScene** shows the final score, accepts 3-letter initials when the score qualifies, renders the full ranked leaderboard with a live highlighted **prospective row** showing where the score will land, and persists to `localStorage` under `ai_hell_leaderboard` (see [Leaderboard](#leaderboard)); **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
+The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): five progressively harder levels (Levels 1–3 are formation-only, Level 4 introduces enemy fire, Level 5 is fewer enemies with predictable patterns) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via P8 Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. The menu also offers **👁 Watch Demo**, which starts the game's own **attract/demo mode** — the survival-first bot plays a run — and after 15 s of menu inactivity the demo starts on its own. On game over the **GameOverScene** shows the final score, accepts 3-letter initials when the score qualifies, renders the full ranked leaderboard with a live highlighted **prospective row** showing where the score will land, and persists to `localStorage` under `ai_hell_leaderboard` (see [Leaderboard](#leaderboard)); **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
 
 Flow / scene keys:
 
-- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **Settings** → `SettingsScene` (origin `MenuScene`), **Leaderboard** → `LeaderboardScene` (full ranked table), **Gym Scene Index (dev)** → `GymIndex` (relocated to the bottom-right). **Play Game** is focused by default; **Tab**/arrow keys cycle focus, **Enter**/**Space** activate.
+- `MenuScene` — boot scene; **Play Game** → `PlayScene`, **👁 Watch Demo** → `PlayScene` in **demo mode** (the bot plays), **Settings** → `SettingsScene` (origin `MenuScene`), **Leaderboard** → `LeaderboardScene` (full ranked table), **Gym Scene Index (dev)** → `GymIndex` (relocated to the bottom-right). **Play Game** is focused by default; **Tab**/arrow keys cycle focus, **Enter**/**Space** activate. A 15 s idle-attract timer (reset by any input) also starts the demo.
 - `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score. Gameplay is fully keyboard-driven (WASD/arrows move, **S**/**↓** drops a layer, auto-fire is continuous) — no mouse is required.
+
+> **Attract / demo mode (AH-0MUX2NENC008AHOQ)** — the game ships an opt-in **attract/demo mode**: the menu's **👁 Watch Demo** control (or 15 s of menu inactivity — `ATTRACT_IDLE_TIMEOUT_MS` in `src/scenes/MenuScene.ts`) starts `PlayScene` with `{ demo: true }`. The survival-first bot in `src/ai/` (`buildBotSnapshot` → `decideBotInput`) then steers the ship through the **same shared `CombatCoreScene._tickPlayer` input path** as a human: survive → engage nearby threats → seek power-ups → collect minerals → best-effort fire-pattern avoidance. Pressing any key or the pointer **takes over** in place (`setDemoMode(false)`) with no restart, and a demo run is **non-scoring** — on death or victory it returns straight to the menu (never `GameOverScene`), writing no leaderboard or session state. Demo mode is **opt-in and `PlayScene`-only**: the bot never runs in a normal session, and the gyms inherit the default `getBotInput() === null`, so gym↔game parity is preserved (the shared input seam in `CombatCoreScene` is exercised by both). Tunables live in one place (`BOT_DECISION_TUNABLES` in `src/ai/botDecision.ts`); the read-only snapshot contract is documented in `src/ai/botSnapshot.ts`.
 
 > **Shared combat core (`src/scenes/core/CombatCoreScene.ts` → `src/scenes/core/CombatScene.ts`)** — the shared combat/lifecycle logic lives in a two-tier hierarchy so no production scene keeps a divergent copy. `CombatCoreScene` is the narrower base: it owns the shared player-control step (`_tickPlayer`: weapon timers → live P5 multipliers → input → physics → auto-fire) and the input path (`_readPlayerInput`, which delegates the scheme→input branch to the shared `mapControlInput` helper in `src/utils/movementModel.ts`), auto-fire (`_autoFire` + `spawnPlayerBullet`, with the `onWeaponFired` cue hook) and drop collection (`_collectDrop` + absorb VFX, with the `onWeaponCollected`/`onPowerUpCollected`/`_playPickupCue` hooks), the player-explosion/collect registries, `_clearEnemyBullets`/`_spawnPlayerExplosion`, and the shared invulnerability/phase/absorption hooks (`getInvulnerabilityDuration`, `isPlayerPhased`, `tryAbsorbPlayerHit`). The combat-specific `CombatScene` extends it and adds collision resolution, hostile hits and teleports (`_handleCollisions`, `_hitPlayer`, `_handleTeleport`/`triggerTeleport`, plus the bullet-vs-bullet impact feedback). Concrete scenes extend whichever tier they need and supply scene specifics through the overridable hook contract (participant accessors plus `onWeaponFired`, `onEnemyDestroyed`, `onPlayerHit`, `onPowerUpCollected`, `canTeleport`, `getTeleportEnemyHitRadius`, `getTeleportBulletHitRadius`, `onBulletVsBulletImpact`, …). Hierarchy: `CombatCoreScene` → `CombatScene` → `PlayScene` / `GymFormationScene` / `GymPowerUpsCombat` / `GymPlayer`; and `CombatCoreScene` → `GymWeapons` / `GymPowerUpsUtility`. Each of the nine shared template methods (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`, `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`, `_readPlayerInput`, `_tickPlayer`) is defined exactly once across all production scenes, enforced repo-wide by `CombatScene.equivalence.test.ts`. Every scene advances the player through the shared `_tickPlayer` step, including the `GymPlayer` thruster-navigation scene (re-based onto `CombatScene`, AH-0MUAYB2XR007N10W), which also consumes the shared collision pass for its deterministic, indestructible obstacle course. Weapon-free gyms (`GymPowerUpsUtility`, `GymPowerUpsCombat`) override `autoFireEnabled()` so auto-fire resolves to a no-op for the feature they do not enable (AH-0MUII39KX007YUQ0, gaps 1 & 11). Bullet-vs-bullet interceptions get a dedicated `playBulletDestructionSound()` cue and a small impact flash (`src/vfx/bulletImpact.ts`) from the single shared path (AH-0MUD8E015004C4JO; standalone-gym consolidation AH-0MUDCT7EU0061OSZ). Player auto-fire is **phase-locked to a single shared beat clock** (`CombatCoreScene.beatClock`, `src/utils/beat.ts`, created once per scene and injected into the player via `setBeatClock`): every shot lands on an exact subdivision of the configurable 80 BPM grid (`beatBpm` / `weaponSubdivisions` in `src/core/rules.ts`), so the game and every gym share one clock and cannot drift (AH-0MUAYB8EH005RJ8B).
 >
@@ -381,7 +383,7 @@ Flow / scene keys:
 
 > **Keyboard-only navigation** — the whole game is playable without a mouse. Menu-style scenes use a shared in-canvas focus model (`src/utils/focusManager.ts`, `FocusManager`): the primary control is focused by default and highlighted, **Tab** / **Shift+Tab** and the arrow keys cycle focus with wrap-around, and **Enter** / **Space** activate the focused control. On the menu, **Play Game** is focused by default, so pressing **Enter** starts a game; on game over, type your initials and press **Enter** (auto-submit) or **Tab** to **Return to Menu** and press **Enter**. The dev-mode **Gym Index** is keyboard-operable the same way: its rows are focused in reading order, **Tab**/arrows move between them, and **Enter**/**Space** launch the focused scene. Pointer interaction still works unchanged.
 
-Run it with `npm run dev` and either click **Play Game** or press **Enter**.
+Run it with `npm run dev` and either click **Play Game** or press **Enter**. Leave the menu idle for 15 s — or press **Tab** then **Enter** on **👁 Watch Demo** — to watch the bot play the demo; press any key to take over.
 
 #### Leaderboard
 
@@ -475,10 +477,13 @@ with the opt-in `npm run capture` command (spike AH-0MUWMFF3C002WOBK; audio
 added by AH-0MUWTNPYJ0031FQE):
 
 - **One command:** after `npm install` + `npm run capture:install`,
-  `npm run capture` boots the game in headless Chromium (Playwright), plays a
-  deterministic scripted segment and writes a playable WebM to
-  `capture-output/` (git-ignored). Options: `--duration <ms>`, `--output
-  <path>`, `--headed`, `--warmup <ms>`, `--port <n>`, `--json`. The command
+  `npm run capture` boots the game in headless Chromium (Playwright), records
+  the shipped **in-game demo** (the survival-first bot plays itself) and
+  writes a playable WebM to `capture-output/` (git-ignored). Pass
+  `--scripted` to fall back to the original deterministic key plan. Options:
+  `--duration <ms>`, `--output
+  <path>`, `--headed`, `--warmup <ms>`, `--port <n>`, `--json`,
+  `--scripted`. The command
   prints progress milestones and a recording heartbeat (with an ETA) to
   stderr so a long capture never looks hung, and fails fast with the fix if
   `playwright`/Chromium is missing. It probes the produced clip (resolution,
@@ -491,10 +496,12 @@ added by AH-0MUWTNPYJ0031FQE):
   `AudioNode.prototype.connect` so the game's shared master gain is mirrored
   into a `MediaStreamAudioDestinationNode`), muxes that audio with
   `canvas.captureStream(60)`, drives `MediaRecorder` inside the page, and
-  replays the scripted key plan from `scripts/capture-bot.mjs` as real
-  Playwright input (Enter starts **Play Game** and resumes the audio context;
-  the auto-firing ship is steered across `PlayScene` level 1). The plan
-  builder and the video/audio verification predicates are pure and
+  records the **in-game demo** by activating **👁 Watch Demo** through the
+  normal menu path (**Tab** to it, then **Enter**; the gesture also resumes
+  the audio context). With `--scripted` it instead replays the scripted key
+  plan from `scripts/capture-bot.mjs` as real Playwright input (**Enter**
+  starts **Play Game**). The mode helpers (`resolveCaptureMode` /
+  `captureStartKeys`) and the video/audio verification predicates are pure and
   unit-tested in `scripts/capture-gameplay.test.ts`.
 - **Fully opt-in:** the tool lives under `scripts/` and is never imported by
   `src/` (the audio tap is injected page-side, so the shipped bundle is

@@ -67,7 +67,7 @@ the game-over screen (the in-game pause menu follows the same model).
   focused at a time.
 - **Menu (`MenuScene`):** *Play Game* is focused by default, so pressing
   **Enter** starts a run; **Tab**/arrows cycle through *Play Game* →
-  *Settings* → *Gym Scene Index (dev)*.
+  *Watch Demo* → *Settings* → *Leaderboard* → *Gym Scene Index (dev)*.
 - **Game over (`GameOverScene`):** the initials field is focused by default
   and **A–Z** / **Backspace** edit it; **Tab**/arrows move focus to
   *Return to Menu*. **Enter** auto-submits when the initials are complete;
@@ -76,6 +76,43 @@ the game-over screen (the in-game pause menu follows the same model).
   browser move focus while the game has keyboard focus.
 - Pointer interaction is unchanged: hovering still highlights a control and
   clicking still activates it (keyboard support is additive).
+
+#### Attract / demo mode (AH-0MUX2NENC008AHOQ)
+
+The game ships an optional **attract/demo mode** that plays itself — for an
+arcade attract loop, capture/marketing clips, and as a regression harness.
+
+- **Entry points:** the menu's **👁 Watch Demo** control, or **15 seconds of
+  menu inactivity** (the idle-attract timer, `ATTRACT_IDLE_TIMEOUT_MS` in
+  `src/scenes/MenuScene.ts`, reset by any key or pointer input). Both start
+  `PlayScene` with `{ demo: true }`.
+- **The bot:** a **survival-first** heuristic in `src/ai/`. A read-only,
+  deep-frozen `BotSnapshot` (`buildBotSnapshot`) is built each decision tick
+  from the scene's existing getters, and the pure `decideBotInput(snapshot)`
+  returns a four-directional `ControlInput`. The priority ladder is:
+  1. **Survive** — never steer into a bullet, asteroid, enemy or wall when a
+     safe alternative exists (best-effort fire-pattern avoidance from fire
+     tells/intervals and in-flight bullets).
+  2. **Threat response** — engage a live enemy/asteroid inside the engagement
+     radius, keeping a minimum distance.
+  3. **Power-ups** — with no nearby threat, seek the nearest power-up.
+  4. **Minerals** — collect on the way, otherwise second priority.
+  5. **Idle** — nothing to do: hold station.
+  All tunables live in one place (`BOT_DECISION_TUNABLES` in
+  `src/ai/botDecision.ts`).
+- **Same input path as a player:** the bot's decision flows through the shared
+  `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
+  before the keyboard — so the demo ship obeys exactly the same
+  `_tickPlayer` movement/auto-fire path as a human.
+- **Take over:** pressing any key or the pointer leaves demo mode in place
+  (`setDemoMode(false)`) — the run continues under player control, no restart.
+- **Non-scoring:** on death or victory a demo run returns straight to the main
+  menu (it never enters `GameOverScene`), so it writes no leaderboard entry and
+  no session state.
+- **Opt-in and PlayScene-only:** normal play is unaffected (the seam returns
+  `null`), and the gyms inherit that default — so **gym↔game parity** is
+  preserved: the shared input seam is exercised by both the game and the gyms,
+  while the bot itself is a `PlayScene`-only consumer.
 
 ### 2.2 Movement
 
