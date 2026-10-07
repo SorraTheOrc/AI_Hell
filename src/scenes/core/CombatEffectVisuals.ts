@@ -15,7 +15,7 @@
  * up to a documented "opaque" alpha in the final second, and the fill then
  * shrinks inside the hull radius in the final half second before the bubble
  * clears at expiry. The animation is a pure function of
- * `EffectsRegistry.remaining('P3')`, so it is frame-rate independent and
+ * `EffectsRegistry.remaining('shield')`, so it is frame-rate independent and
  * identical in the game and every gym.
  *
  * @module scenes/core/CombatEffectVisuals
@@ -93,7 +93,7 @@ export interface GhostVisualTarget {
  * {@link SHIELD_BUBBLE_SHRINK_SECONDS} the fill shrinks toward
  * {@link SHIELD_BUBBLE_SHRINK_MIN_FACTOR} (inside the hull) before the
  * bubble clears at expiry. The animation is a pure function of
- * `registry.remaining('P3')` — frame-rate independent and deterministic.
+ * `registry.remaining('shield')` — frame-rate independent and deterministic.
  *
  * Cleared (never drawn) when there is no graphics, no player, the shield is
  * inactive, or its timer has reached zero, so a popped shield always removes
@@ -113,7 +113,7 @@ export function drawShieldBubble(
   graphics.clear();
   if (!player || !registry.isShielded) return false;
 
-  const remaining = registry.remaining('P3');
+  const remaining = registry.remaining('shield');
   if (remaining === undefined || remaining <= 0) return false;
 
   const fullRadius = SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR;

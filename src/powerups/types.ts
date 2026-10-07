@@ -23,14 +23,14 @@
 // ── Power-up IDs ─────────────────────────────────────────────────────
 
 export type PowerUpId =
-  | 'P3'
-  | 'P4'
-  | 'P5'
-  | 'P6'
-  | 'P7'
-  | 'P8'
-  | 'P9'
-  | 'P10';
+  | 'shield'
+  | 'bomb'
+  | 'speed_boost'
+  | 'phase_shift'
+  | 'teleport'
+  | 'extra_life'
+  | 'magnet'
+  | 'mineral_scoop';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -47,7 +47,7 @@ export type WeaponDropId =
   | 'arc';
 
 /**
- * Every drop the combat gyms can spawn: power-up IDs (P3–P10) plus the
+ * Every drop the combat gyms can spawn: all power-up IDs plus the
  * weapon drop IDs (spread, dual, rapid, reset).
  */
 export type DropId = PowerUpId | WeaponDropId;
@@ -80,7 +80,7 @@ export enum PowerUpType {
 // ── Catalogue entry ─────────────────────────────────────────────────
 
 export interface PowerUpEntry {
-  /** Unique GDD identifier (e.g. "P5"). */
+  /** Unique GDD identifier (e.g. "speed_boost"). */
   id: PowerUpId;
   /** Human-readable display name. */
   name: string;
@@ -104,36 +104,36 @@ export interface PowerUpEntry {
 // ── Power-up catalogue ──────────────────────────────────────────────
 
 /**
- * Full power-up catalogue: P3–P10.
+ * Full power-up catalogue.
  *
  * Entries are ordered by ascending GDD ID so that round-robin spawners
  * cycle in GDD order. Non-combat gym uses a filtered subset; combat gym
- * cycles P3 → P4 → P6 → P7.
+ * cycles shield → bomb → phase_shift → teleport.
  */
 export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
-  P3: {
-    id: 'P3',
+  shield: {
+    id: 'shield',
     name: 'Shield',
     description: 'Absorbs one hit; a bubble protects the ship for 15 s.',
     type: PowerUpType.SHIELD,
     duration: 15,
   },
-  P4: {
-    id: 'P4',
+  bomb: {
+    id: 'bomb',
     name: 'Bomb',
     description:
       'Clears enemy bullets in a radius around the ship; a field pickup fires once, a hold-full reward pulses.',
     type: PowerUpType.BOMB,
   },
-  P5: {
-    id: 'P5',
+  speed_boost: {
+    id: 'speed_boost',
     name: 'Speed Boost',
     description: '+50% movement speed and rate of fire for 10 s.',
     type: PowerUpType.SPEED_BOOST,
     duration: 10,
   },
-  P6: {
-    id: 'P6',
+  phase_shift: {
+    id: 'phase_shift',
     name: 'Phase Shift',
     description:
       'Stores one automatic phase; triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward makes it unlimited.',
@@ -141,22 +141,22 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
   },
-  P7: {
-    id: 'P7',
+  teleport: {
+    id: 'teleport',
     name: 'Teleport',
     description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
     type: PowerUpType.TELEPORT,
   },
-  P8: {
-    id: 'P8',
+  extra_life: {
+    id: 'extra_life',
     name: 'Extra Life',
     description: '+1 life immediately (starts at 3, capped at 5).',
     type: PowerUpType.EXTRA_LIFE,
     livesStart: 3,
     livesMax: 5,
   },
-  P9: {
-    id: 'P9',
+  magnet: {
+    id: 'magnet',
     name: 'Magnet',
     description:
       'Pulls nearby drops toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
@@ -164,8 +164,8 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     duration: 15,
     maxStacks: 5,
   },
-  P10: {
-    id: 'P10',
+  mineral_scoop: {
+    id: 'mineral_scoop',
     name: 'Mineral Scoop',
     description:
       'Pulls nearby minerals toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
@@ -176,7 +176,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
 };
 
 /** Power-up IDs cycled by the combat gym round-robin spawner. */
-export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['P3', 'P4', 'P6', 'P7'] as const;
+export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport'] as const;
 
 /**
  * Weapon drop IDs the combat gyms can spawn alongside power-ups.

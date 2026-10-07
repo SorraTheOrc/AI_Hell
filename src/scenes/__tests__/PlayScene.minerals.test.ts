@@ -67,8 +67,8 @@ describe('PlayScene mineral wiring', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
     // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
-    registry.applyCollect('P10', true);
-    registry.applyCollect('P10', true);
+    registry.applyCollect('mineral_scoop', true);
+    registry.applyCollect('mineral_scoop', true);
 
     const mineral = scene.spawnMineralAt(player.x + 30, player.y);
     const before = mineral.x;
@@ -104,8 +104,8 @@ describe('PlayScene mineral wiring', () => {
     const scene = await bootPlay();
     const offered: ChoiceOption[] = [
       { id: 'dual', name: 'Dual Shot', kind: 'weapon' },
-      { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-      { id: 'P9', name: 'Magnet', kind: 'powerup' },
+      { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+      { id: 'magnet', name: 'Magnet', kind: 'powerup' },
     ];
     scene.setMineralChoiceStrategy(fixedStrategy(offered));
     const drawn = scene.openMineralChoice();
@@ -131,21 +131,21 @@ describe('PlayScene mineral wiring', () => {
     const scene = await bootPlay();
     scene.setMineralChoiceStrategy(
       fixedStrategy([
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-        { id: 'P9', name: 'Magnet', kind: 'powerup' },
-        { id: 'P3', name: 'Shield', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
       ]),
     );
     scene.openMineralChoice();
 
     const chosen = scene.selectMineralChoice(0)!;
 
-    expect(chosen.id).toBe('P5');
+    expect(chosen.id).toBe('speed_boost');
     const registry = scene.getEffectsRegistry();
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     // Permanent — a long tick does not expire it.
     registry.tick(1000);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(scene.isMineralChoiceOpen()).toBe(false);
     expect(scene.isPaused()).toBe(false);
   });
@@ -155,8 +155,8 @@ describe('PlayScene mineral wiring', () => {
     scene.setMineralChoiceStrategy(
       fixedStrategy([
         { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-        { id: 'P9', name: 'Magnet', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
       ]),
     );
     scene.openMineralChoice();
@@ -179,9 +179,9 @@ describe('PlayScene mineral wiring', () => {
     gs.addMinerals(3); // store = 5, overflow = 3
     scene.setMineralChoiceStrategy(
       fixedStrategy([
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-        { id: 'P9', name: 'Magnet', kind: 'powerup' },
-        { id: 'P3', name: 'Shield', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
       ]),
     );
     scene.openMineralChoice();
@@ -196,9 +196,9 @@ describe('PlayScene mineral wiring', () => {
     const gs = scene.getGameState();
     scene.setMineralChoiceStrategy(
       fixedStrategy([
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-        { id: 'P9', name: 'Magnet', kind: 'powerup' },
-        { id: 'P3', name: 'Shield', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
       ]),
     );
 
@@ -231,9 +231,9 @@ describe('PlayScene mineral wiring', () => {
     const gs = scene.getGameState();
     scene.setMineralChoiceStrategy(
       fixedStrategy([
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-        { id: 'P9', name: 'Magnet', kind: 'powerup' },
-        { id: 'P3', name: 'Shield', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
       ]),
     );
 
@@ -368,8 +368,8 @@ describe('PlayScene mineral wiring', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
     // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
-    registry.applyCollect('P10', true);
-    registry.applyCollect('P10', true);
+    registry.applyCollect('mineral_scoop', true);
+    registry.applyCollect('mineral_scoop', true);
 
     const mineral = scene.spawnMineralAt(player.x + 30, player.y);
     const before = mineral.x;

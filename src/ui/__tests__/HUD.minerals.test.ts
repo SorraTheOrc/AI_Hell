@@ -138,11 +138,11 @@ describe('HUD mineral hold bar', () => {
 });
 
 describe('HUD mineral bar layout', () => {
-  /** Y of the first active-effect text row ("Speed Boost"). */
+  /** Y of the first active-effect text row ("Speed Boost …"). */
   function firstEffectRowY(hud: HUD): number {
     const row = hudChildren(hud).find(
       (c) =>
-        c instanceof Phaser.GameObjects.Text && c.text === 'Speed Boost',
+        c instanceof Phaser.GameObjects.Text && c.text.startsWith('Speed Boost'),
     ) as Phaser.GameObjects.Text | undefined;
     if (!row) throw new Error('effect row not found');
     return row.y;
@@ -150,7 +150,7 @@ describe('HUD mineral bar layout', () => {
 
   it('pushes effect rows below the bar', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootHud(reg);
     hud.setMineralStore(3, 20);
     hud.refresh();
@@ -163,7 +163,7 @@ describe('HUD mineral bar layout', () => {
 
   it('keeps effect rows at the top when capacity is 0', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootHud(reg);
     hud.setMineralStore(0, 0);
     hud.refresh();

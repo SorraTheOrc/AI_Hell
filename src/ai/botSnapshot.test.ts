@@ -116,13 +116,13 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
   it('maps each drop position and uses the drop id as its type', () => {
     const scene = makeScene({
       getDrops: () => [
-        { x: 11, y: 22, dropId: 'P3' },
+        { x: 11, y: 22, dropId: 'shield' },
         { x: 33, y: 44, dropId: 'spread' },
       ],
     });
 
     expect(buildBotSnapshot(scene).drops).toEqual([
-      { x: 11, y: 22, type: 'P3' },
+      { x: 11, y: 22, type: 'shield' },
       { x: 33, y: 44, type: 'spread' },
     ]);
   });
@@ -178,7 +178,7 @@ describe('buildBotSnapshot — immutability (AC4)', () => {
       getEnemies: () => [{ x: 5, y: 6, alive: true, archetype: 'tank' }],
       getEnemyBullets: () => [{ graphics: { x: 7, y: 8 }, vx: 0, vy: 1 }],
       getPlayerBullets: () => [{ x: 9, y: 10, vx: 0, vy: -1 }],
-      getDrops: () => [{ x: 11, y: 12, dropId: 'P5' }],
+      getDrops: () => [{ x: 11, y: 12, dropId: 'speed_boost' }],
       getMinerals: () => [{ x: 13, y: 14 }],
     });
 

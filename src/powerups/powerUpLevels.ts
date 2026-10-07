@@ -180,10 +180,10 @@ export interface PowerUpLevelSpec extends CurveSpec {
  */
 export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   // P3 Shield — absorbs its level-resolved hits (base 1, cap 3) in a 15 s bubble.
-  P3: [
+  shield: [
     {
       variable: 'shieldDuration',
-      powerUpId: 'P3',
+      powerUpId: 'shield',
       label: 'Shield time',
       unit: 's',
       description: 'How long the shield bubble lasts.',
@@ -199,7 +199,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
     {
       variable: 'shieldAbsorptions',
-      powerUpId: 'P3',
+      powerUpId: 'shield',
       label: 'Shield hits',
       unit: '',
       description: 'Hits the shield absorbs before it pops.',
@@ -216,10 +216,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P4 Bomb — ranged clear, single on a field pickup; periodic when permanent.
-  P4: [
+  bomb: [
     {
       variable: 'bombRange',
-      powerUpId: 'P4',
+      powerUpId: 'bomb',
       label: 'Bomb range',
       unit: 'px',
       description: 'Radius of the bomb clear, centred on the ship.',
@@ -235,7 +235,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
     {
       variable: 'bombFrequency',
-      powerUpId: 'P4',
+      powerUpId: 'bomb',
       label: 'Bomb rate',
       unit: '/s',
       description: 'Pulses per second for a permanent bomb.',
@@ -253,10 +253,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P5 Speed Boost — +50% movement and fire rate for 10 s.
-  P5: [
+  speed_boost: [
     {
       variable: 'speedMultiplier',
-      powerUpId: 'P5',
+      powerUpId: 'speed_boost',
       label: 'Speed boost',
       unit: '×',
       description: 'Movement and fire-rate multiplier.',
@@ -271,7 +271,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
     {
       variable: 'speedDuration',
-      powerUpId: 'P5',
+      powerUpId: 'speed_boost',
       label: 'Boost time',
       unit: 's',
       description: 'How long the speed boost lasts.',
@@ -288,10 +288,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P6 Phase Shift — charge-based auto pass-through.
-  P6: [
+  phase_shift: [
     {
       variable: 'phaseDuration',
-      powerUpId: 'P6',
+      powerUpId: 'phase_shift',
       label: 'Phase time',
       unit: 's',
       description: 'Pass-through duration when the phase triggers.',
@@ -306,7 +306,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
     {
       variable: 'phaseCharges',
-      powerUpId: 'P6',
+      powerUpId: 'phase_shift',
       label: 'Phase charges',
       unit: '',
       description: 'Auto-activation charges granted per pickup.',
@@ -323,10 +323,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P7 Teleport — stored FIFO uses, S/↓ to activate.
-  P7: [
+  teleport: [
     {
       variable: 'teleportStacks',
-      powerUpId: 'P7',
+      powerUpId: 'teleport',
       label: 'Teleports',
       unit: '',
       description: 'Stored teleport uses granted per pickup.',
@@ -341,7 +341,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
     {
       variable: 'teleportPhaseDuration',
-      powerUpId: 'P7',
+      powerUpId: 'teleport',
       label: 'Arrival phase',
       unit: 's',
       description: 'Phase Shift duration granted on arrival.',
@@ -357,10 +357,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P8 Extra Life — +1 life immediately, capped at 5.
-  P8: [
+  extra_life: [
     {
       variable: 'lifeGain',
-      powerUpId: 'P8',
+      powerUpId: 'extra_life',
       label: 'Lives',
       unit: '',
       description: 'Lives granted per pickup.',
@@ -376,7 +376,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
     {
       variable: 'livesCap',
-      powerUpId: 'P8',
+      powerUpId: 'extra_life',
       label: 'Life cap',
       unit: '',
       description: 'Hard ceiling on the lives counter.',
@@ -393,10 +393,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P9 Magnet — hybrid timed pickup / permanent stacking upgrade.
-  P9: [
+  magnet: [
     {
       variable: 'magnetStacks',
-      powerUpId: 'P9',
+      powerUpId: 'magnet',
       label: 'Magnet',
       unit: '',
       description: 'Permanent stack cap (drives the attraction radius).',
@@ -414,10 +414,10 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
   ],
 
   // P10 Mineral Scoop — hybrid timed pickup / permanent stacking upgrade.
-  P10: [
+  mineral_scoop: [
     {
       variable: 'scoopStacks',
-      powerUpId: 'P10',
+      powerUpId: 'mineral_scoop',
       label: 'Scoop',
       unit: '',
       description: 'Permanent stack cap (drives the attraction radius).',
@@ -439,14 +439,14 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
  * this so catalogue-completeness checks are deterministic.
  */
 export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
-  'P3',
-  'P4',
-  'P5',
-  'P6',
-  'P7',
-  'P8',
-  'P9',
-  'P10',
+  'shield',
+  'bomb',
+  'speed_boost',
+  'phase_shift',
+  'teleport',
+  'extra_life',
+  'magnet',
+  'mineral_scoop',
 ];
 
 // ── Resolved stats ──────────────────────────────────────────────────
@@ -636,17 +636,17 @@ export class PowerUpLevelStore {
 
     const stats = this.stats(id);
     switch (id) {
-      case 'P6':
+      case 'phase_shift':
         if (permanent) {
           this._phasePermanent = true;
         } else {
           this._phaseCharges += stats.phaseCharges ?? 0;
         }
         break;
-      case 'P7':
+      case 'teleport':
         this._teleportStacks += stats.teleportStacks ?? 0;
         break;
-      case 'P8':
+      case 'extra_life':
         this._lives = Math.min(
           this._livesCap(),
           this._lives + (stats.lifeGain ?? 0),
@@ -743,16 +743,16 @@ export class PowerUpLevelStore {
   /** P9 permanent magnet stacks (derived, capped by the level model). */
   magnetStacks(): number {
     return Math.min(
-      this.permanentGrants('P9'),
-      this._permanentStats('P9').magnetStacks ?? 0,
+      this.permanentGrants('magnet'),
+      this._permanentStats('magnet').magnetStacks ?? 0,
     );
   }
 
   /** P10 permanent mineral-scoop stacks (derived, capped by the level model). */
   scoopStacks(): number {
     return Math.min(
-      this.permanentGrants('P10'),
-      this._permanentStats('P10').scoopStacks ?? 0,
+      this.permanentGrants('mineral_scoop'),
+      this._permanentStats('mineral_scoop').scoopStacks ?? 0,
     );
   }
 
@@ -814,7 +814,7 @@ export class PowerUpLevelStore {
 
   /** The level-derived hard lives cap. */
   private _livesCap(): number {
-    return this.stats('P8').livesCap ?? 5;
+    return this.stats('extra_life').livesCap ?? 5;
   }
 
   /** Resets every level and derived resource (run restart). */

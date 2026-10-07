@@ -216,16 +216,16 @@ describe('applyMineralChoiceReward', () => {
     const applyCollect = vi.spyOn(registry, 'applyCollect');
     const player = { equipWeapon: vi.fn() };
     const option: ChoiceOption = {
-      id: 'P5',
+      id: 'speed_boost',
       name: 'Speed Boost',
       kind: 'powerup',
     };
 
     applyMineralChoiceReward(option, registry, player);
 
-    expect(applyCollect).toHaveBeenCalledWith('P5', true);
+    expect(applyCollect).toHaveBeenCalledWith('speed_boost', true);
     expect(applyCollect).toHaveBeenCalledTimes(1);
-    expect(store.getLevel('P5')).toBe(1); // advanced exactly once
+    expect(store.getLevel('speed_boost')).toBe(1); // advanced exactly once
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 
@@ -235,7 +235,7 @@ describe('applyMineralChoiceReward', () => {
     const applyCollect = vi.spyOn(registry, 'applyCollect');
     const player = { equipWeapon: vi.fn() };
     const option: ChoiceOption = {
-      id: 'P3',
+      id: 'shield',
       name: 'Shield Lv.2',
       kind: 'power-up-level',
       level: 2,
@@ -243,9 +243,9 @@ describe('applyMineralChoiceReward', () => {
 
     applyMineralChoiceReward(option, registry, player);
 
-    expect(applyCollect).toHaveBeenCalledWith('P3', true);
+    expect(applyCollect).toHaveBeenCalledWith('shield', true);
     expect(applyCollect).toHaveBeenCalledTimes(1);
-    expect(store.getLevel('P3')).toBe(1); // advanced exactly once
+    expect(store.getLevel('shield')).toBe(1); // advanced exactly once
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 
@@ -254,11 +254,11 @@ describe('applyMineralChoiceReward', () => {
     const applyCollect = vi.spyOn(registry, 'applyCollect');
 
     applyMineralChoiceReward(
-      { id: 'P3', name: 'Shield', kind: 'powerup' },
+      { id: 'shield', name: 'Shield', kind: 'powerup' },
       registry,
       null,
     );
 
-    expect(applyCollect).toHaveBeenCalledWith('P3', true);
+    expect(applyCollect).toHaveBeenCalledWith('shield', true);
   });
 });

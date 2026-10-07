@@ -1888,7 +1888,7 @@ export class PlayScene extends CombatScene<
 
     const drop: PlayDrop = {
       dropId: id,
-      powerUp: new PowerUp(isWeaponDrop(id) ? 'P3' : (id as PowerUpId)),
+      powerUp: new PowerUp(isWeaponDrop(id) ? 'shield' : (id as PowerUpId)),
       weaponDropId: isWeaponDrop(id) ? id : undefined,
       x,
       y,
@@ -1915,7 +1915,7 @@ export class PlayScene extends CombatScene<
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
     super.onPowerUpCollected(drop);
-    if (drop.dropId === 'P8') {
+    if (drop.dropId === 'extra_life') {
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }

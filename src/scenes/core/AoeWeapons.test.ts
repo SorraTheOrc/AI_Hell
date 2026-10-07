@@ -110,7 +110,7 @@ class StubBullet implements CombatEnemyBullet {
 /** Minimal drop (the AOE path does not collect, but the base requires it). */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
-  readonly dropId = 'P5' as const;
+  readonly dropId = 'speed_boost' as const;
   absorbing?: boolean;
 
   constructor(
@@ -118,7 +118,7 @@ class StubDrop implements CombatDrop {
     public y: number,
     public readonly graphics: Phaser.GameObjects.Graphics,
   ) {
-    this.powerUp = new PowerUp('P5');
+    this.powerUp = new PowerUp('speed_boost');
   }
 }
 

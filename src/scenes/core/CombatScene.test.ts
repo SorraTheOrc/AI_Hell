@@ -98,7 +98,7 @@ class StubBullet implements CombatEnemyBullet {
 /** Minimal drop satisfying the shared collect contract. */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
-  readonly dropId: 'P5' | 'P4';
+  readonly dropId: 'speed_boost' | 'bomb';
   weaponDropId?: string;
   absorbing?: boolean;
 
@@ -106,7 +106,7 @@ class StubDrop implements CombatDrop {
     public x: number,
     public y: number,
     public readonly graphics: Phaser.GameObjects.Graphics,
-    dropId: 'P5' | 'P4',
+    dropId: 'speed_boost' | 'bomb',
     weaponDropId?: string,
   ) {
     this.dropId = dropId;
@@ -299,7 +299,7 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   setTeleportKey(key: Phaser.Input.Keyboard.Key | null) {
     this.teleportKey = key;
   }
-  addDrop(id: 'P5' | 'P4', weaponDropId?: string): StubDrop {
+  addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
     const drop = new StubDrop(120, 120, g, id, weaponDropId);
     return drop;
@@ -391,23 +391,23 @@ describe('CombatScene — shared combat core hook contract', () => {
 
   it('AC3 — _collectDrop dispatches the weapon hook and starts the absorb', async () => {
     const scene = await boot();
-    const drop = scene.addDrop('P5', 'spread');
+    const drop = scene.addDrop('speed_boost', 'spread');
 
     scene.runCollectDrop(drop);
 
     expect(scene.hooks).toContain('onWeaponCollected:spread');
-    expect(scene.hooks).toContain('_playPickupCue:P5');
+    expect(scene.hooks).toContain('_playPickupCue:speed_boost');
     expect(drop.absorbing).toBe(true);
     expect(scene.effects.hasWeapon('spread')).toBe(true);
   });
 
   it('AC3 — _collectDrop dispatches the power-up hook', async () => {
     const scene = await boot();
-    const drop = scene.addDrop('P5');
+    const drop = scene.addDrop('speed_boost');
 
     scene.runCollectDrop(drop);
 
-    expect(scene.hooks).toContain('onPowerUpCollected:P5');
+    expect(scene.hooks).toContain('onPowerUpCollected:speed_boost');
     expect(drop.absorbing).toBe(true);
   });
 
@@ -415,7 +415,7 @@ describe('CombatScene — shared combat core hook contract', () => {
     const scene = await boot();
     scene.effects.applyWeapon('spread');
     expect(scene.effects.hasWeapon('spread')).toBe(true);
-    const drop = scene.addDrop('P5', 'reset');
+    const drop = scene.addDrop('speed_boost', 'reset');
 
     scene.runCollectDrop(drop);
 
@@ -431,12 +431,12 @@ describe('CombatScene — shared combat core hook contract', () => {
     const inside = new StubBullet(scene, 130, 120);
     const outside = new StubBullet(scene, 900, 900);
     scene.bullets.push(inside, outside);
-    const drop = scene.addDrop('P4');
+    const drop = scene.addDrop('bomb');
 
     scene.runCollectDrop(drop);
     // Collection queues the pulse but does not clear anything itself.
     expect(scene.bullets).toHaveLength(2);
-    expect(scene.hooks).toContain('onPowerUpCollected:P4');
+    expect(scene.hooks).toContain('onPowerUpCollected:bomb');
 
     scene.runUpdateP4Bomb(0.016);
     expect(scene.bullets).toEqual([outside]);
@@ -533,7 +533,7 @@ describe('CombatScene — shared combat core hook contract', () => {
   it('AC3 — triggerTeleport consumes a stack and warps the player', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
-    scene.effects.applyCollect('P7');
+    scene.effects.applyCollect('teleport');
     expect(scene.effects.hasTeleport()).toBe(true);
 
     const moved = scene.triggerTeleport();
@@ -552,7 +552,7 @@ describe('CombatScene — shared combat core hook contract', () => {
     // No teleport stack.
     expect(scene.triggerTeleport()).toBe(false);
 
-    scene.effects.applyCollect('P7');
+    scene.effects.applyCollect('teleport');
     scene.teleportAllowed = false;
     expect(scene.triggerTeleport()).toBe(false);
     expect(scene.effects.hasTeleport()).toBe(true);
@@ -561,7 +561,7 @@ describe('CombatScene — shared combat core hook contract', () => {
   it('AC3 — _handleTeleport triggers on a held teleport key', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });
-    scene.effects.applyCollect('P7');
+    scene.effects.applyCollect('teleport');
     const key = scene.input.keyboard!.addKey('S');
     (key as unknown as { _justDown: boolean })._justDown = true;
     scene.setTeleportKey(key);

@@ -139,14 +139,14 @@ export const DEFAULT_WEAPON_WEIGHT = 2;
 
 /** Every power-up ID covered by the default weight table (P3–P10). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
-  'P3',
-  'P4',
-  'P5',
-  'P6',
-  'P7',
-  'P8',
-  'P9',
-  'P10',
+  'shield',
+  'bomb',
+  'speed_boost',
+  'phase_shift',
+  'teleport',
+  'extra_life',
+  'magnet',
+  'mineral_scoop',
 ];
 
 /** Every weapon drop covered by the default weapon weight table. */
@@ -199,7 +199,7 @@ export function defaultPowerUpWeights(): PowerUpWeights {
   const weights = {} as PowerUpWeights;
   for (const id of POWER_UP_WEIGHT_IDS) {
     weights[id] =
-      id === 'P8' ? DEFAULT_EXTRA_LIFE_WEIGHT : DEFAULT_STANDARD_POWER_UP_WEIGHT;
+      id === 'extra_life' ? DEFAULT_EXTRA_LIFE_WEIGHT : DEFAULT_STANDARD_POWER_UP_WEIGHT;
   }
   return weights;
 }
