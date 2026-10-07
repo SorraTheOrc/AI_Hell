@@ -15,6 +15,9 @@ import { PlayScene } from '../PlayScene';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
+import { Asteroid } from '../../entities/Asteroid';
+import * as mineralLayer from '../core/mineralLayer';
+import * as mineralScoop from '../../powerups/mineralScoop';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 
 /** Builds a strategy that always offers the supplied options. */
@@ -274,5 +277,165 @@ describe('PlayScene mineral wiring', () => {
     scene.spawnPlayerBullet(small.x, small.y, 0, 0);
     scene.tick(0.016);
     expect(scene.getMinerals()).toHaveLength(1);
+  });
+
+  // ── Between-waves mineral collection (AH-0MUX96GJF006CAZP) ──────
+
+  /**
+   * Deterministically enters the wave-transition pause: disables the random
+   * asteroid spawner (so only the wave's own formation enemies remain) and
+   * times out the wave, which carries the survivors into the ~1.5 s pause.
+   */
+  function enterTransition(scene: PlayScene): void {
+    scene.setAsteroidSpawnerEnabled(false);
+    // Fully spawn the wave's enemies first so they are collidable/absorbing
+    // (spawning entities are skipped by the shared collection pass) and can
+    // be carried over as survivors.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    scene.setWaveTimerRemaining(0.001);
+    scene.tick(0.01); // wave timer expires → transition starts
+  }
+
+  it('AC1 — the player collects an overlapping mineral during a wave transition', async () => {
+    const scene = await bootPlay();
+    enterTransition(scene);
+    expect(scene.isTransitioning()).toBe(true);
+
+    const player = scene.getPlayer()!;
+    const before = scene.getGameState().minerals;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0.016);
+
+    // The hold grew and the mineral was removed from the field even though
+    // the pause is still running.
+    expect(scene.getGameState().minerals).toBeGreaterThanOrEqual(before + 1);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(
+      scene.getMinerals().some(
+        (m) => Math.abs(m.x - player.x) < 1 && Math.abs(m.y - player.y) < 1,
+      ),
+    ).toBe(false);
+  });
+
+  it('AC2 — a phased player still collects minerals during a transition', async () => {
+    const scene = await bootPlay();
+    enterTransition(scene);
+    const registry = scene.getEffectsRegistry();
+    registry.applyPhaseShift();
+    expect(registry.isPhased).toBe(true);
+
+    const player = scene.getPlayer()!;
+    const before = scene.getGameState().minerals;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0.016);
+
+    // Between-waves exception: the automatic defensive phase does not cost
+    // the player the minerals already earned.
+    expect(registry.isPhased).toBe(true);
+    expect(scene.getGameState().minerals).toBeGreaterThanOrEqual(before + 1);
+    expect(scene.getMinerals()).toHaveLength(0);
+  });
+
+  it('AC2 — a phased player still cannot collect minerals during normal wave play (Q7 unchanged)', async () => {
+    const scene = await bootPlay();
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    expect(scene.isTransitioning()).toBe(false);
+
+    const registry = scene.getEffectsRegistry();
+    registry.applyPhaseShift();
+    expect(registry.isPhased).toBe(true);
+
+    const player = scene.getPlayer()!;
+    const before = scene.getGameState().minerals;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0.016);
+
+    // Q7: while phased during combat the mineral survives untouched so it
+    // can be collected the moment the phase expires.
+    expect(scene.getGameState().minerals).toBe(before);
+    expect(
+      scene.getMinerals().some(
+        (m) => Math.abs(m.x - player.x) < 1 && Math.abs(m.y - player.y) < 1,
+      ),
+    ).toBe(true);
+  });
+
+  it('AC3 — the shared P10 scoop attracts an in-range mineral during a transition', async () => {
+    const scene = await bootPlay();
+    enterTransition(scene);
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
+    registry.applyCollect('P10', true);
+    registry.applyCollect('P10', true);
+
+    const mineral = scene.spawnMineralAt(player.x + 30, player.y);
+    const before = mineral.x;
+    scene.tick(0.1); // ~12 px of pull at MAGNET_ATTRACTION_SPEED
+
+    expect(scene.isTransitioning()).toBe(true);
+    expect(mineral.x).toBeLessThan(before);
+  });
+
+  it('AC3 — a carried-over non-asteroid survivor absorbs a mineral left in its path', async () => {
+    const scene = await bootPlay();
+    enterTransition(scene);
+
+    const survivor = scene
+      .getEnemies()
+      .find((e) => e.alive && !(e instanceof Asteroid))!;
+    expect(survivor).toBeDefined();
+    const before = survivor.mineralCount;
+    scene.spawnMineralAt(survivor.x, survivor.y);
+    scene.tick(0.016);
+
+    // The carried survivor absorbed the mineral through the same shared
+    // `collectMinerals` pass (asteroids stay inert).
+    expect(survivor.mineralCount).toBe(before + 1);
+  });
+
+  it('AC4 — the transition branch routes through the shared collectMinerals and scoop helpers', async () => {
+    const scene = await bootPlay();
+    enterTransition(scene);
+    // Record the shared calls made by the transition tick only.
+    const collectSpy = vi.spyOn(mineralLayer, 'collectMinerals');
+    const scoopSpy = vi.spyOn(mineralScoop, 'applyMineralScoop');
+    scene.getEffectsRegistry().applyPhaseShift();
+
+    const player = scene.getPlayer()!;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0.016);
+
+    // Both shared routines run in the transition branch, and the shared
+    // collection routine receives the phase-gate bypass for the pause.
+    expect(scoopSpy).toHaveBeenCalled();
+    expect(collectSpy).toHaveBeenCalled();
+    expect(collectSpy.mock.calls.at(-1)?.[4]?.playerPhased).toBe(false);
+    collectSpy.mockRestore();
+    scoopSpy.mockRestore();
+  });
+
+  it('a hold-full choice opened during a transition resumes the pause cleanly', async () => {
+    const scene = await bootPlay();
+    enterTransition(scene);
+    scene.getGameState().mineralCapacity = 1;
+
+    const player = scene.getPlayer()!;
+    scene.spawnMineralAt(player.x, player.y);
+    scene.tick(0.016);
+
+    expect(scene.getGameState().isHoldFull()).toBe(true);
+    expect(scene.isMineralChoiceOpen()).toBe(true);
+
+    // Resolving the choice resumes play and leaves the transition pause with
+    // its remaining time intact (the timer froze while paused).
+    const remainingBefore = scene.getTransitionRemaining();
+    scene.selectMineralChoice(0);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(scene.getTransitionRemaining()).toBeCloseTo(remainingBefore, 5);
   });
 });

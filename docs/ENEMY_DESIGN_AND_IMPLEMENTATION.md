@@ -842,7 +842,12 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   dropped below the threshold and a **~0.5 s** cooldown has elapsed. While
   phased the shared mineral layer (`collectMinerals({ playerPhased: true })`)
   also blocks **mineral collection**; power-up/weapon drops stay collectable
-  and mineral pickup resumes the instant the phase expires.
+  and mineral pickup resumes the instant the phase expires. **Exception —
+  between waves/levels:** during the wave/level transition pause `PlayScene`
+  runs the shared scoop + collection passes and calls
+  `collectMinerals({ playerPhased: false })`, so a phase active at wave-clear
+  still collects minerals; the Q7 gate is unchanged during normal wave play
+  (AH-0MUX96GJF006CAZP).
 - **P3 Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
   shield (`tryAbsorbShield()`), runs the `onShieldAbsorbed()` cue seam (the
   play scene plays `playDestructionSound()`; the gym stays silent), starts

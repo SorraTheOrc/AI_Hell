@@ -740,6 +740,13 @@ export class PlayScene extends CombatScene<
       this._moveEnemies(dt);
       this._collectEnemyFire();
       this._handleCarriedSurvivorCollisions();
+      // Between-waves mineral passes (AH-0MUX96GJF006CAZP, AC1/AC3): the
+      // player and carried-over survivors keep collecting/absorbing minerals
+      // through the transition breather, and the shared P10 scoop keeps
+      // attracting them. `true` bypasses the P6 phase gate for the pause only
+      // (AC2) — normal wave play still blocks phased collection (Q7).
+      this._applyMineralScoop(this.minerals, dt);
+      this._handleMinerals(true);
       if (this.transitionTimer === 0) this._onTransitionComplete();
     } else {
       this._moveEnemies(dt);
@@ -1610,7 +1617,7 @@ export class PlayScene extends CombatScene<
    * absorb them. Neither contact causes damage, and bullets pass straight
    * through (no mineral bullet pass exists).
    */
-  private _handleMinerals(): void {
+  private _handleMinerals(transitioning = false): void {
     if (!this.player) return;
     // Non-asteroid enemies absorb minerals; asteroids are inert (GDD §4.5).
     const absorbers = this.spawned
@@ -1618,13 +1625,16 @@ export class PlayScene extends CombatScene<
       .map((s) => s.entity);
     // Shared collection/absorption routine — the same code the gyms run
     // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
-    // (Q7); enemy absorption still runs.
+    // (Q7); enemy absorption still runs. The between-waves transition is a
+    // non-combat breather, so it bypasses the phase gate — an automatic
+    // defensive P6 activation at wave-clear must not cost earned minerals
+    // (AH-0MUX96GJF006CAZP, AC2).
     this.minerals = collectMinerals(
       this.minerals,
       this.player,
       absorbers,
       () => this._collectMineral(),
-      { playerPhased: this.isPlayerPhased() },
+      { playerPhased: this.isPlayerPhased() && !transitioning },
     );
   }
 

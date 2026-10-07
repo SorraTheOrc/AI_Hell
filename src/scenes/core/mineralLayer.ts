@@ -75,7 +75,10 @@ export interface MineralCollectionOptions {
    * When true the player cannot collect minerals — the P6 Phase Shift
    * pass-through also blocks mineral pickup while phased (Q7). Enemy
    * absorption is unaffected. Collection resumes the moment the phase
-   * expires.
+   * expires. The between-waves/levels transition pause is the one
+   * exception: `PlayScene` passes `false` for that non-combat breather so
+   * an automatic defensive phase does not cost earned minerals
+   * (AH-0MUX96GJF006CAZP).
    */
   playerPhased?: boolean;
 }
