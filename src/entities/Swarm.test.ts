@@ -205,7 +205,13 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
 
   it('setAimTarget retargets the coordinated burst to the player’s live position (replacing the stand-in)', async () => {
     booted = await bootScene([HarnessScene]);
-    const swarm = makeSwarm(480, 400);
+    // Inject a fixed spread source so the burst direction is deterministic
+    // (the spread now draws from the seeded run stream, AH-0MUY08V6W001SJJN).
+    const swarm = new Swarm(
+      booted!.scene,
+      { x: 480, y: 400, formationOffset: { row: 0, col: 0 }, rng: () => 0.5 },
+      0,
+    );
 
     // Default aim is the bottom-centre stand-in.
     const standIn = swarm.aimTarget;
@@ -221,10 +227,7 @@ describe('Swarm entity (E5 Swarm, GDD §4.1)', () => {
     expect(target.y).toBe(live.y);
 
     swarm.shootEnabled = true;
-    // Pin the random burst spread to zero for a deterministic direction.
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const bullet = swarm.tryFireBurstBullet(1_000_000)!;
-    randomSpy.mockRestore();
 
     // Velocity points straight at the live player position (up from
     // (480,400) to (480,100)) — the stand-in arc never points up.
@@ -392,13 +395,29 @@ describe('Swarm — shot probability gate (AH-0MU0F1T2H003B4K0)', () => {
 
   it('a deterministic 1-in-4 forced sequence emits ~1 bullet per 4 cycles per member', async () => {
     booted = await bootScene([HarnessScene]);
-    // Pattern: three failures then one success, repeating.
-    const sequence = [0.9, 0.9, 0.9, 0.1];
-    let i = 0;
-    const swarm = makeSwarmWith({
-      shotProbability: 0.25,
-      rng: () => sequence[i++ % sequence.length],
-    });
+    // The Swarm constructor consumes three random draws (split timer,
+    // cluster phase, cluster bias) and each successful volley consumes one
+    // more (burst spread). Neutralise those with 0.5 and drive the shot gate
+    // from a repeating three-fail/one-success pattern (AH-0MUY08V6W001SJJN).
+    let constructorDraws = 3;
+    let spreadPending = false;
+    let rollIndex = 0;
+    const pattern = [false, false, false, true];
+    const rng = () => {
+      if (constructorDraws > 0) {
+        constructorDraws -= 1;
+        return 0.5;
+      }
+      if (spreadPending) {
+        spreadPending = false;
+        return 0.5;
+      }
+      const success = pattern[rollIndex % pattern.length];
+      rollIndex += 1;
+      if (success) spreadPending = true;
+      return success ? 0.1 : 0.9;
+    };
+    const swarm = makeSwarmWith({ shotProbability: 0.25, rng });
     swarm.shootEnabled = true;
     const t0 = 1_000_000;
 

@@ -31,6 +31,12 @@ export interface AsteroidSplitOptions {
    * `spawned`/`WaveManager` bookkeeping, or a gym's `entities` list).
    */
   register: (child: Asteroid) => void;
+  /**
+   * Optional seeded random source threaded into each child so its
+   * procedural body shape consumes the same run stream as the parent
+   * (AH-0MUY08V6W001SJJN). Omitted callers keep the entity default.
+   */
+  rng?: () => number;
 }
 
 /**
@@ -49,7 +55,8 @@ export interface AsteroidSplitOptions {
 export function splitAsteroid(
   options: AsteroidSplitOptions,
 ): Asteroid[] | null {
-  const { scene, parent, register } = options;
+  const { scene, parent, register, rng } = options;
+  // The parent draws the fan deviation from its own (seeded) stream.
   const children = parent.getSplitChildren(parent.x, parent.y);
   if (!children) return null; // small tier — clean destruction, no children
 
@@ -63,6 +70,7 @@ export function splitAsteroid(
       vx: spec.vx,
       vy: spec.vy,
       rotationSpeed: spec.rotationSpeed,
+      rng,
     });
     scene.add.existing(child);
     register(child);

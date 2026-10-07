@@ -175,6 +175,15 @@ export class CombatCoreScene<
 > extends Phaser.Scene {
   /** Player bullets in flight (auto-fired + test-injected). */
   protected playerBullets: PlayerBullet[] = [];
+  /**
+   * Random source for shared-core gameplay decisions that are neither
+   * enemy- nor drop-owned (currently the `'onRandom'` AOE detonation
+   * points). Defaults to a dynamic `Math.random` thunk so callers that spy
+   * on `Math.random` still observe it; `PlayScene` replaces it with its
+   * per-run seeded RNG so a seeded run reproduces its random AOE placement
+   * (AH-0MUY08V6W001SJJN). Gyms that omit it keep the unseeded default.
+   */
+  protected sceneRng: () => number = () => Math.random();
   /** Live player-explosion VFX graphics (tracked for observation). */
   protected playerExplosions: Phaser.GameObjects.Graphics[] = [];
   /**
@@ -844,6 +853,11 @@ export class CombatCoreScene<
    * `super.resetRunState()` first. Called at the top of `create()`.
    */
   protected resetRunState(): void {
+    // Re-anchor the shared beat clock at t=0 for the new run
+    // (AH-0MUY08V6W001SJJN): the scene instance is reused across restarts,
+    // so without this a restarted run inherits the previous run's beat
+    // phase and is not reproducible from its seed.
+    this.beatClock.reset();
     // Bind the registry to this scene's live player store, then reset both
     // the timing state and the level store together (AC6). The dynamic
     // resolver means a player created later in `create()` is picked up with

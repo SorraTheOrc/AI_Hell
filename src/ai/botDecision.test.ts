@@ -47,6 +47,7 @@ function makeSnapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     minerals: overrides.minerals ?? [],
     boss: overrides.boss ?? null,
     aliveCount: overrides.aliveCount ?? 0,
+    runSeed: overrides.runSeed ?? 0,
   };
 }
 

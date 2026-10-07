@@ -31,6 +31,7 @@ function makeScene(overrides: Partial<BotSnapshotScene> = {}): BotSnapshotScene 
     getDrops: () => [],
     getMinerals: () => [],
     getAliveCount: () => 0,
+    getRunSeed: () => 0,
     ...overrides,
   };
 }
@@ -156,6 +157,11 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
 
   it('returns a null boss before the boss spawns', () => {
     expect(buildBotSnapshot(makeScene()).boss).toBeNull();
+  });
+
+  it('carries the run seed from the scene (AH-0MUY08V6W001SJJN AC4)', () => {
+    const scene = makeScene({ getRunSeed: () => 0xdeadbeef });
+    expect(buildBotSnapshot(scene).runSeed).toBe(0xdeadbeef);
   });
 });
 

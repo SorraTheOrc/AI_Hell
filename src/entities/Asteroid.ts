@@ -224,12 +224,13 @@ export class Asteroid extends BaseEnemy {
       config.rotationSpeed ?? tierData.rotationSpeed * scale;
 
     // Split-child spawns supply an exact velocity vector; otherwise a
-    // constant velocity vector is computed from a random heading.
+    // constant velocity vector is computed from a seeded random heading
+    // (AH-0MUY08V6W001SJJN).
     if (config.vx !== undefined && config.vy !== undefined) {
       this._vx = config.vx;
       this._vy = config.vy;
     } else {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = this._rng() * Math.PI * 2;
       const speed = tierData.speed * scale;
       this._vx = Math.cos(angle) * speed;
       this._vy = Math.sin(angle) * speed;
@@ -406,7 +407,9 @@ export class Asteroid extends BaseEnemy {
     // Compute two new directions that differ from the parent's heading
     // and from each other (angular separation ≥ π/3).
     const parentAngle = Math.atan2(this._vy, this._vx);
-    const deviation = Math.PI / 3 + (Math.random() * Math.PI) / 3; // π/3 to 2π/3
+    // Seeded so a destroyed asteroid's children split identically on a
+    // replay (AH-0MUY08V6W001SJJN).
+    const deviation = Math.PI / 3 + (this._rng() * Math.PI) / 3; // π/3 to 2π/3
 
     const angle1 = parentAngle + deviation;
     const angle2 = parentAngle - deviation;

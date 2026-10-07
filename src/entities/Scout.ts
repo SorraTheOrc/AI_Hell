@@ -113,7 +113,9 @@ export class Scout extends BaseEnemy {
 
   private _tellStartTime = 0;
   private _isTelling = false;
-  private _wigglePhase = Math.random() * Math.PI * 2;
+  // Seeded: `_rng` is initialised by the `super()` call before this field
+  // initialiser runs (AH-0MUY08V6W001SJJN).
+  private _wigglePhase = this._rng() * Math.PI * 2;
   /** Current aim target. */
   protected readonly target: Phaser.Math.Vector2;
 

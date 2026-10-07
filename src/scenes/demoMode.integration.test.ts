@@ -300,6 +300,7 @@ function makeScene(
     getDrops: () => [],
     getMinerals: () => [],
     getAliveCount: () => 0,
+    getRunSeed: () => 0,
     ...overrides,
   };
 }

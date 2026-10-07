@@ -659,7 +659,7 @@ export abstract class CombatScene<
     const range = (aoe.projectileSpeed ?? 0) * def.bulletLifetime;
     const detonations = Math.max(1, def.offsets.length);
     for (let i = 0; i < detonations; i++) {
-      const point = selectRandomPoint(x, y, range);
+      const point = selectRandomPoint(x, y, range, this.sceneRng);
       this.applyAoeEffect(def, point.x, point.y);
       this.spawnAoeDetonationVfx(def, point.x, point.y);
     }

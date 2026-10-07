@@ -265,9 +265,11 @@ export class Tank extends BaseEnemy {
       this._holdTimer = 0;
       // Pick a new random slow direction (horizontal only — Y is
       // purely grid-based to keep formation geometry verifiable).
-      this._directionX = Math.random() < 0.5 ? -1 : 1;
+      // Seeded so a seeded run reproduces the tank's drift pattern
+      // (AH-0MUY08V6W001SJJN).
+      this._directionX = this._rng() < 0.5 ? -1 : 1;
       // Re-randomise interval within the 2–3 s range.
-      this._moveInterval = 2 + Math.random();
+      this._moveInterval = 2 + this._rng();
     }
 
     const slowX = this._directionX * TANK_FORMATION_DRIFT_SPEED * 0.3 * dt;

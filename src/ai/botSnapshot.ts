@@ -107,6 +107,11 @@ export interface BotSnapshot {
   readonly minerals: readonly BotMineral[];
   readonly boss: BotBoss | null;
   readonly aliveCount: number;
+  /**
+   * The per-run RNG seed (AH-0MUY08V6W001SJJN AC4), so telemetry and the
+   * bot layer can correlate observations with a reproducible run.
+   */
+  readonly runSeed: number;
 }
 
 // ── Structural scene seam (PlayScene satisfies this) ─────────────────
@@ -177,6 +182,8 @@ export interface BotSnapshotScene {
   getDrops(): readonly BotDropSource[];
   getMinerals(): readonly BotMineralSource[];
   getAliveCount(): number;
+  /** The current run's seed (satisfied by `PlayScene.getRunSeed`). */
+  getRunSeed(): number;
 }
 
 // ── Builder ──────────────────────────────────────────────────────────
@@ -240,6 +247,7 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
     })),
     boss,
     aliveCount: scene.getAliveCount(),
+    runSeed: scene.getRunSeed(),
   });
 }
 

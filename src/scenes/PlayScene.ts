@@ -44,6 +44,7 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState } from '../core/GameState';
+import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
   playArcFireSound,
@@ -433,11 +434,28 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
-   * Explicit run seed for `dynamic` wave regeneration (test seam). When null
-   * (the default) a seed is derived once per run from the scene RNG, so each
-   * run differs while remaining reproducible for a seeded RNG.
+   * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
+   * by {@link _initRunSeed}: the explicit {@link setRunSeed} value when one
+   * was supplied, otherwise a fresh random seed, so each unseeded run
+   * differs while a seeded run reproduces exactly. Exposed via
+   * {@link getRunSeed} and mirrored onto `GameState.runSeed` for telemetry.
    */
-  private runSeed: number | null = null;
+  private runSeed = 0;
+
+  /**
+   * Explicit run seed supplied by a caller (test/headless seam); `null`
+   * when the run should generate a fresh seed. Cleared after each run so a
+   * restart without an explicit seed gets a new random run.
+   */
+  private injectedRunSeed: number | null = null;
+
+  /**
+   * Whether an RNG was injected via {@link setRng}. When true, `create()`
+   * leaves the injected stream untouched (tests that script the RNG keep
+   * their sequence); when false, `create()` seeds the stream from the run
+   * seed.
+   */
+  private rngInjected = false;
 
   /**
    * Asteroid spawn events planned for the active wave (empty outside a
@@ -471,10 +489,13 @@ export class PlayScene extends CombatScene<
   /**
    * Reads the scene-start data. Demo/attract mode is opt-in: only an explicit
    * `{ demo: true }` turns it on, so a normal `scene.start('PlayScene')` is
-   * unaffected (AC1/AC7).
+   * unaffected (AC1/AC7). A `seed` supplied here becomes the run seed
+   * (AH-0MUY08V6W001SJJN), letting a caller start a reproducible run without
+   * the {@link setRunSeed} seam.
    */
-  init(data?: { demo?: boolean }): void {
+  init(data?: { demo?: boolean; seed?: number }): void {
     this.demoMode = data?.demo === true;
+    if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
   }
 
   create(): void {
@@ -483,6 +504,10 @@ export class PlayScene extends CombatScene<
     this.resetRunState();
     // Fresh human-like bot input state for this run.
     this.botGovernor.reset();
+    // Resolve and seed the per-run RNG before anything draws from it
+    // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
+    // are created so every gameplay draw comes from the seeded stream.
+    this._initRunSeed();
 
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
@@ -555,10 +580,9 @@ export class PlayScene extends CombatScene<
     // (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves regenerate per
     // run while staying reproducible for a given seed.
     if (rules.sequencedWavesEnabled) {
-      const seed = this._resolveRunSeed();
       this.waveManager.setLevels(
         resolveCampaignLevels(rules, () =>
-          buildSequencedLevels(undefined, undefined, { seed }),
+          buildSequencedLevels(undefined, undefined, { seed: this.runSeed }),
         ),
       );
     }
@@ -873,7 +897,14 @@ export class PlayScene extends CombatScene<
   /** Instantiates one enemy from its spawn descriptor. */
   private _spawnEnemy(spawn: EnemySpawn): void {
     const cfg = loadEnemyConfig(spawn.enemyKey);
-    const entity = createEnemyFromConfig(this, cfg, spawn.x, spawn.y, spawn.offset);
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      spawn.x,
+      spawn.y,
+      spawn.offset,
+      this.rng,
+    );
     entity.shootEnabled = spawn.shootEnabled;
 
     // ── Wormhole spawn animation (AC1–AC4) ────────────────────────
@@ -965,6 +996,7 @@ export class PlayScene extends CombatScene<
       vx: event.vx,
       vy: event.vy,
       enterFromOffscreen: true,
+      rng: this.rng,
     });
     this.add.existing(entity);
     this.spawned.push({
@@ -1047,6 +1079,7 @@ export class PlayScene extends CombatScene<
       event.x,
       event.y,
       { row: 0, col: 0 },
+      this.rng,
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -1310,6 +1343,7 @@ export class PlayScene extends CombatScene<
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
+      rng: this.rng,
     });
     this.add.existing(this.boss);
     this._spawnMinions(1);
@@ -1694,6 +1728,7 @@ export class PlayScene extends CombatScene<
     splitAsteroid({
       scene: this,
       parent,
+      rng: this.rng,
       register: (child) => {
         this.spawned.push({
           entity: child,
@@ -2278,6 +2313,7 @@ export class PlayScene extends CombatScene<
       y,
       formationOffset: { row: 0, col: 0 },
       sizeTier,
+      rng: this.rng,
     });
     this.add.existing(entity);
     this.spawned.push({
@@ -2478,9 +2514,18 @@ export class PlayScene extends CombatScene<
     return this.invulnerable > 0;
   }
 
-  /** Injects an RNG for deterministic drop rolls (tests). */
+  /**
+   * Injects an RNG for deterministic drop rolls (tests).
+   *
+   * Also shared with the shared core's random-AOE seam. Because it is an
+   * explicit injection, `create()` will not overwrite it with a
+   * seed-derived stream, so the injected sequence is preserved across a
+   * restart.
+   */
   setRng(rng: () => number): void {
     this.rng = rng;
+    this.sceneRng = rng;
+    this.rngInjected = true;
     const rules = loadRules();
     this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
@@ -2490,23 +2535,42 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Injects the run seed used to regenerate `dynamic` waves (tests). The seed
-   * is read at `create()` time; when never injected a seed is derived from the
-   * scene RNG so production runs differ from one another.
+   * Injects the per-run seed (tests / headless runner seam). It is read at
+   * the next `create()`; when never injected, `create()` generates a fresh
+   * random seed so production runs differ from one another.
    */
   setRunSeed(seed: number): void {
-    this.runSeed = seed;
+    this.injectedRunSeed = normaliseSeed(seed);
   }
 
   /**
-   * The run seed for `dynamic` wave regeneration: an explicit
-   * {@link setRunSeed} value when present, otherwise a 32-bit seed derived
-   * once from the scene RNG. Deriving only happens when the sequenced-campaign
-   * toggle is on, so the static path consumes no RNG values.
+   * The seed driving every gameplay RNG draw for the current run
+   * (AH-0MUY08V6W001SJJN). Assigned by {@link _initRunSeed} at scene start,
+   * so it is always a valid 32-bit integer once the scene has been created.
    */
-  private _resolveRunSeed(): number {
-    if (this.runSeed !== null) return this.runSeed;
-    return Math.floor(this.rng() * 0x100000000) >>> 0;
+  getRunSeed(): number {
+    return this.runSeed;
+  }
+
+  /**
+   * Resolves and installs the run's RNG stream. Called once at the top of
+   * `create()` before any gameplay draw:
+   *
+   * 1. seed = explicit {@link setRunSeed} value, else a fresh
+   *    {@link randomSeed};
+   * 2. unless an RNG was injected via {@link setRng}, install a
+   *    {@link createSeededRng} stream for that seed (also wiring the shared
+   *    core AOE seam);
+   * 3. mirror the seed onto `GameState` for telemetry.
+   */
+  private _initRunSeed(): void {
+    const seed = this.injectedRunSeed ?? randomSeed();
+    this.runSeed = seed;
+    if (!this.rngInjected) {
+      this.rng = createSeededRng(seed);
+      this.sceneRng = this.rng;
+    }
+    this.gameState.runSeed = seed;
   }
 
   /**
