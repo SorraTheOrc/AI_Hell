@@ -138,11 +138,11 @@ describe('HUD mineral hold bar', () => {
 });
 
 describe('HUD mineral bar layout', () => {
-  /** Y of the first active-effect text row ("Speed Boost"). */
+  /** Y of the first active-effect text row ("Speed Boost …"). */
   function firstEffectRowY(hud: HUD): number {
     const row = hudChildren(hud).find(
       (c) =>
-        c instanceof Phaser.GameObjects.Text && c.text === 'Speed Boost',
+        c instanceof Phaser.GameObjects.Text && c.text.startsWith('Speed Boost'),
     ) as Phaser.GameObjects.Text | undefined;
     if (!row) throw new Error('effect row not found');
     return row.y;

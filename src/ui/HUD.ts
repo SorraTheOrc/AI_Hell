@@ -5,25 +5,35 @@
  * gym, the combat gym, the main game). It renders above gameplay
  * (`HUD_DEPTH`) and displays, from the shared EffectsRegistry:
  *
- * - one row per active timed power-up: icon, name, remaining-seconds timer;
- * - a pickup/stack count row for stackable types (P9 magnet);
+ * - **one row per power-up/weapon** — merged permanent and temporary state
+ *   rather than one row per internal effect (AH-0MUX802450085VZZ);
+ * - each row's label carries the item's **current effective level**
+ *   (`permanent + temporary`, e.g. `Speed Boost Lvl 3`);
+ * - each row's value is either the infinity glyph `∞` (no temporary
+ *   level-up window is active — the level is permanent for the run) or a
+ *   live `Ns` countdown while a temporary window is active;
  * - a lives counter (P8), starting at 3 and incrementing on collection; and
  * - a fixed-length, hollow-outlined hold bar that fills proportionally as
  *   minerals are collected (replaces the former `Minerals: n/20` text).
  *
+ * Consumable counts that the level alone does not convey (P3 shield
+ * remaining absorptions, P6 phase charges, P7 teleport uses) are appended to
+ * the label as ` ×N` so the value column stays strictly `∞`/countdown.
+ *
  * Contains NO gym-specific imports or logic — it depends only on the
  * engine-agnostic power-up modules (`powerups/effects.ts`, `powerups/types.ts`,
- * `powerups/icons.ts`), so any scene can construct and refresh it.
+ * `powerups/powerUpLevels.ts`, `powerups/icons.ts`), so any scene can
+ * construct and refresh it.
  */
 
 import Phaser from 'phaser';
 
 import {
   EffectsRegistry,
-  ActiveEffect,
   WeaponEffect,
 } from '../powerups/effects';
-import { getPowerUpById } from '../powerups/types';
+import { getPowerUpById, type PowerUpId } from '../powerups/types';
+import { POWER_UP_LEVEL_IDS } from '../powerups/powerUpLevels';
 import { drawPowerUpIcon, drawWeaponIcon } from '../powerups/icons';
 import type { WeaponDropIconId } from '../powerups/icons';
 import { HUD_DEPTH } from '../core/constants';
@@ -78,22 +88,56 @@ function mineralBarInnerWidth(): number {
 const WEAPON_ROW_PREFIX = 'Weapon: ';
 
 /**
- * Value shown for an effect with unlimited uses (e.g. the hold-full P6
- * Phase Shift reward) — the infinity glyph reads as "no count" rather than a
- * misleading number.
+ * Value shown when no temporary level-up window is active — the infinity
+ * glyph reads as "the level is permanent for the run" rather than a
+ * misleading countdown.
  */
 export const PERMANENT_VALUE = '∞';
 
-/** One display row in the HUD model. */
+/** One display row in the HUD model (one per power-up/weapon). */
 export interface HUDEntry {
   /** Power-up ID (e.g. "P5"). */
   id: string;
-  /** Display name (e.g. "Speed Boost"). */
+  /** Catalogue display name (e.g. "Speed Boost"). */
   name: string;
+  /** Rendered label including the current level (e.g. "Speed Boost Lvl 3"). */
+  label: string;
   /** Effect type — drives the icon drawn. */
   icon: import('../powerups/types').PowerUpType;
-  /** Formatted value: "10s" (remaining) or "x3" (stacks). */
+  /** Rendered value: a countdown (`"12s"`) while temporary, else `∞`. */
   value: string;
+  /** Current effective level (`permanent + temporary`). */
+  level: number;
+  /** True while a temporary level-up window is active. */
+  temporary: boolean;
+  /** Consumable count (P3 absorptions, P6 charges, P7 teleports), if any. */
+  stacks?: number;
+}
+
+/**
+ * Formats a HUD row value: a live countdown while a temporary level-up
+ * window is active, otherwise the infinity glyph (the level is permanent for
+ * the run).
+ */
+export function formatHUDValue(
+  temporary: boolean,
+  remaining?: number,
+): string {
+  if (!temporary) return PERMANENT_VALUE;
+  return `${Math.max(0, Math.ceil(remaining ?? 0))}s`;
+}
+
+/**
+ * Builds the rendered row label `"<Name> Lvl <N>"`, appending the optional
+ * consumable count as ` ×<stacks>` so the value column stays `∞`/countdown.
+ */
+export function buildHUDLabel(
+  name: string,
+  level: number,
+  stacks?: number,
+): string {
+  const base = `${name} Lvl ${level}`;
+  return stacks !== undefined && stacks > 0 ? `${base} ×${stacks}` : base;
 }
 
 /**
@@ -105,9 +149,10 @@ export interface HUDOptions {
   /** Whether to show the lives counter row. Defaults to true for backward compatibility. Combat gyms with no lives mechanic pass `{ showLives: false }`. */
   showLives?: boolean;
   /**
-   * Reads the current run-scoped **level** for an active weapon (from the
-   * player). When provided, a weapon row shows `Lv.N` once the weapon has
-   * been upgraded (level ≥ 2); level 0/1 shows no suffix (AC4).
+   * Reads the current run-scoped **effective** level for an active weapon
+   * (from the player). When provided, the weapon row label appends
+   * `Lvl N` (e.g. `Weapon: spread Lvl 3`); without a provider the level
+   * falls back to 0 (standalone use).
    */
   getWeaponLevel?: (weaponId: string) => number;
 }
@@ -206,10 +251,11 @@ export class HUD extends Phaser.GameObjects.Container {
     this._rows = [];
 
     if (this._registry) {
-      const effects = this._registry.activeEffects();
       let row = 0;
-      for (const effect of effects) {
-        this._addRow(effect, row);
+      // One row per power-up/weapon: the shared registry merges permanent
+      // and temporary state so a field pickup never adds a second row.
+      for (const entry of this._buildPowerUpRows()) {
+        this._addRow(entry, row);
         row += 1;
       }
       // Render active weapon rows after power-up rows.
@@ -305,19 +351,18 @@ export class HUD extends Phaser.GameObjects.Container {
 
   // ── Rendering helpers ─────────────────────────────────────────────
 
-  /** Builds one display row (icon + name + value) from an active effect. */
-  private _addRow(effect: ActiveEffect, row: number): void {
-    const entry = getPowerUpById(effect.id);
+  /** Builds one display row (icon + label + value) from a HUD entry. */
+  private _addRow(entry: HUDEntry, row: number): void {
     const y = this._rowY(row);
 
     const icon = new Phaser.GameObjects.Graphics(this.scene);
-    drawPowerUpIcon(icon, entry.type, ICON_X, y + ROW_HEIGHT / 2, 8);
+    drawPowerUpIcon(icon, entry.icon, ICON_X, y + ROW_HEIGHT / 2, 8);
 
     const name = new Phaser.GameObjects.Text(
       this.scene,
       NAME_X,
       y + ROW_HEIGHT * 0.25,
-      entry.name,
+      entry.label,
       TEXT_STYLE,
     );
 
@@ -325,23 +370,99 @@ export class HUD extends Phaser.GameObjects.Container {
       this.scene,
       VALUE_X,
       y + ROW_HEIGHT * 0.25,
-      formatValue(effect),
+      entry.value,
       TEXT_STYLE,
     );
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
-    this._rows.push({
-      id: effect.id,
-      name: entry.name,
-      icon: entry.type,
-      value: formatValue(effect),
-    });
+    this._rows.push(entry);
+  }
+
+  // ── Power-up row model ────────────────────────────────────────────
+
+  /**
+   * Builds the merged power-up rows: one entry per owned/active power-up,
+   * with the effective level in the label and `∞`/countdown in the value
+   * (AH-0MUX802450085VZZ). P8 is represented by the dedicated lives counter
+   * and is never a row. Preserves the pre-existing visibility rules (a
+   * permanent P4 bomb, P6 charges/permanent/active phase, P7 stored
+   * teleports, P9/P10 timed or permanent).
+   */
+  private _buildPowerUpRows(): HUDEntry[] {
+    const reg = this._registry;
+    if (!reg) return [];
+    const rows: HUDEntry[] = [];
+    for (const id of POWER_UP_LEVEL_IDS) {
+      if (id === 'P8') continue; // lives are shown by the dedicated counter
+      if (!this._isPowerUpRowVisible(id)) continue;
+      const entry = getPowerUpById(id);
+      const level = reg.powerUpLevel(id);
+      const remaining = reg.powerUpTemporaryRemaining(id);
+      const temporary = remaining !== undefined;
+      const stacks = this._powerUpStacks(id);
+      rows.push({
+        id,
+        name: entry.name,
+        label: buildHUDLabel(entry.name, level, stacks),
+        icon: entry.type,
+        value: formatHUDValue(temporary, remaining),
+        level,
+        temporary,
+        ...(stacks !== undefined ? { stacks } : {}),
+      });
+    }
+    return rows;
+  }
+
+  /** Whether a power-up currently warrants a row (pre-existing rules). */
+  private _isPowerUpRowVisible(id: PowerUpId): boolean {
+    const reg = this._registry!;
+    switch (id) {
+      case 'P3':
+        return reg.isActive('P3');
+      case 'P4':
+        return reg.isBombPermanent();
+      case 'P5':
+        return reg.isActive('P5');
+      case 'P6':
+        return (
+          reg.isPhasePermanent() ||
+          reg.phaseCharges() > 0 ||
+          reg.isActive('P6')
+        );
+      case 'P7':
+        return reg.teleportStacks() > 0;
+      case 'P9':
+        return reg.isMagnetActive();
+      case 'P10':
+        return reg.isScoopActive() || reg.scoopStacks() > 0;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Consumable count for a power-up (appended to the label), or `undefined`
+   * when the level alone conveys the state. A zero count is never surfaced.
+   */
+  private _powerUpStacks(id: PowerUpId): number | undefined {
+    const reg = this._registry!;
+    switch (id) {
+      case 'P3':
+        return reg.shieldAbsorptionsRemaining() || undefined;
+      case 'P6':
+        return reg.isPhasePermanent() ? undefined : reg.phaseCharges() || undefined;
+      case 'P7':
+        return reg.teleportStacks() || undefined;
+      default:
+        return undefined;
+    }
   }
 
   // ── Test accessors (public model) ─────────────────────────────────
 
-  /** Current display rows (icon/name/value per active effect). */
+  /** Current display rows (one merged entry per power-up/weapon). */
   getRows(): HUDEntry[] {
     return [...this._rows];
   }
@@ -372,13 +493,11 @@ export class HUD extends Phaser.GameObjects.Container {
       8,
     );
 
-    // Weapon name, suffixed with the run-scoped level once it has been
-    // upgraded (parent AH-0MUPMPCB2009J54J). Level 0/1 shows no suffix (AC4).
+    // Weapon label, always suffixed with the run-scoped **effective** level
+    // (permanent + temporary); the value shows a countdown while a temporary
+    // field-pickup window is active, else `∞` (AH-0MUX802450085VZZ).
     const level = this._getWeaponLevel?.(weapon.weaponId) ?? 0;
-    const label =
-      level >= 2
-        ? `${WEAPON_ROW_PREFIX}${weapon.weaponId} Lv.${level}`
-        : `${WEAPON_ROW_PREFIX}${weapon.weaponId}`;
+    const label = `${WEAPON_ROW_PREFIX}${weapon.weaponId} Lvl ${level}`;
     const name = new Phaser.GameObjects.Text(
       this.scene,
       NAME_X,
@@ -387,29 +506,18 @@ export class HUD extends Phaser.GameObjects.Container {
       TEXT_STYLE,
     );
 
-    // Remaining seconds.
-    const remaining = Math.max(0, Math.ceil(weapon.remaining));
+    // Remaining seconds while the temporary window is active; `∞` for a
+    // permanent-only weapon.
+    const temporary = weapon.tempWindow === true;
     const value = new Phaser.GameObjects.Text(
       this.scene,
       VALUE_X,
       y + ROW_HEIGHT * 0.25,
-      `${remaining}s`,
+      formatHUDValue(temporary, weapon.remaining),
       TEXT_STYLE,
     );
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
   }
-}
-
-/** Formats an effect's value: "Ns" (remaining), "xN" (stacks) or unlimited. */
-export function formatValue(effect: ActiveEffect): string {
-  if (effect.permanent) {
-    return PERMANENT_VALUE;
-  }
-  if (effect.stacks !== undefined) {
-    return `x${effect.stacks}`;
-  }
-  const remaining = Math.max(0, Math.ceil(effect.remaining ?? 0));
-  return `${remaining}s`;
 }

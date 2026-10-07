@@ -137,6 +137,15 @@ export interface WeaponEffect {
   remaining: number;
   /** True when the effect was granted permanently for the run (never expires). */
   permanent?: boolean;
+  /**
+   * True while a field-pickup temporary window is active on top of the
+   * weapon (AH-0MUX802450085VZZ). A permanent weapon re-collected in the
+   * field keeps `permanent: true` **and** opens this window, which counts
+   * down and clears on expiry while the permanent base remains. The HUD
+   * renders the window as a countdown timer (vs `∞` for a permanent-only
+   * weapon).
+   */
+  tempWindow?: boolean;
 }
 
 export interface ActiveEffect {
@@ -457,13 +466,19 @@ export class EffectsRegistry {
       if (effect.remaining > 0) continue;
       this._expireTimedEffect(id, effect);
     }
-    // Expire timed weapons (permanent weapons are skipped).
+    // Expire timed weapons (permanent weapons with no active temporary
+    // window are skipped; a field-pickup window on top of a permanent base
+    // still expires and clears the window, leaving the permanent base).
     for (const [weaponId, weapon] of this._weapons) {
-      if (weapon.permanent) continue;
+      if (weapon.permanent && !weapon.tempWindow) continue;
       weapon.remaining -= dt;
-      if (weapon.remaining <= 0) {
-        this._weapons.delete(weaponId);
+      if (weapon.remaining > 0) continue;
+      if (weapon.tempWindow) {
+        weapon.tempWindow = false;
+        weapon.remaining = 0;
+        if (weapon.permanent) continue;
       }
+      this._weapons.delete(weaponId);
     }
   }
 
@@ -783,6 +798,34 @@ export class EffectsRegistry {
     return Array.from(this._weapons.values());
   }
 
+  // ── HUD level accessors (AH-0MUX802450085VZZ) ────────────────────
+
+  /**
+   * The **effective** run-scoped level of a power-up
+   * (`permanentGrants + tempStacks`, 0 when unowned). Consumed by the HUD
+   * so a single row shows the current level (AC5).
+   */
+  powerUpLevel(id: PowerUpId): number {
+    return this._levelStore.getEffectiveLevel(id);
+  }
+
+  /**
+   * Seconds remaining on the power-up's active **temporary** window, or
+   * `undefined` when no temporary level-up is active for the item (its
+   * level is permanent for the run). Drives the HUD's `∞`/countdown value:
+   * a permanent base with no window reads `∞`; an active field-pickup (or
+   * timed-effect) window reads a countdown (AC1/AC5).
+   *
+   * A permanent base with an active field window still returns the window's
+   * remaining seconds; a permanent base with no window never does.
+   */
+  powerUpTemporaryRemaining(id: PowerUpId): number | undefined {
+    const effect = this._timed.get(id);
+    if (!effect) return undefined;
+    if (effect.permanent && !effect.tempWindow) return undefined;
+    return Math.max(0, effect.remaining);
+  }
+
   /** Whether a specific timed weapon is currently active. */
   hasWeapon(weaponId: WeaponId): boolean {
     return this._weapons.has(weaponId);
@@ -801,15 +844,23 @@ export class EffectsRegistry {
   applyWeapon(weaponId: WeaponId, permanent = false): boolean {
     const existing = this._weapons.get(weaponId);
     if (existing) {
+      if (permanent) {
+        // A hold-full reward makes the base permanent; an already-active
+        // field window keeps counting down on its own schedule, so the HUD
+        // still shows a timer until it expires (mirrors power-ups, AC2).
+        existing.permanent = true;
+        return false; // already active, upgraded to permanent
+      }
+      // A field pickup (re)opens the temporary window (AC1).
+      existing.tempWindow = true;
       existing.remaining = WEAPON_EFFECT_DURATION;
-      if (permanent) existing.permanent = true;
       return false; // already active, refreshed
     }
     this._weapons.set(weaponId, {
       weaponId,
       duration: WEAPON_EFFECT_DURATION,
       remaining: WEAPON_EFFECT_DURATION,
-      ...(permanent ? { permanent: true } : {}),
+      ...(permanent ? { permanent: true } : { tempWindow: true }),
     });
     return true;
   }

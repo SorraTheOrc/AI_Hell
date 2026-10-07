@@ -2423,7 +2423,7 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
     ).list
       .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
       .map((c) => c.text);
-    expect(texts).toContain(`Weapon: spread Lv.${level}`);
+    expect(texts).toContain(`Weapon: spread Lvl ${level}`);
   });
 });
 

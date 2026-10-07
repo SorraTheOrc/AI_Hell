@@ -1027,3 +1027,55 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     expect(reg.magnetStacks()).toBe(1); // permanent stack retained
   });
 });
+
+// ── HUD level/temporary accessors (AH-0MUX802450085VZZ) ─────────────
+//
+// The HUD derives one merged row per power-up/weapon from these accessors:
+// the effective level in the label and `∞`/countdown in the value.
+
+describe('HUD level and temporary-window accessors (AH-0MUX802450085VZZ)', () => {
+  it('powerUpLevel() reports the effective permanent + temporary level', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.powerUpLevel('P5')).toBe(0);
+
+    reg.applyCollect('P5');
+    expect(reg.powerUpLevel('P5')).toBe(1);
+
+    reg.applyCollect('P5');
+    expect(reg.powerUpLevel('P5')).toBe(2);
+  });
+
+  it('powerUpTemporaryRemaining() is undefined for a permanent-only base', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5', true);
+    expect(reg.powerUpTemporaryRemaining('P5')).toBeUndefined();
+  });
+
+  it('powerUpTemporaryRemaining() counts down a field window and clears to the permanent base', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('P5', true);
+    reg.applyCollect('P5'); // field pickup on top of the permanent base
+
+    expect(reg.powerUpTemporaryRemaining('P5')).toBeGreaterThan(0);
+
+    reg.tick(1000); // window expires
+    expect(reg.powerUpTemporaryRemaining('P5')).toBeUndefined();
+    expect(reg.powerUpLevel('P5')).toBe(1); // level reverted to permanent
+  });
+
+  it('a field pickup on a permanent weapon opens a temporary window that expires back to the permanent base', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread', true); // permanent-only
+    expect(reg.activeWeapons()[0].permanent).toBe(true);
+    expect(reg.activeWeapons()[0].tempWindow).toBeFalsy();
+
+    reg.applyWeapon('spread'); // field pickup on top
+    expect(reg.activeWeapons()[0].tempWindow).toBe(true);
+    expect(reg.activeWeapons()[0].remaining).toBe(10);
+
+    reg.tick(10.1);
+    expect(reg.hasWeapon('spread')).toBe(true); // permanent base remains
+    expect(reg.activeWeapons()[0].tempWindow).toBeFalsy();
+    expect(reg.activeWeapons()[0].permanent).toBe(true);
+  });
+});

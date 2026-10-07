@@ -115,7 +115,7 @@ describe('GymWeaponLeveling', () => {
     ).list
       .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
       .map((c) => c.text);
-    expect(texts.some((t) => t.startsWith('Weapon: rapid Lv.'))).toBe(true);
+    expect(texts.some((t) => t.startsWith('Weapon: rapid Lvl '))).toBe(true);
   });
 
   it('AC1/AC5 — the hold-full choice permanently levels an owned weapon', async () => {
