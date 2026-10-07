@@ -1,9 +1,11 @@
 /**
  * Bot decision logic — survival-first heuristic.
  *
- * `decideBotInput(snapshot)` is a **pure function** that takes a read-only
- * `BotSnapshot` and returns a `FourDirectionalInput`.  The decision follows a
- * strict priority ladder:
+ * `decideBotIntent(snapshot)` is a **pure function** that takes a read-only
+ * `BotSnapshot` and returns a `BotSteeringIntent`: the four-directional
+ * cardinal approximation (kept for the `fourDirectional` scheme and the
+ * legacy tests) **plus** the precise unit travel direction the bot actually
+ * wants.  The decision follows a strict priority ladder:
  *
  * 1. **Survive** — never steer into bullets, asteroids, enemies or walls when
  *    a safe alternative exists.  This tier also performs best-effort
@@ -21,11 +23,26 @@
  *    {@link BotDecisionTunables.engagementRadius}.
  * 5. **Asteroids** — engage the nearest live asteroid within
  *    {@link BotDecisionTunables.engagementRadius}.
- * 6. **Idle** — nothing to pursue and no danger: return an all-false input.
+ * 6. **Idle** — nothing to pursue and no danger: return an all-false intent.
  *
  * The goal order is fixed and legible (minerals > power-ups > enemies >
  * asteroids) so the demo's movement reads as purposeful rather than random;
  * the survival tier still bounds every choice.
+ *
+ * ## Precise aiming ("point towards it and thrust forward")
+ *
+ * A cardinal-only intent cannot express an arbitrary bearing, so under the
+ * rotational `asteroids` control scheme the ship could only ever point at
+ * N/E/S/W and would hunt between adjacent cardinals — the "oscillating
+ * left/right rotation thrusters" the operator observed.  The decision
+ * therefore also returns the exact bearing to the chosen target
+ * (`dirX`/`dirY`); {@link BotSteeringIntent} carries it and the human-like
+ * governor aims the hull at it (see `src/ai/botHumanLike.ts`).  The cardinal
+ * booleans remain the nearest-cardinal projection, so the
+ * `fourDirectional` scheme and existing consumers are unchanged.
+ *
+ * `decideBotInput(snapshot)` is the four-directional projection of the same
+ * intent, retained for the `fourDirectional` scheme and legacy callers.
  *
  * The module deliberately has **no Phaser or scene dependency** so it can be
  * unit-tested with plain stubbed snapshots.  Every tunable lives in
@@ -77,6 +94,14 @@ export interface BotDecisionTunables {
    * bot estimates one.  Best-effort.
    */
   assumedBulletSpeed: number;
+  /**
+   * Standoff hysteresis multiplier for engagement.  The bot starts backing
+   * away at {@link BotDecisionTunables.dangerMargin} and only resumes
+   * approaching once the target is this multiple of the margin away, so a
+   * target on the margin boundary does not flip the intent every decision
+   * tick (the approach/retreat oscillation the operator observed).
+   */
+  engagementHysteresis: number;
   /** Playfield width (px) — the right wall sits at this x. */
   playfieldWidth: number;
   /** Playfield height (px) — the bottom wall sits at this y. */
@@ -85,7 +110,7 @@ export interface BotDecisionTunables {
 
 /**
  * Default tunable values.  Override per-call via the optional second
- * parameter of {@link decideBotInput}.
+ * parameter of {@link decideBotIntent}.
  */
 export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   engagementRadius: 300,
@@ -97,9 +122,28 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   playerSpeed: 175,
   firePredictionHorizon: 0.9,
   assumedBulletSpeed: 200,
+  engagementHysteresis: 1.6,
   playfieldWidth: 960,
   playfieldHeight: 540,
 };
+
+// ── Steering intent ─────────────────────────────────────────────────
+
+/**
+ * A steering intent: the four-directional cardinal approximation (for the
+ * `fourDirectional` scheme and existing consumers) **plus** the precise unit
+ * travel direction (`dirX`, `dirY`) the bot wants.  `(0, 0)` means idle.
+ *
+ * The rotational `asteroids` scheme aims the hull at `(dirX, dirY)` so the
+ * ship points straight at its target and thrusts forward; the
+ * four-directional scheme uses the booleans.
+ */
+export interface BotSteeringIntent extends FourDirectionalInput {
+  /** Precise unit x component of the desired travel direction (0 when idle). */
+  readonly dirX: number;
+  /** Precise unit y component of the desired travel direction (0 when idle). */
+  readonly dirY: number;
+}
 
 // ── Direction primitives ────────────────────────────────────────────
 
@@ -192,49 +236,39 @@ interface DirectionSafety {
   clearance: number;
 }
 
-/** Returns the distance from the player to the wall in the given direction. */
-function wallClearance(
-  dir: BotDirection,
-  px: number,
-  py: number,
-  t: BotDecisionTunables,
-): number {
-  switch (dir) {
-    case 'left':
-      return px;
-    case 'right':
-      return t.playfieldWidth - px;
-    case 'up':
-      return py;
-    case 'down':
-      return t.playfieldHeight - py;
-  }
-}
-
 /**
- * Evaluates whether a direction is safe and how much clearance it offers.
+ * Evaluates whether moving along the unit direction `(dirX, dirY)` is safe
+ * and how much clearance it offers.
  *
  * A direction is unsafe when it either:
- * - moves into a wall within `wallMargin`;
+ * - reaches a wall within `wallMargin`;
  * - moves toward an alive hazard (enemy/asteroid/boss) closer than
  *   `dangerMargin`;
  * - moves toward a bullet already within `bulletDangerRadius`; or
  * - is predicted to cross an in-flight bullet's path within
  *   `firePredictionHorizon` (fire-pattern avoidance).
+ *
+ * Generalising the check to an arbitrary unit vector is what lets the bot
+ * validate a precise aiming direction (not just the four cardinals).
  */
-function evaluateDirection(
-  dir: BotDirection,
+function evaluateVector(
+  dirX: number,
+  dirY: number,
   snapshot: BotSnapshot,
   t: BotDecisionTunables,
   px: number,
   py: number,
 ): DirectionSafety {
-  const vec = DIR_VECTORS[dir];
-  const pvx = vec.dx * t.playerSpeed;
-  const pvy = vec.dy * t.playerSpeed;
+  const pvx = dirX * t.playerSpeed;
+  const pvy = dirY * t.playerSpeed;
 
-  // Walls: only moving into the near wall is unsafe.
-  const wall = wallClearance(dir, px, py, t);
+  // Walls: distance travelled along the direction to the first wall it
+  // reaches; reaching one inside `wallMargin` is unsafe.
+  let wall = Infinity;
+  if (dirX < -EPS) wall = Math.min(wall, px / -dirX);
+  if (dirX > EPS) wall = Math.min(wall, (t.playfieldWidth - px) / dirX);
+  if (dirY < -EPS) wall = Math.min(wall, py / -dirY);
+  if (dirY > EPS) wall = Math.min(wall, (t.playfieldHeight - py) / dirY);
   let clearance = wall;
   let safe = wall >= t.wallMargin;
 
@@ -244,7 +278,7 @@ function evaluateDirection(
     if (d < clearance) clearance = d;
     const toX = hazard.x - px;
     const toY = hazard.y - py;
-    if (d < t.dangerMargin && dot(toX, toY, vec.dx, vec.dy) > 0) {
+    if (d < t.dangerMargin && dot(toX, toY, dirX, dirY) > 0) {
       safe = false;
     }
   }
@@ -281,8 +315,8 @@ function evaluateDirection(
     if (d < t.bulletDangerRadius && dot(
       bullet.x - px,
       bullet.y - py,
-      vec.dx,
-      vec.dy,
+      dirX,
+      dirY,
     ) > 0) {
       safe = false;
     }
@@ -308,6 +342,18 @@ function evaluateDirection(
   }
 
   return { safe, clearance };
+}
+
+/** Evaluates a cardinal direction via {@link evaluateVector}. */
+function evaluateDirection(
+  dir: BotDirection,
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  px: number,
+  py: number,
+): DirectionSafety {
+  const vec = DIR_VECTORS[dir];
+  return evaluateVector(vec.dx, vec.dy, snapshot, t, px, py);
 }
 
 /** Collects the alive hazards (enemies plus the boss) from the snapshot. */
@@ -348,7 +394,8 @@ function nearestWithin(
 }
 
 /**
- * Chooses the safe direction that best changes the distance to `target`.
+ * Chooses the safe cardinal direction that best changes the distance to
+ * `target`.
  *
  * @param direction — `+1` to approach (minimise distance), `-1` to retreat
  *   (maximise distance).
@@ -383,24 +430,24 @@ function steerToward(
 // ── Core decision logic ─────────────────────────────────────────────
 
 /**
- * Decides the next input for the bot from a read-only snapshot.
+ * Decides the next steering intent for the bot from a read-only snapshot.
  *
  * @param snapshot — a read-only `BotSnapshot`.
  * @param tunableOverrides — optional partial override of
  *   {@link BOT_DECISION_TUNABLES}.
- * @returns a `FourDirectionalInput` (up/down/left/right booleans).
+ * @returns a {@link BotSteeringIntent} (cardinal booleans + precise bearing).
  */
-export function decideBotInput(
+export function decideBotIntent(
   snapshot: BotSnapshot,
   tunableOverrides?: Partial<BotDecisionTunables>,
-): FourDirectionalInput {
+): BotSteeringIntent {
   const t: BotDecisionTunables = {
     ...BOT_DECISION_TUNABLES,
     ...(tunableOverrides ?? {}),
   };
 
   // No ship: nothing to control.
-  if (!snapshot.player) return idle();
+  if (!snapshot.player) return idleIntent();
 
   const px = snapshot.player.x;
   const py = snapshot.player.y;
@@ -418,21 +465,21 @@ export function decideBotInput(
   // Cornered: no safe direction exists.  Pick the one with the most
   // clearance — it is the least-bad escape and the bot must still move.
   if (safeDirections.length === 0) {
-    return pickMostClearDirection(safety);
+    return buildCardinalIntent(mostClearDirection(safety));
   }
 
   // ── 2. MINERALS (collect first — the operator's top goal) ──────
   const mineral = nearestWithin(snapshot.minerals, px, py, t.mineralSeekRange);
   if (mineral) {
-    const approach = steerToward(mineral, safeDirections, px, py, 1);
-    if (approach) return buildInput(approach);
+    const intent = approachIntent(mineral, 1, snapshot, t, px, py, safeDirections);
+    if (intent) return intent;
   }
 
   // ── 3. POWER-UPS ────────────────────────────────────────────────
   const powerUp = nearestWithin(snapshot.drops, px, py, t.powerUpSeekRange);
   if (powerUp) {
-    const approach = steerToward(powerUp, safeDirections, px, py, 1);
-    if (approach) return buildInput(approach);
+    const intent = approachIntent(powerUp, 1, snapshot, t, px, py, safeDirections);
+    if (intent) return intent;
   }
 
   // ── 4. ENEMIES (shoot) ──────────────────────────────────────────
@@ -443,8 +490,17 @@ export function decideBotInput(
     t.engagementRadius,
   );
   if (enemy) {
-    const engage = engageTarget(enemy, safeDirections, px, py, t);
-    if (engage) return buildInput(engage);
+    const direction = engageDirection(enemy, snapshot, t, px, py);
+    const intent = approachIntent(
+      enemy,
+      direction,
+      snapshot,
+      t,
+      px,
+      py,
+      safeDirections,
+    );
+    if (intent) return intent;
   }
 
   // ── 5. ASTEROIDS (shoot) ────────────────────────────────────────
@@ -455,16 +511,105 @@ export function decideBotInput(
     t.engagementRadius,
   );
   if (asteroid) {
-    const engage = engageTarget(asteroid, safeDirections, px, py, t);
-    if (engage) return buildInput(engage);
+    const direction = engageDirection(asteroid, snapshot, t, px, py);
+    const intent = approachIntent(
+      asteroid,
+      direction,
+      snapshot,
+      t,
+      px,
+      py,
+      safeDirections,
+    );
+    if (intent) return intent;
   }
 
   // ── 6. IDLE ─────────────────────────────────────────────────────
   // Nothing to pursue; hold position rather than wander into danger.
-  return idle();
+  return idleIntent();
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
+/**
+ * Four-directional projection of {@link decideBotIntent}, retained for the
+ * `fourDirectional` scheme and existing callers.  The precise `dirX`/`dirY`
+ * are dropped; the returned object is exactly the four booleans.
+ */
+export function decideBotInput(
+  snapshot: BotSnapshot,
+  tunableOverrides?: Partial<BotDecisionTunables>,
+): FourDirectionalInput {
+  const { dirX: _dirX, dirY: _dirY, ...cardinal } = decideBotIntent(
+    snapshot,
+    tunableOverrides,
+  );
+  return cardinal;
+}
+
+// ── Steering helpers ────────────────────────────────────────────────
+
+/**
+ * Builds the intent for pursuing `target` in `direction` (`+1` approach,
+ * `-1` retreat).
+ *
+ * Prefers the precise bearing to the target when that bearing is safe, so
+ * the ship points straight at it ("point towards it and thrust forward").
+ * When the direct bearing is blocked by the survival tier, falls back to the
+ * safe cardinal direction that best improves the objective, and `null` when
+ * no safe direction helps.
+ */
+function approachIntent(
+  target: Target,
+  direction: 1 | -1,
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  px: number,
+  py: number,
+  safeDirections: readonly BotDirection[],
+): BotSteeringIntent | null {
+  const rx = target.x - px;
+  const ry = target.y - py;
+  const d = Math.hypot(rx, ry) || 1;
+  const dirX = (direction * rx) / d;
+  const dirY = (direction * ry) / d;
+
+  if (evaluateVector(dirX, dirY, snapshot, t, px, py).safe) {
+    return buildIntent(dirX, dirY);
+  }
+
+  const safe = steerToward(target, safeDirections, px, py, direction);
+  return safe ? buildCardinalIntent(safe) : null;
+}
+
+/**
+ * Chooses whether to approach (`+1`) or retreat (`-1`) an engaged target.
+ *
+ * The bot backs away inside {@link BotDecisionTunables.dangerMargin}.  To
+ * stop the approach/retreat flip-flop at the boundary, it only resumes
+ * approaching once the target is beyond `dangerMargin *
+ * engagementHysteresis` **and** the ship is no longer moving away from it
+ * (radial closing speed non-negative).
+ */
+function engageDirection(
+  target: Target,
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  px: number,
+  py: number,
+): 1 | -1 {
+  if (target.distance >= t.dangerMargin * t.engagementHysteresis) return 1;
+  if (target.distance >= t.dangerMargin) {
+    // In the hysteresis band: keep retreating while still separating.
+    const rx = target.x - px;
+    const ry = target.y - py;
+    const d = target.distance || 1;
+    const radialSpeed =
+      (snapshot.player!.vx * rx + snapshot.player!.vy * ry) / d;
+    return radialSpeed < 0 ? -1 : 1;
+  }
+  return -1;
+}
+
+// ── Intent builders ─────────────────────────────────────────────────
 
 /** Returns the live non-asteroid enemies plus the live boss as targets. */
 function liveEnemyTargets(
@@ -491,28 +636,10 @@ function liveAsteroidTargets(
     .map((enemy) => ({ x: enemy.x, y: enemy.y }));
 }
 
-/**
- * Steers to engage a target: approach it to line up the auto-fire, but back
- * away when it is already inside {@link BotDecisionTunables.dangerMargin} so
- * the bot keeps a safe firing distance.
- */
-function engageTarget(
-  target: Target,
-  safeDirections: readonly BotDirection[],
-  px: number,
-  py: number,
-  t: BotDecisionTunables,
-): BotDirection | null {
-  if (target.distance < t.dangerMargin) {
-    return steerToward(target, safeDirections, px, py, -1);
-  }
-  return steerToward(target, safeDirections, px, py, 1);
-}
-
 /** Returns the input for the direction with the greatest clearance. */
-function pickMostClearDirection(
+function mostClearDirection(
   safety: Record<BotDirection, DirectionSafety>,
-): FourDirectionalInput {
+): BotDirection {
   let best: BotDirection = BOT_DIRECTIONS[0];
   let bestClearance = -Infinity;
   for (const dir of BOT_DIRECTIONS) {
@@ -522,7 +649,33 @@ function pickMostClearDirection(
       best = dir;
     }
   }
-  return buildInput(best);
+  return best;
+}
+
+/**
+ * Builds a {@link BotSteeringIntent} from a precise direction.  The vector is
+ * normalised and the cardinal booleans are its nearest-cardinal projection,
+ * so `decideBotInput` stays a faithful four-directional approximation.
+ */
+function buildIntent(dirX: number, dirY: number): BotSteeringIntent {
+  const len = Math.hypot(dirX, dirY) || 1;
+  const ux = dirX / len;
+  const uy = dirY / len;
+  const cardinal: FourDirectionalInput =
+    Math.abs(ux) >= Math.abs(uy)
+      ? ux >= 0
+        ? { up: false, down: false, left: false, right: true }
+        : { up: false, down: false, left: true, right: false }
+      : uy >= 0
+        ? { up: false, down: true, left: false, right: false }
+        : { up: true, down: false, left: false, right: false };
+  return { ...cardinal, dirX: ux, dirY: uy };
+}
+
+/** Builds an intent along a cardinal direction. */
+function buildCardinalIntent(dir: BotDirection): BotSteeringIntent {
+  const vec = DIR_VECTORS[dir];
+  return { ...buildInput(dir), dirX: vec.dx, dirY: vec.dy };
 }
 
 /** Builds a `FourDirectionalInput` from a direction. */
@@ -535,7 +688,7 @@ function buildInput(dir: BotDirection): FourDirectionalInput {
   };
 }
 
-/** An all-false input (hold position). */
-function idle(): FourDirectionalInput {
-  return { up: false, down: false, left: false, right: false };
+/** An all-false intent (hold position). */
+function idleIntent(): BotSteeringIntent {
+  return { up: false, down: false, left: false, right: false, dirX: 0, dirY: 0 };
 }

@@ -1,7 +1,7 @@
 /**
  * Read-only bot snapshot — type definition and builder.
  *
- * The bot decision logic (`decideBotInput`) is a pure function over a
+ * The bot decision logic (`decideBotIntent`) is a pure function over a
  * `BotSnapshot` so it can be unit-tested without a browser, a Phaser scene
  * or any wall-clock state. This module is the adapter between the live
  * `PlayScene` and that pure decision layer: `buildBotSnapshot(scene)` reads

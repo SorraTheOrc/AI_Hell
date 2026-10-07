@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BOT_DECISION_TUNABLES,
   decideBotInput,
+  decideBotIntent,
   type BotDecisionTunables,
 } from './botDecision';
 
@@ -278,6 +279,115 @@ describe('movement goals: minerals > power-ups > enemies > asteroids (AH-0MUXYOV
       minerals: [mineral(500, 300)],
     });
     expect(decideBotInput(snapshot)).toEqual(decideBotInput(snapshot));
+  });
+});
+
+// ── Precise steering intent (rejection AH-0MUXYOV4C008MV0L) ──────────
+//
+// The operator rejected the original implementation because the bot
+// "oscillates with left and right rotation thrusters" instead of pointing at
+// its target.  A cardinal-only intent cannot express an arbitrary bearing, so
+// `decideBotIntent` also returns the exact bearing to the chosen target.  The
+// four-directional booleans remain its nearest-cardinal projection.
+
+describe('precise steering intent — point at the target (rejection)', () => {
+  it('returns the exact bearing to an off-axis mineral, not just a cardinal', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)], // up-left, not axis-aligned
+    });
+
+    const intent = decideBotIntent(snapshot);
+    const len = Math.hypot(-200, -200);
+    expect(intent.dirX).toBeCloseTo(-200 / len, 6);
+    expect(intent.dirY).toBeCloseTo(-200 / len, 6);
+  });
+
+  it('returns the unit bearing even when the target is close', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(430, 340)], // 50 px away, off-axis
+    });
+
+    const intent = decideBotIntent(snapshot);
+    expect(Math.hypot(intent.dirX, intent.dirY)).toBeCloseTo(1, 6);
+    expect(intent.dirX).toBeGreaterThan(0);
+    expect(intent.dirY).toBeGreaterThan(0);
+  });
+
+  it('projects the precise bearing onto the four-directional booleans', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 260)], // mostly left, slightly up
+    });
+
+    const intent = decideBotIntent(snapshot);
+    // Precise bearing is up-left; the cardinal projection is left.
+    expect(intent.dirX).toBeLessThan(0);
+    expect(intent.left).toBe(true);
+    expect(intent.right).toBe(false);
+  });
+
+  it('does not point into a hazard on the direct path (bearing is safety-bounded)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)], // up-left
+      // A stationary bullet sits on the up-left approach path.
+      enemyBullets: [bullet(300, 200, 0, 0)],
+    });
+
+    const intent = decideBotIntent(snapshot);
+    // The direct up-left bearing is rejected; the intent must not point there.
+    expect(intent.dirX < 0 && intent.dirY < 0).toBe(false);
+  });
+
+  it('is pure and deterministic', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)],
+    });
+    expect(decideBotIntent(snapshot)).toEqual(decideBotIntent(snapshot));
+  });
+
+  it('backs away inside the danger margin and holds through the hysteresis band', () => {
+    // Inside the margin (60 px): retreat, away from the enemy.
+    const inside = decideBotIntent(
+      makeSnapshot({
+        player: { x: 400, y: 300, vx: 0, vy: 0 },
+        enemies: [enemy(460, 300, 'tank')],
+      }),
+    );
+    expect(inside.dirX).toBeLessThan(0);
+
+    // In the hysteresis band (100 px) but still separating: keep retreating.
+    const separating = decideBotIntent(
+      makeSnapshot({
+        player: { x: 400, y: 300, vx: -40, vy: 0 },
+        enemies: [enemy(500, 300, 'tank')],
+      }),
+    );
+    expect(separating.dirX).toBeLessThan(0);
+
+    // In the band and closing: resume the approach.
+    const closing = decideBotIntent(
+      makeSnapshot({
+        player: { x: 400, y: 300, vx: 40, vy: 0 },
+        enemies: [enemy(500, 300, 'tank')],
+      }),
+    );
+    expect(closing.dirX).toBeGreaterThan(0);
+  });
+
+  it('keeps the goal order for the precise intent (mineral beats power-up)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      drops: [drop(300, 260, 'spread')],
+      minerals: [mineral(500, 340)],
+    });
+    const intent = decideBotIntent(snapshot);
+    // Mineral is to the right/below → precise bearing points that way.
+    expect(intent.dirX).toBeGreaterThan(0);
+    expect(intent.dirY).toBeGreaterThan(0);
   });
 });
 

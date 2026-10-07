@@ -1,7 +1,7 @@
 /**
  * Human-like input layer for the attract/demo bot (AH-0MUXXQ1MN002RXGB).
  *
- * The pure {@link decideBotInput} re-evaluates every frame (~16 ms), which
+ * The pure {@link decideBotIntent} re-evaluates every frame (~16 ms), which
  * lets the raw bot flip thrust direction instantly — impossible for a human
  * on a mechanical keyboard. This module wraps that decision in a small
  * stateful governor that:
@@ -19,18 +19,26 @@
  *
  * ## Scheme execution
  *
- * `decideBotInput` is scheme-agnostic: it returns a four-directional
- * *steering intent* — the absolute screen direction the bot wants to travel
- * (up/left/right, or down when a descent is the safest move). The governor
- * resolves that intent into the input shape the ship's movement model
- * actually consumes:
+ * `decideBotIntent` is scheme-agnostic: it returns a *steering intent* — the
+ * absolute screen direction the bot wants to travel (up/left/right, or down
+ * when a descent is the safest move) **plus the precise unit bearing to the
+ * chosen target** (`dirX`/`dirY`). The governor resolves that intent into the
+ * input shape the ship's movement model actually consumes:
  *
  * - `fourDirectional`: the intent maps 1:1 to `{ up, down, left, right }`
  *   with the **down** key stripped (a human drives W/A/D only).
  * - `asteroids`: {@link toAsteroidsInput} turns the ship to **face** the
  *   desired direction (A/Left and D/Right) and then thrusts **forward** (W).
- *   The emitted `AsteroidsInput` has no reverse key at all, so W/A/D is a
+ *   The precise bearing is used when present, so the ship points straight at
+ *   its target instead of snapping between the four cardinals; the cardinal
+ *   booleans remain the fallback for callers without a precise bearing.  The
+ *   emitted `AsteroidsInput` has no reverse key at all, so W/A/D is a
  *   structural guarantee rather than a clamp.
+ *
+ * The governor holds the committed *intent* for the human reaction window but
+ * re-resolves it against the ship's **current** facing every tick, so the
+ * turn is closed-loop: a held "aim at the mineral" intent tracks the target
+ * precisely and never overshoots the way an open-loop held turn key would.
  *
  * `PlayScene` never forces a scheme: the demo drives whichever scheme the
  * ship is configured with, so the demo ship looks and handles like the
@@ -104,6 +112,18 @@ export const BOT_MINERAL_CHOICE_DELAY_MS = 900;
 
 // ── Asteroids scheme adapter ─────────────────────────────────────────
 
+/**
+ * A steering intent the governor understands: the four-directional booleans
+ * plus an optional precise unit bearing (`dirX`/`dirY`) toward the chosen
+ * target.  {@link BotSteeringIntent} satisfies this shape; a bare
+ * `FourDirectionalInput` is also accepted and falls back to the cardinal
+ * booleans.
+ */
+export interface SteeredIntent extends FourDirectionalInput {
+  readonly dirX?: number;
+  readonly dirY?: number;
+}
+
 /** The ship context the governor needs to execute a steering intent. */
 export interface BotControlContext {
   /** The ship's active control scheme. */
@@ -126,12 +146,13 @@ export interface BotControlContext {
  * @returns the `AsteroidsInput` for the current tick.
  */
 export function toAsteroidsInput(
-  intent: FourDirectionalInput,
+  intent: SteeredIntent,
   facing: number,
   toleranceRad: number = BOT_HUMAN_INPUT_TUNABLES.alignmentToleranceRad,
 ): AsteroidsInput {
-  const dx = (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
-  const dy = (intent.down ? 1 : 0) - (intent.up ? 1 : 0);
+  const precise = preciseDirection(intent);
+  const dx = precise ? precise.dx : (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
+  const dy = precise ? precise.dy : (intent.down ? 1 : 0) - (intent.up ? 1 : 0);
   if (dx === 0 && dy === 0) return { ...IDLE_ASTEROIDS_INPUT };
 
   const desired = Math.atan2(dy, dx);
@@ -152,6 +173,24 @@ export function toAsteroidsInput(
   };
 }
 
+/**
+ * Extracts a normalised precise bearing from a steering intent, or `null`
+ * when the intent carries no usable direction (missing, non-finite or the
+ * zero vector).  A `null` result means the caller should fall back to the
+ * four-directional booleans.
+ */
+function preciseDirection(
+  intent: SteeredIntent,
+): { dx: number; dy: number } | null {
+  const rawX = intent.dirX;
+  const rawY = intent.dirY;
+  if (typeof rawX !== 'number' || typeof rawY !== 'number') return null;
+  if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
+  const len = Math.hypot(rawX, rawY);
+  if (len < 1e-9) return null;
+  return { dx: rawX / len, dy: rawY / len };
+}
+
 // ── Governor ─────────────────────────────────────────────────────────
 
 /**
@@ -167,8 +206,11 @@ export function toAsteroidsInput(
  * committed input is held in between.
  */
 export class BotInputGovernor {
-  /** The scheme input currently held between reactions. */
-  private committed: ControlInput = IDLE_INPUT;
+  /** The steering intent committed at the last reaction (held between commits). */
+  private committed: SteeredIntent = IDLE_INPUT;
+
+  /** The scheme input resolved from the committed intent this tick. */
+  private resolved: ControlInput = IDLE_INPUT;
 
   /** Time (ms) since the last commit; starts "due" so the first commits. */
   private sinceCommitMs = Number.POSITIVE_INFINITY;
@@ -185,6 +227,7 @@ export class BotInputGovernor {
    */
   reset(): void {
     this.committed = IDLE_INPUT;
+    this.resolved = IDLE_INPUT;
     this.sinceCommitMs = Number.POSITIVE_INFINITY;
   }
 
@@ -192,38 +235,40 @@ export class BotInputGovernor {
    * Advances by `dtSeconds`, samples `decision`, and returns the input the
    * bot actually holds this tick.
    *
-   * The sampled decision is committed (resolved to the ship's scheme) only
-   * when at least `reactionTimeMs` has elapsed since the previous commit;
-   * otherwise the previously committed input is held. The asteroids adapter
-   * reads `context.facing` at the moment of commitment, so the held turn
-   * carries the ship toward the intended heading.
+   * The sampled decision is committed as the held **intent** only when at
+   * least `reactionTimeMs` has elapsed since the previous commit; otherwise
+   * the previously committed intent is held.  The held intent is resolved to
+   * the ship's scheme input **every tick** against the ship's current facing,
+   * so a rotational `asteroids` turn is closed-loop and aims precisely at the
+   * target rather than overshooting (an open-loop held turn key would).
    *
-   * @param decision — the pure four-directional steering intent for this tick.
+   * @param decision — the pure steering intent for this tick.
    * @param dtSeconds — elapsed time since the previous tick (seconds).
-   * @param context — the ship's active scheme and facing angle.
+   * @param context — the ship's active scheme and current facing angle.
    * @returns the committed scheme input for this tick.
    */
   update(
-    decision: FourDirectionalInput,
+    decision: SteeredIntent,
     dtSeconds: number,
     context: BotControlContext = { scheme: 'fourDirectional', facing: 0 },
   ): ControlInput {
     this.sinceCommitMs += Math.max(0, dtSeconds) * 1000;
     if (this.sinceCommitMs >= this.tunables.reactionTimeMs) {
-      this.committed = this.resolve(decision, context);
+      this.committed = { ...decision };
       this.sinceCommitMs = 0;
     }
+    this.resolved = this.resolve(this.committed, context);
     return this.current();
   }
 
-  /** The currently committed scheme input (defensive copy). */
+  /** The currently resolved scheme input (defensive copy). */
   current(): ControlInput {
-    return { ...this.committed };
+    return { ...this.resolved };
   }
 
   /** Resolves a steering intent to the ship's scheme input. */
   private resolve(
-    decision: FourDirectionalInput,
+    decision: SteeredIntent,
     context: BotControlContext,
   ): ControlInput {
     if (context.scheme === 'asteroids') {

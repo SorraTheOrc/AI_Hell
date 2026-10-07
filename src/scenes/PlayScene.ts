@@ -102,7 +102,7 @@ import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
-import { decideBotInput } from '../ai/botDecision';
+import { decideBotIntent } from '../ai/botDecision';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BOT_MINERAL_CHOICE_DELAY_MS,
@@ -1466,7 +1466,7 @@ export class PlayScene extends CombatScene<
     if (!this.demoMode) return;
     const player = this.getPlayer();
     this.botGovernor.update(
-      decideBotInput(buildBotSnapshot(this)),
+      decideBotIntent(buildBotSnapshot(this)),
       dt,
       {
         scheme: player?.getScheme() ?? 'asteroids',

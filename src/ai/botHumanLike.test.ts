@@ -284,3 +284,116 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
     ).toEqual({ forward: true, turnLeft: false, turnRight: false });
   });
 });
+
+// ── Precise bearing + closed-loop aiming (rejection AH-0MUXYOV4C008MV0L) ──
+//
+// The operator rejected the original demo bot because it "oscillates with
+// left and right rotation thrusters": a cardinal-only intent snapped the
+// hull between N/E/S/W.  The governor now aims at the intent's precise
+// bearing and re-resolves the held intent against the ship's current facing
+// every tick, so a held turn is closed-loop and does not overshoot.
+
+describe('toAsteroidsInput — precise bearing (rejection)', () => {
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+    };
+  }
+
+  it('aims at the precise bearing, not the nearest cardinal', () => {
+    // 30° above the leftward horizontal.
+    const bearing = Math.PI - Math.PI / 6;
+    const intent = {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+    };
+    // Facing that exact bearing → thrust forward (not turn to a cardinal).
+    expect(toAsteroidsInput(intent, bearing)).toEqual(asteroid('forward'));
+    // A cardinal fallback would have turned to face hard left instead.
+    expect(toAsteroidsInput({ ...input('left') }, bearing)).toEqual(
+      asteroid('turnRight'),
+    );
+  });
+
+  it('turns toward the precise bearing from a rightward facing', () => {
+    // 45° below-right.
+    const intent = {
+      ...input(),
+      dirX: Math.cos(Math.PI / 4),
+      dirY: Math.sin(Math.PI / 4),
+    };
+    expect(toAsteroidsInput(intent, 0)).toEqual(asteroid('turnRight'));
+  });
+
+  it('falls back to the cardinal booleans when no precise bearing is present', () => {
+    expect(toAsteroidsInput(input('up'), 0)).toEqual(asteroid('turnLeft'));
+  });
+
+  it('ignores a zero or non-finite precise bearing and uses the cardinals', () => {
+    expect(
+      toAsteroidsInput({ ...input('up'), dirX: 0, dirY: 0 }, 0),
+    ).toEqual(asteroid('turnLeft'));
+    expect(
+      toAsteroidsInput(
+        { ...input('right'), dirX: Number.NaN, dirY: Number.NaN },
+        0,
+      ),
+    ).toEqual(asteroid('forward'));
+  });
+});
+
+describe('BotInputGovernor — closed-loop aiming (rejection)', () => {
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+    };
+  }
+
+  it('re-resolves the held intent against the current facing each tick', () => {
+    const governor = new BotInputGovernor({ reactionTimeMs: 1000 });
+
+    // Commit an "aim up" intent while the ship still faces right: turn left.
+    expect(
+      governor.update(input('up'), 1 / 60, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual(asteroid('turnLeft'));
+
+    // Within the same held window the ship has rotated to face up, so the
+    // held intent now thrusts forward — closed-loop, not open-loop.
+    expect(
+      governor.update(input('up'), 1 / 60, {
+        scheme: 'asteroids',
+        facing: -Math.PI / 2,
+      }),
+    ).toEqual(asteroid('forward'));
+  });
+
+  it('keeps the committed precise bearing while the reaction window is open', () => {
+    const governor = new BotInputGovernor({ reactionTimeMs: 1000 });
+    const bearing = Math.PI / 4;
+    const intent = {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+    };
+
+    // Commits the precise bearing immediately; facing it → forward.
+    expect(
+      governor.update(intent, 1 / 60, { scheme: 'asteroids', facing: bearing }),
+    ).toEqual(asteroid('forward'));
+
+    // A later, different decision inside the window is ignored: the ship
+    // re-aims at the held bearing (now off) rather than flipping target.
+    expect(
+      governor.update(input('up'), 1 / 60, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual(asteroid('turnRight'));
+  });
+});

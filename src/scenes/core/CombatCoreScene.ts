@@ -413,7 +413,7 @@ export class CombatCoreScene<
    * The bot therefore never bypasses movement physics.
    *
    * Default `null` — keyboard-only. `PlayScene` overrides it to return the
-   * pure `decideBotInput(snapshot)` decision while demo mode is on; the
+   * pure `decideBotIntent(snapshot)` decision while demo mode is on; the
    * threat-free gyms inherit the default and are unchanged, so the shared
    * input path stays identical everywhere (gym↔game parity).
    */
