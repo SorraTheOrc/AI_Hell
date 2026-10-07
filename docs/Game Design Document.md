@@ -128,9 +128,7 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   heading stays committed for the human reaction window; each forward-thrust
   press is held for a human-like burst (200–225 ms normally, extended to
   400 ms on a long-travel leg) so the reflex cannot toggle the key every
-  frame (AC15/AC16). When a fast approach would overshoot it **spins ~180°**
-  and **thrusts against its motion** to brake hard rather than merely
-  coasting (AC17).
+  frame (AC15/AC16).
 - **Same input path as a player:** the bot's decision flows through the shared
   `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
   before the keyboard — so the demo ship obeys exactly the same

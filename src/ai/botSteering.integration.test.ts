@@ -186,9 +186,7 @@ describe('closed-loop steering (rejection AH-0MUXYOV4C008MV0L)', () => {
 
     // The ship closed on the mineral substantially.
     expect(trace.minDistance).toBeLessThan(trace.startDistance * 0.5);
-    // It aimed at the exact bearing at some point — not a cardinal.  (The
-    // retro-brake later spins the hull away from the target to shed speed,
-    // AC17, so the error is measured over the whole run, not at the end.)
+    // It aimed at the exact bearing at some point — not a cardinal.
     const expected = bearing(START, target);
     expect(trace.minFacingError).toBeLessThan(0.35);
     expect(Math.abs(angleDiff(expected, 0))).toBeGreaterThan(0.3);
