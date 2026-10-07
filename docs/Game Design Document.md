@@ -89,15 +89,18 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
 - **The bot:** a **survival-first** heuristic in `src/ai/`. A read-only,
   deep-frozen `BotSnapshot` (`buildBotSnapshot`) is built each decision tick
   from the scene's existing getters, and the pure `decideBotInput(snapshot)`
-  returns a four-directional `ControlInput`. The priority ladder is:
+  returns a four-directional `ControlInput`. The movement goal order is fixed
+  and legible (minerals first, then power-ups, then enemies, then asteroids):
   1. **Survive** — never steer into a bullet, asteroid, enemy or wall when a
      safe alternative exists (best-effort fire-pattern avoidance from fire
      tells/intervals and in-flight bullets).
-  2. **Threat response** — engage a live enemy/asteroid inside the engagement
-     radius, keeping a minimum distance.
-  3. **Power-ups** — with no nearby threat, seek the nearest power-up.
-  4. **Minerals** — collect on the way, otherwise second priority.
-  5. **Idle** — nothing to do: hold station.
+  2. **Minerals** — collect the nearest mineral within range.
+  3. **Power-ups** — collect the nearest drop within range.
+  4. **Enemies** — engage the nearest live enemy (or the boss), keeping a
+     minimum distance.
+  5. **Asteroids** — engage the nearest live asteroid, keeping a minimum
+     distance.
+  6. **Idle** — nothing to do: hold station.
   All tunables live in one place (`BOT_DECISION_TUNABLES` in
   `src/ai/botDecision.ts`).
 - **Same input path as a player:** the bot's decision flows through the shared

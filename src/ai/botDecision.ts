@@ -13,16 +13,19 @@
  *    crosses the aim line of an enemy that is inside a fire **tell**
  *    (`BotEnemy.isTelling`).  Survival dominates every lower tier, so the bot
  *    never trades its life for a power-up.
- * 2. **Threat response** — if a live enemy, asteroid or boss is within
- *    {@link BotDecisionTunables.engagementRadius}, steer toward it; when it is
- *    already closer than {@link BotDecisionTunables.dangerMargin}, back away
- *    instead (approach the threat at a safe distance).
- * 3. **Power-ups** — with no nearby threat, seek the nearest drop within
+ * 2. **Minerals** — collect the nearest mineral within
+ *    {@link BotDecisionTunables.mineralSeekRange} (the operator's top goal).
+ * 3. **Power-ups** — collect the nearest drop within
  *    {@link BotDecisionTunables.powerUpSeekRange}.
- * 4. **Minerals** — collect the nearest mineral within
- *    {@link BotDecisionTunables.mineralSeekRange}; a mineral lying on the way
- *    to a power-up is collected by the same direction.
- * 5. **Idle** — nothing to pursue and no danger: return an all-false input.
+ * 4. **Enemies** — engage the nearest live enemy (or the boss) within
+ *    {@link BotDecisionTunables.engagementRadius}.
+ * 5. **Asteroids** — engage the nearest live asteroid within
+ *    {@link BotDecisionTunables.engagementRadius}.
+ * 6. **Idle** — nothing to pursue and no danger: return an all-false input.
+ *
+ * The goal order is fixed and legible (minerals > power-ups > enemies >
+ * asteroids) so the demo's movement reads as purposeful rather than random;
+ * the survival tier still bounds every choice.
  *
  * The module deliberately has **no Phaser or scene dependency** so it can be
  * unit-tested with plain stubbed snapshots.  Every tunable lives in
@@ -418,16 +421,11 @@ export function decideBotInput(
     return pickMostClearDirection(safety);
   }
 
-  // ── 2. THREAT RESPONSE ──────────────────────────────────────────
-  const threat = findNearestThreat(snapshot, px, py, t.engagementRadius);
-  if (threat) {
-    if (threat.distance < t.dangerMargin) {
-      const retreat = steerToward(threat, safeDirections, px, py, -1);
-      if (retreat) return buildInput(retreat);
-    } else {
-      const approach = steerToward(threat, safeDirections, px, py, 1);
-      if (approach) return buildInput(approach);
-    }
+  // ── 2. MINERALS (collect first — the operator's top goal) ──────
+  const mineral = nearestWithin(snapshot.minerals, px, py, t.mineralSeekRange);
+  if (mineral) {
+    const approach = steerToward(mineral, safeDirections, px, py, 1);
+    if (approach) return buildInput(approach);
   }
 
   // ── 3. POWER-UPS ────────────────────────────────────────────────
@@ -437,35 +435,78 @@ export function decideBotInput(
     if (approach) return buildInput(approach);
   }
 
-  // ── 4. MINERALS ─────────────────────────────────────────────────
-  const mineral = nearestWithin(snapshot.minerals, px, py, t.mineralSeekRange);
-  if (mineral) {
-    const approach = steerToward(mineral, safeDirections, px, py, 1);
-    if (approach) return buildInput(approach);
+  // ── 4. ENEMIES (shoot) ──────────────────────────────────────────
+  const enemy = nearestWithin(
+    liveEnemyTargets(snapshot),
+    px,
+    py,
+    t.engagementRadius,
+  );
+  if (enemy) {
+    const engage = engageTarget(enemy, safeDirections, px, py, t);
+    if (engage) return buildInput(engage);
   }
 
-  // ── 5. IDLE ─────────────────────────────────────────────────────
+  // ── 5. ASTEROIDS (shoot) ────────────────────────────────────────
+  const asteroid = nearestWithin(
+    liveAsteroidTargets(snapshot),
+    px,
+    py,
+    t.engagementRadius,
+  );
+  if (asteroid) {
+    const engage = engageTarget(asteroid, safeDirections, px, py, t);
+    if (engage) return buildInput(engage);
+  }
+
+  // ── 6. IDLE ─────────────────────────────────────────────────────
   // Nothing to pursue; hold position rather than wander into danger.
   return idle();
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/** Returns the nearest live threat within `maxRange`, or `null`. */
-function findNearestThreat(
+/** Returns the live non-asteroid enemies plus the live boss as targets. */
+function liveEnemyTargets(
   snapshot: BotSnapshot,
-  px: number,
-  py: number,
-  maxRange: number,
-): Target | null {
-  let best: Target | null = null;
-  for (const hazard of collectHazards(snapshot)) {
-    const d = distance(px, py, hazard.x, hazard.y);
-    if (d <= maxRange && (best === null || d < best.distance)) {
-      best = { x: hazard.x, y: hazard.y, distance: d };
+): Array<{ x: number; y: number }> {
+  const targets: Array<{ x: number; y: number }> = [];
+  for (const enemy of snapshot.enemies) {
+    if (enemy.alive && enemy.archetype !== 'asteroid') {
+      targets.push({ x: enemy.x, y: enemy.y });
     }
   }
-  return best;
+  if (snapshot.boss && snapshot.boss.alive) {
+    targets.push({ x: snapshot.boss.x, y: snapshot.boss.y });
+  }
+  return targets;
+}
+
+/** Returns the live asteroids as targets. */
+function liveAsteroidTargets(
+  snapshot: BotSnapshot,
+): Array<{ x: number; y: number }> {
+  return snapshot.enemies
+    .filter((enemy) => enemy.alive && enemy.archetype === 'asteroid')
+    .map((enemy) => ({ x: enemy.x, y: enemy.y }));
+}
+
+/**
+ * Steers to engage a target: approach it to line up the auto-fire, but back
+ * away when it is already inside {@link BotDecisionTunables.dangerMargin} so
+ * the bot keeps a safe firing distance.
+ */
+function engageTarget(
+  target: Target,
+  safeDirections: readonly BotDirection[],
+  px: number,
+  py: number,
+  t: BotDecisionTunables,
+): BotDirection | null {
+  if (target.distance < t.dangerMargin) {
+    return steerToward(target, safeDirections, px, py, -1);
+  }
+  return steerToward(target, safeDirections, px, py, 1);
 }
 
 /** Returns the input for the direction with the greatest clearance. */

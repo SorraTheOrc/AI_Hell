@@ -280,7 +280,7 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
     expect(decideBotInput(snapshot).left).toBe(true);
   });
 
-  it('AC4 — a mineral is collected as a second-priority pickup', () => {
+  it('AC4 — a mineral is collected as the top-priority pickup', () => {
     const snapshot = buildBotSnapshot(
       makeScene({
         getPlayer: () => stillPlayer(400, 300),

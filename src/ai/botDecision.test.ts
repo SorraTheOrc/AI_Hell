@@ -195,7 +195,7 @@ describe('AC1 — survival-first priority ordering', () => {
     expect(input.left).toBe(false);
   });
 
-  it('prefers a power-up over a mineral (power-ups outrank minerals)', () => {
+  it('prefers a mineral over a power-up (minerals outrank power-ups)', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(1000, 300, 'scout')],
@@ -203,8 +203,80 @@ describe('AC1 — survival-first priority ordering', () => {
       minerals: [mineral(500, 300)],
     });
     const input = decideBotInput(snapshot, { engagementRadius: 100 });
+    expect(input.right).toBe(true);
+    expect(input.left).toBe(false);
+  });
+});
+
+// ── Goal order: minerals > power-ups > enemies > asteroids ──────────
+
+describe('movement goals: minerals > power-ups > enemies > asteroids (AH-0MUXYOV4C008MV0L)', () => {
+  it('AC1 — a mineral in range outranks a power-up', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      drops: [drop(300, 300, 'spread')],
+      minerals: [mineral(500, 300)],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.right).toBe(true);
+    expect(input.left).toBe(false);
+  });
+
+  it('AC2 — a power-up in range outranks a live enemy', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(200, 300, 'scout')],
+      drops: [drop(500, 300, 'spread')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.right).toBe(true);
+    expect(input.left).toBe(false);
+  });
+
+  it('AC3 — a live enemy outranks a live asteroid', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(200, 300, 'scout'), enemy(600, 300, 'asteroid')],
+    });
+    const input = decideBotInput(snapshot);
     expect(input.left).toBe(true);
     expect(input.right).toBe(false);
+  });
+
+  it('AC4 — with only an asteroid in range the bot engages it', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(600, 300, 'asteroid')],
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC5 — survival bounds goal-seeking (an unsafe mineral path is ignored)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 300)],
+      // Bullet on the leftward path, moving toward the player.
+      enemyBullets: [bullet(300, 300, 100, 0)],
+    });
+    expect(decideBotInput(snapshot).left).toBe(false);
+  });
+
+  it('AC6 — the bot backs away from a target inside the danger margin', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(400, 260, 'scout')], // 40 px above, inside dangerMargin
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.up).toBe(false);
+    expect(input.down).toBe(true);
+  });
+
+  it('AC7 — the targeted decision is deterministic', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(decideBotInput(snapshot)).toEqual(decideBotInput(snapshot));
   });
 });
 
@@ -231,7 +303,7 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.left).toBe(false);
   });
 
-  it('threat response: engages a live enemy within engagement radius', () => {
+  it('enemies: engages a live enemy within engagement radius', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(200, 300, 'tank')],
@@ -240,7 +312,7 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.left).toBe(true);
   });
 
-  it('threat response: backs away from a threat already inside the danger margin', () => {
+  it('enemies: backs away from a threat already inside the danger margin', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(360, 300, 'tank')], // 40px left — inside dangerMargin 70
@@ -249,7 +321,7 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.left).toBe(false);
   });
 
-  it('threat response: ignores enemies outside the engagement radius', () => {
+  it('enemies: ignores enemies outside the engagement radius', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(400, 50, 'tank')], // 250px above
@@ -259,7 +331,7 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.up).toBe(true);
   });
 
-  it('power-ups: seeks the nearest power-up when no threat is near', () => {
+  it('power-ups: seeks the nearest power-up when no mineral is in range', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(1000, 300, 'scout')], // far outside engagement radius
@@ -269,7 +341,7 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.left).toBe(true);
   });
 
-  it('minerals: collects a mineral as the second priority after power-ups', () => {
+  it('minerals: collects the nearest mineral (top-priority pickup)', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(1000, 300, 'scout')],
