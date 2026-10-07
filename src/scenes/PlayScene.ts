@@ -18,9 +18,9 @@
  * lives/game-over). The gym formation base runs the same shared path, so
  * the game and gyms cannot diverge.
  *
- * **Shared power-up drop layer:** the drop lifecycle, collection gate, P9
+ * **Shared power-up drop layer:** the drop lifecycle, collection gate, Magnet
  * magnet and per-type pickup cues are inherited from the shared drop layer
- * (`src/scenes/core/dropLayer.ts`); the P4 ranged bomb pulse is driven by
+ * (`src/scenes/core/dropLayer.ts`); the Bomb ranged bomb pulse is driven by
  * the shared `CombatCoreScene._updateP4Bomb` path. This scene supplies only
  * the kill-chance spawn *source* (AH-0MUII3CXX0023H24, gap 4).
  *
@@ -378,7 +378,7 @@ export class PlayScene extends CombatScene<
   /** Resolved DOM key name that toggles pause (from the bindings). */
   private pauseKeyName = 'Escape';
 
-  /** Shield bubble (P3) — drawn around the ship while shielded, cleared on absorb. */
+  /** Shield bubble (Shield) — drawn around the ship while shielded, cleared on absorb. */
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
@@ -541,10 +541,10 @@ export class PlayScene extends CombatScene<
     // Movement / layer-drop / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
     this._applyBindings();
-    // P7 Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
+    // Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
     this.downKey =
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
-    // P3 Shield bubble — rendered above gameplay (below the HUD).
+    // Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
 
@@ -782,8 +782,8 @@ export class PlayScene extends CombatScene<
       this._handleCarriedSurvivorCollisions();
       // Between-waves mineral passes (AH-0MUX96GJF006CAZP, AC1/AC3): the
       // player and carried-over survivors keep collecting/absorbing minerals
-      // through the transition breather, and the shared P10 scoop keeps
-      // attracting them. `true` bypasses the P6 phase gate for the pause only
+      // through the transition breather, and the shared Mineral Scoop scoop keeps
+      // attracting them. `true` bypasses the Phase Shift phase gate for the pause only
       // (AC2) — normal wave play still blocks phased collection (Q7).
       this._applyMineralScoop(this.minerals, dt);
       this._handleMinerals(true);
@@ -799,7 +799,7 @@ export class PlayScene extends CombatScene<
     // Player input, thrust and auto-fire run in every phase, including the
     // wave/level transition pause.
     //
-    // P7 Teleport (S/↓ JustDown) runs first so the warp position is
+    // Teleport (S/↓ JustDown) runs first so the warp position is
     // consumed by this frame's physics.
     this._handleTeleport();
     // Human-like demo bot: sample the decision at a human reaction cadence
@@ -812,13 +812,13 @@ export class PlayScene extends CombatScene<
 
     this._advanceBullets(dt);
     if (!transitioning) {
-      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // Automatic Phase Shift: feed live danger before collision gating
       // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
       this._updatePhaseShiftAutoTrigger(dt);
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
       this._updateSpawnAnimations(dt);
-      // P10 Mineral Scoop attractor runs before the shared mineral collection
+      // Mineral Scoop attractor runs before the shared mineral collection
       // inside _handleCollisions, so a mineral pulled into the hull this frame
       // is collected this frame (parity with every gym).
       this._applyMineralScoop(this.minerals, dt);
@@ -1685,7 +1685,7 @@ export class PlayScene extends CombatScene<
     // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
     // (Q7); enemy absorption still runs. The between-waves transition is a
     // non-combat breather, so it bypasses the phase gate — an automatic
-    // defensive P6 activation at wave-clear must not cost earned minerals
+    // defensive Phase Shift activation at wave-clear must not cost earned minerals
     // (AH-0MUX96GJF006CAZP, AC2).
     this.minerals = collectMinerals(
       this.minerals,
@@ -1824,17 +1824,17 @@ export class PlayScene extends CombatScene<
     this._startInvulnerability();
   }
 
-  // ── Power-up visuals (P3 shield bubble, P6 phase ghost) ──────────
+  // ── Power-up visuals (Shield shield bubble, Phase Shift phase ghost) ──────────
 
   /**
-   * Updates effect visuals each tick: the P3 shield bubble is drawn around
+   * Updates effect visuals each tick: the Shield shield bubble is drawn around
    * the ship while shielded (shared helper — continuously pulsing rim +
    * low-alpha fill, radius SHIP_SIZE × 1.6, with the shared ending fade in
    * the final second, mirrors GymPowerUpsCombat) and cleared otherwise, and
-   * the P6 phase ghost alpha is applied when phased.
+   * the Phase Shift phase ghost alpha is applied when phased.
    */
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while P3 is active (shared helper,
+    // Shield bubble: drawn around the ship while Shield is active (shared helper,
     // including the continuous rim pulse and ending fade).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
@@ -1843,7 +1843,7 @@ export class PlayScene extends CombatScene<
         this.effectsRegistry,
       );
     }
-    // Phase ghost: semi-transparent ship while P6 is active (keeps the
+    // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the
     // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
     // Bomb notice: advanced by the shared drop layer (`_updateDropLayer`).
@@ -1900,7 +1900,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * Advances the drop layer through the single shared sequence (gap 4):
-   * advance the P4 notice, apply the P9 magnet, advance the lifecycle,
+   * advance the Bomb notice, apply the Magnet magnet, advance the lifecycle,
    * collect overlaps and advance the absorb VFX. The per-scene spawn
    * *source* (kill chance) stays in `_maybeDropPowerUp` (OQ6).
    */
@@ -1909,8 +1909,8 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Game extras after a power-up is collected: the P8 extra life (keeping
-   * the HUD lives counter aligned with run state). The P4 bomb is handled
+   * Game extras after a power-up is collected: the Extra Life extra life (keeping
+   * the HUD lives counter aligned with run state). The Bomb bomb is handled
    * by the shared pulse path, not here.
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
@@ -2163,12 +2163,12 @@ export class PlayScene extends CombatScene<
     return this.player;
   }
 
-  /** Whether the P3 shield bubble was drawn in the last visual update (for tests). */
+  /** Whether the Shield shield bubble was drawn in the last visual update (for tests). */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
   }
 
-  /** Whether the P6 phase ghost is currently active (for tests). */
+  /** Whether the Phase Shift phase ghost is currently active (for tests). */
   isPhaseGhostActive(): boolean {
     return this.effectsRegistry.isPhased;
   }

@@ -2,7 +2,7 @@
  * Pure danger-detection helper for the automatic Phase Shift trigger
  * (parent AH-0MUIYX1EE008FVS8).
  *
- * Phase Shift (P6) becomes a reactive defensive tool: when the player is
+ * Phase Shift becomes a reactive defensive tool: when the player is
  * genuinely surrounded, the shared combat core asks this helper whether the
  * ship is "in danger" and, if so, triggers Phase Shift automatically.
  *

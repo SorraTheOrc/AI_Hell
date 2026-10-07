@@ -143,7 +143,7 @@ export abstract class CombatScene<
   /** Centred countdown overlay (created lazily; hidden when idle). */
   protected countdownText: Phaser.GameObjects.Text | null = null;
 
-  /** P7 teleport activation keys: S / ↓ (JustDown semantics). */
+  /** Teleport teleport activation keys: S / ↓ (JustDown semantics). */
   protected teleportKey: Phaser.Input.Keyboard.Key | null = null;
   protected downKey: Phaser.Input.Keyboard.Key | null = null;
 
@@ -162,7 +162,7 @@ export abstract class CombatScene<
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
 
-  // ── Automatic Phase Shift (P6) danger feed ──────────────────────
+  // ── Automatic Phase Shift danger feed ──────────────────────
 
   /**
    * Shared per-frame danger feed for the automatic Phase Shift (parent
@@ -176,7 +176,7 @@ export abstract class CombatScene<
    * `_handleCollisions`, so the game and the gyms share one implementation
    * and one ordering and cannot diverge.
    *
-   * @param dt — frame delta (seconds); advances the P6 re-arm cooldown.
+   * @param dt — frame delta (seconds); advances the Phase Shift re-arm cooldown.
    */
   protected _updatePhaseShiftAutoTrigger(dt: number): void {
     const registry = this.getEffectsRegistry();
@@ -198,10 +198,10 @@ export abstract class CombatScene<
     if (fired) playPhaseShiftSound();
   }
 
-  // ── Shared effect gating (P3 shield / P6 phase) ─────────────────
+  // ── Shared effect gating (Shield shield / Phase Shift phase) ─────────────────
 
   /**
-   * Whether the player is P6 phase-shifted and therefore immune to enemy
+   * Whether the player is Phase Shift phase-shifted and therefore immune to enemy
    * bullets and enemy body contact. Backed by the shared effects registry,
    * so every `CombatScene` subclass (including `GymFormationScene` and its
    * `GymEnemies`/`GymBoss`/`GymMinerals` subclasses) inherits the same
@@ -212,7 +212,7 @@ export abstract class CombatScene<
   }
 
   /**
-   * P3 shield absorbs a hit: consume one of the bubble's remaining
+   * Shield shield absorbs a hit: consume one of the bubble's remaining
    * absorptions (level-resolved), run the scene-specific absorb cue
    * ({@link CombatScene.onShieldAbsorbed}), start the shared post-hit
    * invulnerability window and report the hit as absorbed. A shield with
@@ -227,7 +227,7 @@ export abstract class CombatScene<
   }
 
   /**
-   * Scene hook for the P3 shield-absorb cue. Default no-op — the generic
+   * Scene hook for the Shield shield-absorb cue. Default no-op — the generic
    * gym is silent; `PlayScene` plays its destruction sound here.
    */
   protected onShieldAbsorbed(): void {}
@@ -262,7 +262,7 @@ export abstract class CombatScene<
 
   /**
    * Extra teleport-avoidance bodies (the boss when present). The default
-   * derives the boss body from {@link CombatScene.getBoss}, so a P7
+   * derives the boss body from {@link CombatScene.getBoss}, so a Teleport
    * teleport avoids the boss identically in the game and in `GymBoss`
    * (AH-0MUII3E5E006A93F, AC2).
    */
@@ -757,7 +757,7 @@ export abstract class CombatScene<
   // ── Teleport ─────────────────────────────────────────────────────
 
   /**
-   * Handles the S / ↓ key press for a P7 teleport (JustDown semantics).
+   * Handles the S / ↓ key press for a Teleport teleport (JustDown semantics).
    */
   protected _handleTeleport(): void {
     const player = this.getPlayer();
@@ -779,8 +779,8 @@ export abstract class CombatScene<
   }
 
   /**
-   * Consumes one P7 teleport stack and warps the player to the nearest
-   * safe spot along the heading (granting P6 on arrival via the
+   * Consumes one Teleport teleport stack and warps the player to the nearest
+   * safe spot along the heading (granting Phase Shift on arrival via the
    * registry). Public so tests can trigger it deterministically.
    *
    * @returns true when a teleport was performed.
@@ -819,7 +819,7 @@ export abstract class CombatScene<
       },
     );
 
-    // Consume one stack FIFO and grant P6 phase shift at the landing spot.
+    // Consume one stack FIFO and grant Phase Shift phase shift at the landing spot.
     const phaseActivated = registry.consumeTeleport();
     // Direct activation also plays the dedicated cue (Q6).
     if (phaseActivated) playPhaseShiftSound();

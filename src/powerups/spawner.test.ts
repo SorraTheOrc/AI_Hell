@@ -89,7 +89,7 @@ describe('WeightedRandomSpawner: equally-weighted (pure random)', () => {
   });
 
   it('selection follows the injected RNG draw under equal weights', () => {
-    // thresholds: P5 ∈ [0, 1/3), P8 ∈ [1/3, 2/3), P9 ∈ [2/3, 1)
+    // thresholds: Speed Boost ∈ [0, 1/3), Extra Life ∈ [1/3, 2/3), Magnet ∈ [2/3, 1)
     const draws = [0.1, 0.4, 0.9];
     const s = new WeightedRandomSpawner(NON_COMBAT, () => draws.shift()!);
     expect(s.next()).toBe('speed_boost');
@@ -115,7 +115,7 @@ describe('WeightedRandomSpawner: equally-weighted (pure random)', () => {
 
 describe('WeightedRandomSpawner: runtime weight mutation', () => {
   it('higher weight dominates selection', () => {
-    // P5 weight 90 vs P8/P9 weight 1 → total 92; r=0.5 → t=46 < 90 → P5.
+    // Speed Boost weight 90 vs Extra Life/Magnet weight 1 → total 92; r=0.5 → t=46 < 90 → Speed Boost.
     const draws = [0.5];
     const s = new WeightedRandomSpawner(NON_COMBAT, () => draws.shift()!);
     s.setWeight('speed_boost', 90);
@@ -123,7 +123,7 @@ describe('WeightedRandomSpawner: runtime weight mutation', () => {
   });
 
   it('weight update mid-stream changes subsequent draws', () => {
-    // Same RNG draw (0.7): equal weights → P9 (t=2.1); after P5→90 → P5 (t=64.4 < 90).
+    // Same RNG draw (0.7): equal weights → Magnet (t=2.1); after Speed Boost→90 → Speed Boost (t=64.4 < 90).
     const draws = [0.7, 0.7];
     const s = new WeightedRandomSpawner(NON_COMBAT, () => draws.shift()!);
     expect(s.next()).toBe('magnet');

@@ -1,6 +1,6 @@
 /**
  * Shared mineral scoop attraction — pulls live minerals toward the player ship
- * (P10 Mineral Scoop).
+ * (Mineral Scoop).
  *
  * The mineral-field analogue of {@link ./magnet}: the magnet targets the
  * power-up/weapon drop list, the scoop targets the mineral field. Both share
@@ -32,7 +32,7 @@ export interface MovableMineral {
 
 /**
  * Scoop attraction radius (px) for `stacks` effective stacks: the same curve
- * as the P9 magnet — base 1× ship size, +50% of the base per stack.
+ * as the Magnet magnet — base 1× ship size, +50% of the base per stack.
  */
 export function mineralScoopRadius(shipSize: number, stacks: number): number {
   return magnetRadius(shipSize, stacks);

@@ -7,7 +7,7 @@
  * serialisable for the leaderboard stub (AH-0MU6VSKZT006HBTR).
  *
  * Default values:
- * - lives: 3 (up to 5 with P8 Extra Life power-up)
+ * - lives: 3 (up to 5 with Extra Life power-up)
  * - score: 0 (increments on enemy/boss destruction)
  * - level: 1–5 (boss triggered after level 5)
  * - minerals: 0 (run-scoped ship's hold; first-hold capacity 5, doubling
@@ -32,7 +32,7 @@ export type GameSessionState = 'menu' | 'playing' | 'gameover';
 /** Default number of lives the player starts with. */
 export const DEFAULT_LIVES = 3;
 
-/** Maximum number of lives (capped by P8 Extra Life stacking). */
+/** Maximum number of lives (capped by Extra Life stacking). */
 export const MAX_LIVES = 5;
 
 /** Minimum level number. */

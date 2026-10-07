@@ -60,7 +60,7 @@ const SHARED_METHODS = [
 ] as const;
 
 /**
- * The shared P3/P6 hit-gating hooks (AH-0MUHM66ES0027QQV AC3). They are
+ * The shared Shield/Phase Shift hit-gating hooks (AH-0MUHM66ES0027QQV AC3). They are
  * declared as safe defaults in `CombatCoreScene` and implemented
  * registry-backed in `CombatScene`; no other production scene may
  * re-implement them.
@@ -134,7 +134,7 @@ const EQUIV_GYM_CONFIG: EnemyFormationConfig<EquivEnemy, EquivBullet> = {
   statusLabel: 'equiv',
   hintText: 'equiv',
   player: { x: 100, y: 100 },
-  // Enable the gym's opt-in power-up layer so P7 teleport is allowed
+  // Enable the gym's opt-in power-up layer so Teleport teleport is allowed
   // (`canTeleport()` gates on `powerUpsEnabled`).
   powerUps: {},
   buildOffsets: (count) =>
@@ -339,7 +339,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     const playPlayer = play.getPlayer()!;
     const gymPlayer = gym.getPlayer()!;
     // The shared step reads the live multipliers from each scene's own
-    // effects registry; the P5 outcome must be identical.
+    // effects registry; the Speed Boost outcome must be identical.
     expect(playPlayer.getFireRateMultiplier()).toBeCloseTo(
       gymPlayer.getFireRateMultiplier(),
       10,
@@ -1057,7 +1057,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       };
     }
 
-    // Two P7 collects each → 3 stored uses (level-derived: +1 then +2), so
+    // Two Teleport collects each → 3 stored uses (level-derived: +1 then +2), so
     // FIFO consumption is observable.
     for (const registry of [
       playScene.getEffectsRegistry(),
@@ -1106,7 +1106,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     ];
 
     // Same starting state in every scene: ship parked at a clear corner with
-    // one stored P6 auto-activation charge.
+    // one stored Phase Shift auto-activation charge.
     for (const scene of scenes) {
       const player = scene.getPlayer()!;
       player.setPosition(120, 120);

@@ -449,7 +449,7 @@ describe('CombatCoreScene — shared base class', () => {
     scene.runTickPlayer(0.5);
     scene.pressRight(false);
 
-    // P5 is 1.5× speed and fire rate, applied live by the shared step.
+    // Speed Boost is 1.5× speed and fire rate, applied live by the shared step.
     expect(player.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
     expect(player.getMovementConfig().maxSpeed).toBeCloseTo(
       baseMaxSpeed * 1.5,

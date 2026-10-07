@@ -1,21 +1,21 @@
 /**
  * Power-up type definitions (GDD §4.4).
  *
- * - **P5 Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
- * - **P8 Extra Life** — +1 life immediately (start 3, cap 5)
- * - **P9 Magnet** — attracts nearby drops toward the ship; a 15 s
+ * - **Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
+ * - **Extra Life** — +1 life immediately (start 3, cap 5)
+ * - **Magnet** — attracts nearby drops toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
- * - **P10 Mineral Scoop** — attracts minerals toward the ship; a 15 s
+ * - **Mineral Scoop** — attracts minerals toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
- * - **P3 Shield** — 15 s bubble; absorbs a level-resolved number of hits
+ * - **Shield** — 15 s bubble; absorbs a level-resolved number of hits
  *   (base 1, cap 3) before popping (timed)
- * - **P4 Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
+ * - **Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
  *   field pickup is a single explosion, a hold-full reward pulses
- * - **P6 Phase Shift** — charge-based automatic pass-through (parent
+ * - **Phase Shift** — charge-based automatic pass-through (parent
  *   AH-0MUIYX1EE008FVS8): collecting stores one auto-activation; the shared
  *   danger feed triggers a 1.5 s pass-through when 3+ hostile bodies/bullets
  *   close within 40 px; the hold-full reward makes activations unlimited.
- * - **P7 Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s P6 on arrival
+ * - **Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s Phase Shift on arrival
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */

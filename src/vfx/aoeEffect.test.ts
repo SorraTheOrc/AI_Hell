@@ -114,7 +114,7 @@ describe('aoeEffect — Nova expanding ring (F2 AC3)', () => {
     for (const bulletColor of conventional) {
       expect(NOVA_RING_COLOR).not.toBe(bulletColor);
     }
-    // ...nor with the P4 bomb icon red (0xff3333).
+    // ...nor with the Bomb bomb icon red (0xff3333).
     expect(NOVA_RING_COLOR).not.toBe(0xff3333);
   });
 });

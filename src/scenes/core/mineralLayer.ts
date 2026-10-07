@@ -72,7 +72,7 @@ function overlaps(
 /** Options for {@link collectMinerals}. */
 export interface MineralCollectionOptions {
   /**
-   * When true the player cannot collect minerals — the P6 Phase Shift
+   * When true the player cannot collect minerals — the Phase Shift
    * pass-through also blocks mineral pickup while phased (Q7). Enemy
    * absorption is unaffected. Collection resumes the moment the phase
    * expires. The between-waves/levels transition pause is the one
@@ -97,7 +97,7 @@ export interface MineralCollectionOptions {
  * excludes asteroids (inert) and any entity without `collectMineral`.
  *
  * When `options.playerPhased` is true the player collects nothing this pass
- * (P6 pass-through gates mineral pickup — Q7); the minerals survive unless
+ * (Phase Shift pass-through gates mineral pickup — Q7); the minerals survive unless
  * an enemy absorbs them.
  *
  * @param minerals — the live mineral field (not mutated in place).

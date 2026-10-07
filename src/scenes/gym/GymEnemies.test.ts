@@ -1089,7 +1089,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
     booted = null;
   });
 
-  /** Boots GymEnemies whose first drop lands on the ship and is a P8. */
+  /** Boots GymEnemies whose first drop lands on the ship and is a Extra Life. */
   function makeCollectScene(enemyKey: string): typeof Phaser.Scene {
     const atPlayer: PowerUpPlacement = {
       place: (context) => ({ x: context.player.x, y: context.player.y }),
@@ -1114,7 +1114,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
     booted = await bootScene([makeCollectScene(GYM_ENEMIES_DEFAULT_KEY)]);
     const scene = booted.scene as unknown as GymEnemies;
 
-    // The boot loop advances the drop past the 3% threshold, so the P8
+    // The boot loop advances the drop past the 3% threshold, so the Extra Life
     // spawned on the ship is collected: lives go 3 → 4 and the HUD is shown.
     expect(scene.getHUD()).not.toBeNull();
     expect(scene.getEffectsRegistry().lives()).toBe(4);
@@ -1386,7 +1386,7 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
 /**
  * Regression for AH-0MUHM66ES0027QQV on the real reusable enemy gym route:
  * the Diver is an `enemyKey` routed to `GymEnemies`, which inherits the
- * (previously missing) P3/P6 hit-gating. These tests prove the effects gate
+ * (previously missing) Shield/Phase Shift hit-gating. These tests prove the effects gate
  * a hit on the real scene, not just the stub base.
  */
 describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route (AH-0MUHM66ES0027QQV)', () => {

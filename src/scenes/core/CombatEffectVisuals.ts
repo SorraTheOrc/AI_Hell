@@ -1,16 +1,16 @@
 /**
- * Shared combat effect visuals (P3 shield bubble + P6 phase ghost).
+ * Shared combat effect visuals (Shield shield bubble + Phase Shift phase ghost).
  *
  * `PlayScene`, `GymPowerUpsCombat` and `GymFormationScene` each drew their
  * own copy of the shield bubble / phase ghost. Centralising the drawing here
  * keeps the three scenes visually identical and impossible to drift: the
  * same colour, line width, radius and alpha are used everywhere.
  *
- * The parameter values are fixed by the play-scene P3/P6 work
+ * The parameter values are fixed by the play-scene Shield/Phase Shift work
  * (AH-0MU8QV3O9008JVNQ shield bubble, AH-0MU8QVC9Y008R8I5 phase ghost) and
  * the gym parity item AH-0MUICQC34005QOYF.
  *
- * The P3 shield bubble also winds down as it expires (AH-0MUAYB5HR001HDYC):
+ * The Shield shield bubble also winds down as it expires (AH-0MUAYB5HR001HDYC):
  * the rim pulses continuously for the whole active lifetime, the fill ramps
  * up to a documented "opaque" alpha in the final second, and the fill then
  * shrinks inside the hull radius in the final half second before the bubble
@@ -26,7 +26,7 @@ import type Phaser from 'phaser';
 import { SHIP_SIZE } from '../../core/constants';
 import type { EffectsRegistry } from '../../powerups/effects';
 
-/** Shield-bubble colour (P3). */
+/** Shield-bubble colour (Shield). */
 export const SHIELD_BUBBLE_COLOR = 0x3399ff;
 /** Shield-bubble stroke line width (px). */
 export const SHIELD_BUBBLE_LINE_WIDTH = 2;
@@ -68,7 +68,7 @@ export const SHIELD_BUBBLE_PULSE_RATE = 12;
  * pulsing rim visible (never fully transparent) at its dimmest.
  */
 export const SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER = 0.35;
-/** Phase-ghost ship alpha while P6 is active (and not blinking). */
+/** Phase-ghost ship alpha while Phase Shift is active (and not blinking). */
 export const PHASE_GHOST_ALPHA = 0.45;
 
 /** Minimal positional target for the shield bubble (the ship). */
@@ -83,7 +83,7 @@ export interface GhostVisualTarget {
 }
 
 /**
- * Clears *graphics* and draws the shared P3 shield bubble around *player*
+ * Clears *graphics* and draws the shared Shield shield bubble around *player*
  * when the registry says the player is shielded.
  *
  * The bubble has a continuously pulsing rim (stroke alpha oscillates for the
@@ -159,7 +159,7 @@ export function drawShieldBubble(
 }
 
 /**
- * Applies the shared P6 phase-ghost alpha to the ship.
+ * Applies the shared Phase Shift phase-ghost alpha to the ship.
  *
  * While the post-hit invulnerability blink is active the blink owns the
  * alpha, so this helper is a no-op. Otherwise the ship is ghosted

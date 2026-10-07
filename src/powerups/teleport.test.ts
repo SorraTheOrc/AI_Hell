@@ -1,5 +1,5 @@
 /**
- * Unit tests for the shared P7 teleport safe-spot resolver
+ * Unit tests for the shared Teleport teleport safe-spot resolver
  * (parent AH-0MU3VOQKH005YOBH, feature AH-0MU44M9NQ0006613).
  */
 

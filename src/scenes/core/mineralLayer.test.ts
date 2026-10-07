@@ -113,7 +113,7 @@ describe('collectMinerals', () => {
     expect(mineral.destroy).toHaveBeenCalledOnce();
   });
 
-  // ── P6 Phase Shift mineral gate (Q7, parent AH-0MUIYX1EE008FVS8) ──
+  // ── Phase Shift mineral gate (Q7, parent AH-0MUIYX1EE008FVS8) ──
 
   it('blocks player collection while phased and keeps the mineral on the field', () => {
     const mineral = fakeMineral(100, 100);

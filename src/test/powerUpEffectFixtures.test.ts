@@ -1,5 +1,5 @@
 /**
- * Smoke tests for the shared P3/P4 effect-path fixtures
+ * Smoke tests for the shared Shield/Bomb effect-path fixtures
  * (parent AH-0MUVM9RAO004Y3LB, feature AH-0MUWGCZP6009MF3L).
  *
  * Every fixture exported by `powerUpEffectFixtures.ts` is exercised here so

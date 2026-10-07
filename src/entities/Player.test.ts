@@ -1148,7 +1148,7 @@ describe('Player ship entity', () => {
       player.collectPowerUp('magnet', true);
 
       expect(player.getPowerUpLevel('magnet')).toBe(2);
-      // The derived P9 permanent stacks scale with the level model.
+      // The derived Magnet permanent stacks scale with the level model.
       expect(player.getPowerUpLevels()).toEqual([{ id: 'magnet', level: 2 }]);
     });
 

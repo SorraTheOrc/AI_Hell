@@ -1,10 +1,10 @@
 /**
  * Active power-up effects registry (GDD §4.4).
  *
- * Engine-agnostic state for power-ups P3–P9 after collection, aggregated
+ * Engine-agnostic state for power-ups Shield–Magnet after collection, aggregated
  * for the standalone HUD (`src/ui/HUD.ts`) and by the combat gym for
- * hit-response. Non-combat (P5/P8/P9) are always available; combat-coupled
- * (P3/P4/P6/P7) are exercised by the GymPowerUpsCombat scene with live
+ * hit-response. Non-combat (Speed Boost/Extra Life/Magnet) are always available; combat-coupled
+ * (Shield/Bomb/Phase Shift/Teleport) are exercised by the GymPowerUpsCombat scene with live
  * scout threats (AH-0MTC2P6G3007PJ40).
  *
  * ## Single run-scoped level model (AH-0MUV5CLW6005VF7K)
@@ -18,28 +18,28 @@
  * item's level into a **permanent** component (hold-full rewards only) and a
  * **temporary** component (field pickups); the registry clears the temporary
  * component when the item's timed window expires, so a field pickup's level
- * reverts to the permanent level (or the item becomes inactive). Effect strengths (durations, the P5 multiplier,
+ * reverts to the permanent level (or the item becomes inactive). Effect strengths (durations, the Speed Boost multiplier,
  * caps) are resolved from the catalogue via `store.stats(...)` rather than
  * raw tuning constants, so balance intent cannot drift between scenes
  * (AC1/AC2/AC3). `P9_MAGNET_DURATION` / `P10_SCOOP_DURATION` are the only
- * non-levelled effect constants that remain: the P9/P10 **field-pickup**
+ * non-levelled effect constants that remain: the Magnet/Mineral Scoop **field-pickup**
  * timed duration is not a catalogue axis (documented, AC2).
  *
- * - **P5 Speed Boost** — timed: `speedMultiplier` movement speed and
+ * - **Speed Boost** — timed: `speedMultiplier` movement speed and
  *   fire-rate for `speedDuration` seconds (both use the same level-resolved
  *   multiplier); re-collecting refreshes the timer to full duration (never
  *   additive).
- * - **P8 Extra Life** — immediate: adds the level-resolved `lifeGain`,
+ * - **Extra Life** — immediate: adds the level-resolved `lifeGain`,
  *   clamped to the level-resolved `livesCap` (base 3 start, cap 5).
- * - **P9 Magnet** — attracts nearby drops: a timed 15 s effect when
+ * - **Magnet** — attracts nearby drops: a timed 15 s effect when
  *   collected as a field drop (refresh-only, never stacking), or a
  *   permanent stacking effect when granted as a hold-full reward.
- *   Shares the P9/P10 attraction radius curve (base 1× ship size, +50%/stack).
- * - **P10 Mineral Scoop** — attracts nearby minerals: a timed 15 s effect
+ *   Shares the Magnet/Mineral Scoop attraction radius curve (base 1× ship size, +50%/stack).
+ * - **Mineral Scoop** — attracts nearby minerals: a timed 15 s effect
  *   when collected as a field drop (refresh-only, never stacking), or a
  *   permanent stacking effect when granted as a hold-full reward.
- *   Shares the P9 attraction radius curve (base 1× ship size, +50%/stack).
- * - **P3 Shield** — timed `shieldDuration` bubble; absorbs the level-resolved
+ *   Shares the Magnet attraction radius curve (base 1× ship size, +50%/stack).
+ * - **Shield** — timed `shieldDuration` bubble; absorbs the level-resolved
  *   `shieldAbsorptions` hits (base 1, cap 3) before popping, refreshing the
  *   bubble and its remaining-hit count on re-collect before expiry. The
  *   remaining absorptions are run-scoped registry state, cleared by
@@ -48,21 +48,21 @@
  *   the bubble's expiry clears the temporary level (reverting to the
  *   permanent level, if any); a hold-full reward grants a permanent shield
  *   that never expires (AH-0MUVM9RAO004Y3LB).
- * - **P4 Bomb** — ranged periodic clear (AH-0MUVM9RAO004Y3LB): the model
+ * - **Bomb** — ranged periodic clear (AH-0MUVM9RAO004Y3LB): the model
  *   exposes `bombRange` (px) and `bombFrequency` (pulses/s); the effect path
  *   clears on-screen enemy bullets within the resolved range (a single pulse
  *   for a field pickup, an immediate-then-periodic pulse when permanent),
  *   without damaging 1-HP enemies (GDD §4.4).
- * - **P6 Phase Shift** — charge-based auto-trigger (parent
- *   AH-0MUIYX1EE008FVS8). Collecting P6 stores the level-resolved
+ * - **Phase Shift** — charge-based auto-trigger (parent
+ *   AH-0MUIYX1EE008FVS8). Collecting Phase Shift stores the level-resolved
  *   `phaseCharges` auto-activation charges (or grants unlimited activations
  *   for the hold-full reward); the shared combat core calls
  *   {@link EffectsRegistry.updateDanger} each frame and the registry
  *   activates a `phaseDuration` pass-through the moment the player is in
  *   real danger and a charge is available. After expiry it re-arms only once
  *   danger has cleared and a short cooldown has elapsed (Q2/Q3).
- * - **P7 Teleport** — stored FIFO stacks (no timer); Space consumes one use
- *   and grants P6 Phase Shift for `teleportPhaseDuration` at the landing
+ * - **Teleport** — stored FIFO stacks (no timer); Space consumes one use
+ *   and grants Phase Shift for `teleportPhaseDuration` at the landing
  *   spot without consuming an auto-activation charge (Q6). Safe-spot
  *   resolution is the scene's responsibility; this module tracks only the
  *   stored count.
@@ -101,21 +101,21 @@ export type { WeaponId };
 // ── Non-levelled effect values ──────────────────────────────────────
 
 /**
- * Lives counter initial value (P8 model). Mirrors the store's start so
+ * Lives counter initial value (Extra Life model). Mirrors the store's start so
  * standalone-registry tests and the store agree (AC3).
  */
 export const P8_LIVES_START = POWER_UP_LIVES_START;
 
 /**
- * Duration in seconds of the P9 field-pickup drop attraction. **Not a
- * levelled axis** — the P9/P10 field-pickup timed window stays constant
+ * Duration in seconds of the Magnet field-pickup drop attraction. **Not a
+ * levelled axis** — the Magnet/Mineral Scoop field-pickup timed window stays constant
  * while only the permanent stack cap (and hence the attraction radius)
  * levels (AC2).
  */
 export const P9_MAGNET_DURATION = 15;
 
 /**
- * Duration in seconds of the P10 field-pickup mineral attraction. **Not a
+ * Duration in seconds of the Mineral Scoop field-pickup mineral attraction. **Not a
  * levelled axis**, mirroring {@link P9_MAGNET_DURATION}.
  */
 export const P10_SCOOP_DURATION = 15;
@@ -156,19 +156,19 @@ export interface ActiveEffect {
   /** Remaining seconds (timed types). */
   remaining?: number;
   /**
-   * Stack count (stackable types, e.g. P9 magnet, P7 teleport) or, for the
-   * P3 shield, the remaining absorptions before the bubble pops.
+   * Stack count (stackable types, e.g. Magnet magnet, Teleport teleport) or, for the
+   * Shield shield, the remaining absorptions before the bubble pops.
    */
   stacks?: number;
   /**
    * True when the effect has unlimited uses for the run (e.g. the hold-full
-   * P6 reward). Rendered as an unlimited marker rather than a count.
+   * Phase Shift reward). Rendered as an unlimited marker rather than a count.
    */
   permanent?: boolean;
 }
 
 /**
- * Applies the P5 speed multiplier live to a movement config: both thrust
+ * Applies the Speed Boost speed multiplier live to a movement config: both thrust
  * and max-speed scale by `multiplier`; friction is untouched.
  */
 export function applySpeedMultiplier<T extends { thrust: number; maxSpeed: number; friction: number }>(
@@ -215,7 +215,7 @@ interface TimedEffectState {
    * True while a field-pickup temporary window is active for this effect.
    * Its expiry clears the store's temporary stacks for the id (the permanent
    * base, if any, stays active). Left false for non-collection timed effects
-   * such as the P7-arrival phase, whose expiry must not clear temporary
+   * such as the Teleport-arrival phase, whose expiry must not clear temporary
    * stacks (Resolved decision 4).
    */
   tempWindow?: boolean;
@@ -228,16 +228,16 @@ interface TimedEffectState {
  *
  * Lives/stack/charge state is **delegated** to the injected run-scoped
  * {@link PowerUpLevelStore}; only timing state (active durations, timers,
- * P6 re-arm) lives here.
+ * Phase Shift re-arm) lives here.
  */
 export class EffectsRegistry {
   private _timed = new Map<PowerUpId, TimedEffectState>();
   /** Active timed weapons: each weapon has its own countdown. */
   private _weapons: Map<WeaponId, WeaponEffect> = new Map();
 
-  // ── P6 auto-trigger timing state (Q2/Q3/Q6) ──────────────────────
+  // ── Phase Shift auto-trigger timing state (Q2/Q3/Q6) ──────────────────────
   /**
-   * Whether danger has cleared since the last auto-trigger. A fresh P6 is
+   * Whether danger has cleared since the last auto-trigger. A fresh Phase Shift is
    * armed (`true`); firing latches it off until danger drops below the
    * threshold (Q2).
    */
@@ -245,17 +245,17 @@ export class EffectsRegistry {
   /** Seconds of re-arm cooldown remaining after the last phase expired. */
   private _phaseRearmCooldown = 0;
 
-  // ── P3 shield remaining-absorptions state (AH-0MUVM9RAO004Y3LB) ──
+  // ── Shield shield remaining-absorptions state (AH-0MUVM9RAO004Y3LB) ──
   /**
-   * Hits the active P3 shield can still absorb before it pops, resolved from
+   * Hits the active Shield shield can still absorb before it pops, resolved from
    * the level store on every collection (base 1, cap 3). Run-scoped: reset()
-   * and P3 expiry clear it. Zero means "no shield active".
+   * and Shield expiry clear it. Zero means "no shield active".
    */
   private _shieldRemaining = 0;
 
-  // ── P4 bomb pulse state (AH-0MUVM9RAO004Y3LB) ────────────────────
+  // ── Bomb bomb pulse state (AH-0MUVM9RAO004Y3LB) ────────────────────
   /**
-   * True when a hold-full P4 granted a permanent bomb for the run: it never
+   * True when a hold-full Bomb granted a permanent bomb for the run: it never
    * expires and pulses every {@link bombInterval} seconds. Cleared only by
    * `reset()`.
    */
@@ -375,14 +375,14 @@ export class EffectsRegistry {
         );
         break;
       case 'magnet':
-        // P9 hybrid: only the field pickup opens a timed attraction; the
+        // Magnet hybrid: only the field pickup opens a timed attraction; the
         // hold-full reward is a permanent stack handled by the store.
         if (!permanent) {
           this._startOrRefreshTimed(id, id, P9_MAGNET_DURATION, false);
         }
         break;
       case 'mineral_scoop':
-        // P10 hybrid: mirrors P9.
+        // Mineral Scoop hybrid: mirrors Magnet.
         if (!permanent) {
           this._startOrRefreshTimed(id, id, P10_SCOOP_DURATION, false);
         }
@@ -398,7 +398,7 @@ export class EffectsRegistry {
         }
         break;
       default:
-        // P6 phase, P7 teleport, P8 life: no registry-local timed state —
+        // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
         // the level store owns charges/stacks/lives.
         break;
     }
@@ -491,7 +491,7 @@ export class EffectsRegistry {
     effect.remaining = 0;
     if (effect.permanent) return;
     this._timed.delete(id);
-    // Start the P6 re-arm cooldown the moment a phase expires (Q2).
+    // Start the Phase Shift re-arm cooldown the moment a phase expires (Q2).
     if (id === 'phase_shift') {
       this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
     }
@@ -507,12 +507,12 @@ export class EffectsRegistry {
     return this._timed.has(id);
   }
 
-  /** Whether the ship is shielded (P3 active). */
+  /** Whether the ship is shielded (Shield active). */
   get isShielded(): boolean {
     return this._timed.has('shield');
   }
 
-  /** Whether the ship is in phase shift (P6 active) — intangibility. */
+  /** Whether the ship is in phase shift (Phase Shift active) — intangibility. */
   get isPhased(): boolean {
     return this._timed.has('phase_shift');
   }
@@ -523,7 +523,7 @@ export class EffectsRegistry {
   }
 
   /**
-   * Absorbs a hit with the shield (P3): while a shield is active, decrements
+   * Absorbs a hit with the shield (Shield): while a shield is active, decrements
    * its remaining-absorptions count and returns true (hit absorbed). The
    * shield stays active until its last absorption (the count resolved from
    * `store.stats('shield').shieldAbsorptions`: base 1, cap 3), when it pops.
@@ -545,22 +545,22 @@ export class EffectsRegistry {
   }
 
   /**
-   * Hits the active P3 shield can still absorb before it pops (0 when no
+   * Hits the active Shield shield can still absorb before it pops (0 when no
    * shield is active). Surfaced for the HUD's `Shield ×N` row.
    */
   shieldAbsorptionsRemaining(): number {
     return this._shieldRemaining;
   }
 
-  // ── P4 bomb pulse (AH-0MUVM9RAO004Y3LB) ────────────────────────────
+  // ── Bomb bomb pulse (AH-0MUVM9RAO004Y3LB) ────────────────────────────
 
-  /** Whether a permanent (hold-full) P4 bomb is active for the run. */
+  /** Whether a permanent (hold-full) Bomb bomb is active for the run. */
   isBombPermanent(): boolean {
     return this._bombPermanent;
   }
 
   /**
-   * The resolved P4 clear radius in px at the current level. Resolved live,
+   * The resolved Bomb clear radius in px at the current level. Resolved live,
    * so a level-up mid-run enlarges every subsequent pulse (AC3).
    */
   bombRange(): number {
@@ -568,7 +568,7 @@ export class EffectsRegistry {
   }
 
   /**
-   * The resolved P4 pulse interval in seconds (`1 / bombFrequency`). The
+   * The resolved Bomb pulse interval in seconds (`1 / bombFrequency`). The
    * model stores a monotonic pulses/second rate; the effect inverts it.
    */
   bombInterval(): number {
@@ -577,7 +577,7 @@ export class EffectsRegistry {
   }
 
   /**
-   * Advances the P4 bomb pulse state by `dt` and reports whether a pulse is
+   * Advances the Bomb bomb pulse state by `dt` and reports whether a pulse is
    * due this frame.
    *
    * - A field-pickup request fires exactly once and is then gone (AC1).
@@ -609,8 +609,8 @@ export class EffectsRegistry {
   }
 
   /**
-   * Activates P6 Phase Shift (upgrade-level duration for P7 arrivals) —
-   * e.g. on P7 teleport arrival. Refreshes if already active — never
+   * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
+   * e.g. on Teleport teleport arrival. Refreshes if already active — never
    * additive. This is the direct, charge-free activation path; it does not
    * consume an auto-activation charge (Q6).
    */
@@ -620,7 +620,7 @@ export class EffectsRegistry {
     );
   }
 
-  /** (Re)activates the P6 timed effect at `duration` seconds. */
+  /** (Re)activates the Phase Shift timed effect at `duration` seconds. */
   private _activatePhase(duration: number): void {
     const existing = this._timed.get('phase_shift');
     if (existing) {
@@ -637,7 +637,7 @@ export class EffectsRegistry {
   }
 
   /**
-   * Feeds the shared per-frame danger signal into the P6 auto-trigger model
+   * Feeds the shared per-frame danger signal into the Phase Shift auto-trigger model
    * (Q1/Q2/Q3). Call once per frame after {@link tick}.
    *
    * When `inDanger` is true, the player is not already phased, a charge is
@@ -673,7 +673,7 @@ export class EffectsRegistry {
     return true;
   }
 
-  /** Stored P6 auto-activation charges (0 for a permanent reward). */
+  /** Stored Phase Shift auto-activation charges (0 for a permanent reward). */
   phaseCharges(): number {
     return this._levelStore.phaseCharges();
   }
@@ -683,7 +683,7 @@ export class EffectsRegistry {
     return this._levelStore.isPhasePermanent();
   }
 
-  /** Stored teleport uses (P7). */
+  /** Stored teleport uses (Teleport). */
   teleportStacks(): number {
     return this._levelStore.teleportStacks();
   }
@@ -695,7 +695,7 @@ export class EffectsRegistry {
 
   /**
    * Consumes one stored teleport use (FIFO — one stack) and grants
-   * P6 Phase Shift at the landing spot. Returns true if consumed, false
+   * Phase Shift at the landing spot. Returns true if consumed, false
    * if none were stored.
    */
   consumeTeleport(): boolean {
@@ -727,7 +727,7 @@ export class EffectsRegistry {
     return this.speedMultiplier();
   }
 
-  /** Current lives count (P8 model); starts at 3, capped level-resolved. */
+  /** Current lives count (Extra Life model); starts at 3, capped level-resolved. */
   lives(): number {
     return this._levelStore.lives();
   }
@@ -735,14 +735,14 @@ export class EffectsRegistry {
   /**
    * Sets the lives counter directly (clamped to `[0, livesCap]`).
    * Lets the playable game drive the HUD from its authoritative run state
-   * (GameState) when a player is hit; P8 collection still uses
+   * (GameState) when a player is hit; Extra Life collection still uses
    * `applyCollect('extra_life')`.
    */
   setLives(value: number): void {
     this._levelStore.setLives(value);
   }
 
-  /** Current permanent magnet stack count (P9); level-capped. */
+  /** Current permanent magnet stack count (Magnet); level-capped. */
   magnetStacks(): number {
     return this._levelStore.magnetStacks();
   }
@@ -765,12 +765,12 @@ export class EffectsRegistry {
     return this._timed.has('magnet') ? 1 : 0;
   }
 
-  /** Current permanent mineral-scoop stack count (P10); level-capped. */
+  /** Current permanent mineral-scoop stack count (Mineral Scoop); level-capped. */
   scoopStacks(): number {
     return this._levelStore.scoopStacks();
   }
 
-  /** Whether the timed P10 field-pickup mineral attraction is active. */
+  /** Whether the timed Mineral Scoop field-pickup mineral attraction is active. */
   isScoopActive(): boolean {
     return this._timed.has('mineral_scoop');
   }
@@ -874,14 +874,14 @@ export class EffectsRegistry {
 
   /**
    * Snapshot of the active timed effects plus permanent stack/lives state —
-   * the aggregated model the standalone HUD renders from. P7 teleport is
+   * the aggregated model the standalone HUD renders from. Teleport teleport is
    * included as a stack entry when any uses are stored. Weapons are
    * exposed separately via `activeWeapons()`.
    */
   activeEffects(): ActiveEffect[] {
     const result: ActiveEffect[] = [];
     for (const effect of this._timed.values()) {
-      // P3 carries its remaining absorptions so the HUD renders `Shield xN`
+      // Shield carries its remaining absorptions so the HUD renders `Shield xN`
       // and updates as hits are absorbed (AC6).
       const stacks =
         effect.id === 'shield' ? this._shieldRemaining : undefined;
@@ -900,7 +900,7 @@ export class EffectsRegistry {
         ...(stacks !== undefined ? { stacks } : {}),
       });
     }
-    // P9 permanent upgrades render as a stack row; the timed field pickup
+    // Magnet permanent upgrades render as a stack row; the timed field pickup
     // is already surfaced from `_timed` above. A zero stack count is never
     // surfaced (no misleading "x0").
     const magnetStacks = this._levelStore.magnetStacks();
@@ -911,7 +911,7 @@ export class EffectsRegistry {
         stacks: magnetStacks,
       });
     }
-    // P10 permanent upgrades render as a stack row; the timed field pickup
+    // Mineral Scoop permanent upgrades render as a stack row; the timed field pickup
     // is already surfaced from `_timed` above. A zero stack count is never
     // surfaced (no misleading "x0").
     const scoopStacks = this._levelStore.scoopStacks();
@@ -922,7 +922,7 @@ export class EffectsRegistry {
         stacks: scoopStacks,
       });
     }
-    // A permanent P4 bomb is a run-scoped active effect (never expires); a
+    // A permanent Bomb bomb is a run-scoped active effect (never expires); a
     // field pickup leaves no row (AC6).
     if (this._bombPermanent) {
       result.push({
@@ -939,7 +939,7 @@ export class EffectsRegistry {
         stacks: teleportStacks,
       });
     }
-    // P6 auto-activation charges (parent AH-0MUIYX1EE008FVS8): a finite
+    // Phase Shift auto-activation charges (parent AH-0MUIYX1EE008FVS8): a finite
     // stock-pile renders as a count, the hold-full reward as unlimited. A
     // zero charge count is never surfaced (no misleading "x0").
     if (this.isPhasePermanent()) {

@@ -312,7 +312,7 @@ function drawMagnet(
 /**
  * Mineral scoop — a shovel/scoop bowl with a handle and mineral dots
  * gathering inside it. Distinct neon-green hue so it never reads as the
- * purple P9 Magnet.
+ * purple Magnet.
  */
 function drawMineralScoop(
   g: Phaser.GameObjects.Graphics,

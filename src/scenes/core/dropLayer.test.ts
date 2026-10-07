@@ -99,7 +99,7 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       if (id === 'extra_life') extraLives += 1;
     }
 
-    // P8 weight 3 of the 31 total power-up weight → exactly 3/31.
+    // Extra Life weight 3 of the 31 total power-up weight → exactly 3/31.
     const p8Share = extraLives / powerUps;
     expect(p8Share).toBeCloseTo(3 / 31, 3);
     // Tied to the shipped weight table (not a hard-coded expectation).
@@ -109,7 +109,7 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
     );
     expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.extra_life / weightTotal, 3);
     // Relative weight tripled (1 → 3): ≈ 2.4× the former 1/25 normalised share
-    // (the P10 addition widens the denominator from 27 to 31).
+    // (the Mineral Scoop addition widens the denominator from 27 to 31).
     expect(p8Share / (1 / 25)).toBeCloseTo((3 / 31) / (1 / 25), 2);
   });
 });

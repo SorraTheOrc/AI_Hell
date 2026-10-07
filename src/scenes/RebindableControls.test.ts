@@ -159,7 +159,7 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P7 teleport stack.
+    // Collect a Teleport teleport stack.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);

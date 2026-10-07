@@ -608,7 +608,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a fresh P3 shield.
+    // Collect a fresh Shield shield.
     const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -691,7 +691,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const livesBefore = scene.getGameState().lives;
     player.setPosition(enemy.x, enemy.y);
     // Keep the player's internal movement state in sync so physicsTick does
-    // not snap the ship back (same pattern as the P7 teleport code).
+    // not snap the ship back (same pattern as the Teleport teleport code).
     const state = player.getMovementState();
     (player as unknown as { _movementState: { x: number; y: number } })._movementState =
       { ...state, x: enemy.x, y: enemy.y };
@@ -2053,18 +2053,18 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(scene.getEffectsRegistry().isActive('speed_boost')).toBe(false);
   });
 
-  // ── P5 Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
+  // ── Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
 
   it('P5 active → speed multiplier applied to player movement config', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Default: no P5 active, multiplier = 1.
+    // Default: no Speed Boost active, multiplier = 1.
     const configDefault = player.getMovementConfig();
     expect(registry.speedMultiplier()).toBe(1);
 
-    // Activate P5 via direct collection (drop under ship at full size).
+    // Activate Speed Boost via direct collection (drop under ship at full size).
     const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     expect(drop.powerUp.canCollect()).toBe(true);
@@ -2088,7 +2088,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Activate P5.
+    // Activate Speed Boost.
     const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2113,7 +2113,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect first P5.
+    // Collect first Speed Boost.
     const drop1 = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop1.powerUp.advance(0.05);
     player.setPosition(drop1.x, drop1.y);
@@ -2125,7 +2125,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isActive('speed_boost')).toBe(true);
     const remainingBeforeSecond = registry.remaining('speed_boost')!;
 
-    // Collect a second P5 — should refresh the timer to full.
+    // Collect a second Speed Boost — should refresh the timer to full.
     const drop2 = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop2.powerUp.advance(0.05);
     player.setPosition(drop2.x, drop2.y);
@@ -2147,11 +2147,11 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Default: no P5 active, fire-rate multiplier = 1.
+    // Default: no Speed Boost active, fire-rate multiplier = 1.
     expect(registry.fireRateMultiplier()).toBe(1);
     expect(player.getFireRateMultiplier()).toBe(1);
 
-    // Collect a P5 (drop under the ship at full size).
+    // Collect a Speed Boost (drop under the ship at full size).
     const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2184,14 +2184,14 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(player.getFireRateMultiplier()).toBe(1);
   });
 
-  // ── P7 Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
+  // ── Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
 
   it('P7 teleport with a stack warps the player, consumes the stack and grants P6', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P7 to gain a teleport stack.
+    // Collect a Teleport to gain a teleport stack.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2206,7 +2206,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(scene.triggerTeleport()).toBe(true);
 
     expect(registry.teleportStacks()).toBe(0);
-    expect(registry.isPhased).toBe(true); // P6 granted on arrival
+    expect(registry.isPhased).toBe(true); // Phase Shift granted on arrival
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
     expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
@@ -2225,7 +2225,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(false);
 
-    // Player did not move; no P6 granted; still zero stacks.
+    // Player did not move; no Phase Shift granted; still zero stacks.
     expect(player.x).toBeCloseTo(beforeX);
     expect(player.y).toBeCloseTo(beforeY);
     expect(registry.teleportStacks()).toBe(0);
@@ -2237,7 +2237,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P7 stack.
+    // Collect a Teleport stack.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2258,7 +2258,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(distFromEnemy).toBeGreaterThan(enemy.getHitRadius());
   });
 
-  // ── P3 Shield bubble visual (AH-0MU8QV3O9008JVNQ) ───────────────
+  // ── Shield bubble visual (AH-0MU8QV3O9008JVNQ) ───────────────
 
   it('P3 shield bubble is rendered while the shield is active', async () => {
     const scene = await bootPlay();
@@ -2267,7 +2267,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.isShieldBubbleVisible()).toBe(false);
 
-    // Collect a P3 shield.
+    // Collect a Shield shield.
     const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2286,7 +2286,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const registry = scene.getEffectsRegistry();
     const livesBefore = scene.getGameState().lives;
 
-    // Collect a P3 shield (park an enemy bullet far away so auto-fire
+    // Collect a Shield shield (park an enemy bullet far away so auto-fire
     // damage during setup does not interfere — the shield is fresh).
     const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
@@ -2305,7 +2305,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(scene.isPlayerInvulnerable()).toBe(true);
   });
 
-  // ── P6 Phase Shift ghost visual (AH-0MU8QVC9Y008R8I5) ────────────
+  // ── Phase Shift ghost visual (AH-0MU8QVC9Y008R8I5) ────────────
 
   it('P6 phase shift renders the ship as a semi-transparent ghost (alpha 0.45)', async () => {
     const scene = await bootPlay();
@@ -2369,7 +2369,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(player.alpha).not.toBeCloseTo(0.45);
   });
 
-  // ── P4 Bomb ranged clear (AH-0MUVM9RAO004Y3LB) ───────────────────
+  // ── Bomb ranged clear (AH-0MUVM9RAO004Y3LB) ───────────────────
 
   it('P4 field pickup clears enemy bullets within range exactly once', async () => {
     const scene = await bootPlay();
@@ -2380,7 +2380,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.spawnEnemyBullet(player.x + 400, player.y, 0, 0);
     expect(scene.getEnemyBullets().length).toBe(2);
 
-    // Collect a P4 bomb.
+    // Collect a Bomb bomb.
     const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2401,7 +2401,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const aliveBefore = scene.getAliveCount();
 
-    // Collect a P4 bomb.
+    // Collect a Bomb bomb.
     const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
@@ -2509,7 +2509,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const scene = await bootPlay();
     vi.clearAllMocks();
 
-    // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated cue yet.
+    // Shield shield, Bomb bomb, Phase Shift phase, Teleport teleport have no dedicated cue yet.
     for (const id of ['shield', 'bomb', 'phase_shift', 'teleport']) {
       await collectDropInPlay(scene, id);
     }
@@ -2686,9 +2686,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
       scene.tick(0.016);
     };
 
-    // Collect one of each effect category: timed (P5 speed, P8 life,
-    // P3 shield, P6 phase, P9 magnet field-pickup), permanent stacks (P9
-    // magnet upgrade, P7 teleport) and a weapon pickup ('spread').
+    // Collect one of each effect category: timed (Speed Boost speed, Extra Life life,
+    // Shield shield, Phase Shift phase, Magnet magnet field-pickup), permanent stacks (Magnet
+    // magnet upgrade, Teleport teleport) and a weapon pickup ('spread').
     collect('speed_boost');
     collect('extra_life');
     collect('shield');

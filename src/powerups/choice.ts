@@ -8,7 +8,7 @@
  * choice scene or the PlayScene wiring.
  *
  * The default strategy draws `count` **distinct** entries uniformly at random
- * from the candidate list — the base drop pool (P3–P10 plus the collectable
+ * from the candidate list — the base drop pool (Shield–Mineral Scoop plus the collectable
  * weapon drops spread/dual/rapid/nova/mortar/arc) with each owned item's
  * base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
@@ -30,7 +30,7 @@ import { summarisePowerUpLevelChange } from './powerUpLevels';
 // ── Pool ────────────────────────────────────────────────────────────
 
 /**
- * Every drop the hold-full choice can offer: the power-ups P3–P10 plus the
+ * Every drop the hold-full choice can offer: the power-ups Shield–Mineral Scoop plus the
  * collectable weapon drops (spread, dual, rapid). The `reset` utility drop is
  * intentionally excluded — it removes weapons rather than granting one.
  */
@@ -55,7 +55,7 @@ export const CHOICE_POOL: readonly DropId[] = [
 
 /**
  * The kind of option offered:
- * - `'powerup'` — a P3–P10 power-up grant,
+ * - `'powerup'` — a Shield–Mineral Scoop power-up grant,
  * - `'weapon'` — a collectable weapon drop (grant \*or\* re-activate),
  * - `'weapon-level'` — a permanent level-up of a weapon the player already
  *   owns (parent AH-0MUPMPCB2009J54J),

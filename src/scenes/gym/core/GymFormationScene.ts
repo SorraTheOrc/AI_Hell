@@ -28,9 +28,9 @@
  * fraction of the minerals it absorbed, exactly as in `PlayScene`.
  *
  * **Shared power-up drop layer:** the opt-in power-up layer runs the same
- * lifecycle, collection gate, P9 magnet and per-type pickup cues as the
+ * lifecycle, collection gate, Magnet magnet and per-type pickup cues as the
  * game, via the shared `src/scenes/core/dropLayer.ts` template methods
- * (`_updateDropLayer` etc.); the P4 ranged bomb pulse is driven by the
+ * (`_updateDropLayer` etc.); the Bomb ranged bomb pulse is driven by the
  * shared `CombatCoreScene._updateP4Bomb` path. Only the spawn *source*
  * (a timer, not a kill chance) is gym-specific (AH-0MUII3CXX0023H24, gap 4).
  *
@@ -272,7 +272,7 @@ export interface PlayerFormationConfig {
 export interface PowerUpLayerConfig {
   /**
    * Injectable ID spawner. Defaults to a `WeightedRandomSpawner` over
-   * P3–P9 plus the weapon drops (spread, dual, rapid, reset) using the
+   * Shield–Magnet plus the weapon drops (spread, dual, rapid, reset) using the
    * game-rules weights.
    */
   spawner?: PowerUpSpawner<DropId>;
@@ -475,7 +475,7 @@ export class GymFormationScene<
   private effectsRegistry = new EffectsRegistry();
   /** Standalone HUD rendering the active effects (null when disabled). */
   private hud: HUD | null = null;
-  /** Shared P3 shield-bubble graphics (draws the shared helper output). */
+  /** Shared Shield shield-bubble graphics (draws the shared helper output). */
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the shield bubble was drawn in the last visual update. */
   private shieldBubbleDrawn = false;
@@ -596,7 +596,7 @@ export class GymFormationScene<
       ) as WasdKeysLike | undefined;
     }
 
-    // ── Shared P3/P6 player visuals (parity with PlayScene/gym combat) ──
+    // ── Shared Shield/Phase Shift player visuals (parity with PlayScene/gym combat) ──
     // Drawn through the shared CombatEffectVisuals helper so the enemy gym
     // cannot drift from the other scenes (AH-0MUICQC34005QOYF).
     this.shieldBubble = this.add.graphics();
@@ -649,9 +649,9 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
-    // ── P7 teleport keys (S/↓) — bound whenever a player exists ─────
+    // ── Teleport teleport keys (S/↓) — bound whenever a player exists ─────
     // Independent of the opt-in power-up drop layer: the minerals gym
-    // grants P7 through the hold-full choice, not field drops, so teleport
+    // grants Teleport through the hold-full choice, not field drops, so teleport
     // must be usable there too (AH-0MUHMXWGC0058BO4 · AC2).
     this._bindTeleportKeys();
 
@@ -824,7 +824,7 @@ export class GymFormationScene<
 
     // The registry is reset by `resetRunState()` at the top of `create()`,
     // so it is already clean here; only the standalone HUD is rebuilt per
-    // scene start (lives visible so P8 is observable). Sharing the one
+    // scene start (lives visible so Extra Life is observable). Sharing the one
     // reset path stops the registry drifting on restart (gap 10).
     this.hud = new HUD(this, this.effectsRegistry, {
       showLives: true,
@@ -929,13 +929,13 @@ export class GymFormationScene<
   /**
    * Advances drop lifecycles, resolves fly-over collection, spawns the
    * next drop when the configured interval has elapsed and no previous
-   * drop is still live (one drop on screen at a time), handles P7
+   * drop is still live (one drop on screen at a time), handles Teleport
    * teleport, ticks the effects registry and refreshes the HUD.
    */
   private _updatePowerUpLayer(dt: number): void {
     if (!this.powerUpsEnabled) return;
 
-    // Single shared drop sequence (gap 4): P4 notice, P9 magnet,
+    // Single shared drop sequence (gap 4): Bomb notice, Magnet magnet,
     // lifecycle, overlap collection, absorb VFX. Only the spawn *source*
     // (the cadence below) differs from the game (OQ6).
     this.powerUpDrops = this._updateDropLayer(this.powerUpDrops, dt);
@@ -956,11 +956,11 @@ export class GymFormationScene<
     drop.powerUp.tryCollect();
   }
 
-  // ── Teleport (P7, S/↓) ───────────────────────────────────────────
+  // ── Teleport (Teleport, S/↓) ───────────────────────────────────────────
 
   /**
    * Teleports are allowed when the opt-in drop layer is active, or whenever
-   * a stored P7 use is available (the minerals gym grants P7 through the
+   * a stored Teleport use is available (the minerals gym grants Teleport through the
    * hold-full choice, not field drops — AH-0MUHMXWGC0058BO4 · AC2).
    */
   protected override canTeleport(): boolean {
@@ -1058,7 +1058,7 @@ export class GymFormationScene<
   }
 
   /**
-   * Draws the shared P3 shield bubble and applies the shared P6 phase ghost
+   * Draws the shared Shield shield bubble and applies the shared Phase Shift phase ghost
    * each frame (parity with `PlayScene`/`GymPowerUpsCombat`). Safe when no
    * player is present.
    */
@@ -1071,12 +1071,12 @@ export class GymFormationScene<
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
   }
 
-  /** Whether the P3 shield bubble was drawn in the last visual update. */
+  /** Whether the Shield shield bubble was drawn in the last visual update. */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
   }
 
-  /** Whether the P6 phase ghost is currently active. */
+  /** Whether the Phase Shift phase ghost is currently active. */
   isPhaseGhostActive(): boolean {
     return this.effectsRegistry.isPhased;
   }
@@ -1183,7 +1183,7 @@ export class GymFormationScene<
    * Player collects overlapping minerals into the hold; non-asteroid
    * enemies absorb them. Asteroids are inert to minerals. Runs the shared
    * `collectMinerals` routine — the same code the game runs
-   * (AH-0MUII3DHM008L7JF · AC1). The P10 Mineral Scoop attraction pass runs
+   * (AH-0MUII3DHM008L7JF · AC1). The Mineral Scoop attraction pass runs
    * first (shared `_applyMineralScoop`), so a mineral pulled into the hull
    * this frame is collected this frame — matching `PlayScene`.
    */
@@ -1461,7 +1461,7 @@ export class GymFormationScene<
       this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
 
-      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // Automatic Phase Shift: feed live danger before collision gating
       // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
       this._updatePhaseShiftAutoTrigger(dt);
 
@@ -1476,19 +1476,19 @@ export class GymFormationScene<
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
 
-    // ── P7 teleport (S/↓) — independent of the opt-in drop layer ─────
-    // The minerals gym grants P7 through the hold-full choice, so the
+    // ── Teleport teleport (S/↓) — independent of the opt-in drop layer ─────
+    // The minerals gym grants Teleport through the hold-full choice, so the
     // handler must run even when field drops are disabled
     // (AH-0MUHMXWGC0058BO4 · AC2).
     this._handleTeleport();
 
     // ── Effect timers + HUD — independent of the opt-in drop layer ───
-    // Timed effects (e.g. P6 granted on teleport arrival) and the HUD must
+    // Timed effects (e.g. Phase Shift granted on teleport arrival) and the HUD must
     // advance in every gym, not only those with field drops.
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
 
-    // ── Shared P3/P6 player visuals (parity with the other scenes) ──
+    // ── Shared Shield/Phase Shift player visuals (parity with the other scenes) ──
     // Runs after the power-up layer so a drop collected this frame is
     // reflected immediately. Safe when no player is present.
     this._updateEffectVisuals();

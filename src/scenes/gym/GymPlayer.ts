@@ -6,7 +6,7 @@
  * more than a bare ship-tuning testbed. It now:
  *
  * - advances the player through the shared {@link CombatCoreScene._tickPlayer}
- *   step (weapon timers → live P5 multipliers → scheme-aware input → physics
+ *   step (weapon timers → live Speed Boost multipliers → scheme-aware input → physics
  *   → auto-fire), so input and auto-fire are the *same code* the shipped
  *   game and the other gyms run;
  * - auto-fires the active weapon(s) through the shared

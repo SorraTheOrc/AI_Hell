@@ -398,7 +398,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     scene.entities.push(enemy);
     scene.bullets.push(new StubBullet(scene, 100, 100));
 
-    // P4 uses the shared `_clearEnemyBullets` path (no enemy damage).
+    // Bomb uses the shared `_clearEnemyBullets` path (no enemy damage).
     (scene as unknown as { _clearEnemyBullets(): void })._clearEnemyBullets();
 
     expect(scene.bullets).toHaveLength(0);

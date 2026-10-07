@@ -3,7 +3,7 @@
  * children AC1–AC10): discovery by the gym index, scene boot + player ship
  * with thrust movement and screen-wrap, scout V-formation + SHOOT toggle,
  * combat power-up collection, hit response, round-robin spawn, back button,
- * and visual feedback (shield bubble, phase ghost, P4 pulse ring).
+ * and visual feedback (shield bubble, phase ghost, Bomb pulse ring).
  *
  * Uses gameHarness (Phaser headless via happy-dom) — no rasterised canvas
  * checks; visuals tested via commandBuffer where applicable.
@@ -247,7 +247,7 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     expect(drops.length).toBeGreaterThanOrEqual(1);
     expect(drops[0].powerUp.id).toBe('shield'); // first in COMBAT_ORDER
 
-    // Advance through one full cycle (P3 despawn → P4 spawn → P6 → P7).
+    // Advance through one full cycle (Shield despawn → Bomb spawn → Phase Shift → Teleport).
     // Each drop has POWER_UP_LIFETIME seconds of life.
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
@@ -318,7 +318,7 @@ describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
   });
 });
 
-// ── AC4: P3 Shield collection + visual ─────────────────────────────────
+// ── AC4: Shield collection + visual ─────────────────────────────────
 
 describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
   let booted: BootedGame | null = null;
@@ -372,7 +372,7 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
   });
 });
 
-// ── AC5: P4 Bomb collection + bullet clear + notice ────────────────────
+// ── AC5: Bomb collection + bullet clear + notice ────────────────────
 
 describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', () => {
   let booted: BootedGame | null = null;
@@ -387,7 +387,7 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Place enemy bullets deterministically so the assertion tests the P4
+    // Place enemy bullets deterministically so the assertion tests the Bomb
     // ranged clear itself, not scout fire cadence vs bullet lifetime
     // (AH-0MU960UTE001PTV0 — shorter lifetimes made the previous
     // tick-until-bullets-exist approach timing-fragile).
@@ -395,7 +395,7 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
     scene.spawnEnemyBullet(100, 100, 0, 0); // well outside
     expect(scene.getEnemyBullets()).toHaveLength(2);
 
-    // Collect P4 on the first tick, then advance one more so the shared bomb
+    // Collect Bomb on the first tick, then advance one more so the shared bomb
     // step fires the queued pulse.
     scene.spawnDrop('bomb', 480, 270);
     scene.advanceDrops(0.5);
@@ -424,7 +424,7 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
   });
 });
 
-// ── AC6: P6 Phase Shift collection + ghost visual ──────────────────────
+// ── AC6: Phase Shift collection + ghost visual ──────────────────────
 
 describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () => {
   let booted: BootedGame | null = null;
@@ -481,7 +481,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
   });
 });
 
-// ── AC7: P7 Teleport FIFO stacks + safe-spot ──────────────────────────
+// ── AC7: Teleport FIFO stacks + safe-spot ──────────────────────────
 
 describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
   let booted: BootedGame | null = null;
@@ -796,7 +796,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
 
     // Only the down-arrow is held/just-down; S is not. The inherited
-    // `_handleTeleport` must still consume the stack and grant P6 — the
+    // `_handleTeleport` must still consume the stack and grant Phase Shift — the
     // deliberate S+↓ fix that replaces the gym's old S-only
     // implementation (parent AC5b).
     const sKey = scene.input.keyboard!.addKey('S');
@@ -816,7 +816,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
 
     scene['_handleTeleport']();
 
-    // The ↓ key (not S) consumed the P7 stack and granted P6 on arrival.
+    // The ↓ key (not S) consumed the Teleport stack and granted Phase Shift on arrival.
     expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     booted.game.destroy(true);

@@ -194,7 +194,7 @@ the first three enemy gym scenes duplicated:
   shared path. The shipped game and the gyms therefore cannot diverge on
   collision, auto-fire, drops, teleport or player-hit behaviour.
 
-  **Shared P3/P6 hit-gating (**AH-0MUHM66ES0027QQV**).** The shield/phase
+  **Shared Shield/Phase Shift hit-gating (**AH-0MUHM66ES0027QQV**).** The shield/phase
   hit-gating hooks are part of the shared core and are **not** per-scene
   overrides: `CombatScene` provides the registry-backed defaults
   `isPlayerPhased()` → `getEffectsRegistry().isPhased` and
@@ -205,21 +205,21 @@ the first three enemy gym scenes duplicated:
   (`GymWeapons`, `GymPowerUpsUtility`). Every `CombatScene` subclass
   inherits the gating exactly once — `PlayScene`, `GymPowerUpsCombat`, and
   `GymFormationScene` (`GymEnemies`/`GymBoss`/`GymMinerals`) — so collecting
-  P3 Shield or P6 Phase Shift behaves identically in the shipped game and
+  Shield or Phase Shift behaves identically in the shipped game and
   the enemy gym. **No scene should re-implement these hooks**; a scene may
-  add a per-type cue only through the `onShieldAbsorbed()` seam. The P3
-  shield-bubble and P6 phase-ghost player visuals live once in
+  add a per-type cue only through the `onShieldAbsorbed()` seam. The Shield
+  shield-bubble and phase-ghost player visuals live once in
   `src/scenes/core/CombatEffectVisuals.ts` and are used by all three scenes
   (see §7.2).
 
   **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
   `GymMinerals` has no field power-up drops, so its rewards come from the
-  hold-full choice overlay. Because the choice can grant P7 Teleport, the
+  hold-full choice overlay. Because the choice can grant Teleport, the
   S / ↓ teleport keys are bound whenever a player exists and the shared
   `_handleTeleport()` runs every tick — independent of `powerUpsEnabled` —
-  so a stored P7 use is consumable; `canTeleport()` accepts a stored use in
+  so a stored Teleport use is consumable; `canTeleport()` accepts a stored use in
   addition to the opt-in drop layer. The effects registry ticks (and the
-  HUD refreshes) every frame in all formation gyms, so a P6 granted on
+  HUD refreshes) every frame in all formation gyms, so a Phase Shift granted on
   teleport arrival expires normally. The overlay renders the caller's
   stored options, so the displayed label is the option applied.
 
@@ -257,7 +257,7 @@ the first three enemy gym scenes duplicated:
   `src/scenes/core/CombatScene.equivalence.test.ts` and the
   dispatch/fallback behaviour by `src/entities/enemyFire.test.ts`.
 - **Shared boss integration** (AH-0MUII3E5E006A93F, gap 6) — the boss
-  advance (`_advanceBoss(dt)`) and the P7 teleport boss-avoidance
+  advance (`_advanceBoss(dt)`) and the teleport boss-avoidance
   (`getAdditionalTeleportBodies()`) live once in `CombatScene` and are
   driven by each scene's own `tick(dt)`, so a single deterministic tick
   advances the boss with the same ordering relative to collisions in the
@@ -614,7 +614,7 @@ enemy is protected (AC4):
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
 
 `GymBoss` also consumes the shared boss hooks (§2.1): its `tick(dt)`
-advances the Boss through `CombatScene._advanceBoss`, P7 teleports avoid the
+advances the Boss through `CombatScene._advanceBoss`, teleports avoid the
 boss via the shared `getAdditionalTeleportBodies()`, and its phase minions
 are summoned from the shared `planMinionSpawns()` plan and advanced on the
 same tick path through `onBossAdvanced()` — so the gym Boss runs the same
@@ -824,10 +824,10 @@ Resolved in the shared `CombatScene._handleCollisions` (inherited by
 > respawn* is in-place. Supersedes the respawn clause of AH-0MTVYBCUW008BEQT
 > AC4 ("the respawn position matches the initial spawn position").
 
-**Power-up hit-gating (P3 Shield / P6 Phase Shift).** The P3/P6 gating is
+**Power-up hit-gating (Shield / Phase Shift).** The Shield/Phase Shift gating is
 inherited from the shared `CombatScene`, not re-implemented in the gym:
 
-- **P6 Phase Shift** — `CombatScene.isPlayerPhased()` returns
+- **Phase Shift** — `CombatScene.isPlayerPhased()` returns
   `getEffectsRegistry().isPhased`; while active, `_handleCollisions()` skips
   both the enemy-bullet-vs-player and player-body-vs-enemy passes, so the
   ship passes through bullets and bodies for the **1.5 s** effect window (no
@@ -848,18 +848,18 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   `collectMinerals({ playerPhased: false })`, so a phase active at wave-clear
   still collects minerals; the Q7 gate is unchanged during normal wave play
   (AH-0MUX96GJF006CAZP).
-- **P3 Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
+- **Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
   shield (`tryAbsorbShield()`), runs the `onShieldAbsorbed()` cue seam (the
   play scene plays `playDestructionSound()`; the gym stays silent), starts
   the shared post-hit invulnerability window and reports the hit absorbed,
   so an absorbed hit costs no life; the following hit lands normally.
-- **Visuals** — `GymFormationScene` draws the same P3 shield bubble
+- **Visuals** — `GymFormationScene` draws the same shield bubble
   (colour `0x3399ff`, line width 2, radius `SHIP_SIZE * 1.6`, fill alpha
-  `0.12`) and P6 phase ghost (alpha `0.45`, blink-aware) as `PlayScene` and
+  `0.12`) and Phase Shift ghost (alpha `0.45`, blink-aware) as `PlayScene` and
   `GymPowerUpsCombat`, through the shared `CombatEffectVisuals` helper. Test
   seams: `isShieldBubbleVisible()`, `isPhaseGhostActive()`.
 
-`GymFormationScene`-based scenes therefore record **and** apply P3/P6
+`GymFormationScene`-based scenes therefore record **and** apply Shield/Phase Shift
 identically to the other combat scenes — a regression is guarded by the
 enemy-gym phase/shield tests and the cross-scene equivalence tests. The
 mineral gate is unit-tested in `src/scenes/core/mineralLayer.test.ts` and

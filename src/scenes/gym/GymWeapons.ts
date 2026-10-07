@@ -34,7 +34,7 @@
  * + ship hull radius); collecting plays the pickup cue and applies the
  * weapon effect without pausing the next spawn's cadence.
  *
- * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * The drop lifecycle, collection gate, Magnet magnet and per-type pickup cues
  * run through the shared `src/scenes/core/dropLayer.ts` template methods
  * (`_advanceDropLifecycles`, `_collectOverlappingDrops`, `_applyDropMagnet`,
  * `_playPickupCue`), so the gym cannot drift from the game; only the

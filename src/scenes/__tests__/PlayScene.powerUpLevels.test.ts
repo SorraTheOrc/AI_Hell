@@ -110,7 +110,7 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     const player = scene.getPlayer()!;
     const effects = scene.getEffectsRegistry();
 
-    // Own P5 at level 1.
+    // Own Speed Boost at level 1.
     player.collectPowerUp('speed_boost');
     expect(player.getPowerUpLevel('speed_boost')).toBe(1);
 

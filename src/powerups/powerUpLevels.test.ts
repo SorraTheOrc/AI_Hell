@@ -3,7 +3,7 @@
  * (parent AH-0MUU2QJE2007JNR6).
  *
  * Covers:
- * - AC1: data-driven catalogue for every power-up P3–P10 with rationale.
+ * - AC1: data-driven catalogue for every power-up Shield–Mineral Scoop with rationale.
  * - AC2: run-scoped integer level, incremented on every collection and
  *   cleared only on run restart.
  * - AC3: stack/charge semantics derived from the level model.
@@ -195,19 +195,19 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
     // Every axis is wired since AH-0MUVM9RAO004Y3LB.
     expect(DEFERRED_POWER_UP_LEVEL_VARIABLES.size).toBe(0);
 
-    // P4's range and frequency now contribute a promised delta.
+    // Bomb's range and frequency now contribute a promised delta.
     const p4 = summarisePowerUpLevelChange('bomb', 0, 1);
     expect(p4).toContain('Bomb range');
     expect(p4).toContain('Bomb rate');
 
-    // P3's multi-hit axis is included alongside its duration.
+    // Shield's multi-hit axis is included alongside its duration.
     const p3 = summarisePowerUpLevelChange('shield', 0, 1);
     expect(p3).toContain('Shield time');
     expect(p3).toContain('Shield hits');
   });
 });
 
-// ── P4 model: range/frequency axes (AH-0MUVM9RAO004Y3LB) ────────────
+// ── Bomb model: range/frequency axes (AH-0MUVM9RAO004Y3LB) ────────────
 
 describe('P4 Bomb model: bombRange/bombFrequency replace bombCharges', () => {
   it('exposes the Q2=A specs with labels, units and a rationale', () => {
@@ -328,7 +328,7 @@ describe('PowerUpLevelStore (AC2 — run-scoped integer level)', () => {
 describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
   it('derives P9/P10 permanent stacks from permanent grants, capped at 5', () => {
     const store = new PowerUpLevelStore();
-    // A field pickup levels P9 up but grants no permanent stack (hybrid).
+    // A field pickup levels Magnet up but grants no permanent stack (hybrid).
     store.collect('magnet');
     expect(store.getLevel('magnet')).toBe(1);
     expect(store.magnetStacks()).toBe(0);

@@ -469,7 +469,7 @@ describe('GymBoss — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => 
     booted = null;
   });
 
-  /** Boots GymBoss whose first drop lands on the ship and is a P8. */
+  /** Boots GymBoss whose first drop lands on the ship and is a Extra Life. */
   class CollectGymBoss extends GymBoss {
     init(): void {
       const atPlayer: PowerUpPlacement = {

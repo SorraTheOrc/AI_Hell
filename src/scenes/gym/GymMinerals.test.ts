@@ -191,7 +191,7 @@ describe('GymMinerals', () => {
 });
 
 /**
- * Hold-full choice → P7 teleport and P3/P6 hit-gating in the minerals gym
+ * Hold-full choice → Teleport teleport and Shield/Phase Shift hit-gating in the minerals gym
  * (AH-0MUHMXWGC0058BO4 · AC1/AC2/AC3/AC4).
  *
  * The minerals gym omits the opt-in field power-up layer, so it is the

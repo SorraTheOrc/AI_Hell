@@ -198,14 +198,14 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _config: PlayerMovementConfig;
 
   /**
-   * Nominal movement config (pre-multiplier). P5 Speed Boost scales
+   * Nominal movement config (pre-multiplier). Speed Boost scales
    * thrust + max-speed about these values via {@link setSpeedMultiplier}.
    */
   private _baseConfig: PlayerMovementConfig;
 
-  /** Current live speed multiplier (1 = normal, 1.5 = P5 boosted). */
+  /** Current live speed multiplier (1 = normal, 1.5 = Speed Boost boosted). */
   private _speedMultiplier = 1;
-  /** Current live fire-rate multiplier (1 = normal, 1.5 = P5 boosted). */
+  /** Current live fire-rate multiplier (1 = normal, 1.5 = Speed Boost boosted). */
   private _fireRateMultiplier = 1;
 
   // ── Weapon system (AC1–AC4) ─────────────────────────────────────
@@ -555,7 +555,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Applies a live movement multiplier (P5 Speed Boost: +50%): thrust and
+   * Applies a live movement multiplier (Speed Boost: +50%): thrust and
    * max-speed scale by `multiplier` about the nominal config; friction and
    * rendering are untouched. 1 = normal speed. Applied to physics only.
    */
@@ -566,7 +566,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Applies a live fire-rate multiplier (P5 Speed Boost: +50% rate of fire).
+   * Applies a live fire-rate multiplier (Speed Boost: +50% rate of fire).
    * The effective fire interval is divided by `multiplier`, so the ship fires
    * `multiplier`× as often — and every active weapon is re-scheduled on the
    * new interval grid so shots stay phase-locked (no drift) after the
@@ -598,7 +598,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Current live fire-rate multiplier (1 = normal, 1.5 = P5 boosted).
+   * Current live fire-rate multiplier (1 = normal, 1.5 = Speed Boost boosted).
    * Exposed so scenes and tests can verify the applied multiplier without
    * inferring it from fire timing.
    */
@@ -817,7 +817,7 @@ export class Player extends Phaser.GameObjects.Graphics {
    * Collects a power-up: increments its run-scoped level (every
    * collection levels the power-up up, parent AH-0MUV5CLVO002ZHS9).
    * For `permanent` (hold-full) rewards, the permanent-grant count
-   * also increments — relevant for P9/P10 hybrid semantics.
+   * also increments — relevant for Magnet/Mineral Scoop hybrid semantics.
    *
    * @param id — The power-up collected.
    * @param permanent — True for a hold-full permanent reward.
@@ -927,7 +927,7 @@ export class Player extends Phaser.GameObjects.Graphics {
   /**
    * Effective fire interval for a weapon in ms — its configured beat
    * subdivision (`weaponSubdivisions` + `beatBpm` from the game rules),
-   * scaled by the live fire-rate multiplier (P5 Speed Boost: `/1.5` fires
+   * scaled by the live fire-rate multiplier (Speed Boost: `/1.5` fires
    * 50 % more often). At the default multiplier of 1 every interval is an
    * exact subdivision of the beat period (AH-0MUAYB8EH005RJ8B).
    */
@@ -942,7 +942,7 @@ export class Player extends Phaser.GameObjects.Graphics {
     // upgrade's fire-rate multiplier, then re-quantise so the leveled cadence
     // stays on the shared beat grid (parent AH-0MUPMPCB2009J54J). At upgrade
     // index 0 the multiplier is 1 and the base interval is already on-grid,
-    // so this is a no-op and the existing cadence (and P5 behaviour) is
+    // so this is a no-op and the existing cadence (and Speed Boost behaviour) is
     // unchanged.
     const upgradeIndex = this._weaponUpgradeIndex(weaponId);
     const levelMultiplier =

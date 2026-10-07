@@ -60,7 +60,7 @@ export interface GameRules {
    */
   weaponSubdivisions: WeaponSubdivisions;
   /**
-   * Relative weight per power-up ID (P3–P10). Higher weight ⇒ more
+   * Relative weight per power-up ID (Shield–Mineral Scoop). Higher weight ⇒ more
    * likely. These are relative, not percentages — the spawner normalises
    * them internally.
    */
@@ -122,14 +122,14 @@ export function defaultWeaponSubdivisions(): WeaponSubdivisions {
   return { ...DEFAULT_WEAPON_SUBDIVISIONS };
 }
 
-/** Default relative weight for standard-rarity power-ups (P3–P7, P9, P10). */
+/** Default relative weight for standard-rarity power-ups (Shield–Teleport, Magnet, Mineral Scoop). */
 export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
 
 /**
- * Default relative weight for P8 Extra Life — rarer than standard drops
+ * Default relative weight for Extra Life — rarer than standard drops
  * per GDD §4.4. Raised from `1` to `3` (AH-0MUNS3VAQ0023L1J) so Extra Life
  * appears roughly three times as often **by weight** (≈ 2.8× normalised
- * share), giving players a meaningful recovery loop while keeping P8 rarer
+ * share), giving players a meaningful recovery loop while keeping Extra Life rarer
  * than the standard drops (a 4:3 ratio rather than the former 4:1).
  */
 export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
@@ -137,7 +137,7 @@ export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
-/** Every power-up ID covered by the default weight table (P3–P10). */
+/** Every power-up ID covered by the default weight table (Shield–Mineral Scoop). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'shield',
   'bomb',
@@ -211,7 +211,7 @@ export const DEFAULT_SEQUENCED_WAVES_ENABLED = true;
 
 /**
  * Builds a fresh default weight table: every standard ID carries
- * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, P8 Extra Life the rarer
+ * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, Extra Life the rarer
  * {@link DEFAULT_EXTRA_LIFE_WEIGHT}.
  */
 export function defaultPowerUpWeights(): PowerUpWeights {
@@ -270,7 +270,7 @@ export const RULES_STORAGE_KEY = 'ai-hell-game-rules';
  * {@link loadRules} resets the bonus tunables to the new defaults for any
  * config older than version 3 rather than carrying the stale keys forward.
  *
- * Version 4 renamed the power-up ids from the opaque GDD codes (`P3`–`P10`)
+ * Version 4 renamed the power-up ids from the opaque GDD codes (`Shield`–`Mineral Scoop`)
  * to the canonical snake_case names (parent AH-0MUX6S20F002GHPF).
  * {@link loadRules} translates a legacy `powerUpWeights` table keyed by the
  * old codes through {@link LEGACY_POWER_UP_ID_BY_CODE} so customised drop
@@ -468,7 +468,7 @@ export function loadRules(): GameRules {
     // never reinterpreted as a bonus.
     const legacyRedrop = !isVersionAtLeast(parsed.version, 3);
     // Versions 1–3 keyed `powerUpWeights` by the opaque GDD codes
-    // (`P3`–`P10`); version 4 renamed the keys to the canonical snake_case
+    // (`Shield`–`Mineral Scoop`); version 4 renamed the keys to the canonical snake_case
     // names. Translate legacy keys so customised weights survive the rename.
     const legacyPowerUpWeights = !isVersionAtLeast(
       parsed.version,

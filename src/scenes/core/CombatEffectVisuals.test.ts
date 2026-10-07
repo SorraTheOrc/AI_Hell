@@ -1,5 +1,5 @@
 /**
- * Unit tests for the shared P3/P6 effect visuals
+ * Unit tests for the shared Shield/Phase Shift effect visuals
  * (`AH-0MUICQC34005QOYF`). Pins the exact shield-bubble/phase-ghost
  * parameters used by `PlayScene`, `GymPowerUpsCombat` and
  * `GymFormationScene`, so the three scenes cannot drift visually.
@@ -66,7 +66,7 @@ function graphics(g: FakeGraphics): Phaser.GameObjects.Graphics {
 }
 
 /**
- * Minimal registry stub that reports an exact P3 remaining time, so the
+ * Minimal registry stub that reports an exact Shield remaining time, so the
  * time-based ending animation can be driven deterministically (no floating
  * point drift from ticking a real registry).
  */

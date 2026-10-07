@@ -353,22 +353,22 @@ export function playResetPickupSound(): void {
   playCue('playResetPickupSound');
 }
 
-/** Quick ascending zip — P5 Speed Boost activation. */
+/** Quick ascending zip — Speed Boost activation. */
 export function playSpeedBoostCollectSound(): void {
   playCue('playSpeedBoostCollectSound');
 }
 
-/** Warm two-note chime — P8 Extra Life activation. */
+/** Warm two-note chime — Extra Life activation. */
 export function playExtraLifeCollectSound(): void {
   playCue('playExtraLifeCollectSound');
 }
 
-/** Magnetic pulse-hum — P9 Magnet activation. */
+/** Magnetic pulse-hum — Magnet activation. */
 export function playMagnetCollectSound(): void {
   playCue('playMagnetCollectSound');
 }
 
-/** Rising chirp + whoosh — P6 Phase Shift activation. */
+/** Rising chirp + whoosh — Phase Shift activation. */
 export function playPhaseShiftSound(): void {
   playCue('playPhaseShiftSound');
 }

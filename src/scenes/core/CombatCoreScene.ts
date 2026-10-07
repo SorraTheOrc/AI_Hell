@@ -15,7 +15,7 @@
  * It owns:
  *
  * - the shared player-control step
- *   ({@link CombatCoreScene._tickPlayer}: weapon timers → live P5
+ *   ({@link CombatCoreScene._tickPlayer}: weapon timers → live Speed Boost
  *   multipliers → input → physics → auto-fire),
  * - the input path ({@link CombatCoreScene._readPlayerInput} plus the
  *   cursor/WASD bindings; the scheme→input branch itself lives in
@@ -28,12 +28,12 @@
  *   {@link CombatCoreScene._updateCollectAnimations} and the pickup-cue
  *   hook) plus the shared power-up drop layer itself — the default weighted
  *   spawner, grow/hold/shrink lifecycle, hull-touches-bubble collection gate,
- *   P9 magnet and the complete per-frame drop sequence, delegated to
+ *   Magnet magnet and the complete per-frame drop sequence, delegated to
  *   `./dropLayer` through {@link CombatCoreScene._updateDropLayer} et al.
  *   (AH-0MUII3CXX0023H24, gap 4), so an enabled drop behaves identically in
  *   every scene and only the spawn *source* stays per-scene,
  * - the player-explosion/collect registries, and the shared
- *   enemy-bullet clear path used by the P4 bomb,
+ *   enemy-bullet clear path used by the Bomb bomb,
  * - the shared hooks the combat scenes override
  *   ({@link CombatCoreScene.getInvulnerabilityDuration},
  *   {@link CombatCoreScene.tryAbsorbPlayerHit},
@@ -102,7 +102,7 @@ import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
-/** Ring colour for the P4 bomb pulse VFX (hot magenta-red). */
+/** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
 export const BOMB_PULSE_COLOR = 0xff5577;
 
 /**
@@ -202,7 +202,7 @@ export class CombatCoreScene<
    */
   protected phaseShiftEffects: Phaser.GameObjects.GameObject[] = [];
   /**
-   * Live P4 bomb-pulse ring VFX (AH-0MUVM9RAO004Y3LB). The ring removes
+   * Live Bomb bomb-pulse ring VFX (AH-0MUVM9RAO004Y3LB). The ring removes
    * itself on completion; the registry is also cleared on restart/shutdown
    * so an in-flight pulse leaks nothing.
    */
@@ -300,7 +300,7 @@ export class CombatCoreScene<
   /**
    * Scene hook for shield-style absorption. Default: no absorption (the
    * hit always lands). {@link CombatScene} provides the shared
-   * registry-backed implementation (P3 shield consumes one shield and
+   * registry-backed implementation (Shield shield consumes one shield and
    * starts the post-hit invulnerability window), so concrete combat scenes
    * should not re-implement it.
    *
@@ -311,7 +311,7 @@ export class CombatCoreScene<
   }
 
   /**
-   * Whether the player is phase-shifted (P6) and therefore immune.
+   * Whether the player is phase-shifted (Phase Shift) and therefore immune.
    * Default false; {@link CombatScene} provides the shared registry-backed
    * implementation (`getEffectsRegistry().isPhased`) so every combat scene
    * gates hits identically.
@@ -382,7 +382,7 @@ export class CombatCoreScene<
   /**
    * Plays the per-type pickup activation cue through the single shared
    * `playDropPickupCue` dispatcher, so every scene plays the same cue set
-   * (generic pop + P5/P8/P9 + weapon/Reset, generic chime fallback).
+   * (generic pop + Speed Boost/Extra Life/Magnet + weapon/Reset, generic chime fallback).
    */
   protected _playPickupCue(drop: TDrop): void {
     playDropPickupCue(drop);
@@ -391,7 +391,7 @@ export class CombatCoreScene<
   /**
    * Hook run after a power-up (non-weapon) drop is collected. Default
    * no-op; scenes override to add their lifecycle extras (and call
-   * `super`). The P4 bomb is handled entirely by the shared pulse path
+   * `super`). The Bomb bomb is handled entirely by the shared pulse path
    * ({@link CombatCoreScene._updateP4Bomb}), so no notice is shown here
    * (AH-0MUVM9RAO004Y3LB, producer Q3=A).
    */
@@ -477,13 +477,13 @@ export class CombatCoreScene<
    * scene advances the player identically, in the same order every frame:
    *
    * 1. advance timed-weapon countdowns,
-   * 2. apply the live P5 speed / fire-rate multipliers from the effects
+   * 2. apply the live Speed Boost speed / fire-rate multipliers from the effects
    *    registry,
    * 3. read the scheme-appropriate input,
    * 4. step physics (screen-wrap),
    * 5. auto-fire the active weapons (unless the scene opts out via
    *    {@link CombatCoreScene.autoFireEnabled}),
-   * 6. advance the P4 bomb pulse and fire a ranged clear when due
+   * 6. advance the Bomb bomb pulse and fire a ranged clear when due
    *    ({@link CombatCoreScene._updateP4Bomb}).
    *
    * Scenes call this instead of a local copy, so a control/ordering fix
@@ -496,7 +496,7 @@ export class CombatCoreScene<
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame.
     player.tickWeaponTimers(dt * 1000);
-    // P5 live boost: scale thrust/max-speed and fire rate each frame.
+    // Speed Boost live boost: scale thrust/max-speed and fire rate each frame.
     const registry = this.getEffectsRegistry();
     player.setSpeedMultiplier(registry.speedMultiplier());
     player.setFireRateMultiplier(registry.fireRateMultiplier());
@@ -504,7 +504,7 @@ export class CombatCoreScene<
     if (input) player.setInput(input);
     player.physicsTick(dt, this.scale.width, this.scale.height);
     if (this.autoFireEnabled()) this._autoFire(dt);
-    // P4 bomb: advance the shared pulse state and fire a ranged clear when
+    // Bomb bomb: advance the shared pulse state and fire a ranged clear when
     // one is due. Runs after physics so the pulse is centred on the player's
     // current position, and from this single shared step so the game and
     // every gym cannot diverge (AH-0MUVM9RAO004Y3LB).
@@ -621,7 +621,7 @@ export class CombatCoreScene<
 
   /**
    * Collects a drop on overlap: applies the weapon/power-up through the
-   * shared registry, clears bullets for P4, then starts the absorb VFX
+   * shared registry, clears bullets for Bomb, then starts the absorb VFX
    * and pickup cue. Scene-specific extras run through the collect hooks.
    */
   protected _collectDrop(drop: TDrop): void {
@@ -639,7 +639,7 @@ export class CombatCoreScene<
     } else {
       const effect = drop.powerUp.tryCollect();
       if (!effect) return;
-      // P4's ranged clear/pulse is driven from the registry by the shared
+      // Bomb's ranged clear/pulse is driven from the registry by the shared
       // per-frame bomb step ({@link CombatCoreScene._updateP4Bomb}) — a
       // field pickup queues one pulse, a hold-full reward a permanent one
       // (AH-0MUVM9RAO004Y3LB).
@@ -657,7 +657,7 @@ export class CombatCoreScene<
 
   /**
    * Builds the default weighted-random drop spawner over the combined pool
-   * (P3–P9 + weapon drops) from the game-rules weights — the single shared
+   * (Shield–Magnet + weapon drops) from the game-rules weights — the single shared
    * spawner construction consumed by `PlayScene` and every gym.
    */
   protected _buildDefaultDropSpawner(
@@ -694,7 +694,7 @@ export class CombatCoreScene<
   }
 
   /**
-   * Applies the P9 magnet pull (shared range/speed) to every collectible
+   * Applies the Magnet magnet pull (shared range/speed) to every collectible
    * drop within range, using the scene's effective magnet stacks
    * (permanent stacking or timed field-pickup). The hybrid accessor
    * consumes the effective count so both paths drive the same radius curve.
@@ -709,7 +709,7 @@ export class CombatCoreScene<
   }
 
   /**
-   * Applies the P10 Mineral Scoop pull (shared range/speed) to every live
+   * Applies the Mineral Scoop pull (shared range/speed) to every live
    * mineral within range, using the scene's effective scoop stacks. The
    * mineral-field analogue of {@link _applyDropMagnet}; scenes with a mineral
    * field call it immediately before their shared `collectMinerals` pass so
@@ -727,7 +727,7 @@ export class CombatCoreScene<
   }
 
   /**
-   * The complete shared per-frame drop sequence: apply the P9 magnet,
+   * The complete shared per-frame drop sequence: apply the Magnet magnet,
    * advance the lifecycle, collect overlaps, then advance the absorb
    * animations. Scenes that interleave a spawn source call the individual
    * shared steps instead.
@@ -770,7 +770,7 @@ export class CombatCoreScene<
     this.collectAnimations = kept;
   }
 
-  /** Clears all on-screen enemy bullets (P4 bomb — no enemy damage). */
+  /** Clears all on-screen enemy bullets (Bomb bomb — no enemy damage). */
   protected _clearEnemyBullets(): void {
     for (const bullet of this.getEnemyBullets()) {
       bullet.graphics.destroy();
@@ -780,7 +780,7 @@ export class CombatCoreScene<
 
   /**
    * Clears every enemy bullet whose centre lies within `range` px of the
-   * point `(x, y)`, keeping the rest — the shared P4 ranged clear
+   * point `(x, y)`, keeping the rest — the shared Bomb ranged clear
    * (AH-0MUVM9RAO004Y3LB, AC4). Bullets only: enemy entities are never
    * touched, so the bomb deals no damage (AC3).
    *
@@ -805,7 +805,7 @@ export class CombatCoreScene<
   }
 
   /**
-   * Advances the shared P4 bomb pulse and, when the registry reports a pulse
+   * Advances the shared Bomb bomb pulse and, when the registry reports a pulse
    * is due, clears enemy bullets within the resolved range around the player
    * and spawns the expanding-ring VFX (AH-0MUVM9RAO004Y3LB).
    *
@@ -826,7 +826,7 @@ export class CombatCoreScene<
   }
 
   /**
-   * Spawns the P4 expanding-ring pulse VFX at the cleared radius. Reuses the
+   * Spawns the Bomb expanding-ring pulse VFX at the cleared radius. Reuses the
    * shared `spawnNovaRing` helper (tracked in {@link bombPulseEffects}) so
    * the game and every gym show the same feedback.
    */
@@ -876,7 +876,7 @@ export class CombatCoreScene<
     // only teardown path is here.
     for (const anim of this.collectAnimations) anim.destroy();
     this.collectAnimations = [];
-    // In-flight P4 pulse rings are likewise owned by their registry.
+    // In-flight Bomb pulse rings are likewise owned by their registry.
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
   }

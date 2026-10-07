@@ -209,7 +209,7 @@ describe('HUD AC2: permanent stack power-ups merge into one row', () => {
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
-    // The previous design showed TWO P9 rows here; one row is required.
+    // The previous design showed TWO Magnet rows here; one row is required.
     expect(hud.getRows()).toHaveLength(1);
     expect(hud.getRows()[0].label).toBe('Magnet Lvl 2');
     expect(hud.getRows()[0].value).toBe('15s');
@@ -430,7 +430,7 @@ describe('HUD AC5: reacts to registry changes', () => {
     reg.applyCollect('magnet', true);
     hud.refresh();
     const rows = hud.getRows();
-    expect(rows).toHaveLength(2); // P5 timed row + P9 permanent row
+    expect(rows).toHaveLength(2); // Speed Boost timed row + Magnet permanent row
     const ids = rows.map((r) => r.id);
     expect(ids).toContain('speed_boost');
     expect(ids).toContain('magnet');

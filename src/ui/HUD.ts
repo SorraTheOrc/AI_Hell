@@ -12,12 +12,12 @@
  * - each row's value is either the infinity glyph `∞` (no temporary
  *   level-up window is active — the level is permanent for the run) or a
  *   live `Ns` countdown while a temporary window is active;
- * - a lives counter (P8), starting at 3 and incrementing on collection; and
+ * - a lives counter (Extra Life), starting at 3 and incrementing on collection; and
  * - a fixed-length, hollow-outlined hold bar that fills proportionally as
  *   minerals are collected (replaces the former `Minerals: n/20` text).
  *
- * Consumable counts that the level alone does not convey (P3 shield
- * remaining absorptions, P6 phase charges, P7 teleport uses) are appended to
+ * Consumable counts that the level alone does not convey (Shield shield
+ * remaining absorptions, Phase Shift phase charges, Teleport teleport uses) are appended to
  * the label as ` ×N` so the value column stays strictly `∞`/countdown.
  *
  * Contains NO gym-specific imports or logic — it depends only on the
@@ -110,7 +110,7 @@ export interface HUDEntry {
   level: number;
   /** True while a temporary level-up window is active. */
   temporary: boolean;
-  /** Consumable count (P3 absorptions, P6 charges, P7 teleports), if any. */
+  /** Consumable count (Shield absorptions, Phase Shift charges, Teleport teleports), if any. */
   stacks?: number;
 }
 
@@ -384,10 +384,10 @@ export class HUD extends Phaser.GameObjects.Container {
   /**
    * Builds the merged power-up rows: one entry per owned/active power-up,
    * with the effective level in the label and `∞`/countdown in the value
-   * (AH-0MUX802450085VZZ). P8 is represented by the dedicated lives counter
+   * (AH-0MUX802450085VZZ). Extra Life is represented by the dedicated lives counter
    * and is never a row. Preserves the pre-existing visibility rules (a
-   * permanent P4 bomb, P6 charges/permanent/active phase, P7 stored
-   * teleports, P9/P10 timed or permanent).
+   * permanent Bomb bomb, Phase Shift charges/permanent/active phase, Teleport stored
+   * teleports, Magnet/Mineral Scoop timed or permanent).
    */
   private _buildPowerUpRows(): HUDEntry[] {
     const reg = this._registry;

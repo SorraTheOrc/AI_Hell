@@ -71,7 +71,7 @@ describe('power-up catalogue (types)', () => {
     expect(ids).toContain('speed_boost');
     expect(ids).toContain('extra_life');
     expect(ids).toContain('magnet');
-    // Combat gym adds P3,P4,P6,P7 (AH-0MTC2P6G3007PJ40)
+    // Combat gym adds Shield,Bomb,Phase Shift,Teleport (AH-0MTC2P6G3007PJ40)
     expect(ids).toContain('shield');
     expect(ids).toContain('bomb');
     expect(ids).toContain('phase_shift');

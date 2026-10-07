@@ -1,5 +1,5 @@
 /**
- * Shared deterministic test fixtures for the P3/P4 effect-path work
+ * Shared deterministic test fixtures for the Shield/Bomb effect-path work
  * (parent AH-0MUVM9RAO004Y3LB).
  *
  * This module is **test infrastructure only** — nothing here is imported by
@@ -14,7 +14,7 @@
  *   effect at a requested upgrade level (field or permanent) and returns the
  *   resolved stats the assertion can compare against.
  * - {@link isWithinBlastRange} / {@link partitionByBlastRange} /
- *   {@link expectRangedClear} give the P4 ranged clear one independent
+ *   {@link expectRangedClear} give the Bomb ranged clear one independent
  *   geometry oracle, so a test asserts observable behaviour rather than
  *   re-implementing the production radius filter.
  * - {@link StubEnemyBullet} / {@link RangedClearTestScene} /
@@ -182,7 +182,7 @@ export interface PositionedBullet {
 /**
  * Whether a bullet at `(x, y)` lies within a blast centred on `(cx, cy)`
  * with radius `range`. **Inclusive** boundary (`distance ≤ range`) — the
- * canonical "within range" definition for the P4 bomb.
+ * canonical "within range" definition for the Bomb bomb.
  */
 export function isWithinBlastRange(
   x: number,

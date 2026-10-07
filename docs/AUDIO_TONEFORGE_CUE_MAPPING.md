@@ -99,10 +99,10 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playDualPickupSound` | Saw 1000→500 then 1200→700 Hz, 0.06 s apart | Dual pickup | `dropLayer` | new | `aihell-pickup-dual` |
 | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | Rapid pickup | `dropLayer` | new | `aihell-pickup-rapid` |
 | `playResetPickupSound` | Sine 900→300 Hz, ~0.2 s | Reset pickup | `dropLayer` | new | `aihell-pickup-reset` |
-| `playSpeedBoostCollectSound` | Square 600→1800 Hz, 0.1 s | P5 Speed Boost | `dropLayer` | new | `aihell-pickup-speed` |
-| `playExtraLifeCollectSound` | Sine 440→880 then 660→990 Hz | P8 Extra Life | `dropLayer` | new | `aihell-pickup-extralife` |
-| `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | P9 Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
-| `playPhaseShiftSound` | Triangle chirp 320→1560 Hz + bandpass noise swing 600→3200 Hz | P6 Phase Shift | `CombatScene` | new | `aihell-phase-shift` |
+| `playSpeedBoostCollectSound` | Square 600→1800 Hz, 0.1 s | Speed Boost | `dropLayer` | new | `aihell-pickup-speed` |
+| `playExtraLifeCollectSound` | Sine 440→880 then 660→990 Hz | Extra Life | `dropLayer` | new | `aihell-pickup-extralife` |
+| `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
+| `playPhaseShiftSound` | Triangle chirp 320→1560 Hz + bandpass noise swing 600→3200 Hz | Phase Shift | `CombatScene` | new | `aihell-phase-shift` |
 | `playVictoryFanfareSound` | Two-phrase fanfare: arpeggio C5-E5-G5-C6 + cadence + sustained chord + bass + sparkle + shimmer, ~3.3 s, ≤ 0.2 | Victory | `PlayScene` | new | `aihell-victory-fanfare` (sequence + stack) |
 | `playVictoryExplosionSound` | Layered saw 110→32 Hz boom + sine sub-rumble + LP noise crackle, ~0.65 s | Victory firework burst/starburst | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-explosion` |
 | `playVictoryCrackSound` | Quick saw 587→140 Hz + HP noise crack, ~0.18 s | Victory firework ring | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-crack` |

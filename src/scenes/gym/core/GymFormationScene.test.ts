@@ -2106,12 +2106,12 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     const scene = await boot(layer('speed_boost', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Baseline: no P5, both multipliers normal.
+    // Baseline: no Speed Boost, both multipliers normal.
     scene.tick(0.1);
     const baseThrust = player.getMovementConfig().thrust;
     expect(player.getFireRateMultiplier()).toBe(1);
 
-    // Collect P5 on the ship.
+    // Collect Speed Boost on the ship.
     scene.spawnPowerUpDrop('speed_boost', player.x, player.y);
     scene.tick(0.1);
     expect(scene.getEffectsRegistry().fireRateMultiplier()).toBe(1.5);
@@ -2183,7 +2183,7 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.activeBullets.length).toBeGreaterThan(0);
     const aliveBefore = scene.aliveCount;
 
-    // Collect a P4 on the ship — the bomb clears in-range bullets.
+    // Collect a Bomb on the ship — the bomb clears in-range bullets.
     const player = scene.getPlayer()!;
     const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
@@ -2198,7 +2198,7 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     const scene = await boot(layer('teleport', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Collect a P7 to gain a teleport stack.
+    // Collect a Teleport to gain a teleport stack.
     scene.spawnPowerUpDrop('teleport', player.x, player.y);
     scene.tick(0.1);
 
@@ -2500,7 +2500,7 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 /**
  * Regression for the parent bug AH-0MUHM66ES0027QQV: the enemy gym
  * (`GymFormationScene`, base of `GymEnemies`/`GymBoss`/`GymMinerals`)
- * recorded P3/P6 in the shared `EffectsRegistry` but never consulted it in
+ * recorded Shield/Phase Shift in the shared `EffectsRegistry` but never consulted it in
  * the shared hit path, so the player still took hits. These tests pin the
  * expected enemy-gym behaviour and are the red-to-green proof for the
  * shared-gating fix.

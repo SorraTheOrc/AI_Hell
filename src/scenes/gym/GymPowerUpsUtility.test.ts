@@ -133,7 +133,7 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const registry = scene.getEffectsRegistry();
     expect(registry.isActive('speed_boost')).toBe(false);
 
-    // Spawn a P5 drop exactly under the ship and grow it to full size.
+    // Spawn a Speed Boost drop exactly under the ship and grow it to full size.
     scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5); // grow window → full size (collectible)
 
@@ -181,11 +181,11 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
 
-    // No P5 → normal fire rate.
+    // No Speed Boost → normal fire rate.
     scene.tick(1 / 60);
     expect(player.getFireRateMultiplier()).toBe(1);
 
-    // Collect P5 under the ship.
+    // Collect Speed Boost under the ship.
     scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
@@ -220,14 +220,14 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
 
-    // Activate P9 via a direct collection (drop under ship at full size).
+    // Activate Magnet via a direct collection (drop under ship at full size).
     scene.spawnDrop('magnet', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     // Field pickup is timed: effective stack count is 1.
     expect(registry.magnetEffectStacks()).toBe(1);
 
-    // Place a fresh P5 drop some distance away (inside the 1-stack magnet
+    // Place a fresh Speed Boost drop some distance away (inside the 1-stack magnet
     // radius of 1×20×(1+0.5) = 30 px; use a drop 20 px away and step the
     // simulation ~0.5 s).
     const drop = scene.spawnDrop('speed_boost', 500, 270); // 20 px right of the ship
@@ -243,14 +243,14 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
 
-    // Activate P9.
+    // Activate Magnet.
     scene.spawnDrop('magnet', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     // Field pickup is timed: effective stack count is 1.
     expect(registry.magnetEffectStacks()).toBe(1);
 
-    // Place a P5 drop 20 px right of the ship (inside the 30 px 1-stack radius).
+    // Place a Speed Boost drop 20 px right of the ship (inside the 30 px 1-stack radius).
     const drop = scene.spawnDrop('speed_boost', 500, 270);
     scene.advanceDrops(0.5); // grow to full size
 
@@ -324,7 +324,7 @@ describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
     const hud = scene.getHud();
     expect(hud).toBeInstanceOf(HUD);
     expect(hud!.depth).toBeGreaterThan(0);
-    expect(hud!.getLivesValue()).toBe(3); // P8 lives default visible
+    expect(hud!.getLivesValue()).toBe(3); // Extra Life lives default visible
   });
 });
 
@@ -346,8 +346,8 @@ describe('GymPowerUpsUtility spawn cadence (parent AC2 via the scene)', () => {
     expect(drops.length).toBeGreaterThanOrEqual(1);
     expect(drops[0].powerUp.id).toBe('speed_boost');
 
-    // Advance ~12.5 s (ignoring collection): the P5 drop despawns at the end
-    // of its 12.5 s lifetime and the next (P8) spawns at the same instant —
+    // Advance ~12.5 s (ignoring collection): the Speed Boost drop despawns at the end
+    // of its 12.5 s lifetime and the next (Extra Life) spawns at the same instant —
     // so exactly one drop is on screen at the boundary (parent AC2).
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
@@ -826,7 +826,7 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
 
   it('spawns P10 in its round-robin (P5 → P8 → P9 → P10)', async () => {
     const scene = await bootPowerUps();
-    // Default spawn interval is 12.5 s; the 4th round-robin slot (P10)
+    // Default spawn interval is 12.5 s; the 4th round-robin slot (Mineral Scoop)
     // therefore spawns at ~37.5 s.
     for (let i = 0; i < 39 * 60; i++) scene.tick(1 / 60);
     expect(scene.getDrops().some((d) => d.powerUp.id === 'mineral_scoop')).toBe(true);
@@ -838,7 +838,7 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Collect P10 under the ship (field pickup → timed, refresh-only).
+    // Collect Mineral Scoop under the ship (field pickup → timed, refresh-only).
     scene.spawnDrop('mineral_scoop', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);

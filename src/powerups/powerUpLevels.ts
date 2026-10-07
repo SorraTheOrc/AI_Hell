@@ -2,12 +2,12 @@
  * Power-up level-curve catalogue, pure resolver and run-scoped level store
  * (parent AH-0MUU2QJE2007JNR6).
  *
- * Power-ups P3–P10 are **constantly upgradable**, mirroring the weapon
+ * Power-ups Shield–Mineral Scoop are **constantly upgradable**, mirroring the weapon
  * levelling system (`src/utils/weaponLevels.ts`, parent AH-0MUPMPCB2009J54J):
  *
  * - {@link POWER_UP_LEVEL_SPECS} — one spec (base, finite cap, curve rate
  *   `k`, `discrete`, label + rationale) per levelled variable, for **every**
- *   power-up P3–P10. The specs reuse the shared exponential-saturation
+ *   power-up Shield–Mineral Scoop. The specs reuse the shared exponential-saturation
  *   curve from `src/utils/curve.ts` so there is exactly **one** curve
  *   implementation for weapons and power-ups (AC1/AC4).
  * - {@link resolvePowerUpAtLevel} — the **pure** resolver mapping
@@ -19,8 +19,8 @@
  *   and a **temporary** component (field pickups, tied to the item's timed
  *   window). The effective level is `permanent + temporary`; only the
  *   permanent component governs the hold-full choice. Both components are
- *   cleared on run restart. Existing stack/charge semantics (P9/P10
- *   permanent stacks, P7 stored teleports, P6 charges, P8 lives) are
+ *   cleared on run restart. Existing stack/charge semantics (Magnet/Mineral Scoop
+ *   permanent stacks, Teleport stored teleports, Phase Shift charges, Extra Life lives) are
  *   **derived from this model** rather than tracked by a second, independent
  *   counter (AC3).
  *
@@ -46,15 +46,15 @@
  * in the `Player` weapon-level state) so the game and every gym share one
  * implementation (AC7).
  *
- * Unconsumed consumable grants (P6 charges, P7 teleports) persist across a
+ * Unconsumed consumable grants (Phase Shift charges, Teleport teleports) persist across a
  * temporary-window expiry: clearing the temporary level never claws back an
  * already-granted charge/teleport (producer Resolved decision 1b).
- * Power-ups with no timed effect (P4/P6/P7/P8) have no temporary window, so
+ * Power-ups with no timed effect (Bomb/Phase Shift/Teleport/Extra Life) have no temporary window, so
  * their temporary stacks persist until run reset (Resolved decision 4).
  *
- * ## P9/P10 hybrid reconciliation
+ * ## Magnet/Mineral Scoop hybrid reconciliation
  *
- * P9 Magnet and P10 Mineral Scoop are **hybrids**: a field pickup grants a
+ * Magnet and Mineral Scoop are **hybrids**: a field pickup grants a
  * timed (refresh-only) attraction, while a hold-full reward grants a
  * permanent stack (GDD §4.4; AH-0MUTOTLCY005NZ8L / AH-0MUTPEHMP0074Y1L).
  * The level model therefore tracks **both** the total collection count
@@ -81,33 +81,33 @@ import {
  * non-decreasing in level (a higher level never makes the power-up worse).
  */
 export type PowerUpLevelVariable =
-  /** P3 Shield — bubble duration in seconds. */
+  /** Shield — bubble duration in seconds. */
   | 'shieldDuration'
-  /** P3 Shield — hits absorbed before the bubble pops. */
+  /** Shield — hits absorbed before the bubble pops. */
   | 'shieldAbsorptions'
-  /** P4 Bomb — clear radius in pixels. */
+  /** Bomb — clear radius in pixels. */
   | 'bombRange'
-  /** P4 Bomb — permanent pulse rate in pulses per second. */
+  /** Bomb — permanent pulse rate in pulses per second. */
   | 'bombFrequency'
-  /** P5 Speed Boost — movement/fire-rate multiplier. */
+  /** Speed Boost — movement/fire-rate multiplier. */
   | 'speedMultiplier'
-  /** P5 Speed Boost — duration in seconds. */
+  /** Speed Boost — duration in seconds. */
   | 'speedDuration'
-  /** P6 Phase Shift — pass-through duration in seconds. */
+  /** Phase Shift — pass-through duration in seconds. */
   | 'phaseDuration'
-  /** P6 Phase Shift — auto-activation charges granted per pickup. */
+  /** Phase Shift — auto-activation charges granted per pickup. */
   | 'phaseCharges'
-  /** P7 Teleport — stored stacks granted per pickup. */
+  /** Teleport — stored stacks granted per pickup. */
   | 'teleportStacks'
-  /** P7 Teleport — arrival Phase Shift duration in seconds. */
+  /** Teleport — arrival Phase Shift duration in seconds. */
   | 'teleportPhaseDuration'
-  /** P8 Extra Life — lives granted per pickup. */
+  /** Extra Life — lives granted per pickup. */
   | 'lifeGain'
-  /** P8 Extra Life — hard lives cap. */
+  /** Extra Life — hard lives cap. */
   | 'livesCap'
-  /** P9 Magnet — permanent stack cap (and attraction-radius growth). */
+  /** Magnet — permanent stack cap (and attraction-radius growth). */
   | 'magnetStacks'
-  /** P10 Mineral Scoop — permanent stack cap (radius growth). */
+  /** Mineral Scoop — permanent stack cap (radius growth). */
   | 'scoopStacks';
 
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
@@ -134,8 +134,8 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
  * hold-full choice never promises a delta the effect path does not apply
  * (AC4).
  *
- * **Empty since AH-0MUVM9RAO004Y3LB** wired both the P3 `shieldAbsorptions`
- * axis (multi-hit shield) and the redesigned P4 `bombRange`/`bombFrequency`
+ * **Empty since AH-0MUVM9RAO004Y3LB** wired both the Shield `shieldAbsorptions`
+ * axis (multi-hit shield) and the redesigned Bomb `bombRange`/`bombFrequency`
  * axes (ranged periodic bomb) into the effect path. The set is retained as
  * the single seam for any future deferred axis.
  */
@@ -171,7 +171,7 @@ export interface PowerUpLevelSpec extends CurveSpec {
 }
 
 /**
- * The per-power-up level catalogue — one entry per power-up P3–P10, each
+ * The per-power-up level catalogue — one entry per power-up Shield–Mineral Scoop, each
  * holding that power-up's levelable variables.
  *
  * Caps are deliberately conservative for the survivability power-ups
@@ -179,7 +179,7 @@ export interface PowerUpLevelSpec extends CurveSpec {
  * damage (AC1, producer risk note).
  */
 export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
-  // P3 Shield — absorbs its level-resolved hits (base 1, cap 3) in a 15 s bubble.
+  // Shield — absorbs its level-resolved hits (base 1, cap 3) in a 15 s bubble.
   shield: [
     {
       variable: 'shieldDuration',
@@ -215,7 +215,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // P4 Bomb — ranged clear, single on a field pickup; periodic when permanent.
+  // Bomb — ranged clear, single on a field pickup; periodic when permanent.
   bomb: [
     {
       variable: 'bombRange',
@@ -252,7 +252,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // P5 Speed Boost — +50% movement and fire rate for 10 s.
+  // Speed Boost — +50% movement and fire rate for 10 s.
   speed_boost: [
     {
       variable: 'speedMultiplier',
@@ -287,7 +287,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // P6 Phase Shift — charge-based auto pass-through.
+  // Phase Shift — charge-based auto pass-through.
   phase_shift: [
     {
       variable: 'phaseDuration',
@@ -317,12 +317,12 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'Charges are stored activations; the cap is small (3) and k=0.5 ' +
-        'grants the second charge at the first upgrade. The hold-full P6 ' +
+        'grants the second charge at the first upgrade. The hold-full Phase Shift ' +
         'reward remains unlimited (permanent) and is unaffected.',
     },
   ],
 
-  // P7 Teleport — stored FIFO uses, S/↓ to activate.
+  // Teleport — stored FIFO uses, S/↓ to activate.
   teleport: [
     {
       variable: 'teleportStacks',
@@ -356,7 +356,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // P8 Extra Life — +1 life immediately, capped at 5.
+  // Extra Life — +1 life immediately, capped at 5.
   extra_life: [
     {
       variable: 'lifeGain',
@@ -387,12 +387,12 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'The lives ceiling is deliberately held at 5 (existing balance) and ' +
-        'is level-agnostic; P8 levels the lives *gained* per pickup instead ' +
+        'is level-agnostic; Extra Life levels the lives *gained* per pickup instead ' +
         'of raising the ceiling.',
     },
   ],
 
-  // P9 Magnet — hybrid timed pickup / permanent stacking upgrade.
+  // Magnet — hybrid timed pickup / permanent stacking upgrade.
   magnet: [
     {
       variable: 'magnetStacks',
@@ -407,13 +407,13 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'The 5-stack cap is retained (existing balance: +50% radius per ' +
-        'stack). Deriving the cap from the level lets a levelled P9 reach ' +
+        'stack). Deriving the cap from the level lets a levelled Magnet reach ' +
         'the cap sooner; k=0.35 front-loads the early stacks while never ' +
         'exceeding 5.',
     },
   ],
 
-  // P10 Mineral Scoop — hybrid timed pickup / permanent stacking upgrade.
+  // Mineral Scoop — hybrid timed pickup / permanent stacking upgrade.
   mineral_scoop: [
     {
       variable: 'scoopStacks',
@@ -427,7 +427,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       k: 0.35,
       discrete: true,
       rationale:
-        'Mirrors P9 so the two attraction power-ups stay behaviourally ' +
+        'Mirrors Magnet so the two attraction power-ups stay behaviourally ' +
         'consistent (shared radius curve); the 5-stack cap is retained and ' +
         'the level-derived cap reaches it sooner.',
     },
@@ -464,33 +464,33 @@ export interface PowerUpLevelStats {
   powerUpId: PowerUpId;
   /** The (clamped, whole-number) upgrade level the snapshot was resolved at. */
   level: number;
-  /** P3 — shield bubble duration in seconds. */
+  /** Shield — shield bubble duration in seconds. */
   shieldDuration?: number;
-  /** P3 — hits the shield absorbs. */
+  /** Shield — hits the shield absorbs. */
   shieldAbsorptions?: number;
-  /** P4 — clear radius in pixels. */
+  /** Bomb — clear radius in pixels. */
   bombRange?: number;
-  /** P4 — permanent pulse rate in pulses per second. */
+  /** Bomb — permanent pulse rate in pulses per second. */
   bombFrequency?: number;
-  /** P5 — movement/fire-rate multiplier. */
+  /** Speed Boost — movement/fire-rate multiplier. */
   speedMultiplier?: number;
-  /** P5 — boost duration in seconds. */
+  /** Speed Boost — boost duration in seconds. */
   speedDuration?: number;
-  /** P6 — pass-through duration in seconds. */
+  /** Phase Shift — pass-through duration in seconds. */
   phaseDuration?: number;
-  /** P6 — auto-activation charges granted per pickup. */
+  /** Phase Shift — auto-activation charges granted per pickup. */
   phaseCharges?: number;
-  /** P7 — stored teleport uses granted per pickup. */
+  /** Teleport — stored teleport uses granted per pickup. */
   teleportStacks?: number;
-  /** P7 — arrival Phase Shift duration in seconds. */
+  /** Teleport — arrival Phase Shift duration in seconds. */
   teleportPhaseDuration?: number;
-  /** P8 — lives granted per pickup. */
+  /** Extra Life — lives granted per pickup. */
   lifeGain?: number;
-  /** P8 — hard lives cap. */
+  /** Extra Life — hard lives cap. */
   livesCap?: number;
-  /** P9 — permanent stack cap (attraction radius driver). */
+  /** Magnet — permanent stack cap (attraction radius driver). */
   magnetStacks?: number;
-  /** P10 — permanent stack cap (attraction radius driver). */
+  /** Mineral Scoop — permanent stack cap (attraction radius driver). */
   scoopStacks?: number;
 }
 
@@ -578,7 +578,7 @@ export function summarisePowerUpLevelChange(
 
 // ── Run-scoped level store ──────────────────────────────────────────
 
-/** Default P8 lives start (mirrors `P8_LIVES_START` in `effects.ts`). */
+/** Default Extra Life lives start (mirrors `P8_LIVES_START` in `effects.ts`). */
 export const POWER_UP_LIVES_START = 3;
 
 /**
@@ -594,10 +594,10 @@ export const POWER_UP_LIVES_START = 3;
  *   (weapon parity).
  * - Derive the existing stack/charge semantics from the level model rather
  *   than from second, independent counters:
- *   - P9/P10 permanent stacks = `min(permanentGrants, levelCap)`,
- *   - P7 stored teleports and P6 charges = `grants − consumed` (grants are
+ *   - Magnet/Mineral Scoop permanent stacks = `min(permanentGrants, levelCap)`,
+ *   - Teleport stored teleports and Phase Shift charges = `grants − consumed` (grants are
  *     level-derived; consumption is inherent to a consumable resource),
- *   - P8 lives = `min(livesStart + Σ lifeGain(level), livesCap)`.
+ *   - Extra Life lives = `min(livesStart + Σ lifeGain(level), livesCap)`.
  *
  * Pure and deterministic (no scene/storage coupling) so the game and every
  * gym can share exactly one level model.
@@ -618,7 +618,7 @@ export class PowerUpLevelStore {
 
   /**
    * Records a collection of `id`: increments the run-scoped level and, for
-   * `permanent` (hold-full) rewards, the permanent-grant count. P8 also adds
+   * `permanent` (hold-full) rewards, the permanent-grant count. Extra Life also adds
    * the level-derived lives (clamped to the level-derived cap).
    *
    * @param id - The collected power-up.
@@ -723,7 +723,7 @@ export class PowerUpLevelStore {
 
   /**
    * Removes `id`'s temporary stacks (its field-pickup window expired). The
-   * permanent grants — and any consumable already granted (P6 charges, P7
+   * permanent grants — and any consumable already granted (Phase Shift charges, Teleport
    * teleports) — are left intact (Resolved decision 1b).
    */
   clearTemporary(id: PowerUpId): void {
@@ -740,7 +740,7 @@ export class PowerUpLevelStore {
     return resolvePowerUpAtLevel(id, this.getUpgradeLevel(id));
   }
 
-  /** P9 permanent magnet stacks (derived, capped by the level model). */
+  /** Magnet permanent magnet stacks (derived, capped by the level model). */
   magnetStacks(): number {
     return Math.min(
       this.permanentGrants('magnet'),
@@ -748,7 +748,7 @@ export class PowerUpLevelStore {
     );
   }
 
-  /** P10 permanent mineral-scoop stacks (derived, capped by the level model). */
+  /** Mineral Scoop permanent mineral-scoop stacks (derived, capped by the level model). */
   scoopStacks(): number {
     return Math.min(
       this.permanentGrants('mineral_scoop'),
@@ -761,7 +761,7 @@ export class PowerUpLevelStore {
     return resolvePowerUpAtLevel(id, this.getPermanentUpgradeLevel(id));
   }
 
-  /** Stored P7 teleport uses (level-derived grants, minus consumes). */
+  /** Stored Teleport teleport uses (level-derived grants, minus consumes). */
   teleportStacks(): number {
     return this._teleportStacks;
   }
@@ -775,18 +775,18 @@ export class PowerUpLevelStore {
     return true;
   }
 
-  /** Stored P6 auto-activation charges (level-derived grants, minus consumes). */
+  /** Stored Phase Shift auto-activation charges (level-derived grants, minus consumes). */
   phaseCharges(): number {
     return this._phaseCharges;
   }
 
-  /** Whether the hold-full reward granted unlimited P6 activations. */
+  /** Whether the hold-full reward granted unlimited Phase Shift activations. */
   isPhasePermanent(): boolean {
     return this._phasePermanent;
   }
 
   /**
-   * Consumes one P6 charge unless the permanent reward is active. Returns
+   * Consumes one Phase Shift charge unless the permanent reward is active. Returns
    * true when an activation is available.
    */
   consumePhaseCharge(): boolean {
@@ -796,7 +796,7 @@ export class PowerUpLevelStore {
     return true;
   }
 
-  /** Current lives (P8 model); starts at the configured start, capped. */
+  /** Current lives (Extra Life model); starts at the configured start, capped. */
   lives(): number {
     return this._lives;
   }
@@ -804,7 +804,7 @@ export class PowerUpLevelStore {
   /**
    * Sets the lives counter directly (clamped to `[0, livesCap]`). Lets the
    * playable game push its authoritative run state (`GameState`) into the
-   * single level store when the player is hit; P8 collection still uses
+   * single level store when the player is hit; Extra Life collection still uses
    * {@link collect}. The cap is level-derived (base 5), so an authoritative
    * push can never exceed it.
    */

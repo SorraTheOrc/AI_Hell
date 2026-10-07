@@ -30,7 +30,7 @@ const BASE_CONFIG = {
   friction: 100,
 };
 
-/** Resolved P5 speed multiplier at the given upgrade level. */
+/** Resolved Speed Boost speed multiplier at the given upgrade level. */
 function p5Multiplier(upgradeLevel: number): number {
   return resolvePowerUpAtLevel('speed_boost', upgradeLevel).speedMultiplier!;
 }
@@ -173,7 +173,7 @@ describe('resolved stats replace raw constants (AC2)', () => {
     reg.applyCollect('mineral_scoop');
     expect(reg.remaining('magnet')).toBeCloseTo(P9_MAGNET_DURATION, 10);
     expect(reg.remaining('mineral_scoop')).toBeCloseTo(P10_SCOOP_DURATION, 10);
-    // Levelling P9 does not change its timed field window.
+    // Levelling Magnet does not change its timed field window.
     reg.applyCollect('magnet');
     expect(reg.remaining('magnet')).toBeCloseTo(P9_MAGNET_DURATION, 10);
   });
@@ -388,7 +388,7 @@ describe('timing and reset semantics (AC6)', () => {
   });
 });
 
-// ── P3 Shield ────────────────────────────────────────────────────────
+// ── Shield ────────────────────────────────────────────────────────
 
 describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-collect', () => {
   it('is shielded while active, blocks one hit then pops at level 0', () => {
@@ -422,7 +422,7 @@ describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-colle
   });
 });
 
-// ── P3 multi-hit absorption (AH-0MUVM9RAO004Y3LB) ───────────────────
+// ── Shield multi-hit absorption (AH-0MUVM9RAO004Y3LB) ───────────────────
 
 describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
   it('absorbs exactly the level-resolved count before popping', () => {
@@ -518,7 +518,7 @@ describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
   });
 });
 
-// ── P4 Bomb ──────────────────────────────────────────────────────────
+// ── Bomb ──────────────────────────────────────────────────────────
 
 describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y3LB)', () => {
   it('a field pickup queues exactly one pulse and leaves no permanent state', () => {
@@ -579,7 +579,7 @@ describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y
   });
 });
 
-// ── P6 Phase Shift ───────────────────────────────────────────────────
+// ── Phase Shift ───────────────────────────────────────────────────
 
 describe('P6 Phase Shift: charge-based auto-trigger', () => {
   it('collecting P6 stores level-resolved charges and does not phase immediately', () => {
@@ -731,7 +731,7 @@ describe('P6 charge display model', () => {
   });
 });
 
-// ── P7 Teleport ──────────────────────────────────────────────────────
+// ── Teleport ──────────────────────────────────────────────────────
 
 describe('P7 Teleport: derived FIFO stacks, consume, grants P6', () => {
   it('stacks grow by the level-resolved grant on each collect', () => {
@@ -939,14 +939,14 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
-    // 1. Pick up P3 → lvl0 for 15 s.
+    // 1. Pick up Shield → lvl0 for 15 s.
     reg.applyCollect('shield');
     expect(store.getEffectiveLevel('shield')).toBe(1);
     expect(store.getUpgradeLevel('shield')).toBe(0);
     expect(store.getPermanentLevel('shield')).toBe(0);
     expect(reg.isShielded).toBe(true);
 
-    // 2. Pick up P3 again before expiry → lvl1 for 15 s (window refreshed).
+    // 2. Pick up Shield again before expiry → lvl1 for 15 s (window refreshed).
     reg.applyCollect('shield');
     expect(store.getEffectiveLevel('shield')).toBe(2);
     expect(store.getUpgradeLevel('shield')).toBe(1);
@@ -967,7 +967,7 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
-    // 1. Take P3 from a hold-full reward → lvl0, permanent, no timeout.
+    // 1. Take Shield from a hold-full reward → lvl0, permanent, no timeout.
     reg.applyCollect('shield', true);
     expect(store.getPermanentLevel('shield')).toBe(1);
     expect(store.getEffectiveLevel('shield')).toBe(1);
@@ -975,7 +975,7 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     expect(reg.isShielded).toBe(true);
     expect(store.getEffectiveLevel('shield')).toBe(1);
 
-    // 2. Pick up P3 in the field → lvl1 (temporary), for x s.
+    // 2. Pick up Shield in the field → lvl1 (temporary), for x s.
     reg.applyCollect('shield');
     expect(store.getTempStacks('shield')).toBe(1);
     expect(store.getPermanentLevel('shield')).toBe(1);
@@ -988,7 +988,7 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     expect(store.getEffectiveLevel('shield')).toBe(1);
     expect(reg.isShielded).toBe(true);
 
-    // 4. Take P3 from another hold-full reward → lvl1, permanent.
+    // 4. Take Shield from another hold-full reward → lvl1, permanent.
     reg.applyCollect('shield', true);
     expect(store.getPermanentLevel('shield')).toBe(2);
     expect(store.getEffectiveLevel('shield')).toBe(2);
@@ -1001,7 +1001,7 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     reg.applyCollect('teleport');
     const teleports = reg.teleportStacks();
     expect(teleports).toBeGreaterThan(0);
-    // P7 has no timed window; simulate an expiry of a (hypothetical) window.
+    // Teleport has no timed window; simulate an expiry of a (hypothetical) window.
     store.clearTemporary('teleport');
     expect(store.getEffectiveLevel('teleport')).toBe(0);
     expect(reg.teleportStacks()).toBe(teleports); // not clawed back
