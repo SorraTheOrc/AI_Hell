@@ -576,4 +576,31 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     // Take-over leaves the run in place — only the input source changes.
     expect(play.isDemoMode()).toBe(false);
   });
+
+  // ── Explicit start-data contract (AH-0MUY4881P007FJ8R) ──────────
+  //
+  // Phaser only rewrites `settings.data` for a *truthy* `data`, so a
+  // no-argument normal start after a demo reuses the stale `{ demo: true }`
+  // payload. Every normal Play Game entry point must therefore pass an
+  // explicit non-demo payload.
+
+  it('AC2 — the Play Game pointer handler passes an explicit non-demo payload', async () => {
+    const scene = await bootMenu();
+    const startSpy = vi.spyOn(scene.scene, 'start');
+
+    findText(scene, '▶  Play Game').emit('pointerdown');
+
+    expect(startSpy).toHaveBeenCalledWith('PlayScene', { demo: false });
+    startSpy.mockRestore();
+  });
+
+  it('AC2 — Enter on the focused Play Game control passes an explicit non-demo payload', async () => {
+    const scene = await bootMenu();
+    const startSpy = vi.spyOn(scene.scene, 'start');
+
+    pressKey(scene, { key: 'Enter' });
+
+    expect(startSpy).toHaveBeenCalledWith('PlayScene', { demo: false });
+    startSpy.mockRestore();
+  });
 });

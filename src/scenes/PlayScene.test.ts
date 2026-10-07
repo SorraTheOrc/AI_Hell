@@ -3910,6 +3910,39 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(scene.isDemoMode()).toBe(false);
     });
 
+    it('AC3 — init treats absent, undefined and non-true data as non-demo', () => {
+      const scene = new PlayScene();
+      scene.init(undefined);
+      expect(scene.isDemoMode()).toBe(false);
+      scene.init({});
+      expect(scene.isDemoMode()).toBe(false);
+      scene.init({ demo: false });
+      expect(scene.isDemoMode()).toBe(false);
+      scene.init({ demo: true });
+      expect(scene.isDemoMode()).toBe(true);
+    });
+
+    it('AC2/AC5 — an explicit non-demo start clears stale demo data on the reused scene', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+      const botInput = () =>
+        (scene as unknown as { getBotInput(): unknown }).getBotInput();
+
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+      expect(botInput()).not.toBeNull();
+
+      // The explicit `{ demo: false }` overwrites the stale payload.
+      scene.scene.start('PlayScene', { demo: false });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(false);
+      expect(botInput()).toBeNull();
+    });
+
     it('AC6 — setDemoMode toggles the flag at runtime', async () => {
       const scene = await bootPlay();
       expect(scene.isDemoMode()).toBe(false);

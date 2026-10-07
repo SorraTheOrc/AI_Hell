@@ -488,10 +488,17 @@ export class PlayScene extends CombatScene<
 
   /**
    * Reads the scene-start data. Demo/attract mode is opt-in: only an explicit
-   * `{ demo: true }` turns it on, so a normal `scene.start('PlayScene')` is
-   * unaffected (AC1/AC7). A `seed` supplied here becomes the run seed
+   * `{ demo: true }` turns it on, so absent, `undefined` or non-`true` data is
+   * always non-demo (AC1/AC7). A `seed` supplied here becomes the run seed
    * (AH-0MUY08V6W001SJJN), letting a caller start a reproducible run without
    * the {@link setRunSeed} seam.
+   *
+   * Scene-start data contract (AH-0MUY4881P007FJ8R): Phaser reuses this scene
+   * instance and `Systems.start(data)` only rewrites `settings.data` for a
+   * truthy `data`. A no-argument `scene.start('PlayScene')` therefore receives
+   * the **previous** payload via `init()` — so every normal caller must pass an
+   * explicit `{ demo: false }` (see `MenuScene`). This guard only protects a
+   * genuinely absent payload; it cannot distinguish a stale one.
    */
   init(data?: { demo?: boolean; seed?: number }): void {
     this.demoMode = data?.demo === true;

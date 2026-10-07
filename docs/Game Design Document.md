@@ -86,6 +86,12 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   menu inactivity** (the idle-attract timer, `ATTRACT_IDLE_TIMEOUT_MS` in
   `src/scenes/MenuScene.ts`, reset by any key or pointer input). Both start
   `PlayScene` with `{ demo: true }`.
+- **Start-data contract (AH-0MUY4881P007FJ8R):** Phaser reuses the `PlayScene`
+  instance and only rewrites `settings.data` for a **truthy** payload, so a
+  no-argument `scene.start('PlayScene')` would receive the previous
+  `{ demo: true }` via `init()` and leave the bot in control. Every **normal**
+  start therefore passes an explicit non-demo payload (`{ demo: false }`), and
+  `PlayScene.init()` treats absent/`undefined`/non-`true` data as non-demo.
 - **The bot:** a **survival-first** heuristic in `src/ai/`. A read-only,
   deep-frozen `BotSnapshot` (`buildBotSnapshot`) is built each decision tick
   from the scene's existing getters, and the pure `decideBotInput(snapshot)`

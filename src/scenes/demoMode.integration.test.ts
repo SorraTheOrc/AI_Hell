@@ -17,6 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import * as leaderboardModule from '../core/Leaderboard';
@@ -66,6 +67,16 @@ function botInputOf(scene: PlayScene): ControlInput | null {
       getBotInput(): ControlInput | null;
     }
   ).getBotInput();
+}
+
+/** Finds an on-screen text control by label. */
+function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
+  const found = scene.children.list.find(
+    (child): child is Phaser.GameObjects.Text =>
+      child instanceof Phaser.GameObjects.Text && child.text === label,
+  );
+  expect(found, `text "${label}" not found`).toBeDefined();
+  return found!;
 }
 
 describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
@@ -221,6 +232,77 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     await wait(150);
     const restarted = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(restarted.isDemoMode()).toBe(false);
+  });
+
+  // ── Stale scene-start data leak (AH-0MUY4881P007FJ8R) ──────────
+  //
+  // Phaser's `Systems.start(data)` only writes `settings.data` for a
+  // *truthy* `data`, and `bootScene` then calls `init(settings.data)`. A
+  // no-argument normal start after a demo therefore inherits the stale
+  // `{ demo: true }` payload and re-enables the bot. These tests drive the
+  // real menu entry points to prove the explicit non-demo payload clears it.
+
+  it('AC1/AC5 — Watch Demo then Play Game (pointer) hands control back to the keyboard', async () => {
+    const menu = await bootMenu();
+
+    // 1. Watch Demo — `{ demo: true }` is written to the reused PlayScene.
+    menu.startDemo();
+    await wait(150);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+    expect(botInputOf(play)).not.toBeNull();
+
+    // 2. End the demo on the final life: PlayScene shuts down (Phaser keeps
+    //    its settings.data) and the menu becomes active again.
+    play.getGameState().lives = 1;
+    killPlayer(play);
+    await wait(250);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+
+    // 3. Normal Play Game via the pointer handler.
+    findText(booted!.scene, '▶  Play Game').emit('pointerdown');
+    await wait(150);
+
+    const fresh = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(fresh.isDemoMode()).toBe(false);
+    expect(botInputOf(fresh)).toBeNull();
+
+    // The keyboard — not the bot — now drives the ship.
+    const player = fresh.getPlayer()!;
+    const cursors = cursorsOf(fresh);
+    const beforeX = player.x;
+    cursors.right.isDown = true;
+    fresh.tick(0);
+    for (let i = 0; i < 20; i += 1) fresh.tick(1 / 60);
+    cursors.right.isDown = false;
+    expect(player.x).toBeGreaterThan(beforeX);
+  });
+
+  it('AC1/AC5 — Watch Demo then Play Game (keyboard) does not re-enter demo mode', async () => {
+    const menu = await bootMenu();
+
+    menu.startDemo();
+    await wait(150);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    // End the demo, returning to the menu (PlayScene's settings.data is kept).
+    play.getGameState().lives = 1;
+    killPlayer(play);
+    await wait(250);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+
+    // Activate the focused Play Game control (the FocusManager entry point).
+    (booted!.scene as MenuScene).input.keyboard!.emit('keydown', {
+      key: 'Enter',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    await wait(150);
+
+    const fresh = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(fresh.isDemoMode()).toBe(false);
+    expect(botInputOf(fresh)).toBeNull();
   });
 
   // ── Asteroid scheme (producer review AH-0MUX2NENC008AHOQ) ──────────
