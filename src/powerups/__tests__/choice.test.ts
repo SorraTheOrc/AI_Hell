@@ -25,14 +25,14 @@ describe('power-up choice strategy', () => {
   it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
     expect([...CHOICE_POOL].sort()).toEqual(
       [
-        'P3',
-        'P4',
-        'P5',
-        'P6',
-        'P7',
-        'P8',
-        'P9',
-        'P10',
+        'shield',
+        'bomb',
+        'speed_boost',
+        'phase_shift',
+        'teleport',
+        'extra_life',
+        'magnet',
+        'mineral_scoop',
         'dual',
         'rapid',
         'spread',
@@ -46,7 +46,7 @@ describe('power-up choice strategy', () => {
   });
 
   it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {
-    expect(CHOICE_POOL).toContain('P10');
+    expect(CHOICE_POOL).toContain('mineral_scoop');
   });
 
   it('the default strategy offers three distinct options from the pool', () => {
@@ -75,10 +75,10 @@ describe('power-up choice strategy', () => {
   });
 
   it('degrades gracefully when the pool has fewer than the requested count', () => {
-    const strategy = createRandomChoiceStrategy(['P3', 'P4']);
+    const strategy = createRandomChoiceStrategy(['shield', 'bomb']);
     const options = strategy.choose(3);
     expect(options).toHaveLength(2);
-    expect(options.map((o) => o.id).sort()).toEqual(['P3', 'P4']);
+    expect(options.map((o) => o.id).sort()).toEqual(['bomb', 'shield']);
   });
 
   it('degrades to zero options for an empty pool', () => {
@@ -86,22 +86,22 @@ describe('power-up choice strategy', () => {
   });
 
   it('selects deterministically with an injected rng', () => {
-    const strategy = createRandomChoiceStrategy(['P3', 'P4', 'P5']);
+    const strategy = createRandomChoiceStrategy(['shield', 'bomb', 'speed_boost']);
     const options = strategy.choose(1, () => 0);
     expect(options).toHaveLength(1);
-    expect(options[0].id).toBe('P3');
+    expect(options[0].id).toBe('shield');
   });
 
   it('swapping the strategy needs no change to the caller', () => {
     const fixed: ChoiceStrategy = {
       choose: () => [
         { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-        { id: 'P9', name: 'Magnet', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
       ],
     };
     const options = chooseOptions(3, fixed);
-    expect(options.map((o) => o.id)).toEqual(['spread', 'P5', 'P9']);
+    expect(options.map((o) => o.id)).toEqual(['spread', 'speed_boost', 'magnet']);
   });
 
   describe('weapon level-up offers (AH-0MUPOVYZU0073OUV)', () => {
@@ -202,29 +202,29 @@ describe('power-up choice strategy', () => {
   describe('power-up level-up offers (AH-0MUU2QJE2007JNR6 AC6)', () => {
     const context = {
       powerUpLevels: [
-        { id: 'P3' as const, level: 2 },
-        { id: 'P9' as const, level: 1 },
+        { id: 'shield' as const, level: 2 },
+        { id: 'magnet' as const, level: 1 },
       ],
     };
 
     it('adds a level-up offer for each owned power-up, reflecting its level', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const levelUps = candidates.filter((o) => o.kind === 'power-up-level');
-      expect(levelUps.map((o) => o.id).sort()).toEqual(['P3', 'P9']);
+      expect(levelUps.map((o) => o.id).sort()).toEqual(['magnet', 'shield']);
 
-      const p3 = levelUps.find((o) => o.id === 'P3')!;
+      const p3 = levelUps.find((o) => o.id === 'shield')!;
       expect(p3.level).toBe(3);
       expect(p3.name).toContain('Lv.3');
-      const p9 = levelUps.find((o) => o.id === 'P9')!;
+      const p9 = levelUps.find((o) => o.id === 'magnet')!;
       expect(p9.level).toBe(2);
     });
 
     it('derives the change summary from the shared power-up resolver', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const p3 = candidates.find(
-        (o) => o.kind === 'power-up-level' && o.id === 'P3',
+        (o) => o.kind === 'power-up-level' && o.id === 'shield',
       )!;
-      expect(p3.changeSummary).toBe(summarisePowerUpLevelChange('P3', 2, 3));
+      expect(p3.changeSummary).toBe(summarisePowerUpLevelChange('shield', 2, 3));
       expect(p3.changeSummary!.length).toBeGreaterThan(0);
     });
 
@@ -232,19 +232,19 @@ describe('power-up choice strategy', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
         powerUpLevels: [],
       });
-      const p5 = candidates.find((o) => o.kind === 'powerup' && o.id === 'P5');
+      const p5 = candidates.find((o) => o.kind === 'powerup' && o.id === 'speed_boost');
       expect(p5).toBeDefined();
       expect(p5!.isNew).toBe(true);
     });
 
     it('suppresses the base-pool power-up entry once owned, leaving only the level-up offer (AC2)', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
-        powerUpLevels: [{ id: 'P5' as const, level: 1 }],
+        powerUpLevels: [{ id: 'speed_boost' as const, level: 1 }],
       });
       expect(
-        candidates.some((o) => o.kind === 'powerup' && o.id === 'P5'),
+        candidates.some((o) => o.kind === 'powerup' && o.id === 'speed_boost'),
       ).toBe(false);
-      const levelUp = candidates.find((o) => o.id === 'P5');
+      const levelUp = candidates.find((o) => o.id === 'speed_boost');
       expect(levelUp).toBeDefined();
       expect(levelUp!.kind).toBe('power-up-level');
       expect(levelUp!.level).toBe(2);
@@ -276,7 +276,7 @@ describe('power-up choice strategy', () => {
         weaponLevels: [],
         powerUpLevels: [],
       });
-      const p3 = candidates.find((o) => o.id === 'P3')!;
+      const p3 = candidates.find((o) => o.id === 'shield')!;
       expect(p3.kind).toBe('powerup');
       expect(p3.isNew).toBe(true);
       expect(candidates.some((o) => o.kind === 'power-up-level')).toBe(false);
@@ -286,9 +286,9 @@ describe('power-up choice strategy', () => {
     it('offers a level-up only for an item present at permanent level ≥ 1', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
         weaponLevels: [],
-        powerUpLevels: [{ id: 'P3', level: 1 }],
+        powerUpLevels: [{ id: 'shield', level: 1 }],
       });
-      const p3 = candidates.find((o) => o.id === 'P3')!;
+      const p3 = candidates.find((o) => o.id === 'shield')!;
       expect(p3.kind).toBe('power-up-level');
       expect(p3.level).toBe(2);
       expect(p3.isNew).toBeUndefined();
@@ -313,14 +313,14 @@ describe('power-up choice strategy', () => {
     it('never lists a base and a level-up entry for the same power-up id (AC2)', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
         powerUpLevels: [
-          { id: 'P3' as const, level: 1 },
-          { id: 'P9' as const, level: 4 },
+          { id: 'shield' as const, level: 1 },
+          { id: 'magnet' as const, level: 4 },
         ],
       });
       const ids = candidates.map((o) => o.id);
       expect(new Set(ids).size).toBe(ids.length);
-      expect(candidates.filter((o) => o.id === 'P3')).toHaveLength(1);
-      expect(candidates.filter((o) => o.id === 'P9')).toHaveLength(1);
+      expect(candidates.filter((o) => o.id === 'shield')).toHaveLength(1);
+      expect(candidates.filter((o) => o.id === 'magnet')).toHaveLength(1);
     });
 
     it('keeps an unowned weapon offered exactly once as a New base entry (AC1)', () => {
@@ -335,9 +335,9 @@ describe('power-up choice strategy', () => {
 
     it('keeps an unowned power-up offered exactly once as a New base entry (AC2)', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
-        powerUpLevels: [{ id: 'P5' as const, level: 1 }],
+        powerUpLevels: [{ id: 'speed_boost' as const, level: 1 }],
       });
-      const p6 = candidates.filter((o) => o.id === 'P6');
+      const p6 = candidates.filter((o) => o.id === 'phase_shift');
       expect(p6).toHaveLength(1);
       expect(p6[0].kind).toBe('powerup');
       expect(p6[0].isNew).toBe(true);
@@ -359,8 +359,8 @@ describe('power-up choice strategy', () => {
           { id: 'dual' as const, level: 1 },
         ],
         powerUpLevels: [
-          { id: 'P5' as const, level: 3 },
-          { id: 'P9' as const, level: 1 },
+          { id: 'speed_boost' as const, level: 3 },
+          { id: 'magnet' as const, level: 1 },
         ],
       };
       for (let i = 0; i < 200; i++) {

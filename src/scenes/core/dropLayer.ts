@@ -210,16 +210,16 @@ export function playDropPickupCue(drop: PickupCueDrop): void {
       return;
     }
     switch (drop.dropId) {
-      case 'P5':
+      case 'speed_boost':
         playSpeedBoostCollectSound();
         break;
-      case 'P8':
+      case 'extra_life':
         playExtraLifeCollectSound();
         break;
-      case 'P9':
+      case 'magnet':
         playMagnetCollectSound();
         break;
-      case 'P10':
+      case 'mineral_scoop':
         // Mineral Scoop reuses the magnet field-hum cue (optional polish to
         // add a dedicated cue later).
         playMagnetCollectSound();

@@ -73,7 +73,7 @@ export interface BotBullet {
 export interface BotDrop {
   readonly x: number;
   readonly y: number;
-  /** Drop id, e.g. `'P3'`, `'spread'`. */
+  /** Drop id, e.g. `'shield'`, `'spread'`. */
   readonly type: string;
 }
 

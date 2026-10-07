@@ -91,8 +91,8 @@ describe('GymMinerals', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
     // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
-    registry.applyCollect('P10', true);
-    registry.applyCollect('P10', true);
+    registry.applyCollect('mineral_scoop', true);
+    registry.applyCollect('mineral_scoop', true);
 
     const mineral = scene.getMinerals()[0];
     mineral.setPosition(player.x + 30, player.y);
@@ -246,8 +246,8 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     const scene = await bootMinerals();
     const offered: ChoiceOption[] = [
       { id: 'dual', name: 'Dual Shot', kind: 'weapon' },
-      { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-      { id: 'P9', name: 'Magnet', kind: 'powerup' },
+      { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+      { id: 'magnet', name: 'Magnet', kind: 'powerup' },
     ];
     scene.setMineralChoiceStrategy({ choose: () => offered });
     const drawn = scene.openMineralChoice();
@@ -288,7 +288,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   it('AC2 — P7 granted by the choice teleports on S/↓ and grants P6', async () => {
     const scene = await bootMinerals();
     const player = scene.getPlayer()!;
-    grantViaChoice(scene, { id: 'P7', name: 'Teleport', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'teleport', name: 'Teleport', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
     expect(registry.hasTeleport()).toBe(true);
@@ -314,7 +314,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
   it('AC3 — P6 Protects against enemy bullets in the minerals gym', async () => {
     const scene = await bootMinerals();
-    grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
     expect(registry.updateDanger(true, 0.016)).toBe(true);
@@ -329,7 +329,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
   it('AC3 — P6 phase also passes the player through enemy bodies', async () => {
     const scene = await bootMinerals();
-    grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' });
     expect(scene.getEffectsRegistry().updateDanger(true, 0.016)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
@@ -344,7 +344,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
   it('AC4 — P3 absorbs the first hit, then the next hit registers', async () => {
     const scene = await bootMinerals();
-    grantViaChoice(scene, { id: 'P3', name: 'Shield', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'shield', name: 'Shield', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
     expect(registry.isShielded).toBe(true);
@@ -385,9 +385,9 @@ describe('GymMinerals — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)'
     // The minerals gym has no field-drop layer, so this is the exact
     // stale-registry vector from gap 10: apply a permanent effect as the
     // hold-full choice does, then stop/restart the same instance.
-    registry.applyCollect('P9', true);
+    registry.applyCollect('magnet', true);
     registry.applyWeapon('spread', true);
-    registry.applyCollect('P7');
+    registry.applyCollect('teleport');
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.activeWeapons()).toHaveLength(1);
     expect(registry.hasTeleport()).toBe(true);

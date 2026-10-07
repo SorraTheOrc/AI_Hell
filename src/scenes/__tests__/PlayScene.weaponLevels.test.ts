@@ -116,8 +116,8 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     // Own two weapons and two power-ups so both suppression paths are live.
     player.equipWeapon('spread', true);
     player.equipWeapon('dual', true);
-    player.collectPowerUp('P5');
-    player.collectPowerUp('P9');
+    player.collectPowerUp('speed_boost');
+    player.collectPowerUp('magnet');
 
     // The scene uses its default random strategy with the real player
     // context, so every draw must offer each underlying item at most once.

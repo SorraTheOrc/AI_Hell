@@ -86,7 +86,7 @@ export const PERMANENT_VALUE = '∞';
 
 /** One display row in the HUD model. */
 export interface HUDEntry {
-  /** Power-up ID (e.g. "P5"). */
+  /** Power-up ID (e.g. "speed_boost"). */
   id: string;
   /** Display name (e.g. "Speed Boost"). */
   name: string;

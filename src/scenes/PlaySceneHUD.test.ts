@@ -34,7 +34,7 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
   }
 
   /** Grows a drop to full size so it is immediately collectible. */
-  function growDrop(scene: PlayScene, id: 'P5' | 'P8') {
+  function growDrop(scene: PlayScene, id: 'speed_boost' | 'extra_life') {
     const player = scene.getPlayer()!;
     const drop = scene.spawnPowerUpDrop(id, player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
@@ -81,17 +81,17 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
 
   it('AC3 — collected timed power-ups appear as HUD effect rows', async () => {
     const scene = await bootPlay();
-    growDrop(scene, 'P5');
+    growDrop(scene, 'speed_boost');
     scene.tick(0.016);
     scene.tick(0.016);
 
     const hud = scene.getHUD()!;
-    expect(hud.getRows().some((row) => row.id === 'P5')).toBe(true);
+    expect(hud.getRows().some((row) => row.id === 'speed_boost')).toBe(true);
   });
 
   it('AC1/AC5P8 — collecting P8 Extra Life raises the HUD lives counter', async () => {
     const scene = await bootPlay();
-    growDrop(scene, 'P8');
+    growDrop(scene, 'extra_life');
     scene.tick(0.016);
     scene.tick(0.016);
 

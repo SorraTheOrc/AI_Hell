@@ -330,8 +330,8 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
   });
 
   it('P5 boost yields the same speed/fire-rate outcome in the game and a gym', async () => {    const { play, gym } = await bootBoth();
-    play.getEffectsRegistry().applyCollect('P5');
-    gym.getEffectsRegistry().applyCollect('P5');
+    play.getEffectsRegistry().applyCollect('speed_boost');
+    gym.getEffectsRegistry().applyCollect('speed_boost');
 
     play.tick(0.5);
     gym.tick(0.5);
@@ -363,11 +363,11 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     // The registry consumes the player's run-scoped store in both scenes, so
     // the shared `applyCollect` path levels the power-up up exactly once and
     // resolves the same effect strength everywhere.
-    play.getEffectsRegistry().applyCollect('P5');
-    gym.getEffectsRegistry().applyCollect('P5');
+    play.getEffectsRegistry().applyCollect('speed_boost');
+    gym.getEffectsRegistry().applyCollect('speed_boost');
 
-    expect(playPlayer.getPowerUpLevel('P5')).toBe(1);
-    expect(gymPlayer.getPowerUpLevel('P5')).toBe(1);
+    expect(playPlayer.getPowerUpLevel('speed_boost')).toBe(1);
+    expect(gymPlayer.getPowerUpLevel('speed_boost')).toBe(1);
     expect(play.getEffectsRegistry().speedMultiplier()).toBeCloseTo(
       gym.getEffectsRegistry().speedMultiplier(),
       10,
@@ -379,11 +379,11 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     const playPlayer = play.getPlayer()!;
     const gymPlayer = gym.getPlayer()!;
 
-    play.getEffectsRegistry().applyCollect('P5', true);
-    gym.getEffectsRegistry().applyCollect('P5', true);
+    play.getEffectsRegistry().applyCollect('speed_boost', true);
+    gym.getEffectsRegistry().applyCollect('speed_boost', true);
 
-    expect(playPlayer.getPowerUpLevel('P5')).toBe(1);
-    expect(gymPlayer.getPowerUpLevel('P5')).toBe(1);
+    expect(playPlayer.getPowerUpLevel('speed_boost')).toBe(1);
+    expect(gymPlayer.getPowerUpLevel('speed_boost')).toBe(1);
   });
 
   it('expires timed weapons identically in the game and a gym (timers before auto-fire)', async () => {
@@ -406,8 +406,8 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
   it('teleport consumes a P7 stack and warps the player in both scenes', async () => {
     const { play, gym } = await bootBoth();
 
-    play.getEffectsRegistry().applyCollect('P7');
-    gym.getEffectsRegistry().applyCollect('P7');
+    play.getEffectsRegistry().applyCollect('teleport');
+    gym.getEffectsRegistry().applyCollect('teleport');
 
     const playMoved = play.triggerTeleport();
     const gymMoved = gym.triggerTeleport();
@@ -1009,8 +1009,8 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       };
     }
 
-    combatScene.getEffectsRegistry().applyCollect('P7');
-    formationScene.getEffectsRegistry().applyCollect('P7');
+    combatScene.getEffectsRegistry().applyCollect('teleport');
+    formationScene.getEffectsRegistry().applyCollect('teleport');
 
     expect(combatScene.triggerTeleport()).toBe(true);
     expect(formationScene.triggerTeleport()).toBe(true);
@@ -1063,8 +1063,8 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       playScene.getEffectsRegistry(),
       combatScene.getEffectsRegistry(),
     ]) {
-      registry.applyCollect('P7');
-      registry.applyCollect('P7');
+      registry.applyCollect('teleport');
+      registry.applyCollect('teleport');
     }
 
     expect(playScene.triggerTeleport()).toBe(true);
@@ -1120,7 +1120,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
         vy: 0,
         facing: 0,
       };
-      scene.getEffectsRegistry().applyCollect('P6');
+      scene.getEffectsRegistry().applyCollect('phase_shift');
     }
 
     // Three enemy bullets centred within DANGER_RADIUS (40 px) of the ship.
@@ -1187,7 +1187,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
         vy: 0,
         facing: 0,
       };
-      scene.getEffectsRegistry().applyCollect('P6');
+      scene.getEffectsRegistry().applyCollect('phase_shift');
     }
 
     const threats: Array<[number, number]> = [
@@ -1245,7 +1245,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
       vy: 0,
       facing: 0,
     };
-    playScene.getEffectsRegistry().applyCollect('P6');
+    playScene.getEffectsRegistry().applyCollect('phase_shift');
     playScene.spawnEnemyBullet(130, 120, 0, 0);
     playScene.spawnEnemyBullet(120, 130, 0, 0);
     playScene.spawnEnemyBullet(120, 110, 0, 0);
@@ -1266,7 +1266,7 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     const playScene = play.scene as PlayScene;
     const soundSpy = vi.spyOn(effectsModule, 'playPhaseShiftSound');
 
-    playScene.getEffectsRegistry().applyCollect('P7');
+    playScene.getEffectsRegistry().applyCollect('teleport');
     expect(playScene.triggerTeleport()).toBe(true);
 
     expect(playScene.getEffectsRegistry().isPhased).toBe(true);
@@ -1408,10 +1408,10 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     utility.getPlayer()!.setPosition(50, 50);
     combat.getPlayer()!.setPosition(50, 50);
 
-    const p = play.spawnPowerUpDrop('P5', 700, 100)!;
-    const f = formation.spawnPowerUpDrop('P5', 700, 100)!;
-    const u = utility.spawnDrop('P5', 700, 100);
-    const c = combat.spawnDrop('P5', 700, 100);
+    const p = play.spawnPowerUpDrop('speed_boost', 700, 100)!;
+    const f = formation.spawnPowerUpDrop('speed_boost', 700, 100)!;
+    const u = utility.spawnDrop('speed_boost', 700, 100);
+    const c = combat.spawnDrop('speed_boost', 700, 100);
 
     play.tick(0.25);
     formation.tick(0.25);
@@ -1426,10 +1426,10 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
   it('collects the same drop type through the shared gate and applies the same effect', async () => {
     const { play, formation, utility, combat } = await bootDrops();
 
-    const playDrop = play.spawnPowerUpDrop('P3', play.getPlayer()!.x, play.getPlayer()!.y)!;
-    const fDrop = formation.spawnPowerUpDrop('P3', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
-    const uDrop = utility.spawnDrop('P3', utility.getPlayer()!.x, utility.getPlayer()!.y);
-    const cDrop = combat.spawnDrop('P3', combat.getPlayer()!.x, combat.getPlayer()!.y);
+    const playDrop = play.spawnPowerUpDrop('shield', play.getPlayer()!.x, play.getPlayer()!.y)!;
+    const fDrop = formation.spawnPowerUpDrop('shield', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
+    const uDrop = utility.spawnDrop('shield', utility.getPlayer()!.x, utility.getPlayer()!.y);
+    const cDrop = combat.spawnDrop('shield', combat.getPlayer()!.x, combat.getPlayer()!.y);
     for (const drop of [playDrop, fDrop, uDrop, cDrop]) drop.powerUp.advance(0.5);
 
     play.tick(0.001);
@@ -1451,11 +1451,11 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     // shared store is the single source, so every scene must resolve the
     // same remaining-absorptions count.
     for (const owner of owners) {
-      owner.getEffectsRegistry().applyCollect('P3');
-      owner.getEffectsRegistry().applyCollect('P3');
+      owner.getEffectsRegistry().applyCollect('shield');
+      owner.getEffectsRegistry().applyCollect('shield');
     }
 
-    const expected = resolvePowerUpAtLevel('P3', 1).shieldAbsorptions!;
+    const expected = resolvePowerUpAtLevel('shield', 1).shieldAbsorptions!;
     for (const owner of owners) {
       const registry = owner.getEffectsRegistry();
       expect(registry.shieldAbsorptionsRemaining()).toBe(expected);
@@ -1472,18 +1472,18 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     const { play, formation, utility, combat, weapons } = await bootDrops();
 
     const owners = [play, formation, utility, combat, weapons];
-    for (const owner of owners) owner.getEffectsRegistry().applyCollect('P9');
+    for (const owner of owners) owner.getEffectsRegistry().applyCollect('magnet');
 
     // Spawn each drop 30 px to the right of the scene's own player (no
     // scene position assumptions — PlayScene's physics owns its position).
     const playPlayer = play.getPlayer()!;
-    const playDrop = play.spawnPowerUpDrop('P5', playPlayer.x + 30, playPlayer.y)!;
+    const playDrop = play.spawnPowerUpDrop('speed_boost', playPlayer.x + 30, playPlayer.y)!;
     const fPlayer = formation.getPlayer()!;
-    const fDrop = formation.spawnPowerUpDrop('P5', fPlayer.x + 30, fPlayer.y)!;
+    const fDrop = formation.spawnPowerUpDrop('speed_boost', fPlayer.x + 30, fPlayer.y)!;
     const uPlayer = utility.getPlayer()!;
-    const uDrop = utility.spawnDrop('P5', uPlayer.x + 30, uPlayer.y);
+    const uDrop = utility.spawnDrop('speed_boost', uPlayer.x + 30, uPlayer.y);
     const cPlayer = combat.getPlayer()!;
-    const cDrop = combat.spawnDrop('P5', cPlayer.x + 30, cPlayer.y);
+    const cDrop = combat.spawnDrop('speed_boost', cPlayer.x + 30, cPlayer.y);
     const wPlayer = weapons.getPlayer()!;
     const wDrop = weapons.spawnDrop('spread', wPlayer.x + 30, wPlayer.y);
     const drops = [playDrop, fDrop, uDrop, cDrop, wDrop];
@@ -1533,7 +1533,7 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
         }),
       );
       // Grant the permanent (hold-full) bomb — the shared pulse path fires it.
-      owner.getEffectsRegistry().applyCollect('P4', true);
+      owner.getEffectsRegistry().applyCollect('bomb', true);
     }
 
     play.tick(0.016);
@@ -1553,9 +1553,9 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     const speedCue = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
     const spreadCue = vi.spyOn(effectsModule, 'playSpreadPickupSound');
 
-    const playDrop = play.spawnPowerUpDrop('P5', play.getPlayer()!.x, play.getPlayer()!.y)!;
-    const fDrop = formation.spawnPowerUpDrop('P5', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
-    const uDrop = utility.spawnDrop('P5', utility.getPlayer()!.x, utility.getPlayer()!.y);
+    const playDrop = play.spawnPowerUpDrop('speed_boost', play.getPlayer()!.x, play.getPlayer()!.y)!;
+    const fDrop = formation.spawnPowerUpDrop('speed_boost', formation.getPlayer()!.x, formation.getPlayer()!.y)!;
+    const uDrop = utility.spawnDrop('speed_boost', utility.getPlayer()!.x, utility.getPlayer()!.y);
     for (const drop of [playDrop, fDrop, uDrop]) drop.powerUp.advance(0.5);
     play.tick(0.001);
     formation.tick(0.001);

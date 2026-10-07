@@ -914,8 +914,8 @@ export class GymFormationScene<
     graphics.setScale(0);
 
     const drop: FormationSceneDrop = {
-      powerUp: new PowerUp(isWeaponDrop(id) ? 'P3' : id),
-      id: isWeaponDrop(id) ? 'P3' : id,
+      powerUp: new PowerUp(isWeaponDrop(id) ? 'shield' : id),
+      id: isWeaponDrop(id) ? 'shield' : id,
       weaponDropId: isWeaponDrop(id) ? id : undefined,
       dropId: id,
       x,

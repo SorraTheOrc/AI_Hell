@@ -64,13 +64,13 @@ describe('HUD AC4: standalone scene attachability', () => {
 describe('HUD AC1: aggregated model for timed power-ups', () => {
   it('renders a row per active timed effect: icon, name, remaining seconds', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5'); // active, 10 s remaining
+    reg.applyCollect('speed_boost'); // active, 10 s remaining
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
     const rows = hud.getRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe('P5');
+    expect(rows[0].id).toBe('speed_boost');
     expect(rows[0].name).toBe('Speed Boost');
     expect(rows[0].icon).toBe(PowerUpType.SPEED_BOOST);
     expect(rows[0].value).toBe('10s');
@@ -79,7 +79,7 @@ describe('HUD AC1: aggregated model for timed power-ups', () => {
 
   it('counts down: the remaining-seconds timer decrements', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('10s');
@@ -96,7 +96,7 @@ describe('HUD AC1: aggregated model for timed power-ups', () => {
 
   it('renders multiple timed effects with no cross-contamination of values', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     reg.tick(8);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
@@ -109,15 +109,15 @@ describe('HUD AC1: aggregated model for timed power-ups', () => {
 describe('HUD AC2: stack counts for stackable types', () => {
   it('shows the P9 magnet stack count as a pickup count', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9', true);
-    reg.applyCollect('P9', true);
-    reg.applyCollect('P9', true);
+    reg.applyCollect('magnet', true);
+    reg.applyCollect('magnet', true);
+    reg.applyCollect('magnet', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
     const rows = hud.getRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe('P9');
+    expect(rows[0].id).toBe('magnet');
     expect(rows[0].name).toBe('Magnet');
     expect(rows[0].icon).toBe(PowerUpType.MAGNET);
     expect(rows[0].value).toBe('x3');
@@ -126,13 +126,13 @@ describe('HUD AC2: stack counts for stackable types', () => {
 
   it('increments the count as more stacks are collected', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9', true);
+    reg.applyCollect('magnet', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x1');
 
-    reg.applyCollect('P9', true);
-    reg.applyCollect('P9', true);
+    reg.applyCollect('magnet', true);
+    reg.applyCollect('magnet', true);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('x3');
     destroy(game);
@@ -140,13 +140,13 @@ describe('HUD AC2: stack counts for stackable types', () => {
 
   it('shows a timed P9 field pickup as remaining seconds, not a stack count', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P9'); // field pickup → 15 s timed effect
+    reg.applyCollect('magnet'); // field pickup → 15 s timed effect
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
     const rows = hud.getRows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe('P9');
+    expect(rows[0].id).toBe('magnet');
     expect(rows[0].name).toBe('Magnet');
     expect(rows[0].value).toBe('15s');
     destroy(game);
@@ -156,34 +156,34 @@ describe('HUD AC2: stack counts for stackable types', () => {
 describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
   it('shows the remaining absorptions as xN and decrements as hits are absorbed', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P3'); // level 0 → 1 absorption
-    reg.applyCollect('P3'); // level 1 → 2 absorptions
+    reg.applyCollect('shield'); // level 0 → 1 absorption
+    reg.applyCollect('shield'); // level 1 → 2 absorptions
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
-    const row = hud.getRows().find((r) => r.id === 'P3')!;
+    const row = hud.getRows().find((r) => r.id === 'shield')!;
     expect(row.name).toBe('Shield');
     expect(row.value).toBe(
-      `x${resolvePowerUpAtLevel('P3', 1).shieldAbsorptions!}`,
+      `x${resolvePowerUpAtLevel('shield', 1).shieldAbsorptions!}`,
     );
 
     reg.tryAbsorbShield();
     hud.refresh();
-    const updated = hud.getRows().find((r) => r.id === 'P3')!;
+    const updated = hud.getRows().find((r) => r.id === 'shield')!;
     expect(updated.value).toBe(`x${reg.shieldAbsorptionsRemaining()}`);
     destroy(game);
   });
 
   it('drops the P3 row once the last absorption pops the shield', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P3'); // level 0 → 1 absorption
+    reg.applyCollect('shield'); // level 0 → 1 absorption
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().some((r) => r.id === 'P3')).toBe(true);
+    expect(hud.getRows().some((r) => r.id === 'shield')).toBe(true);
 
     reg.tryAbsorbShield();
     hud.refresh();
-    expect(hud.getRows().some((r) => r.id === 'P3')).toBe(false);
+    expect(hud.getRows().some((r) => r.id === 'shield')).toBe(false);
     destroy(game);
   });
 });
@@ -191,11 +191,11 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
   it('shows a finite charge as xN and decrements live on trigger', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P6'); // level 1 → +1
-    reg.applyCollect('P6'); // level 2 → +2 (level-derived grant)
+    reg.applyCollect('phase_shift'); // level 1 → +1
+    reg.applyCollect('phase_shift'); // level 2 → +2 (level-derived grant)
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().find((r) => r.id === 'P6')!.value).toBe('x3');
+    expect(hud.getRows().find((r) => r.id === 'phase_shift')!.value).toBe('x3');
 
     // Consume one charge (the phase is now active, so a timer row also
     // appears; the charge row must read x2).
@@ -203,17 +203,17 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
     hud.refresh();
     const chargeRow = hud
       .getRows()
-      .find((r) => r.id === 'P6' && r.value.startsWith('x'))!;
+      .find((r) => r.id === 'phase_shift' && r.value.startsWith('x'))!;
     expect(chargeRow.value).toBe('x2');
     destroy(game);
   });
 
   it('shows the permanent reward as unlimited instead of a number', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P6', true);
+    reg.applyCollect('phase_shift', true);
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    const p6 = hud.getRows().find((r) => r.id === 'P6')!;
+    const p6 = hud.getRows().find((r) => r.id === 'phase_shift')!;
     expect(p6.value).toBe(PERMANENT_VALUE);
     expect(p6.value).not.toMatch(/^x/);
     destroy(game);
@@ -223,24 +223,24 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
     const reg = new EffectsRegistry();
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().filter((r) => r.id === 'P6')).toHaveLength(0);
+    expect(hud.getRows().filter((r) => r.id === 'phase_shift')).toHaveLength(0);
     destroy(game);
   });
 
   it('formats charges, unlimited and timers distinctly', () => {
     expect(
-      formatValue({ id: 'P6', type: PowerUpType.PHASE_SHIFT, stacks: 1 }),
+      formatValue({ id: 'phase_shift', type: PowerUpType.PHASE_SHIFT, stacks: 1 }),
     ).toBe('x1');
     expect(
       formatValue({
-        id: 'P6',
+        id: 'phase_shift',
         type: PowerUpType.PHASE_SHIFT,
         permanent: true,
       }),
     ).toBe(PERMANENT_VALUE);
     expect(
       formatValue({
-        id: 'P5',
+        id: 'speed_boost',
         type: PowerUpType.SPEED_BOOST,
         duration: 10,
         remaining: 4.2,
@@ -264,12 +264,12 @@ describe('HUD AC3: lives counter (P8)', () => {
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
-    reg.applyCollect('P8');
+    reg.applyCollect('extra_life');
     hud.refresh();
     expect(hud.getLivesValue()).toBe(4);
     expect(hud.getLivesLabel()).toBe('Lives: 4');
 
-    reg.applyCollect('P8');
+    reg.applyCollect('extra_life');
     hud.refresh();
     expect(hud.getLivesValue()).toBe(5);
     expect(hud.getLivesLabel()).toBe('Lives: 5');
@@ -280,7 +280,7 @@ describe('HUD AC3: lives counter (P8)', () => {
 describe('HUD AC5: reacts to registry changes', () => {
   it('removes a row when the effect timer expires', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows()).toHaveLength(1);
@@ -293,16 +293,16 @@ describe('HUD AC5: reacts to registry changes', () => {
 
   it('updates a row when a timed effect is refreshed (re-collect)', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     reg.tick(6); // 4 s left
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows()[0].value).toBe('4s');
 
-    reg.applyCollect('P5'); // re-collect → refresh to the level-1 duration
+    reg.applyCollect('speed_boost'); // re-collect → refresh to the level-1 duration
     hud.refresh();
     const upgraded = Math.ceil(
-      resolvePowerUpAtLevel('P5', 1).speedDuration!,
+      resolvePowerUpAtLevel('speed_boost', 1).speedDuration!,
     );
     expect(hud.getRows()[0].value).toBe(`${upgraded}s`);
     destroy(game);
@@ -314,15 +314,15 @@ describe('HUD AC5: reacts to registry changes', () => {
     hud.refresh();
     expect(hud.getRows()).toHaveLength(0);
 
-    reg.applyCollect('P5');
-    reg.applyCollect('P9', true);
-    reg.applyCollect('P9', true);
+    reg.applyCollect('speed_boost');
+    reg.applyCollect('magnet', true);
+    reg.applyCollect('magnet', true);
     hud.refresh();
     const rows = hud.getRows();
     expect(rows).toHaveLength(2); // P5 timed row + P9 stack row
     const ids = rows.map((r) => r.id);
-    expect(ids).toContain('P5');
-    expect(ids).toContain('P9');
+    expect(ids).toContain('speed_boost');
+    expect(ids).toContain('magnet');
     destroy(game);
   });
 });
@@ -335,7 +335,7 @@ describe('HUD lives list layout (AH-0MU7JTFY1006QA8I)', () => {
 
   it('AC1 — with lives shown, the first effect row starts below the lives label', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5'); // timed row: Speed Boost
+    reg.applyCollect('speed_boost'); // timed row: Speed Boost
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
 
@@ -355,7 +355,7 @@ describe('HUD lives list layout (AH-0MU7JTFY1006QA8I)', () => {
 
   it('AC3 — without lives (gym combat), the first row stays at the top', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P5');
+    reg.applyCollect('speed_boost');
     const { game, hud } = await bootScene([BareScene]).then(({ game: g, scene }) => {
       const h = new HUD(scene, reg, { showLives: false });
       h.refresh();

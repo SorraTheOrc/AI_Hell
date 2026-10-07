@@ -73,7 +73,7 @@ function graphics(g: FakeGraphics): Phaser.GameObjects.Graphics {
 function shieldAt(remaining: number, shielded = true): EffectsRegistry {
   return {
     isShielded: shielded,
-    remaining: (id: string) => (id === 'P3' ? remaining : undefined),
+    remaining: (id: string) => (id === 'shield' ? remaining : undefined),
   } as unknown as EffectsRegistry;
 }
 
@@ -101,7 +101,7 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
 
   it('draws the bubble at the shared colour/width/radius and steady fill while shielded', () => {
     const registry = new EffectsRegistry();
-    registry.applyCollect('P3');
+    registry.applyCollect('shield');
     const g = new FakeGraphics();
 
     const drawn = drawShieldBubble(graphics(g), { x: 100, y: 50 }, registry);
@@ -134,7 +134,7 @@ describe('CombatEffectVisuals — shared P3 shield bubble / P6 phase ghost', () 
 
   it('is safe with no graphics or no player (and clears when only the player is missing)', () => {
     const registry = new EffectsRegistry();
-    registry.applyCollect('P3');
+    registry.applyCollect('shield');
 
     expect(drawShieldBubble(null, { x: 1, y: 2 }, registry)).toBe(false);
 

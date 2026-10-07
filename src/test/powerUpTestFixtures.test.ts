@@ -73,20 +73,20 @@ describe('powerUpTestFixtures — deterministic test infrastructure', () => {
 
   describe('createSeededWeightedSpawner', () => {
     it('is reproducible across identical spawners', () => {
-      const a = createSeededWeightedSpawner(7, ['P3', 'P4', 'P6', 'P7']);
-      const b = createSeededWeightedSpawner(7, ['P3', 'P4', 'P6', 'P7']);
+      const a = createSeededWeightedSpawner(7, ['shield', 'bomb', 'phase_shift', 'teleport']);
+      const b = createSeededWeightedSpawner(7, ['shield', 'bomb', 'phase_shift', 'teleport']);
       expect(Array.from({ length: 8 }, () => a.next())).toEqual(
         Array.from({ length: 8 }, () => b.next()),
       );
     });
 
     it('never selects a zero-weight ID', () => {
-      const spawner = createSeededWeightedSpawner(3, ['P3', 'P8'], {
-        P3: 1,
-        P8: 0,
+      const spawner = createSeededWeightedSpawner(3, ['shield', 'extra_life'], {
+        shield: 1,
+        extra_life: 0,
       });
       for (let i = 0; i < 20; i += 1) {
-        expect(spawner.next()).toBe('P3');
+        expect(spawner.next()).toBe('shield');
       }
     });
   });

@@ -66,7 +66,7 @@ describe('MineralChoiceScene', () => {
     booted = await bootScene([HarnessScene, MineralChoiceScene]);
     booted.game.scene.start('MineralChoiceScene', {
       options: [
-        { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+        { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
         { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
       ],
     });
@@ -75,7 +75,7 @@ describe('MineralChoiceScene', () => {
     const scene = booted.game.scene.getScene(
       'MineralChoiceScene',
     ) as MineralChoiceScene;
-    expect(scene.getOptions().map((o) => o.id)).toEqual(['P5', 'spread']);
+    expect(scene.getOptions().map((o) => o.id)).toEqual(['speed_boost', 'spread']);
     expect(scene.getOptionLabels()).toHaveLength(2);
   });
 
@@ -131,7 +131,7 @@ describe('MineralChoiceScene', () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted.game.scene.start('MineralChoiceScene', {
         options: [
-          { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
         ],
       });
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -195,7 +195,7 @@ describe('MineralChoiceScene', () => {
       const calls: number[] = [];
       booted.game.scene.start('MineralChoiceScene', {
         options: [
-          { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
           { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
         ],
         autoSelectMs: 40,
@@ -210,7 +210,7 @@ describe('MineralChoiceScene', () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       const calls: number[] = [];
       booted.game.scene.start('MineralChoiceScene', {
-        options: [{ id: 'P5', name: 'Speed Boost', kind: 'powerup' }],
+        options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
         onSelect: (index: number) => calls.push(index),
       });
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -228,7 +228,7 @@ describe('MineralChoiceScene', () => {
       const calls: number[] = [];
       booted.game.scene.start('MineralChoiceScene', {
         options: [
-          { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
           { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
         ],
         autoSelectMs: 200,
