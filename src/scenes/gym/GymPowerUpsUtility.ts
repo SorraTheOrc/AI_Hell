@@ -275,7 +275,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // Graphics at the drop's world position.
     graphics.setPosition(x, y);
     const entry = getPowerUpById(id);
-    drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
+    drawPowerUpDrop(graphics, entry.id, 0, 0, POWER_UP_DROP_SIZE);
     // Start at scale 0 — the lifecycle grows it in.
     graphics.setScale(0);
 

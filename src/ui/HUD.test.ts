@@ -13,7 +13,7 @@ import {
 } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
-import { PowerUpType } from '../powerups/types';
+
 
 /**
  * A bare scene with no gym logic — proves the HUD attaches to ANY Phaser
@@ -83,7 +83,7 @@ describe('HUD AC1: one row per active power-up with the current level', () => {
     expect(rows[0].label).toBe('Speed Boost Lvl 1');
     expect(rows[0].level).toBe(1);
     expect(rows[0].temporary).toBe(true);
-    expect(rows[0].icon).toBe(PowerUpType.SPEED_BOOST);
+    expect(rows[0].icon).toBe('speed_boost');
     expect(rows[0].value).toBe('10s');
     expect(hudTexts(hud)).toContain('Speed Boost Lvl 1');
     destroy(game);
@@ -196,7 +196,7 @@ describe('HUD AC2: permanent stack power-ups merge into one row', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe('magnet');
     expect(rows[0].name).toBe('Magnet');
-    expect(rows[0].icon).toBe(PowerUpType.MAGNET);
+    expect(rows[0].icon).toBe('magnet');
     expect(rows[0].label).toBe('Magnet Lvl 3');
     expect(rows[0].value).toBe(PERMANENT_VALUE);
     destroy(game);

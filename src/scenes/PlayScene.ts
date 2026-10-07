@@ -1882,7 +1882,7 @@ export class PlayScene extends CombatScene<
     if (isWeaponDrop(id)) {
       drawWeaponDrop(graphics, id, 0, 0, POWER_UP_DROP_SIZE);
     } else {
-      drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
+      drawPowerUpDrop(graphics, getPowerUpById(id).id, 0, 0, POWER_UP_DROP_SIZE);
     }
     graphics.setScale(0);
 

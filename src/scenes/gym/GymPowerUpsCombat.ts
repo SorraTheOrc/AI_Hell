@@ -464,7 +464,7 @@ export class GymPowerUpsCombat extends CombatScene<
     const graphics = this.add.graphics();
     graphics.setPosition(x, y);
     const entry = getPowerUpById(id);
-    drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
+    drawPowerUpDrop(graphics, entry.id, 0, 0, POWER_UP_DROP_SIZE);
     graphics.setScale(0);
     const drop: CombatActiveDrop = { powerUp: new PowerUp(id), x, y, graphics, dropId: id };
     this.drops.push(drop);

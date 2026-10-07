@@ -111,7 +111,7 @@ export function getHelpEntry(id: HelpDropId): HelpEntry {
     name: powerUp.name,
     description: powerUp.description,
     drawIcon: (graphics, x, y, size) =>
-      drawPowerUpIcon(graphics, powerUp.type, x, y, size),
+      drawPowerUpIcon(graphics, powerUp.id, x, y, size),
   };
 }
 

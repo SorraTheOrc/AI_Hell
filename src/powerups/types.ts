@@ -52,31 +52,6 @@ export type WeaponDropId =
  */
 export type DropId = PowerUpId | WeaponDropId;
 
-// ── Power-up types ──────────────────────────────────────────────────
-
-export enum PowerUpType {
-  /** Absorbs one hit for 15 s (timed, P3). */
-  SHIELD = 'shield',
-  /** Clears on-screen enemy bullets instantly (instant, P4). */
-  BOMB = 'bomb',
-  /** +50% movement speed for 10 s (timed). */
-  SPEED_BOOST = 'speed_boost',
-  /** Charge-based automatic pass-through: 1.5 s when in danger (P6). */
-  PHASE_SHIFT = 'phase_shift',
-  /** Stored teleport stacks, Space to consume (stored, P7). */
-  TELEPORT = 'teleport',
-  /** +1 life immediately (start 3, cap 5). */
-  EXTRA_LIFE = 'extra_life',
-  /** Permanent magnet stacks attracting drops (cap 5). */
-  MAGNET = 'magnet',
-  /**
-   * Attracts nearby minerals toward the ship: a timed 15 s effect when
-   * collected as a field drop, permanent and stacking (cap 5) when granted
-   * as a hold-full reward.
-   */
-  MINERAL_SCOOP = 'mineral_scoop',
-}
-
 // ── Catalogue entry ─────────────────────────────────────────────────
 
 export interface PowerUpEntry {
@@ -89,8 +64,6 @@ export interface PowerUpEntry {
    * gym help overlay so help copy cannot drift from the catalogue.
    */
   description: string;
-  /** Effect type determining behaviour. */
-  type: PowerUpType;
   /** Duration in seconds for timed effects (undefined for permanent). */
   duration?: number;
   /** Maximum stack count for stackable effects (undefined for non-stackable). */
@@ -115,7 +88,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'shield',
     name: 'Shield',
     description: 'Absorbs one hit; a bubble protects the ship for 15 s.',
-    type: PowerUpType.SHIELD,
     duration: 15,
   },
   bomb: {
@@ -123,13 +95,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Bomb',
     description:
       'Clears enemy bullets in a radius around the ship; a field pickup fires once, a hold-full reward pulses.',
-    type: PowerUpType.BOMB,
   },
   speed_boost: {
     id: 'speed_boost',
     name: 'Speed Boost',
     description: '+50% movement speed and rate of fire for 10 s.',
-    type: PowerUpType.SPEED_BOOST,
     duration: 10,
   },
   phase_shift: {
@@ -137,7 +107,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Phase Shift',
     description:
       'Stores one automatic phase; triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward makes it unlimited.',
-    type: PowerUpType.PHASE_SHIFT,
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
   },
@@ -145,13 +114,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'teleport',
     name: 'Teleport',
     description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
-    type: PowerUpType.TELEPORT,
   },
   extra_life: {
     id: 'extra_life',
     name: 'Extra Life',
     description: '+1 life immediately (starts at 3, capped at 5).',
-    type: PowerUpType.EXTRA_LIFE,
     livesStart: 3,
     livesMax: 5,
   },
@@ -160,7 +127,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Magnet',
     description:
       'Pulls nearby drops toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
-    type: PowerUpType.MAGNET,
     duration: 15,
     maxStacks: 5,
   },
@@ -169,7 +135,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Mineral Scoop',
     description:
       'Pulls nearby minerals toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
-    type: PowerUpType.MINERAL_SCOOP,
     duration: 15,
     maxStacks: 5,
   },

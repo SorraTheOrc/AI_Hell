@@ -74,8 +74,6 @@
 
 import {
   PowerUpId,
-  PowerUpType,
-  getPowerUpById,
 } from './types';
 import {
   MAGNET_ATTRACTION_SPEED,
@@ -151,8 +149,8 @@ export interface WeaponEffect {
 export interface ActiveEffect {
   /** Power-up ID (e.g. "speed_boost"). */
   id: PowerUpId;
-  /** Effect type. */
-  type: PowerUpType;
+  /** Effect type — the same identifier as {@link id}. */
+  type: PowerUpId;
   /** Full duration in seconds (timed types). */
   duration?: number;
   /** Remaining seconds (timed types). */
@@ -203,7 +201,7 @@ export type PowerUpLevelStoreResolver = () => PowerUpLevelStore | null;
 
 interface TimedEffectState {
   id: PowerUpId;
-  type: PowerUpType;
+  type: PowerUpId;
   duration: number;
   /**
    * Remaining seconds. For a non-permanent effect this is the effect's own
@@ -355,12 +353,11 @@ export class EffectsRegistry {
     permanent: boolean,
     stats: PowerUpLevelStats,
   ): void {
-    const entry = getPowerUpById(id);
-    switch (entry.type) {
-      case PowerUpType.SHIELD:
+    switch (id) {
+      case 'shield':
         this._startOrRefreshTimed(
           id,
-          entry.type,
+          id,
           stats.shieldDuration ?? 15,
           permanent,
         );
@@ -369,28 +366,28 @@ export class EffectsRegistry {
         // (AC1/AC3).
         this._shieldRemaining = stats.shieldAbsorptions ?? 1;
         break;
-      case PowerUpType.SPEED_BOOST:
+      case 'speed_boost':
         this._startOrRefreshTimed(
           id,
-          entry.type,
+          id,
           stats.speedDuration ?? 10,
           permanent,
         );
         break;
-      case PowerUpType.MAGNET:
+      case 'magnet':
         // P9 hybrid: only the field pickup opens a timed attraction; the
         // hold-full reward is a permanent stack handled by the store.
         if (!permanent) {
-          this._startOrRefreshTimed(id, entry.type, P9_MAGNET_DURATION, false);
+          this._startOrRefreshTimed(id, id, P9_MAGNET_DURATION, false);
         }
         break;
-      case PowerUpType.MINERAL_SCOOP:
+      case 'mineral_scoop':
         // P10 hybrid: mirrors P9.
         if (!permanent) {
-          this._startOrRefreshTimed(id, entry.type, P10_SCOOP_DURATION, false);
+          this._startOrRefreshTimed(id, id, P10_SCOOP_DURATION, false);
         }
         break;
-      case PowerUpType.BOMB:
+      case 'bomb':
         // bomb: a field pickup queues one ranged explosion; the hold-full
         // reward additionally makes it permanent and pulses immediately
         // (AH-0MUVM9RAO004Y3LB).
@@ -410,7 +407,7 @@ export class EffectsRegistry {
   /** Starts a timed effect or refreshes it to the (possibly new) duration. */
   private _startOrRefreshTimed(
     id: PowerUpId,
-    type: PowerUpType,
+    type: PowerUpId,
     duration: number,
     permanent: boolean,
   ): void {
@@ -632,7 +629,7 @@ export class EffectsRegistry {
     } else {
       this._timed.set('phase_shift', {
         id: 'phase_shift' as PowerUpId,
-        type: PowerUpType.PHASE_SHIFT,
+        type: 'phase_shift',
         duration,
         remaining: duration,
       });
@@ -910,7 +907,7 @@ export class EffectsRegistry {
     if (magnetStacks > 0) {
       result.push({
         id: 'magnet' as PowerUpId,
-        type: PowerUpType.MAGNET,
+        type: 'magnet',
         stacks: magnetStacks,
       });
     }
@@ -921,7 +918,7 @@ export class EffectsRegistry {
     if (scoopStacks > 0) {
       result.push({
         id: 'mineral_scoop' as PowerUpId,
-        type: PowerUpType.MINERAL_SCOOP,
+        type: 'mineral_scoop',
         stacks: scoopStacks,
       });
     }
@@ -930,7 +927,7 @@ export class EffectsRegistry {
     if (this._bombPermanent) {
       result.push({
         id: 'bomb' as PowerUpId,
-        type: PowerUpType.BOMB,
+        type: 'bomb',
         permanent: true,
       });
     }
@@ -938,7 +935,7 @@ export class EffectsRegistry {
     if (teleportStacks > 0) {
       result.push({
         id: 'teleport' as PowerUpId,
-        type: PowerUpType.TELEPORT,
+        type: 'teleport',
         stacks: teleportStacks,
       });
     }
@@ -948,7 +945,7 @@ export class EffectsRegistry {
     if (this.isPhasePermanent()) {
       result.push({
         id: 'phase_shift' as PowerUpId,
-        type: PowerUpType.PHASE_SHIFT,
+        type: 'phase_shift',
         permanent: true,
       });
     } else {
@@ -956,7 +953,7 @@ export class EffectsRegistry {
       if (phaseCharges > 0) {
         result.push({
           id: 'phase_shift' as PowerUpId,
-          type: PowerUpType.PHASE_SHIFT,
+          type: 'phase_shift',
           stacks: phaseCharges,
         });
       }

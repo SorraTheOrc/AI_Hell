@@ -103,7 +103,7 @@ export interface HUDEntry {
   /** Rendered label including the current level (e.g. "Speed Boost Lvl 3"). */
   label: string;
   /** Effect type — drives the icon drawn. */
-  icon: import('../powerups/types').PowerUpType;
+  icon: import('../powerups/types').PowerUpId;
   /** Rendered value: a countdown (`"12s"`) while temporary, else `∞`. */
   value: string;
   /** Current effective level (`permanent + temporary`). */
@@ -405,7 +405,7 @@ export class HUD extends Phaser.GameObjects.Container {
         id,
         name: entry.name,
         label: buildHUDLabel(entry.name, level, stacks),
-        icon: entry.type,
+        icon: entry.id,
         value: formatHUDValue(temporary, remaining),
         level,
         temporary,

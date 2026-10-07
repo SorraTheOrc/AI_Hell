@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 
-import { PowerUpType } from './types';
 import {
   EffectsRegistry,
   P8_LIVES_START,
@@ -17,6 +16,7 @@ import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
 } from './powerUpLevels';
+import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
   activateEffectAtUpgradeLevel,
@@ -271,7 +271,7 @@ describe('P9 Magnet hybrid (AC3)', () => {
 
     reg.applyCollect('magnet');
     const timed = reg.activeEffects().find((e) => e.id === 'magnet');
-    expect(timed?.type).toBe(PowerUpType.MAGNET);
+    expect(timed?.type).toBe('magnet');
     expect(timed?.remaining).toBeCloseTo(15, 5);
     expect(timed?.stacks).toBeUndefined();
 
@@ -820,7 +820,7 @@ describe('registry aggregation (feed for the HUD)', () => {
     const active = reg.activeEffects();
     expect(active).toHaveLength(1);
     expect(active[0].id).toBe('speed_boost');
-    expect(active[0].type).toBe(PowerUpType.SPEED_BOOST);
+    expect(active[0].type).toBe('speed_boost');
     expect(active[0].duration).toBe(resolvePowerUpAtLevel('speed_boost', 0).speedDuration);
   });
 
@@ -1077,5 +1077,15 @@ describe('HUD level and temporary-window accessors (AH-0MUX802450085VZZ)', () =>
     expect(reg.hasWeapon('spread')).toBe(true); // permanent base remains
     expect(reg.activeWeapons()[0].tempWindow).toBeFalsy();
     expect(reg.activeWeapons()[0].permanent).toBe(true);
+  });
+});
+
+describe('unified PowerUpId dispatch (F3)', () => {
+  it('dispatches every catalogue entry through the registry keyed only by PowerUpId', () => {
+    const { registry, store } = createEffectRegistry();
+    for (const id of Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]) {
+      registry.applyCollect(id);
+      expect(store.getLevel(id), `level for ${id}`).toBe(1);
+    }
   });
 });

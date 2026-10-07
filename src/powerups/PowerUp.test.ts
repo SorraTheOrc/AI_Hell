@@ -9,7 +9,6 @@ import {
 } from '../core/constants';
 
 import {
-  PowerUpType,
   PowerUpId,
   POWER_UP_CATALOGUE,
 } from './types';
@@ -82,21 +81,18 @@ describe('power-up catalogue (types)', () => {
   it('P5 is Speed Boost', () => {
     const p5 = getPowerUpById('speed_boost');
     expect(p5).toBeDefined();
-    expect(p5!.type).toBe(PowerUpType.SPEED_BOOST);
     expect(p5!.id).toBe('speed_boost');
   });
 
   it('P8 is Extra Life', () => {
     const p8 = getPowerUpById('extra_life');
     expect(p8).toBeDefined();
-    expect(p8!.type).toBe(PowerUpType.EXTRA_LIFE);
     expect(p8!.id).toBe('extra_life');
   });
 
   it('P9 is Magnet', () => {
     const p9 = getPowerUpById('magnet');
     expect(p9).toBeDefined();
-    expect(p9!.type).toBe(PowerUpType.MAGNET);
     expect(p9!.id).toBe('magnet');
   });
 
@@ -364,7 +360,7 @@ describe('PowerUp collection', () => {
     powerUp.advance(TEST_GROW_DURATION); // now at full size, holding
     const effect = powerUp.tryCollect();
     expect(effect).toBeDefined();
-    expect(effect?.type).toBe(PowerUpType.SPEED_BOOST);
+    expect(effect?.type).toBe('speed_boost');
   });
 
   it('does not apply effect again after collection', () => {
