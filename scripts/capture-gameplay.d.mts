@@ -69,3 +69,8 @@ export function readRunEndedSignal(
   plan?: RunEndedListenerPlan,
   scope?: object,
 ): unknown;
+export function captureExitCode(result?: {
+  fullRun?: boolean;
+  capHit?: boolean;
+  nonTrivial?: boolean;
+}): number;

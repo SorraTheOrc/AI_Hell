@@ -41,6 +41,7 @@ import {
   RUN_ENDED_STATE_KEY,
   RUN_ENDED_STORE_KEY,
   buildRunEndedListenerPlan,
+  captureExitCode,
   captureStartKeys,
   captureStartPlan,
   installRunEndedListener,
@@ -60,6 +61,7 @@ import {
   evaluateRunStop,
   resolveDemoGameOverDwellMs,
   shouldDemoReturnToMenu,
+  summariseCaptureRun,
   waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
 
@@ -1149,5 +1151,143 @@ describe('full-run wait loop (AH-0MUXZ4CNS009RV40)', () => {
 
     expect(progress.length).toBeGreaterThan(0);
     expect(progress).toEqual([...progress].sort((a, b) => a - b));
+  });
+});
+
+/**
+ * Integration over the pieces the browser path wires together: the run-end
+ * wait loop (with a stubbed signal source and fake clock) feeding the reported
+ * run summary and the process exit code. No browser boots
+ * (AH-0MUXZ4D0M001IWW1).
+ */
+describe('full-run capture integration (AH-0MUXZ4D0M001IWW1)', () => {
+  function makeClock(start = 0) {
+    let now = start;
+    return {
+      now: () => now,
+      advance: (ms: number) => {
+        now += ms;
+        return now;
+      },
+    };
+  }
+
+  async function captureWith(options: {
+    signalAt: number | null;
+    won: boolean;
+    score: number;
+    tailMs: number;
+    maxDurationMs: number;
+  }) {
+    const { signalAt, won, score, tailMs, maxDurationMs } = options;
+    const clock = makeClock();
+    const wait = await waitForRunEnd({
+      now: clock.now,
+      readSignal: () =>
+        signalAt !== null && clock.now() >= signalAt ? { won, score } : null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 250,
+      tailMs,
+      maxDurationMs,
+    });
+    return {
+      wait,
+      summary: summariseCaptureRun({ fullRun: true, wait, recordingMs: 0 }),
+    };
+  }
+
+  it('stops the recording exactly one tail after a victory signal', async () => {
+    const tailMs = 5_000;
+    const { wait, summary } = await captureWith({
+      signalAt: 12_000,
+      won: true,
+      score: 500,
+      tailMs,
+      maxDurationMs: 60_000,
+    });
+
+    expect(wait.elapsedMs).toBe(12_000 + tailMs);
+    expect(summary.complete).toBe(true);
+    expect(summary.capHit).toBe(false);
+    expect(summary.runOutcome).toEqual({ won: true, score: 500 });
+    expect(summary.runLengthMs).toBe(12_000);
+    expect(captureExitCode({ ...summary, nonTrivial: true })).toBe(0);
+  });
+
+  it('stops one tail after a defeat signal too', async () => {
+    const tailMs = 2_000;
+    const { wait, summary } = await captureWith({
+      signalAt: 4_000,
+      won: false,
+      score: 0,
+      tailMs,
+      maxDurationMs: 60_000,
+    });
+
+    expect(wait.elapsedMs).toBe(4_000 + tailMs);
+    expect(summary.complete).toBe(true);
+    expect(summary.runOutcome).toEqual({ won: false, score: 0 });
+    expect(captureExitCode({ ...summary, nonTrivial: true })).toBe(0);
+  });
+
+  it('reports an incomplete clip and exits non-zero when the cap is hit', async () => {
+    const { wait, summary } = await captureWith({
+      signalAt: null,
+      won: false,
+      score: 0,
+      tailMs: 5_000,
+      maxDurationMs: 3_000,
+    });
+
+    expect(wait.capHit).toBe(true);
+    expect(summary.complete).toBe(false);
+    expect(summary.capHit).toBe(true);
+    expect(summary.runOutcome).toBeNull();
+    expect(summary.runLengthMs).toBe(wait.elapsedMs);
+    expect(captureExitCode({ ...summary, nonTrivial: true })).toBe(1);
+  });
+
+  it('does not fail a complete fixed-length capture on the cap check', () => {
+    const fixed = summariseCaptureRun({
+      fullRun: false,
+      recordingMs: 15_000,
+    });
+
+    expect(fixed.complete).toBeNull();
+    expect(fixed.capHit).toBe(false);
+    expect(fixed.runLengthMs).toBe(15_000);
+    expect(captureExitCode({ ...fixed, nonTrivial: true })).toBe(0);
+  });
+
+  it('fails non-zero for a trivial clip regardless of completeness', async () => {
+    const { summary } = await captureWith({
+      signalAt: 1_000,
+      won: true,
+      score: 1,
+      tailMs: 500,
+      maxDurationMs: 60_000,
+    });
+
+    expect(captureExitCode({ ...summary, nonTrivial: false })).toBe(1);
+  });
+
+  it('holds the demo game-over screen for at least the captured tail', async () => {
+    const { wait } = await captureWith({
+      signalAt: 3_000,
+      won: true,
+      score: 42,
+      tailMs: DEFAULT_CAPTURE_TAIL_MS,
+      maxDurationMs: 60_000,
+    });
+    const capturedTailMs = wait.elapsedMs - (wait.signalTimeMs ?? 0);
+
+    expect(capturedTailMs).toBe(DEFAULT_CAPTURE_TAIL_MS);
+    expect(resolveDemoGameOverDwellMs()).toBeGreaterThanOrEqual(capturedTailMs);
+    expect(
+      shouldDemoReturnToMenu(capturedTailMs - 1, resolveDemoGameOverDwellMs()),
+    ).toBe(false);
+    expect(
+      shouldDemoReturnToMenu(capturedTailMs, resolveDemoGameOverDwellMs()),
+    ).toBe(true);
   });
 });

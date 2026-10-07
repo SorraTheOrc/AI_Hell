@@ -65,6 +65,22 @@ export interface RunEndWaitResult extends RunStopDecision {
   runLengthMs: number;
 }
 
+/** Inputs to `summariseCaptureRun`. */
+export interface CaptureRunInput {
+  fullRun?: boolean;
+  wait?: RunEndWaitResult | null;
+  recordingMs?: number;
+}
+
+/** The run-outcome fields reported by a capture. */
+export interface CaptureRunSummary {
+  fullRun: boolean;
+  complete: boolean | null;
+  capHit: boolean;
+  runOutcome: RunEndedDetail | null;
+  runLengthMs: number;
+}
+
 /** Post-signal tail length in milliseconds. */
 export const DEFAULT_CAPTURE_TAIL_MS: number;
 /** Generous safety cap for a full-run recording, in milliseconds. */
@@ -88,6 +104,9 @@ export function evaluateRunStop(state?: RunStopState): RunStopDecision;
 export function waitForRunEnd(
   options?: RunEndWaitOptions,
 ): Promise<RunEndWaitResult>;
+export function summariseCaptureRun(
+  capture?: CaptureRunInput,
+): CaptureRunSummary;
 export function resolveDemoGameOverDwellMs(
   configuredMs?: number,
   minMs?: number,

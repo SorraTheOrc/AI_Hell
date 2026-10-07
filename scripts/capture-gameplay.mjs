@@ -64,6 +64,7 @@ import {
 import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
+  summariseCaptureRun,
   waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
 import {
@@ -726,21 +727,16 @@ export async function runCapture(
     // A full run is complete once the game signalled its end; hitting the cap
     // without a signal is reported explicitly so a capped clip is never
     // presented as a complete run (AC3). Fixed-length captures report neither.
-    const runOutcome = fullRun ? runWait?.signal ?? null : null;
-    const capHit = fullRun ? runWait?.capHit === true : false;
-    const complete = fullRun ? !capHit : null;
-    const runLengthMs = fullRun
-      ? runWait?.runLengthMs ?? recordingMs
-      : recordingMs;
+    const runSummary = summariseCaptureRun({
+      fullRun,
+      wait: runWait,
+      recordingMs,
+    });
     return {
       output: outputPath,
       bytes: video.length,
       durationMs: recordingMs,
-      fullRun,
-      complete,
-      capHit,
-      runOutcome,
-      runLengthMs,
+      ...runSummary,
       renderer: probe.renderer,
       ...probe,
       audioVerdict,
@@ -1043,6 +1039,24 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
   }, fallbackDurationMs);
 }
 
+/**
+ * Resolves the process exit code for a capture result (AH-0MUXZ4D0M001IWW1).
+ *
+ * A full run that hit the `--max-duration` cap without a run-end signal is an
+ * incomplete run and must fail non-zero so a capped clip is never silently
+ * accepted; a trivial clip fails for the same reason. Extracted from `main()`
+ * so the integration tests can assert the cap path's exit code without a
+ * browser.
+ *
+ * @param {{ fullRun?: boolean, capHit?: boolean, nonTrivial?: boolean }} [result]
+ * @returns {number}
+ */
+export function captureExitCode(result = {}) {
+  if (result.fullRun === true && result.capHit === true) return 1;
+  if (result.nonTrivial === false) return 1;
+  return 0;
+}
+
 function formatReport(result) {
   const lines = [
     'AI_Hell automated gameplay capture',
@@ -1106,13 +1120,14 @@ async function main() {
       'Capture hit the --max-duration safety cap without a run-end signal; ' +
         'the clip is an incomplete run.',
     );
-    process.exitCode = 1;
   }
 
   if (!result.nonTrivial) {
     console.error('Capture produced a trivial clip; see reasons above.');
-    process.exitCode = 1;
   }
+
+  const exitCode = captureExitCode(result);
+  if (exitCode !== 0) process.exitCode = exitCode;
 }
 
 const invokedDirectly =

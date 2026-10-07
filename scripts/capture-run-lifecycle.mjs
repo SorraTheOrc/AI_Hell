@@ -310,6 +310,51 @@ export async function waitForRunEnd(options = {}) {
 }
 
 /**
+ * Summarises a capture into the fields the tool reports about the run
+ * (AH-0MUXZ4D0M001IWW1).
+ *
+ * For a full run, a signal means the clip is `complete`; reaching the safety
+ * cap without one marks it incomplete (`capHit`) so the reported result can
+ * never present a capped clip as a finished run. Fixed-length captures carry
+ * neither flag (`complete: null`), matching their legacy behaviour.
+ *
+ * @param {{
+ *   fullRun?: boolean,
+ *   wait?: { capHit?: boolean, signal?: { won: boolean, score: number }|null, runLengthMs?: number }|null,
+ *   recordingMs?: number,
+ * }} [capture]
+ * @returns {{
+ *   fullRun: boolean,
+ *   complete: boolean|null,
+ *   capHit: boolean,
+ *   runOutcome: { won: boolean, score: number }|null,
+ *   runLengthMs: number,
+ * }}
+ */
+export function summariseCaptureRun(capture = {}) {
+  const durationMs = toFiniteOr(capture.recordingMs, 0);
+
+  if (capture.fullRun !== true) {
+    return {
+      fullRun: false,
+      complete: null,
+      capHit: false,
+      runOutcome: null,
+      runLengthMs: durationMs,
+    };
+  }
+
+  const capHit = capture.wait?.capHit === true;
+  return {
+    fullRun: true,
+    complete: !capHit,
+    capHit,
+    runOutcome: capture.wait?.signal ?? null,
+    runLengthMs: capture.wait?.runLengthMs ?? durationMs,
+  };
+}
+
+/**
  * Resolves the effective demo game-over dwell, in milliseconds.
  *
  * The configured value (from `DEMO_GAME_OVER_DWELL_MS`, an override, or a test
