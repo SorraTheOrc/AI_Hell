@@ -60,6 +60,13 @@ interface SimulationTrace {
   minDistance: number;
   /** The ship's facing at the closest approach to the target. */
   minFacing: number;
+  /** The ship's speed at the closest approach to the target. */
+  minSpeed: number;
+  /**
+   * How far past the target the ship travelled along the start→target axis
+   * (0 when it never overshot).
+   */
+  overshoot: number;
   /** Distance at the start of the run. */
   startDistance: number;
 }
@@ -93,9 +100,15 @@ function simulateToward(
   let state: SteeringState = { ...start };
   const distTo = (s: SteeringState) => Math.hypot(s.x - target.x, s.y - target.y);
   const startDistance = distTo(state);
+  // Unit axis from the start position toward the target, used to measure how
+  // far *past* the target the ship travels (overshoot).
+  const axisX = (target.x - state.x) / (startDistance || 1);
+  const axisY = (target.y - state.y) / (startDistance || 1);
   let minDistance = startDistance;
   let maxDistance = startDistance;
   let minFacing = state.facing;
+  let minSpeed = Math.hypot(state.vx, state.vy);
+  let overshoot = 0;
 
   for (let i = 0; i < ticks; i += 1) {
     const intent = decideBotIntent(snapshotOf(state, targets));
@@ -115,8 +128,12 @@ function simulateToward(
     if (d < minDistance) {
       minDistance = d;
       minFacing = state.facing;
+      minSpeed = Math.hypot(state.vx, state.vy);
     }
     if (d > maxDistance) maxDistance = d;
+    const projection =
+      (state.x - target.x) * axisX + (state.y - target.y) * axisY;
+    if (projection > overshoot) overshoot = projection;
   }
 
   return {
@@ -124,6 +141,8 @@ function simulateToward(
     maxDistance,
     minDistance,
     minFacing,
+    minSpeed,
+    overshoot,
     startDistance,
   };
 }
@@ -179,6 +198,22 @@ describe('closed-loop steering (rejection AH-0MUXYOV4C008MV0L)', () => {
     // The ship turned toward the enemy and closed distance rather than
     // drifting away — the reported failure was that it could not engage.
     expect(trace.minDistance).toBeLessThan(trace.startDistance * 0.6);
+  });
+
+  it('brakes to a controlled stop on a mineral instead of overshooting (AC10)', () => {
+    // A mineral dead ahead; without the forward model the ship would blast
+    // past it and wrap around the screen.
+    const target = { x: START.x + 260, y: START.y };
+    const mineral: BotMineral = { x: target.x, y: target.y, type: 'mineral' };
+
+    const trace = simulateToward(START, target, { minerals: [mineral] }, 300);
+
+    // Arrives within the arrival radius...
+    expect(trace.minDistance).toBeLessThan(25);
+    // ... at a low closing speed (a controlled stop, not a fly-through)...
+    expect(trace.minSpeed).toBeLessThan(35);
+    // ... and never runs meaningfully past the mineral.
+    expect(trace.overshoot).toBeLessThan(20);
   });
 
   it('survival bounds the aim: the ship does not fly into a shot line', () => {

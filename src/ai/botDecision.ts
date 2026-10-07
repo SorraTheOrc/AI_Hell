@@ -48,6 +48,21 @@
  * unit-tested with plain stubbed snapshots.  Every tunable lives in
  * {@link BotDecisionTunables} (AC5) — there are no scattered magic numbers.
  *
+ * ## Forward model (AC10 — no thruster overshoot)
+ *
+ * The ship is Newtonian and has no brakes, so a bot that simply points at its
+ * target and holds the throttle flies past it.  `decideBotIntent` therefore
+ * plans its own **stopping distance** ahead: the ship sheds speed at
+ * {@link BotDecisionTunables.frictionDeceleration} when coasting, so from
+ * speed `v` it needs `v² / (2a)` to stop.  Thrusting is suppressed whenever
+ * that stopping distance would carry the ship past the target (into
+ * {@link BotDecisionTunables.collectArrivalRadius} for pickups, or the
+ * engagement standoff for hazards); the intent still **aims** at the target
+ * while `thrust` is `false`, so the ship coasts to a controlled stop rather
+ * than overshooting.  The governor re-evaluates this thrust flag every tick
+ * (a fast reflex) while the chosen heading stays committed for the human
+ * reaction window.
+ *
  * @module src/ai/botDecision
  */
 
@@ -102,6 +117,19 @@ export interface BotDecisionTunables {
    * tick (the approach/retreat oscillation the operator observed).
    */
   engagementHysteresis: number;
+  /**
+   * The ship's friction deceleration (px/s²) — how fast it sheds speed when
+   * no thrust is applied.  Used to plan the braking distance ahead of a
+   * target so the bot stops instead of overshooting.  Defaults to the
+   * shipped ship config (100 px/s²).
+   */
+  frictionDeceleration: number;
+  /**
+   * Distance (px) from a collection target within which it counts as reached.
+   * The bot aims to arrive (near-zero speed) inside this radius rather than
+   * barrelling through the target.
+   */
+  collectArrivalRadius: number;
   /** Playfield width (px) — the right wall sits at this x. */
   playfieldWidth: number;
   /** Playfield height (px) — the bottom wall sits at this y. */
@@ -123,6 +151,8 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   firePredictionHorizon: 0.9,
   assumedBulletSpeed: 200,
   engagementHysteresis: 1.6,
+  frictionDeceleration: 100,
+  collectArrivalRadius: 18,
   playfieldWidth: 960,
   playfieldHeight: 540,
 };
@@ -137,12 +167,22 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
  * The rotational `asteroids` scheme aims the hull at `(dirX, dirY)` so the
  * ship points straight at its target and thrusts forward; the
  * four-directional scheme uses the booleans.
+ *
+ * `thrust` is the **forward-model** decision (AC10): the bot plans its own
+ * stopping distance, so when continuing to thrust would overshoot the target
+ * it sets `thrust: false` (coast) while still aiming.  Defaults to `true` so
+ * callers that do not plan can omit it.
  */
 export interface BotSteeringIntent extends FourDirectionalInput {
   /** Precise unit x component of the desired travel direction (0 when idle). */
   readonly dirX: number;
   /** Precise unit y component of the desired travel direction (0 when idle). */
   readonly dirY: number;
+  /**
+   * Whether to apply forward thrust toward `(dirX, dirY)`.  `false` = coast
+   * (aim but do not accelerate) — used when thrusting would overshoot.
+   */
+  readonly thrust: boolean;
 }
 
 // ── Direction primitives ────────────────────────────────────────────
@@ -471,14 +511,32 @@ export function decideBotIntent(
   // ── 2. MINERALS (collect first — the operator's top goal) ──────
   const mineral = nearestWithin(snapshot.minerals, px, py, t.mineralSeekRange);
   if (mineral) {
-    const intent = approachIntent(mineral, 1, snapshot, t, px, py, safeDirections);
+    const intent = approachIntent(
+      mineral,
+      1,
+      snapshot,
+      t,
+      px,
+      py,
+      safeDirections,
+      t.collectArrivalRadius,
+    );
     if (intent) return intent;
   }
 
   // ── 3. POWER-UPS ────────────────────────────────────────────────
   const powerUp = nearestWithin(snapshot.drops, px, py, t.powerUpSeekRange);
   if (powerUp) {
-    const intent = approachIntent(powerUp, 1, snapshot, t, px, py, safeDirections);
+    const intent = approachIntent(
+      powerUp,
+      1,
+      snapshot,
+      t,
+      px,
+      py,
+      safeDirections,
+      t.collectArrivalRadius,
+    );
     if (intent) return intent;
   }
 
@@ -499,6 +557,7 @@ export function decideBotIntent(
       px,
       py,
       safeDirections,
+      t.dangerMargin,
     );
     if (intent) return intent;
   }
@@ -520,6 +579,7 @@ export function decideBotIntent(
       px,
       py,
       safeDirections,
+      t.dangerMargin,
     );
     if (intent) return intent;
   }
@@ -532,16 +592,19 @@ export function decideBotIntent(
 /**
  * Four-directional projection of {@link decideBotIntent}, retained for the
  * `fourDirectional` scheme and existing callers.  The precise `dirX`/`dirY`
- * are dropped; the returned object is exactly the four booleans.
+ * and the `thrust` flag are dropped; the returned object is exactly the four
+ * booleans.
  */
 export function decideBotInput(
   snapshot: BotSnapshot,
   tunableOverrides?: Partial<BotDecisionTunables>,
 ): FourDirectionalInput {
-  const { dirX: _dirX, dirY: _dirY, ...cardinal } = decideBotIntent(
-    snapshot,
-    tunableOverrides,
-  );
+  const {
+    dirX: _dirX,
+    dirY: _dirY,
+    thrust: _thrust,
+    ...cardinal
+  } = decideBotIntent(snapshot, tunableOverrides);
   return cardinal;
 }
 
@@ -565,19 +628,55 @@ function approachIntent(
   px: number,
   py: number,
   safeDirections: readonly BotDirection[],
+  arrivalRadius: number,
 ): BotSteeringIntent | null {
   const rx = target.x - px;
   const ry = target.y - py;
   const d = Math.hypot(rx, ry) || 1;
   const dirX = (direction * rx) / d;
   const dirY = (direction * ry) / d;
+  // Forward model (AC10): only accelerate when the ship can still shed the
+  // speed it has by the time it reaches the target; otherwise coast.  A
+  // retreat always thrusts (it is trying to escape, not arrive).
+  const thrust =
+    direction === 1
+      ? mayThrust(snapshot, t, target.distance, arrivalRadius)
+      : true;
 
   if (evaluateVector(dirX, dirY, snapshot, t, px, py).safe) {
-    return buildIntent(dirX, dirY);
+    return buildIntent(dirX, dirY, thrust);
   }
 
   const safe = steerToward(target, safeDirections, px, py, direction);
-  return safe ? buildCardinalIntent(safe) : null;
+  return safe ? buildCardinalIntent(safe, thrust) : null;
+}
+
+/**
+ * Forward model (AC10): whether continuing to thrust is safe given the
+ * target's remaining distance and the ship's current speed.
+ *
+ * The ship sheds speed at {@link BotDecisionTunables.frictionDeceleration}
+ * when coasting, so the distance it needs to stop from speed `v` is
+ * `v² / (2a)`.  Thrusting is only safe while that stopping distance fits in
+ * the remaining gap (target distance minus the arrival radius); otherwise the
+ * bot would overshoot, so it coasts and lets friction bring it to rest on
+ * target.  This is re-evaluated every tick by the governor (the throttle is a
+ * fast reflex) even while the chosen heading stays committed.
+ */
+function mayThrust(
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  distance: number,
+  arrivalRadius: number,
+): boolean {
+  const player = snapshot.player;
+  if (!player) return false;
+  // No friction -> the ship cannot brake by coasting; keep thrusting.
+  if (t.frictionDeceleration <= 0) return true;
+  const speed = Math.hypot(player.vx, player.vy);
+  const gap = Math.max(0, distance - arrivalRadius);
+  const stoppingDistance = (speed * speed) / (2 * t.frictionDeceleration);
+  return stoppingDistance <= gap;
 }
 
 /**
@@ -657,7 +756,7 @@ function mostClearDirection(
  * normalised and the cardinal booleans are its nearest-cardinal projection,
  * so `decideBotInput` stays a faithful four-directional approximation.
  */
-function buildIntent(dirX: number, dirY: number): BotSteeringIntent {
+function buildIntent(dirX: number, dirY: number, thrust = true): BotSteeringIntent {
   const len = Math.hypot(dirX, dirY) || 1;
   const ux = dirX / len;
   const uy = dirY / len;
@@ -669,13 +768,13 @@ function buildIntent(dirX: number, dirY: number): BotSteeringIntent {
       : uy >= 0
         ? { up: false, down: true, left: false, right: false }
         : { up: true, down: false, left: false, right: false };
-  return { ...cardinal, dirX: ux, dirY: uy };
+  return { ...cardinal, dirX: ux, dirY: uy, thrust };
 }
 
 /** Builds an intent along a cardinal direction. */
-function buildCardinalIntent(dir: BotDirection): BotSteeringIntent {
+function buildCardinalIntent(dir: BotDirection, thrust = true): BotSteeringIntent {
   const vec = DIR_VECTORS[dir];
-  return { ...buildInput(dir), dirX: vec.dx, dirY: vec.dy };
+  return { ...buildInput(dir), dirX: vec.dx, dirY: vec.dy, thrust };
 }
 
 /** Builds a `FourDirectionalInput` from a direction. */
@@ -690,5 +789,13 @@ function buildInput(dir: BotDirection): FourDirectionalInput {
 
 /** An all-false intent (hold position). */
 function idleIntent(): BotSteeringIntent {
-  return { up: false, down: false, left: false, right: false, dirX: 0, dirY: 0 };
+  return {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    dirX: 0,
+    dirY: 0,
+    thrust: false,
+  };
 }

@@ -112,6 +112,13 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   6. **Idle** — nothing to do: hold station.
   All tunables live in one place (`BOT_DECISION_TUNABLES` in
   `src/ai/botDecision.ts`).
+- **Predictive braking (AC10):** the ship is Newtonian and has no brakes, so
+  the bot models its own **stopping distance** (`v² / 2a`, where `a` is the
+  ship's friction deceleration) and stops thrusting when continuing would
+  overshoot. It coasts to a controlled stop within the collection radius or
+  the engagement standoff instead of flying past its target. The `thrust`
+  flag is re-evaluated **every tick** (a fast reflex) while the chosen
+  heading stays committed for the human reaction window.
 - **Same input path as a player:** the bot's decision flows through the shared
   `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
   before the keyboard — so the demo ship obeys exactly the same

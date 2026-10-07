@@ -391,6 +391,66 @@ describe('precise steering intent — point at the target (rejection)', () => {
   });
 });
 
+// ── Forward model: no thruster overshoot (AC10) ─────────────────────
+//
+// The operator reported the bot "tends to overshoot with its thrusters" and
+// "needs to plan further into the future".  The intent now carries a `thrust`
+// flag computed from the ship's own stopping distance (`v² / 2a`): it coasts
+// when thrusting would carry it past the target.
+
+describe('predictive braking — plan the stopping distance (AC10)', () => {
+  it('coasts instead of thrusting when thrusting would overshoot', () => {
+    // 100 px from the mineral but already moving at 170 px/s: stopping
+    // distance is 170²/(2·100) = 144 px > gap (100 − 18) → coast.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    const intent = decideBotIntent(snapshot);
+    expect(intent.thrust).toBe(false);
+    // Still aims at the mineral, so the ship coasts straight at it.
+    expect(intent.dirX).toBeGreaterThan(0);
+  });
+
+  it('thrusts when it can still stop within the remaining distance', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(decideBotIntent(snapshot).thrust).toBe(true);
+  });
+
+  it('resumes thrusting once friction has slowed it enough to stop', () => {
+    // Same 100 px gap as the coast case but slow enough to stop in time:
+    // stopping distance 60²/200 = 18 px <= 82 px gap.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 60, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(decideBotIntent(snapshot).thrust).toBe(true);
+  });
+
+  it('plans the standoff when engaging: coasts rather than ramming', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      enemies: [enemy(500, 300, 'tank')], // 100 px away; standoff is 70
+    });
+    const intent = decideBotIntent(snapshot);
+    // gap = 100 − 70 = 30; stopping distance 144 > 30 → coast (do not ram).
+    expect(intent.thrust).toBe(false);
+  });
+
+  it('is a no-op when friction is zero (the ship cannot brake by coasting)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(
+      decideBotIntent(snapshot, { frictionDeceleration: 0 }).thrust,
+    ).toBe(true);
+  });
+});
+
 // ── AC2: deterministic unit test per priority branch ────────────────
 
 describe('AC2 — one deterministic test per priority branch', () => {

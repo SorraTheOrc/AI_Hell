@@ -32,6 +32,7 @@ import {
   decideBotInput,
 } from '../ai/botDecision';
 import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
+import type { BotInputGovernor } from '../ai/botHumanLike';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
@@ -177,7 +178,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(player.y).toBeLessThan(beforeY);
   });
 
-  it('AC1/AC3 — the demo input changes at a human cadence, not every tick', async () => {
+  it('AC1/AC3 — the committed steering is held at a human cadence, not every tick', async () => {
     const menu = await bootMenu();
     menu.startDemo();
     await wait(150);
@@ -186,13 +187,22 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(play.isDemoMode()).toBe(true);
 
     // Reset the governor cadence, then tick a window shorter than the
-    // reaction time: the committed input must be held, not flip-flopped
-    // every frame (AH-0MUXXQ1MN002RXGB).
+    // reaction time: the committed *steering decision* (chosen target bearing)
+    // must be held, not flip-flopped every frame (AH-0MUXXQ1MN002RXGB).  The
+    // resolved scheme input may still vary every tick — the closed-loop turn
+    // tracks the held bearing and the forward-model throttle is a fast
+    // braking reflex (AC10) — so we assert the committed intent here.
     play.setDemoMode(true);
+    const governor = (play as unknown as { botGovernor: BotInputGovernor })
+      .botGovernor;
+    const steering = (): unknown => {
+      const { thrust: _thrust, ...held } = governor.currentIntent();
+      return held;
+    };
     const seen = new Set<string>();
     for (let i = 0; i < 10; i += 1) {
       play.tick(1 / 60);
-      seen.add(JSON.stringify(botInputOf(play)));
+      seen.add(JSON.stringify(steering()));
     }
     expect(seen.size).toBe(1);
   });

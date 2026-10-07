@@ -397,3 +397,63 @@ describe('BotInputGovernor — closed-loop aiming (rejection)', () => {
     ).toEqual(asteroid('turnRight'));
   });
 });
+
+// ── Forward-model throttle (AC10) ───────────────────────────────────
+//
+// The bot's `thrust` flag is the fast-reflex braking decision: it is
+// re-evaluated every tick even while the chosen heading stays committed for
+// the human reaction window.
+
+describe('forward-model throttle (AC10)', () => {
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+    };
+  }
+
+  it('coasts (no forward thrust) when the intent says thrust is false', () => {
+    expect(
+      toAsteroidsInput(
+        { ...input('right'), dirX: 1, dirY: 0, thrust: false },
+        0,
+      ),
+    ).toEqual(asteroid());
+  });
+
+  it('still turns toward the target while coasting', () => {
+    // Aiming up but coasting: the ship turns toward up without thrusting.
+    expect(toAsteroidsInput({ ...input('up'), thrust: false }, 0)).toEqual(
+      asteroid('turnLeft'),
+    );
+  });
+
+  it('re-evaluates the thrust flag every tick while the heading is held', () => {
+    const governor = new BotInputGovernor({ reactionTimeMs: 1000 });
+    const intent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
+
+    expect(
+      governor.update(intent, 1 / 60, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual(asteroid('forward'));
+
+    // Inside the reaction window the heading is held, but the braking reflex
+    // takes effect immediately: the same heading now coasts.
+    const braking = { ...input('right'), dirX: 1, dirY: 0, thrust: false };
+    expect(
+      governor.update(braking, 1 / 60, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual(asteroid());
+  });
+
+  it('coasts in four-directional mode too (releases the movement keys)', () => {
+    const governor = new BotInputGovernor();
+    expect(
+      governor.update({ ...input('right'), thrust: false }, 1 / 60, {
+        scheme: 'fourDirectional',
+        facing: 0,
+      }),
+    ).toEqual(input());
+  });
+});

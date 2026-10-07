@@ -115,13 +115,15 @@ export const BOT_MINERAL_CHOICE_DELAY_MS = 900;
 /**
  * A steering intent the governor understands: the four-directional booleans
  * plus an optional precise unit bearing (`dirX`/`dirY`) toward the chosen
- * target.  {@link BotSteeringIntent} satisfies this shape; a bare
- * `FourDirectionalInput` is also accepted and falls back to the cardinal
- * booleans.
+ * target and an optional `thrust` flag.  {@link BotSteeringIntent} satisfies
+ * this shape; a bare `FourDirectionalInput` is also accepted and falls back to
+ * the cardinal booleans with thrust enabled.
  */
 export interface SteeredIntent extends FourDirectionalInput {
   readonly dirX?: number;
   readonly dirY?: number;
+  /** Whether to apply forward thrust; `false` coasts (aims without thrusting). */
+  readonly thrust?: boolean;
 }
 
 /** The ship context the governor needs to execute a steering intent. */
@@ -164,7 +166,9 @@ export function toAsteroidsInput(
     Math.cos(desired - facing),
   );
   if (Math.abs(error) <= toleranceRad) {
-    return { forward: true, turnLeft: false, turnRight: false };
+    // Aimed at the target: thrust unless the forward model says coasting
+    // (braking) is required to avoid overshooting.
+    return { forward: intent.thrust !== false, turnLeft: false, turnRight: false };
   }
   return {
     forward: false,
@@ -256,6 +260,12 @@ export class BotInputGovernor {
     if (this.sinceCommitMs >= this.tunables.reactionTimeMs) {
       this.committed = { ...decision };
       this.sinceCommitMs = 0;
+    } else if (typeof decision.thrust === 'boolean') {
+      // Throttle/braking is a fast reflex: re-evaluate the thrust flag every
+      // tick while the chosen target/heading stays committed for the human
+      // reaction window.  This is what lets the forward model brake on time
+      // instead of overshooting inside a held 250 ms thrust pulse (AC10).
+      this.committed = { ...this.committed, thrust: decision.thrust };
     }
     this.resolved = this.resolve(this.committed, context);
     return this.current();
@@ -264,6 +274,19 @@ export class BotInputGovernor {
   /** The currently resolved scheme input (defensive copy). */
   current(): ControlInput {
     return { ...this.resolved };
+  }
+
+  /**
+   * The steering intent committed at the last reaction (defensive copy).
+   *
+   * This is the human-cadence decision: the chosen target bearing is held for
+   * `reactionTimeMs`.  The resolved scheme input ({@link current}) may still
+   * change every tick — the closed-loop turn tracks the held bearing and the
+   * forward-model throttle ({@link SteeredIntent.thrust}) is a fast braking
+   * reflex.
+   */
+  currentIntent(): SteeredIntent {
+    return { ...this.committed };
   }
 
   /** Resolves a steering intent to the ship's scheme input. */
@@ -278,6 +301,7 @@ export class BotInputGovernor {
         this.tunables.alignmentToleranceRad,
       );
     }
+    if (decision.thrust === false) return { ...IDLE_INPUT };
     return {
       up: decision.up,
       down: this.tunables.allowDown ? decision.down : false,
