@@ -100,6 +100,9 @@ import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
+import type { ControlInput } from '../utils/movementModel';
+import { decideBotInput } from '../ai/botDecision';
+import { buildBotSnapshot } from '../ai/botSnapshot';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import {
   DEFAULT_BINDINGS,
@@ -308,6 +311,14 @@ export class PlayScene extends CombatScene<
   PlayEnemyBullet,
   PlayDrop
 > {
+  /**
+   * Whether this run is the bot-driven demo/attract mode
+   * (AH-0MUX495VG0014MIY). Opt-in via
+   * `scene.start('PlayScene', { demo: true })`; false for normal play, so the
+   * demo can never leak into a real session (AC1/AC7).
+   */
+  private demoMode = false;
+
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -438,6 +449,15 @@ export class PlayScene extends CombatScene<
 
   // ── Scene lifecycle ─────────────────────────────────────────────
 
+  /**
+   * Reads the scene-start data. Demo/attract mode is opt-in: only an explicit
+   * `{ demo: true }` turns it on, so a normal `scene.start('PlayScene')` is
+   * unaffected (AC1/AC7).
+   */
+  init(data?: { demo?: boolean }): void {
+    this.demoMode = data?.demo === true;
+  }
+
   create(): void {
     // Reset any state carried over from a previous session (restarts reuse
     // the same scene instance — never leak stale enemies/bullets/timers).
@@ -451,6 +471,12 @@ export class PlayScene extends CombatScene<
     // Player ship (auto-fire, weapons, effects).
     this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
     this.add.existing(this.player);
+    if (this.demoMode) {
+      // The bot decision steers in absolute screen directions (four-
+      // directional input); pin the demo ship to that scheme so the decision
+      // maps directly to thrust. Normal play keeps the configured scheme.
+      this.player.setScheme('fourDirectional');
+    }
     this.cursors = this.input.keyboard?.createCursorKeys();
     // Movement / layer-drop / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
@@ -1334,6 +1360,17 @@ export class PlayScene extends CombatScene<
   // ── Player input & fire ─────────────────────────────────────────
 
   /**
+   * Demo/attract-mode bot input (AC2). With demo mode on, the shared input
+   * seam consumes the pure `decideBotInput` decision over a fresh read-only
+   * snapshot of this scene's live state instead of the keyboard. Off (the
+   * default) → null, and the keyboard path is used unchanged (AC4).
+   */
+  protected override getBotInput(): ControlInput | null {
+    if (!this.demoMode) return null;
+    return decideBotInput(buildBotSnapshot(this));
+  }
+
+  /**
    * Plays the per-weapon shoot cue when a weapon fires — the hook for
    * the shared {@link CombatScene._autoFire}.
    */
@@ -1965,6 +2002,14 @@ export class PlayScene extends CombatScene<
 
   /** Transitions to GameOverScene with the final score. */
   private _finishRun(won: boolean): void {
+    if (this.demoMode) {
+      // Non-scoring demo (AC5): skip GameOverScene entirely — no score entry
+      // and no persisted session state — and return to the menu, which can
+      // start another demo. Demo runs never touch the leaderboard.
+      this.demoMode = false;
+      this.scene.start('MenuScene');
+      return;
+    }
     this.scene.start('GameOverScene', { won, score: this.gameState.score });
   }
 
@@ -2048,6 +2093,30 @@ export class PlayScene extends CombatScene<
   /** True while a wave/level transition is in progress. */
   isTransitioning(): boolean {
     return this.transitionTimer > 0;
+  }
+
+  // ── Demo / attract mode (AH-0MUX495VG0014MIY) ───────────────────
+
+  /**
+   * Whether this run is the bot-driven demo/attract mode (AC1). Set when the
+   * scene is started with `{ demo: true }` (or via `setDemoMode`).
+   */
+  isDemoMode(): boolean {
+    return this.demoMode;
+  }
+
+  /**
+   * Turns demo mode on/off at runtime. On, the shared input seam consumes the
+   * bot decision; off, control returns to the keyboard with no bot input read
+   * (AC4/AC7). Used by the menu attract lifecycle and tests.
+   */
+  setDemoMode(demo: boolean): void {
+    this.demoMode = demo;
+    if (demo && this.player) {
+      // Match the create-time demo setup: the bot's four-directional decision
+      // must map to the ship's active scheme (idempotent when already set).
+      this.player.setScheme('fourDirectional');
+    }
   }
 
   // ── Pause control (parent AH-0MU9LPZ0G0015292) ──────────────────

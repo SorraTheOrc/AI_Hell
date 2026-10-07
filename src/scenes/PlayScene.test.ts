@@ -3883,4 +3883,103 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(effect.active).toBe(false);
     }
   });
+
+  // ── Demo/attract mode (AH-0MUX495VG0014MIY AC1/AC3/AC4/AC6) ────
+
+  describe('Demo mode flag (AC1/AC6)', () => {
+    it('AC1 — demo mode is set when started with { demo: true }', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+    });
+
+    it('AC6 — demo mode is false when started normally', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+      scene.scene.start('PlayScene');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    it('AC6 — setDemoMode toggles the flag at runtime', async () => {
+      const scene = await bootPlay();
+      expect(scene.isDemoMode()).toBe(false);
+      scene.setDemoMode(true);
+      expect(scene.isDemoMode()).toBe(true);
+      scene.setDemoMode(false);
+      expect(scene.isDemoMode()).toBe(false);
+    });
+  });
+
+  describe('Normal play unaffected (AC4/AC6)', () => {
+    it('AC4 — normal play does not call bot decision logic', async () => {
+      const scene = await bootPlay();
+      // In normal mode the bot-input seam returns null, so the keyboard
+      // path is used unchanged.
+      const botInput = (scene as unknown as {
+        getBotInput(): { up: boolean; down: boolean; left: boolean; right: boolean } | null;
+      }).getBotInput();
+      expect(botInput).toBeNull();
+    });
+  });
+
+  describe('Demo lifecycle (AC3/AC6)', () => {
+    it('AC3 — demo run returns to MenuScene when the player dies', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+
+      // Start the demo
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+
+      // Kill the player on the final life so the hit ends the run
+      scene.getGameState().lives = 1;
+      (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+      // Wait for the game-over / menu transition
+      await new Promise((r) => setTimeout(r, 300));
+
+      // The demo should have returned to MenuScene, NOT GameOverScene.
+      // Verify by checking the current active scene key.
+      const activeKey = scene.scene.isActive('GameOverScene')
+        ? 'GameOverScene'
+        : scene.scene.isActive('MenuScene')
+          ? 'MenuScene'
+          : 'other';
+      expect(activeKey).toBe('MenuScene');
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    it('AC3 — normal play navigates to GameOverScene when the player dies', async () => {
+      const scene = await bootPlay();
+      const gs = scene.getGameState();
+      gs.lives = 1;
+
+      // Kill the player
+      (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+      // Wait for the game-over transition
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Normal play should navigate to GameOverScene.
+      const activeKey = scene.scene.isActive('GameOverScene')
+        ? 'GameOverScene'
+        : scene.scene.isActive('MenuScene')
+          ? 'MenuScene'
+          : 'other';
+      expect(activeKey).toBe('GameOverScene');
+    });
+  });
 });

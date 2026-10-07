@@ -11,6 +11,7 @@ import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
+import type { ControlInput } from '../../utils/movementModel';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
@@ -71,6 +72,8 @@ class BareCoreScene extends CombatCoreScene {
   playerRef: Player | null = null;
   effects = new EffectsRegistry();
   bullets: StubBullet[] = [];
+  /** Bot-input seam under test: null by default (keyboard-only). */
+  botInput: ControlInput | null = null;
 
   constructor() {
     super({ key: 'CombatCoreSceneBareStub' });
@@ -92,6 +95,10 @@ class BareCoreScene extends CombatCoreScene {
   }
   protected override setEnemyBullets(bullets: StubBullet[]): void {
     this.bullets = bullets;
+  }
+  /** Bot-input seam override: returns the injected decision (default null). */
+  protected override getBotInput(): ControlInput | null {
+    return this.botInput;
   }
 
   addPlayer(at: { x: number; y: number }): Player {
@@ -125,6 +132,9 @@ class BareCoreScene extends CombatCoreScene {
   }
   runReadInput() {
     return this._readPlayerInput();
+  }
+  runGetBotInput(): ControlInput | null {
+    return this.getBotInput();
   }
   runUpdateCollectAnimations(dt: number): void {
     this._updateCollectAnimations(dt);
@@ -252,6 +262,58 @@ describe('CombatCoreScene — shared base class', () => {
     const input = scene.runReadInput();
     expect(input).not.toBeNull();
     expect(input).toHaveProperty('up');
+  });
+
+  // ── Bot-input seam (AH-0MUX495VG0014MIY AC2) ─────────────────────
+
+  it('AC2 — getBotInput defaults to null (keyboard-only)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    expect(scene.runGetBotInput()).toBeNull();
+  });
+
+  it('AC2/AC4 — _readPlayerInput uses the keyboard when no bot input is supplied', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.pressRight(true);
+
+    expect(scene.runReadInput()).toEqual({
+      up: false,
+      down: false,
+      left: false,
+      right: true,
+    });
+  });
+
+  it('AC2 — a supplied bot input takes precedence over held keys', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    // Keyboard says right; the bot seam says left — the bot wins.
+    scene.pressRight(true);
+    scene.botInput = { up: false, down: false, left: true, right: false };
+
+    expect(scene.runReadInput()).toEqual({
+      up: false,
+      down: false,
+      left: true,
+      right: false,
+    });
+  });
+
+  it('AC2 — the bot input flows through _tickPlayer into the shared movement path', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.botInput = { up: false, down: false, left: false, right: true };
+    const beforeX = player.x;
+
+    scene.runTickPlayer(0.5);
+
+    expect(player.getInput()).toEqual({
+      up: false,
+      down: false,
+      left: false,
+      right: true,
+    });
+    expect(player.x).toBeGreaterThan(beforeX);
   });
 
   // ── AC4 — auto-fire ───────────────────────────────────────────────

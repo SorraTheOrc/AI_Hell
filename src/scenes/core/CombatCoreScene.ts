@@ -397,12 +397,34 @@ export class CombatCoreScene<
   // ── Shared template methods ───────────────────────────────────────
 
   /**
+   * Optional bot-input seam for a demo/attract mode (AH-0MUX495VG0014MIY
+   * AC2). {@link CombatCoreScene._readPlayerInput} consults this **before**
+   * the keyboard: a non-null result is used verbatim, so a bot's decision
+   * flows through the shared player-control step exactly like held keys.
+   * The bot therefore never bypasses movement physics.
+   *
+   * Default `null` — keyboard-only. `PlayScene` overrides it to return the
+   * pure `decideBotInput(snapshot)` decision while demo mode is on; the
+   * threat-free gyms inherit the default and are unchanged, so the shared
+   * input path stays identical everywhere (gym↔game parity).
+   */
+  protected getBotInput(): ControlInput | null {
+    return null;
+  }
+
+  /**
    * Reads the held arrow/WASD keys into the scheme-appropriate
    * `ControlInput` contract, keyed off the player's saved control scheme.
    * Delegates to the shared {@link mapControlInput} helper so the
    * scheme→input branch is defined once (AC1/AC2).
+   *
+   * A provided {@link CombatCoreScene.getBotInput} result takes precedence
+   * over the keyboard — the demo/attract seam — while normal play (no bot
+   * input) reads the keys exactly as before.
    */
   protected _readPlayerInput(): ControlInput | null {
+    const botInput = this.getBotInput();
+    if (botInput) return botInput;
     const player = this.getPlayer();
     if (!player || !this.cursors || !this.wasd) return null;
     return mapControlInput(player.getScheme(), {
