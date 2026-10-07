@@ -43,6 +43,18 @@ import {
   resolveCaptureMode,
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
+import {
+  DEFAULT_CAPTURE_TAIL_MS,
+  DEFAULT_MAX_CAPTURE_DURATION_MS,
+  DEMO_GAME_OVER_DWELL_MS,
+  buildRunEndedDetail,
+  capWasReachedWithoutSignal,
+  computeStopTimeMs,
+  decodeRunEndedDetail,
+  evaluateRunStop,
+  resolveDemoGameOverDwellMs,
+  shouldDemoReturnToMenu,
+} from './capture-run-lifecycle.mjs';
 
 describe('buildScriptedPlan', () => {
   it('covers the requested duration exactly and uses only movement keys', () => {
@@ -672,5 +684,218 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     expect(options.durationMs).toBe(2000);
     expect(options.warmupMs).toBe(500);
     expect(options.scripted).toBe(true);
+  });
+});
+
+describe('run-end signal payload helpers (AH-0MUXZ49PY0065K2O)', () => {
+  it('builds a victory payload carrying the score', () => {
+    expect(buildRunEndedDetail(true, 1234)).toEqual({ won: true, score: 1234 });
+  });
+
+  it('builds a defeat payload with a zero score', () => {
+    expect(buildRunEndedDetail(false, 0)).toEqual({ won: false, score: 0 });
+  });
+
+  it('normalises a non-true win to a defeat and an invalid score to zero', () => {
+    expect(buildRunEndedDetail('yes', 'not-a-number')).toEqual({
+      won: false,
+      score: 0,
+    });
+  });
+
+  it('clamps a negative or fractional score to a non-negative integer', () => {
+    expect(buildRunEndedDetail(true, -5)).toEqual({ won: true, score: 0 });
+    expect(buildRunEndedDetail(true, 12.9)).toEqual({ won: true, score: 12 });
+  });
+
+  it('round-trips the built payload through the decoder for both outcomes', () => {
+    for (const won of [true, false]) {
+      expect(decodeRunEndedDetail(buildRunEndedDetail(won, 42))).toEqual({
+        won,
+        score: 42,
+      });
+    }
+  });
+
+  it('decodes both the event detail and the window flag shapes', () => {
+    expect(decodeRunEndedDetail({ won: true, score: 10 })).toEqual({
+      won: true,
+      score: 10,
+    });
+    expect(decodeRunEndedDetail({ ended: true, won: false, score: 0 })).toEqual({
+      won: false,
+      score: 0,
+    });
+  });
+
+  it('rejects missing, non-object and malformed payloads', () => {
+    expect(decodeRunEndedDetail(undefined)).toBeNull();
+    expect(decodeRunEndedDetail(null)).toBeNull();
+    expect(decodeRunEndedDetail('aihell:run-ended')).toBeNull();
+    expect(decodeRunEndedDetail({ score: 10 })).toBeNull();
+    expect(decodeRunEndedDetail({ won: 'yes', score: 10 })).toBeNull();
+    expect(decodeRunEndedDetail({ won: true })).toBeNull();
+    expect(decodeRunEndedDetail({ won: true, score: 'many' })).toBeNull();
+    expect(decodeRunEndedDetail({ won: true, score: Number.NaN })).toBeNull();
+  });
+
+  it('rejects an explicit not-ended flag', () => {
+    expect(
+      decodeRunEndedDetail({ ended: false, won: true, score: 10 }),
+    ).toBeNull();
+  });
+});
+
+describe('run tail and safety cap helpers (AH-0MUXZ49PY0065K2O)', () => {
+  it('exposes single-source defaults sized for a full run', () => {
+    expect(DEFAULT_CAPTURE_TAIL_MS).toBe(5_000);
+    expect(DEFAULT_MAX_CAPTURE_DURATION_MS).toBeGreaterThan(
+      DEFAULT_CAPTURE_TAIL_MS,
+    );
+  });
+
+  it('stops the recording one tail after the signal', () => {
+    expect(computeStopTimeMs(10_000, 5_000, 60_000)).toBe(15_000);
+  });
+
+  it('clamps the stop time to the cap when the tail would overrun it', () => {
+    expect(computeStopTimeMs(58_000, 5_000, 60_000)).toBe(60_000);
+  });
+
+  it('never stops for non-finite arithmetic inputs', () => {
+    expect(computeStopTimeMs(Number.NaN, 5_000, 60_000)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(computeStopTimeMs(10_000, Number.NaN, 60_000)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('treats a negative tail as no tail', () => {
+    expect(computeStopTimeMs(10_000, -5_000, 60_000)).toBe(10_000);
+  });
+
+  it('reports the cap reached only when no signal arrived', () => {
+    expect(capWasReachedWithoutSignal(10_000, 60_000, 60_000)).toBe(false);
+    expect(capWasReachedWithoutSignal(null, 59_999, 60_000)).toBe(false);
+    expect(capWasReachedWithoutSignal(null, 60_000, 60_000)).toBe(true);
+    expect(capWasReachedWithoutSignal(undefined, 60_001, 60_000)).toBe(true);
+  });
+
+  it('does not report a stop or cap hit before the cap is reached', () => {
+    const decision = evaluateRunStop({
+      elapsedMs: 59_000,
+      signalTimeMs: null,
+      tailMs: 5_000,
+      maxDurationMs: 60_000,
+    });
+
+    expect(decision).toEqual({
+      done: false,
+      reason: null,
+      stopTimeMs: 60_000,
+      capHit: false,
+    });
+  });
+
+  it('reports an explicit cap hit when the cap is reached without a signal', () => {
+    const decision = evaluateRunStop({
+      elapsedMs: 60_000,
+      signalTimeMs: null,
+      tailMs: 5_000,
+      maxDurationMs: 60_000,
+    });
+
+    expect(decision.done).toBe(true);
+    expect(decision.reason).toBe('cap');
+    expect(decision.capHit).toBe(true);
+    expect(decision.stopTimeMs).toBe(60_000);
+  });
+
+  it('stops at signal + tail when the signal arrived within the cap', () => {
+    const beforeTail = evaluateRunStop({
+      elapsedMs: 14_999,
+      signalTimeMs: 10_000,
+      tailMs: 5_000,
+      maxDurationMs: 60_000,
+    });
+    expect(beforeTail.done).toBe(false);
+    expect(beforeTail.capHit).toBe(false);
+
+    const atTail = evaluateRunStop({
+      elapsedMs: 15_000,
+      signalTimeMs: 10_000,
+      tailMs: 5_000,
+      maxDurationMs: 60_000,
+    });
+    expect(atTail).toEqual({
+      done: true,
+      reason: 'signal',
+      stopTimeMs: 15_000,
+      capHit: false,
+    });
+  });
+
+  it('treats a signal near the cap as a signal stop, not a cap hit', () => {
+    const decision = evaluateRunStop({
+      elapsedMs: 60_000,
+      signalTimeMs: 58_000,
+      tailMs: 5_000,
+      maxDurationMs: 60_000,
+    });
+
+    expect(decision.reason).toBe('signal');
+    expect(decision.capHit).toBe(false);
+    expect(decision.stopTimeMs).toBe(60_000);
+  });
+
+  it('falls back to safe defaults for missing or invalid state', () => {
+    const decision = evaluateRunStop();
+
+    expect(decision.done).toBe(false);
+    expect(decision.capHit).toBe(false);
+    expect(decision.stopTimeMs).toBe(DEFAULT_MAX_CAPTURE_DURATION_MS);
+  });
+});
+
+describe('demo game-over dwell helpers (AH-0MUXZ49PY0065K2O)', () => {
+  it('keeps the default dwell at or above the capture tail', () => {
+    expect(DEMO_GAME_OVER_DWELL_MS).toBeGreaterThanOrEqual(
+      DEFAULT_CAPTURE_TAIL_MS,
+    );
+    expect(resolveDemoGameOverDwellMs()).toBe(DEMO_GAME_OVER_DWELL_MS);
+  });
+
+  it('honours a configured dwell above the minimum', () => {
+    expect(resolveDemoGameOverDwellMs(8_000)).toBe(8_000);
+  });
+
+  it('clamps a configured dwell below the capture tail up to the minimum', () => {
+    expect(resolveDemoGameOverDwellMs(1_000)).toBe(DEFAULT_CAPTURE_TAIL_MS);
+    expect(resolveDemoGameOverDwellMs(0)).toBe(DEFAULT_CAPTURE_TAIL_MS);
+  });
+
+  it('allows an explicit minimum override for short/zero test dwells', () => {
+    expect(resolveDemoGameOverDwellMs(0, 0)).toBe(0);
+    expect(resolveDemoGameOverDwellMs(250, 0)).toBe(250);
+  });
+
+  it('falls back to the documented default for invalid input', () => {
+    expect(resolveDemoGameOverDwellMs(Number.NaN)).toBe(
+      DEMO_GAME_OVER_DWELL_MS,
+    );
+    expect(resolveDemoGameOverDwellMs(-1)).toBe(DEMO_GAME_OVER_DWELL_MS);
+  });
+
+  it('returns to the menu only once the dwell has elapsed', () => {
+    expect(shouldDemoReturnToMenu(4_999, 5_000)).toBe(false);
+    expect(shouldDemoReturnToMenu(5_000, 5_000)).toBe(true);
+    expect(shouldDemoReturnToMenu(6_000, 5_000)).toBe(true);
+  });
+
+  it('returns immediately for a zero dwell and never for invalid input', () => {
+    expect(shouldDemoReturnToMenu(0, 0)).toBe(true);
+    expect(shouldDemoReturnToMenu(Number.NaN, 5_000)).toBe(false);
+    expect(shouldDemoReturnToMenu(5_000, Number.NaN)).toBe(false);
   });
 });
