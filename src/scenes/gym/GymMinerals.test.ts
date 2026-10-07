@@ -262,12 +262,13 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
   });
 
-  it('the hold-full choice receives the player weapon levels (AC1/AC2)', async () => {
+  it('the hold-full choice receives the player permanent weapon levels (AC1/AC2)', async () => {
     const scene = await bootMinerals();
     const player = scene.getPlayer()!;
-    player.equipWeapon('spread');
-    player.equipWeapon('spread');
-    player.equipWeapon('rapid');
+    // Permanent grants only: a field pickup's temporary level is not priced.
+    player.equipWeapon('spread', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('rapid', true);
 
     let captured: ChoiceContext | undefined;
     scene.setMineralChoiceStrategy({

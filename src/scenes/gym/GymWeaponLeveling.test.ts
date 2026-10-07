@@ -122,9 +122,8 @@ describe('GymWeaponLeveling', () => {
     const scene = await boot();
     const player = scene.getPlayer()!;
 
-    // Own a weapon (level 1) so a level-up offer exists.
-    scene.spawnDrop('spread', player.x, player.y);
-    scene.tick(0.1);
+    // Own a weapon permanently (level 1) so a level-up offer exists.
+    player.equipWeapon('spread', true);
     expect(player.getWeaponLevel('spread')).toBe(1);
 
     const offered = scene.openMineralChoice();
@@ -139,6 +138,7 @@ describe('GymWeaponLeveling', () => {
     // Permanent: it never times out.
     player.tickWeaponTimers(100_000);
     expect(player.hasWeapon('spread')).toBe(true);
+    expect(player.getWeaponLevel('spread')).toBe(2);
   });
 
   it('AC1 — the choice is offered when the hold fills', async () => {
@@ -162,18 +162,16 @@ describe('GymWeaponLeveling', () => {
     ]);
   });
 
-  it('AC1 — Reset-style behaviour is not duplicated: the gym keeps levels', async () => {
+  it('AC1 — Reset-style behaviour is not duplicated: the gym keeps permanent levels', async () => {
     const scene = await boot();
     const player = scene.getPlayer()!;
-    scene.spawnDrop('rapid', player.x, player.y);
-    scene.tick(0.1);
-    scene.spawnDrop('rapid', player.x, player.y);
-    scene.tick(0.1);
+    player.equipWeapon('rapid', true);
+    player.equipWeapon('rapid', true);
     expect(player.getWeaponLevel('rapid')).toBe(2);
 
-    // Levels persist across the timed weapon expiring.
+    // Permanent levels persist across the run (the gym never clears them).
     player.tickWeaponTimers(100_000);
-    expect(player.hasWeapon('rapid')).toBe(false);
+    expect(player.hasWeapon('rapid')).toBe(true);
     expect(player.getWeaponLevel('rapid')).toBe(2);
   });
 
@@ -211,5 +209,30 @@ describe('GymWeaponLeveling — shared-core parity', () => {
     expect(actual.fireRateMs).toBe(expected.fireRateMs);
     expect(actual.levelBulletSize).toBe(expected.levelBulletSize);
     consoleError.mockRestore();
+  });
+
+  it('gym and game share the temporary/permanent field-pickup contract (AC8)', async () => {
+    booted = await bootScene([GymWeaponLeveling]);
+    const scene = booted.scene as GymWeaponLeveling;
+    const player = scene.getPlayer()!;
+
+    // Same sequence as the PlayScene battle test: a field pickup is temporary.
+    scene.spawnDrop('dual', player.x, player.y);
+    scene.tick(0.1);
+    scene.spawnDrop('dual', player.x, player.y);
+    scene.tick(0.1);
+    expect(player.getWeaponLevel('dual')).toBe(2);
+    expect(player.getPermanentWeaponLevel('dual')).toBe(0);
+
+    player.tickWeaponTimers(100_000);
+    expect(player.hasWeapon('dual')).toBe(false);
+    expect(player.getWeaponLevel('dual')).toBe(0);
+
+    // A hold-full reward is permanent and never expires.
+    player.equipWeapon('dual', true);
+    expect(player.getPermanentWeaponLevel('dual')).toBe(1);
+    player.tickWeaponTimers(100_000);
+    expect(player.hasWeapon('dual')).toBe(true);
+    expect(player.getWeaponLevel('dual')).toBe(1);
   });
 });

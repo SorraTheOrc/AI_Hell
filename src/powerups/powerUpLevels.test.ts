@@ -283,15 +283,19 @@ describe('PowerUpLevelStore (AC2 — run-scoped integer level)', () => {
     expect(store.getLevels()).toEqual([]);
   });
 
-  it('increments the level on every collection (field and permanent)', () => {
+  it('increments the effective level on every collection; the permanent level tracks hold-full grants', () => {
     const store = new PowerUpLevelStore();
-    expect(store.collect('P5')).toBe(1);
-    expect(store.collect('P5')).toBe(2);
-    expect(store.collect('P5', true)).toBe(3);
-    expect(store.getLevel('P5')).toBe(3);
+    expect(store.collect('P5')).toBe(1); // field pickup → temporary
+    expect(store.collect('P5')).toBe(2); // field pickup → temporary
+    expect(store.collect('P5', true)).toBe(3); // hold-full → permanent
+    expect(store.getLevel('P5')).toBe(3); // effective
     // First collection is base; each further collection is one upgrade.
     expect(store.getUpgradeLevel('P5')).toBe(2);
-    expect(store.getLevels()).toContainEqual({ id: 'P5', level: 3 });
+    expect(store.getTempStacks('P5')).toBe(2);
+    expect(store.getPermanentLevel('P5')).toBe(1);
+    expect(store.getPermanentUpgradeLevel('P5')).toBe(0);
+    // The hold-full choice reflects the permanent grant only (AC4).
+    expect(store.getLevels()).toContainEqual({ id: 'P5', level: 1 });
   });
 
   it('resolves stats from the current upgrade level', () => {
@@ -374,5 +378,104 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
     expect(store.lives()).toBe(5);
     store.reset();
     expect(store.lives()).toBe(POWER_UP_LIVES_START);
+  });
+});
+
+// ── Temporary/permanent split contract (AH-0MUX802450085VZZ, F1) ────
+//
+// The contract the implementation children (F2/F3) must satisfy:
+//   permanentUpgradeLevel = permanentGrants - 1
+//   effectiveLevel        = permanentGrants + tempStacks   (0 when unowned)
+//   owned/active          iff permanentGrants + tempStacks >= 1
+// A field pickup adds a temporary stack; a hold-full reward adds a permanent
+// grant and never touches the temporary stacks.
+
+describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => {
+  it('routes a field pickup to temporary stacks and a hold-full reward to permanent grants', () => {
+    const store = new PowerUpLevelStore();
+    expect(store.getEffectiveLevel('P5')).toBe(0);
+    expect(store.getTempStacks('P5')).toBe(0);
+    expect(store.getPermanentLevel('P5')).toBe(0);
+
+    store.collect('P5'); // field pickup
+    expect(store.getTempStacks('P5')).toBe(1);
+    expect(store.getPermanentLevel('P5')).toBe(0);
+    expect(store.getEffectiveLevel('P5')).toBe(1);
+
+    store.collect('P5'); // second field pickup
+    expect(store.getTempStacks('P5')).toBe(2);
+    expect(store.getEffectiveLevel('P5')).toBe(2);
+
+    store.collect('P5', true); // hold-full reward
+    expect(store.getPermanentLevel('P5')).toBe(1);
+    expect(store.getTempStacks('P5')).toBe(2); // untouched by the reward
+    expect(store.getEffectiveLevel('P5')).toBe(3);
+  });
+
+  it('clearTemporary reverts the effective level to the permanent level', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P3');
+    store.collect('P3');
+    store.collect('P3', true);
+    expect(store.getEffectiveLevel('P3')).toBe(3);
+    expect(store.getUpgradeLevel('P3')).toBe(2);
+
+    store.clearTemporary('P3');
+
+    expect(store.getTempStacks('P3')).toBe(0);
+    expect(store.getPermanentLevel('P3')).toBe(1);
+    expect(store.getEffectiveLevel('P3')).toBe(1);
+    expect(store.getUpgradeLevel('P3')).toBe(0);
+    expect(store.getPermanentUpgradeLevel('P3')).toBe(0);
+  });
+
+  it('an item with no permanent level becomes inactive when its window expires', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P3');
+    expect(store.getEffectiveLevel('P3')).toBe(1);
+    store.clearTemporary('P3');
+    expect(store.getEffectiveLevel('P3')).toBe(0);
+    expect(store.getPermanentLevel('P3')).toBe(0);
+  });
+
+  it('reports the permanent level only to the hold-full choice', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P9'); // field-only: never permanently owned
+    expect(store.getLevels()).toEqual([]);
+
+    store.collect('P9', true);
+    expect(store.getLevels()).toEqual([{ id: 'P9', level: 1 }]);
+    expect(store.getPermanentLevel('P9')).toBe(1);
+  });
+
+  it('persists unconsumed consumable grants across clearTemporary (Resolved decision 1b)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P7');
+    const teleports = store.teleportStacks();
+    expect(teleports).toBeGreaterThan(0);
+    store.clearTemporary('P7');
+    expect(store.getEffectiveLevel('P7')).toBe(0);
+    expect(store.teleportStacks()).toBe(teleports); // not clawed back
+
+    store.collect('P6');
+    const charges = store.phaseCharges();
+    expect(charges).toBeGreaterThan(0);
+    store.clearTemporary('P6');
+    expect(store.getEffectiveLevel('P6')).toBe(0);
+    expect(store.phaseCharges()).toBe(charges);
+  });
+
+  it('reset clears both the permanent and temporary level state', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('P5');
+    store.collect('P5', true);
+    expect(store.getEffectiveLevel('P5')).toBe(2);
+
+    store.reset();
+
+    expect(store.getTempStacks('P5')).toBe(0);
+    expect(store.getPermanentLevel('P5')).toBe(0);
+    expect(store.getEffectiveLevel('P5')).toBe(0);
+    expect(store.getLevels()).toEqual([]);
   });
 });

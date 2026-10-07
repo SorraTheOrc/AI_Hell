@@ -14,7 +14,11 @@
  * player (producer decision Q1=A): every scene injects the player's store
  * through {@link EffectsRegistry.setStore}/{@link EffectsRegistry.setStoreResolver},
  * and {@link EffectsRegistry.applyCollect} calls `store.collect(...)` as the
- * single mutation point. Effect strengths (durations, the P5 multiplier,
+ * single mutation point. Since AH-0MUX802450085VZZ the store splits each
+ * item's level into a **permanent** component (hold-full rewards only) and a
+ * **temporary** component (field pickups); the registry clears the temporary
+ * component when the item's timed window expires, so a field pickup's level
+ * reverts to the permanent level (or the item becomes inactive). Effect strengths (durations, the P5 multiplier,
  * caps) are resolved from the catalogue via `store.stats(...)` rather than
  * raw tuning constants, so balance intent cannot drift between scenes
  * (AC1/AC2/AC3). `P9_MAGNET_DURATION` / `P10_SCOOP_DURATION` are the only
@@ -39,9 +43,11 @@
  *   `shieldAbsorptions` hits (base 1, cap 3) before popping, refreshing the
  *   bubble and its remaining-hit count on re-collect before expiry. The
  *   remaining absorptions are run-scoped registry state, cleared by
- *   `reset()` and surfaced to the HUD via `activeEffects()` (`stacks`); the
- *   run-scoped **level** still persists after the bubble expires
- *   (AH-0MUVM9RAO004Y3LB).
+ *   `reset()` and surfaced to the HUD via `activeEffects()` (`stacks`).
+ *   Because a field pickup's level is **temporary** (AH-0MUX802450085VZZ),
+ *   the bubble's expiry clears the temporary level (reverting to the
+ *   permanent level, if any); a hold-full reward grants a permanent shield
+ *   that never expires (AH-0MUVM9RAO004Y3LB).
  * - **P4 Bomb** — ranged periodic clear (AH-0MUVM9RAO004Y3LB): the model
  *   exposes `bombRange` (px) and `bombFrequency` (pulses/s); the effect path
  *   clears on-screen enemy bullets within the resolved range (a single pulse
@@ -190,9 +196,22 @@ interface TimedEffectState {
   id: PowerUpId;
   type: PowerUpType;
   duration: number;
+  /**
+   * Remaining seconds. For a non-permanent effect this is the effect's own
+   * lifetime; for a permanent effect it is the remaining temporary
+   * field-pickup window (0 when none is active).
+   */
   remaining: number;
-  /** True when granted permanently for the run (never expires). */
+  /** True when the base effect was granted permanently for the run. */
   permanent?: boolean;
+  /**
+   * True while a field-pickup temporary window is active for this effect.
+   * Its expiry clears the store's temporary stacks for the id (the permanent
+   * base, if any, stays active). Left false for non-collection timed effects
+   * such as the P7-arrival phase, whose expiry must not clear temporary
+   * stacks (Resolved decision 4).
+   */
+  tempWindow?: boolean;
 }
 
 /**
@@ -391,15 +410,23 @@ export class EffectsRegistry {
       // Refresh to the current full duration — never additive. A level-up
       // mid-effect strengthens it (resolved-live, weapon parity).
       existing.duration = duration;
-      existing.remaining = duration;
-      if (permanent) existing.permanent = true;
+      if (permanent) {
+        // A hold-full reward makes the base effect permanent and adds no
+        // temporary stack, so any existing temporary window is left to
+        // expire on its own schedule (AC2).
+        existing.permanent = true;
+      } else {
+        // A field pickup (re)starts the temporary window (AC1).
+        existing.tempWindow = true;
+        existing.remaining = duration;
+      }
     } else {
       this._timed.set(id, {
         id,
         type,
         duration,
-        remaining: duration,
-        ...(permanent ? { permanent: true } : {}),
+        remaining: permanent ? 0 : duration,
+        ...(permanent ? { permanent: true } : { tempWindow: true }),
       });
     }
   }
@@ -417,25 +444,18 @@ export class EffectsRegistry {
 
   /**
    * Advances timers by `dt` seconds, removing expired effects and weapons.
-   * Permanent effects (granted by the hold-full choice) never expire.
+   * Permanent effects (granted by the hold-full choice) never expire, but an
+   * active temporary field-pickup window on top of one still expires and
+   * clears the store's temporary level (AC1/AC2).
    */
   tick(dt: number): void {
-    // Expire timed power-up effects (permanent effects are skipped).
-    for (const [id, effect] of this._timed) {
-      if (effect.permanent) continue;
+    // Expire timed power-up effects (permanent effects are skipped unless a
+    // temporary window is active on top of them).
+    for (const [id, effect] of [...this._timed]) {
+      if (effect.permanent && !effect.tempWindow) continue;
       effect.remaining -= dt;
-      if (effect.remaining <= 0) {
-        this._timed.delete(id);
-        // Start the P6 re-arm cooldown the moment a phase expires (Q2).
-        if (id === 'P6') {
-          this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
-        }
-        // The shield's remaining absorptions end with its bubble; the
-        // run-scoped *level* persists (AC3).
-        if (id === 'P3') {
-          this._shieldRemaining = 0;
-        }
-      }
+      if (effect.remaining > 0) continue;
+      this._expireTimedEffect(id, effect);
     }
     // Expire timed weapons (permanent weapons are skipped).
     for (const [weaponId, weapon] of this._weapons) {
@@ -444,6 +464,29 @@ export class EffectsRegistry {
       if (weapon.remaining <= 0) {
         this._weapons.delete(weaponId);
       }
+    }
+  }
+
+  /**
+   * Expires a timed effect: clears its temporary level if it owns a field
+   * window, then removes the entry unless a permanent base remains.
+   */
+  private _expireTimedEffect(id: PowerUpId, effect: TimedEffectState): void {
+    if (effect.tempWindow) {
+      this._levelStore.clearTemporary(id);
+      effect.tempWindow = false;
+    }
+    effect.remaining = 0;
+    if (effect.permanent) return;
+    this._timed.delete(id);
+    // Start the P6 re-arm cooldown the moment a phase expires (Q2).
+    if (id === 'P6') {
+      this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
+    }
+    // The shield's remaining absorptions end with its bubble; the temporary
+    // level is cleared above and the permanent level persists (AC3).
+    if (id === 'P3') {
+      this._shieldRemaining = 0;
     }
   }
 
@@ -483,6 +526,8 @@ export class EffectsRegistry {
     if (this._shieldRemaining <= 0) {
       this._timed.delete('P3');
       this._shieldRemaining = 0;
+      // The shield popped, ending its temporary field window too.
+      this._levelStore.clearTemporary('P3');
     }
     return true;
   }
@@ -792,11 +837,18 @@ export class EffectsRegistry {
       // and updates as hits are absorbed (AC6).
       const stacks =
         effect.id === 'P3' ? this._shieldRemaining : undefined;
+      // A permanent base with no active temporary window shows its full
+      // duration (it never counts down); an active temporary window shows
+      // the window remaining (AC1/AC2).
+      const remaining =
+        effect.permanent && !effect.tempWindow
+          ? effect.duration
+          : effect.remaining;
       result.push({
         id: effect.id,
         type: effect.type,
         duration: effect.duration,
-        remaining: effect.remaining,
+        remaining,
         ...(stacks !== undefined ? { stacks } : {}),
       });
     }

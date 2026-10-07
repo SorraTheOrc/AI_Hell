@@ -61,7 +61,7 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     expect(player.getWeaponDef('spread')).toEqual(expected);
   });
 
-  it('the level persists across a timeout and rises on re-collection', async () => {
+  it('a field-pickup level is temporary: it reverts across a timeout', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
@@ -71,15 +71,15 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     scene.tick(0.016);
     expect(player.getWeaponLevel('rapid')).toBe(2);
 
-    // Expire the timed weapon: the level survives.
+    // Expire the timed weapon: the temporary level is removed.
     player.tickWeaponTimers(60_000);
     expect(player.hasWeapon('rapid')).toBe(false);
-    expect(player.getWeaponLevel('rapid')).toBe(2);
+    expect(player.getWeaponLevel('rapid')).toBe(0);
 
-    // Re-collecting keeps levelling.
+    // Re-collecting starts from the base level again.
     scene.spawnPowerUpDrop('rapid', player.x, player.y);
     scene.tick(0.016);
-    expect(player.getWeaponLevel('rapid')).toBe(3);
+    expect(player.getWeaponLevel('rapid')).toBe(1);
   });
 
   it('a permanent hold-full choice levels an owned weapon for the run', async () => {
@@ -137,13 +137,15 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     }
   });
 
-  it('the mineral choice receives the player weapon levels (context)', async () => {
+  it('the mineral choice receives the player permanent weapon levels (context)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    scene.spawnPowerUpDrop('dual', player.x, player.y);
-    scene.tick(0.016);
-    scene.spawnPowerUpDrop('dual', player.x, player.y);
-    scene.tick(0.016);
+    // Permanent grants are what the hold-full choice prices (AC4).
+    player.equipWeapon('dual', true);
+    player.equipWeapon('dual', true);
+    // A field-only pickup is not permanently owned, so it is not offered as
+    // a level-up (it stays a New base entry).
+    player.equipWeapon('spread');
 
     let context: ChoiceContext | undefined;
     scene.setMineralChoiceStrategy({

@@ -266,6 +266,35 @@ describe('power-up choice strategy', () => {
     });
   });
 
+  describe('permanent-level-only choice context (AH-0MUX802450085VZZ, F1 contract)', () => {
+    it('treats an item absent from the permanent context as New (field-only not owned)', () => {
+      // A field pickup adds only a temporary stack, so it never appears in
+      // the permanent context supplied by `getPowerUpLevels()` /
+      // `getWeaponLevels()`. The choice must therefore still offer it as a
+      // New base entry with no level-up.
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      const p3 = candidates.find((o) => o.id === 'P3')!;
+      expect(p3.kind).toBe('powerup');
+      expect(p3.isNew).toBe(true);
+      expect(candidates.some((o) => o.kind === 'power-up-level')).toBe(false);
+      expect(candidates.some((o) => o.kind === 'weapon-level')).toBe(false);
+    });
+
+    it('offers a level-up only for an item present at permanent level ≥ 1', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [{ id: 'P3', level: 1 }],
+      });
+      const p3 = candidates.find((o) => o.id === 'P3')!;
+      expect(p3.kind).toBe('power-up-level');
+      expect(p3.level).toBe(2);
+      expect(p3.isNew).toBeUndefined();
+    });
+  });
+
   describe('owned-item de-duplication (AH-0MUVRACE9001WVT2)', () => {
     it('never lists a base and a level-up entry for the same weapon id (AC1)', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {

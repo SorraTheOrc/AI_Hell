@@ -152,6 +152,30 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     expect(atShip).toHaveLength(0);
   });
 
+  it('gym parity: a field pickup is temporary and reverts on expiry (AC1/AC8)', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+
+    // Field pickup only → temporary level, no permanent grant.
+    scene.spawnDrop('P5', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(store.getEffectiveLevel('P5')).toBe(1);
+    expect(store.getPermanentLevel('P5')).toBe(0);
+
+    registry.tick(1000);
+    expect(registry.isActive('P5')).toBe(false);
+    expect(store.getEffectiveLevel('P5')).toBe(0);
+
+    // Hold-full reward → permanent level with no timeout.
+    registry.applyCollect('P5', true);
+    expect(store.getPermanentLevel('P5')).toBe(1);
+    registry.tick(1000);
+    expect(registry.isActive('P5')).toBe(true);
+    expect(store.getEffectiveLevel('P5')).toBe(1);
+  });
+
   it('applies the P5 fire-rate multiplier to the player (gym parity, AC4)', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();

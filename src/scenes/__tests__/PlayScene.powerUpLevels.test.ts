@@ -85,11 +85,13 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     expect(effects.isActive('P5')).toBe(true);
   });
 
-  it('the mineral choice receives the player power-up levels (context)', async () => {
+  it('the mineral choice receives the player permanent power-up levels (context)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    // Own a power-up (the run's ownership source).
-    player.collectPowerUp('P5');
+    // Own a power-up permanently (the choice's ownership source). A field
+    // pickup adds only a temporary stack, so it is not owned for the choice.
+    player.collectPowerUp('P6');
+    player.collectPowerUp('P5', true);
 
     let context: ChoiceContext | undefined;
     scene.setMineralChoiceStrategy({
@@ -151,9 +153,10 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
   it('a default-strategy hold-full draw never offers a base and a level-up power-up (AC2/AC4)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    // Own two power-ups so the base-pool suppression path is exercised.
-    player.collectPowerUp('P3');
-    player.collectPowerUp('P5');
+    // Own two power-ups permanently so the base-pool suppression path is
+    // exercised.
+    player.collectPowerUp('P3', true);
+    player.collectPowerUp('P5', true);
 
     for (let i = 0; i < 20; i++) {
       const options = scene.openMineralChoice();

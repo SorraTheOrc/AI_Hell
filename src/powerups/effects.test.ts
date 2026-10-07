@@ -85,14 +85,16 @@ describe('single run-scoped level store (AC1)', () => {
     expect(store.getLevel('P5')).toBe(2);
   });
 
-  it('the level persists across a timed activation expiring (AC6)', () => {
+  it('the temporary level reverts when a timed activation expires (AC6)', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
     reg.applyCollect('P5');
-    expect(store.getLevel('P5')).toBe(1);
+    expect(store.getEffectiveLevel('P5')).toBe(1);
     reg.tick(1000);
     expect(reg.isActive('P5')).toBe(false);
-    expect(store.getLevel('P5')).toBe(1); // level never expires
+    // Field-pickup-only: the temporary level is removed on expiry (AC1).
+    expect(store.getEffectiveLevel('P5')).toBe(0);
+    expect(store.getTempStacks('P5')).toBe(0);
   });
 });
 
@@ -356,16 +358,16 @@ describe('P10 Mineral Scoop hybrid (AC3)', () => {
 // ── AC6 — timing / reset semantics ───────────────────────────────────
 
 describe('timing and reset semantics (AC6)', () => {
-  it('a level-up while P5 is active persists after the active effect expires', () => {
+  it('a temporary level-up is removed when the active effect expires', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
-    reg.applyCollect('P5'); // level 1
+    reg.applyCollect('P5'); // temporary level 1
     reg.tick(1);
-    reg.applyCollect('P5'); // level 2, refreshes timer
+    reg.applyCollect('P5'); // temporary level 2, refreshes timer
     expect(reg.speedMultiplier()).toBeCloseTo(p5Multiplier(1), 10);
     reg.tick(1000);
     expect(reg.isActive('P5')).toBe(false);
-    expect(store.getLevel('P5')).toBe(2); // level survives expiry
+    expect(store.getEffectiveLevel('P5')).toBe(0); // temporary level gone
   });
 
   it('reset() clears the level store and the registry timing state together', () => {
@@ -411,9 +413,9 @@ describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-colle
 
   it('refreshes on re-collect to the new level duration (never additive)', () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('P3');
-    reg.tick(15);
-    // Re-collect after expiry is a level-up: level-resolved longer window.
+    reg.applyCollect('P3'); // base window
+    // Re-collect before expiry is a level-up: resolved-live longer window,
+    // refreshed (never additive).
     reg.applyCollect('P3');
     const upgraded = resolvePowerUpAtLevel('P3', 1).shieldDuration!;
     expect(reg.remaining('P3')).toBeCloseTo(upgraded, 10);
@@ -473,7 +475,7 @@ describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
     expect(fixture.registry.shieldAbsorptionsRemaining()).not.toBe(1 + level1);
   });
 
-  it('clears remaining absorptions on expiry but keeps the run-scoped level', () => {
+  it('clears remaining absorptions on expiry and reverts the temporary level', () => {
     const fixture = createEffectRegistry();
     activateEffectAtUpgradeLevel(fixture, 'P3', 1);
     expect(fixture.registry.shieldAbsorptionsRemaining()).toBeGreaterThan(1);
@@ -482,7 +484,9 @@ describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
 
     expect(fixture.registry.isShielded).toBe(false);
     expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(0);
-    expect(fixture.store.getUpgradeLevel('P3')).toBe(1); // level survives
+    // The upgrade came from field pickups only, so it reverts on expiry.
+    expect(fixture.store.getEffectiveLevel('P3')).toBe(0);
+    expect(fixture.store.getUpgradeLevel('P3')).toBe(0);
   });
 
   it('reset() clears the remaining absorptions and the level', () => {
@@ -921,5 +925,105 @@ describe('weapon effects: timed weapons in the combat gym', () => {
     expect(reg.hasWeapon('dual')).toBe(false);
     expect(reg.lives()).toBe(3);
     expect(store.getLevel('P8')).toBe(0);
+  });
+});
+
+// ── Worked examples A & B (AH-0MUX802450085VZZ, F1 contract) ────────
+//
+// The parent's worked examples, asserted step-by-step. A field pickup is a
+// temporary level tied to the item's timed window; a hold-full reward is a
+// permanent level with no timeout.
+
+describe('temporary/permanent field-pickup contract (F1 worked examples)', () => {
+  it('example A — field pickups only: level reverts on expiry', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    // 1. Pick up P3 → lvl0 for 15 s.
+    reg.applyCollect('P3');
+    expect(store.getEffectiveLevel('P3')).toBe(1);
+    expect(store.getUpgradeLevel('P3')).toBe(0);
+    expect(store.getPermanentLevel('P3')).toBe(0);
+    expect(reg.isShielded).toBe(true);
+
+    // 2. Pick up P3 again before expiry → lvl1 for 15 s (window refreshed).
+    reg.applyCollect('P3');
+    expect(store.getEffectiveLevel('P3')).toBe(2);
+    expect(store.getUpgradeLevel('P3')).toBe(1);
+    expect(store.getTempStacks('P3')).toBe(2);
+    expect(reg.remaining('P3')).toBeCloseTo(
+      resolvePowerUpAtLevel('P3', 1).shieldDuration!,
+      5,
+    );
+
+    // 3. Expiry → back to unowned (no permanent level retained).
+    reg.tick(1000);
+    expect(reg.isShielded).toBe(false);
+    expect(store.getEffectiveLevel('P3')).toBe(0);
+    expect(store.getPermanentLevel('P3')).toBe(0);
+  });
+
+  it('example B — hold-full reward then field pickups: reverts to permanent', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    // 1. Take P3 from a hold-full reward → lvl0, permanent, no timeout.
+    reg.applyCollect('P3', true);
+    expect(store.getPermanentLevel('P3')).toBe(1);
+    expect(store.getEffectiveLevel('P3')).toBe(1);
+    reg.tick(1000); // permanent shield never expires
+    expect(reg.isShielded).toBe(true);
+    expect(store.getEffectiveLevel('P3')).toBe(1);
+
+    // 2. Pick up P3 in the field → lvl1 (temporary), for x s.
+    reg.applyCollect('P3');
+    expect(store.getTempStacks('P3')).toBe(1);
+    expect(store.getPermanentLevel('P3')).toBe(1);
+    expect(store.getEffectiveLevel('P3')).toBe(2);
+
+    // 3. Expiry → back to lvl0 permanent (still active).
+    reg.tick(1000);
+    expect(store.getTempStacks('P3')).toBe(0);
+    expect(store.getPermanentLevel('P3')).toBe(1);
+    expect(store.getEffectiveLevel('P3')).toBe(1);
+    expect(reg.isShielded).toBe(true);
+
+    // 4. Take P3 from another hold-full reward → lvl1, permanent.
+    reg.applyCollect('P3', true);
+    expect(store.getPermanentLevel('P3')).toBe(2);
+    expect(store.getEffectiveLevel('P3')).toBe(2);
+  });
+
+  it('keeps stored P6 charges / P7 teleports after the window expires (AC9)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    reg.applyCollect('P7');
+    const teleports = reg.teleportStacks();
+    expect(teleports).toBeGreaterThan(0);
+    // P7 has no timed window; simulate an expiry of a (hypothetical) window.
+    store.clearTemporary('P7');
+    expect(store.getEffectiveLevel('P7')).toBe(0);
+    expect(reg.teleportStacks()).toBe(teleports); // not clawed back
+
+    reg.applyCollect('P6');
+    const charges = reg.phaseCharges();
+    expect(charges).toBeGreaterThan(0);
+    store.clearTemporary('P6');
+    expect(reg.phaseCharges()).toBe(charges);
+  });
+
+  it('P9 hybrid: a hold-full stack is unaffected by a later field expiry', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    reg.applyCollect('P9', true); // permanent stack
+    expect(reg.magnetStacks()).toBe(1);
+
+    reg.applyCollect('P9'); // field pickup → temporary level
+    expect(store.getTempStacks('P9')).toBe(1);
+    reg.tick(1000); // timed window expires
+    expect(store.getTempStacks('P9')).toBe(0);
+    expect(reg.magnetStacks()).toBe(1); // permanent stack retained
   });
 });

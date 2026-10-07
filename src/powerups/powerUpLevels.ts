@@ -14,12 +14,15 @@
  *   `(powerUpId, level)` to a {@link PowerUpLevelStats} snapshot. Pure,
  *   deterministic, monotonic non-decreasing and clamped to each variable's
  *   finite cap (AC4).
- * - {@link PowerUpLevelStore} — the run-scoped level model. Every
- *   collection increments the power-up's level; the level persists across a
- *   timed effect expiring and resets only on run restart (AC2, weapon
- *   parity). Existing stack/charge semantics (P9/P10 permanent stacks, P7
- *   stored teleports, P6 charges, P8 lives) are **derived from this model**
- *   rather than tracked by a second, independent counter (AC3).
+ * - {@link PowerUpLevelStore} — the run-scoped level model. It splits each
+ *   power-up's level into a **permanent** component (hold-full rewards only)
+ *   and a **temporary** component (field pickups, tied to the item's timed
+ *   window). The effective level is `permanent + temporary`; only the
+ *   permanent component governs the hold-full choice. Both components are
+ *   cleared on run restart. Existing stack/charge semantics (P9/P10
+ *   permanent stacks, P7 stored teleports, P6 charges, P8 lives) are
+ *   **derived from this model** rather than tracked by a second, independent
+ *   counter (AC3).
  *
  * ## Level semantics (weapon parity)
  *
@@ -27,8 +30,27 @@
  * `resolveWeaponAtLevel`: the **first** collection unlocks the power-up at
  * its base (existing) strength (`resolvePowerUpAtLevel(id, 0)`), and each
  * *further* collection applies the next upgrade. The store holds the raw
- * collection count and exposes {@link PowerUpLevelStore.getUpgradeLevel}
- * for the resolver.
+ * collection counts and exposes {@link PowerUpLevelStore.getUpgradeLevel}
+ * (effective) and {@link PowerUpLevelStore.getPermanentUpgradeLevel}
+ * (hold-full only) for the resolver.
+ *
+ * ## Temporary vs permanent (AH-0MUX802450085VZZ)
+ *
+ * A **field pickup** (`collect(id)`) adds one *temporary* stack
+ * (`tempStacks`); a **hold-full reward** (`collect(id, true)`) adds one
+ * *permanent* grant (`permanentGrants`). The temporary stacks are tied to
+ * the item's timed window and cleared by
+ * {@link PowerUpLevelStore.clearTemporary} when that window expires; the
+ * permanent grants never expire. An item is owned/active while
+ * `permanentGrants + tempStacks >= 1`. This split lives **only here** (and
+ * in the `Player` weapon-level state) so the game and every gym share one
+ * implementation (AC7).
+ *
+ * Unconsumed consumable grants (P6 charges, P7 teleports) persist across a
+ * temporary-window expiry: clearing the temporary level never claws back an
+ * already-granted charge/teleport (producer Resolved decision 1b).
+ * Power-ups with no timed effect (P4/P6/P7/P8) have no temporary window, so
+ * their temporary stacks persist until run reset (Resolved decision 4).
  *
  * ## P9/P10 hybrid reconciliation
  *
@@ -563,10 +585,13 @@ export const POWER_UP_LIVES_START = 3;
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
- * - Track each power-up's run-scoped **level** (number of collections).
- *   Every collection — field pickup or hold-full permanent reward —
- *   increments it; the level persists across a timed effect expiring and is
- *   cleared only by {@link reset} on run restart (weapon parity).
+ * - Track each power-up's run-scoped level as a **permanent** component
+ *   (hold-full grant count) plus a **temporary** component (field-pickup
+ *   stacks). The effective level is their sum; a field pickup's temporary
+ *   stacks are cleared by {@link clearTemporary} when its timed window
+ *   expires (leaving the permanent level or, with none, making the item
+ *   inactive). Both components are cleared by {@link reset} on run restart
+ *   (weapon parity).
  * - Derive the existing stack/charge semantics from the level model rather
  *   than from second, independent counters:
  *   - P9/P10 permanent stacks = `min(permanentGrants, levelCap)`,
@@ -578,8 +603,8 @@ export const POWER_UP_LIVES_START = 3;
  * gym can share exactly one level model.
  */
 export class PowerUpLevelStore {
-  private _levels = new Map<PowerUpId, number>();
   private _permanentGrants = new Map<PowerUpId, number>();
+  private _tempStacks = new Map<PowerUpId, number>();
   private _teleportStacks = 0;
   private _phaseCharges = 0;
   private _phasePermanent = false;
@@ -602,11 +627,12 @@ export class PowerUpLevelStore {
    */
   collect(id: PowerUpId, permanent = false): number {
     getPowerUpById(id); // validate id (throws for unknown power-ups)
-    const next = this.getLevel(id) + 1;
-    this._levels.set(id, next);
     if (permanent) {
       this._permanentGrants.set(id, this.permanentGrants(id) + 1);
+    } else {
+      this._tempStacks.set(id, this.getTempStacks(id) + 1);
     }
+    const next = this.getEffectiveLevel(id);
 
     const stats = this.stats(id);
     switch (id) {
@@ -632,28 +658,76 @@ export class PowerUpLevelStore {
     return next;
   }
 
-  /** The run-scoped collection level of `id` (0 when never collected). */
+  /**
+   * The **effective** run-scoped collection level of `id` — permanent grants
+   * plus active temporary stacks (0 when the item is not owned). Drives the
+   * effect path and the HUD readouts (AC5).
+   */
   getLevel(id: PowerUpId): number {
-    return this._levels.get(id) ?? 0;
+    return this.getEffectiveLevel(id);
   }
 
   /**
-   * The resolver level for `id`: the number of *upgrades* applied, i.e.
-   * `collections − 1` (the first collection is base — weapon parity).
+   * The effective level of `id`: `permanentGrants + tempStacks` (0 when the
+   * item is not owned). The temporary component is removed by
+   * {@link clearTemporary} when the item's timed window expires.
+   */
+  getEffectiveLevel(id: PowerUpId): number {
+    return this.permanentGrants(id) + this.getTempStacks(id);
+  }
+
+  /**
+   * The **permanent** level of `id`: the number of hold-full grants only.
+   * This is what the hold-full choice prices (AC4), so a temporary field
+   * pickup never inflates the offered level.
+   */
+  getPermanentLevel(id: PowerUpId): number {
+    return this.permanentGrants(id);
+  }
+
+  /** Number of active temporary (field-pickup) stacks of `id`. */
+  getTempStacks(id: PowerUpId): number {
+    return this._tempStacks.get(id) ?? 0;
+  }
+
+  /**
+   * The **effective** resolver level for `id`: the number of upgrades applied
+   * by permanent grants *and* temporary stacks, i.e. `effectiveLevel − 1`
+   * (the first collection is base — weapon parity).
    */
   getUpgradeLevel(id: PowerUpId): number {
-    return Math.max(0, this.getLevel(id) - 1);
+    return Math.max(0, this.getEffectiveLevel(id) - 1);
   }
 
   /**
-   * Snapshot of every power-up the player has collected this run, with its
-   * current level (id → level ≥ 1). Used by the hold-full choice to offer
-   * power-up level-ups that reflect the run's progress (AC6).
+   * The **permanent** resolver level for `id`: the number of upgrades applied
+   * by hold-full grants only, i.e. `permanentGrants − 1`. Used to cap
+   * permanent-stack counts so a temporary field pickup cannot raise them
+   * (AC9).
+   */
+  getPermanentUpgradeLevel(id: PowerUpId): number {
+    return Math.max(0, this.permanentGrants(id) - 1);
+  }
+
+  /**
+   * Snapshot of every power-up the player **permanently** owns this run, with
+   * its permanent level (id → level ≥ 1). Used by the hold-full choice to
+   * offer power-up level-ups that reflect only permanent progress (AC4/AC6);
+   * a field-only item is omitted, so it is still offered as `★ New`.
    */
   getLevels(): Array<{ id: PowerUpId; level: number }> {
-    return [...this._levels.entries()]
+    return [...this._permanentGrants.entries()]
       .filter(([, level]) => level > 0)
       .map(([id, level]) => ({ id, level }));
+  }
+
+  /**
+   * Removes `id`'s temporary stacks (its field-pickup window expired). The
+   * permanent grants — and any consumable already granted (P6 charges, P7
+   * teleports) — are left intact (Resolved decision 1b).
+   */
+  clearTemporary(id: PowerUpId): void {
+    this._tempStacks.delete(id);
   }
 
   /** Number of permanent (hold-full) grants of `id`. */
@@ -670,7 +744,7 @@ export class PowerUpLevelStore {
   magnetStacks(): number {
     return Math.min(
       this.permanentGrants('P9'),
-      this.stats('P9').magnetStacks ?? 0,
+      this._permanentStats('P9').magnetStacks ?? 0,
     );
   }
 
@@ -678,8 +752,13 @@ export class PowerUpLevelStore {
   scoopStacks(): number {
     return Math.min(
       this.permanentGrants('P10'),
-      this.stats('P10').scoopStacks ?? 0,
+      this._permanentStats('P10').scoopStacks ?? 0,
     );
+  }
+
+  /** Resolved stats for `id` at its current **permanent** upgrade level. */
+  private _permanentStats(id: PowerUpId): PowerUpLevelStats {
+    return resolvePowerUpAtLevel(id, this.getPermanentUpgradeLevel(id));
   }
 
   /** Stored P7 teleport uses (level-derived grants, minus consumes). */
@@ -740,8 +819,8 @@ export class PowerUpLevelStore {
 
   /** Resets every level and derived resource (run restart). */
   reset(): void {
-    this._levels.clear();
     this._permanentGrants.clear();
+    this._tempStacks.clear();
     this._teleportStacks = 0;
     this._phaseCharges = 0;
     this._phasePermanent = false;

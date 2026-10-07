@@ -46,10 +46,15 @@
  * emission.
  *
  * Weapons are also **constantly upgradable** (parent AH-0MUPMPCB2009J54J):
- * each weapon carries a run-scoped **level** that every collection raises.
- * `getWeaponLevel()` reports it and `getWeaponDef()` returns a
- * level-resolved definition; `resetWeapon` keeps levels while
- * `resetWeaponLevels()` clears them on run restart.
+ * each weapon carries a run-scoped **level** split into a **permanent**
+ * component (hold-full rewards only) and a **temporary** component (field
+ * pickups, tied to the weapon's 10 s timed window) — AH-0MUX802450085VZZ.
+ * A field pickup's temporary level is cleared when the weapon times out;
+ * `getWeaponLevel()` (HUD/def) reports the effective level while
+ * `getWeaponLevels()` (the hold-full choice) reports permanent levels only.
+ * `getWeaponDef()` returns a level-resolved definition; `resetWeapon`
+ * clears timed activations and their temporary stacks while keeping
+ * permanent levels, and `resetWeaponLevels()` clears both on run restart.
  *
  * Fire timing is **globally quantised to an 80 BPM beat**
  * (AH-0MUAYB8EH005RJ8B): every active weapon's shots land on a tick of one
@@ -215,13 +220,20 @@ export class Player extends Phaser.GameObjects.Graphics {
   /** Collected timed weapons → remaining lifetime in ms (10 s each, independent countdown). */
   private _weaponTimers: Map<WeaponId, number> = new Map();
   /**
-   * Run-scoped **level** of each weapon (weapon leveling, parent
+   * Run-scoped **permanent** weapon level (hold-full grants only, parent
    * AH-0MUPMPCB2009J54J). Uncollected weapons are absent (level 0 = base).
-   * A collection levels the weapon up; the level persists across a weapon
-   * timing out (AC3) and across a Reset (AC6), and is cleared only by
+   * Permanent grants never expire and are cleared only by
    * {@link resetWeaponLevels} on run restart (AC7).
    */
-  private _weaponLevels: Map<WeaponId, number> = new Map();
+  private _permanentWeaponGrants: Map<WeaponId, number> = new Map();
+  /**
+   * Active **temporary** weapon stacks (field pickups). Each field pickup
+   * adds one stack tied to the weapon's 10 s timed window; the stack is
+   * cleared when the window expires in {@link tickWeaponTimers}, so a field
+   * pickup's level never persists after the weapon times out
+   * (AH-0MUX802450085VZZ).
+   */
+  private _tempWeaponStacks: Map<WeaponId, number> = new Map();
   /** Run-scoped power-up level store — every collection levels the power-up (parent AH-0MUV5CLVO002ZHS9). */
   private _powerUpLevelStore: PowerUpLevelStore = new PowerUpLevelStore();
   /** Absolute beat-clock time (ms, a grid tick) of each active weapon's next shot. */
@@ -669,11 +681,14 @@ export class Player extends Phaser.GameObjects.Graphics {
    * cannon is permanent and collecting it is a no-op.
    *
    * @param weaponId — The weapon power-up to add ('spread' | 'dual' | 'rapid').
-   * @param permanent — When true, the weapon is granted permanently for the
-   *   current run (used by the hold-full choice) and never expires.
+   * @param permanent — When true, the weapon is granted **permanently** for
+   *   the current run (used by the hold-full choice) and never expires; when
+   *   false, the pickup adds a **temporary** stack tied to the weapon's 10 s
+   *   timed window (AH-0MUX802450085VZZ).
    *
-   * Both temporary and permanent collections **level the weapon up** (AC2);
-   * the level persists for the run (AC3, AC6).
+   * A field pickup's temporary level is cleared when the weapon times out
+   * ({@link tickWeaponTimers}); a permanent grant survives the run. Only
+   * {@link resetWeaponLevels} clears the permanent level, on run restart.
    */
   equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!isTimedWeapon(weaponId)) {
@@ -682,13 +697,14 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (!WEAPON_CATALOGUE[weaponId]) {
       return;
     }
-    // Every collection levels the weapon up (AC2): a temporary drop and a
-    // permanent mineral choice both raise the run-scoped level. The level is
-    // retained across timeouts (AC3) and Resets (AC6); only a run restart
-    // clears it (AC7, `resetWeaponLevels`).
-    this._weaponLevels.set(weaponId, this.getWeaponLevel(weaponId) + 1);
     if (permanent) {
-      // Permanent for the run: active forever, no countdown to tick down.
+      // A hold-full reward raises the **permanent** level for the run: the
+      // weapon is active forever with no countdown (AC2). It never touches
+      // the temporary stacks.
+      this._permanentWeaponGrants.set(
+        weaponId,
+        this.getPermanentWeaponLevel(weaponId) + 1,
+      );
       this._permanentWeapons.add(weaponId);
       this._weaponTimers.delete(weaponId);
       this._weaponNextShot.delete(weaponId);
@@ -697,7 +713,13 @@ export class Player extends Phaser.GameObjects.Graphics {
       this._readyFire(weaponId);
       return;
     }
-    // Fresh independent 10 s countdown from the moment of collection (AC2).
+    // A field pickup raises the **temporary** level only, tied to the
+    // weapon's fresh independent 10 s countdown (AC1/AC2). When the window
+    // expires the stack is cleared (see {@link tickWeaponTimers}).
+    this._tempWeaponStacks.set(
+      weaponId,
+      this.getTempWeaponStacks(weaponId) + 1,
+    );
     this._weaponTimers.set(weaponId, WEAPON_TIMEOUT_MS);
     this._primaryWeapon = weaponId;
     this._readyFire(weaponId);
@@ -709,17 +731,22 @@ export class Player extends Phaser.GameObjects.Graphics {
    * is never a weapon and is never added to the active set.
    *
    * Also clears any hold-full choice weapons granted permanently for the
-   * run — a Reset returns the ship to the bare cannon.
+   * run — a Reset returns the ship to the bare cannon, but its **permanent
+   * level** is retained so re-collecting it later resumes at the earned
+   * strength.
    *
-   * **Levels are retained** (AC6): a Reset stops the weapons firing but
-   * keeps the run's upgrade progress, so re-collecting a weapon later
-   * re-activates it at the same level. Only a run restart clears levels
-   * ({@link resetWeaponLevels}).
+   * **Temporary levels are cleared** (AH-0MUX802450085VZZ): a Reset ends the
+   * active timed windows, so the temporary (field-pickup) stacks tied to
+   * them go with them. **Permanent levels are retained** (AC6) and only a
+   * run restart clears them ({@link resetWeaponLevels}).
    */
   resetWeapon(): void {
     this._weaponTimers.clear();
     this._weaponNextShot.clear();
     this._weaponLastShot.clear();
+    // A Reset ends every active timed window, so the temporary levels tied to
+    // those windows go with them; the permanent levels are retained (AC6).
+    this._tempWeaponStacks.clear();
     this._permanentWeapons.clear();
     this._permanentWeapons.add('cannon');
     this._primaryWeapon = 'cannon';
@@ -727,24 +754,40 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Returns the run-scoped level of a weapon: `0` for a never-collected
-   * weapon (the base, un-upgraded state), otherwise the number of times it
-   * has been collected (AC5). Levels are unbounded.
+   * Returns the **effective** run-scoped level of a weapon: `0` for a
+   * never-collected weapon (the base, un-upgraded state), otherwise
+   * `permanentGrants + tempStacks`. The effect path and the HUD readout use
+   * this so a live field pickup strengthens the weapon while it lasts
+   * (AC1/AC5).
    *
    * @param weaponId — The weapon whose level to read.
    */
   getWeaponLevel(weaponId: WeaponId): number {
-    return this._weaponLevels.get(weaponId) ?? 0;
+    return (
+      this.getPermanentWeaponLevel(weaponId) +
+      this.getTempWeaponStacks(weaponId)
+    );
+  }
+
+  /** The number of **permanent** (hold-full) grants of `weaponId` (AC4). */
+  getPermanentWeaponLevel(weaponId: WeaponId): number {
+    return this._permanentWeaponGrants.get(weaponId) ?? 0;
+  }
+
+  /** The number of active **temporary** (field-pickup) stacks of `weaponId`. */
+  getTempWeaponStacks(weaponId: WeaponId): number {
+    return this._tempWeaponStacks.get(weaponId) ?? 0;
   }
 
   /**
-   * Snapshot of every weapon the player has collected this run, with its
-   * current level (id → level ≥ 1). Used by the hold-full choice to offer
-   * weapon level-ups that reflect the run's progress (parent
-   * AH-0MUPMPCB2009J54J). A never-collected weapon is omitted (level 0).
+   * Snapshot of every weapon the player **permanently** owns this run, with
+   * its permanent level (id → level ≥ 1). Used by the hold-full choice to
+   * offer weapon level-ups that reflect only permanent progress (parent
+   * AH-0MUPMPCB2009J54J, AC4). A field-only weapon is omitted, so it is
+   * still offered as `★ New`.
    */
   getWeaponLevels(): Array<{ id: WeaponId; level: number }> {
-    return [...this._weaponLevels.entries()]
+    return [...this._permanentWeaponGrants.entries()]
       .filter(([, level]) => level > 0)
       .map(([id, level]) => ({ id, level }));
   }
@@ -760,12 +803,14 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Clears every weapon level back to base — the run-scoped reset performed
-   * on run restart (AC7). Distinct from {@link resetWeapon}, which clears
-   * only timed *activations* and deliberately retains levels (AC6).
+   * Clears every weapon level (permanent **and** temporary) back to base —
+   * the run-scoped reset performed on run restart (AC6/AC7). Distinct from
+   * {@link resetWeapon}, which clears timed activations and only their
+   * temporary stacks while deliberately retaining permanent levels.
    */
   resetWeaponLevels(): void {
-    this._weaponLevels.clear();
+    this._permanentWeaponGrants.clear();
+    this._tempWeaponStacks.clear();
   }
 
   /**
@@ -861,6 +906,9 @@ export class Player extends Phaser.GameObjects.Graphics {
         this._weaponTimers.delete(id);
         this._weaponNextShot.delete(id);
         this._weaponLastShot.delete(id);
+        // The timed window has expired, so its temporary level is removed;
+        // the permanent level (if any) reverts the effective level (AC1).
+        this._tempWeaponStacks.delete(id);
         if (this._primaryWeapon === id) {
           // Fall back to the most recently collected remaining weapon.
           const stillActive = [...this._weaponTimers.keys()];

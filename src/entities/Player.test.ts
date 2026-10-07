@@ -888,7 +888,7 @@ describe('Player ship entity', () => {
       expect(player.hasWeapon('spread')).toBe(true);
     });
 
-    it('level persists across a timeout and re-collection raises it again (AC3)', async () => {
+    it('a field-pickup level is temporary: it reverts when the weapon times out (AC3)', async () => {
       const player = await freshPlayer();
       player.equipWeapon('dual');
       player.equipWeapon('dual');
@@ -896,10 +896,28 @@ describe('Player ship entity', () => {
 
       player.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
       expect(player.hasWeapon('dual')).toBe(false);
-      expect(player.getWeaponLevel('dual')).toBe(2); // retained
+      // Field pickups only: the temporary level is removed on expiry.
+      expect(player.getWeaponLevel('dual')).toBe(0);
+      expect(player.getPermanentWeaponLevel('dual')).toBe(0);
 
       player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(1);
+    });
+
+    it('a permanent weapon level survives timeout and is unaffected by temporary expiry (AC2)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('dual', true);
+      player.equipWeapon('dual', true);
+      expect(player.getWeaponLevel('dual')).toBe(2);
+      expect(player.getPermanentWeaponLevel('dual')).toBe(2);
+
+      // A later field pickup adds a temporary stack...
+      player.equipWeapon('dual');
       expect(player.getWeaponLevel('dual')).toBe(3);
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
+      // ...which expires, leaving the permanent level.
+      expect(player.getWeaponLevel('dual')).toBe(2);
+      expect(player.hasWeapon('dual')).toBe(true); // permanent, never expires
     });
 
     it('getWeaponDef returns a level-resolved definition and never mutates the base (AC4)', async () => {
@@ -945,15 +963,24 @@ describe('Player ship entity', () => {
       expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(baseRadius);
     });
 
-    it('resetWeapon clears activations but retains levels (AC6)', async () => {
+    it('resetWeapon clears activations but retains permanent levels (AC6)', async () => {
       const player = await freshPlayer();
-      player.equipWeapon('spread');
-      player.equipWeapon('dual');
+      player.equipWeapon('spread', true);
+      player.equipWeapon('dual', true);
 
       player.resetWeapon();
       expect(player.getActiveWeapons()).toEqual(['cannon']);
       expect(player.getWeaponLevel('spread')).toBe(1);
       expect(player.getWeaponLevel('dual')).toBe(1);
+    });
+
+    it('resetWeapon clears temporary field-pickup levels with the activations', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('spread'); // field pickup → temporary
+      expect(player.getWeaponLevel('spread')).toBe(1);
+
+      player.resetWeapon();
+      expect(player.getWeaponLevel('spread')).toBe(0);
     });
 
     it('a permanent mineral choice levels the weapon up and keeps it (AC3)', async () => {
@@ -971,28 +998,39 @@ describe('Player ship entity', () => {
       expect(player.hasWeapon('spread')).toBe(true);
     });
 
-    it('getWeaponLevels lists every owned weapon with its level (choice context)', async () => {
+    it('getWeaponLevels lists every permanently owned weapon with its permanent level (choice context)', async () => {
       const player = await freshPlayer();
       expect(player.getWeaponLevels()).toEqual([]);
 
-      player.equipWeapon('spread');
-      player.equipWeapon('spread');
-      player.equipWeapon('rapid');
+      player.equipWeapon('spread', true);
+      player.equipWeapon('spread', true);
+      player.equipWeapon('rapid', true);
       expect(player.getWeaponLevels()).toEqual([
         { id: 'spread', level: 2 },
         { id: 'rapid', level: 1 },
       ]);
+
+      // A field-only weapon is not permanently owned, so it is not offered
+      // as a level-up (it stays a New base entry).
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevels().some((w) => w.id === 'dual')).toBe(false);
     });
 
-    it('resetWeaponLevels clears every level (AC7)', async () => {
+    it('resetWeaponLevels clears both permanent and temporary levels (AC6/AC7)', async () => {
       const player = await freshPlayer();
-      player.equipWeapon('spread');
-      player.equipWeapon('rapid');
-      expect(player.getWeaponLevel('rapid')).toBe(1);
+      player.equipWeapon('spread', true); // permanent grant
+      player.equipWeapon('spread'); // temporary stack
+      player.equipWeapon('rapid', true); // permanent grant
+      expect(player.getWeaponLevel('spread')).toBe(2);
+      expect(player.getPermanentWeaponLevel('spread')).toBe(1);
+      expect(player.getTempWeaponStacks('spread')).toBe(1);
 
       player.resetWeaponLevels();
       expect(player.getWeaponLevel('spread')).toBe(0);
+      expect(player.getPermanentWeaponLevel('spread')).toBe(0);
+      expect(player.getTempWeaponStacks('spread')).toBe(0);
       expect(player.getWeaponLevel('rapid')).toBe(0);
+      expect(player.getWeaponLevels()).toEqual([]);
       expect(player.getWeaponDef('rapid')).toBe(WEAPON_CATALOGUE.rapid);
     });
 
@@ -1019,6 +1057,58 @@ describe('Player ship entity', () => {
       const shot = player.getLastShotTime('rapid')!;
       expect(isOnGrid(shot, interval, 0)).toBe(true);
     });
+
+    // ── Worked examples (AH-0MUX802450085VZZ, F1 contract) ──────────
+
+    it('example A — field pickups only: weapon level reverts on timeout', async () => {
+      const player = await freshPlayer();
+
+      // 1. Pick up a weapon → base level for the 10 s window.
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(1);
+      expect(player.getTempWeaponStacks('dual')).toBe(1);
+      expect(player.getPermanentWeaponLevel('dual')).toBe(0);
+
+      // 2. Pick it up again before expiry → level up, timer refreshed.
+      player.equipWeapon('dual');
+      expect(player.getWeaponLevel('dual')).toBe(2);
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS - 100);
+      expect(player.hasWeapon('dual')).toBe(true); // refreshed window
+
+      // 3. Expiry → back to unowned (no permanent level retained).
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS);
+      expect(player.hasWeapon('dual')).toBe(false);
+      expect(player.getWeaponLevel('dual')).toBe(0);
+      expect(player.getPermanentWeaponLevel('dual')).toBe(0);
+    });
+
+    it('example B — permanent grant then field pickup: reverts to the permanent level', async () => {
+      const player = await freshPlayer();
+
+      // 1. Take the weapon from a hold-full reward → permanent, no timeout.
+      player.equipWeapon('dual', true);
+      expect(player.getPermanentWeaponLevel('dual')).toBe(1);
+      expect(player.getWeaponLevel('dual')).toBe(1);
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS * 10);
+      expect(player.hasWeapon('dual')).toBe(true); // never expires
+
+      // 2. Pick it up in the field → temporary level on top.
+      player.equipWeapon('dual');
+      expect(player.getTempWeaponStacks('dual')).toBe(1);
+      expect(player.getWeaponLevel('dual')).toBe(2);
+      expect(player.getWeaponDef('dual').levelBulletSize).toBeGreaterThan(1);
+
+      // 3. Expiry → back to the permanent level (still active).
+      player.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
+      expect(player.getTempWeaponStacks('dual')).toBe(0);
+      expect(player.getWeaponLevel('dual')).toBe(1);
+      expect(player.hasWeapon('dual')).toBe(true);
+
+      // 4. Another hold-full reward → permanent level 2.
+      player.equipWeapon('dual', true);
+      expect(player.getPermanentWeaponLevel('dual')).toBe(2);
+      expect(player.getWeaponLevel('dual')).toBe(2);
+    });
   });
 
   describe('power-up level store (AH-0MUV5CLVO002ZHS9)', () => {
@@ -1033,18 +1123,22 @@ describe('Player ship entity', () => {
       expect(player.getPowerUpLevel('P3')).toBe(2);
     });
 
-    it('getPowerUpLevels lists every owned power-up with its level (choice context)', async () => {
+    it('getPowerUpLevels lists every permanently owned power-up with its permanent level (choice context)', async () => {
       const player = await freshPlayer();
       expect(player.getPowerUpLevels()).toEqual([]);
 
-      player.collectPowerUp('P3');
-      player.collectPowerUp('P3');
-      player.collectPowerUp('P5');
+      player.collectPowerUp('P3', true);
+      player.collectPowerUp('P3', true);
+      player.collectPowerUp('P5', true);
 
       expect(player.getPowerUpLevels()).toEqual([
         { id: 'P3', level: 2 },
         { id: 'P5', level: 1 },
       ]);
+
+      // A field-only power-up is not permanently owned (Resolved decision 2).
+      player.collectPowerUp('P6');
+      expect(player.getPowerUpLevels().some((p) => p.id === 'P6')).toBe(false);
     });
 
     it('a permanent hold-full grant tracks the level and permanent stack (P9)', async () => {
@@ -1058,15 +1152,22 @@ describe('Player ship entity', () => {
       expect(player.getPowerUpLevels()).toEqual([{ id: 'P9', level: 2 }]);
     });
 
-    it('resetPowerUpLevels clears every level (run restart)', async () => {
+    it('resetPowerUpLevels clears both permanent and temporary levels (run restart)', async () => {
       const player = await freshPlayer();
-      player.collectPowerUp('P3');
-      player.collectPowerUp('P6');
+      const store = player.getPowerUpLevelStore();
+      player.collectPowerUp('P3', true); // permanent grant
+      player.collectPowerUp('P3'); // temporary stack
+      player.collectPowerUp('P6'); // temporary only
+      expect(store.getEffectiveLevel('P3')).toBe(2);
+      expect(store.getPermanentLevel('P3')).toBe(1);
+      expect(store.getTempStacks('P3')).toBe(1);
 
       player.resetPowerUpLevels();
 
       expect(player.getPowerUpLevel('P3')).toBe(0);
       expect(player.getPowerUpLevel('P6')).toBe(0);
+      expect(store.getTempStacks('P3')).toBe(0);
+      expect(store.getPermanentLevel('P3')).toBe(0);
       expect(player.getPowerUpLevels()).toEqual([]);
     });
   });
