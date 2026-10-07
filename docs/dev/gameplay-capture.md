@@ -23,10 +23,13 @@ fallback replays the original deterministic key plan instead
 npm install
 npm run capture:install          # playwright install chromium (~278 MiB download)
 
-# record a 15 s clip of the in-game demo (default) to capture-output/…
+# record a complete in-game demo run (start → game over + 5 s tail) to capture-output/…
 npm run capture
 
-# or control it explicitly
+# bound a long run or lengthen the post-signal tail
+npm run capture -- --max-duration 1800000 --tail 5000
+
+# or use the legacy fixed-length / scripted fallbacks
 npm run capture -- --duration 20000 --output clips/demo.webm
 npm run capture -- --headed      # watch it drive a visible browser
 npm run capture -- --scripted    # fallback: replay the fixed scripted plan
@@ -76,17 +79,86 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
 6. Calls `canvas.captureStream(60)`, muxes the canvas video tracks with the
    tapped audio tracks and starts a `MediaRecorder` **inside the page** with
    the resolved VP9+Opus mime.
-7. Records for the requested duration. In **demo mode** the shipped in-game
-   bot plays itself (no further input is sent); with `--scripted` the
-   deterministic bot plan (below) is replayed as **real Playwright
-   `keyboard.down`/`keyboard.up` events** (trusted input, not synthesised DOM
-   events).
+7. Records the run. The default **demo** path installs a run-end listener
+   **before the game boots** (`page.addInitScript`), waits for the dev-gated
+   `aihell:run-ended` signal and keeps recording for `--tail` ms after it,
+   bounded by `--max-duration` ms — a whole run, win or lose, instead of a
+   fixed clip (see [Full-run capture](#full-run-capture-default)). With
+   `--scripted` the deterministic bot plan (below) is replayed as **real
+   Playwright `keyboard.down`/`keyboard.up` events** (trusted input, not
+   synthesised DOM events); `--duration` keeps the legacy fixed-length clip.
 8. Stops the recorder, decodes the produced WebM back through a `<video>`
    element and probes several sampled frames for **resolution, duration,
    non-black fraction, colour variety and frame-to-frame motion**, then
    decodes the audio with `decodeAudioData` for **peak and RMS**.
 9. Streams the encoded chunks to Node over an `exposeFunction` binding and
    writes them to the output file.
+
+## Full-run capture (default)
+
+`npm run capture` records a **complete run**, not a fixed clip
+(AH-0MUX2K8U7000GFNU). From the demo's start (Play Game / Watch Demo) through
+_every level the run spans_ to the first game over, the recorder keeps
+running, then continues for a **`--tail`** (default **5000 ms**) after the run
+ends so the victory/defeat screen is visible, and stops.
+
+### End-of-run signal
+
+Because the run length varies (unseeded wave/spawn RNG), capture cannot assume
+a duration — it detects the end from a small, additive, **dev-gated**
+page-side signal emitted by `PlayScene._finishRun`
+(AH-0MUXZ4BXK001QCEK, `src/core/runEndedSignal.ts`):
+
+- a `CustomEvent` on `window` named **`aihell:run-ended`** whose `detail` is
+  `{ won, score }`; and
+- **`window.__aiHellRunState = { ended: true, won, score }`** as a race
+  fallback.
+
+Both fire for **victory and defeat**. The capture installs its listener with
+`page.addInitScript` before the game boots (so a short run cannot end before
+it is listening) and also polls the `window.__aiHellRunState` flag, so an
+early end is still detected. The payload shape is owned by the pure
+`buildRunEndedDetail` / `decodeRunEndedDetail` helpers in
+`scripts/capture-run-lifecycle.mjs`, shared by the game emitter and the
+capture decoder. The signal is gated by `import.meta.env.DEV`, so the shipped
+bundle stays inert (`npm run check-bundle` still passes).
+
+### Tail, cap and exit code
+
+- **`--tail <ms>`** — how long to keep recording after the signal (default
+  `5000`). Recording stops one tail after the signal, clamped to the cap.
+- **`--max-duration <ms>`** — safety cap (default `1800000` = 30 min). If a
+  run never signals, the recorder stops at the cap and the command **reports
+  it and exits non-zero** — a capped clip is never presented as a complete
+  run. The `--json` payload carries `fullRun`, `complete`, `capHit`,
+  `runOutcome` (`{ won, score }` or `null`) and `runLengthMs`.
+- **Backwards compatibility:** `--duration` and `--scripted` keep the legacy
+  fixed-length behaviour; only the default demo path is a full run.
+
+The stop/cap decision is the pure `evaluateRunStop` / `waitForRunEnd` pair in
+`scripts/capture-run-lifecycle.mjs`, unit-tested with a fake clock and a
+stubbed signal source.
+
+### Demo game-over dwell
+
+For the captured tail to show the outcome, the demo/attract mode holds on the
+game-over screen before returning to the menu (AH-0MUXZ4CAE008QRFZ). On game
+over the demo starts the shared `GameOverScene` with `{ demo: true }`, which
+renders VICTORY/DEFEAT + the final score without leaderboard qualification or
+initials and auto-returns to the menu after **`DEMO_GAME_OVER_DWELL_MS`**
+(single-source, **>= the capture tail**). Normal (non-demo) play is unchanged,
+and a demo run is **non-scoring**. The dwell is resolved by the pure
+`resolveDemoGameOverDwellMs` / `shouldDemoReturnToMenu` helpers.
+
+### Cost of long runs
+
+A full victory run is far longer than the original 15 s spike clip: it spans
+every level and the boss, so expect **minutes** of wall clock, a
+correspondingly larger WebM file, and a non-deterministic length (the game is
+not yet fully deterministic). A **defeat** run is typically much shorter. The
+`--max-duration` cap and the heartbeat bound and surface the cost; there is
+no frame-exact reproducibility yet (see
+[Determinism gaps](#determinism-gaps)).
 
 ## Progress output & dependency preflight
 
@@ -100,13 +172,15 @@ stdout for the final report / `--json` payload
 [capture] Starting Vite dev server…
 [capture] Launching headless Chromium…
 [capture] Loading http://127.0.0.1:46321/…
-[capture] Starting PlayScene (Enter)…
-[capture] Recording 15.0s of scripted gameplay…
-Recording [########----------------]  34%  5.1s/15.5s  ETA 10.4s
-Recording [################--------]  67%  10.4s/15.5s  ETA 5.1s
-Recording [########################] 100%  15.5s/15.5s  ETA 0.0s
+[capture] Starting in-game demo (Watch Demo)…
+[capture] Recording the full run (tail 5.0s, cap 1800.0s)…
+Recording [------------------------]   0%  2.0s/1800.0s  ETA 1798.0s
+Recording [#-----------------------]   4%  65.0s/1800.0s  ETA 1735.0s
 [capture] Encoding and probing the clip…
 ```
+
+The full-run heartbeat reports **elapsed against the `--max-duration` cap**,
+not against an assumed run length (the run length is not known in advance).
 
 On a TTY the heartbeat overwrites itself in place; when redirected (logs, CI)
 each heartbeat is a separate line. `--json` suppresses the human report and
@@ -372,6 +446,8 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 | `scripts/capture-gameplay.d.mts` | Types for the capture orchestrator's pure arg/mode helpers |
 | `scripts/capture-progress.mjs` | Pure duration / ETA / progress-bar + audio-summary formatting + setup hint |
 | `scripts/capture-progress.d.mts` | Types for the progress module |
+| `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
+| `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
 | `package.json` | `capture` / `capture:install` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
