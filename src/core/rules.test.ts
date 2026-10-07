@@ -512,6 +512,99 @@ describe('game rules configuration module', () => {
       expect(loaded.mineralCollectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
       expect(loaded.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
     });
+
+    // ── Power-up ID rename migration (F4 AH-0MUY0GP4Q008LYO7) ──────
+
+    it('migrates a version-3 P-keyed powerUpWeights table to the name keys', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          powerUpSpawnInterval: 7,
+          powerUpWeights: {
+            P3: 4,
+            P4: 4,
+            P5: 4,
+            P6: 4,
+            P7: 4,
+            P8: 9,
+            P9: 4,
+            P10: 4,
+          },
+        }),
+      );
+
+      const loaded = loadRules();
+
+      // The customised Extra Life weight survives under its name key.
+      expect(loaded.powerUpWeights.extra_life).toBe(9);
+      // Every other code key maps to its name key with the stored value.
+      expect(loaded.powerUpWeights.shield).toBe(4);
+      expect(loaded.powerUpWeights.bomb).toBe(4);
+      expect(loaded.powerUpWeights.speed_boost).toBe(4);
+      expect(loaded.powerUpWeights.phase_shift).toBe(4);
+      expect(loaded.powerUpWeights.teleport).toBe(4);
+      expect(loaded.powerUpWeights.magnet).toBe(4);
+      expect(loaded.powerUpWeights.mineral_scoop).toBe(4);
+      // Other rules are preserved by the migration.
+      expect(loaded.powerUpSpawnInterval).toBe(7);
+      // No legacy code key leaks into the loaded table.
+      expect(Object.keys(loaded.powerUpWeights).sort()).toEqual(
+        [...POWER_UP_WEIGHT_IDS].sort(),
+      );
+    });
+
+    it('keeps the canonical name key when a legacy code and its name are both present', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          powerUpWeights: { P8: 1, extra_life: 9 },
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.powerUpWeights.extra_life).toBe(9);
+    });
+
+    it('ignores unknown and non-numeric entries in a legacy P-keyed table', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          powerUpWeights: { P8: 9, P11: 5, shield: 'lots' },
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.powerUpWeights.extra_life).toBe(9);
+      expect(loaded.powerUpWeights.shield).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
+      expect('P11' in loaded.powerUpWeights).toBe(false);
+    });
+
+    it('round-trips a version-4 name-keyed config unchanged', () => {
+      const custom: GameRules = {
+        ...DEFAULT_RULES,
+        powerUpWeights: {
+          ...DEFAULT_RULES.powerUpWeights,
+          extra_life: 9,
+        },
+      };
+
+      saveRules(custom);
+      const loaded = loadRules();
+
+      expect(loaded.powerUpWeights).toEqual(custom.powerUpWeights);
+      expect(loaded).toEqual(custom);
+    });
+
+    it('stamps saved rules with the current schema version', () => {
+      saveRules(DEFAULT_RULES);
+      const raw = window.localStorage.getItem(RULES_STORAGE_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw as string).version).toBe(RULES_SCHEMA_VERSION);
+      expect(RULES_SCHEMA_VERSION).toBe(4);
+    });
   });
 });
 

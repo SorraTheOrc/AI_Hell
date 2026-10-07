@@ -149,6 +149,25 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'mineral_scoop',
 ];
 
+/**
+ * Translation table from the legacy opaque GDD power-up codes to the
+ * canonical snake_case ids (parent AH-0MUX6S20F002GHPF, F4
+ * AH-0MUY0GP4Q008LYO7). Configs persisted before version 4 keyed
+ * `powerUpWeights` by these codes; {@link loadRules} translates them so a
+ * player's tuned drop weights survive the rename instead of silently
+ * resetting to the defaults.
+ */
+export const LEGACY_POWER_UP_ID_BY_CODE: Readonly<Record<string, PowerUpId>> = {
+  'P3': 'shield',
+  'P4': 'bomb',
+  'P5': 'speed_boost',
+  'P6': 'phase_shift',
+  'P7': 'teleport',
+  'P8': 'extra_life',
+  'P9': 'magnet',
+  'P10': 'mineral_scoop',
+};
+
 /** Every weapon drop covered by the default weapon weight table. */
 export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'spread',
@@ -250,8 +269,14 @@ export const RULES_STORAGE_KEY = 'ai-hell-game-rules';
  * values that are meaningless under the new additive semantics, so
  * {@link loadRules} resets the bonus tunables to the new defaults for any
  * config older than version 3 rather than carrying the stale keys forward.
+ *
+ * Version 4 renamed the power-up ids from the opaque GDD codes (`P3`–`P10`)
+ * to the canonical snake_case names (parent AH-0MUX6S20F002GHPF).
+ * {@link loadRules} translates a legacy `powerUpWeights` table keyed by the
+ * old codes through {@link LEGACY_POWER_UP_ID_BY_CODE} so customised drop
+ * weights survive the upgrade (F4 AH-0MUY0GP4Q008LYO7).
  */
-export const RULES_SCHEMA_VERSION = 3;
+export const RULES_SCHEMA_VERSION = 4;
 
 // ── Internals ───────────────────────────────────────────────────────
 
@@ -327,6 +352,27 @@ function coerceInterval(value: unknown): number {
     value > 0
     ? value
     : DEFAULT_RULES.powerUpSpawnInterval;
+}
+
+/**
+ * Translates a stored (possibly legacy P-keyed) power-up weight table to
+ * the canonical name keys. A canonical name key already present in the
+ * stored object wins over its legacy code alias; every other entry is left
+ * untouched. Unknown keys pass through unchanged so {@link mergeWeights}
+ * can ignore them as before.
+ */
+function migrateLegacyPowerUpWeights(stored: unknown): unknown {
+  if (!stored || typeof stored !== 'object') return stored;
+  const source = stored as Record<string, unknown>;
+  const migrated: Record<string, unknown> = { ...source };
+  for (const [code, name] of Object.entries(LEGACY_POWER_UP_ID_BY_CODE)) {
+    if (!(code in source)) continue;
+    if (!(name in source)) {
+      migrated[name] = source[code];
+    }
+    delete migrated[code];
+  }
+  return migrated;
 }
 
 /**
@@ -421,13 +467,24 @@ export function loadRules(): GameRules {
     // the bonus tunables for any older config so a stale fraction value is
     // never reinterpreted as a bonus.
     const legacyRedrop = !isVersionAtLeast(parsed.version, 3);
+    // Versions 1–3 keyed `powerUpWeights` by the opaque GDD codes
+    // (`P3`–`P10`); version 4 renamed the keys to the canonical snake_case
+    // names. Translate legacy keys so customised weights survive the rename.
+    const legacyPowerUpWeights = !isVersionAtLeast(
+      parsed.version,
+      RULES_SCHEMA_VERSION,
+    );
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       beatBpm: coercePositiveNumber(parsed.beatBpm, DEFAULT_BEAT_BPM),
       weaponSubdivisions: mergeWeaponSubdivisions(
         parsed.weaponSubdivisions,
       ),
-      powerUpWeights: mergeWeights(parsed.powerUpWeights),
+      powerUpWeights: mergeWeights(
+        legacyPowerUpWeights
+          ? migrateLegacyPowerUpWeights(parsed.powerUpWeights)
+          : parsed.powerUpWeights,
+      ),
       weaponWeights: mergeWeaponWeights(parsed.weaponWeights),
       mineralCollectAmount: coercePositiveNumber(
         parsed.mineralCollectAmount,

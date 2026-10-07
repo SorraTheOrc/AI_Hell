@@ -99,6 +99,24 @@ const ALLOW_LIST: readonly AllowListEntry[] = [
       'power-up rename.',
     signature: /export type WeaponId\s*=/,
   },
+  ...([
+    ['P3', 'shield'],
+    ['P4', 'bomb'],
+    ['P5', 'speed_boost'],
+    ['P6', 'phase_shift'],
+    ['P7', 'teleport'],
+    ['P8', 'extra_life'],
+    ['P9', 'magnet'],
+    ['P10', 'mineral_scoop'],
+  ] as const).map(([code, name]): AllowListEntry => ({
+    path: 'src/core/rules.ts',
+    literal: `'${code}'`,
+    reason:
+      `Legacy persisted-weight migration key: loadRules() translates ` +
+      `the stored '${code}' weight to '${name}' (F4 AH-0MUY0GP4Q008LYO7). ` +
+      `This is the one place the legacy code legitimately remains.`,
+    signature: /LEGACY_POWER_UP_ID_BY_CODE/,
+  })),
 ];
 
 /** Recursively lists every TypeScript file under `dir`. */
