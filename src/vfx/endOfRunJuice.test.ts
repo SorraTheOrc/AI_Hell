@@ -15,6 +15,10 @@ import {
   spawnVictoryJuice,
   planVictoryFireworks,
   spawnVictoryFireworks,
+  spawnVictoryBurstGlow,
+  spawnVictorySparkShards,
+  spawnVictoryRays,
+  playVictoryFireworkCue,
   spawnDefeatVignette,
   spawnDefeatGlitch,
   spawnDefeatRing,
@@ -57,6 +61,12 @@ import {
   ENDOFRUN_VICTORY_FIREWORKS_MAX_BURSTS,
   ENDOFRUN_VICTORY_FIREWORK_KINDS,
   ENDOFRUN_VICTORY_FIREWORK_DEPTH,
+  ENDOFRUN_VICTORY_FIREWORK_SPARK_COUNT,
+  ENDOFRUN_VICTORY_RAY_SWEEPS,
+  ENDOFRUN_ENABLE_VICTORY_GLOW,
+  ENDOFRUN_ENABLE_VICTORY_SPARKS,
+  ENDOFRUN_ENABLE_VICTORY_RAYS,
+  ENDOFRUN_ENABLE_VICTORY_FIREWORKS_SOUND,
 } from './endOfRunJuice';
 
 // ── Fixture helpers ──────────────────────────────────────────────────
@@ -684,7 +694,7 @@ describe('spawnVictoryFireworks — renderer (AC1/AC3/AC4/AC6)', () => {
     return booted.scene;
   }
 
-  it('spawns one registered explosion per planned burst', async () => {
+  it('spawns one registered explosion per planned burst, plus glow and spark layers', async () => {
     const scene = await boot();
     const registry: Phaser.GameObjects.GameObject[] = [];
 
@@ -696,10 +706,21 @@ describe('spawnVictoryFireworks — renderer (AC1/AC3/AC4/AC6)', () => {
 
     expect(handle.bursts.length).toBeGreaterThan(0);
     expect(handle.explosions).toHaveLength(handle.bursts.length);
-    expect(registry).toHaveLength(handle.bursts.length);
+    expect(handle.glows).toHaveLength(handle.bursts.length);
+    expect(handle.sparks).toHaveLength(
+      handle.bursts.length * ENDOFRUN_VICTORY_FIREWORK_SPARK_COUNT,
+    );
+    expect(handle.rays).toHaveLength(ENDOFRUN_VICTORY_RAY_SWEEPS);
     for (const explosion of handle.explosions) {
       expect(explosion.totalCount).toBeGreaterThan(0);
     }
+    // Every spawned layer object is registered for SHUTDOWN teardown.
+    expect(registry).toHaveLength(
+      handle.explosions.length +
+        handle.glows.length +
+        handle.sparks.length +
+        handle.rays.length,
+    );
   });
 
   it('schedules each burst with its planned delay', async () => {
@@ -708,10 +729,13 @@ describe('spawnVictoryFireworks — renderer (AC1/AC3/AC4/AC6)', () => {
 
     const handle = spawnVictoryFireworks(scene, 0, 0, { seed: 2, durationMs: 2000 });
     const delays = tweenSpy.mock.calls.map(
-      (call) => (call[0] as Phaser.Types.Tweens.TweenBuilderConfig).delay,
+      (call) => (call[0] as Phaser.Types.Tweens.TweenBuilderConfig).delay ?? 0,
     );
 
-    expect(delays).toEqual(handle.bursts.map((burst) => burst.delayMs));
+    // Each planned burst delay is used by at least one scheduled layer.
+    for (const burst of handle.bursts) {
+      expect(delays).toContain(burst.delayMs);
+    }
   });
 
   it('renders bursts behind the GameOverScene UI by default (negative depth)', async () => {
@@ -764,7 +788,9 @@ describe('spawnVictoryFireworks — renderer (AC1/AC3/AC4/AC6)', () => {
       seed: 4,
       durationMs: 2000,
     });
-    expect(registry).toHaveLength(handle.bursts.length);
+    expect(registry).toHaveLength(
+      handle.explosions.length + handle.glows.length + handle.sparks.length + handle.rays.length,
+    );
 
     for (const call of tweenSpy.mock.calls) {
       const onComplete = (call[0] as Phaser.Types.Tweens.TweenBuilderConfig)
@@ -778,15 +804,196 @@ describe('spawnVictoryFireworks — renderer (AC1/AC3/AC4/AC6)', () => {
     }
   });
 
-  it('tags each burst with a victoryFirework juice layer', async () => {
+  it('tags the explosion, glow, spark and ray layers with their juice tags', async () => {
     const scene = await boot();
     const registry: Phaser.GameObjects.GameObject[] = [];
 
-    spawnVictoryFireworks(scene, 0, 0, { registry, seed: 5, durationMs: 1500 });
+    const handle = spawnVictoryFireworks(scene, 0, 0, { registry, seed: 5, durationMs: 1500 });
 
-    expect(registry.length).toBeGreaterThan(0);
-    for (const obj of registry) {
-      expect(obj.getData('juiceLayer')).toBe('victoryFirework');
+    for (const explosion of handle.explosions) {
+      const graphics = explosion.graphics as { getData?(k: string): unknown };
+      expect(graphics.getData?.('juiceLayer')).toBe('victoryFirework');
+    }
+    for (const glow of handle.glows) {
+      expect(glow.getData('juiceLayer')).toBe('victoryGlow');
+    }
+    for (const spark of handle.sparks) {
+      expect(spark.getData('juiceLayer')).toBe('victorySpark');
+    }
+    for (const ray of handle.rays) {
+      expect(ray.getData('juiceLayer')).toBe('victoryRay');
+    }
+  });
+
+  it('honours the resolved layer toggles (glow / sparks / rays / sound)', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const playSound = vi.fn();
+    const disabled = {
+      ...resolveEndOfRunJuiceParams('victory'),
+      victoryGlowEnabled: false,
+      victorySparksEnabled: false,
+      victoryRaysEnabled: false,
+      victoryFireworksSoundEnabled: false,
+    };
+
+    const handle = spawnVictoryFireworks(scene, 0, 0, {
+      registry,
+      seed: 6,
+      durationMs: 1500,
+      params: disabled,
+      playSound,
+    });
+
+    expect(handle.bursts.length).toBeGreaterThan(0);
+    expect(handle.glows).toHaveLength(0);
+    expect(handle.sparks).toHaveLength(0);
+    expect(handle.rays).toHaveLength(0);
+    expect(playSound).not.toHaveBeenCalled();
+  });
+
+  it('schedules one firework cue per burst by default', async () => {
+    const scene = await boot();
+    const playSound = vi.fn();
+
+    const handle = spawnVictoryFireworks(scene, 0, 0, {
+      seed: 7,
+      durationMs: 2000,
+      playSound,
+    });
+
+    expect(playSound).toHaveBeenCalledTimes(handle.bursts.length);
+    for (let i = 0; i < handle.bursts.length; i++) {
+      expect(playSound).toHaveBeenNthCalledWith(i + 1, handle.bursts[i].kind, handle.bursts[i].delayMs, i);
+    }
+  });
+
+  it('exports all layer toggles on by default', () => {
+    expect(ENDOFRUN_ENABLE_VICTORY_GLOW).toBe(true);
+    expect(ENDOFRUN_ENABLE_VICTORY_SPARKS).toBe(true);
+    expect(ENDOFRUN_ENABLE_VICTORY_RAYS).toBe(true);
+    expect(ENDOFRUN_ENABLE_VICTORY_FIREWORKS_SOUND).toBe(true);
+  });
+});
+
+describe('victory firework extra layers — glow / sparks / rays (AC1/AC4/AC5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  it('spawns a registered glow pulse that grows and fades after its delay', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveEndOfRunJuiceParams('victory');
+
+    const glow = spawnVictoryBurstGlow(scene, 10, 20, params.victoryColor, 300, params, -7, registry);
+
+    expect(glow).not.toBeNull();
+    expect(registry).toContain(glow);
+    expect(glow?.depth).toBe(-7);
+    expect(glow?.getData('juiceLayer')).toBe('victoryGlow');
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.delay).toBe(300);
+    expect(config.scale).toBe(1);
+    expect(config.duration).toBe(params.victoryGlowDurationMs);
+  });
+
+  it('is a no-op when the glow toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = { ...resolveEndOfRunJuiceParams('victory'), victoryGlowEnabled: false };
+
+    const glow = spawnVictoryBurstGlow(scene, 0, 0, 0x00ffff, 0, params, -7, registry);
+
+    expect(glow).toBeNull();
+    expect(registry).toHaveLength(0);
+  });
+
+  it('spawns the configured spark shards, all registered and tagged', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = resolveEndOfRunJuiceParams('victory');
+
+    const sparks = spawnVictorySparkShards(
+      scene,
+      0,
+      0,
+      params.victoryColor,
+      0,
+      params,
+      -7,
+      () => 0.5,
+      registry,
+    );
+
+    expect(sparks).toHaveLength(params.victorySparkCount);
+    for (const spark of sparks) {
+      expect(registry).toContain(spark);
+      expect(spark.depth).toBe(-7);
+      expect(spark.getData('juiceLayer')).toBe('victorySpark');
+    }
+  });
+
+  it('is a no-op when the spark toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = { ...resolveEndOfRunJuiceParams('victory'), victorySparksEnabled: false };
+
+    const sparks = spawnVictorySparkShards(scene, 0, 0, 0x00ffff, 0, params, -7, () => 0.5, registry);
+
+    expect(sparks).toHaveLength(0);
+    expect(registry).toHaveLength(0);
+  });
+
+  it('spawns one registered ray sweep per configured sweep and cleans them up', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const params = resolveEndOfRunJuiceParams('victory');
+
+    const rays = spawnVictoryRays(scene, 50, 60, params, registry, { depth: -7 });
+
+    expect(rays).toHaveLength(params.victoryRaySweeps);
+    for (const ray of rays) {
+      expect(registry).toContain(ray);
+      expect(ray.depth).toBe(-7);
+      expect(ray.getData('juiceLayer')).toBe('victoryRay');
+    }
+
+    for (const call of tweenSpy.mock.calls) {
+      const onComplete = (call[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+        .onComplete as (() => void) | undefined;
+      onComplete?.();
+    }
+    expect(registry).toHaveLength(0);
+  });
+
+  it('is a no-op when the rays toggle is off', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const params = { ...resolveEndOfRunJuiceParams('victory'), victoryRaysEnabled: false };
+
+    const rays = spawnVictoryRays(scene, 0, 0, params, registry);
+
+    expect(rays).toHaveLength(0);
+    expect(registry).toHaveLength(0);
+  });
+
+  it('playVictoryFireworkCue is a safe no-op without an AudioContext', () => {
+    const params = resolveEndOfRunJuiceParams('victory');
+    const kinds = ENDOFRUN_VICTORY_FIREWORK_KINDS;
+
+    for (const kind of kinds) {
+      expect(() => playVictoryFireworkCue(kind, 300, params.victoryFireworksSoundVolume)).not.toThrow();
     }
   });
 });

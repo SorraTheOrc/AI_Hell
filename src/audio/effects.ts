@@ -385,6 +385,42 @@ export function playDefeatStingSound(): void {
   playCue('playDefeatStingSound');
 }
 
+// ── Victory firework cues (AH-0MUWZ5HCV0034H44) ────────────────────
+//
+// The sustained victory celebration layers exploded/firework SFX on top of
+// the fanfare. Each cue is a baked asset with per-burst pitch-jitter variants
+// so a long sequence does not sound like one repeated sample. `options.delay`
+// (seconds) lets `spawnVictoryFireworks` schedule a cue to land with its
+// matching visual burst without per-burst timers.
+
+/** Explosive boom — grand victory firework burst (multi-seed jitter). */
+export function playVictoryExplosionSound(
+  options: SfxPlayOptions & { seed?: number } = {},
+): void {
+  playCue('playVictoryExplosionSound', options);
+}
+
+/** Sharp crack — mid-size victory firework (multi-seed jitter). */
+export function playVictoryCrackSound(
+  options: SfxPlayOptions & { seed?: number } = {},
+): void {
+  playCue('playVictoryCrackSound', options);
+}
+
+/** Soft pop — small victory firework / spark burst (multi-seed jitter). */
+export function playVictoryPopSound(
+  options: SfxPlayOptions & { seed?: number } = {},
+): void {
+  playCue('playVictoryPopSound', options);
+}
+
+/** Bright shimmer — victory sparkle / spark trail (multi-seed jitter). */
+export function playVictorySparkleSound(
+  options: SfxPlayOptions & { seed?: number } = {},
+): void {
+  playCue('playVictorySparkleSound', options);
+}
+
 // ── Boss cues (migrated from Boss.ts inline `blip` synthesis) ────────
 
 /** Low rumble — Boss spawn. */

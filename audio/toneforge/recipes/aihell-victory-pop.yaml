@@ -1,0 +1,48 @@
+# AI Hell cue: aihell-victory-pop — Soft pop for small fireworks and sparks.
+# Very short sine chirp with quick decay — lighter, softer than the crack.
+# Seed range 32258-32260: renders three pitch-jittered variants.
+version: "0.1"
+meta:
+  name: aihell-victory-pop
+  description: Soft pop — short sine chirp with quick decay for small fireworks and sparks.
+  category: AIHell
+  tags:
+    - victory
+    - pop
+    - fireworks
+  duration: 0.09
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 784
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 784
+        - kind: exponentialRamp
+          time: 0.06
+          value: 240
+  e0:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.03
+      sustain: 0.06
+      release: 0.06
+  g0:
+    kind: gain
+    params:
+      gain: 0.28
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

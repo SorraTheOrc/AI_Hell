@@ -54,6 +54,26 @@ describe('End-of-run victory/defeat treatment is documented (AC4/AC5)', () => {
     expect(gdd).toMatch(/implosion/i);
   });
 
+  it('GDD §7.2 documents the extra firework layers and SFX (production audit)', () => {
+    // Extra visual juice layers.
+    expect(gdd).toContain('spawnVictoryBurstGlow');
+    expect(gdd).toContain('spawnVictorySparkShards');
+    expect(gdd).toContain('spawnVictoryRays');
+    expect(gdd).toMatch(/ENDOFRUN_ENABLE_VICTORY_GLOW/);
+    expect(gdd).toMatch(/ENDOFRUN_ENABLE_VICTORY_SPARKS/);
+    expect(gdd).toMatch(/ENDOFRUN_ENABLE_VICTORY_RAYS/);
+    // Five firework kinds.
+    expect(gdd).toMatch(/sparkle/i);
+    expect(gdd).toMatch(/starburst/i);
+    // Per-burst SFX layer.
+    expect(gdd).toContain('playVictoryFireworkCue');
+    expect(gdd).toContain('playVictoryExplosionSound');
+    expect(gdd).toContain('playVictoryCrackSound');
+    expect(gdd).toContain('playVictoryPopSound');
+    expect(gdd).toContain('playVictorySparkleSound');
+    expect(gdd).toMatch(/ENDOFRUN_ENABLE_VICTORY_FIREWORKS_SOUND/);
+  });
+
   it('GDD §7.2 records the gym-parity decision (no gym run-end screen)', () => {
     expect(gdd).toMatch(/GameOverScene` is reached only from `PlayScene/);
     expect(gdd).toMatch(/no gym scene has a run-end screen/i);

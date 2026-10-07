@@ -319,6 +319,48 @@
       ]
     },
     {
+      "cue": "playVictoryExplosionSound",
+      "recipe": "aihell-victory-explosion",
+      "delivery": "baked",
+      "seeds": [
+        32250,
+        32251,
+        32252,
+        32253,
+        32254
+      ]
+    },
+    {
+      "cue": "playVictoryCrackSound",
+      "recipe": "aihell-victory-crack",
+      "delivery": "baked",
+      "seeds": [
+        32255,
+        32256,
+        32257
+      ]
+    },
+    {
+      "cue": "playVictoryPopSound",
+      "recipe": "aihell-victory-pop",
+      "delivery": "baked",
+      "seeds": [
+        32258,
+        32259,
+        32260
+      ]
+    },
+    {
+      "cue": "playVictorySparkleSound",
+      "recipe": "aihell-victory-sparkle",
+      "delivery": "baked",
+      "seeds": [
+        32261,
+        32262,
+        32263
+      ]
+    },
+    {
       "cue": "playDefeatStingSound",
       "recipe": "aihell-defeat-sting",
       "delivery": "baked",
