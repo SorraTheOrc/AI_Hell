@@ -8,8 +8,10 @@
 
 This document records how AI_Hell can produce a gameplay video **without a
 human recording their screen**: one opt-in command boots the game in a real
-rendering browser, plays a scripted segment automatically, and writes a
-playable video file locally.
+rendering browser, starts the **in-game attract/demo mode** (the shipped bot
+plays itself), and writes a playable video file locally. A `--scripted`
+fallback replays the original deterministic key plan instead
+(AH-0MUX496IJ0041O3V).
 
 ## TL;DR — recommended approach
 
@@ -21,12 +23,13 @@ playable video file locally.
 npm install
 npm run capture:install          # playwright install chromium (~278 MiB download)
 
-# record a 15 s clip (default) to capture-output/gameplay-<timestamp>.webm
+# record a 15 s clip of the in-game demo (default) to capture-output/…
 npm run capture
 
 # or control it explicitly
 npm run capture -- --duration 20000 --output clips/demo.webm
 npm run capture -- --headed      # watch it drive a visible browser
+npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -63,15 +66,19 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
    [Audio capture](#audio-capture)).
 4. Loads the game and waits for the real `#game-container canvas` at
    `960×540`.
-5. Presses **Enter**, which activates the focused **Play Game** control in
-   `MenuScene` (the whole game is keyboard-navigable — see the README's
-   *Keyboard-only navigation* note); the gesture also resumes the shared
-   `AudioContext`. Waits `--warmup` ms for `PlayScene` to settle, then waits
-   (bounded) for the tap to expose an audio track.
+5. Starts a run through the **normal menu input path**: by default it presses
+   **Tab** then **Enter** to activate the **Watch Demo** control (`Play Game`
+   is focused by default, so Tab moves focus to Watch Demo), which starts
+   `PlayScene` in demo mode; with `--scripted` it presses **Enter** to
+   activate the focused **Play Game** control instead. Either gesture resumes
+   the shared `AudioContext`. Waits `--warmup` ms for `PlayScene` to settle,
+   then waits (bounded) for the tap to expose an audio track.
 6. Calls `canvas.captureStream(60)`, muxes the canvas video tracks with the
    tapped audio tracks and starts a `MediaRecorder` **inside the page** with
    the resolved VP9+Opus mime.
-7. Replays the deterministic bot plan (below) as **real Playwright
+7. Records for the requested duration. In **demo mode** the shipped in-game
+   bot plays itself (no further input is sent); with `--scripted` the
+   deterministic bot plan (below) is replayed as **real Playwright
    `keyboard.down`/`keyboard.up` events** (trusted input, not synthesised DOM
    events).
 8. Stops the recorder, decodes the produced WebM back through a `<video>`
@@ -115,8 +122,18 @@ Run: npm install && npm run capture:install
 
 ## The automated player (the bot)
 
-`scripts/capture-bot.mjs` owns the player. It deliberately does **not** reach
-into Phaser internals — it is a fixed, wall-clock-relative key plan:
+**Default: the shipped in-game demo.** Since AH-0MUX496IJ0041O3V the capture
+records the game's own **attract/demo mode** — the survival-first bot in
+`src/ai/` plays a real run (seeking power-ups/minerals, dodging fire) with no
+external input. The capture only starts the demo (Tab → Enter on **Watch
+Demo**) and records it. `resolveCaptureMode` / `captureStartKeys` in
+`scripts/capture-gameplay.mjs` select this path (default) versus the scripted
+fallback. This is the higher-quality clip and exercises the same code that
+ships.
+
+**Fallback: the scripted sweep plan.** `scripts/capture-bot.mjs` owns the
+legacy player, retained behind `--scripted`. It deliberately does **not**
+reach into Phaser internals — it is a fixed, wall-clock-relative key plan:
 
 - The ship **auto-fires**, so steering is the whole job.
 - `BASE_SWEEP_PATTERN` is a deterministic left↔right sweep with small
@@ -126,7 +143,9 @@ into Phaser internals — it is a fixed, wall-clock-relative key plan:
   `ArrowDown` hold via Playwright.
 
 It drives **`PlayScene`, level 1, wave 1** (6 Scouts in a `v` formation)
-straight from **Play Game** — nothing else needs to be navigated.
+straight from **Play Game** — nothing else needs to be navigated. This is the
+`--scripted` fallback path; the default demo mode instead runs the shipped
+`src/ai/` bot through the `Watch Demo` control.
 
 The plan builder and the clip-verification predicate are pure functions,
 unit-tested in `scripts/capture-gameplay.test.ts` (no browser
@@ -350,6 +369,7 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 | `scripts/capture-gameplay.mjs` | Orchestrator: Vite server, headless Chromium, record, drive bot, probe, write WebM; progress + preflight |
 | `scripts/capture-bot.mjs` | Deterministic bot plan + `isNonTrivialClip` / `evaluateAudioTrack` / `combineClipVerdict` predicates + the page-side `AudioNode.connect` tap (pure, testable) |
 | `scripts/capture-bot.d.mts` | Types for the plain-JS bot module |
+| `scripts/capture-gameplay.d.mts` | Types for the capture orchestrator's pure arg/mode helpers |
 | `scripts/capture-progress.mjs` | Pure duration / ETA / progress-bar + audio-summary formatting + setup hint |
 | `scripts/capture-progress.d.mts` | Types for the progress module |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |

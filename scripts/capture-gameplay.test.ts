@@ -36,6 +36,11 @@ import {
   formatProgress,
   setupHint,
 } from './capture-progress.mjs';
+import {
+  captureStartKeys,
+  parseCaptureArgs,
+  resolveCaptureMode,
+} from './capture-gameplay.mjs';
 
 describe('buildScriptedPlan', () => {
   it('covers the requested duration exactly and uses only movement keys', () => {
@@ -603,5 +608,43 @@ describe('installGameAudioTap', () => {
 
     context.state = 'running';
     expect(tap.isContextRunning()).toBe(true);
+  });
+});
+
+describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
+  it('defaults to the in-game demo path', () => {
+    expect(resolveCaptureMode()).toBe('demo');
+    expect(resolveCaptureMode({})).toBe('demo');
+    expect(resolveCaptureMode({ scripted: false })).toBe('demo');
+  });
+
+  it('selects the scripted fallback only when requested', () => {
+    expect(resolveCaptureMode({ scripted: true })).toBe('scripted');
+  });
+
+  it('starts the demo through the normal menu input (Tab to Watch Demo, Enter)', () => {
+    expect(captureStartKeys('demo')).toEqual(['Tab', 'Enter']);
+  });
+
+  it('starts the scripted plan with Enter on the focused Play Game', () => {
+    expect(captureStartKeys('scripted')).toEqual(['Enter']);
+  });
+
+  it('parseCaptureArgs defaults to demo and recognises --scripted', () => {
+    expect(parseCaptureArgs([]).scripted).toBe(false);
+    expect(parseCaptureArgs(['--scripted']).scripted).toBe(true);
+  });
+
+  it('parseCaptureArgs still parses the existing flags', () => {
+    const options = parseCaptureArgs([
+      '--duration',
+      '2000',
+      '--warmup',
+      '500',
+      '--scripted',
+    ]);
+    expect(options.durationMs).toBe(2000);
+    expect(options.warmupMs).toBe(500);
+    expect(options.scripted).toBe(true);
   });
 });

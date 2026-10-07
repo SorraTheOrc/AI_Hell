@@ -178,6 +178,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     headed: false,
     keepServer: false,
     json: false,
+    scripted: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -211,6 +212,11 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
       case '--keep-server':
         options.keepServer = true;
         break;
+      case '--scripted':
+        // Fallback: replay the fixed scripted plan instead of the in-game
+        // demo (AH-0MUX496IJ0041O3V).
+        options.scripted = true;
+        break;
       case '--help':
         options.help = true;
         break;
@@ -220,6 +226,36 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
   }
 
   return options;
+}
+
+/**
+ * Resolves which capture mode the options select (AH-0MUX496IJ0041O3V).
+ *
+ * The **in-game demo** is the default: the capture starts the shipped
+ * attract/demo mode through the normal menu path and records the bot playing.
+ * Passing `--scripted` selects the legacy deterministic plan replay instead,
+ * which remains the fallback when the demo cannot run.
+ *
+ * @param {{ scripted?: boolean }} [options]
+ * @returns {'demo' | 'scripted'}
+ */
+export function resolveCaptureMode(options = {}) {
+  return options.scripted === true ? 'scripted' : 'demo';
+}
+
+/**
+ * The key sequence that starts the chosen mode from `MenuScene`.
+ *
+ * `Play Game` is focused by default, so the demo path presses **Tab** to move
+ * focus to the `Watch Demo` control and **Enter** to activate it; the
+ * scripted path activates the focused `Play Game` directly. Both are the same
+ * normal menu input a player would use (no `src/` internals are reached).
+ *
+ * @param {'demo' | 'scripted'} mode
+ * @returns {string[]}
+ */
+export function captureStartKeys(mode) {
+  return mode === 'scripted' ? ['Enter'] : ['Tab', 'Enter'];
 }
 
 /** Resolves the output path, defaulting to `capture-output/gameplay-<ts>.webm`. */
@@ -325,7 +361,14 @@ export async function runCapture(
   reporter = createReporter(),
 ) {
   const outputPath = resolveOutputPath(options.output);
-  const plan = buildScriptedPlan(options.durationMs);
+  const mode = resolveCaptureMode(options);
+  const plan = mode === 'scripted' ? buildScriptedPlan(options.durationMs) : [];
+  // The scripted plan spans the plan plus one inter-step gap after each step;
+  // the demo simply records for the requested duration while the bot plays.
+  const recordingMs =
+    mode === 'scripted'
+      ? planDurationMs(plan) + plan.length * INTER_STEP_MS
+      : options.durationMs;
 
   let server;
   let browser;
@@ -353,6 +396,14 @@ export async function runCapture(
           // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
           // the software (SwiftShader) WebGL backend.
           '--enable-unsafe-swiftshader',
+          // The demo path sends no input during recording, so without these
+          // Chromium throttles the requestAnimationFrame loop for a
+          // backgrounded/occluded page — the canvas stops redrawing and the
+          // recorded clip comes out static. Keep the loop running at full
+          // rate so the in-game demo is recorded faithfully.
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
         ],
       });
     } catch (error) {
@@ -387,9 +438,17 @@ export async function runCapture(
       { timeout: 20_000 },
     );
 
-    // Enter activates the focused "Play Game" control in MenuScene.
-    reporter.step('Starting PlayScene (Enter)…');
-    await page.keyboard.press('Enter');
+    // The demo path (default) starts the shipped in-game demo through the
+    // normal menu; the scripted fallback activates the focused Play Game and
+    // replays the fixed plan.
+    reporter.step(
+      mode === 'scripted'
+        ? 'Starting PlayScene (Enter)…'
+        : 'Starting in-game demo (Watch Demo)…',
+    );
+    for (const key of captureStartKeys(mode)) {
+      await page.keyboard.press(key);
+    }
     await page.waitForTimeout(options.warmupMs);
 
     // The Enter gesture resumes the shared context; wait (bounded) for the
@@ -405,25 +464,39 @@ export async function runCapture(
     if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
 
     reporter.step(
-      `Recording ${formatDuration(planDurationMs(plan))} of scripted gameplay…`,
+      mode === 'scripted'
+        ? `Recording ${formatDuration(recordingMs)} of scripted gameplay…`
+        : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
     );
     await startRecording(page, mimeType);
 
-    // The recording spans the plan plus one inter-step gap after each step.
-    const recordingMs = planDurationMs(plan) + plan.length * INTER_STEP_MS;
     const startedAt = Date.now();
     let lastProgressAt = 0;
     let lastReportedMs = -1;
-    for (const step of plan) {
-      await page.keyboard.down(step.key);
-      await page.waitForTimeout(step.holdMs);
-      await page.keyboard.up(step.key);
-      await page.waitForTimeout(INTER_STEP_MS);
-      const elapsed = Date.now() - startedAt;
-      if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
-        lastProgressAt = elapsed;
-        lastReportedMs = elapsed;
-        reporter.progress(formatProgress(elapsed, recordingMs));
+    if (mode === 'scripted') {
+      for (const step of plan) {
+        await page.keyboard.down(step.key);
+        await page.waitForTimeout(step.holdMs);
+        await page.keyboard.up(step.key);
+        await page.waitForTimeout(INTER_STEP_MS);
+        const elapsed = Date.now() - startedAt;
+        if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+          lastProgressAt = elapsed;
+          lastReportedMs = elapsed;
+          reporter.progress(formatProgress(elapsed, recordingMs));
+        }
+      }
+    } else {
+      // The bot plays autonomously; hold the recording open and emit
+      // heartbeats until the requested duration elapses.
+      while (Date.now() - startedAt < recordingMs) {
+        const elapsed = Date.now() - startedAt;
+        if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+          lastProgressAt = elapsed;
+          lastReportedMs = elapsed;
+          reporter.progress(formatProgress(elapsed, recordingMs));
+        }
+        await page.waitForTimeout(Math.min(250, recordingMs - elapsed));
       }
     }
     // Guarantee a final 100% heartbeat when the loop did not already reach it.
@@ -432,7 +505,7 @@ export async function runCapture(
     }
 
     reporter.step('Encoding and probing the clip…');
-    const probe = await stopRecordingAndProbe(page, planDurationMs(plan) + 500);
+    const probe = await stopRecordingAndProbe(page, recordingMs + 500);
 
     const video = Buffer.concat(chunks);
     mkdirSync(dirname(outputPath), { recursive: true });
@@ -449,7 +522,7 @@ export async function runCapture(
     return {
       output: outputPath,
       bytes: video.length,
-      durationMs: planDurationMs(plan),
+      durationMs: recordingMs,
       renderer: probe.renderer,
       ...probe,
       audioVerdict,
@@ -772,7 +845,7 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted]',
     );
     return;
   }
