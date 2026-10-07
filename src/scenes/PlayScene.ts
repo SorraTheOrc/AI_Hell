@@ -2193,6 +2193,19 @@ export class PlayScene extends CombatScene<
     return this.spawned.filter((s) => s.entity.alive).length;
   }
 
+  /**
+   * The active timed wave's state (AH-0MUXYOV4C008MV0L AC14), read by the
+   * demo bot so it can prioritise clearing the wave before the time limit
+   * carries survivors over.
+   */
+  getWaveState(): { active: boolean; timeRemaining: number; timeLimit: number } {
+    return {
+      active: this.waveTimerActive,
+      timeRemaining: this.waveTimer,
+      timeLimit: WAVE_TIME_LIMIT_SECONDS,
+    };
+  }
+
   /** Player bullets in flight. */
   getPlayerBullets(): PlayerBullet[] {
     return this.playerBullets.slice();

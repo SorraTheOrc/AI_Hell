@@ -5,7 +5,7 @@
  * `BotSnapshot` and returns a `BotSteeringIntent`: the four-directional
  * cardinal approximation (kept for the `fourDirectional` scheme and the
  * legacy tests) **plus** the precise unit travel direction the bot actually
- * wants.  The decision follows a strict priority ladder:
+ * wants.  The decision is:
  *
  * 1. **Survive** — never steer into bullets, asteroids, enemies or walls when
  *    a safe alternative exists.  This tier also performs best-effort
@@ -15,19 +15,23 @@
  *    crosses the aim line of an enemy that is inside a fire **tell**
  *    (`BotEnemy.isTelling`).  Survival dominates every lower tier, so the bot
  *    never trades its life for a power-up.
- * 2. **Minerals** — collect the nearest mineral within
- *    {@link BotDecisionTunables.mineralSeekRange} (the operator's top goal).
- * 3. **Power-ups** — collect the nearest drop within
- *    {@link BotDecisionTunables.powerUpSeekRange}.
- * 4. **Enemies** — engage the nearest live enemy (or the boss) within
- *    {@link BotDecisionTunables.engagementRadius}.
- * 5. **Asteroids** — engage the nearest live asteroid within
- *    {@link BotDecisionTunables.engagementRadius}.
- * 6. **Idle** — nothing to pursue and no danger: return an all-false intent.
+ * 2. **Clear the wave** (default) — pursue the nearest live non-asteroid
+ *    enemy so the wave can be destroyed before its time limit carries
+ *    survivors over (AC14).
+ * 3. **Opportunistic diversion** — divert from combat to a pickup only when
+ *    its **willingness** clears a threshold: a mineral must belong to a
+ *    **cluster** (a lone mineral never diverts — AC11), willingness falls off
+ *    with distance (AC12), and a power-up is a little more diverting than a
+ *    lone mineral (AC13).  As the wave timer runs down the threshold rises,
+ *    so the bot stops detouring and focuses fire (AC14).
+ * 4. **Asteroids** — engage the nearest live asteroid within
+ *    {@link BotDecisionTunables.engagementRadius} (they drop minerals too).
+ * 5. **Idle** — nothing to pursue and no danger: return an all-false intent.
  *
- * The goal order is fixed and legible (minerals > power-ups > enemies >
- * asteroids) so the demo's movement reads as purposeful rather than random;
- * the survival tier still bounds every choice.
+ * Because destroying enemies and asteroids drops more minerals, chasing a
+ * lone scattered mineral is normally a net loss — the willingness model
+ * encodes that: combat is the default and pickups have to earn a detour.
+ * The survival tier still bounds every choice.
  *
  * ## Precise aiming ("point towards it and thrust forward")
  *
@@ -77,7 +81,7 @@ import type { BotSnapshot } from './botSnapshot';
  * All distances are in canvas pixels; times are in seconds.
  */
 export interface BotDecisionTunables {
-  /** Distance (px) within which a live threat is engaged. */
+  /** Distance (px) within which a live **asteroid** is engaged. */
   engagementRadius: number;
   /**
    * Minimum distance (px) the bot keeps from a hazard.  When a hazard is
@@ -130,6 +134,36 @@ export interface BotDecisionTunables {
    * barrelling through the target.
    */
   collectArrivalRadius: number;
+  /**
+   * Radius (px) within which the bot pursues live non-asteroid enemies.  It is
+   * deliberately larger than {@link BotDecisionTunables.engagementRadius} so
+   * the bot crosses the field to clear a wave before the time limit carries
+   * survivors over (AC14).
+   */
+  enemySeekRange: number;
+  /**
+   * Maximum gap (px) between two minerals for them to count as the **same
+   * cluster**.  A lone, isolated mineral is not a cluster and never diverts
+   * the bot from combat (AC11).
+   */
+  mineralClusterRadius: number;
+  /** Minimum cluster size that can divert the bot from combat (inclusive). */
+  mineralGroupMinSize: number;
+  /** Willingness scale for a full mineral cluster at zero distance (AC11/AC12). */
+  mineralDivertWeight: number;
+  /**
+   * Willingness scale for a power-up at zero distance.  Slightly above the
+   * mineral weight so upgrades are a little more diverting (AC13).
+   */
+  powerUpDivertWeight: number;
+  /** Base willingness a pickup must reach to divert the bot from combat. */
+  divertThreshold: number;
+  /**
+   * Multiplier added to {@link BotDecisionTunables.divertThreshold} at full
+   * wave pressure (timer nearly expired), so the bot stops detouring and
+   * focuses on clearing the wave (AC14).
+   */
+  waveClearBoost: number;
   /** Playfield width (px) — the right wall sits at this x. */
   playfieldWidth: number;
   /** Playfield height (px) — the bottom wall sits at this y. */
@@ -153,6 +187,13 @@ export const BOT_DECISION_TUNABLES: BotDecisionTunables = {
   engagementHysteresis: 1.6,
   frictionDeceleration: 100,
   collectArrivalRadius: 18,
+  enemySeekRange: 800,
+  mineralClusterRadius: 70,
+  mineralGroupMinSize: 2,
+  mineralDivertWeight: 1,
+  powerUpDivertWeight: 1.4,
+  divertThreshold: 0.5,
+  waveClearBoost: 1,
   playfieldWidth: 960,
   playfieldHeight: 540,
 };
@@ -467,6 +508,147 @@ function steerToward(
   return best;
 }
 
+// ── Utility / willingness model ─────────────────────────────────────
+
+/** A target with its diversion willingness score. */
+interface ScoredTarget extends Target {
+  score: number;
+}
+
+/** Clamps a number into `[0, 1]`. */
+function clamp01(value: number): number {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+/** Willingness falloff with distance: 1 at the player, 0 at `range`. */
+function proximity(dist: number, range: number): number {
+  if (range <= 0) return 0;
+  return clamp01(1 - dist / range);
+}
+
+/**
+ * Fraction of full willingness a mineral cluster of `count` earns.  Zero
+ * below {@link BotDecisionTunables.mineralGroupMinSize} — a lone mineral
+ * never earns a diversion (AC11).
+ */
+function mineralGroupFactor(count: number, t: BotDecisionTunables): number {
+  if (count < t.mineralGroupMinSize) return 0;
+  return Math.min(1, 0.5 + 0.25 * (count - t.mineralGroupMinSize));
+}
+
+/**
+ * Groups minerals into clusters of mutually-near neighbours (a gap no larger
+ * than `radius`), via an `O(n²)` breadth-first flood fill.  The live mineral
+ * field is small, so the simple approach is fine and deterministic.
+ */
+function clusterMinerals(
+  minerals: readonly { x: number; y: number }[],
+  radius: number,
+): Array<Array<{ x: number; y: number }>> {
+  const n = minerals.length;
+  const visited = new Array<boolean>(n).fill(false);
+  const clusters: Array<Array<{ x: number; y: number }>> = [];
+
+  for (let i = 0; i < n; i += 1) {
+    if (visited[i]) continue;
+    const stack = [i];
+    visited[i] = true;
+    const cluster: Array<{ x: number; y: number }> = [];
+    while (stack.length > 0) {
+      const a = stack.pop() as number;
+      cluster.push(minerals[a]);
+      for (let b = 0; b < n; b += 1) {
+        if (visited[b]) continue;
+        if (
+          distance(minerals[a].x, minerals[a].y, minerals[b].x, minerals[b].y) <=
+          radius
+        ) {
+          visited[b] = true;
+          stack.push(b);
+        }
+      }
+    }
+    clusters.push(cluster);
+  }
+
+  return clusters;
+}
+
+/**
+ * Wave pressure in `[0, 1]`: `0` at the start of a timed wave, rising to `1`
+ * as the wave time-limit approaches (survivors then carry over).  No timed
+ * wave (boss, transition, between waves) → `0`.
+ */
+function computeWavePressure(snapshot: BotSnapshot): number {
+  const wave = snapshot.wave;
+  if (!wave || !wave.active || wave.timeLimit <= 0) return 0;
+  return clamp01(1 - wave.timeRemaining / wave.timeLimit);
+}
+
+/**
+ * Scores every mineral cluster and power-up for the **willingness to divert**
+ * from combat and returns the best-scoring candidate (or `null`).
+ *
+ * - A mineral cluster only scores when it meets
+ *   {@link BotDecisionTunables.mineralGroupMinSize}; the score grows with
+ *   cluster size (AC11) and falls off with distance (AC12).
+ * - A power-up scores on its own (higher) weight, also falling off with
+ *   distance (AC13).
+ */
+function bestDiversion(
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  px: number,
+  py: number,
+): ScoredTarget | null {
+  let best: ScoredTarget | null = null;
+
+  for (const cluster of clusterMinerals(
+    snapshot.minerals,
+    t.mineralClusterRadius,
+  )) {
+    const factor = mineralGroupFactor(cluster.length, t);
+    if (factor <= 0) continue;
+    const nearest = nearestWithin(cluster, px, py, t.mineralSeekRange);
+    if (!nearest) continue;
+    const score =
+      t.mineralDivertWeight *
+      factor *
+      proximity(nearest.distance, t.mineralSeekRange);
+    if (!best || score > best.score) {
+      best = { x: nearest.x, y: nearest.y, distance: nearest.distance, score };
+    }
+  }
+
+  for (const drop of snapshot.drops) {
+    const d = distance(px, py, drop.x, drop.y);
+    if (d > t.powerUpSeekRange) continue;
+    const score = t.powerUpDivertWeight * proximity(d, t.powerUpSeekRange);
+    if (!best || score > best.score) {
+      best = { x: drop.x, y: drop.y, distance: d, score };
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Nearest mineral or power-up of any size — the fallback target when there is
+ * no combat objective (or its approach is unsafe), so the bot still sweeps up
+ * loose pickups between fights.
+ */
+function nearestCollectible(
+  snapshot: BotSnapshot,
+  t: BotDecisionTunables,
+  px: number,
+  py: number,
+): Target | null {
+  const mineral = nearestWithin(snapshot.minerals, px, py, t.mineralSeekRange);
+  const drop = nearestWithin(snapshot.drops, px, py, t.powerUpSeekRange);
+  if (mineral && drop) return mineral.distance <= drop.distance ? mineral : drop;
+  return mineral ?? drop;
+}
+
 // ── Core decision logic ─────────────────────────────────────────────
 
 /**
@@ -475,7 +657,8 @@ function steerToward(
  * @param snapshot — a read-only `BotSnapshot`.
  * @param tunableOverrides — optional partial override of
  *   {@link BOT_DECISION_TUNABLES}.
- * @returns a {@link BotSteeringIntent} (cardinal booleans + precise bearing).
+ * @returns a {@link BotSteeringIntent} (cardinal booleans + precise bearing +
+ *   the forward-model thrust flag).
  */
 export function decideBotIntent(
   snapshot: BotSnapshot,
@@ -508,45 +691,50 @@ export function decideBotIntent(
     return buildCardinalIntent(mostClearDirection(safety));
   }
 
-  // ── 2. MINERALS (collect first — the operator's top goal) ──────
-  const mineral = nearestWithin(snapshot.minerals, px, py, t.mineralSeekRange);
-  if (mineral) {
-    const intent = approachIntent(
-      mineral,
-      1,
-      snapshot,
-      t,
-      px,
-      py,
-      safeDirections,
-      t.collectArrivalRadius,
-    );
-    if (intent) return intent;
-  }
+  // ── 2. GOAL SELECTION: utility / willingness model ─────────────
+  //
+  // Clearing the wave is the default objective; pickups must **earn** a
+  // diversion.  A lone mineral never earns one (only a cluster can);
+  // willingness falls off with distance; and as the wave timer runs down the
+  // diversion threshold rises so the bot focuses fire on the survivors
+  // (AC11–AC14).
+  const wavePressure = computeWavePressure(snapshot);
+  const diversion = bestDiversion(snapshot, t, px, py);
+  const fallbackPickup = nearestCollectible(snapshot, t, px, py);
 
-  // ── 3. POWER-UPS ────────────────────────────────────────────────
-  const powerUp = nearestWithin(snapshot.drops, px, py, t.powerUpSeekRange);
-  if (powerUp) {
-    const intent = approachIntent(
-      powerUp,
-      1,
-      snapshot,
-      t,
-      px,
-      py,
-      safeDirections,
-      t.collectArrivalRadius,
-    );
-    if (intent) return intent;
-  }
-
-  // ── 4. ENEMIES (shoot) ──────────────────────────────────────────
   const enemy = nearestWithin(
     liveEnemyTargets(snapshot),
     px,
     py,
+    t.enemySeekRange,
+  );
+  const asteroid = nearestWithin(
+    liveAsteroidTargets(snapshot),
+    px,
+    py,
     t.engagementRadius,
   );
+  const hasCombatTarget = enemy !== null || asteroid !== null;
+  const effectiveThreshold =
+    t.divertThreshold * (1 + wavePressure * t.waveClearBoost);
+
+  if (
+    diversion &&
+    (!hasCombatTarget || diversion.score >= effectiveThreshold - EPS)
+  ) {
+    const intent = approachIntent(
+      diversion,
+      1,
+      snapshot,
+      t,
+      px,
+      py,
+      safeDirections,
+      t.collectArrivalRadius,
+    );
+    if (intent) return intent;
+  }
+
   if (enemy) {
     const direction = engageDirection(enemy, snapshot, t, px, py);
     const intent = approachIntent(
@@ -562,13 +750,6 @@ export function decideBotIntent(
     if (intent) return intent;
   }
 
-  // ── 5. ASTEROIDS (shoot) ────────────────────────────────────────
-  const asteroid = nearestWithin(
-    liveAsteroidTargets(snapshot),
-    px,
-    py,
-    t.engagementRadius,
-  );
   if (asteroid) {
     const direction = engageDirection(asteroid, snapshot, t, px, py);
     const intent = approachIntent(
@@ -584,7 +765,23 @@ export function decideBotIntent(
     if (intent) return intent;
   }
 
-  // ── 6. IDLE ─────────────────────────────────────────────────────
+  // No combat target (or its approach was unsafe): collect the nearest pickup
+  // even when it is a lone mineral.
+  if (fallbackPickup) {
+    const intent = approachIntent(
+      fallbackPickup,
+      1,
+      snapshot,
+      t,
+      px,
+      py,
+      safeDirections,
+      t.collectArrivalRadius,
+    );
+    if (intent) return intent;
+  }
+
+  // ── 3. IDLE ─────────────────────────────────────────────────────
   // Nothing to pursue; hold position rather than wander into danger.
   return idleIntent();
 }

@@ -178,6 +178,19 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(player.y).toBeLessThan(beforeY);
   });
 
+  it('AC14 — the live scene exposes its wave timer state to the bot snapshot', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    const state = play.getWaveState();
+    expect(typeof state.active).toBe('boolean');
+    expect(state.timeLimit).toBeGreaterThan(0);
+    // The wave state flows verbatim through the snapshot builder.
+    expect(buildBotSnapshot(play).wave).toEqual(state);
+  });
+
   it('AC1/AC3 — the committed steering is held at a human cadence, not every tick', async () => {
     const menu = await bootMenu();
     menu.startDemo();
@@ -422,6 +435,7 @@ function makeScene(
     getDrops: () => [],
     getMinerals: () => [],
     getAliveCount: () => 0,
+    getWaveState: () => ({ active: false, timeRemaining: 0, timeLimit: 30 }),
     getRunSeed: () => 0,
     ...overrides,
   };
@@ -464,7 +478,24 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
     expect(decideBotInput(snapshot).left).toBe(true);
   });
 
-  it('AC4 — a mineral is collected as the top-priority pickup', () => {
+  it('AC11 — a mineral cluster diverts the bot through the snapshot builder', () => {
+    const snapshot = buildBotSnapshot(
+      makeScene({
+        getPlayer: () => stillPlayer(400, 300),
+        getEnemies: () => [{ x: 200, y: 300, alive: true, archetype: 'scout' }],
+        getMinerals: () => [
+          { x: 460, y: 300 },
+          { x: 480, y: 300 },
+          { x: 500, y: 300 },
+        ],
+        getAliveCount: () => 1,
+      }),
+    );
+
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC11 — a lone mineral does not divert the bot from an enemy', () => {
     const snapshot = buildBotSnapshot(
       makeScene({
         getPlayer: () => stillPlayer(400, 300),
@@ -474,7 +505,28 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
       }),
     );
 
-    expect(decideBotInput(snapshot).left).toBe(true);
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC14 — wave pressure flows through the builder and reverses the diversion', () => {
+    const base = {
+      getPlayer: () => stillPlayer(400, 300),
+      getEnemies: () => [{ x: 200, y: 300, alive: true, archetype: 'scout' }],
+      getMinerals: () => [
+        { x: 460, y: 300 },
+        { x: 480, y: 300 },
+        { x: 500, y: 300 },
+      ],
+      getAliveCount: () => 1,
+    };
+    const calm = buildBotSnapshot(
+      makeScene({ ...base, getWaveState: () => ({ active: true, timeRemaining: 30, timeLimit: 30 }) }),
+    );
+    const urgent = buildBotSnapshot(
+      makeScene({ ...base, getWaveState: () => ({ active: true, timeRemaining: 1, timeLimit: 30 }) }),
+    );
+    expect(decideBotInput(calm).right).toBe(true);
+    expect(decideBotInput(urgent).left).toBe(true);
   });
 
   it('AC5 — a fire tell flows through the builder and the bot refuses the shot line', () => {

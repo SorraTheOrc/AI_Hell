@@ -94,6 +94,22 @@ export interface BotBoss {
 }
 
 /**
+ * The active wave's time-limit state.
+ *
+ * Regular waves run against a countdown ({@link WAVE_TIME_LIMIT_SECONDS} in
+ * the game); when it expires the surviving enemies carry over into the next
+ * wave, so the bot uses the remaining time to prioritise clearing them.
+ */
+export interface BotWave {
+  /** Whether a timed wave is currently counting down. */
+  readonly active: boolean;
+  /** Seconds left before the wave-time limit carries survivors over. */
+  readonly timeRemaining: number;
+  /** The full wave time limit (seconds). */
+  readonly timeLimit: number;
+}
+
+/**
  * The complete read-only game state the bot decides from. Every field is
  * `readonly`; at runtime the object is deep-frozen by
  * {@link buildBotSnapshot} (AC4).
@@ -107,6 +123,11 @@ export interface BotSnapshot {
   readonly minerals: readonly BotMineral[];
   readonly boss: BotBoss | null;
   readonly aliveCount: number;
+  /**
+   * The active timed wave, or `null` when no wave timer is running (boss
+   * fights, transitions, or between waves).
+   */
+  readonly wave: BotWave | null;
   /**
    * The per-run RNG seed (AH-0MUY08V6W001SJJN AC4), so telemetry and the
    * bot layer can correlate observations with a reproducible run.
@@ -168,6 +189,13 @@ export interface BotBossSource {
   readonly alive: boolean;
 }
 
+/** Minimal wave-timer source (satisfied by `PlayScene.getWaveState`). */
+export interface BotWaveSource {
+  readonly active: boolean;
+  readonly timeRemaining: number;
+  readonly timeLimit: number;
+}
+
 /**
  * The slice of the owning scene the snapshot builder reads. `PlayScene`
  * satisfies it through its existing public getters; tests provide stubs.
@@ -182,6 +210,8 @@ export interface BotSnapshotScene {
   getDrops(): readonly BotDropSource[];
   getMinerals(): readonly BotMineralSource[];
   getAliveCount(): number;
+  /** The active timed wave's state (satisfied by `PlayScene.getWaveState`). */
+  getWaveState(): BotWaveSource;
   /** The current run's seed (satisfied by `PlayScene.getRunSeed`). */
   getRunSeed(): number;
 }
@@ -247,8 +277,18 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
     })),
     boss,
     aliveCount: scene.getAliveCount(),
+    wave: copyWave(scene.getWaveState()),
     runSeed: scene.getRunSeed(),
   });
+}
+
+/** Copies the wave-timer state into a plain `BotWave` object. */
+function copyWave(source: BotWaveSource): BotWave {
+  return {
+    active: source.active,
+    timeRemaining: source.timeRemaining,
+    timeLimit: source.timeLimit,
+  };
 }
 
 /** Copies the movement state into a plain `BotPlayer` object. */

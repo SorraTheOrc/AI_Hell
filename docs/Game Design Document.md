@@ -98,18 +98,25 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   returns a scheme-agnostic *steering intent*: the nearest-cardinal
   four-directional projection (consumed by the `fourDirectional` scheme),
   **plus the precise bearing to the chosen target** (`dirX`/`dirY`). The
-  movement goal order is fixed and legible (minerals first, then power-ups,
-  then enemies, then asteroids):
+  decision uses a **utility / willingness model** (superseding the former
+  fixed ladder): clearing the wave is the default objective and pickups must
+  **earn** a diversion.
   1. **Survive** — never steer into a bullet, asteroid, enemy or wall when a
      safe alternative exists (best-effort fire-pattern avoidance from fire
      tells/intervals and in-flight bullets).
-  2. **Minerals** — collect the nearest mineral within range.
-  3. **Power-ups** — collect the nearest drop within range.
-  4. **Enemies** — engage the nearest live enemy (or the boss), keeping a
-     minimum distance.
-  5. **Asteroids** — engage the nearest live asteroid, keeping a minimum
-     distance.
-  6. **Idle** — nothing to do: hold station.
+  2. **Clear the wave** (default) — pursue the nearest live non-asteroid
+     enemy so the wave is destroyed before its 30 s time-limit carries
+     survivors over.
+  3. **Opportunistic diversion** — divert to a pickup only when its
+     willingness clears a threshold: a mineral must belong to a **cluster**
+     (a lone scattered mineral never diverts — more minerals drop when
+     enemies/asteroids are destroyed, so chasing one is a net loss),
+     willingness falls off with distance, and a power-up is a little more
+     diverting than a lone mineral. As the wave timer runs down the threshold
+     rises, so the bot stops detouring and focuses fire.
+  4. **Asteroids** — engage the nearest live asteroid within range (they drop
+     minerals too), keeping a minimum distance.
+  5. **Idle** — nothing to do: hold station.
   All tunables live in one place (`BOT_DECISION_TUNABLES` in
   `src/ai/botDecision.ts`).
 - **Predictive braking (AC10):** the ship is Newtonian and has no brakes, so

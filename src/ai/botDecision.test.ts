@@ -48,6 +48,7 @@ function makeSnapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     minerals: overrides.minerals ?? [],
     boss: overrides.boss ?? null,
     aliveCount: overrides.aliveCount ?? 0,
+    wave: overrides.wave ?? null,
     runSeed: overrides.runSeed ?? 0,
   };
 }
@@ -163,6 +164,16 @@ describe('AC5 — tunables in one shared config', () => {
       'playerSpeed',
       'firePredictionHorizon',
       'assumedBulletSpeed',
+      'engagementHysteresis',
+      'frictionDeceleration',
+      'collectArrivalRadius',
+      'enemySeekRange',
+      'mineralClusterRadius',
+      'mineralGroupMinSize',
+      'mineralDivertWeight',
+      'powerUpDivertWeight',
+      'divertThreshold',
+      'waveClearBoost',
       'playfieldWidth',
       'playfieldHeight',
     ];
@@ -197,57 +208,103 @@ describe('AC1 — survival-first priority ordering', () => {
     expect(input.left).toBe(false);
   });
 
-  it('prefers a mineral over a power-up (minerals outrank power-ups)', () => {
+  it('does not divert to a lone mineral while an enemy is in range (AC11)', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
-      enemies: [enemy(1000, 300, 'scout')],
-      drops: [drop(300, 300, 'spread')],
-      minerals: [mineral(500, 300)],
-    });
-    const input = decideBotInput(snapshot, { engagementRadius: 100 });
-    expect(input.right).toBe(true);
-    expect(input.left).toBe(false);
-  });
-});
-
-// ── Goal order: minerals > power-ups > enemies > asteroids ──────────
-
-describe('movement goals: minerals > power-ups > enemies > asteroids (AH-0MUXYOV4C008MV0L)', () => {
-  it('AC1 — a mineral in range outranks a power-up', () => {
-    const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
-      drops: [drop(300, 300, 'spread')],
-      minerals: [mineral(500, 300)],
-    });
-    const input = decideBotInput(snapshot);
-    expect(input.right).toBe(true);
-    expect(input.left).toBe(false);
-  });
-
-  it('AC2 — a power-up in range outranks a live enemy', () => {
-    const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
-      enemies: [enemy(200, 300, 'scout')],
-      drops: [drop(500, 300, 'spread')],
-    });
-    const input = decideBotInput(snapshot);
-    expect(input.right).toBe(true);
-    expect(input.left).toBe(false);
-  });
-
-  it('AC3 — a live enemy outranks a live asteroid', () => {
-    const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
-      enemies: [enemy(200, 300, 'scout'), enemy(600, 300, 'asteroid')],
+      enemies: [enemy(200, 300, 'scout')], // left
+      minerals: [mineral(500, 300)], // lone, right
     });
     const input = decideBotInput(snapshot);
     expect(input.left).toBe(true);
     expect(input.right).toBe(false);
   });
+});
+
+// ── Utility / willingness model (AC11–AC14, supersedes AC1–AC4) ─────
+//
+// Rejection follow-up #2: clearing the wave is the default objective and
+// pickups must **earn** a diversion.  A lone mineral never diverts (only a
+// cluster does), willingness falls off with distance, a power-up is a little
+// more diverting, and wave pressure raises the bar so the bot focuses fire as
+// the timer runs down.
+
+describe('utility model: wave clear + earned diversions (AH-0MUXYOV4C008MV0L)', () => {
+  const CENTRE = { x: 400, y: 300, vx: 0, vy: 0 };
+  const clusterRight = [mineral(460, 300), mineral(480, 300), mineral(500, 300)];
+
+  it('AC11 — a mineral cluster diverts the bot from an enemy', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(200, 300, 'scout')], // left
+      minerals: clusterRight,
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.right).toBe(true);
+    expect(input.left).toBe(false);
+  });
+
+  it('AC12 — a near cluster diverts but a far one does not', () => {
+    const enemies = [enemy(200, 300, 'scout')];
+    const near = makeSnapshot({ player: CENTRE, enemies, minerals: clusterRight });
+    const far = makeSnapshot({
+      player: CENTRE,
+      enemies,
+      minerals: [mineral(880, 300), mineral(900, 300), mineral(920, 300)],
+    });
+    expect(decideBotInput(near).right).toBe(true);
+    // Far cluster is below the willingness bar → engage the enemy instead.
+    expect(decideBotInput(far).left).toBe(true);
+  });
+
+  it('AC13 — a nearby upgrade diverts while a lone mineral does not', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(200, 300, 'scout')],
+      drops: [drop(470, 300, 'spread')],
+      minerals: [mineral(500, 300)], // lone — would not divert on its own
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC14 — high wave pressure stops the diversion and focuses on the enemy', () => {
+    const enemyTarget = [enemy(200, 300, 'scout')];
+    const calm = makeSnapshot({
+      player: CENTRE,
+      enemies: enemyTarget,
+      minerals: clusterRight,
+      wave: { active: true, timeRemaining: 30, timeLimit: 30 },
+    });
+    const urgent = makeSnapshot({
+      player: CENTRE,
+      enemies: enemyTarget,
+      minerals: clusterRight,
+      wave: { active: true, timeRemaining: 1, timeLimit: 30 },
+    });
+    expect(decideBotInput(calm).right).toBe(true); // diverts early in the wave
+    expect(decideBotInput(urgent).left).toBe(true); // clears the wave late
+  });
+
+  it('AC14 — no timed wave leaves the diversion bar at its base value', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(200, 300, 'scout')],
+      minerals: clusterRight,
+      wave: null,
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC14 — pursues the nearest enemy across a large seek range', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(700, 300, 'scout')], // 300 px right, beyond engagementRadius
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
 
   it('AC4 — with only an asteroid in range the bot engages it', () => {
     const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      player: CENTRE,
       enemies: [enemy(600, 300, 'asteroid')],
     });
     expect(decideBotInput(snapshot).right).toBe(true);
@@ -255,7 +312,7 @@ describe('movement goals: minerals > power-ups > enemies > asteroids (AH-0MUXYOV
 
   it('AC5 — survival bounds goal-seeking (an unsafe mineral path is ignored)', () => {
     const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      player: CENTRE,
       minerals: [mineral(200, 300)],
       // Bullet on the leftward path, moving toward the player.
       enemyBullets: [bullet(300, 300, 100, 0)],
@@ -265,7 +322,7 @@ describe('movement goals: minerals > power-ups > enemies > asteroids (AH-0MUXYOV
 
   it('AC6 — the bot backs away from a target inside the danger margin', () => {
     const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      player: CENTRE,
       enemies: [enemy(400, 260, 'scout')], // 40 px above, inside dangerMargin
     });
     const input = decideBotInput(snapshot);
@@ -275,7 +332,7 @@ describe('movement goals: minerals > power-ups > enemies > asteroids (AH-0MUXYOV
 
   it('AC7 — the targeted decision is deterministic', () => {
     const snapshot = makeSnapshot({
-      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      player: CENTRE,
       minerals: [mineral(500, 300)],
     });
     expect(decideBotInput(snapshot)).toEqual(decideBotInput(snapshot));
@@ -378,14 +435,14 @@ describe('precise steering intent — point at the target (rejection)', () => {
     expect(closing.dirX).toBeGreaterThan(0);
   });
 
-  it('keeps the goal order for the precise intent (mineral beats power-up)', () => {
+  it('points the precise bearing at an earned mineral cluster', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
-      drops: [drop(300, 260, 'spread')],
-      minerals: [mineral(500, 340)],
+      enemies: [enemy(200, 300, 'scout')],
+      minerals: [mineral(500, 340), mineral(520, 350), mineral(540, 360)],
     });
     const intent = decideBotIntent(snapshot);
-    // Mineral is to the right/below → precise bearing points that way.
+    // Cluster is to the right/below → precise bearing points that way.
     expect(intent.dirX).toBeGreaterThan(0);
     expect(intent.dirY).toBeGreaterThan(0);
   });
@@ -492,13 +549,13 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.left).toBe(false);
   });
 
-  it('enemies: ignores enemies outside the engagement radius', () => {
+  it('enemies: ignores enemies outside the wave seek range', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
       enemies: [enemy(400, 50, 'tank')], // 250px above
       drops: [drop(400, 200, 'spread')], // 100px above
     });
-    const input = decideBotInput(snapshot, { engagementRadius: 200 });
+    const input = decideBotInput(snapshot, { enemySeekRange: 200 });
     expect(input.up).toBe(true);
   });
 
@@ -512,10 +569,10 @@ describe('AC2 — one deterministic test per priority branch', () => {
     expect(input.left).toBe(true);
   });
 
-  it('minerals: collects the nearest mineral (top-priority pickup)', () => {
+  it('minerals: collects a lone mineral when there is no combat target', () => {
     const snapshot = makeSnapshot({
       player: { x: 400, y: 300, vx: 0, vy: 0 },
-      enemies: [enemy(1000, 300, 'scout')],
+      enemies: [enemy(1400, 300, 'scout')], // outside enemySeekRange (800)
       minerals: [mineral(350, 300)], // 50px left
     });
     const input = decideBotInput(snapshot);
@@ -682,12 +739,12 @@ describe('Edge cases', () => {
       enemies: [enemy(400, 200, 'scout')], // 100px above
     });
 
-    // Enemy outside a 50px engagement radius: no threat, so idle.
-    const small = decideBotInput(snapshot, { engagementRadius: 50 });
+    // Enemy outside a 50px wave seek range: no threat, so idle.
+    const small = decideBotInput(snapshot, { enemySeekRange: 50 });
     expect(small.up).toBe(false);
 
-    // Enemy inside a 200px engagement radius: engage it.
-    const large = decideBotInput(snapshot, { engagementRadius: 200 });
+    // Enemy inside a 200px wave seek range: engage it.
+    const large = decideBotInput(snapshot, { enemySeekRange: 200 });
     expect(large.up).toBe(true);
   });
 });

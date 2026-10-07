@@ -82,6 +82,7 @@ function snapshotOf(state: SteeringState, targets: Targets): BotSnapshot {
     minerals: targets.minerals ?? [],
     boss: null,
     aliveCount: 0,
+    wave: null,
     runSeed: 1,
   };
 }

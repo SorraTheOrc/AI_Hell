@@ -31,6 +31,7 @@ function makeScene(overrides: Partial<BotSnapshotScene> = {}): BotSnapshotScene 
     getDrops: () => [],
     getMinerals: () => [],
     getAliveCount: () => 0,
+    getWaveState: () => ({ active: false, timeRemaining: 0, timeLimit: 30 }),
     getRunSeed: () => 0,
     ...overrides,
   };
@@ -162,6 +163,25 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
   it('carries the run seed from the scene (AH-0MUY08V6W001SJJN AC4)', () => {
     const scene = makeScene({ getRunSeed: () => 0xdeadbeef });
     expect(buildBotSnapshot(scene).runSeed).toBe(0xdeadbeef);
+  });
+
+  it('maps the active wave timer state (AC14)', () => {
+    const scene = makeScene({
+      getWaveState: () => ({ active: true, timeRemaining: 12.5, timeLimit: 30 }),
+    });
+    expect(buildBotSnapshot(scene).wave).toEqual({
+      active: true,
+      timeRemaining: 12.5,
+      timeLimit: 30,
+    });
+  });
+
+  it('maps an inactive wave timer (between waves / boss) as inactive', () => {
+    expect(buildBotSnapshot(makeScene()).wave).toEqual({
+      active: false,
+      timeRemaining: 0,
+      timeLimit: 30,
+    });
   });
 });
 
