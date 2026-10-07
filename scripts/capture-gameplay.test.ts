@@ -44,6 +44,7 @@ import {
   captureExitCode,
   captureStartKeys,
   captureStartPlan,
+  captureUrl,
   installRunEndedListener,
   parseCaptureArgs,
   readRunEndedSignal,
@@ -682,6 +683,32 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
     expect(parseCaptureArgs(['--scripted']).scripted).toBe(true);
   });
 
+  it('selects the dev scenario mode and starts Play Game (AH-0MUWZ5HCV0034H44)', () => {
+    expect(resolveCaptureMode({ scenario: 'boss-four-hits' })).toBe('scenario');
+    expect(captureStartKeys('scenario')).toEqual(['Enter']);
+    expect(captureStartPlan('scenario')).toEqual([
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    expect(parseCaptureArgs(['--scenario', 'boss-four-hits']).scenario).toBe(
+      'boss-four-hits',
+    );
+    // An empty scenario string leaves the default demo path untouched.
+    expect(resolveCaptureMode({ scenario: '' })).toBe('demo');
+  });
+
+  it('captureUrl adds the scenario query only when requested', () => {
+    const base = 'http://127.0.0.1:1234/';
+    expect(captureUrl(base)).toBe(base);
+    expect(captureUrl(base, { scenario: null })).toBe(base);
+    expect(captureUrl(base, { scenario: 'boss-four-hits' })).toBe(
+      `${base}?scenario=boss-four-hits`,
+    );
+    // A query already on the URL is appended with `&` and the value encoded.
+    expect(captureUrl('http://x/?a=1', { scenario: 'a b' })).toBe(
+      'http://x/?a=1&scenario=a%20b',
+    );
+  });
+
   it('parseCaptureArgs still parses the existing flags', () => {
     const options = parseCaptureArgs([
       '--duration',
@@ -1078,6 +1105,22 @@ describe('full-run wait loop (AH-0MUXZ4CNS009RV40)', () => {
     expect(decision.runLengthMs).toBe(signalAtMs);
     expect(decision.elapsedMs).toBe(signalAtMs + 5_000);
     expect(decision.stopTimeMs).toBe(signalAtMs + 5_000);
+  });
+
+  it('awaits an async signal reader (the capture passes a page.evaluate promise)', async () => {
+    const clock = makeClock();
+    const decision = await waitForRunEnd({
+      now: clock.now,
+      readSignal: async () =>
+        clock.now() >= 1_000 ? { won: true, score: 7 } : null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 250,
+      tailMs: 1_000,
+      maxDurationMs: 60_000,
+    });
+
+    expect(decision.reason).toBe('signal');
+    expect(decision.signal).toEqual({ won: true, score: 7 });
   });
 
   it('decodes a window-flag defeat payload the same way', async () => {

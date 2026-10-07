@@ -227,6 +227,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     keepServer: false,
     json: false,
     scripted: false,
+    scenario: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -272,6 +273,11 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // demo (AH-0MUX496IJ0041O3V).
         options.scripted = true;
         break;
+      case '--scenario':
+        // Dev-gated game scenario selected through the URL query
+        // (AH-0MUWZ5HCV0034H44), e.g. `boss-four-hits`.
+        options.scenario = next();
+        break;
       case '--help':
         options.help = true;
         break;
@@ -289,13 +295,39 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
  * The **in-game demo** is the default: the capture starts the shipped
  * attract/demo mode through the normal menu path and records the bot playing.
  * Passing `--scripted` selects the legacy deterministic plan replay instead,
- * which remains the fallback when the demo cannot run.
+ * which remains the fallback when the demo cannot run. Passing `--scenario`
+ * selects a **dev scenario** (AH-0MUWZ5HCV0034H44): the game URL carries the
+ * scenario query, the capture starts a normal Play Game run and lets the
+ * scenario drive the run (e.g. straight to a low-HP boss).
  *
- * @param {{ scripted?: boolean }} [options]
- * @returns {'demo' | 'scripted'}
+ * @param {{ scripted?: boolean, scenario?: string | null }} [options]
+ * @returns {'demo' | 'scripted' | 'scenario'}
  */
 export function resolveCaptureMode(options = {}) {
+  if (typeof options.scenario === 'string' && options.scenario.length > 0) {
+    return 'scenario';
+  }
   return options.scripted === true ? 'scripted' : 'demo';
+}
+
+/**
+ * Appends the `--scenario` value to a capture URL as a query parameter.
+ *
+ * The scenario is selected page-side by `src/core/devScenario.ts` (dev builds
+ * only), so the recorder only loads a different URL — it never reaches into
+ * Phaser internals (AH-0MUWZ5HCV0034H44). No scenario leaves the URL
+ * untouched.
+ *
+ * @param {string} baseUrl — the served game URL.
+ * @param {{ scenario?: string | null }} [options]
+ * @returns {string}
+ */
+export function captureUrl(baseUrl, options = {}) {
+  if (typeof options.scenario !== 'string' || options.scenario.length === 0) {
+    return baseUrl;
+  }
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}scenario=${encodeURIComponent(options.scenario)}`;
 }
 
 /**
@@ -303,14 +335,15 @@ export function resolveCaptureMode(options = {}) {
  *
  * `Play Game` is focused by default, so the demo path presses **Tab** to move
  * focus to the `Watch Demo` control and **Enter** to activate it; the
- * scripted path activates the focused `Play Game` directly. Both are the same
- * normal menu input a player would use (no `src/` internals are reached).
+ * scripted and scenario paths activate the focused `Play Game` directly. All
+ * are the same normal menu input a player would use (no `src/` internals are
+ * reached).
  *
- * @param {'demo' | 'scripted'} mode
+ * @param {'demo' | 'scripted' | 'scenario'} mode
  * @returns {string[]}
  */
 export function captureStartKeys(mode) {
-  return mode === 'scripted' ? ['Enter'] : ['Tab', 'Enter'];
+  return mode === 'demo' ? ['Tab', 'Enter'] : ['Enter'];
 }
 
 /**
@@ -528,8 +561,9 @@ export async function runCapture(
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
   // `--max-duration`). `--duration` and `--scripted` keep the legacy
-  // fixed-length behaviour (AH-0MUXZ4CNS009RV40, AC4).
-  const fullRun = mode === 'demo' && options.fixedDuration !== true;
+  // fixed-length behaviour (AH-0MUXZ4CNS009RV40, AC4). A dev scenario
+  // (`--scenario`) is a complete run too: its short fight ends in victory.
+  const fullRun = mode !== 'scripted' && options.fixedDuration !== true;
   const plan = mode === 'scripted' ? buildScriptedPlan(options.durationMs) : [];
   // The scripted plan spans the plan plus one inter-step gap after each step;
   // the fixed-length demo simply records for the requested duration while the
@@ -553,7 +587,8 @@ export async function runCapture(
     const address = server.httpServer?.address();
     const port =
       address && typeof address === 'object' ? address.port : options.port;
-    const url = `http://127.0.0.1:${port}/`;
+    const baseUrl = `http://127.0.0.1:${port}/`;
+    const url = captureUrl(baseUrl, options);
 
     reporter.step('Launching headless Chromium…');
     const chromium = await loadChromium();
@@ -617,11 +652,14 @@ export async function runCapture(
 
     // The demo path (default) starts the shipped in-game demo through the
     // normal menu; the scripted fallback activates the focused Play Game and
-    // replays the fixed plan.
+    // replays the fixed plan; the scenario path activates Play Game and lets
+    // the URL-selected dev scenario drive the run.
     reporter.step(
-      mode === 'scripted'
-        ? 'Starting PlayScene (Enter)…'
-        : 'Starting in-game demo (Watch Demo)…',
+      mode === 'demo'
+        ? 'Starting in-game demo (Watch Demo)…'
+        : mode === 'scenario'
+          ? `Starting dev scenario "${options.scenario}" (Enter)…`
+          : 'Starting PlayScene (Enter)…',
     );
     for (const step of captureStartPlan(mode)) {
       await page.keyboard.press(step.key);
@@ -653,6 +691,25 @@ export async function runCapture(
           : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
     );
     await startRecording(page, mimeType);
+
+    // A dev scenario freezes the run at setup so recording can start before
+    // the (deliberately short) fight destroys the boss. Release it through the
+    // page-side scenario handle once the recorder is live, so the whole
+    // display is captured. No keystroke is simulated.
+    if (mode === 'scenario') {
+      reporter.step('Releasing dev scenario…');
+      const released = await page.evaluate(() => {
+        const handle = window.__aiHellScenario;
+        if (!handle || typeof handle.resume !== 'function') return false;
+        handle.resume();
+        return true;
+      });
+      if (!released) {
+        throw new Error(
+          'dev scenario was not active — did Play Game start? (check --scenario value / dev build)',
+        );
+      }
+    }
 
     let lastProgressAt = 0;
     let lastReportedMs = -1;
@@ -1095,10 +1152,13 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
+    );
+    console.log(
+      'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only).',
     );
     return;
   }

@@ -22,7 +22,7 @@ import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
-import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
+import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -3836,6 +3836,49 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       scene.getVictoryEffects(),
     );
     expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
+  });
+
+  it('dev scenario — jumps to a 4-hit boss with no minions/attacks and freezes until resumed (AH-0MUWZ5HCV0034H44)', async () => {
+    const scene = await bootPlay();
+
+    scene.startDevBossScenario(4);
+
+    const boss = scene.getBoss();
+    expect(boss).not.toBeNull();
+    expect(boss!.alive).toBe(true);
+    // Exactly four hits remain, shown in the final phase, with no attacks and
+    // no Phase-1 minions to soak the player's fire.
+    expect(boss!.getHpFraction()).toBeCloseTo(
+      4 / (BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE),
+      6,
+    );
+    expect(boss!.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+    expect(boss!.shootEnabled).toBe(false);
+    expect(scene.getEnemies()).toHaveLength(0);
+    // Frozen so the recorder starts before the short fight begins, with a
+    // deterministic page-side release handle exposed.
+    expect(scene.isPaused()).toBe(true);
+    expect(window.__aiHellScenario?.hitsRemaining).toBe(4);
+    // The ship sits to the boss's left at the same height, so the default
+    // right-facing auto-fire lands on the boss unaided.
+    const player = scene.getPlayer()!;
+    expect(player.x).toBeLessThan(boss!.x);
+    expect(player.y).toBeCloseTo(boss!.y, 5);
+    expect(player.getHeading()).toBeCloseTo(0, 5);
+
+    // Resume through the scenario handle and land the four hits: the run is
+    // won and the celebration runs.
+    window.__aiHellScenario?.resume();
+    expect(scene.isPaused()).toBe(false);
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
+    for (let hit = 0; hit < 4 && boss!.alive; hit++) {
+      scene.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);
+      scene.tick(0.016);
+    }
+    expect(boss!.alive).toBe(false);
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
   });
 
   it('AC1 — the fanfare and celebration fire exactly once even across extra ticks', async () => {

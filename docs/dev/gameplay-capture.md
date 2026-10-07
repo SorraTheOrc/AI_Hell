@@ -33,6 +33,9 @@ npm run capture -- --max-duration 1800000 --tail 5000
 npm run capture -- --duration 20000 --output clips/demo.webm
 npm run capture -- --headed      # watch it drive a visible browser
 npm run capture -- --scripted    # fallback: replay the fixed scripted plan
+
+# record the dev boss scenario: jump straight to a boss with 4 hits remaining
+npm run capture -- --scenario boss-four-hits
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -93,6 +96,43 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
    decodes the audio with `decodeAudioData` for **peak and RMS**.
 9. Streams the encoded chunks to Node over an `exposeFunction` binding and
    writes them to the output file.
+
+## Dev scenarios (`--scenario`)
+
+A real run reaches the Central AI boss only after all five levels, and the
+boss then needs **400 hits** (4 phases × 100) to destroy — so neither the
+recorder nor a human reviewer can practically observe the victory celebration
+(AH-0MUWZ5HCV0034H44 producer-audit follow-up). A **dev scenario** is an
+additive, dev-only shortcut that drops the run straight into a short boss
+encounter:
+
+```bash
+# dev builds only: Play Game loads /?scenario=boss-four-hits, jumps to the
+# boss with 4 hits remaining and freezes the run until the recorder releases it
+npm run capture -- --scenario boss-four-hits
+```
+
+The scenario is selected by the `scenario` URL query parameter, parsed by the
+pure `src/core/devScenario.ts` resolver. The capture only appends the query to
+the game URL it loads (`captureUrl`) — it never reaches into Phaser internals.
+Supported values:
+
+| `scenario` | Effect |
+|---|---|
+| `boss-four-hits` | Jump to the boss with **4** hits remaining (the recorded demo). |
+| `boss` | The same jump, with the hits tunable via `&bossHits=N` (e.g. `?scenario=boss&bossHits=12`). |
+
+The scenario clears the opening wave, spawns the boss in its final phase with
+no minions and its attacks disabled, and places the ship to the boss's left
+facing it, so the auto-fire lands without input. The run is then **frozen** so
+recording starts before the deliberately short fight ends; once the recorder
+is live the capture releases it through the page-side scenario handle
+(`window.__aiHellScenario.resume()`), so no keystroke is simulated and the
+release is deterministic.
+
+Everything is gated behind `import.meta.env.DEV`: a production build ignores
+the query parameter (`resolveDevScenario` is never consulted), so the shipped
+bundle and normal runs are unchanged.
 
 ## Full-run capture (default)
 
@@ -449,5 +489,6 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 | `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
+| `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
 | `package.json` | `capture` / `capture:install` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |

@@ -121,6 +121,24 @@ export const BOSS_PHASE_COUNT = 4;
 /** Number of hits required to deplete one boss phase. */
 export const BOSS_HIT_POINTS_PER_PHASE = 100;
 
+/**
+ * Resolves the boss's starting HP: the full pool by default, else the
+ * requested value clamped to at least one hit and at most the full pool.
+ */
+function resolveInitialHp(
+  initialHp: number | undefined,
+  totalHp: number,
+): number {
+  if (initialHp === undefined || !Number.isFinite(initialHp)) return totalHp;
+  return Math.min(totalHp, Math.max(1, Math.floor(initialHp)));
+}
+
+/** Resolves the boss's starting phase, clamped to the four valid phases. */
+function resolveInitialPhase(initialPhase: number | undefined): number {
+  if (initialPhase === undefined || !Number.isFinite(initialPhase)) return 1;
+  return Math.min(BOSS_PHASE_COUNT, Math.max(1, Math.floor(initialPhase)));
+}
+
 /** Health bar width in px. */
 export const BOSS_HEALTH_BAR_WIDTH = 300;
 /** Health bar height in px. */
@@ -148,6 +166,18 @@ export interface BossConfig {
   shotProbability?: number;
   /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
   rng?: () => number;
+  /**
+   * Optional starting health: how many further hits the boss can take.
+   * Defaults to the full 4-phase pool (400). The dev boss scenario
+   * (AH-0MUWZ5HCV0034H44) uses a small value so the run can be won quickly;
+   * clamped to `[1, BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE]`.
+   */
+  initialHp?: number;
+  /**
+   * Optional starting phase (1–4), so a low-HP dev boss can still be shown in
+   * its final, desperation visuals. Defaults to 1; clamped to the phase range.
+   */
+  initialPhase?: number;
 }
 
 // ── Bullet types ────────────────────────────────────────────────────
@@ -259,7 +289,9 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
     this._totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
-    this._currentHp = this._totalHp;
+    this._currentHp = resolveInitialHp(config.initialHp, this._totalHp);
+    this._currentPhaseNumber = resolveInitialPhase(config.initialPhase);
+    this._currentPhase = this._currentPhaseNumber as BossPhase;
     this.add(this.healthBarGraphics);
 
     this._drawBody();
