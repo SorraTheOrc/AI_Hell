@@ -125,7 +125,10 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   overshoot. It coasts to a controlled stop within the collection radius or
   the engagement standoff instead of flying past its target. The `thrust`
   flag is re-evaluated **every tick** (a fast reflex) while the chosen
-  heading stays committed for the human reaction window.
+  heading stays committed for the human reaction window; each forward-thrust
+  press is itself held for a human-like burst (base duration + a random
+  **25–60%**, drawn per press from the run seed) so the reflex cannot toggle
+  the key every frame (AC15).
 - **Same input path as a player:** the bot's decision flows through the shared
   `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
   before the keyboard — so the demo ship obeys exactly the same

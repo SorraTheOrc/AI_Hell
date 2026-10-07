@@ -523,6 +523,9 @@ export class PlayScene extends CombatScene<
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
     this._initRunSeed();
+    // Seed the bot's per-press jitter from the run seed so demo press
+    // lengths are reproducible per run (AC15).
+    this.botGovernor.seed(this.getRunSeed());
 
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
@@ -2253,6 +2256,7 @@ export class PlayScene extends CombatScene<
       // the ship's configured control scheme (default `asteroids`); the
       // governor resolves the bot's steering intent to it
       // (AH-0MUX2NENC008AHOQ producer review).
+      this.botGovernor.seed(this.getRunSeed());
       this.botGovernor.reset();
       this._enableDemoTakeOver();
     } else {

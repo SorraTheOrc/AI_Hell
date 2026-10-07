@@ -40,6 +40,16 @@
  * turn is closed-loop: a held "aim at the mineral" intent tracks the target
  * precisely and never overshoots the way an open-loop held turn key would.
  *
+ * ## Human-like thrust presses (AC15)
+ *
+ * The forward-model throttle can flip the thrust key every tick near the
+ * braking boundary, which reads as mechanical `on/off/on/off`.  A human
+ * presses for a perceptible burst, so the governor holds each forward-thrust
+ * press for its base duration extended by a random **+25 % to +60 %** (drawn
+ * per press from the run-seeded RNG).  This lengthens the "on" runs without
+ * changing the chosen target/heading; the ship may overshoot its standoff a
+ * little more, which is the deliberate human-feel trade-off.
+ *
  * `PlayScene` never forces a scheme: the demo drives whichever scheme the
  * ship is configured with, so the demo ship looks and handles like the
  * player's ship rather than a four-directional impostor
@@ -94,6 +104,17 @@ export interface BotHumanInputTunables {
    * toward it.
    */
   alignmentToleranceRad: number;
+  /**
+   * Base duration (ms) of a forward-thrust press.  Each press is extended by
+   * a random factor in
+   * `[thrustPressExtensionMin, thrustPressExtensionMax]` so the bot holds the
+   * key in human-like bursts instead of toggling every tick (AC15).
+   */
+  thrustPressBaseMs: number;
+  /** Minimum random extension applied to a thrust press (1 = none). */
+  thrustPressExtensionMin: number;
+  /** Maximum random extension applied to a thrust press. */
+  thrustPressExtensionMax: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -101,7 +122,25 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reactionTimeMs: 250,
   allowDown: false,
   alignmentToleranceRad: 0.15,
+  thrustPressBaseMs: 160,
+  thrustPressExtensionMin: 1.25,
+  thrustPressExtensionMax: 1.6,
 };
+
+/** Default seed for the governor's press-duration RNG (deterministic). */
+const BOT_INPUT_DEFAULT_SEED = 0x5eed1e55;
+
+/** Small deterministic PRNG (mulberry32) for per-press duration jitter. */
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 /**
  * Delay (ms) before the demo bot picks an upgrade on the hold-full overlay
@@ -219,10 +258,29 @@ export class BotInputGovernor {
   /** Time (ms) since the last commit; starts "due" so the first commits. */
   private sinceCommitMs = Number.POSITIVE_INFINITY;
 
+  /** Per-press duration jitter RNG (seeded for per-run reproducibility). */
+  private random: () => number;
+
+  /** Milliseconds left in the current forward-thrust press (0 = none). */
+  private thrustPressRemainingMs = 0;
+
   private readonly tunables: BotHumanInputTunables;
 
-  constructor(tunables: Partial<BotHumanInputTunables> = {}) {
+  constructor(
+    tunables: Partial<BotHumanInputTunables> = {},
+    seed: number = BOT_INPUT_DEFAULT_SEED,
+  ) {
     this.tunables = { ...BOT_HUMAN_INPUT_TUNABLES, ...tunables };
+    this.random = mulberry32(seed);
+  }
+
+  /**
+   * Re-seeds the per-press duration RNG so a run's press lengths are
+   * reproducible (AH-0MUY08V6W001SJJN).  Called by `PlayScene` with the run
+   * seed when the demo starts.
+   */
+  seed(value: number): void {
+    this.random = mulberry32(value);
   }
 
   /**
@@ -233,6 +291,7 @@ export class BotInputGovernor {
     this.committed = IDLE_INPUT;
     this.resolved = IDLE_INPUT;
     this.sinceCommitMs = Number.POSITIVE_INFINITY;
+    this.thrustPressRemainingMs = 0;
   }
 
   /**
@@ -256,7 +315,8 @@ export class BotInputGovernor {
     dtSeconds: number,
     context: BotControlContext = { scheme: 'fourDirectional', facing: 0 },
   ): ControlInput {
-    this.sinceCommitMs += Math.max(0, dtSeconds) * 1000;
+    const dtMs = Math.max(0, dtSeconds) * 1000;
+    this.sinceCommitMs += dtMs;
     if (this.sinceCommitMs >= this.tunables.reactionTimeMs) {
       this.committed = { ...decision };
       this.sinceCommitMs = 0;
@@ -267,8 +327,48 @@ export class BotInputGovernor {
       // instead of overshooting inside a held 250 ms thrust pulse (AC10).
       this.committed = { ...this.committed, thrust: decision.thrust };
     }
+
+    // Human-like thrust presses (AC15): hold each press for its (randomly
+    // extended) duration so the braking reflex cannot flip the key every
+    // tick.  The chosen heading is unaffected.
+    this.committed = {
+      ...this.committed,
+      thrust: this.resolveThrustPress(
+        this.committed.thrust !== false,
+        dtMs,
+      ),
+    };
+
     this.resolved = this.resolve(this.committed, context);
     return this.current();
+  }
+
+  /**
+   * Applies the human-like thrust-press hold (AC15): once thrust is on it
+   * stays on for a base duration extended by a random +25–60%, then it
+   * follows the live request.  Returns the effective thrust for this tick.
+   */
+  private resolveThrustPress(desiredThrust: boolean, dtMs: number): boolean {
+    if (this.thrustPressRemainingMs > 0) {
+      this.thrustPressRemainingMs = Math.max(
+        0,
+        this.thrustPressRemainingMs - dtMs,
+      );
+      return true;
+    }
+    if (!desiredThrust) return false;
+    const {
+      thrustPressBaseMs,
+      thrustPressExtensionMin,
+      thrustPressExtensionMax,
+    } = this.tunables;
+    const span = Math.max(
+      0,
+      thrustPressExtensionMax - thrustPressExtensionMin,
+    );
+    const extension = thrustPressExtensionMin + this.random() * span;
+    this.thrustPressRemainingMs = thrustPressBaseMs * extension;
+    return true;
   }
 
   /** The currently resolved scheme input (defensive copy). */

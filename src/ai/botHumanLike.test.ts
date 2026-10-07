@@ -431,17 +431,32 @@ describe('forward-model throttle (AC10)', () => {
     );
   });
 
-  it('re-evaluates the thrust flag every tick while the heading is held', () => {
-    const governor = new BotInputGovernor({ reactionTimeMs: 1000 });
+  it('holds the thrust press even when the live request turns off (AC15)', () => {
+    const governor = new BotInputGovernor(
+      {
+        reactionTimeMs: 1000,
+        thrustPressBaseMs: 160,
+        thrustPressExtensionMin: 1.25,
+        thrustPressExtensionMax: 1.6,
+      },
+      1,
+    );
     const intent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
 
     expect(
       governor.update(intent, 1 / 60, { scheme: 'asteroids', facing: 0 }),
     ).toEqual(asteroid('forward'));
 
-    // Inside the reaction window the heading is held, but the braking reflex
-    // takes effect immediately: the same heading now coasts.
+    // The live request is off next tick, but the press holds the key down.
     const braking = { ...input('right'), dirX: 1, dirY: 0, thrust: false };
+    expect(
+      governor.update(braking, 1 / 60, { scheme: 'asteroids', facing: 0 }),
+    ).toEqual(asteroid('forward'));
+
+    // Once the press window elapses, it coasts.
+    for (let i = 0; i < 30; i += 1) {
+      governor.update(braking, 1 / 60, { scheme: 'asteroids', facing: 0 });
+    }
     expect(
       governor.update(braking, 1 / 60, { scheme: 'asteroids', facing: 0 }),
     ).toEqual(asteroid());
@@ -455,5 +470,83 @@ describe('forward-model throttle (AC10)', () => {
         facing: 0,
       }),
     ).toEqual(input());
+  });
+});
+
+// ── Human-like thrust presses (AC15) ────────────────────────────────
+//
+// The operator reported the bot toggling the thruster "on/off/on/off" to
+// avoid overshooting and asked for human-length presses extended by a random
+// +25–60% per press.
+
+describe('human-like thrust presses (AC15)', () => {
+  const DT = 1 / 60;
+  const DT_MS = DT * 1000;
+  const T = {
+    thrustPressBaseMs: 160,
+    thrustPressExtensionMin: 1.25,
+    thrustPressExtensionMax: 1.6,
+    reactionTimeMs: 1000,
+  };
+  const thrustIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
+  const coastIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: false };
+
+  /** Measures the on-run (ms) of the press started by a rising thrust edge. */
+  function measurePressMs(governor: BotInputGovernor): number {
+    governor.update(thrustIntent, DT, { scheme: 'asteroids', facing: 0 });
+    let ticks = 1;
+    for (let i = 0; i < 60; i += 1) {
+      const out = governor.update(coastIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+      }) as AsteroidsInput;
+      if (!out.forward) break;
+      ticks += 1;
+    }
+    return ticks * DT_MS;
+  }
+
+  it('extends a one-tick thrust request into a full press', () => {
+    const ms = measurePressMs(new BotInputGovernor(T, 1));
+    // Base 160 ms + 25–60% → 200–256 ms (allow two ticks of measurement
+    // slack: the press spans from the rising edge to the tick it expires).
+    expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+    expect(ms).toBeLessThanOrEqual(256 + 2 * DT_MS);
+    // A full press is many ticks, not the raw one-tick blip.
+    expect(ms / DT_MS).toBeGreaterThan(8);
+  });
+
+  it('randomises each press within the +25–60% band', () => {
+    const governor = new BotInputGovernor(T, 7);
+    const durations = [0, 1, 2, 3, 4].map(() => measurePressMs(governor));
+    for (const ms of durations) {
+      expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+      expect(ms).toBeLessThanOrEqual(256 + 2 * DT_MS);
+    }
+    // Random per press: not all presses are the same length.
+    expect(new Set(durations.map((d) => Math.round(d))).size).toBeGreaterThan(1);
+  });
+
+  it('is deterministic for a given seed', () => {
+    const first = new BotInputGovernor(T, 42);
+    const second = new BotInputGovernor(T, 42);
+    const seqFirst = [0, 1, 2, 3, 4].map(() =>
+      Math.round(measurePressMs(first)),
+    );
+    const seqSecond = [0, 1, 2, 3, 4].map(() =>
+      Math.round(measurePressMs(second)),
+    );
+    expect(seqFirst).toEqual(seqSecond);
+  });
+
+  it('keeps thrust on continuously while the live request stays on', () => {
+    const governor = new BotInputGovernor(T, 3);
+    for (let i = 0; i < 90; i += 1) {
+      const out = governor.update(thrustIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+      }) as AsteroidsInput;
+      expect(out.forward).toBe(true);
+    }
   });
 });
