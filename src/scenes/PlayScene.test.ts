@@ -42,6 +42,7 @@ import {
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
+import { RUN_ENDED_EVENT } from '../core/runEndedSignal';
 import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
@@ -3980,6 +3981,90 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
           ? 'MenuScene'
           : 'other';
       expect(activeKey).toBe('GameOverScene');
+    });
+  });
+
+  // ── End-of-run page-side signal (AH-0MUXZ4BXK001QCEK) ───────────
+
+  describe('End-of-run page-side signal (AH-0MUXZ4BXK001QCEK)', () => {
+    /**
+     * Records `aihell:run-ended` event details dispatched while `run()`
+     * executes. The emitter dispatches synchronously inside `_finishRun`, so
+     * the scene transition it precedes cannot race the capture.
+     */
+    function withRunEndedEvents(run: () => void): unknown[] {
+      const details: unknown[] = [];
+      const listener = (event: Event): void => {
+        details.push((event as CustomEvent).detail);
+      };
+      window.addEventListener(RUN_ENDED_EVENT, listener);
+      try {
+        run();
+      } finally {
+        window.removeEventListener(RUN_ENDED_EVENT, listener);
+      }
+      return details;
+    }
+
+    beforeEach(() => {
+      delete window.__aiHellRunState;
+      vi.stubEnv('DEV', true);
+    });
+
+    afterEach(() => {
+      delete window.__aiHellRunState;
+      vi.unstubAllEnvs();
+    });
+
+    it('AC1 — a victory sets the flag, emits the event and still transitions', async () => {
+      const scene = await bootPlay();
+      const score = scene.getGameState().score;
+
+      const details = withRunEndedEvents(() => {
+        (scene as unknown as { _finishRun(won: boolean): void })._finishRun(true);
+      });
+
+      expect(window.__aiHellRunState).toEqual({ ended: true, won: true, score });
+      expect(details).toEqual([{ won: true, score }]);
+      // Normal play still reaches GameOverScene (AC3); the scene start is
+      // queued to the next frame, so let it settle.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    });
+
+    it('AC1 — a defeat sets the flag and emits the event', async () => {
+      const scene = await bootPlay();
+      const gs = scene.getGameState();
+      gs.lives = 1;
+
+      const details = withRunEndedEvents(() => {
+        (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+      });
+
+      expect(gs.lives).toBe(0);
+      expect(window.__aiHellRunState).toEqual({
+        ended: true,
+        won: false,
+        score: gs.score,
+      });
+      expect(details).toEqual([{ won: false, score: gs.score }]);
+    });
+
+    it('AC2 — the signal is dev-gated: a production build emits nothing', async () => {
+      const scene = await bootPlay();
+      vi.stubEnv('DEV', false);
+      const gs = scene.getGameState();
+      gs.lives = 1;
+
+      const details = withRunEndedEvents(() => {
+        (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+      });
+
+      expect(window.__aiHellRunState).toBeUndefined();
+      expect(details).toEqual([]);
+      // The game-over transition is unaffected by the disabled signal.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     });
   });
 });

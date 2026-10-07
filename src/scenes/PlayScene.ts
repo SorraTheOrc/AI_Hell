@@ -108,6 +108,7 @@ import {
   BotInputGovernor,
 } from '../ai/botHumanLike';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
   DEFAULT_BINDINGS,
   keyFor,
@@ -2052,6 +2053,11 @@ export class PlayScene extends CombatScene<
 
   /** Transitions to GameOverScene with the final score. */
   private _finishRun(won: boolean): void {
+    // Dev-gated end-of-run signal (AH-0MUXZ4BXK001QCEK), emitted *before* the
+    // scene transition so a demo run that returns to the menu still signals.
+    // `window` receives the `aihell:run-ended` CustomEvent and the
+    // `window.__aiHellRunState` fallback; `npm run capture` consumes both.
+    emitRunEndedSignal(won, this.gameState.score);
     if (this.demoMode) {
       // Non-scoring demo (AC5): skip GameOverScene entirely — no score entry
       // and no persisted session state — and return to the menu, which can
