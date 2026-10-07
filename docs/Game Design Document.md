@@ -104,6 +104,17 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
   before the keyboard — so the demo ship obeys exactly the same
   `_tickPlayer` movement/auto-fire path as a human.
+- **Human input limits (AH-0MUXXQ1MN002RXGB):** the bot is restricted to the
+  keys a person uses — **W/A/D** (up/left/right thrusters; never down/S) — and
+  its committed input changes no faster than a human reaction cadence
+  (`BotInputGovernor` / `BOT_HUMAN_INPUT_TUNABLES` in `src/ai/botHumanLike.ts`,
+  default **250 ms**), holding a thruster between reactions instead of
+  flip-flopping every frame. The governor advances by the frame `dt`, so demo
+  behaviour stays deterministic.
+- **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
+  the modal hold-full choice overlay auto-selects its first option after
+  `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run
+  never stalls on the selection screen. Normal play never auto-selects.
 - **Take over:** pressing any key or the pointer leaves demo mode in place
   (`setDemoMode(false)`) — the run continues under player control, no restart.
 - **Non-scoring:** on death or victory a demo run returns straight to the main

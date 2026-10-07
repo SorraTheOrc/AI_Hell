@@ -103,6 +103,10 @@ import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
 import { decideBotInput } from '../ai/botDecision';
 import { buildBotSnapshot } from '../ai/botSnapshot';
+import {
+  BOT_MINERAL_CHOICE_DELAY_MS,
+  BotInputGovernor,
+} from '../ai/botHumanLike';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import {
   DEFAULT_BINDINGS,
@@ -326,6 +330,12 @@ export class PlayScene extends CombatScene<
    */
   private demoTakeOverHandler: (() => void) | null = null;
 
+  /**
+   * Human-like input layer for the demo bot (AH-0MUXXQ1MN002RXGB): samples
+   * the pure decision at a human reaction cadence and clamps it to W/A/D.
+   */
+  private botGovernor = new BotInputGovernor();
+
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -469,6 +479,8 @@ export class PlayScene extends CombatScene<
     // Reset any state carried over from a previous session (restarts reuse
     // the same scene instance — never leak stale enemies/bullets/timers).
     this.resetRunState();
+    // Fresh human-like bot input state for this run.
+    this.botGovernor.reset();
 
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
@@ -743,6 +755,10 @@ export class PlayScene extends CombatScene<
     // P7 Teleport (S/↓ JustDown) runs first so the warp position is
     // consumed by this frame's physics.
     this._handleTeleport();
+    // Human-like demo bot: sample the decision at a human reaction cadence
+    // before the shared player step reads the input seam
+    // (AH-0MUXXQ1MN002RXGB).
+    this._advanceDemoBot(dt);
     // Shared player-control step (timers → multipliers → input → physics →
     // auto-fire) — identical in every scene (AH-0MUII39KX007YUQ0, AC1).
     this._tickPlayer(dt);
@@ -1374,13 +1390,24 @@ export class PlayScene extends CombatScene<
 
   /**
    * Demo/attract-mode bot input (AC2). With demo mode on, the shared input
-   * seam consumes the pure `decideBotInput` decision over a fresh read-only
+   * seam consumes the human-like governed decision over a fresh read-only
    * snapshot of this scene's live state instead of the keyboard. Off (the
    * default) → null, and the keyboard path is used unchanged (AC4).
    */
   protected override getBotInput(): ControlInput | null {
     if (!this.demoMode) return null;
-    return decideBotInput(buildBotSnapshot(this));
+    return this.botGovernor.current();
+  }
+
+  /**
+   * Samples the pure bot decision and feeds it to the human-like input
+   * governor (AH-0MUXXQ1MN002RXGB). Called once per tick, before the shared
+   * player-control step reads the seam, so the committed input the governor
+   * holds is what the ship flies with.
+   */
+  private _advanceDemoBot(dt: number): void {
+    if (!this.demoMode) return;
+    this.botGovernor.update(decideBotInput(buildBotSnapshot(this)), dt);
   }
 
   /**
@@ -2126,6 +2153,8 @@ export class PlayScene extends CombatScene<
   setDemoMode(demo: boolean): void {
     this.demoMode = demo;
     if (demo) {
+      // Start the human-like input layer from a clean slate.
+      this.botGovernor.reset();
       if (this.player) {
         // Match the create-time demo setup: the bot's four-directional
         // decision must map to the ship's active scheme (idempotent when
@@ -2301,6 +2330,12 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
+        // Demo mode auto-selects after a human-like delay so the bot never
+        // stalls on the overlay; normal play waits for a real selection
+        // (AH-0MUXXQ1MN002RXGB · AC4/AC5).
+        ...(this.demoMode
+          ? { autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS }
+          : {}),
         // Single overlay contract (AH-0MUII3DHM008L7JF · AC3): the launcher
         // supplies the selection callback; the overlay never reaches back
         // into `PlayScene` by key.

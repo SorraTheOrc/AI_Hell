@@ -29,10 +29,12 @@ import {
 import {
   decideBotInput,
 } from '../ai/botDecision';
+import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
+import { MineralChoiceScene } from './MineralChoiceScene';
 import { GymIndex } from './GymIndex';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,7 +79,14 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
   async function bootMenu(): Promise<MenuScene> {
     booted = await bootScene(
-      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, GymIndex],
+      [
+        MenuScene,
+        PlayScene,
+        GameOverScene,
+        LeaderboardScene,
+        MineralChoiceScene,
+        GymIndex,
+      ],
       { deterministicBoot: true },
     );
     return booted.scene as MenuScene;
@@ -126,6 +135,51 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     for (let i = 0; i < 60; i += 1) play.tick(1 / 60);
 
     expect(player.y).toBeLessThan(beforeY);
+  });
+
+  it('AC1/AC3 — the demo input changes at a human cadence, not every tick', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    // Reset the governor cadence, then tick a window shorter than the
+    // reaction time: the committed input must be held, not flip-flopped
+    // every frame (AH-0MUXXQ1MN002RXGB).
+    play.setDemoMode(true);
+    const seen = new Set<string>();
+    for (let i = 0; i < 10; i += 1) {
+      play.tick(1 / 60);
+      seen.add(JSON.stringify(botInputOf(play)));
+    }
+    expect(seen.size).toBe(1);
+  });
+
+  it('AC4 — the demo bot resolves the hold-full choice instead of stalling', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    // Open the hold-full choice exactly as a filled hold would.
+    const offered = play.openMineralChoice();
+    expect(offered).toHaveLength(3);
+    expect(play.isMineralChoiceOpen()).toBe(true);
+
+    // The launch is queued; give Phaser a step to activate the overlay.
+    await wait(80);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+
+    // The overlay auto-selects after the human-like delay, applies the choice
+    // and resumes play — the run never stalls.
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+
+    expect(play.isMineralChoiceOpen()).toBe(false);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
   });
 
   it('AC2 — normal play is unaffected: the keyboard drives and the bot seam stays off', async () => {

@@ -188,4 +188,62 @@ describe('MineralChoiceScene', () => {
       expect(scene.getDetailLines()[0]).toBe('\u2605 New');
     });
   });
+
+  describe('demo auto-select (AH-0MUXXQ1MN002RXGB)', () => {
+    it('AC4 — auto-selects the first option after the delay', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      const calls: number[] = [];
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+        ],
+        autoSelectMs: 40,
+        onSelect: (index: number) => calls.push(index),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      expect(calls).toEqual([0]);
+    });
+
+    it('AC5 — waits for a real selection when no delay is supplied', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      const calls: number[] = [];
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'P5', name: 'Speed Boost', kind: 'powerup' }],
+        onSelect: (index: number) => calls.push(index),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      expect(calls).toEqual([]);
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      // Still open and awaiting input.
+      expect(scene.getOptions()).toHaveLength(1);
+    });
+
+    it('a manual selection before the delay cancels the auto-select', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      const calls: number[] = [];
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+        ],
+        autoSelectMs: 200,
+        onSelect: (index: number) => calls.push(index),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      scene.select(1);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // The late timer must not fire a second selection.
+      expect(calls).toEqual([1]);
+    });
+  });
 });
