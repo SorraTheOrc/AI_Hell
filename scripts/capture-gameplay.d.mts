@@ -20,6 +20,18 @@ export interface CaptureOptions {
 /** Which capture path the options select. */
 export type CaptureMode = 'demo' | 'scripted';
 
+/** One capture-start key and the delay to apply after dispatching it. */
+export interface CaptureStartStep {
+  key: string;
+  delayAfterMs: number;
+}
+
+export const START_KEY_GAP_MS: number;
+
 export function parseCaptureArgs(argv?: string[]): CaptureOptions;
 export function resolveCaptureMode(options?: { scripted?: boolean }): CaptureMode;
 export function captureStartKeys(mode: CaptureMode): string[];
+export function captureStartPlan(
+  mode: CaptureMode,
+  gapMs?: number,
+): CaptureStartStep[];

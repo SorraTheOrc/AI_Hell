@@ -69,6 +69,16 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 960, height: 540 };
 const INTER_STEP_MS = 30;
 
+/**
+ * Gap (ms) between dispatching consecutive capture-start keys
+ * (AH-0MUXVVYWY009WT3X). The menu's `FocusManager` moves focus on the first
+ * keydown; dispatching the next key back-to-back races that focus change and
+ * the activation is lost, so neither the demo nor a normal run starts and the
+ * capture records the static menu. A short gap makes the demo
+ * (**Tab → Enter**) start reliably.
+ */
+export const START_KEY_GAP_MS = 250;
+
 /** Progress heartbeat interval during recording, in milliseconds. */
 const PROGRESS_INTERVAL_MS = 2_000;
 
@@ -256,6 +266,28 @@ export function resolveCaptureMode(options = {}) {
  */
 export function captureStartKeys(mode) {
   return mode === 'scripted' ? ['Enter'] : ['Tab', 'Enter'];
+}
+
+/**
+ * The ordered start keys and the delay to apply **after** dispatching each
+ * (AH-0MUXVVYWY009WT3X).
+ *
+ * A pure, testable encoding of {@link captureStartKeys} plus the inter-key
+ * timing that makes the multi-key demo path reliable: focus-moving keys are
+ * followed by {@link START_KEY_GAP_MS} before the next key, so the menu's
+ * `FocusManager` has processed the focus change before it is activated. The
+ * final key carries no trailing delay.
+ *
+ * @param {'demo' | 'scripted'} mode
+ * @param {number} [gapMs] — delay (ms) after each key except the last.
+ * @returns {{ key: string, delayAfterMs: number }[]}
+ */
+export function captureStartPlan(mode, gapMs = START_KEY_GAP_MS) {
+  const keys = captureStartKeys(mode);
+  return keys.map((key, index) => ({
+    key,
+    delayAfterMs: index < keys.length - 1 ? gapMs : 0,
+  }));
 }
 
 /** Resolves the output path, defaulting to `capture-output/gameplay-<ts>.webm`. */
@@ -446,8 +478,13 @@ export async function runCapture(
         ? 'Starting PlayScene (Enter)…'
         : 'Starting in-game demo (Watch Demo)…',
     );
-    for (const key of captureStartKeys(mode)) {
-      await page.keyboard.press(key);
+    for (const step of captureStartPlan(mode)) {
+      await page.keyboard.press(step.key);
+      // Let the FocusManager process a focus-moving key before the next one
+      // (AH-0MUXVVYWY009WT3X — back-to-back Tab+Enter is unreliable).
+      if (step.delayAfterMs > 0) {
+        await page.waitForTimeout(step.delayAfterMs);
+      }
     }
     await page.waitForTimeout(options.warmupMs);
 

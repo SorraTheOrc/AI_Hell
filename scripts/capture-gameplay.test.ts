@@ -38,8 +38,10 @@ import {
 } from './capture-progress.mjs';
 import {
   captureStartKeys,
+  captureStartPlan,
   parseCaptureArgs,
   resolveCaptureMode,
+  START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
 
 describe('buildScriptedPlan', () => {
@@ -628,6 +630,30 @@ describe('capture mode selection (AH-0MUX496IJ0041O3V)', () => {
 
   it('starts the scripted plan with Enter on the focused Play Game', () => {
     expect(captureStartKeys('scripted')).toEqual(['Enter']);
+  });
+
+  it('waits a gap after the focus-moving Tab before activating Enter (AH-0MUXVVYWY009WT3X)', () => {
+    const plan = captureStartPlan('demo');
+
+    expect(plan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    // A zero gap would reproduce the flaky back-to-back dispatch.
+    expect(START_KEY_GAP_MS).toBeGreaterThan(0);
+  });
+
+  it('carries no trailing delay for the single-key scripted start', () => {
+    expect(captureStartPlan('scripted')).toEqual([
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+  });
+
+  it('honours a custom inter-key gap', () => {
+    expect(captureStartPlan('demo', 500)).toEqual([
+      { key: 'Tab', delayAfterMs: 500 },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
   });
 
   it('parseCaptureArgs defaults to demo and recognises --scripted', () => {
