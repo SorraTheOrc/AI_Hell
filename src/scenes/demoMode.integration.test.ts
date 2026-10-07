@@ -170,12 +170,22 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(botInputOf(play)).not.toBeNull();
 
     // Tick the live scene with no keyboard input: the bot must move the ship
-    // (from spawn it engages the wave-1 formation / seeks pickups).
+    // (it engages the wave-1 formation / seeks pickups).  The exact direction
+    // depends on the run-seeded field, so assert real movement rather than a
+    // specific heading.
     const player = play.getPlayer()!;
+    const beforeX = player.x;
     const beforeY = player.y;
-    for (let i = 0; i < 60; i += 1) play.tick(1 / 60);
+    let maxDisplacement = 0;
+    for (let i = 0; i < 60; i += 1) {
+      play.tick(1 / 60);
+      maxDisplacement = Math.max(
+        maxDisplacement,
+        Math.hypot(player.x - beforeX, player.y - beforeY),
+      );
+    }
 
-    expect(player.y).toBeLessThan(beforeY);
+    expect(maxDisplacement).toBeGreaterThan(5);
   });
 
   it('AC14 — the live scene exposes its wave timer state to the bot snapshot', async () => {
