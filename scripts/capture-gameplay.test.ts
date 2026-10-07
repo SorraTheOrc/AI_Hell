@@ -37,9 +37,15 @@ import {
   setupHint,
 } from './capture-progress.mjs';
 import {
+  RUN_ENDED_EVENT,
+  RUN_ENDED_STATE_KEY,
+  RUN_ENDED_STORE_KEY,
+  buildRunEndedListenerPlan,
   captureStartKeys,
   captureStartPlan,
+  installRunEndedListener,
   parseCaptureArgs,
+  readRunEndedSignal,
   resolveCaptureMode,
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
@@ -54,6 +60,7 @@ import {
   evaluateRunStop,
   resolveDemoGameOverDwellMs,
   shouldDemoReturnToMenu,
+  waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
 
 describe('buildScriptedPlan', () => {
@@ -897,5 +904,250 @@ describe('demo game-over dwell helpers (AH-0MUXZ49PY0065K2O)', () => {
     expect(shouldDemoReturnToMenu(0, 0)).toBe(true);
     expect(shouldDemoReturnToMenu(Number.NaN, 5_000)).toBe(false);
     expect(shouldDemoReturnToMenu(5_000, Number.NaN)).toBe(false);
+  });
+});
+
+/**
+ * Minimal fake `window` for the run-end listener: records handlers per event
+ * type and lets a test dispatch a plain event object at them, matching the
+ * browser's `addEventListener`/`dispatchEvent` surface the listener uses.
+ */
+function makeWindowScope() {
+  const listeners = new Map<
+    string,
+    Array<(event: { type: string; detail?: unknown }) => void>
+  >();
+  const scope = {
+    addEventListener(
+      type: string,
+      handler: (event: { type: string; detail?: unknown }) => void,
+    ) {
+      const existing = listeners.get(type) ?? [];
+      existing.push(handler);
+      listeners.set(type, existing);
+    },
+    dispatchEvent(event: { type: string; detail?: unknown }) {
+      for (const handler of listeners.get(event.type) ?? []) handler(event);
+    },
+  };
+  return { scope, listeners };
+}
+
+describe('full-run capture arguments (AH-0MUXZ4CNS009RV40)', () => {
+  it('defaults to the full-run demo with the standard tail and cap', () => {
+    const options = parseCaptureArgs([]);
+
+    expect(options.fixedDuration).toBe(false);
+    expect(options.tailMs).toBe(DEFAULT_CAPTURE_TAIL_MS);
+    expect(options.maxDurationMs).toBe(DEFAULT_MAX_CAPTURE_DURATION_MS);
+  });
+
+  it('parses --tail and --max-duration without leaving the full-run path', () => {
+    const options = parseCaptureArgs([
+      '--tail',
+      '2500',
+      '--max-duration',
+      '120000',
+    ]);
+
+    expect(options.tailMs).toBe(2500);
+    expect(options.maxDurationMs).toBe(120000);
+    expect(options.fixedDuration).toBe(false);
+  });
+
+  it('marks an explicit --duration as the legacy fixed-length mode', () => {
+    const options = parseCaptureArgs(['--duration', '8000']);
+
+    expect(options.durationMs).toBe(8000);
+    expect(options.fixedDuration).toBe(true);
+  });
+});
+
+describe('run-end listener (AH-0MUXZ4CNS009RV40)', () => {
+  it('names the event, flag and store the game and capture share', () => {
+    expect(buildRunEndedListenerPlan()).toEqual({
+      eventName: RUN_ENDED_EVENT,
+      stateKey: RUN_ENDED_STATE_KEY,
+      storeKey: RUN_ENDED_STORE_KEY,
+    });
+    expect(RUN_ENDED_EVENT).toBe('aihell:run-ended');
+    expect(RUN_ENDED_STATE_KEY).toBe('__aiHellRunState');
+  });
+
+  it('captures an event dispatched after installation', () => {
+    const { scope } = makeWindowScope();
+
+    installRunEndedListener(undefined, scope);
+    scope.dispatchEvent({
+      type: RUN_ENDED_EVENT,
+      detail: { won: true, score: 12 },
+    });
+
+    expect(readRunEndedSignal(undefined, scope)).toEqual({
+      won: true,
+      score: 12,
+    });
+  });
+
+  it('installs the store under the plan key the reader looks up', () => {
+    const { scope } = makeWindowScope();
+    const plan = buildRunEndedListenerPlan();
+
+    installRunEndedListener(plan, scope);
+
+    expect((scope as Record<string, unknown>)[plan.storeKey]).toBeDefined();
+  });
+
+  it('falls back to the window flag when the event was missed', () => {
+    const { scope } = makeWindowScope();
+
+    installRunEndedListener(undefined, scope);
+    (scope as Record<string, unknown>).__aiHellRunState = {
+      ended: true,
+      won: false,
+      score: 0,
+    };
+
+    expect(readRunEndedSignal(undefined, scope)).toEqual({
+      ended: true,
+      won: false,
+      score: 0,
+    });
+  });
+
+  it('returns null before any signal and prefers the event over the flag', () => {
+    const { scope } = makeWindowScope();
+
+    installRunEndedListener(undefined, scope);
+    expect(readRunEndedSignal(undefined, scope)).toBeNull();
+
+    (scope as Record<string, unknown>).__aiHellRunState = {
+      ended: true,
+      won: false,
+      score: 0,
+    };
+    scope.dispatchEvent({
+      type: RUN_ENDED_EVENT,
+      detail: { won: true, score: 99 },
+    });
+
+    expect(readRunEndedSignal(undefined, scope)).toEqual({
+      won: true,
+      score: 99,
+    });
+  });
+
+  it('is inert on a scope that cannot listen', () => {
+    expect(installRunEndedListener(undefined, {})).toBeNull();
+  });
+});
+
+describe('full-run wait loop (AH-0MUXZ4CNS009RV40)', () => {
+  /** A deterministic fake clock advanced by the injected sleep. */
+  function makeClock(start = 0) {
+    let now = start;
+    return {
+      now: () => now,
+      advance: (ms: number) => {
+        now += ms;
+        return now;
+      },
+    };
+  }
+
+  it('stops one tail after the signal and reports the outcome', async () => {
+    const clock = makeClock();
+    const signalAtMs = 10_000;
+    const decision = await waitForRunEnd({
+      now: clock.now,
+      readSignal: () =>
+        clock.now() >= signalAtMs ? { won: true, score: 321 } : null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 250,
+      tailMs: 5_000,
+      maxDurationMs: 60_000,
+    });
+
+    expect(decision.done).toBe(true);
+    expect(decision.reason).toBe('signal');
+    expect(decision.capHit).toBe(false);
+    expect(decision.signal).toEqual({ won: true, score: 321 });
+    expect(decision.signalTimeMs).toBe(signalAtMs);
+    expect(decision.runLengthMs).toBe(signalAtMs);
+    expect(decision.elapsedMs).toBe(signalAtMs + 5_000);
+    expect(decision.stopTimeMs).toBe(signalAtMs + 5_000);
+  });
+
+  it('decodes a window-flag defeat payload the same way', async () => {
+    const clock = makeClock();
+    const decision = await waitForRunEnd({
+      now: clock.now,
+      readSignal: () =>
+        clock.now() >= 1_000 ? { ended: true, won: false, score: 0 } : null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 500,
+      tailMs: 2_000,
+      maxDurationMs: 60_000,
+    });
+
+    expect(decision.signal).toEqual({ won: false, score: 0 });
+    expect(decision.reason).toBe('signal');
+  });
+
+  it('stops at the safety cap and marks the run incomplete without a signal', async () => {
+    const clock = makeClock();
+    const decision = await waitForRunEnd({
+      now: clock.now,
+      readSignal: () => null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 250,
+      tailMs: 5_000,
+      maxDurationMs: 3_000,
+    });
+
+    expect(decision.done).toBe(true);
+    expect(decision.reason).toBe('cap');
+    expect(decision.capHit).toBe(true);
+    expect(decision.signal).toBeNull();
+    expect(decision.signalTimeMs).toBeNull();
+    expect(decision.elapsedMs).toBeGreaterThanOrEqual(3_000);
+  });
+
+  it('clamps the tail to the cap when the signal lands near the cap', async () => {
+    const clock = makeClock();
+    const decision = await waitForRunEnd({
+      now: clock.now,
+      readSignal: () =>
+        clock.now() >= 2_800 ? { won: true, score: 1 } : null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 100,
+      tailMs: 5_000,
+      maxDurationMs: 3_000,
+    });
+
+    expect(decision.reason).toBe('signal');
+    expect(decision.capHit).toBe(false);
+    expect(decision.stopTimeMs).toBe(3_000);
+  });
+
+  it('reports ascending progress heartbeats against the cap', async () => {
+    const clock = makeClock();
+    const progress: number[] = [];
+    await waitForRunEnd({
+      now: clock.now,
+      readSignal: () =>
+        clock.now() >= 1_000 ? { won: true, score: 1 } : null,
+      sleep: (ms) => clock.advance(ms),
+      pollMs: 250,
+      tailMs: 500,
+      maxDurationMs: 60_000,
+      onProgress: ({ elapsedMs, maxDurationMs }) => {
+        expect(maxDurationMs).toBe(60_000);
+        progress.push(elapsedMs);
+      },
+    });
+
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress).toEqual([...progress].sort((a, b) => a - b));
   });
 });

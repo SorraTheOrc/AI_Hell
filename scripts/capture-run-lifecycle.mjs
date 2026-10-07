@@ -213,6 +213,103 @@ export function evaluateRunStop(state = {}) {
 }
 
 /**
+ * Drives the full-run wait loop to a decision, given injected clock, signal
+ * reader and sleep so the loop is hermetic and testable without a browser.
+ *
+ * Each poll reads the latest run-end payload (through
+ * {@link decodeRunEndedDetail}) and hands the elapsed time and the first
+ * observed signal to {@link evaluateRunStop}; the loop returns when that
+ * decision says to stop — one `tailMs` after the signal, or at
+ * `maxDurationMs` when no signal arrived. The first signal observation wins,
+ * so a duplicate later signal cannot extend the tail. `onProgress` is called
+ * before each sleep with the elapsed time against the effective cap, so a
+ * caller can render an elapsed-vs-cap heartbeat across an unbounded wait.
+ *
+ * @param {{
+ *   now?: () => number,
+ *   readSignal?: () => unknown,
+ *   sleep?: (ms: number) => unknown,
+ *   pollMs?: number,
+ *   tailMs?: number,
+ *   maxDurationMs?: number,
+ *   onProgress?: (state: { elapsedMs: number, maxDurationMs: number, signalTimeMs: number|null }) => void,
+ * }} [options]
+ * @returns {Promise<{
+ *   done: boolean,
+ *   reason: 'signal'|'cap'|null,
+ *   stopTimeMs: number,
+ *   capHit: boolean,
+ *   signal: { won: boolean, score: number }|null,
+ *   signalTimeMs: number|null,
+ *   elapsedMs: number,
+ *   runLengthMs: number,
+ * }>}
+ */
+export async function waitForRunEnd(options = {}) {
+  const clock =
+    typeof options.now === 'function' ? options.now : () => Date.now();
+  const readSignal =
+    typeof options.readSignal === 'function'
+      ? options.readSignal
+      : () => null;
+  const pause =
+    typeof options.sleep === 'function'
+      ? options.sleep
+      : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const pollRaw = Number(options.pollMs);
+  const pollMs = Number.isFinite(pollRaw) && pollRaw > 0 ? pollRaw : 1;
+  const effectiveCap = toFiniteOr(
+    options.maxDurationMs,
+    DEFAULT_MAX_CAPTURE_DURATION_MS,
+  );
+
+  const startMs = clock();
+  let signal = null;
+  let signalTimeMs = null;
+  let elapsedMs = 0;
+  let decision = evaluateRunStop({
+    elapsedMs: 0,
+    signalTimeMs: null,
+    tailMs: options.tailMs,
+    maxDurationMs: options.maxDurationMs,
+  });
+
+  while (!decision.done) {
+    if (signal === null) {
+      const decoded = decodeRunEndedDetail(readSignal());
+      if (decoded) {
+        signal = decoded;
+        signalTimeMs = clock() - startMs;
+      }
+    }
+    elapsedMs = clock() - startMs;
+    decision = evaluateRunStop({
+      elapsedMs,
+      signalTimeMs,
+      tailMs: options.tailMs,
+      maxDurationMs: options.maxDurationMs,
+    });
+    if (decision.done) break;
+    if (typeof options.onProgress === 'function') {
+      options.onProgress({
+        elapsedMs,
+        maxDurationMs: effectiveCap,
+        signalTimeMs,
+      });
+    }
+    await pause(pollMs);
+  }
+
+  return {
+    ...decision,
+    signal,
+    signalTimeMs,
+    elapsedMs,
+    runLengthMs: signalTimeMs ?? elapsedMs,
+  };
+}
+
+/**
  * Resolves the effective demo game-over dwell, in milliseconds.
  *
  * The configured value (from `DEMO_GAME_OVER_DWELL_MS`, an override, or a test

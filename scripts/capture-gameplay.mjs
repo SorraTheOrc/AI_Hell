@@ -19,8 +19,10 @@
  *    menu control, and wait `--warmup` ms for `PlayScene` to settle.
  * 4. Start `canvas.captureStream(60)` → `MediaRecorder` (VP9, falling back
  *    to VP8/WebM) inside the page.
- * 5. Replay the deterministic bot plan (`scripts/capture-bot.mjs`) as real
- *    Playwright keydown/keyup events.
+ * 5. Record the run. The default demo path waits for the dev-gated
+ *    `aihell:run-ended` page signal and stops one `--tail` later, bounded by
+ *    `--max-duration`; `--scripted` / `--duration` replay the fixed bot plan
+ *    instead (`scripts/capture-bot.mjs`).
  * 6. Stop the recorder, decode the produced WebM back through a `<video>`
  *    element and probe it (resolution, duration, non-black fraction,
  *    colour variety, frame-to-frame motion) so the clip's non-triviality
@@ -34,8 +36,9 @@
  *
  * Usage:
  *
- *   npm run capture                       # defaults: 15 s, capture-output/gameplay-<ts>.webm
- *   npm run capture -- --duration 20000 --output clips/demo.webm --headed
+ *   npm run capture                       # full run + 5 s tail, capture-output/gameplay-<ts>.webm
+ *   npm run capture -- --tail 8000 --max-duration 1200000
+ *   npm run capture -- --duration 20000 --output clips/demo.webm --headed  # fixed-length
  *
  * The tool is opt-in: it is only reachable through this script and does not
  * touch the shipped bundle or the vitest suite.
@@ -59,6 +62,11 @@ import {
   resolveCaptureMimeType,
 } from './capture-bot.mjs';
 import {
+  DEFAULT_CAPTURE_TAIL_MS,
+  DEFAULT_MAX_CAPTURE_DURATION_MS,
+  waitForRunEnd,
+} from './capture-run-lifecycle.mjs';
+import {
   formatAudioSummary,
   formatDuration,
   formatProgress,
@@ -78,6 +86,30 @@ const INTER_STEP_MS = 30;
  * (**Tab → Enter**) start reliably.
  */
 export const START_KEY_GAP_MS = 250;
+
+/**
+ * Page-side event the game dispatches on `window` when a run ends
+ * (AH-0MUXZ4BXK001QCEK). Capture waits for it to detect the end of a full run
+ * instead of assuming a duration.
+ */
+export const RUN_ENDED_EVENT = 'aihell:run-ended';
+
+/**
+ * Read-only `window` flag the game mirrors the run outcome onto. Read as a
+ * race fallback because a short run can end before the capture's listener is
+ * attached (the game only sets it once the run has ended).
+ */
+export const RUN_ENDED_STATE_KEY = '__aiHellRunState';
+
+/** Where the installed listener parks the latest captured event detail. */
+export const RUN_ENDED_STORE_KEY = '__aiHellRunEndedSignal';
+
+/**
+ * Poll interval, in milliseconds, while waiting for the run-end signal. The
+ * wait is bounded by `--max-duration`, so a tight poll only costs a little
+ * page-evaluate traffic.
+ */
+const RUN_ENDED_POLL_MS = 250;
 
 /** Progress heartbeat interval during recording, in milliseconds. */
 const PROGRESS_INTERVAL_MS = 2_000;
@@ -181,7 +213,12 @@ function asSetupError(error) {
 /** Parses `process.argv`-style flags into an options object. */
 export function parseCaptureArgs(argv = process.argv.slice(2)) {
   const options = {
+    // `--duration` opts back into the legacy fixed-length clip; without it the
+    // demo path records a complete run bounded by `maxDurationMs`.
     durationMs: DEFAULT_CAPTURE_DURATION_MS,
+    fixedDuration: false,
+    tailMs: DEFAULT_CAPTURE_TAIL_MS,
+    maxDurationMs: DEFAULT_MAX_CAPTURE_DURATION_MS,
     warmupMs: DEFAULT_WARMUP_MS,
     output: null,
     port: 0,
@@ -203,6 +240,13 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     switch (arg) {
       case '--duration':
         options.durationMs = Number(next());
+        options.fixedDuration = true;
+        break;
+      case '--tail':
+        options.tailMs = Number(next());
+        break;
+      case '--max-duration':
+        options.maxDurationMs = Number(next());
         break;
       case '--warmup':
         options.warmupMs = Number(next());
@@ -288,6 +332,92 @@ export function captureStartPlan(mode, gapMs = START_KEY_GAP_MS) {
     key,
     delayAfterMs: index < keys.length - 1 ? gapMs : 0,
   }));
+}
+
+/**
+ * Describes the page-side run-end signal the capture listens for
+ * (AH-0MUXZ4CNS009RV40). Single source for the event name, the race-fallback
+ * flag and the capture's local store, so the init script and the poller can
+ * never drift apart.
+ *
+ * @returns {{ eventName: string, stateKey: string, storeKey: string }}
+ */
+export function buildRunEndedListenerPlan() {
+  return {
+    eventName: RUN_ENDED_EVENT,
+    stateKey: RUN_ENDED_STATE_KEY,
+    storeKey: RUN_ENDED_STORE_KEY,
+  };
+}
+
+/**
+ * Installs the run-end listener on `scope`, called through
+ * `page.addInitScript` **before the game boots** so an early end is never
+ * missed (AH-0MUXZ4CNS009RV40, AC1).
+ *
+ * The function is self-contained (its default `plan` is an inline literal) so
+ * Playwright can serialise it into the page; the exported
+ * {@link buildRunEndedListenerPlan} is the same shape and is asserted against
+ * it by the unit tests. It captures the `aihell:run-ended` event detail into
+ * `scope[storeKey]` and adopts an already-set `window.__aiHellRunState` flag
+ * defensively. Returns the store, or `null` when the scope cannot hold it.
+ *
+ * @param {{ eventName: string, stateKey: string, storeKey: string }} [plan]
+ * @param {object} [scope]
+ * @returns {{ detail: unknown } | null}
+ */
+export function installRunEndedListener(
+  plan = {
+    eventName: 'aihell:run-ended',
+    stateKey: '__aiHellRunState',
+    storeKey: '__aiHellRunEndedSignal',
+  },
+  scope = globalThis,
+) {
+  if (!scope || typeof scope.addEventListener !== 'function') return null;
+
+  const store = { detail: null };
+  scope.addEventListener(plan.eventName, (event) => {
+    if (event && event.detail !== undefined && event.detail !== null) {
+      store.detail = event.detail;
+    }
+  });
+  if (scope[plan.stateKey] !== undefined && scope[plan.stateKey] !== null) {
+    store.detail = store.detail ?? scope[plan.stateKey];
+  }
+  scope[plan.storeKey] = store;
+  return store;
+}
+
+/**
+ * Reads the latest raw run-end payload from the page, or `null` before any
+ * signal (AH-0MUXZ4CNS009RV40, AC1). Prefers the captured event detail and
+ * falls back to `window.__aiHellRunState`, so a run that ended before the
+ * listener attached is still detected. Called through `page.evaluate`, which
+ * serialises the function into the page — hence the inline-literal default
+ * `plan`; the caller decodes the returned value with
+ * `decodeRunEndedDetail`.
+ *
+ * @param {{ eventName: string, stateKey: string, storeKey: string }} [plan]
+ * @param {object} [scope]
+ * @returns {unknown}
+ */
+export function readRunEndedSignal(
+  plan = {
+    eventName: 'aihell:run-ended',
+    stateKey: '__aiHellRunState',
+    storeKey: '__aiHellRunEndedSignal',
+  },
+  scope = globalThis,
+) {
+  if (!scope) return null;
+
+  const store = scope[plan.storeKey];
+  const fromEvent = store ? store.detail : null;
+  if (fromEvent !== undefined && fromEvent !== null) return fromEvent;
+
+  const fromFlag = scope[plan.stateKey];
+  return fromFlag === undefined ? null : fromFlag;
 }
 
 /** Resolves the output path, defaulting to `capture-output/gameplay-<ts>.webm`. */
@@ -394,10 +524,16 @@ export async function runCapture(
 ) {
   const outputPath = resolveOutputPath(options.output);
   const mode = resolveCaptureMode(options);
+  // The default demo path records a **complete run**: it waits for the game's
+  // run-end signal and stops one `--tail` later (bounded by
+  // `--max-duration`). `--duration` and `--scripted` keep the legacy
+  // fixed-length behaviour (AH-0MUXZ4CNS009RV40, AC4).
+  const fullRun = mode === 'demo' && options.fixedDuration !== true;
   const plan = mode === 'scripted' ? buildScriptedPlan(options.durationMs) : [];
   // The scripted plan spans the plan plus one inter-step gap after each step;
-  // the demo simply records for the requested duration while the bot plays.
-  const recordingMs =
+  // the fixed-length demo simply records for the requested duration while the
+  // bot plays. The full-run path overwrites this with the observed run length.
+  let recordingMs =
     mode === 'scripted'
       ? planDurationMs(plan) + plan.length * INTER_STEP_MS
       : options.durationMs;
@@ -448,6 +584,14 @@ export async function runCapture(
     // the wrapper is in place when the game first connects its master gain to
     // the shared context.destination (AH-0MUWYQQYU001G6OG).
     await page.addInitScript(installGameAudioTap);
+
+    // Install the run-end listener *before* the game boots so a short run
+    // cannot end before the capture is listening (AH-0MUXZ4CNS009RV40, AC1).
+    // The game also mirrors the outcome onto `window.__aiHellRunState`, which
+    // `readRunEndedSignal` reads as a race fallback.
+    if (fullRun) {
+      await page.addInitScript(installRunEndedListener);
+    }
 
     // Stream encoded chunks to Node as they are produced (avoids one huge
     // base64 return value over the CDP bridge).
@@ -501,44 +645,67 @@ export async function runCapture(
     if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
 
     reporter.step(
-      mode === 'scripted'
-        ? `Recording ${formatDuration(recordingMs)} of scripted gameplay…`
-        : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
+      fullRun
+        ? `Recording the full run (tail ${formatDuration(options.tailMs)}, cap ${formatDuration(options.maxDurationMs)})…`
+        : mode === 'scripted'
+          ? `Recording ${formatDuration(recordingMs)} of scripted gameplay…`
+          : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
     );
     await startRecording(page, mimeType);
 
-    const startedAt = Date.now();
     let lastProgressAt = 0;
     let lastReportedMs = -1;
-    if (mode === 'scripted') {
-      for (const step of plan) {
-        await page.keyboard.down(step.key);
-        await page.waitForTimeout(step.holdMs);
-        await page.keyboard.up(step.key);
-        await page.waitForTimeout(INTER_STEP_MS);
-        const elapsed = Date.now() - startedAt;
-        if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
-          lastProgressAt = elapsed;
-          lastReportedMs = elapsed;
-          reporter.progress(formatProgress(elapsed, recordingMs));
-        }
-      }
+    const reportProgress = (elapsedMs, totalMs) => {
+      if (elapsedMs - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+      lastProgressAt = elapsedMs;
+      lastReportedMs = elapsedMs;
+      reporter.progress(formatProgress(elapsedMs, totalMs));
+    };
+
+    let runWait = null;
+    if (fullRun) {
+      // Wait for the run to end, then keep recording for the tail (bounded by
+      // the safety cap). `waitForRunEnd` decodes the signal and owns the
+      // stop/cap decision; the page-side reader prefers the event and falls
+      // back to the `window.__aiHellRunState` flag (AC1). The heartbeat
+      // reports elapsed against the cap, since a full run is unbounded (AC5).
+      runWait = await waitForRunEnd({
+        now: () => Date.now(),
+        readSignal: () => page.evaluate(readRunEndedSignal),
+        sleep: (ms) => page.waitForTimeout(ms),
+        pollMs: RUN_ENDED_POLL_MS,
+        tailMs: options.tailMs,
+        maxDurationMs: options.maxDurationMs,
+        onProgress: ({ elapsedMs, maxDurationMs }) =>
+          reportProgress(elapsedMs, maxDurationMs),
+      });
+      recordingMs = runWait.elapsedMs;
+      // Always show the final elapsed against the cap.
+      reporter.progress(formatProgress(recordingMs, options.maxDurationMs));
+      lastReportedMs = recordingMs;
     } else {
-      // The bot plays autonomously; hold the recording open and emit
-      // heartbeats until the requested duration elapses.
-      while (Date.now() - startedAt < recordingMs) {
-        const elapsed = Date.now() - startedAt;
-        if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
-          lastProgressAt = elapsed;
-          lastReportedMs = elapsed;
-          reporter.progress(formatProgress(elapsed, recordingMs));
+      const startedAt = Date.now();
+      if (mode === 'scripted') {
+        for (const step of plan) {
+          await page.keyboard.down(step.key);
+          await page.waitForTimeout(step.holdMs);
+          await page.keyboard.up(step.key);
+          await page.waitForTimeout(INTER_STEP_MS);
+          reportProgress(Date.now() - startedAt, recordingMs);
         }
-        await page.waitForTimeout(Math.min(250, recordingMs - elapsed));
+      } else {
+        // The bot plays autonomously; hold the recording open and emit
+        // heartbeats until the requested duration elapses.
+        while (Date.now() - startedAt < recordingMs) {
+          const elapsed = Date.now() - startedAt;
+          reportProgress(elapsed, recordingMs);
+          await page.waitForTimeout(Math.min(250, recordingMs - elapsed));
+        }
       }
-    }
-    // Guarantee a final 100% heartbeat when the loop did not already reach it.
-    if (lastReportedMs < recordingMs) {
-      reporter.progress(formatProgress(recordingMs, recordingMs));
+      // Guarantee a final heartbeat when the loop did not already reach it.
+      if (lastReportedMs < recordingMs) {
+        reporter.progress(formatProgress(recordingMs, recordingMs));
+      }
     }
 
     reporter.step('Encoding and probing the clip…');
@@ -556,10 +723,24 @@ export async function runCapture(
       decodeError: probe.audioDecodeError,
     });
     const verdict = combineClipVerdict(videoVerdict, audioVerdict);
+    // A full run is complete once the game signalled its end; hitting the cap
+    // without a signal is reported explicitly so a capped clip is never
+    // presented as a complete run (AC3). Fixed-length captures report neither.
+    const runOutcome = fullRun ? runWait?.signal ?? null : null;
+    const capHit = fullRun ? runWait?.capHit === true : false;
+    const complete = fullRun ? !capHit : null;
+    const runLengthMs = fullRun
+      ? runWait?.runLengthMs ?? recordingMs
+      : recordingMs;
     return {
       output: outputPath,
       bytes: video.length,
       durationMs: recordingMs,
+      fullRun,
+      complete,
+      capHit,
+      runOutcome,
+      runLengthMs,
       renderer: probe.renderer,
       ...probe,
       audioVerdict,
@@ -863,26 +1044,47 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
 }
 
 function formatReport(result) {
-  return [
+  const lines = [
     'AI_Hell automated gameplay capture',
     '=================================',
     `Output:     ${result.output}`,
     `Size:       ${(result.bytes / 1024).toFixed(1)} KiB`,
     `Resolution: ${result.width}x${result.height} @ ${Math.round(result.durationSeconds * 1000)} ms`,
+  ];
+
+  // Full-run captures report the detected outcome and whether the run was
+  // complete, so a capped clip is never mistaken for a finished run (AC2/AC3).
+  if (result.fullRun) {
+    const outcome = result.runOutcome
+      ? `${result.runOutcome.won ? 'victory' : 'defeat'} (score ${result.runOutcome.score})`
+      : 'no run-end signal';
+    lines.push(
+      `Run:        ${outcome}`,
+      `Run length: ${formatDuration(result.runLengthMs)}`,
+      `Complete:   ${result.complete ? 'yes' : 'NO — safety cap reached without a run-end signal'}`,
+    );
+  }
+
+  lines.push(
     `Renderer:   ${result.renderer}`,
     `Non-black:  ${(result.nonBlackFraction * 100).toFixed(2)}% of pixels`,
     `Colours:    ${result.uniqueColours} distinct (16-level buckets)`,
     `Motion:     ${result.motion.toFixed(4)} mean frame delta`,
     `Audio:      ${formatAudioSummary(result)}`,
     `Non-trivial:${result.nonTrivial ? ' yes' : ` no (${result.reasons.join('; ')})`}`,
-  ].join('\n');
+  );
+
+  return lines.join('\n');
 }
 
 async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted]',
+    );
+    console.log(
+      'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
     );
     return;
   }
@@ -897,6 +1099,14 @@ async function main() {
       for (const error of result.pageErrors) console.warn(`  - ${error}`);
     }
     console.log(JSON.stringify(result, null, 2));
+  }
+
+  if (result.fullRun && result.capHit) {
+    console.error(
+      'Capture hit the --max-duration safety cap without a run-end signal; ' +
+        'the clip is an incomplete run.',
+    );
+    process.exitCode = 1;
   }
 
   if (!result.nonTrivial) {

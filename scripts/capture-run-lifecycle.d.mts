@@ -39,6 +39,32 @@ export interface RunStopDecision {
   capHit: boolean;
 }
 
+/** Progress heartbeat emitted before each poll of `waitForRunEnd`. */
+export interface RunEndWaitProgress {
+  elapsedMs: number;
+  maxDurationMs: number;
+  signalTimeMs: number | null;
+}
+
+/** Injected dependencies for the pure `waitForRunEnd` loop. */
+export interface RunEndWaitOptions {
+  now?: () => number;
+  readSignal?: () => unknown;
+  sleep?: (ms: number) => unknown;
+  pollMs?: number;
+  tailMs?: number;
+  maxDurationMs?: number;
+  onProgress?: (state: RunEndWaitProgress) => void;
+}
+
+/** The terminal result of the `waitForRunEnd` loop. */
+export interface RunEndWaitResult extends RunStopDecision {
+  signal: RunEndedDetail | null;
+  signalTimeMs: number | null;
+  elapsedMs: number;
+  runLengthMs: number;
+}
+
 /** Post-signal tail length in milliseconds. */
 export const DEFAULT_CAPTURE_TAIL_MS: number;
 /** Generous safety cap for a full-run recording, in milliseconds. */
@@ -59,6 +85,9 @@ export function capWasReachedWithoutSignal(
   maxDurationMs: number,
 ): boolean;
 export function evaluateRunStop(state?: RunStopState): RunStopDecision;
+export function waitForRunEnd(
+  options?: RunEndWaitOptions,
+): Promise<RunEndWaitResult>;
 export function resolveDemoGameOverDwellMs(
   configuredMs?: number,
   minMs?: number,
