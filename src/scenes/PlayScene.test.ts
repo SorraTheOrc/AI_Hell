@@ -627,6 +627,37 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.getPlayerDeathEffects()).toHaveLength(0);
   });
 
+  it('AC5 — a kill defers only the cue: the boom lands on the beat grid while the death VFX stays immediate', async () => {
+    vi.restoreAllMocks();
+    const plays: Array<{ url: string; delay: number }> = [];
+    effectsModule.setSfxSoundProvider({
+      getAudioContext: () => null,
+      useAudioContext: () => {},
+      play: (url, options) => {
+        plays.push({ url, delay: options?.delay ?? 0 });
+        return { stop: () => {} };
+      },
+      setVolume: () => {},
+      setMuted: () => {},
+      reset: () => {},
+    });
+    const scene = await bootPlay();
+    const clock = scene.getBeatClock();
+    plays.length = 0; // drop any boot-time cues
+    clock.reset();
+    clock.advance(100); // 87.5 ms to the 187.5 ms 16th-note tick
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    // Only the cue is deferred: it is scheduled 87.5 ms out...
+    expect(plays).toHaveLength(1);
+    expect(plays[0].delay).toBeCloseTo(0.0875, 6);
+    // ...while the player-death VFX spawns synchronously on the death frame.
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    effectsModule._resetAudioContextForTests();
+  });
+
   it('F7 — SHUTDOWN clears the juice registry (no leak across restart)', async () => {
     vi.restoreAllMocks();
     const scene = await bootPlay();

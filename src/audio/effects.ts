@@ -47,6 +47,7 @@ import {
   stopThrusterHum,
   updateThrusterHum,
 } from './thrusterShim';
+import type { BeatClock } from '../utils/beat';
 
 // Re-exported thruster-hum reference constants + test seams (moved to the shim
 // module, kept exported from here so consumers/tests are unchanged).
@@ -154,6 +155,93 @@ function pickCueSeed(cue: string): number | undefined {
   return seeds[Math.floor(Math.random() * seeds.length)];
 }
 
+// ── Beat-synchronised explosion accents (AH-0MV01HNLU008S5E3) ────────
+//
+// Player weapon fire is already phase-locked to a silent beat grid
+// (`utils/beat`). The non-weapon destruction booms used to fire on the
+// exact kill frame, so they landed at arbitrary offsets against that grid.
+// These cues are instead scheduled onto the next **16th note** of the
+// current tempo, giving a burst of kills one rhythmic accent. The
+// quantisation lives here, once, so the game and every gym behave
+// identically; VFX stays on the death frame (audio only).
+
+/**
+ * Subdivisions per beat for the explosion accent grid: a **16th note**
+ * (4 per beat). At the default 80 BPM that is 187.5 ms.
+ */
+export const EXPLOSION_ACCENT_SUBDIVISIONS = 4;
+
+/**
+ * Maximum number of explosion cues allowed to land on one accent tick.
+ * Several kills inside a single 16th-note window stack into one rhythmic
+ * accent; this caps the stack so a mass kill cannot clip the mix. Tunable
+ * in one place (AC4).
+ */
+export const EXPLOSION_PER_TICK_CAP = 4;
+
+/** Epsilon (ms) for grouping requests into the same accent tick. */
+const ACCENT_TICK_EPSILON = 1e-6;
+
+let accentClock: BeatClock | null = null;
+let accentTickMs: number | null = null;
+let accentCount = 0;
+
+/**
+ * Registers the scene's shared beat clock so the non-weapon destruction
+ * cues ({@link playDestructionSound}, {@link playDiverDestructionSound},
+ * {@link playPlayerDestructionSound}) are scheduled onto the next 16th note
+ * of the current tempo. Pass `null` to detach (scene teardown) and restore
+ * immediate playback.
+ *
+ * This is the single shared audio seam: `CombatCoreScene` registers its one
+ * clock on reset and detaches it on teardown, so the game and every gym
+ * quantise identically with no per-scene copy (AGENTS.md gym↔game parity).
+ * A (re)registered clock also opens a fresh accent window, so a scene
+ * restart resets the grid to origin without inheriting the previous run's
+ * per-tick count (AC6).
+ */
+export function setExplosionBeatClock(clock: BeatClock | null): void {
+  accentClock = clock;
+  accentTickMs = null;
+  accentCount = 0;
+}
+
+/**
+ * Resolves the `delay` (seconds) for an explosion cue: the **game-time**
+ * distance to the next 16th-note tick. Returns `0` when no clock is
+ * registered or the request is already on a tick, and `null` when the
+ * per-tick cap is exhausted (the cue is dropped).
+ *
+ * The delay is derived from the game-time distance to the tick
+ * (`nextTick(now) - now`), never a wall-clock read, so a paused scene whose
+ * clock does not advance cannot queue audio into the future.
+ */
+function nextExplosionAccentDelaySeconds(): number | null {
+  const clock = accentClock;
+  if (clock === null) return 0;
+  const nowMs = clock.now();
+  const delayMs = clock.nextSubdivisionDelayMs(EXPLOSION_ACCENT_SUBDIVISIONS);
+  const tickMs = nowMs + delayMs;
+  if (accentTickMs === null || Math.abs(tickMs - accentTickMs) > ACCENT_TICK_EPSILON) {
+    accentTickMs = tickMs;
+    accentCount = 0;
+  }
+  if (accentCount >= EXPLOSION_PER_TICK_CAP) return null;
+  accentCount += 1;
+  return Math.max(0, delayMs / 1000);
+}
+
+/**
+ * Plays an explosion cue on the next accent tick, dropping it when the
+ * per-tick cap is already reached. `options` carry the cue's own settings
+ * (e.g. volume); the accent `delay` is always applied on top.
+ */
+function playExplosionCue(cue: string, options: SfxPlayOptions = {}): void {
+  const delay = nextExplosionAccentDelaySeconds();
+  if (delay === null) return;
+  playCue(cue, { ...options, delay });
+}
+
 // ── Advance cues (parent AC8: ≥ 500 ms, gap-free) ───────────────────
 
 /**
@@ -207,12 +295,12 @@ export function playSpawnSound(): void {
 
 /** Descending saw burst — enemy destruction cue (multi-seed jitter). */
 export function playDestructionSound(): void {
-  playCue('playDestructionSound');
+  playExplosionCue('playDestructionSound');
 }
 
 /** Heavier layered "hull breach" boom — player destruction (volume-scaled). */
 export function playPlayerDestructionSound(volumeScale = 1): void {
-  playCue('playPlayerDestructionSound', { volume: volumeScale });
+  playExplosionCue('playPlayerDestructionSound', { volume: volumeScale });
 }
 
 /** Short high tick — player bullet destroys an enemy bullet. */
@@ -261,7 +349,7 @@ export function playDiverFireSound(): void {
 
 /** Deep resonant fall — Diver destruction cue (multi-seed jitter). */
 export function playDiverDestructionSound(): void {
-  playCue('playDiverDestructionSound');
+  playExplosionCue('playDiverDestructionSound');
 }
 
 /** Deep resonant boom — Boss fire cue. */
@@ -472,7 +560,9 @@ export function stopThrusterSound(): void {
  * gain so it respects mute/volume.
  */
 export function playVolumeFeedback(volume: number): void {
-  playPlayerDestructionSound(volume);
+  // Volume-preview feedback is UI, not a gameplay explosion: play the cue
+  // immediately so a registered gameplay beat clock never delays it.
+  playCue('playPlayerDestructionSound', { volume });
 }
 
 // ── Test seams ──────────────────────────────────────────────────────
@@ -488,4 +578,7 @@ export function _resetAudioContextForTests(): void {
   webAudioSfxProvider.reset();
   resetThrusterHumForTests();
   diveSound = null;
+  accentClock = null;
+  accentTickMs = null;
+  accentCount = 0;
 }

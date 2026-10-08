@@ -304,6 +304,21 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     return { play: play.scene as PlayScene, gym: gym.scene as EquivGymScene };
   }
 
+  it('AC5 — the game and every gym register the same shared explosion-accent seam', async () => {
+    const register = vi.spyOn(effectsModule, 'setExplosionBeatClock');
+    try {
+      const { play, gym } = await bootBoth();
+
+      // Both scenes register their own shared beat clock with the single
+      // audio seam (defined once in `CombatCoreScene.resetRunState`), so the
+      // accent grid is never a per-scene copy.
+      expect(register).toHaveBeenCalledWith(play.getBeatClock());
+      expect(register).toHaveBeenCalledWith(gym.getBeatClock());
+    } finally {
+      register.mockRestore();
+    }
+  });
+
   it('auto-fire produces bullets at the shared PLAYER_BULLET_SPEED in both scenes', async () => {
     const { play, gym } = await bootBoth();
 

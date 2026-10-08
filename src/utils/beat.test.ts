@@ -13,10 +13,13 @@ import { describe, expect, test } from 'vitest';
 import {
   DEFAULT_BPM,
   MS_PER_MINUTE,
+  SIXTEENTH_NOTE_SUBDIVISIONS,
   beatPeriodMs,
   beatSubdivisionMs,
   createBeatClock,
   isOnGrid,
+  nextSubdivisionDelayMs,
+  nextSixteenthDelayMs,
   nextTick,
   shotTimeFor,
 } from './beat';
@@ -60,6 +63,63 @@ describe('beatSubdivisionMs — per-weapon subdivisions (AC3, AC4)', () => {
     expect(beatSubdivisionMs(0)).toBe(750);
     expect(beatSubdivisionMs(-2)).toBe(750);
     expect(beatSubdivisionMs(NaN)).toBe(750);
+  });
+});
+
+describe('nextSubdivisionDelayMs / nextSixteenthDelayMs — accent scheduling (AC1)', () => {
+  test('a 16th note is beatPeriodMs(bpm) / 4', () => {
+    expect(SIXTEENTH_NOTE_SUBDIVISIONS).toBe(4);
+    expect(beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS)).toBe(187.5);
+    // Just after a tick, the next 16th note is ~187.5 ms away.
+    expect(nextSixteenthDelayMs(0.001)).toBeCloseTo(187.499, 9);
+    expect(nextSixteenthDelayMs(187.5)).toBe(0); // already on a tick
+  });
+
+  test('returns 0 when already on the requested tick', () => {
+    expect(nextSixteenthDelayMs(0)).toBe(0);
+    expect(nextSixteenthDelayMs(187.5)).toBe(0);
+    expect(nextSixteenthDelayMs(750)).toBe(0);
+    expect(nextSubdivisionDelayMs(0, 2)).toBe(0);
+  });
+
+  test('snaps a mid-window request up to the next tick', () => {
+    expect(nextSixteenthDelayMs(100)).toBeCloseTo(87.5, 9);
+    expect(nextSixteenthDelayMs(187.6)).toBeCloseTo(187.4, 9);
+    expect(nextSixteenthDelayMs(200)).toBeCloseTo(175, 9);
+  });
+
+  test('scales with the tempo (configurable BPM)', () => {
+    // 160 BPM → 375 ms beat → 93.75 ms 16th note.
+    expect(nextSixteenthDelayMs(0.001, 160)).toBeCloseTo(93.749, 9);
+    expect(nextSixteenthDelayMs(50, 160)).toBeCloseTo(43.75, 9);
+  });
+
+  test('invalid tempo falls back to the default and is never negative', () => {
+    for (const bad of [0, -80, NaN, Infinity, -Infinity]) {
+      const delay = nextSixteenthDelayMs(100, bad);
+      expect(Number.isFinite(delay)).toBe(true);
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeCloseTo(87.5, 9); // same as the default 80 BPM
+    }
+  });
+
+  test('invalid subdivisions fall back to one per beat', () => {
+    expect(nextSubdivisionDelayMs(100, 0)).toBeCloseTo(650, 9);
+    expect(nextSubdivisionDelayMs(100, -2)).toBeCloseTo(650, 9);
+  });
+
+  test('is bounded by one subdivision period', () => {
+    const interval = beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS);
+    for (const t of [0, 1, 93.7, 187.4, 187.5, 187.6, 375, 1000.2]) {
+      const delay = nextSixteenthDelayMs(t);
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeLessThanOrEqual(interval);
+    }
+  });
+
+  test('respects a configured anchor', () => {
+    expect(nextSixteenthDelayMs(100, 80, 100)).toBe(0);
+    expect(nextSixteenthDelayMs(101, 80, 100)).toBeCloseTo(186.5, 9);
   });
 });
 
@@ -241,5 +301,9 @@ describe('createBeatClock — shared, configurable instance (AC2, AC3, AC4)', ()
     expect(clock.nextTick(375)).toBe(nextTick(800, 375));
     expect(clock.shotTimeFor(375)).toBe(shotTimeFor(800, 375));
     expect(clock.isOnGrid(clock.shotTimeFor(375), 375)).toBe(true);
+    expect(clock.nextSubdivisionDelayMs(SIXTEENTH_NOTE_SUBDIVISIONS)).toBe(
+      nextSubdivisionDelayMs(800, SIXTEENTH_NOTE_SUBDIVISIONS),
+    );
+    expect(clock.nextSixteenthDelayMs()).toBe(nextSixteenthDelayMs(800));
   });
 });
