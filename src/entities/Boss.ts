@@ -68,6 +68,26 @@ export const BOSS_CORE_RADIUS = 16;
 /** Core glow radius in px. */
 export const BOSS_CORE_GLOW_RADIUS = 30;
 
+// ── Figure-of-eight movement tuning (GDD §4.3, AH-0MUZMTS8J0029FSS) ──
+
+/**
+ * Horizontal amplitude of the figure-of-eight about the boss anchor (px).
+ * The boss traces a Gerono lemniscate centred on its spawn anchor:
+ * `x = anchorX + BOSS_MOVE_AMPLITUDE_X * sin(theta)`.
+ */
+export const BOSS_MOVE_AMPLITUDE_X = 120;
+/**
+ * Vertical amplitude of the figure-of-eight about the boss anchor (px).
+ * `y = anchorY + BOSS_MOVE_AMPLITUDE_Y * sin(2 * theta)`.
+ */
+export const BOSS_MOVE_AMPLITUDE_Y = 60;
+/**
+ * Duration of one full figure-of-eight cycle (ms). `theta` advances as
+ * `2 * PI * elapsedMs / BOSS_MOVE_PERIOD_MS`, so the boss completes one
+ * lemniscate every 8 s.
+ */
+export const BOSS_MOVE_PERIOD_MS = 8000;
+
 /** Bullet colour for Boss attacks (bright white/cyan). */
 export const BOSS_BULLET_COLOR = 0xffffff;
 /** Bullet radius in px for Boss attacks. */
@@ -242,6 +262,13 @@ export class Boss extends Phaser.GameObjects.Container {
   private _lastAttackTime = 0;
   private _attackAngle = 0; // for spiral pattern rotation
 
+  // Figure-of-eight movement state (AH-0MUZMTS8J0029FSS). `_moveElapsedMs`
+  // accumulates frame deltas; the anchor is the lemniscate centre the boss is
+  // spawned at (and re-anchored to by `applyFormationPosition`).
+  private _anchorX: number;
+  private _anchorY: number;
+  private _moveElapsedMs = 0;
+
   // Pulse wave state
   private _pulseWaveGraphics: Phaser.GameObjects.Graphics | null = null;
   private _pulseWaveRadius = 0;
@@ -263,6 +290,12 @@ export class Boss extends Phaser.GameObjects.Container {
     this.formationOffset = config.formationOffset;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._rng = config.rng ?? Math.random;
+
+    // The figure-of-eight anchor starts at the spawn point; `update()` traces
+    // the lemniscate about it in the shared core, so `PlayScene` and every
+    // boss gym get identical motion (AH-0MUZMTS8J0029FSS).
+    this._anchorX = config.x;
+    this._anchorY = config.y;
 
     // Body — a hexagonal/geometric shape in neon red.
     this.bodyGraphics = scene.add.graphics();
@@ -843,8 +876,11 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Applies the formation position — keeps the Boss centered on screen.
-   * The Boss does not drift; it stays at its spawn position.
+   * Applies the formation position — records the boss's spawn **anchor** (the
+   * centre of its figure-of-eight) without teleporting the container. The
+   * live position is driven solely by `update()`'s lemniscate, so the gym's
+   * per-frame formation call can never fight the shared movement
+   * (AH-0MUZMTS8J0029FSS).
    */
   applyFormationPosition(
     baseX: number,
@@ -854,7 +890,58 @@ export class Boss extends Phaser.GameObjects.Container {
     _spacingY: number,
   ): void {
     if (!this._alive) return;
-    this.setPosition(baseX, baseY);
+    this._anchorX = baseX;
+    this._anchorY = baseY;
+  }
+
+  // ── Figure-of-eight movement (AH-0MUZMTS8J0029FSS) ──────────────
+
+  /**
+   * Advances the figure-of-eight (Gerono lemniscate) by `deltaMs` and
+   * repositions the boss about its current anchor. The boss completes one
+   * cycle every {@link BOSS_MOVE_PERIOD_MS}; the traced point is clamped to
+   * the playfield so the boss never leaves the screen. Called from the shared
+   * `update()` so `CombatScene._advanceBoss` drives both scenes identically.
+   */
+  private _advanceFigureEight(
+    deltaMs: number,
+    sceneWidth: number,
+    sceneHeight: number,
+  ): void {
+    this._moveElapsedMs += deltaMs;
+    const theta = (2 * Math.PI * this._moveElapsedMs) / BOSS_MOVE_PERIOD_MS;
+    const x = this._anchorX + BOSS_MOVE_AMPLITUDE_X * Math.sin(theta);
+    const y = this._anchorY + BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta);
+    this.setPosition(
+      this._clampToPlayfield(x, sceneWidth),
+      this._clampToPlayfield(y, sceneHeight),
+    );
+  }
+
+  /**
+   * Clamps one axis to the playfield bounds, leaving room for the boss body so
+   * its centre can never sit such that the body leaves the screen. The clamp
+   * range never inverts on a degenerate (sub-body) extent.
+   */
+  private _clampToPlayfield(value: number, extent: number): number {
+    const min = Math.min(BOSS_RADIUS, extent / 2);
+    const max = Math.max(extent - BOSS_RADIUS, extent / 2);
+    return Phaser.Math.Clamp(value, min, max);
+  }
+
+  /** World-space x of the figure-of-eight anchor (test seam). */
+  getMoveAnchorX(): number {
+    return this._anchorX;
+  }
+
+  /** World-space y of the figure-of-eight anchor (test seam). */
+  getMoveAnchorY(): number {
+    return this._anchorY;
+  }
+
+  /** Accumulated figure-of-eight motion time in ms (test seam). */
+  getMoveElapsedMs(): number {
+    return this._moveElapsedMs;
   }
 
   // ── Animation ───────────────────────────────────────────────────
@@ -892,6 +979,11 @@ export class Boss extends Phaser.GameObjects.Container {
     const bullets: BossBullet[] = [];
 
     if (!this._alive) return bullets;
+
+    // Figure-of-eight movement (shared core): advance and reposition before
+    // drawing/attacking so the live `x`/`y` is used by firing and hit
+    // detection in both scenes (AH-0MUZMTS8J0029FSS).
+    this._advanceFigureEight(delta, sceneWidth, sceneHeight);
 
     // Update core pulse.
     this._corePulsePhase += dt;

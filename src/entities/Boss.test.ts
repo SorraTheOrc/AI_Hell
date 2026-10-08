@@ -18,6 +18,9 @@ import {
   BOSS_HEALTH_BAR_WIDTH,
   BOSS_HEALTH_SEGMENTS,
   BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_MOVE_AMPLITUDE_X,
+  BOSS_MOVE_AMPLITUDE_Y,
+  BOSS_MOVE_PERIOD_MS,
   BOSS_PHASE_COUNT,
   Boss,
   playBossSpawnSound,
@@ -727,5 +730,147 @@ describe('Boss — dev scenario starting health (AH-0MUWZ5HCV0034H44)', () => {
     const boss = makeBoss({ initialHp: 0, initialPhase: -3 });
     expect(boss.getPhaseNumber()).toBe(1);
     expect(boss.takeDamage().destroyed).toBe(true);
+  });
+});
+
+// ── Figure-of-eight movement (AH-0MUZMTS8J0029FSS) ──────────────────
+
+describe('Boss — figure-of-eight movement in shared core (AH-0MUZMTS8J0029FSS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(x = 480, y = 200): Boss {
+    return new Boss(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('exposes the documented movement constants', async () => {
+    booted = await bootScene([HarnessScene]);
+    expect(BOSS_MOVE_AMPLITUDE_X).toBe(120);
+    expect(BOSS_MOVE_AMPLITUDE_Y).toBe(60);
+    expect(BOSS_MOVE_PERIOD_MS).toBe(8000);
+  });
+
+  it('starts on its anchor at elapsed time zero', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, 0, 960, 540);
+
+    expect(boss.x).toBeCloseTo(480);
+    expect(boss.y).toBeCloseTo(200);
+    expect(boss.getMoveAnchorX()).toBe(480);
+    expect(boss.getMoveAnchorY()).toBe(200);
+  });
+
+  it('reaches its horizontal peak a quarter of the way through the cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 4, 960, 540);
+
+    // theta = PI/2: x at +amplitude, y at the anchor (sin(PI) = 0).
+    expect(boss.x).toBeCloseTo(480 + BOSS_MOVE_AMPLITUDE_X);
+    expect(boss.y).toBeCloseTo(200);
+  });
+
+  it('reaches its vertical peak an eighth of the way through the cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+
+    // theta = PI/4: y at +amplitude (sin(PI/2) = 1).
+    expect(boss.y).toBeCloseTo(200 + BOSS_MOVE_AMPLITUDE_Y);
+  });
+
+  it('returns to its anchor after a full cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, BOSS_MOVE_PERIOD_MS, 960, 540);
+
+    expect(boss.x).toBeCloseTo(480);
+    expect(boss.y).toBeCloseTo(200);
+  });
+
+  it('traces close to the configured horizontal and vertical amplitudes over a cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    let peakX = 0;
+    let peakY = 0;
+    const step = 100;
+    for (let elapsed = 0; elapsed <= BOSS_MOVE_PERIOD_MS; elapsed += step) {
+      boss.update(0, step, 960, 540);
+      peakX = Math.max(peakX, Math.abs(boss.x - 480));
+      peakY = Math.max(peakY, Math.abs(boss.y - 200));
+    }
+
+    expect(peakX).toBeCloseTo(BOSS_MOVE_AMPLITUDE_X, 1);
+    expect(peakY).toBeCloseTo(BOSS_MOVE_AMPLITUDE_Y, 1);
+  });
+
+  it('clamps the traced position so the boss body stays within the playfield', async () => {
+    booted = await bootScene([HarnessScene]);
+    // Anchor hard against the top-left corner: without clamping the path
+    // would leave the screen on both axes.
+    const boss = makeBoss(30, 30);
+
+    const step = 50;
+    for (let elapsed = 0; elapsed <= BOSS_MOVE_PERIOD_MS; elapsed += step) {
+      boss.update(0, step, 960, 540);
+      expect(boss.x).toBeGreaterThanOrEqual(0);
+      expect(boss.x).toBeLessThanOrEqual(960);
+      expect(boss.y).toBeGreaterThanOrEqual(0);
+      expect(boss.y).toBeLessThanOrEqual(540);
+    }
+  });
+
+  it('applyFormationPosition sets the anchor without overriding the live position', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    // Move the boss off its anchor first.
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+    const liveX = boss.x;
+    const liveY = boss.y;
+    expect(liveX).not.toBeCloseTo(480);
+
+    boss.applyFormationPosition(300, 150, 0.016, 0, 0);
+
+    // The live figure-of-eight position is untouched; only the anchor moved.
+    expect(boss.x).toBe(liveX);
+    expect(boss.y).toBe(liveY);
+    expect(boss.getMoveAnchorX()).toBe(300);
+    expect(boss.getMoveAnchorY()).toBe(150);
+
+    // The next full cycle now traces about the new anchor (the motion phase
+    // continues, so advance to the next full-cycle boundary).
+    boss.update(0, BOSS_MOVE_PERIOD_MS - BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+    expect(boss.x).toBeCloseTo(300);
+    expect(boss.y).toBeCloseTo(150);
+  });
+
+  it('does not move a destroyed boss', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+    const liveX = boss.x;
+    const liveY = boss.y;
+
+    boss.destroySelf();
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 4, 960, 540);
+
+    expect(boss.x).toBe(liveX);
+    expect(boss.y).toBe(liveY);
   });
 });
