@@ -11,6 +11,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { BotSnapshot } from '../../ai/botSnapshot';
 import {
+  DEFAULT_ACTION_INTENSITY_CONFIG,
+  computeActionIntensity,
+} from './actionIntensity';
+import {
   TELEMETRY_SCHEMA_VERSION,
   type TelemetryJson,
   type TelemetryRecorder,
@@ -18,6 +22,7 @@ import {
   type TelemetryRunHeaderInput,
 } from '../../telemetry';
 import {
+  actionIntensityCountsFromState,
   buildRunTelemetryState,
   RUN_TELEMETRY_EVENT_VERSION,
   RUN_TELEMETRY_EVENTS,
@@ -25,6 +30,7 @@ import {
   RunTelemetry,
   serialiseTelemetryInput,
   type RunTelemetryExtras,
+  type RunTelemetryState,
 } from './runTelemetry';
 
 /** A representative snapshot with every collection populated. */
@@ -97,6 +103,42 @@ class FakeRecorder implements TelemetryRecorder {
     };
   }
 }
+
+describe('buildRunTelemetryState — actionIntensity (AH-0MUZQEDW9002KHRN, AC3)', () => {
+  it('defaults actionIntensity to null until the tick is recorded', () => {
+    const state = buildRunTelemetryState(SNAPSHOT, EXTRAS);
+
+    expect(state.actionIntensity).toBeNull();
+  });
+});
+
+describe('actionIntensityCountsFromState (AH-0MUZQEDW9002KHRN, AC3)', () => {
+  it('derives counts from the state registries, splitting asteroids out', () => {
+    const state = buildRunTelemetryState(
+      {
+        ...SNAPSHOT,
+        enemies: [
+          { x: 1, y: 2, alive: true, archetype: 'scout' },
+          { x: 3, y: 4, alive: true, archetype: 'asteroid' },
+          { x: 5, y: 6, alive: false, archetype: 'asteroid' },
+        ],
+      },
+      EXTRAS,
+    );
+
+    expect(actionIntensityCountsFromState(state)).toEqual({
+      playerBullets: 1,
+      enemyBullets: 1,
+      enemies: 1,
+      asteroids: 1,
+      drops: 1,
+      enemyExplosions: 0,
+      bossExplosions: 0,
+      playerExplosions: 0,
+      bosses: 1,
+    });
+  });
+});
 
 describe('buildRunTelemetryState (AC1, AC6)', () => {
   it('versions the state, tags the run seed and reuses the snapshot collections', () => {
@@ -216,12 +258,84 @@ describe('RunTelemetry (AC3, AC6)', () => {
 
   it('forwards a tick state + serialised input', () => {
     const recorder = new FakeRecorder();
-    const telemetry = new RunTelemetry(recorder);
+    const telemetry = new RunTelemetry(recorder, { now: () => 0 });
     const state = buildRunTelemetryState(SNAPSHOT, EXTRAS);
 
     telemetry.recordTick(state, serialiseTelemetryInput(null));
 
-    expect(recorder.ticks).toEqual([{ state, input: null }]);
+    expect(recorder.ticks).toHaveLength(1);
+    expect(recorder.ticks[0].input).toBeNull();
+    const recorded = recorder.ticks[0].state as RunTelemetryState;
+    // Everything except the instrumentation-owned actionIntensity is forwarded.
+    expect({ ...recorded, actionIntensity: null }).toEqual(state);
+  });
+
+  it('folds a computed actionIntensity sample into the recorded tick', () => {
+    const recorder = new FakeRecorder();
+    const telemetry = new RunTelemetry(recorder, { now: () => 0 });
+    const state = buildRunTelemetryState(SNAPSHOT, EXTRAS);
+
+    telemetry.recordTick(state, serialiseTelemetryInput(null));
+
+    expect(recorder.ticks).toHaveLength(1);
+    const recorded = recorder.ticks[0].state as RunTelemetryState;
+    expect(recorded.actionIntensity).toEqual(
+      computeActionIntensity(
+        { counts: actionIntensityCountsFromState(state), eventScore: 0 },
+        DEFAULT_ACTION_INTENSITY_CONFIG,
+      ),
+    );
+    // The state handed in is not mutated.
+    expect(state.actionIntensity).toBeNull();
+  });
+
+  it('includes observed discrete events in the burst window (AC4)', () => {
+    const recorder = new FakeRecorder();
+    const telemetry = new RunTelemetry(recorder, { now: () => 0 });
+    telemetry.enemyKilled('scout', 1, 2);
+    const state = buildRunTelemetryState(SNAPSHOT, EXTRAS);
+
+    telemetry.recordTick(state, serialiseTelemetryInput(null));
+
+    const recorded = recorder.ticks[0].state as RunTelemetryState;
+    expect(recorded.actionIntensity).toEqual(
+      computeActionIntensity(
+        {
+          counts: actionIntensityCountsFromState(state),
+          events: [{ type: 'enemy_killed', at: 0 }],
+        },
+        DEFAULT_ACTION_INTENSITY_CONFIG,
+      ),
+    );
+  });
+
+  it('reuses the sample within one sample interval', () => {
+    const recorder = new FakeRecorder();
+    let nowMs = 0;
+    const telemetry = new RunTelemetry(recorder, { now: () => nowMs });
+    const state = buildRunTelemetryState(SNAPSHOT, EXTRAS);
+
+    telemetry.startRun(1);
+    telemetry.recordTick(state, null);
+    nowMs = 50; // below the 100 ms interval at the default 10 Hz
+    telemetry.recordTick(state, null);
+
+    const first = (recorder.ticks[0].state as RunTelemetryState).actionIntensity;
+    const second = (recorder.ticks[1].state as RunTelemetryState).actionIntensity;
+    expect(first).not.toBeNull();
+    expect(second).toBe(first);
+  });
+
+  it('records nothing while disabled (strict no-op)', () => {
+    const recorder = new FakeRecorder(false);
+    const telemetry = new RunTelemetry(recorder, { now: () => 0 });
+    const state = buildRunTelemetryState(SNAPSHOT, EXTRAS);
+
+    telemetry.enemyKilled('scout', 1, 2);
+    telemetry.recordTick(state, serialiseTelemetryInput(null));
+
+    expect(recorder.ticks).toHaveLength(0);
+    expect(recorder.events).toHaveLength(0);
   });
 
   it('emits every discrete event with the concrete event version', () => {
