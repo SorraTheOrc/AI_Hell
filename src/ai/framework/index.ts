@@ -73,3 +73,13 @@ export {
 } from './botBrain';
 
 export { createLegacyBotPolicy } from './legacyPolicy';
+
+export {
+  COMPETENT_BEHAVIOUR_IDS,
+  COMPETENT_BOT_TUNABLES,
+  COMPETENT_GOAL_IDS,
+  createCompetentBotBrain,
+  resolveCompetentTunables,
+  type CompetentBotOptions,
+  type CompetentBotTunables,
+} from './competent';

@@ -4,10 +4,11 @@ The attract/demo bot is built on a small, testable framework rather than a
 per-frame priority ladder. This document is the overview of that framework
 and the guide to extending it with goals and behaviours.
 
-> **Status:** framework core (AH-0MUY08WKB002N1N6). The concrete competent
-> goal/behaviour content is added by its child work item
-> (AH-0MUY08WX3000ZEVO); until then the framework falls back to the legacy
-> survival heuristic (see [Legacy adapter](#legacy-adapter)).
+> **Status:** framework core (AH-0MUY08WKB002N1N6) plus the structured
+> competent bot content (AH-0MUY08WX3000ZEVO) described in
+> [section 9](#9-the-structured-competent-bot). The framework still ships the
+> legacy survival heuristic as the brain's default fallback (see
+> [Legacy adapter](#7-legacy-adapter)).
 
 ## 1. Why a framework
 
@@ -243,9 +244,97 @@ const brain = new BotBrain({
 
 No core file changes — the brain discovers the goal through the registry. The
 full competent goal set (minerals > power-ups > enemies > asteroids, plus
-survival) is the next epic child.
+survival) is documented in
+[section 9](#9-the-structured-competent-bot).
 
-## 9. Testing
+## 9. The structured competent bot
+
+The concrete content added by AH-0MUY08WX3000ZEVO lives in
+`src/ai/framework/competent/` and is bundled by
+`createCompetentBotBrain()`:
+
+```ts
+import { createCompetentBotBrain } from './framework';
+
+const brain = createCompetentBotBrain(); // BotBrain / BotPolicy
+brain.decide(snapshot, dt);              // -> BotSteeringIntent
+brain.reset();                           // on run restart
+```
+
+### 9.1 Goals and priorities
+
+Goals are registered in priority/tie-break order and score in separated
+**utility bands**, so the operator's order is structural (a closer
+lower-priority target can never outrank a higher-priority one):
+
+| Band | Goal id | Behaviour |
+|---|---|---|
+| survival | `survive` | `evade` |
+| minerals | `collect-mineral` | `collect` |
+| power-ups | `collect-powerup` | `collect` |
+| enemies | `engage-enemy` | `engage` |
+| asteroids | `engage-asteroid` | `engage` |
+| reposition | `reposition` | `reposition` |
+
+A goal's utility rises as its target gets closer (`prioritySpan`) but stays
+inside its band. `survive` is only valid while a shot urgently threatens, and
+releases immediately when the threat clears; collection/engagement goals are
+released when their target type is gone. The hysteresis (hold, margin,
+challenger persistence) is the framework's commitment mechanism from
+[section 4](#4-commitment--hysteresis).
+
+### 9.2 Behaviours
+
+- **`collect`** (mineral/power-up): approach and scoop, braking via the
+  forward model so the ship arrives rather than barrelling through.
+- **`engage`** (enemy/asteroid): line the target up inside `engagementRange`,
+  then hold the **aim axis** and coast so the forward-firing weapon stays on
+  target (aim/fire reasoning, AC3) instead of aiming only by accident of
+  travel.
+- **`evade`**: head away from the weighted centroid of the shots that
+  threaten the ship (predictive path-around, AC2), not merely direction
+  rejection.
+- **`reposition`**: drift back toward the playfield centre when idle.
+
+### 9.3 Survival is a hard constraint (AC4)
+
+Every behaviour routes its intent through the pure `planSteering` helper,
+which samples a **fan of bearings around the objective**, evaluates each one
+for predicted clearance against walls, hazards and incoming fire, and picks
+the safe bearing that best trades objective progress for clearance. When no
+bearing is safe it takes the greatest-clearance bearing — the least-bad
+escape — so the ship always moves rather than freezing. The never-suicide
+property therefore holds regardless of which goal is committed.
+
+### 9.4 Single-sourced tuning (AC5)
+
+All competent-bot numbers live in `COMPETENT_BOT_TUNABLES`
+(`src/ai/framework/competent/tunables.ts`): the priority bands, ranges,
+safety margins, steering-fan/scoring weights, playfield size and the
+commitment/world-model overrides. The human-like input cadence itself is the
+governor's `reactionTimeMs` ([section 5](#5-brain--policy)); the competent
+tunables set a compatible `minCommitSeconds` so a goal cannot be re-picked
+faster than a human can change input.
+
+### 9.5 Module layout
+
+| Module | Responsibility |
+|---|---|
+| `competent/tunables.ts` | Single source of tuning + `resolveCompetentTunables`. |
+| `competent/steering.ts` | Pure bearing fan, safety evaluation, forward model. |
+| `competent/goals.ts` | The six registered goals and their utility bands. |
+| `competent/behaviours.ts` | collect / engage / evade / reposition. |
+| `competent/index.ts` | `createCompetentBotBrain()` factory. |
+
+### 9.6 Wiring
+
+`PlayScene`'s demo bot feeds `this.botBrain.decide(buildBotSnapshot(this),
+dt)` into the human-like governor (instead of the legacy `decideBotIntent`),
+and resets the brain on run (re)start. The competent brain keeps the legacy
+adapter as its default fallback, so the demo still behaves sensibly if a
+behaviour declines.
+
+## 10. Testing
 
 The framework's unit tests live beside it:
 
@@ -256,8 +345,18 @@ The framework's unit tests live beside it:
   deterministic replay of a decision sequence.
 - `legacyPolicy.test.ts` — parity with the original pure decision.
 
-`botFrameworkDocs.test.ts` guards the presence of this document and its key
-sections.
+The competent content is tested in `src/ai/framework/competent/`:
+
+- `steering.test.ts` — safe/unsafe bearings, path-around, aim, forward model.
+- `goals.test.ts` — utility bands and priority order.
+- `behaviours.test.ts` — collect/engage/evade/reposition intents.
+- `competentBot.test.ts` — commitment/hysteresis and dispatch.
+- `competentBot.integration.test.ts` — a deterministic seeded run, the
+  hard-constraint dodge, and the priority-weighted A/B against the legacy
+  ladder (AC6).
+
+`botFrameworkDocs.test.ts` and `competent/competentBotDocs.test.ts` guard the
+presence of this document and its key sections.
 
 ## References
 

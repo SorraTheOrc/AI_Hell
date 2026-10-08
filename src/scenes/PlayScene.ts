@@ -102,7 +102,7 @@ import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
-import { decideBotIntent } from '../ai/botDecision';
+import { createCompetentBotBrain } from '../ai/framework';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BOT_MINERAL_CHOICE_DELAY_MS,
@@ -375,6 +375,8 @@ export class PlayScene extends CombatScene<
    * ship's own control scheme (W/A/D — never a reverse key).
    */
   private botGovernor = new BotInputGovernor();
+  /** The structured competent bot's committed policy (AC1–AC4). */
+  private botBrain = createCompetentBotBrain();
 
   /** Session state (lives, score, level). */
   private gameState: GameState;
@@ -565,6 +567,8 @@ export class PlayScene extends CombatScene<
     this.resetRunState();
     // Fresh human-like bot input state for this run.
     this.botGovernor.reset();
+    // Fresh competent-bot commitment/scratch for this run (AC1).
+    this.botBrain.reset();
     // Resolve and seed the per-run RNG before anything draws from it
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
@@ -1717,7 +1721,7 @@ export class PlayScene extends CombatScene<
     if (!this.demoMode) return;
     const player = this.getPlayer();
     this.botGovernor.update(
-      decideBotIntent(buildBotSnapshot(this)),
+      this.botBrain.decide(buildBotSnapshot(this), dt),
       dt,
       {
         scheme: player?.getScheme() ?? 'asteroids',
