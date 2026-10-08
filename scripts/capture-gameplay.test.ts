@@ -52,9 +52,11 @@ import {
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
 import {
+  CAPTURE_STARTED_EVENT,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   DEMO_GAME_OVER_DWELL_MS,
+  buildCaptureStartedMarker,
   buildRunEndedDetail,
   capWasReachedWithoutSignal,
   computeStopTimeMs,
@@ -65,6 +67,21 @@ import {
   summariseCaptureRun,
   waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
+
+describe('buildCaptureStartedMarker (AH-0MUZQG13S006KL8K)', () => {
+  it('emits the epoch-ms marker at recording start', () => {
+    expect(buildCaptureStartedMarker(1_700_000_000_000)).toEqual({
+      event: CAPTURE_STARTED_EVENT,
+      atEpochMs: 1_700_000_000_000,
+    });
+  });
+
+  it('is dev-gated and rejects non-finite epochs', () => {
+    expect(buildCaptureStartedMarker(1_700_000_000_000, false)).toBeNull();
+    expect(buildCaptureStartedMarker(Number.NaN)).toBeNull();
+    expect(buildCaptureStartedMarker(undefined)).toBeNull();
+  });
+});
 
 describe('buildScriptedPlan', () => {
   it('covers the requested duration exactly and uses only movement keys', () => {

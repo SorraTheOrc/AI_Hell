@@ -64,6 +64,7 @@ import {
 import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
+  buildCaptureStartedMarker,
   summariseCaptureRun,
   waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
@@ -690,7 +691,11 @@ export async function runCapture(
           ? `Recording ${formatDuration(recordingMs)} of scripted gameplay…`
           : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
     );
-    await startRecording(page, mimeType);
+    const captureStartedAtEpochMs = await startRecording(page, mimeType);
+    // Dev-gated recording-start anchor for the action-intensity video join
+    // (AH-0MUZQG13S006KL8K, epic AH-0MUZMTTYH008KVS2): the marker lets a
+    // consumer map the series' `t` (ms since run start) to the WebM timeline.
+    const captureStarted = buildCaptureStartedMarker(captureStartedAtEpochMs);
 
     // A dev scenario freezes the run at setup so recording can start before
     // the (deliberately short) fight destroys the boss. Release it through the
@@ -793,6 +798,7 @@ export async function runCapture(
       output: outputPath,
       bytes: video.length,
       durationMs: recordingMs,
+      captureStarted,
       ...runSummary,
       renderer: probe.renderer,
       ...probe,
@@ -820,7 +826,7 @@ export async function runCapture(
  * @param {string} mimeType
  */
 async function startRecording(page, mimeType) {
-  await page.evaluate((resolvedMimeType) => {
+  return page.evaluate((resolvedMimeType) => {
     // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
     const captureChunk = window.__aiHellCaptureChunk;
     const canvas = document.querySelector('#game-container canvas');
@@ -857,13 +863,16 @@ async function startRecording(page, mimeType) {
       await captureChunk(btoa(binary));
     };
 
+    const captureStartedAtEpochMs = Date.now();
     window.__aiHellCapture = {
       recorder,
       chunks,
       mimeType: resolvedMimeType,
       audioTrackCount: audioTracks.length,
+      captureStartedAtEpochMs,
     };
     recorder.start(1000);
+    return captureStartedAtEpochMs;
   }, mimeType);
 }
 
