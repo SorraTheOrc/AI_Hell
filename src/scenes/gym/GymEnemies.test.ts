@@ -39,7 +39,7 @@ vi.mock('../../core/configStore', async (importOriginal) => {
 });
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
-import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, GYM_ENEMIES_BOSS_KEY, ENEMY_DIFFICULTY_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymEnemies';
+import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, GYM_ENEMIES_BOSS_KEY, ENEMY_DIFFICULTY_ID, ENEMY_TOGGLE_PLAYER_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymEnemies';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
@@ -218,6 +218,34 @@ describe('GymEnemies — single reusable enemy gym', () => {
         expect(Math.abs(e.y - scene.formationY)).toBeLessThan(400);
       }
     }
+  });
+
+  it('marches as a rigid block via the shared policy: steps, reverses and drops', async () => {
+    // Space Invaders archetype (AH-0MV01EDZS0005R20). Disable the player so
+    // the block's alive count (and therefore its cadence) stays at full
+    // strength for the deterministic step assertions.
+    const scene = await bootWithKey('march');
+    document.getElementById(ENEMY_TOGGLE_PLAYER_ID)!.click();
+
+    const cfg = DEFAULT_ENEMY_CONFIGS.march;
+    const step = cfg.marchStep ?? 20;
+    const drop = cfg.marchDrop ?? 14;
+    const startX = scene.formationX;
+    const startY = scene.formationY;
+
+    // marchStep / driftSpeed = 1 s per step at full strength.
+    scene.tick(1.0);
+    expect(scene.formationX).toBeCloseTo(startX + step, 5);
+    expect(scene.formationY).toBeCloseTo(startY, 5);
+
+    // Keep stepping until the block hits the right edge, reverses and drops.
+    let dropped = false;
+    for (let i = 0; i < 60 && !dropped; i++) {
+      scene.tick(1.0);
+      dropped = scene.formationY > startY;
+    }
+    expect(dropped).toBe(true);
+    expect(scene.formationY).toBeCloseTo(startY + drop, 5);
   });
 
   it('uses displayName-derived hint/status and player component', async () => {

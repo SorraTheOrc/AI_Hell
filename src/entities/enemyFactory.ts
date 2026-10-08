@@ -112,6 +112,10 @@ export function createEnemyFromConfig(
       return new Swarm(scene, { x, y, formationOffset: offset, ...opts }, clusterIndex);
     }
     case 'scout':
+    // Space Invaders marching block (AH-0MV01EDZS0005R20) reuses the Scout
+    // body; its distinct behaviour is the shared `march` movement policy, not
+    // a new entity class.
+    case 'march':
     default: {
       // Unknown keys fall back to Scout — deterministic behaviour for
       // Save As custom enemies without a dedicated entity class.

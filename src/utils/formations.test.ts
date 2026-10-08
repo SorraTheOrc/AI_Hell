@@ -12,6 +12,7 @@ import {
   getFormationBuilder,
   buildOrbitalPhaseOffsets,
   buildSingleOffset,
+  buildMarchFormationOffsets,
   buildVFormationOffsets,
   computeFormationPosition,
   computeFormationReanchorDelta,
@@ -21,7 +22,7 @@ import { sanitizeShotPattern, isValidShotPattern } from './enemyShotPatterns';
 
 describe('FORMATION_BUILDERS registry', () => {
   it('exposes a builder for every EnemyFormationKind', () => {
-    const kinds = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single'] as const;
+    const kinds = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march'] as const;
     for (const k of kinds) expect(FORMATION_BUILDERS[k]).toEqual(expect.any(Function));
   });
 
@@ -38,6 +39,21 @@ describe('FORMATION_BUILDERS registry', () => {
     expect(buildOrbitalPhaseOffsets(4)).toEqual([
       { row: 0, col: 0 }, { row: 0, col: 1 }, { row: 0, col: 2 }, { row: 0, col: 3 },
     ]);
+  });
+
+  it('march builder returns a rectangular block, wider than tall', () => {
+    const offsets = buildMarchFormationOffsets(11);
+    expect(offsets).toHaveLength(11);
+    // One row of 11 centred columns for the classic block.
+    expect(new Set(offsets.map((o) => o.row))).toEqual(new Set([0]));
+    expect(offsets.map((o) => o.col)).toEqual([
+      -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5,
+    ]);
+
+    const block = buildMarchFormationOffsets(22);
+    expect(block).toHaveLength(22);
+    // 11 columns × 2 rows.
+    expect(new Set(block.map((o) => o.row))).toEqual(new Set([0, 1]));
   });
 
   it('single builder always returns a single centred offset', () => {

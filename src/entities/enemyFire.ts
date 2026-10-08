@@ -21,6 +21,9 @@
  */
 export const ENEMY_FIRE_METHODS = {
   scout: 'tryFireAimedBullet',
+  // Space Invaders marching block (AH-0MV01EDZS0005R20): aimed shots, gated
+  // by the level's fire rule exactly like the Scout.
+  march: 'tryFireAimedBullet',
   diver: 'tryFireSpreadBurst',
   tank: 'tryFireRadialBurst',
   phaser: 'tryFireRadialBullets',

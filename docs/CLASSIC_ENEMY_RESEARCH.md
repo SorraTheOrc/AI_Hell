@@ -34,30 +34,37 @@ Each archetype exercises different parts of the shared core (`CombatScene`,
 along the top of the screen, stepping down one row after each full pass. The
 entire formation moves as one rigid body; individual aliens drop bombs at random.
 
-**AI_Hell adaptation:** A rigid rectangular formation (`rect` builder) that
-drifts rightward at a configurable `driftSpeed`, then bounces off screen edges
-and shifts down in rows. Individual members fire aimed shots on a staggered
-cycle (`shotProbability` gates the fire roll). No enemy–enemy interaction;
-each alien is a standalone entity following the `rect` formation geometry.
+**AI_Hell adaptation:** A rigid rectangular block of invaders that steps
+sideways by a configured horizontal `marchStep`, reverses at the arena edge,
+and drops one configured vertical `marchDrop` row on every reversal — the
+classic marching cadence. The step cadence scales up as the block thins
+(`marchSpeedMultiplier = initialCount / aliveCount`), so destroying members
+speeds the march. Individual members fire aimed shots on a staggered cycle
+(`shotProbability` gates the fire roll); the level's fire rule gates all fire
+(Levels 1–3 never fire). No enemy–enemy interaction; each alien is a
+standalone entity positioned from the shared march base.
 
-**Divergence from original:** The original uses a tight grid with no vertical
-drift — AI_Hell replaces the rigid row-by-row step-down with continuous
-rightward drift + occasional vertical repositioning at the formation base. The
-no-enemy-collision rule means the "squeeze" mechanic (aliens speed up as they
-are destroyed) is expressed purely as a `driftSpeed` tuning, not emergent
-behaviour.
+**Divergence from original:** The original's step-down is a *screen-row* grid;
+AI_Hell expresses the same behaviour as a per-reversal vertical drop of the
+formation base (`marchDrop`), which reads identically in the top-down arena.
+The no-enemy-collision rule means the block never squeezes against the wall —
+it reverses at a computed arena bound instead.
 
-**Pipeline fit:** `EnemyConfig` / CSV row. Uses the existing
-`buildRectFormationOffsets` (via `formationKind: 'rect'`) and
-`aimed` shot pattern. Wired into `enemyFire.ts` via `tryFireAimedBullet`
-(the Scout default path — no new entity class needed). Factory key falls back
-to the Scout entity type with custom colour/sizing.
+**Pipeline fit:** `EnemyConfig` / CSV row. Uses a **new formation kind
+`march`** (`buildMarchFormationOffsets`, an 11-column rectangular grid) and the
+existing `aimed` shot pattern. The movement is a shared pure policy
+(`src/scenes/core/marchFormation.ts`) consumed by both `PlayScene` and
+`GymFormationScene`, so the gym and game cannot diverge. Wired into
+`enemyFire.ts` via `tryFireAimedBullet` (no new entity class needed — the
+Scout body is reused). Factory key falls back to the Scout entity type with
+custom colour/sizing. Two neutral tuning axes, `marchStep` and `marchDrop`, are
+added to the config/CSV pipeline.
 
 **Difficulty scoring inputs:**
 
 | Factor | Type | Notes |
 |--------|------|-------|
-| Movement | `driftSpeed` (px/s) + `count` | Rigid body drift; destruction reduces count, so threat is proportional to remaining members. |
+| Movement | `formationKind` (`march`) + `driftSpeed` (px/s) + `marchStep` + `marchDrop` + `count` | Rigid block; `driftSpeed` sets the full-strength cadence, destruction reduces the alive count so the block speeds up. |
 | Fire | `shotPattern` (`aimed`) + `fireInterval` + `shotProbability` | Staggered aimed shots; individual fire rolls controlled by `shotProbability`. |
 | Health | `health` (default 1) | Single-hit; durability is low but the formation's sheer number compensates. |
 
@@ -348,7 +355,7 @@ to warrant a child work item in this research round.
 
 | Archetype | Formation builder | Shot pattern | Entity class | Fire method | Gym scene(s) |
 |-----------|-------------------|--------------|--------------|-------------|--------------|
-| Space Invaders | `buildRectFormationOffsets` (`rect`) | `aimed` | Scout (reused, custom config) | `tryFireAimedBullet` (default) | `GymEnemies` |
+| Space Invaders | `buildMarchFormationOffsets` (`march`, new) | `aimed` | Scout (reused, custom config) | `tryFireAimedBullet` | `GymEnemies` |
 | Galaga | `buildDiverFormationOffsets` (`diver`) | `spread` | Diver (reused, custom config) | `tryFireSpreadBurst` | `GymEnemies` |
 | Pac-Man Ghosts | `buildVFormationOffsets` (`v`) | varied (`aimed`/`spread`/`coordinated`/`radial`) | `Ghost.ts` (new) | `tryFireGhost` (new) | `GymEnemies` |
 | Centipede | `buildSingleOffset` (`single`) | `radial` | `Centipede.ts` (new) | `tryFireCentipede` (new) | `GymCentipede`, `GymEnemies` |

@@ -207,6 +207,39 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     burstCount: 1,
     shotProbability: 1.0,
   },
+  // Space Invaders archetype (AH-0MV01EDZS0005R20): a rigid block that steps
+  // horizontally, reverses at the arena edge, drops a row per reversal and
+  // speeds up as it thins. `marchStep`/`marchDrop` are the neutral tuning
+  // axes; `driftSpeed` is the reference px/s that sets the full-strength
+  // step cadence (`marchStep / driftSpeed`).
+  march: {
+    key: 'march',
+    displayName: 'Invader',
+    formationKind: 'march',
+    count: 11,
+    spacingX: 26,
+    spacingY: 24,
+    driftSpeed: 20,
+    marchStep: 20,
+    marchDrop: 14,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.25,
+    startXMin: GAME_WIDTH * 0.5,
+    startXMax: GAME_WIDTH * 0.5,
+    startYMin: GAME_HEIGHT * 0.25,
+    startYMax: GAME_HEIGHT * 0.25,
+    size: 16,
+    health: 1,
+    color: 0x00ff66,
+    bulletColor: 0xff4444,
+    bulletSize: 3,
+    shotPattern: 'aimed',
+    fireInterval: 1400,
+    bulletSpeed: 90,
+    bulletLifetime: 1.4,
+    burstCount: 1,
+    shotProbability: 0.4,
+  },
   harvester: {
     key: 'harvester',
     displayName: 'Harvester',

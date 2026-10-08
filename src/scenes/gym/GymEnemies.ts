@@ -72,6 +72,11 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   spacingX: { min: 10, max: 120, step: 1 },
   spacingY: { min: 10, max: 100, step: 1 },
   driftSpeed: { min: 0, max: 200, step: 1 },
+  // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20):
+  // neutral for other kinds, editable in the Enemies panel so the step/reverse
+  // cadence and the per-reversal drop can be dialled in live.
+  marchStep: { min: 4, max: 80, step: 1 },
+  marchDrop: { min: 4, max: 80, step: 1 },
   startX: { min: 0, max: GAME_WIDTH, step: 1 },
   startY: { min: 0, max: GAME_HEIGHT, step: 1 },
   // Spawn-position ranges (AH-0MUKCLXLW0032R67): bound to the canvas so a
@@ -126,7 +131,7 @@ export function normaliseSpawnRanges(config: EnemyConfig): EnemyConfig {
   return config;
 }
 
-const FORMATION_KINDS = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single'] as const;
+const FORMATION_KINDS = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march'] as const;
 const SHOT_PATTERNS = ['none', 'aimed', 'spread', 'radial', 'orbital', 'coordinated'] as const;
 
 // ── Colour helpers (mirrors GymPlayer) ───────────────────────────
@@ -157,6 +162,9 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     spacingX: cfg.spacingX,
     spacingY: cfg.spacingY,
     driftSpeed: cfg.driftSpeed,
+    formationKind: cfg.formationKind,
+    marchStep: cfg.marchStep,
+    marchDrop: cfg.marchDrop,
     startX: cfg.startX,
     startY: cfg.startY,
     startXMin: cfg.startXMin,
@@ -478,6 +486,9 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     this.config.spacingX = config.spacingX;
     this.config.spacingY = config.spacingY;
     this.config.driftSpeed = config.driftSpeed;
+    this.config.formationKind = config.formationKind;
+    this.config.marchStep = config.marchStep;
+    this.config.marchDrop = config.marchDrop;
     this.config.startX = config.startX;
     this.config.startY = config.startY;
     this.config.startXMin = config.startXMin;

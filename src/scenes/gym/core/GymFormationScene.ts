@@ -80,7 +80,20 @@ import {
   WasdKeysLike,
 } from '../../../utils/input';
 import { loadRules } from '../../../core/rules';
-import { pickInRange, resolveSpawnRange } from '../../../core/configTypes';
+import {
+  pickInRange,
+  resolveSpawnRange,
+  type EnemyFormationKind,
+} from '../../../core/configTypes';
+import {
+  advanceMarch,
+  computeMarchBounds,
+  createMarchState,
+  DEFAULT_MARCH_DROP,
+  DEFAULT_MARCH_STEP,
+  type MarchOptions,
+  type MarchState,
+} from '../../../scenes/core/marchFormation';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
@@ -331,6 +344,16 @@ export interface EnemyFormationConfig<
   spacingY: number;
   /** Forward (rightward) drift speed of the whole formation (px/s). */
   driftSpeed: number;
+  /**
+   * Formation kind. `march` selects the shared marching policy
+   * (Space Invaders archetype, AH-0MV01EDZS0005R20) instead of continuous
+   * drift; every other kind (or an absent value) keeps the drift behaviour.
+   */
+  formationKind?: EnemyFormationKind;
+  /** Horizontal step (px) for the `march` formation; see {@link marchStep}. */
+  marchStep?: number;
+  /** Vertical drop per reversal (px) for the `march` formation. */
+  marchDrop?: number;
   /** Initial formation base x. */
   startX: number;
   /** Initial formation base y. */
@@ -450,6 +473,17 @@ export class GymFormationScene<
   protected formationBaseY!: number;
   private shootEnabled = false;
 
+  /**
+   * Live marching-formation state (Space Invaders archetype,
+   * AH-0MV01EDZS0005R20). Non-null only when `config.formationKind` is
+   * `march`; drives the shared step/reverse/drop/speed-up policy.
+   */
+  private marchState: MarchState | null = null;
+  /** Full-strength member count for the march speed-up ratio. */
+  private marchInitialCount = 0;
+  /** Resolved march bounds (px) for the current formation. */
+  private marchBounds: { minX: number; maxX: number } = { minX: 0, maxX: 0 };
+
   /** Live wormhole handle for the current formation spawn, or null. */
   private _spawnWormhole: WormholeHandle | null = null;
 
@@ -545,6 +579,39 @@ export class GymFormationScene<
     // offset, so the Diver group is back on the shared formation base.
     this.diverAnchorX = 0;
     this.diverAnchorY = 0;
+
+    // A marching block (Space Invaders archetype) starts fresh at the
+    // resolved base heading right; non-march formations leave the state null
+    // and keep the continuous-drift path.
+    if (this.config.formationKind === 'march') {
+      this.marchInitialCount = this.config.count;
+      this.marchBounds = this._marchBounds();
+      this.marchState = createMarchState(this.formationBaseX, this.formationBaseY, 1);
+    } else {
+      this.marchState = null;
+    }
+  }
+
+  /** Base-position bounds (px) keeping the whole marching block on screen. */
+  private _marchBounds(): { minX: number; maxX: number } {
+    const offsets = this.config.buildOffsets(this.config.count);
+    const maxAbsCol = offsets.reduce(
+      (max, offset) => Math.max(max, Math.abs(offset.col)),
+      0,
+    );
+    return computeMarchBounds(maxAbsCol * this.config.spacingX, GAME_WIDTH);
+  }
+
+  /** Resolved march tuning for the current config (shared policy options). */
+  private _marchOptions(): MarchOptions {
+    return {
+      step: this.config.marchStep ?? DEFAULT_MARCH_STEP,
+      drop: this.config.marchDrop ?? DEFAULT_MARCH_DROP,
+      referenceSpeed: this.config.driftSpeed,
+      minX: this.marchBounds.minX,
+      maxX: this.marchBounds.maxX,
+      initialCount: this.marchInitialCount,
+    };
   }
 
   create(): void {
@@ -1379,13 +1446,30 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
-    // Advance the formation base unconditionally; when the whole formation
-    // has crossed the right edge, respawn it off the left edge so it flies
-    // again. No entity can freeze the drift (the obsolete formation-hold seam
-    // was removed in AH-0MUAYB957002EMYV).
-    this.formationBaseX += config.driftSpeed * dt;
-    if (this.formationBaseX > GAME_WIDTH + 60) {
-      this.formationBaseX = this._respawnX();
+    // Advance the formation base unconditionally. A `march` block (Space
+    // Invaders archetype, AH-0MV01EDZS0005R20) steps, reverses at the arena
+    // edge and drops a row via the shared pure policy; every other formation
+    // keeps the continuous rightward drift, respawning off the left edge once
+    // it has fully crossed (the obsolete formation-hold seam was removed in
+    // AH-0MUAYB957002EMYV). No entity can freeze the movement.
+    if (this.marchState) {
+      const alive = this.entities.reduce(
+        (count, entity) => count + (entity.alive ? 1 : 0),
+        0,
+      );
+      this.marchState = advanceMarch(
+        this.marchState,
+        dt,
+        alive,
+        this._marchOptions(),
+      );
+      this.formationBaseX = this.marchState.x;
+      this.formationBaseY = this.marchState.y;
+    } else {
+      this.formationBaseX += config.driftSpeed * dt;
+      if (this.formationBaseX > GAME_WIDTH + 60) {
+        this.formationBaseX = this._respawnX();
+      }
     }
 
     // Diver re-anchor (GDD §4.1 — E2, AH-0MUAYB957002EMYV): if a Diver's
