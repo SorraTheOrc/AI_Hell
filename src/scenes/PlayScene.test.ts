@@ -4062,6 +4062,9 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   // ── Narrowed demo take-over (AH-0MUYP6M6W006Z1AY) ───────────────
+  //
+  // Full unit coverage of the narrowed take-over/ESC behaviour required by
+  // the tests item (AH-0MUYPHN89007KSPW AC6).
 
   describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
     /** Boots a live game and starts the demo, returning the PlayScene. */
@@ -4129,6 +4132,22 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(scene.isDemoMode()).toBe(false);
     });
 
+    // Every arrow key and every configured WASD binding takes over on its
+    // own, not just the single `w`/`ArrowUp` sampled above
+    // (AH-0MUYPHN89007KSPW AC2).
+    it.each(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'])(
+      'AC2 — movement key %s takes over the demo in place',
+      async (key) => {
+        const scene = await bootDemo();
+
+        pressKey(scene, key);
+
+        expect(scene.isDemoMode()).toBe(false);
+        // In place — the run continues on the live PlayScene.
+        expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+      },
+    );
+
     it('AC2 — a rebind is honoured: the new movement key takes over, the old one does not', async () => {
       const scene = await bootDemo();
 
@@ -4155,7 +4174,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC3 — a non-movement key is ignored and the demo keeps playing', async () => {
       const scene = await bootDemo();
 
-      for (const key of [' ', 'Enter', 'Tab', 'x', '7', 'F1']) {
+      for (const key of [' ', 'Enter', 'Tab', 'F5', 'x', '7', 'F1']) {
         pressKey(scene, key);
       }
 
@@ -4199,6 +4218,15 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       scene.setDemoMode(true);
       expect(takeOverHandlerOf(scene)).not.toBeNull();
       pressKey(scene, 'Escape');
+      expect(takeOverHandlerOf(scene)).toBeNull();
+    });
+
+    it('AC6 — the take-over listener is removed on scene shutdown (no leak)', async () => {
+      const scene = await bootDemo();
+      expect(takeOverHandlerOf(scene)).not.toBeNull();
+
+      scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
       expect(takeOverHandlerOf(scene)).toBeNull();
     });
   });
