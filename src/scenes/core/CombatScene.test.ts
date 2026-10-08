@@ -257,8 +257,8 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   runUpdateP4Bomb(dt: number) {
     this._updateP4Bomb(dt);
   }
-  runHandleTeleport() {
-    this._handleTeleport();
+  runUpdateAutoDefence(dt: number) {
+    this._updateAutoDefence(dt);
   }
   runHitPlayer() {
     this._hitPlayer();
@@ -296,9 +296,6 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
     this.playerRef = player;
     return player;
   }
-  setTeleportKey(key: Phaser.Input.Keyboard.Key | null) {
-    this.teleportKey = key;
-  }
   addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
     const drop = new StubDrop(120, 120, g, id, weaponDropId);
@@ -331,7 +328,7 @@ describe('CombatScene — shared combat core hook contract', () => {
       '_collectDrop',
       '_spawnPlayerExplosion',
       '_clearEnemyBullets',
-      '_handleTeleport',
+      '_updateAutoDefence',
       '_readPlayerInput',
     ]) {
       expect(typeof (proto as unknown as Record<string, unknown>)[method]).toBe(
@@ -558,17 +555,49 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.effects.hasTeleport()).toBe(true);
   });
 
-  it('AC3 — _handleTeleport triggers on a held teleport key', async () => {
+  it('AC1/AC3 — automatic defence warps on danger with no key press when Teleport is chosen', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('teleport');
+    // Three hostile bodies within DANGER_RADIUS (40 px) → in danger.
+    for (let i = 0; i < 3; i += 1) {
+      scene.entities.push(new StubEnemy(scene, 110 + i * 5, 100));
+    }
+
+    scene.runUpdateAutoDefence(0.016);
+
+    expect(scene.effects.hasTeleport()).toBe(false);
+    expect(scene.effects.isPhased).toBe(true);
+    expect(Math.hypot(player.x - 100, player.y - 100)).toBeGreaterThan(0);
+  });
+
+  it('AC1 — automatic defence does nothing below the danger threshold', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });
     scene.effects.applyCollect('teleport');
-    const key = scene.input.keyboard!.addKey('S');
-    (key as unknown as { _justDown: boolean })._justDown = true;
-    scene.setTeleportKey(key);
+    // Only two threats → below DANGER_THREAT_THRESHOLD (3).
+    for (let i = 0; i < 2; i += 1) {
+      scene.entities.push(new StubEnemy(scene, 110 + i * 5, 100));
+    }
 
-    scene.runHandleTeleport();
+    scene.runUpdateAutoDefence(0.016);
 
-    expect(scene.effects.hasTeleport()).toBe(false);
+    expect(scene.effects.hasTeleport()).toBe(true);
+    expect(scene.effects.isPhased).toBe(false);
+  });
+
+  it('AC1 — automatic defence auto-triggers Phase Shift when only phase charges are held', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('phase_shift');
+    for (let i = 0; i < 3; i += 1) {
+      scene.entities.push(new StubEnemy(scene, 110 + i * 5, 100));
+    }
+
+    scene.runUpdateAutoDefence(0.016);
+
+    expect(scene.effects.isPhased).toBe(true);
+    expect(scene.effects.phaseCharges()).toBe(0);
   });
 
   // ── AC5 — shared bullet-vs-bullet impact path ────────────────────

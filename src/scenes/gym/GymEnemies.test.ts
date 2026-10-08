@@ -1478,7 +1478,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
     // storing an auto-activation charge; the danger feed triggers the phase.
     scene.tick(0.05);
     expect(scene.getEffectsRegistry().phaseCharges()).toBe(1);
-    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe('phase_shift');
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     placeEnemyBulletOnPlayer(scene);

@@ -145,16 +145,52 @@ the envelope and guarantees the payload is JSON-safe and PII-free, while the
 instrumentation layer owns the concrete shape. Payloads are copies — call
 sites can never mutate buffered data.
 
-> **Planned `state` field — `actionIntensity`.** The per-tick `state` will
-> gain an `actionIntensity` object (raw score, normalised intensity, smoothed
-> EMA, burstiness, and a per-category breakdown). It is a payload-only change —
-> no framework schema bump — and the metric is a strict no-op when telemetry is
-> disabled. The pure computation and its wiring through the instrumentation
-> layer (`src/scenes/core/runTelemetry.ts`, AH-0MUY08VVQ007HSSH) are delivered
-> by the implementation epic **AH-0MUZMTTYH008KVS2**; the researched model,
-> scoring weights, output schema and video-join semantics are specified in
-> [docs/dev/action-intensity.md](./dev/action-intensity.md)
-> (AH-0MUZCSJXQ004TREN).
+> #### `state.actionIntensity` — per-tick action-intensity metric (AH-0MUZQEDW9002KHRN)
+>
+> When telemetry is enabled the `state` object includes an `actionIntensity`
+> field (§7.1 of [the decision doc](./dev/action-intensity.md), wired by
+> AH-0MUZQEDW9002KHRN):
+>
+> ```jsonc
+> {
+>   "actionIntensity": {
+>     "rawScore": 41.5,        // unbounded R(t) = P(t) + k_E · E(t)
+>     "intensity": 0.58,       // normalised [0,1) via R/(R+B)
+>     "smoothed": 0.49,        // exponential moving average S(t)
+>     "burstiness": 0.09,      // intensity(t) − S(t)
+>     "breakdown": {           // per-category live counts n_c(t)
+>       "playerBullets": 4,
+>       "enemyBullets": 11,
+>       "enemies": 6,
+>       "asteroids": 0,
+>       "drops": 1,
+>       "enemyExplosions": 0,
+>       "bossExplosions": 0,
+>       "playerExplosions": 0,
+>       "bosses": 0
+>     }
+>   }
+> }
+> ```
+>
+> - **`rawScore`** — the unbounded combined raw score `R(t)`.
+> - **`intensity`** — normalised score in `[0, 1)` (`R/(R+B)`).
+> - **`smoothed`** — the exponential moving average of `intensity`.
+> - **`burstiness`** — `intensity − smoothed`; positive values indicate a
+>   spike above the trend, negative a dip.
+> - **`breakdown`** — the per-category live counts `n_c(t)` that contributed to
+>   the score.
+>
+> This is a **payload-only change** (no framework schema bump) and is a strict
+> no-op when telemetry is disabled: `RunTelemetry.recordTick` returns before
+> computing anything, so there is no sample and no record. When enabled,
+> `recordTick` derives the per-category counts from the tick state's own
+> registries (the `BotSnapshot` collections), feeds the discrete events
+> observed since the run started through the sliding event window (§6.2), and
+> samples the combined score at the configured rate (§6.5) before the recorder
+> sees the tick. The pure computation and the event-window accumulator live in
+> [`src/scenes/core/actionIntensity.ts`](../src/scenes/core/actionIntensity.ts)
+> and are owned by the epic **AH-0MUZMTTYH008KVS2**.
 
 ## Sinks
 
@@ -249,7 +285,7 @@ state the snapshot does not carry:
 
 The shape is versioned by `v` and extensible without an envelope bump — the
 on-screen action-intensity epic (AH-0MUZMTTYH008KVS2) adds an
-`actionIntensity` object here.
+`actionIntensity` object as described in the schema reference above.
 
 ### Per-tick input (AC2)
 
@@ -405,7 +441,7 @@ The framework is covered by hermetic unit tests under
 | `sinks.test.ts` | no-op sink, JSONL round-trip, remote sink + transport auto-wiring |
 | `transport.test.ts` | HTTP envelope, batching, retry/backoff, permanent failures, offline drop |
 | `recorder.test.ts` | run header/schema version, batching, ring buffer, sampling, redaction |
-| [`runTelemetry.test.ts`](../src/scenes/core/runTelemetry.test.ts) | concrete state/event serialisation, version/seed tagging, no-op |
+| [`runTelemetry.test.ts`](../src/scenes/core/runTelemetry.test.ts) | concrete state/event serialisation, version/seed tagging, no-op, actionIntensity field wiring |
 | [`PlaySceneTelemetry.test.ts`](../src/scenes/PlaySceneTelemetry.test.ts) | end-to-end PlayScene recording: state + applied input, run/wave/kill/pickup/choice/run-end events, off = zero records |
 | [`TelemetryConsentScene.test.ts`](../src/scenes/TelemetryConsentScene.test.ts) | consent prompt: privacy copy, safe default, grant/deny/ESC persistence |
 | [`telemetryConsentStore.test.ts`](../src/core/telemetryConsentStore.test.ts) | consent persistence, corrupt/absent fallback |

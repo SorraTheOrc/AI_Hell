@@ -73,8 +73,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | Cue (`src/audio/effects.ts`) | Original character | GDD §7.3 | Production consumer(s) | Disp. | Target recipe / preset |
 |------------------------------|--------------------|----------|------------------------|-------|------------------------|
 | `playSpawnSound` | Rising square blip 220→880 Hz, 0.18 s, vol 0.12 | Enemy spawn (subtle hum rise) | `PlayScene`, `GymFormationScene`, `GymPowerUpsCombat`, `GymLevel` | new | `aihell-enemy-spawn` |
-| `playDestructionSound` | Descending saw 440→60 Hz (× ±15 % pitch jitter), 0.28 s, vol 0.30 | Enemy destroyed (sharp pop/crack) | `PlayScene`, `CombatScene`, `GymFormationScene`, `enemyFactory`, `Asteroid`, `Scout`, `Phaser`, `Diver`, `playerDeathJuice` | new | `aihell-enemy-destruction` (multi-seed) |
-| `playPlayerDestructionSound` | Layered hull breach: saw thump 120→32 Hz 0.4 s + triangle body 260→42 Hz 0.6 s + HP noise tail 0.28 s, ≤ 0.2 | Player hit / life lost | `vfx/playerDeathJuice` | new | `aihell-player-hull-breach` (stack) |
+| `playDestructionSound` | Descending saw 440→60 Hz (× ±15 % pitch jitter), 0.28 s, vol 0.30 | Enemy destroyed (sharp pop/crack), scheduled on the next 16th-note beat accent | `PlayScene`, `CombatScene`, `GymFormationScene`, `enemyFactory`, `Asteroid`, `Scout`, `Phaser`, `Diver`, `playerDeathJuice` | new | `aihell-enemy-destruction` (multi-seed) |
+| `playPlayerDestructionSound` | Layered hull breach: saw thump 120→32 Hz 0.4 s + triangle body 260→42 Hz 0.6 s + HP noise tail 0.28 s, ≤ 0.2 | Player hit / life lost, scheduled on the next 16th-note beat accent | `vfx/playerDeathJuice` | new | `aihell-player-hull-breach` (stack) |
 | `playMajorExplosionSound` | Layered major blast: saw thump 150→26 + triangle body 340→38 + LP noise tail, 4-voice limiter | Wave timeout — retained but unused | **none** | **retired** | — (see Retired cues) |
 | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12 | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
 | `playTankDestructionSound` | Saw 220→30 Hz, 0.45 s, vol 0.2 | Intentionally unwired | **none** (test-only) | **retired** | — (see Retired cues) |
@@ -94,7 +94,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playDiveSound` | Bandpass noise sweep 300→900 Hz, refcounted shared ~2 s voice | Diver dive | `entities/Diver` | new | `aihell-diver-dive-loop` |
 | `stopDiveSound` | Stops/releases the shared dive voice | Diver dive | `entities/Diver` | control | (companion to `aihell-diver-dive-loop`) |
 | `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | Enemy fire (spread burst) | `entities/Diver` | new | `aihell-diver-fire` |
-| `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s (× pitch jitter) | Enemy destroyed (heavy) | `entities/Diver` | new | `aihell-diver-destruction` (multi-seed) |
+| `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s (× pitch jitter) | Enemy destroyed (heavy), scheduled on the next 16th-note beat accent | `entities/Diver` | new | `aihell-diver-destruction` (multi-seed) |
 | `playBossFireSound` | Saw 200→50 Hz + low sine undertone, ~0.2 s | Boss fire | `entities/Boss` | new | `aihell-boss-fire` |
 | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s, vol 0.15 | Player cannon fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-cannon-fire` |
 | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s, vol 0.15 | Player spread fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-spread-fire` |
@@ -121,6 +121,23 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playVolumeFeedback` | Player hull-breach cue at selected gain, pitch unchanged | Settings volume feedback | `SettingsScene` | **existing** | `aihell-player-hull-breach` (gain-scaled) |
 | `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled, ≤ 0.075 | Thruster hum (held thrust) | `Player`, `movementModel` | new | `aihell-thruster-hum` (runtime shim delivery) |
 | `stopThrusterSound` | Stops/releases the thruster hum nodes | Thruster hum | `Player` | control | (companion to `aihell-thruster-hum`) |
+
+### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
+
+The non-weapon destruction booms — `playDestructionSound`,
+`playDiverDestructionSound` and `playPlayerDestructionSound` — are scheduled
+onto the **next 16th note** of the current tempo (`beatPeriodMs(bpm) / 4`,
+187.5 ms at the default 80 BPM) instead of firing on the exact kill frame, so
+kills land as a rhythmic accent against the silent player-fire grid. Several
+cues inside one 16th-note window stack onto the same tick, capped at
+`EXPLOSION_PER_TICK_CAP` (4) per tick so a mass kill cannot clip the mix. The
+delay is the **game-time** distance to the tick (`nextTick(now) − now`), never
+a wall-clock read, so a paused scene never queues audio into the future. Only
+the cue is deferred — all explosion VFX stays on the death frame. Weapon cues
+(Mortar detonation; Nova/Mortar/Arc fire) and `playBulletDestructionSound`
+stay immediate. The quantisation is implemented once in the shared audio seam
+(`setExplosionBeatClock`) and registered by the shared combat core, so the
+game and every gym behave identically.
 
 ### Advance cues (≥ 500 ms) — explicitly carried forward
 

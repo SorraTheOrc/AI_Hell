@@ -46,6 +46,9 @@ export const DEFAULT_BINDINGS: Record<ActionName, string> = {
   moveDown: 's',
   moveLeft: 'a',
   moveRight: 'd',
+  // `layerDrop` is retained but unwired (Teleport is automatic since
+  // AH-0MUZE4AIP009HZWC); the reverse-thruster item AH-0MUZCSB4B00107RG
+  // will reuse or remove it.
   layerDrop: 's', // intentional overlap: same as moveDown
   pauseToggle: 'Escape',
 };

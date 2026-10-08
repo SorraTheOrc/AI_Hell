@@ -81,6 +81,20 @@ export interface CaptureRunSummary {
   runLengthMs: number;
 }
 
+/** The dev-gated recording-start anchor emitted at `MediaRecorder` start. */
+export interface CaptureStartedMarker {
+  event: string;
+  atEpochMs: number;
+}
+
+/** Page-side event name for the recording-start anchor. */
+export const CAPTURE_STARTED_EVENT: string;
+
+export function buildCaptureStartedMarker(
+  epochMs?: number,
+  enabled?: boolean,
+): CaptureStartedMarker | null;
+
 /** Post-signal tail length in milliseconds. */
 export const DEFAULT_CAPTURE_TAIL_MS: number;
 /** Generous safety cap for a full-run recording, in milliseconds. */

@@ -42,22 +42,26 @@ function group(
 
 /**
  * The minion wave for each boss phase (GDD §4.3). Phase 3 spawns none;
- * phases 1, 2 and 4 reinforce the boss.
+ * phases 1, 2 and 4 reinforce the boss: phase 1 summons **12 scouts**
+ * (two groups of 6), phase 2 **12 divers** (two groups of 6), and phase 4
+ * a single **15-strong swarm**. Counts are retuned on the boss encounter
+ * (AH-0MUZMTRW00065PID) without changing formations, keys, fire gating or
+ * phase-3 emptiness.
  */
 export const BOSS_MINION_WAVES: Record<number, BossMinionWave> = {
   1: {
     phase: 1,
     groups: [
-      group('scout', 'v', 4, GAME_WIDTH * 0.08, GAME_HEIGHT * 0.3),
-      group('scout', 'v', 4, GAME_WIDTH * 0.78, GAME_HEIGHT * 0.3),
+      group('scout', 'v', 6, GAME_WIDTH * 0.08, GAME_HEIGHT * 0.3),
+      group('scout', 'v', 6, GAME_WIDTH * 0.78, GAME_HEIGHT * 0.3),
     ],
     shootEnabled: true,
   },
   2: {
     phase: 2,
     groups: [
-      group('diver', 'diver', 4, GAME_WIDTH * 0.3, GAME_HEIGHT * 0.06, 30, 26),
-      group('diver', 'diver', 4, GAME_WIDTH * 0.6, GAME_HEIGHT * 0.06, 30, 26),
+      group('diver', 'diver', 6, GAME_WIDTH * 0.3, GAME_HEIGHT * 0.06, 30, 26),
+      group('diver', 'diver', 6, GAME_WIDTH * 0.6, GAME_HEIGHT * 0.06, 30, 26),
     ],
     shootEnabled: true,
   },
@@ -68,7 +72,10 @@ export const BOSS_MINION_WAVES: Record<number, BossMinionWave> = {
   },
   4: {
     phase: 4,
-    groups: [group('swarm', 'swarm', 10, GAME_WIDTH * 0.3, GAME_HEIGHT * 0.18)],
+    // Base X sits left of centre: the swarm clusters grow rightward, so the
+    // wider 15-strong formation must start further out to keep every member
+    // clear of the boss body (AH-0MUZMTRW00065PID).
+    groups: [group('swarm', 'swarm', 15, GAME_WIDTH * 0.26, GAME_HEIGHT * 0.18)],
     shootEnabled: true,
   },
 };

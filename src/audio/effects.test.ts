@@ -25,6 +25,11 @@ import {
 } from './cueManifest';
 import type { SfxPlayOptions, SfxSoundHandle, SfxSoundProvider } from './sfxPlayback';
 import {
+  SIXTEENTH_NOTE_SUBDIVISIONS,
+  beatSubdivisionMs,
+  createBeatClock,
+} from '../utils/beat';
+import {
   RecordingAudioContext,
   resetRecordingAudioContext,
 } from '../test/audioTestDouble';
@@ -286,7 +291,143 @@ describe('thruster hum (runtime shim)', () => {
   });
 });
 
-// ── 6. Headless no-op (belt-and-suspenders with the contract suite) ─
+// ── 6. Beat-synchronised explosion accents (AC2–AC4, AC6) ─────────
+
+describe('beat-synchronised explosion accents', () => {
+  const SIXTEENTH_MS = beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS); // 187.5
+
+  afterEach(() => {
+    effects.setExplosionBeatClock(null);
+  });
+
+  it('schedules the enemy/Diver/player destruction cues on the next 16th note', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100); // 87.5 ms to the 187.5 ms tick
+
+    effects.playDestructionSound();
+    effects.playDiverDestructionSound();
+    effects.playPlayerDestructionSound(0.5);
+
+    expect(recording.plays).toHaveLength(3);
+    for (const play of recording.plays) {
+      expect(play.options?.delay).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
+    }
+    // Player destruction keeps its volume scaling alongside the delay.
+    expect(recording.plays[2].options?.volume).toBe(0.5);
+  });
+
+  it('fires immediately when the request is already on a tick', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(SIXTEENTH_MS);
+    effects.playDestructionSound();
+    expect(recording.plays[0].options?.delay).toBe(0);
+  });
+
+  it('stacks several kills in one window onto the same tick (one accent)', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100);
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP; i += 1) {
+      effects.playDestructionSound();
+    }
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
+    const delays = recording.plays.map((p) => p.options?.delay ?? 0);
+    expect(new Set(delays).size).toBe(1);
+    expect(delays[0]).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
+  });
+
+  it('caps the per-tick accent so a mass kill cannot clip the mix', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100);
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP + 8; i += 1) {
+      effects.playDestructionSound();
+    }
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
+  });
+
+  it('opens a fresh accent window once the clock crosses the tick', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100);
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP; i += 1) {
+      effects.playDestructionSound();
+    }
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
+
+    // Cross into the next 16th window: the cap resets.
+    clock.advance(SIXTEENTH_MS - 100 + 1);
+    effects.playDestructionSound();
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 1);
+    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].options?.delay).toBeCloseTo(
+      (2 * SIXTEENTH_MS - (SIXTEENTH_MS + 1)) / 1000,
+      6,
+    );
+  });
+
+  it('keeps weapon and interception cues immediate while a clock is registered', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100); // mid-window — the accent would be 87.5 ms
+
+    effects.playMortarDetonationSound();
+    effects.playNovaFireSound();
+    effects.playMortarFireSound();
+    effects.playArcFireSound();
+    effects.playBulletDestructionSound();
+
+    expect(recording.plays.length).toBeGreaterThan(0);
+    for (const play of recording.plays) {
+      expect(play.options?.delay ?? 0).toBe(0);
+    }
+  });
+
+  it('re-derives the schedule after a scene restart (clock reset)', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100);
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP; i += 1) {
+      effects.playDestructionSound();
+    }
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
+
+    // A run restart resets the grid to origin and re-registers the clock.
+    clock.reset();
+    effects.setExplosionBeatClock(clock);
+    effects.playDestructionSound();
+
+    // Back on the origin tick: immediate, with a fresh (not inherited) cap.
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 1);
+    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].options?.delay).toBe(0);
+  });
+
+  it('does not queue audio into the future for a frozen clock', () => {
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100); // frozen mid-window; never advanced again
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP + 10; i += 1) {
+      effects.playDestructionSound();
+    }
+
+    // Only the capped stack is queued, and every delay is bounded by one
+    // 16th note so a paused scene leaks no open-ended scheduling.
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
+    for (const play of recording.plays) {
+      expect(play.options?.delay ?? 0).toBeGreaterThanOrEqual(0);
+      expect(play.options?.delay ?? 0).toBeLessThanOrEqual(SIXTEENTH_MS / 1000);
+    }
+  });
+
+  it('plays immediately when no beat clock is registered', () => {
+    effects.setExplosionBeatClock(null);
+    effects.playDestructionSound();
+    expect(recording.plays[0].options?.delay).toBe(0);
+  });
+});
+
+// ── 7. Headless no-op (belt-and-suspenders with the contract suite) ─
 
 describe('headless no-op', () => {
   it('every cue degrades safely without an AudioContext', () => {

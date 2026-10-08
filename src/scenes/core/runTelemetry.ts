@@ -44,6 +44,15 @@
  */
 
 import type { BotSnapshot } from '../../ai/botSnapshot';
+import {
+  computeActionIntensity,
+  DEFAULT_ACTION_INTENSITY_CONFIG,
+  EventWindowAccumulator,
+  type ActionIntensityConfig,
+  type ActionIntensityCounts,
+  type ActionIntensityEventType,
+  type ActionIntensitySample,
+} from './actionIntensity';
 import type { ControlInput } from '../../utils/movementModel';
 import {
   NoopTelemetryRecorder,
@@ -102,6 +111,26 @@ export const RUN_TELEMETRY_EVENTS = [
 /** A discriminator from {@link RUN_TELEMETRY_EVENTS}. */
 export type RunTelemetryEvent = (typeof RUN_TELEMETRY_EVENTS)[number];
 
+/**
+ * Maps the instrumentation's discrete events (AC3) to the action-intensity
+ * burst-layer events (§6.2). Events with no burst-layer counterpart (e.g.
+ * `wave_start`, `mineral_collected`, `hold_full`) are intentionally absent,
+ * so they never inflate the metric's event score.
+ */
+const RUN_TELEMETRY_TO_ACTION_INTENSITY: Partial<
+  Record<RunTelemetryEvent, ActionIntensityEventType>
+> = {
+  run_start: 'run_started',
+  run_end: 'run_ended',
+  player_hit: 'player_hit',
+  player_death: 'life_lost',
+  enemy_killed: 'enemy_killed',
+  pickup: 'powerup_collected',
+  wave_cleared: 'wave_clear',
+  level_cleared: 'level_clear',
+  boss_phase: 'boss_phase',
+};
+
 // ── Concrete state vector (AC1) ──────────────────────────────────────
 
 /** Player fields the state vector carries (AC1: position, velocity, heading). */
@@ -151,6 +180,12 @@ export interface RunTelemetryState {
     readonly alive: boolean;
     readonly archetype: string;
   }[];
+  readonly playerBullets: readonly {
+    readonly x: number;
+    readonly y: number;
+    readonly vx: number;
+    readonly vy: number;
+  }[];
   readonly enemyBullets: readonly {
     readonly x: number;
     readonly y: number;
@@ -179,6 +214,25 @@ export interface RunTelemetryState {
     readonly timeRemaining: number;
     readonly timeLimit: number;
   } | null;
+  /**
+   * Live per-kind explosion-VFX counts (§6.1 `enemyExplosions`,
+   * `bossExplosions`, `playerExplosions`), read from the single shared VFX
+   * registry (AH-0MUZQGRQR0086NP6, AC7) so a category is never double-counted.
+   */
+  readonly explosions: {
+    readonly enemy: number;
+    readonly boss: number;
+    readonly player: number;
+  };
+  /**
+   * Per-tick action-intensity metric (§7.1 of
+   * `docs/dev/action-intensity.md`).
+   *
+   * `null` in a freshly built state; {@link RunTelemetry.recordTick} folds in
+   * the sample it computes for the tick (AH-0MUZQEDW9002KHRN, AC3). It is
+   * never computed at all when telemetry is disabled.
+   */
+  readonly actionIntensity: ActionIntensitySample | null;
 }
 
 /**
@@ -194,6 +248,14 @@ export interface RunTelemetryExtras {
   readonly mineralCapacity: number;
   readonly weaponLevels: readonly RunTelemetryLevel[];
   readonly powerUpLevels: readonly RunTelemetryLevel[];
+  /**
+   * Live explosion-VFX counts from the shared registry
+   * (`getExplosionVfxCounts()`, AH-0MUZQGRQR0086NP6). Optional; absent means
+   * zero, so call sites that predate the registry keep working.
+   */
+  readonly enemyExplosions?: number;
+  readonly bossExplosions?: number;
+  readonly playerExplosions?: number;
 }
 
 /**
@@ -239,6 +301,12 @@ export function buildRunTelemetryState(
       alive: enemy.alive,
       archetype: enemy.archetype,
     })),
+    playerBullets: snapshot.playerBullets.map((bullet) => ({
+      x: bullet.x,
+      y: bullet.y,
+      vx: bullet.vx,
+      vy: bullet.vy,
+    })),
     enemyBullets: snapshot.enemyBullets.map((bullet) => ({
       x: bullet.x,
       y: bullet.y,
@@ -271,12 +339,53 @@ export function buildRunTelemetryState(
           timeLimit: snapshot.wave.timeLimit,
         }
       : null,
+    explosions: {
+      enemy: extras.enemyExplosions ?? 0,
+      boss: extras.bossExplosions ?? 0,
+      player: extras.playerExplosions ?? 0,
+    },
+    actionIntensity: null,
   };
 }
 
 /** Copies a run-scoped level list into fresh plain-JSON entries. */
 function copyLevels(levels: readonly RunTelemetryLevel[]): RunTelemetryLevel[] {
   return levels.map((entry) => ({ id: entry.id, level: entry.level }));
+}
+
+/**
+ * Derives the action-intensity per-category counts (§6.1) from the per-tick
+ * state vector, reusing the registries the {@link BotSnapshot} builder copied
+ * in. Asteroids are split out of the enemy list by archetype so they are not
+ * double-counted at the enemy weight.
+ *
+ * Explosion-VFX categories are not yet exposed on the state vector — the
+ * parity child (AH-0MUZQGRQR0086NP6) adds the shared registry — so they are
+ * reported as zero here.
+ *
+ * @param state - The per-tick state vector from {@link buildRunTelemetryState}.
+ */
+export function actionIntensityCountsFromState(
+  state: RunTelemetryState,
+): ActionIntensityCounts {
+  let enemies = 0;
+  let asteroids = 0;
+  for (const enemy of state.enemies) {
+    if (!enemy.alive) continue;
+    if (enemy.archetype === 'asteroid') asteroids += 1;
+    else enemies += 1;
+  }
+  return {
+    playerBullets: state.playerBullets.length,
+    enemyBullets: state.enemyBullets.length,
+    enemies,
+    asteroids,
+    drops: state.drops.length,
+    enemyExplosions: state.explosions.enemy,
+    bossExplosions: state.explosions.boss,
+    playerExplosions: state.explosions.player,
+    bosses: state.boss?.alive ? 1 : 0,
+  };
 }
 
 // ── Input serialisation (AC2) ────────────────────────────────────────
@@ -310,18 +419,54 @@ export function serialiseTelemetryInput(input: ControlInput | null): TelemetryJs
 
 // ── RunTelemetry wrapper (AC2–AC6) ───────────────────────────────────
 
+/** Milliseconds from a monotonic clock; `Date.now()` fallback for non-DOM. */
+const defaultNow = (): number =>
+  typeof performance !== 'undefined' ? performance.now() : Date.now();
+
+/** Optional tuning/clock seams for {@link RunTelemetry}. */
+export interface RunTelemetryOptions {
+  /** Action-intensity config; defaults to the documented defaults (§6.6). */
+  readonly config?: ActionIntensityConfig;
+  /** Monotonic clock in milliseconds; overridden in tests. */
+  readonly now?: () => number;
+}
+
 /**
  * The instrumentation wrapper over a {@link TelemetryRecorder}. It names the
  * discrete events (AC3), tags every payload with
  * {@link RUN_TELEMETRY_EVENT_VERSION} and short-circuits to a strict no-op
  * when the recorder is disabled (AC5).
+ *
+ * It also owns the per-run action-intensity metric (AH-0MUZQEDW9002KHRN,
+ * AC3/AC4): it observes the discrete events it records, computes a sample from
+ * the tick state's own registries at the configured sample rate, and folds it
+ * into `state.actionIntensity` before the recorder sees the tick.
  */
 export class RunTelemetry {
   /**
    * @param recorder - The framework recorder. Pass a disabled recorder
    *   (e.g. `NoopTelemetryRecorder`) to make every method a no-op.
+   * @param options - Optional action-intensity tuning and clock seam; tests
+   *   override these, production uses the documented defaults.
    */
-  constructor(private readonly recorder: TelemetryRecorder) {}
+  constructor(
+    private readonly recorder: TelemetryRecorder,
+    options: RunTelemetryOptions = {},
+  ) {
+    this.actionIntensityConfig =
+      options.config ?? DEFAULT_ACTION_INTENSITY_CONFIG;
+    this.now = options.now ?? defaultNow;
+    this.eventWindow = new EventWindowAccumulator(this.actionIntensityConfig);
+    this.runStartedAtMs = this.now();
+  }
+
+  private readonly actionIntensityConfig: ActionIntensityConfig;
+  private readonly now: () => number;
+  private readonly eventWindow: EventWindowAccumulator;
+  private previousSmoothed: number | undefined;
+  private runStartedAtMs: number;
+  private lastSampleAtSeconds = Number.NEGATIVE_INFINITY;
+  private lastSample: ActionIntensitySample | null = null;
 
   /** A run telemetry instance with recording disabled (strict no-op). */
   static noop(): RunTelemetry {
@@ -342,14 +487,24 @@ export class RunTelemetry {
    */
   startRun(runSeed: number, build?: Partial<TelemetryBuildInfo>): void {
     if (!this.enabled) return;
+    this.resetActionIntensity();
     this.recorder.startRun({ runSeed, build });
     this.recordEvent('run_start', { seed: runSeed });
   }
 
-  /** Records the per-tick state + applied input (AC1/AC2). No-op if disabled. */
+  /**
+   * Records the per-tick state + applied input (AC1/AC2), folding in the
+   * action-intensity sample computed for the tick (§7.1; AC3). The metric
+   * reuses the state's own registries and the discrete events observed since
+   * the run started and is sampled at the configured rate (§6.5). A strict
+   * no-op when disabled: no sample is computed and no record is written.
+   */
   recordTick(state: RunTelemetryState, input: TelemetryJson): void {
     if (!this.enabled) return;
-    this.recorder.recordTick(state, input);
+    this.recorder.recordTick(
+      { ...state, actionIntensity: this.sampleActionIntensity(state) },
+      input,
+    );
   }
 
   /** Records a hit that cost a life. */
@@ -457,5 +612,61 @@ export class RunTelemetry {
       v: RUN_TELEMETRY_EVENT_VERSION,
       ...payload,
     });
+    this.observeActionIntensityEvent(event);
+  }
+
+  /**
+   * Computes the action-intensity sample for a tick, reusing the EMA state
+   * from the previous sample. Computed at most once per
+   * `1 / sampleRateHz` seconds so the recorded series matches §6.5; between
+   * samples the last value is reused. `null` only before the first sample.
+   */
+  private sampleActionIntensity(
+    state: RunTelemetryState,
+  ): ActionIntensitySample | null {
+    const elapsed = this.elapsedSeconds();
+    if (
+      elapsed - this.lastSampleAtSeconds >=
+      1 / this.actionIntensityConfig.sampleRateHz
+    ) {
+      const eventScore = this.eventWindow.scoreAt(elapsed);
+      const sample = computeActionIntensity(
+        {
+          counts: actionIntensityCountsFromState(state),
+          eventScore,
+          previousSmoothed: this.previousSmoothed,
+        },
+        this.actionIntensityConfig,
+      );
+      this.previousSmoothed = sample.smoothed;
+      this.lastSampleAtSeconds = elapsed;
+      this.lastSample = sample;
+    }
+    return this.lastSample;
+  }
+
+  /**
+   * Feeds a discrete telemetry event into the burst-layer window when it maps
+   * to an action-intensity event (AC4). Events are stamped with the current
+   * run-relative time so the window shares the clock used for the samples.
+   */
+  private observeActionIntensityEvent(event: RunTelemetryEvent): void {
+    const type = RUN_TELEMETRY_TO_ACTION_INTENSITY[event];
+    if (!type) return;
+    this.eventWindow.push({ type, at: this.elapsedSeconds() });
+  }
+
+  /** Seconds since the run header was written, floored at zero. */
+  private elapsedSeconds(): number {
+    return Math.max(0, (this.now() - this.runStartedAtMs) / 1000);
+  }
+
+  /** Clears the action-intensity accumulator and EMA state for a new run. */
+  private resetActionIntensity(): void {
+    this.eventWindow.reset();
+    this.previousSmoothed = undefined;
+    this.lastSampleAtSeconds = Number.NEGATIVE_INFINITY;
+    this.lastSample = null;
+    this.runStartedAtMs = this.now();
   }
 }

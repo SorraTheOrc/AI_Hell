@@ -51,6 +51,35 @@ export const DEFAULT_MAX_CAPTURE_DURATION_MS = 30 * 60 * 1_000;
  */
 export const DEMO_GAME_OVER_DWELL_MS = DEFAULT_CAPTURE_TAIL_MS;
 
+/**
+ * Page-side event name for the recording-start anchor, consumed by the
+ * action-intensity video join (AH-0MUZQG13S006KL8K, epic AH-0MUZMTTYH008KVS2).
+ */
+export const CAPTURE_STARTED_EVENT = 'aihell:capture-started';
+
+/**
+ * Builds the dev-gated `capture_started` epoch-ms marker.
+ *
+ * The marker anchors the action-intensity series (`t` in ms since run start)
+ * to the captured WebM timeline (decision doc §7.5). It is dev tooling only —
+ * `enabled` defaults to `true` because the capture script never ships in the
+ * game bundle; passing `false` (or a non-finite epoch) yields `null`, so the
+ * join can fall back to the telemetry run header when the marker is absent.
+ *
+ * @param {number} epochMs — `Date.now()` at the moment recording starts.
+ * @param {boolean} [enabled] — whether to emit the marker at all.
+ * @returns {{ event: string, atEpochMs: number } | null}
+ */
+export function buildCaptureStartedMarker(epochMs, enabled = true) {
+  if (!enabled) return null;
+  const at = Number(epochMs);
+  if (!Number.isFinite(at)) return null;
+  return {
+    event: CAPTURE_STARTED_EVENT,
+    atEpochMs: Math.max(0, Math.trunc(at)),
+  };
+}
+
 /** Coerces `value` to a finite number, or returns `fallback`. */
 const toFiniteOr = (value, fallback) => {
   const numeric = Number(value);

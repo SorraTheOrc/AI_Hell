@@ -716,12 +716,6 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
-    // ── Teleport teleport keys (S/↓) — bound whenever a player exists ─────
-    // Independent of the opt-in power-up drop layer: the minerals gym
-    // grants Teleport through the hold-full choice, not field drops, so teleport
-    // must be usable there too (AH-0MUHMXWGC0058BO4 · AC2).
-    this._bindTeleportKeys();
-
     // ── Mineral layer: seed 100 random minerals + HUD hold bar ─────
     this._initMineralLayer();
 
@@ -901,19 +895,6 @@ export class GymFormationScene<
 
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
-  }
-
-  /**
-   * Binds the S / ↓ teleport keys whenever a player exists, independent of
-   * the opt-in power-up drop layer. `addKey` is idempotent for the same
-   * key code, so this is safe to call from `create()` on every restart.
-   */
-  private _bindTeleportKeys(): void {
-    if (!this.player) return;
-    this.teleportKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
-    this.downKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
   }
 
   /** Snapshot of the live bodies a drop must avoid (enemies + player). */
@@ -1545,9 +1526,10 @@ export class GymFormationScene<
       this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
 
-      // Automatic Phase Shift: feed live danger before collision gating
-      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
-      this._updatePhaseShiftAutoTrigger(dt);
+      // Automatic defence (Phase Shift / Teleport): feed live danger before
+      // collision gating so a trigger this frame protects this frame
+      // (parent AH-0MUIYX1EE008FVS8; AH-0MUZE4AIP009HZWC).
+      this._updateAutoDefence(dt);
 
       // Collisions + post-hit invulnerability blink (player component only).
       this._handleCollisions();
@@ -1559,12 +1541,6 @@ export class GymFormationScene<
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
-
-    // ── Teleport teleport (S/↓) — independent of the opt-in drop layer ─────
-    // The minerals gym grants Teleport through the hold-full choice, so the
-    // handler must run even when field drops are disabled
-    // (AH-0MUHMXWGC0058BO4 · AC2).
-    this._handleTeleport();
 
     // ── Effect timers + HUD — independent of the opt-in drop layer ───
     // Timed effects (e.g. Phase Shift granted on teleport arrival) and the HUD must

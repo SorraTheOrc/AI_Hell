@@ -88,6 +88,7 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import { getExplosionVfxCounts } from '../vfx/explosionParticles';
 import {
   ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
   spawnVictoryFireworks,
@@ -624,9 +625,6 @@ export class PlayScene extends CombatScene<
     // Movement / layer-drop / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
     this._applyBindings();
-    // Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
-    this.downKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
     // Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
@@ -707,9 +705,12 @@ export class PlayScene extends CombatScene<
 
   /**
    * Reads the persisted `ai_hell_settings` bindings and creates the Phaser
-   * keys for movement, layer-drop/teleport and the pause toggle. Arrow keys
-   * remain always-available movement defaults. Called on create and again
-   * on RESUME so a rebind takes effect immediately on return to the game.
+   * keys for movement and the pause toggle. Arrow keys remain
+   * always-available movement defaults. Called on create and again on RESUME
+   * so a rebind takes effect immediately on return to the game. Teleport is
+   * automatic (AH-0MUZE4AIP009HZWC), so the `layerDrop` action is retained
+   * in the settings model but no longer wired here — S / ↓ are freed for
+   * movement/reverse thrust.
    */
   private _applyBindings(): void {
     const bindings = resolveBindings(loadSettings().bindings);
@@ -718,7 +719,6 @@ export class PlayScene extends CombatScene<
     const kb = this.input.keyboard;
     if (!kb) {
       this.wasd = undefined;
-      this.teleportKey = null;
       return;
     }
     const keyForAction = (action: ActionName) =>
@@ -729,7 +729,6 @@ export class PlayScene extends CombatScene<
       S: keyForAction('moveDown'),
       D: keyForAction('moveRight'),
     } as WasdKeysLike;
-    this.teleportKey = keyForAction('layerDrop');
 
     // The demo take-over keys must be the *same* source as normal-play
     // movement: the resolved `moveUp`/`moveDown`/`moveLeft`/`moveRight`
@@ -905,9 +904,6 @@ export class PlayScene extends CombatScene<
     // Player input, thrust and auto-fire run in every phase, including the
     // wave/level transition pause.
     //
-    // Teleport (S/↓ JustDown) runs first so the warp position is
-    // consumed by this frame's physics.
-    this._handleTeleport();
     // Human-like demo bot: sample the decision at a human reaction cadence
     // before the shared player step reads the input seam
     // (AH-0MUXXQ1MN002RXGB).
@@ -918,9 +914,10 @@ export class PlayScene extends CombatScene<
 
     this._advanceBullets(dt);
     if (!transitioning) {
-      // Automatic Phase Shift: feed live danger before collision gating
-      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
-      this._updatePhaseShiftAutoTrigger(dt);
+      // Automatic defence (Phase Shift / Teleport): feed live danger before
+      // collision gating so a trigger this frame protects this frame
+      // (parent AH-0MUIYX1EE008FVS8; AH-0MUZE4AIP009HZWC).
+      this._updateAutoDefence(dt);
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
       this._updateSpawnAnimations(dt);
@@ -3041,6 +3038,7 @@ export class PlayScene extends CombatScene<
   /** The non-snapshot run state the tick vector carries (AC1). */
   private _telemetryExtras(): RunTelemetryExtras {
     const player = this.player;
+    const explosions = getExplosionVfxCounts();
     return {
       heading: player?.getHeading() ?? 0,
       lives: this.gameState.lives,
@@ -3049,6 +3047,9 @@ export class PlayScene extends CombatScene<
       mineralCapacity: this.gameState.mineralCapacity,
       weaponLevels: player?.getWeaponLevels() ?? [],
       powerUpLevels: player?.getPowerUpLevels() ?? [],
+      enemyExplosions: explosions.enemy,
+      bossExplosions: explosions.boss,
+      playerExplosions: explosions.player,
     };
   }
 

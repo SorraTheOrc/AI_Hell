@@ -2588,7 +2588,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     const player = scene.getPlayer()!;
 
     collectOnShip(scene, 'phase_shift');
-    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe('phase_shift');
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     expect(scene.getPlayerHitCount()).toBe(0);
 
@@ -2611,7 +2611,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
     const { scene } = await bootGated('phase_shift');
     collectOnShip(scene, 'phase_shift');
-    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe('phase_shift');
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities[0];

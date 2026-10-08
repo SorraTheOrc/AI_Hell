@@ -41,8 +41,9 @@
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *
- * Teleport (S/↓): routed through the shared `CombatScene.triggerTeleport`
- * so the game and every gym resolve teleports through one implementation;
+ * Teleport (automatic): selected by the shared per-frame defence feed and
+ * routed through the shared `CombatScene.triggerTeleport` so the game and
+ * every gym resolve teleports through one implementation;
  * it consumes one Teleport stack FIFO, warps to the nearest safe spot along the
  * heading ray, clamped to screen bounds, then applies Phase Shift. The gym supplies
  * only its hit radii (`getTeleportEnemyHitRadius` / `getTeleportBulletHitRadius`)
@@ -203,10 +204,6 @@ export class GymPowerUpsCombat extends CombatScene<
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
-    this.teleportKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
-    this.downKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
 
     // Spawn the small scout formation.
     this._spawnScoutFormation();
@@ -229,7 +226,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.shootButton.setInteractive({ useHandCursor: true });
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'Shield · Bomb · Phase Shift · Teleport (S/↓) — scouts fire aimed shots', {
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'Shield · Bomb · Phase Shift · Teleport (auto) — scouts fire aimed shots', {
       fontFamily: 'monospace',
       fontSize: '11px',
       color: '#555555',
@@ -304,7 +301,7 @@ export class GymPowerUpsCombat extends CombatScene<
    * One deterministic simulation step (seconds). Drives ship movement,
    * formation drift, scout aim + firing, bullet lifecycle, spawner,
    * drop lifecycles, collection (with Bomb bomb), effect timers,
-   * teleport (S/↓), hit response, and HUD.
+   * automatic teleport, hit response, and HUD.
    */
   tick(dt: number): void {
     if (!this.player) return;
@@ -313,9 +310,6 @@ export class GymPowerUpsCombat extends CombatScene<
     // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1/AC4). The player is
     // advanced from the supplied `dt`; auto-fire is a no-op here.
     this._tickPlayer(dt);
-
-    // ── Teleport (S/↓) — before hit checks so arrival phase protects ─
-    this._handleTeleport();
 
     // ── Formation drift ─────────────────────────────────────────
     this._tickFormation(dt);
@@ -338,8 +332,9 @@ export class GymPowerUpsCombat extends CombatScene<
     //    lifecycle, overlap collection, absorb VFX ──
     this.drops = this._updateDropLayer(this.drops, dt);
 
-    // ── Automatic Phase Shift: feed live danger before gating ──
-    this._updatePhaseShiftAutoTrigger(dt);
+    // ── Automatic defence (Phase Shift / Teleport): feed live danger
+    //    before gating so an activation this frame protects this frame ──
+    this._updateAutoDefence(dt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleCollisions();
@@ -522,7 +517,7 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // ── Shared combat-core hooks ─────────────────────────────────────
 
-  // Teleports (S/↓) run through the single shared
+  // Teleports (automatic) run through the single shared
   // `CombatScene.triggerTeleport` path; the gym supplies only its
   // specifics below. Destination selection, FIFO stack consumption and
   // the Phase Shift-on-arrival grant all live in the shared core (gap 7,
