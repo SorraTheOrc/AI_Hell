@@ -16,8 +16,8 @@
  * Each attack phase begins with a clear telegraph (glow + audio cue) at
  * least 500 ms before the visual event fires.
  *
- * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (100)
- * player hits, so the Boss is destroyed only after 400 hits total. A hit
+ * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (50)
+ * player hits, so the Boss is destroyed only after 200 hits total. A hit
  * that does not deplete the current phase leaves the phase unchanged and
  * only reduces the health-bar fill; a depleting hit advances the phase
  * (or destroys the Boss after phase 4). `takeDamage()` returns
@@ -119,7 +119,7 @@ export enum BossPhase {
 /** Total number of health phases. */
 export const BOSS_PHASE_COUNT = 4;
 /** Number of hits required to deplete one boss phase. */
-export const BOSS_HIT_POINTS_PER_PHASE = 100;
+export const BOSS_HIT_POINTS_PER_PHASE = 50;
 
 /**
  * Resolves the boss's starting HP: the full pool by default, else the
@@ -168,7 +168,7 @@ export interface BossConfig {
   rng?: () => number;
   /**
    * Optional starting health: how many further hits the boss can take.
-   * Defaults to the full 4-phase pool (400). The dev boss scenario
+   * Defaults to the full 4-phase pool (200). The dev boss scenario
    * (AH-0MUWZ5HCV0034H44) uses a small value so the run can be won quickly;
    * clamped to `[1, BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE]`.
    */
@@ -235,7 +235,7 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
-  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 400 total hits
+  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 200 total hits
   private _currentHp!: number;
   private _telegraphState: TelegraphState = TelegraphState.Idle;
   private _telegraphStartTime = 0;
@@ -284,7 +284,9 @@ export class Boss extends Phaser.GameObjects.Container {
     this.explosionGraphics.setDepth(3);
     this.add(this.explosionGraphics);
 
-    // Health bar — rendered at screen top, positioned in create().
+    // Health bar — a SCENE child (NOT a boss-container child) so it renders
+    // at the absolute screen coordinates drawn by `_drawHealthBar()` and is
+    // never offset by the boss position (AH-0MUZMTRJM003ISD5).
     this.healthBarGraphics = scene.add.graphics();
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
@@ -292,7 +294,6 @@ export class Boss extends Phaser.GameObjects.Container {
     this._currentHp = resolveInitialHp(config.initialHp, this._totalHp);
     this._currentPhaseNumber = resolveInitialPhase(config.initialPhase);
     this._currentPhase = this._currentPhaseNumber as BossPhase;
-    this.add(this.healthBarGraphics);
 
     this._drawBody();
     this._drawHealthBar();
@@ -763,6 +764,15 @@ export class Boss extends Phaser.GameObjects.Container {
    */
   getHpFraction(): number {
     return this._alive ? this._currentHp / this._totalHp : 0;
+  }
+
+  /**
+   * Returns the health-bar `Graphics` object. It is a scene child (not a
+   * boss-container child) so its drawn screen position is independent of the
+   * boss position; exposed for tests and teardown assertions.
+   */
+  getHealthBarGraphics(): Phaser.GameObjects.Graphics {
+    return this.healthBarGraphics;
   }
 
   /** Returns true if in desperation phase. */

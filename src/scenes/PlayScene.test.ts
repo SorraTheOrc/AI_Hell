@@ -1599,7 +1599,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (400 total).
+    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -1710,7 +1710,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(boss.alive).toBe(true);
   });
 
-  it('AC6 — a fully levelled weapon still requires 400 hits to destroy the boss', async () => {
+  it('AC6 — a fully levelled weapon still requires 200 hits to destroy the boss', async () => {
     const scene = await bootPlay();
     reachBoss(scene);
     const boss = scene.getBoss()!;
@@ -3801,7 +3801,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
   /**
    * Drives the boss through all four phases so the run is won
-   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 400 total).
+   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 200 total).
    */
   function defeatBoss(scene: PlayScene): void {
     const boss = scene.getBoss()!;

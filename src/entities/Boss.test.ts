@@ -15,6 +15,8 @@ import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
 import {
   BOSS_ATTACK_INTERVAL,
+  BOSS_HEALTH_BAR_WIDTH,
+  BOSS_HEALTH_SEGMENTS,
   BOSS_HIT_POINTS_PER_PHASE,
   BOSS_PHASE_COUNT,
   Boss,
@@ -252,7 +254,7 @@ describe('Boss audio shares the effects.ts AudioContext (AH-0MU4KPQHR008WX4R)', 
   });
 });
 
-// ── Per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9) ──────
+// ── Per-phase HP model: 50 hits per phase, 200 total (AH-0MUZMTRJM003ISD5) ──
 
 interface TakeDamageResult {
   destroyed: boolean;
@@ -261,7 +263,7 @@ interface TakeDamageResult {
   hpRemaining: number;
 }
 
-describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)', () => {
+describe('Boss — per-phase HP model: 50 hits per phase (AH-0MUWTS07L008KVP9)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -278,14 +280,14 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
     });
   }
 
-  // AC1: 100 hits per phase; total HP derives from the phase constants.
+  // AC1: 50 hits per phase; total HP derives from the phase constants.
   it('AC1 — total hits to destroy = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE', async () => {
     booted = await bootScene([HarnessScene]);
     const boss = makeBoss();
     const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
 
-    // AC1 metric: the exported constants compose to exactly 400 hits.
-    expect(totalHits).toBe(400);
+    // AC1 metric: the exported constants compose to exactly 200 hits.
+    expect(totalHits).toBe(200);
 
     for (let i = 0; i < totalHits - 1; i++) {
       const result = boss.takeDamage() as TakeDamageResult;
@@ -298,7 +300,7 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
     expect(boss.alive).toBe(false);
   });
 
-  // AC1: 100 hits per phase
+  // AC1: 50 hits per phase
   it('after BOSS_HIT_POINTS_PER_PHASE - 1 hits the boss remains in phase 1', async () => {
     booted = await bootScene([HarnessScene]);
     const boss = makeBoss();
@@ -473,6 +475,195 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
     const rBoundary = boss.takeDamage() as TakeDamageResult;
     expect(rBoundary.phaseAdvanced).toBe(true);
     expect(boss.getPhaseNumber()).toBe(2);
+  });
+});
+
+// ── 200-hit retune + screen-fixed health bar (AH-0MUZMTRJM003ISD5) ─
+
+// Phaser Graphics `commandBuffer` opcodes (mirrors src/powerups/icons.test.ts).
+const Cmd = {
+  FILL_RECT: 3,
+  LINE_TO: 4,
+  MOVE_TO: 5,
+  LINE_STYLE: 6,
+  FILL_STYLE: 7,
+  FILL_PATH: 8,
+  STROKE_PATH: 9,
+  BEGIN_PATH: 1,
+  CLOSE_PATH: 2,
+} as const;
+
+interface ParsedGraphics {
+  fillRects: number[][];
+  lineStyles: number[][];
+}
+
+/** Walks the flat command buffer, extracting FILL_RECT and LINE_STYLE commands. */
+function parseGraphics(buf: number[]): ParsedGraphics {
+  const fillRects: number[][] = [];
+  const lineStyles: number[][] = [];
+  let i = 0;
+  while (i < buf.length) {
+    switch (buf[i]) {
+      case Cmd.FILL_RECT:
+        fillRects.push(buf.slice(i + 1, i + 5));
+        i += 5;
+        break;
+      case Cmd.LINE_TO:
+      case Cmd.MOVE_TO:
+        i += 3;
+        break;
+      case Cmd.LINE_STYLE:
+        lineStyles.push(buf.slice(i + 1, i + 4));
+        i += 4;
+        break;
+      case Cmd.FILL_STYLE:
+        i += 3;
+        break;
+      case Cmd.BEGIN_PATH:
+      case Cmd.CLOSE_PATH:
+      case Cmd.FILL_PATH:
+      case Cmd.STROKE_PATH:
+        i += 1;
+        break;
+      default:
+        i += 1;
+        break;
+    }
+  }
+  return { fillRects, lineStyles };
+}
+
+describe('Boss — 200-hit retune + screen-fixed health bar (AH-0MUZMTRJM003ISD5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(x = 480, y = 200): Boss {
+    return new Boss(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('AC1 — BOSS_HIT_POINTS_PER_PHASE is 50 and total HP is 200', async () => {
+    booted = await bootScene([HarnessScene]);
+    expect(BOSS_HIT_POINTS_PER_PHASE).toBe(50);
+    expect(BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE).toBe(200);
+  });
+
+  it('AC1 — hit 49 keeps phase 1, hit 50 advances to phase 2, hit 200 destroys', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    for (let hit = 1; hit <= 49; hit++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.destroyed).toBe(false);
+      expect(result.phaseAdvanced).toBe(false);
+    }
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(boss.alive).toBe(true);
+
+    const fiftieth = boss.takeDamage() as TakeDamageResult;
+    expect(fiftieth.phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(2);
+
+    // Hits 51..199 leave the boss alive on its final phase.
+    for (let hit = 51; hit <= 199; hit++) boss.takeDamage();
+    expect(boss.alive).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+
+    const twoHundredth = boss.takeDamage() as TakeDamageResult;
+    expect(twoHundredth.destroyed).toBe(true);
+    expect(twoHundredth.hpRemaining).toBe(0);
+    expect(boss.alive).toBe(false);
+  });
+
+  it('AC3 — getHpFraction decreases monotonically with every hit', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    let previous = boss.getHpFraction();
+    expect(previous).toBeCloseTo(1.0);
+    for (let hit = 1; hit <= 199; hit++) {
+      boss.takeDamage();
+      const next = boss.getHpFraction();
+      expect(next).toBeLessThan(previous);
+      previous = next;
+    }
+    expect(previous).toBeGreaterThan(0);
+  });
+
+  it('AC2 — the health bar Graphics is a scene child, not a boss-container child', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const bar = boss.getHealthBarGraphics();
+
+    expect(boss.list).not.toContain(bar);
+    expect(bar.parentContainer).toBeNull();
+    // Camera-fixed at the top of the screen.
+    expect(bar.scrollFactorX).toBe(0);
+    expect(bar.scrollFactorY).toBe(0);
+    expect(bar.depth).toBe(100);
+  });
+
+  it('AC2 — the bar’s drawn screen position is unchanged when the boss moves', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    const bar = boss.getHealthBarGraphics();
+
+    const before = parseGraphics(bar.commandBuffer as number[]).fillRects;
+    const expectedX =
+      (booted!.scene.scale.width - BOSS_HEALTH_BAR_WIDTH) / 2;
+    // Drawn at the absolute screen centre, not at the boss position.
+    expect(before[0][0]).toBeCloseTo(expectedX);
+    expect(before[0][0]).not.toBeCloseTo(boss.x);
+
+    // Move the boss far from its spawn anchor (as figure-8 motion will).
+    boss.setPosition(120, 460);
+
+    // A scene child is not transformed by the boss container, so the drawn
+    // screen coordinates are byte-for-byte unchanged.
+    const after = parseGraphics(bar.commandBuffer as number[]).fillRects;
+    expect(after).toEqual(before);
+    expect(boss.x).toBe(120);
+    expect(boss.y).toBe(460);
+  });
+
+  it('AC4 — the proportional fill halves after 100 hits and the four dividers remain', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const bar = boss.getHealthBarGraphics();
+
+    const full = parseGraphics(bar.commandBuffer as number[]);
+    // Two FILL_RECTs: full-width background and the proportional health fill.
+    expect(full.fillRects).toHaveLength(2);
+    expect(full.fillRects[1][2]).toBeCloseTo(BOSS_HEALTH_BAR_WIDTH);
+
+    for (let hit = 0; hit < 100; hit++) boss.takeDamage();
+    expect(boss.getHpFraction()).toBeCloseTo(0.5);
+
+    const half = parseGraphics(bar.commandBuffer as number[]);
+    expect(half.fillRects[1][2]).toBeCloseTo(BOSS_HEALTH_BAR_WIDTH * 0.5);
+    // The divider line style is still emitted (4 segments → 3 dividers).
+    expect(BOSS_HEALTH_SEGMENTS).toBe(4);
+    expect(half.lineStyles.some((s) => s[1] === 0x666666)).toBe(true);
+  });
+
+  it('AC4 — destroy() explicitly destroys the health-bar Graphics', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const bar = boss.getHealthBarGraphics();
+
+    boss.destroy();
+
+    expect(bar.active).toBe(false);
+    expect(bar.scene).toBeUndefined();
   });
 });
 
