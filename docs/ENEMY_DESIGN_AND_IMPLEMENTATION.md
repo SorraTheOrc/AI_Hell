@@ -29,6 +29,21 @@ E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
 Boss is multi-hit via its 4-phase bar — **100 hits per phase (400 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
+### 1.2 Classic arcade research (AH-0MV01EBUR003BDNK)
+
+The current roster (E1–E7 + Boss) is a self-contained set of seven archetypes.
+A research epic (AH-0MUYAQ6YH0010G52) selected eight classic arcade enemy
+archetypes for future implementation: Space Invaders, Galaga, Pac-Man Ghosts,
+Centipede, Robotron 2084 Horde, Defender Raider, Missile Command Strike, and
+Frogger Lane Traffic. Each selected archetype has its own child work item that
+implements the full lifecycle (code + tests + gym parity + docs).
+
+The full research catalogue — source game, original behaviour, AI_Hell
+adaptation, pipeline fit, difficulty scoring inputs, and gym scenes — is in
+[`CLASSIC_ENEMY_RESEARCH.md`](CLASSIC_ENEMY_RESEARCH.md). The "considered but
+not selected" section (Joust, Dig Dug, Q*bert, Star Castle) is also recorded
+there for future roster expansion.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed
