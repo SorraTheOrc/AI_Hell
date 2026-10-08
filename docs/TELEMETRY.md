@@ -1,9 +1,9 @@
 # Telemetry framework
 
 > Status: framework landed in AH-0MUY08VJ9006BHJO (epic
-> AH-0MUY089KR003F8S4). Wiring the game to record per-tick state is child 3
-> (AH-0MUY08VVQ007HSSH); production opt-in and the remote transport are child
-> 10 (AH-0MUY08Y9P005ER7A).
+> AH-0MUY089KR003F8S4). The game instrumentation — per-tick state + input and
+> discrete events — landed in child 3 (AH-0MUY08VVQ007HSSH); production opt-in
+> and the remote transport are child 10 (AH-0MUY08Y9P005ER7A).
 
 The telemetry framework is a **versioned, consent-gated, pluggable pipeline**
 that is a **strict no-op unless explicitly enabled**. It records reproducible
@@ -160,6 +160,99 @@ Recording must never stall gameplay:
 Inspect `recorder.stats` for `recorded`, `dropped`, `skipped`,
 `flushedBatches`, `flushedRecords` and `failedBatches`.
 
+## Game instrumentation (AH-0MUY08VVQ007HSSH)
+
+The concrete `state`, `input` and event `payload` shapes the game records are
+owned by [`src/scenes/core/runTelemetry.ts`](../src/scenes/core/runTelemetry.ts).
+`PlayScene` wires that layer to the framework in `create()`; the recording is
+**off by default**, so a normal run is a strict no-op.
+
+### Per-tick state vector (AC1)
+
+Each sampled tick records a compact, versioned state vector built from the
+existing read-only `buildBotSnapshot()` (`src/ai/botSnapshot.ts`) plus the run
+state the snapshot does not carry:
+
+| Field | Contents |
+|---|---|
+| `v` | concrete state-vector version (`RUN_TELEMETRY_STATE_VERSION`) |
+| `runSeed` | the per-run RNG seed — a tick is self-describing |
+| `player` | `x`, `y`, `vx`, `vy`, `heading` (rad), `lives`, `invulnerable` |
+| `hold` | `minerals`, `capacity` |
+| `levels` | run-scoped `weapons` and `powerUps` (`{ id, level }`) |
+| `enemies` | `x`, `y`, `alive`, `archetype` |
+| `enemyBullets` | `x`, `y`, `vx`, `vy` |
+| `drops` | `x`, `y`, `type` |
+| `minerals` | `x`, `y`, `type` |
+| `boss` | `x`, `y`, `alive`, `phase` (or `null`) |
+| `aliveCount` | live enemy count |
+| `wave` | `active`, `timeRemaining`, `timeLimit` (or `null`) |
+
+### Per-tick input (AC2)
+
+The tick's `input` is the control input the shared player step **actually
+applied** (`player.getInput()`), tagged with its control scheme:
+`{ scheme: 'asteroids', forward, turnLeft, turnRight }` or
+`{ scheme: 'fourDirectional', up, down, left, right }`. It is recorded for the
+shipped/demo bot and for human play alike, because both flow through the one
+shared input seam.
+
+### Discrete events (AC3)
+
+Events are tagged with `RUN_TELEMETRY_EVENT_VERSION` and the tick they occurred
+on:
+
+| Event | Recorded when | Payload |
+|---|---|---|
+| `run_start` | run begins | `{ seed }` |
+| `run_end` | run ends (win or lose) | `{ won, score }` |
+| `player_hit` | a hit costs a life | `{ lives }` |
+| `player_hit_absorbed` | a shield absorbs a hit | `{}` |
+| `player_death` | the ship runs out of lives | `{}` |
+| `enemy_killed` | an enemy/asteroid is destroyed | `{ archetype, x, y }` |
+| `pickup` | a power-up/weapon is collected | `{ kind, id }` |
+| `mineral_collected` | a mineral enters the hold | `{ total }` |
+| `hold_full` | the hold-full choice opens | `{ options }` |
+| `choice_selected` | the choice is resolved | `{ index, id }` |
+| `wave_start` | a wave starts | `{ level, waveNumber, waveCount }` |
+| `wave_cleared` | a wave is cleared | `{ level, waveNumber }` |
+| `level_cleared` | a level is cleared | `{ level }` |
+| `boss_triggered` | the campaign triggers the boss | `{}` |
+| `boss_spawn` | the boss spawns | `{}` |
+| `boss_phase` | a boss phase is depleted | `{ phase }` |
+| `boss_defeated` | the boss is destroyed | `{}` |
+
+The framework still writes a `run_header` (seed + build) once per run.
+
+### Enabling it for the game
+
+Enable recording exactly as for the framework (`VITE_TELEMETRY_ENABLED=true`;
+production also needs `VITE_TELEMETRY_CONSENT=true`). While disabled,
+`PlayScene` performs only one boolean check per tick and records nothing.
+Records are flushed on scene shutdown so the run tail (`run_end`) reaches the
+sink.
+
+### Opting a shared-core / gym scene in (AC4)
+
+Any scene that can satisfy `buildBotSnapshot()` can opt in without new
+plumbing — build the same state/input values and call the wrapper:
+
+```ts
+import { buildBotSnapshot } from '../ai/botSnapshot';
+import { buildRunTelemetryState, RunTelemetry, serialiseTelemetryInput } from './core/runTelemetry';
+
+const telemetry = new RunTelemetry(recorder); // no-op unless recorder.enabled
+telemetry.startRun(runSeed);
+// once per tick:
+telemetry.recordTick(
+  buildRunTelemetryState(buildBotSnapshot(scene), extras),
+  serialiseTelemetryInput(scene.getPlayer()?.getInput() ?? null),
+);
+// at lifecycle points:
+telemetry.enemyKilled(archetype, x, y);
+telemetry.runEnd(won, score);
+```
+
 ## Data policy — no PII, no secrets
 
 - **By design**, the schema records positional/numeric gameplay state and
@@ -191,6 +284,8 @@ The framework is covered by hermetic unit tests under
 | `config.test.ts` | disabled-by-default, consent gate, env parsing |
 | `sinks.test.ts` | no-op sink, JSONL round-trip, remote stub |
 | `recorder.test.ts` | run header/schema version, batching, ring buffer, sampling, redaction |
+| [`runTelemetry.test.ts`](../src/scenes/core/runTelemetry.test.ts) | concrete state/event serialisation, version/seed tagging, no-op |
+| [`PlaySceneTelemetry.test.ts`](../src/scenes/PlaySceneTelemetry.test.ts) | end-to-end PlayScene recording: state + applied input, run/wave/kill/pickup/choice/run-end events, off = zero records |
 
 Run them with `npx vitest run src/telemetry` (or the full suite via
 `/skill:test`).

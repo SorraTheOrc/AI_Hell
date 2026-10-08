@@ -111,6 +111,18 @@ import {
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
+  createTelemetryRecorder,
+  resolveBuildInfo,
+  resolveTelemetryConfig,
+  type TelemetryRecorder,
+} from '../telemetry';
+import {
+  buildRunTelemetryState,
+  RunTelemetry,
+  serialiseTelemetryInput,
+  type RunTelemetryExtras,
+} from './core/runTelemetry';
+import {
   clearDevScenarioHandle,
   installDevScenarioHandle,
   isDevScenarioEnabled,
@@ -483,6 +495,22 @@ export class PlayScene extends CombatScene<
   private rngInjected = false;
 
   /**
+   * Test/headless seam: a recorder injected via {@link setTelemetryRecorder}.
+   * When null, `create()` builds one from the environment config (disabled by
+   * default). The recorder is reused across restarts so a test can observe a
+   * full run (AH-0MUY08VVQ007HSSH).
+   */
+  private injectedTelemetryRecorder: TelemetryRecorder | null = null;
+
+  /**
+   * Live run instrumentation (AH-0MUY08VVQ007HSSH). A strict no-op until
+   * `_initTelemetry()` installs the configured/injected recorder, and while
+   * telemetry is disabled. Never null, so tick/event call sites need no null
+   * guard.
+   */
+  private runTelemetry: RunTelemetry = RunTelemetry.noop();
+
+  /**
    * Asteroid spawn events planned for the active wave (empty outside a
    * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
    * scene rng stream is only advanced at wave boundaries.
@@ -544,6 +572,10 @@ export class PlayScene extends CombatScene<
     // Seed the bot's per-press jitter from the run seed so demo press
     // lengths are reproducible per run (AC15).
     this.botGovernor.seed(this.getRunSeed());
+    // Install the telemetry instrumentation for this run (AH-0MUY08VVQ007HSSH):
+    // the environment-configured recorder (disabled by default) unless a test
+    // injected one. Records the run header + `run_start` event.
+    this._initTelemetry();
 
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
@@ -774,6 +806,10 @@ export class PlayScene extends CombatScene<
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
+
+    // Flush any buffered records so the run tail (run_end) reaches the sink
+    // before the scene is torn down (AH-0MUY08VVQ007HSSH).
+    void this.runTelemetry.flush();
   }
 
   // ── Frame loop ──────────────────────────────────────────────────
@@ -878,6 +914,9 @@ export class PlayScene extends CombatScene<
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
+    // Per-tick telemetry last, so the recorded state matches the frame the
+    // player actually saw (AH-0MUY08VVQ007HSSH). No-op when off.
+    this._recordTelemetryTick();
   }
 
   /**
@@ -947,6 +986,11 @@ export class PlayScene extends CombatScene<
     this.diverAnchorX = 0;
     this.diverAnchorY = 0;
     this._startWaveTimer();
+    this.runTelemetry.waveStart(
+      this.waveManager.level,
+      this.waveManager.waveNumber,
+      this.waveManager.waveCount,
+    );
   }
 
   /** Instantiates one enemy from its spawn descriptor. */
@@ -1257,13 +1301,19 @@ export class PlayScene extends CombatScene<
       case 'continue':
         return;
       case 'waveCleared':
+        this.runTelemetry.waveCleared(
+          this.waveManager.level,
+          this.waveManager.waveNumber,
+        );
         this._startTransition();
         return;
       case 'levelCleared':
+        this.runTelemetry.levelCleared(this.waveManager.level);
         this._announceLevel();
         this._startTransition();
         return;
       case 'bossTriggered':
+        this.runTelemetry.bossTriggered();
         this.onBossTriggered();
         return;
       case 'gameComplete':
@@ -1413,6 +1463,7 @@ export class PlayScene extends CombatScene<
       initialPhase: options.initialPhase,
     });
     this.add.existing(this.boss);
+    this.runTelemetry.bossSpawn();
     if (options.spawnMinions !== false) this._spawnMinions(1);
     // No per-wave time limit applies to the boss encounter.
     this._hideWaveTimer();
@@ -1591,6 +1642,7 @@ export class PlayScene extends CombatScene<
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
+      this.runTelemetry.bossDefeated();
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -1600,6 +1652,7 @@ export class PlayScene extends CombatScene<
     // summon the next phase's minions. Partial-phase hits do neither.
     if (result.phaseAdvanced) {
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.runTelemetry.bossPhase(boss.getPhaseNumber());
       this._spawnMinions(boss.getPhaseNumber());
     }
   }
@@ -1913,6 +1966,7 @@ export class PlayScene extends CombatScene<
     } else if (awardScore) {
       this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
     }
+    this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
     // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
     // asteroid leaves one mineral at the site, large/medium asteroids do not
@@ -1961,6 +2015,7 @@ export class PlayScene extends CombatScene<
    * destruction sound. The hit is absorbed — no life lost.
    */
   protected override onShieldAbsorbed(): void {
+    this.runTelemetry.playerHitAbsorbed();
     playDestructionSound();
   }
 
@@ -1988,6 +2043,7 @@ export class PlayScene extends CombatScene<
 
     this.playerHitCount += 1;
     this.gameState.loseLife();
+    this.runTelemetry.playerHit(this.gameState.lives);
     // Push the authoritative run-state lives into the HUD's registry so the
     // lives counter updates immediately (GDD §4.5 display).
     this.effectsRegistry.setLives(this.gameState.lives);
@@ -2007,6 +2063,7 @@ export class PlayScene extends CombatScene<
     }
 
     if (this.gameState.lives <= 0) {
+      this.runTelemetry.playerDeath();
       this._finishRun(false);
       return;
     }
@@ -2113,10 +2170,16 @@ export class PlayScene extends CombatScene<
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
     super.onPowerUpCollected(drop);
+    this.runTelemetry.pickup('powerUp', drop.dropId);
     if (drop.dropId === 'extra_life') {
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
+  }
+
+  /** Weapon pickup hook: records the discrete pickup event (AC3). */
+  protected override onWeaponCollected(drop: PlayDrop): void {
+    this.runTelemetry.pickup('weapon', drop.weaponDropId ?? drop.dropId);
   }
 
   // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────
@@ -2201,13 +2264,16 @@ export class PlayScene extends CombatScene<
       case 'continue':
         return;
       case 'waveCleared':
+        this.runTelemetry.waveCleared(wm.level, wm.waveNumber);
         this._startTransition();
         return;
       case 'levelCleared':
+        this.runTelemetry.levelCleared(wm.level);
         this._announceLevel();
         this._startTransition();
         return;
       case 'bossTriggered':
+        this.runTelemetry.bossTriggered();
         this.onBossTriggered();
         return;
       case 'gameComplete':
@@ -2309,6 +2375,8 @@ export class PlayScene extends CombatScene<
 
   /** Transitions to GameOverScene with the final score. */
   private _finishRun(won: boolean): void {
+    // Run end (win/lose) is a discrete telemetry event (AH-0MUY08VVQ007HSSH).
+    this.runTelemetry.runEnd(won, this.gameState.score);
     // Dev-gated end-of-run signal (AH-0MUXZ4BXK001QCEK), emitted *before* the
     // scene transition so a demo run that returns to the menu still signals.
     // `window` receives the `aihell:run-ended` CustomEvent and the
@@ -2652,6 +2720,7 @@ export class PlayScene extends CombatScene<
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
+    this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));
     this.setPaused(true);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.pause();
@@ -2687,6 +2756,7 @@ export class PlayScene extends CombatScene<
   selectMineralChoice(index: number): ChoiceOption | null {
     const option = this.mineralChoiceOptions[index];
     if (!option) return null;
+    this.runTelemetry.choiceSelected(index, option.id);
     this._applyChoicePermanently(option);
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
@@ -2710,6 +2780,7 @@ export class PlayScene extends CombatScene<
   /** Collects a mineral: adds it to the hold and opens the choice when full. */
   private _collectMineral(): void {
     this.gameState.addMinerals(loadRules().mineralCollectAmount);
+    this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();
     if (this.gameState.isHoldFull()) this.openMineralChoice();
   }
@@ -2826,6 +2897,67 @@ export class PlayScene extends CombatScene<
    */
   getRunSeed(): number {
     return this.runSeed;
+  }
+
+  /**
+   * Injects a telemetry recorder (test/headless seam,
+   * AH-0MUY08VVQ007HSSH). The next `create()` uses it in place of the
+   * environment-configured recorder, letting a test capture a run's records
+   * without enabling telemetry for the whole suite.
+   */
+  setTelemetryRecorder(recorder: TelemetryRecorder): void {
+    this.injectedTelemetryRecorder = recorder;
+  }
+
+  /** Whether live run recording is enabled (test/inspection seam). */
+  isTelemetryEnabled(): boolean {
+    return this.runTelemetry.enabled;
+  }
+
+  /**
+   * Installs the instrumentation for this run: the injected recorder when one
+   * was supplied via {@link setTelemetryRecorder}, else one built from the
+   * environment config (disabled by default). Writes the run header (seed +
+   * build) and the `run_start` event.
+   */
+  private _initTelemetry(): void {
+    const recorder =
+      this.injectedTelemetryRecorder ??
+      createTelemetryRecorder(resolveTelemetryConfig(), {
+        build: resolveBuildInfo(),
+      });
+    this.runTelemetry = new RunTelemetry(recorder);
+    this.runTelemetry.startRun(this.getRunSeed());
+  }
+
+  /**
+   * Records the per-tick state vector + the input actually applied
+   * (AH-0MUY08VVQ007HSSH, AC1/AC2/AC4). When telemetry is disabled this is a
+   * single boolean check — no snapshot is built and nothing is serialised
+   * (AC5). `player.getInput()` is the input the shared player step applied, so
+   * bot and human alike are captured through one seam (AC4).
+   */
+  private _recordTelemetryTick(): void {
+    if (!this.runTelemetry.enabled) return;
+    const player = this.player;
+    this.runTelemetry.recordTick(
+      buildRunTelemetryState(buildBotSnapshot(this), this._telemetryExtras()),
+      serialiseTelemetryInput(player?.getInput() ?? null),
+    );
+  }
+
+  /** The non-snapshot run state the tick vector carries (AC1). */
+  private _telemetryExtras(): RunTelemetryExtras {
+    const player = this.player;
+    return {
+      heading: player?.getHeading() ?? 0,
+      lives: this.gameState.lives,
+      invulnerable: this.invulnerable > 0,
+      minerals: this.gameState.minerals,
+      mineralCapacity: this.gameState.mineralCapacity,
+      weaponLevels: player?.getWeaponLevels() ?? [],
+      powerUpLevels: player?.getPowerUpLevels() ?? [],
+    };
   }
 
   /**
