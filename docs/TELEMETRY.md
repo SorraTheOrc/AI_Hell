@@ -112,15 +112,16 @@ the envelope and guarantees the payload is JSON-safe and PII-free, while the
 instrumentation layer owns the concrete shape. Payloads are copies — call
 sites can never mutate buffered data.
 
-> **Planned `state` field — `actionIntensity`.** The instrumentation child
-> (AH-0MUY08VVQ007HSSH) will add an `actionIntensity` object to the per-tick
-> `state` (raw score, normalised intensity, smoothed EMA, burstiness, and a
-> per-category breakdown). It is a payload-only change — no framework schema
-> bump — and the metric is a strict no-op when telemetry is disabled. The
-> researched model, scoring weights, output schema and video-join semantics
-> are specified in
+> **Planned `state` field — `actionIntensity`.** The per-tick `state` will
+> gain an `actionIntensity` object (raw score, normalised intensity, smoothed
+> EMA, burstiness, and a per-category breakdown). It is a payload-only change —
+> no framework schema bump — and the metric is a strict no-op when telemetry is
+> disabled. The pure computation and its wiring through the instrumentation
+> layer (`src/scenes/core/runTelemetry.ts`, AH-0MUY08VVQ007HSSH) are delivered
+> by the implementation epic **AH-0MUZMTTYH008KVS2**; the researched model,
+> scoring weights, output schema and video-join semantics are specified in
 > [docs/dev/action-intensity.md](./dev/action-intensity.md)
-> (AH-0MUZCSJXQ004TREN; implementation epic AH-0MUZMTTYH008KVS2).
+> (AH-0MUZCSJXQ004TREN).
 
 ## Sinks
 
@@ -187,6 +188,10 @@ state the snapshot does not carry:
 | `boss` | `x`, `y`, `alive`, `phase` (or `null`) |
 | `aliveCount` | live enemy count |
 | `wave` | `active`, `timeRemaining`, `timeLimit` (or `null`) |
+
+The shape is versioned by `v` and extensible without an envelope bump — the
+on-screen action-intensity epic (AH-0MUZMTTYH008KVS2) adds an
+`actionIntensity` object here.
 
 ### Per-tick input (AC2)
 
