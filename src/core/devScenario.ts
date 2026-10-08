@@ -3,7 +3,7 @@
  * (AH-0MUWZ5HCV0034H44 producer-audit follow-up).
  *
  * The victory-fireworks display is anchored to the Central AI boss, but a
- * real run requires 400 hits (4 phases × 100) to reach it, so the recorder
+ * real run requires 200 hits (4 phases × 50) to reach it, so the recorder
  * (`npm run capture`) — and a human reviewer — cannot practically observe the
  * celebration. A **dev scenario** is a small, additive, dev-only shortcut that
  * drops the run straight into the boss encounter with a chosen number of hits

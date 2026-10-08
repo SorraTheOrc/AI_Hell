@@ -15,7 +15,8 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { addEntry } from '../core/Leaderboard';
-import { MenuScene, resumeAudioContext } from './MenuScene';
+import { GAME_HEIGHT } from '../core/constants';
+import { GITHUB_REPO_URL, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
 import { SettingsScene } from './SettingsScene';
@@ -264,7 +265,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(play.style.stroke).toBeTruthy();
   });
 
-  it('AC2/AC5 — Tab cycles focus: Play → Watch Demo → Settings → Leaderboard → Gym Index → Play (wrap)', async () => {
+  it('AC2/AC5 — Tab cycles focus: Play → Watch Demo → Settings → Leaderboard → GitHub → Gym Index → Play (wrap)', async () => {
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
 
@@ -276,6 +277,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
@@ -298,6 +302,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+
+    pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: 'ArrowDown' });
@@ -308,6 +315,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     const scene = await bootMenu();
     pressKey(scene, { key: 'Tab', shiftKey: true });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+
+    pressKey(scene, { key: 'Tab', shiftKey: true });
+    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
 
     pressKey(scene, { key: 'Tab', shiftKey: true });
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
@@ -356,6 +366,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC6 — Enter on focused Gym Scene Index opens GymIndex', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
@@ -638,5 +649,138 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
 
     expect(startSpy).toHaveBeenCalledWith('PlayScene', { demo: false });
     startSpy.mockRestore();
+  });
+});
+
+describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([
+      MenuScene,
+      PlayScene,
+      PauseScene,
+      SettingsScene,
+      GameOverScene,
+      LeaderboardScene,
+      GymIndex,
+    ]);
+    return booted!.scene as MenuScene;
+  }
+
+  /**
+   * Dispatches a keydown through the scene keyboard plugin. The
+   * `FocusManager.attachKeyboard` wiring routes this to
+   * `FocusManager.handleKey`, so this exercises the same keyboard
+   * activation path a player uses (AC5c).
+   */
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('AC1 — renders an interactive "🐙  GitHub" link in the bottom-left corner', async () => {
+    const scene = await bootMenu();
+    const link = findText(scene, '🐙  GitHub');
+
+    // Interactive click target.
+    expect(link.input?.enabled).toBe(true);
+    // Bottom-left footer, matching the Gym Scene Index button's bottom offset.
+    expect(link.x).toBe(16);
+    expect(link.y).toBe(GAME_HEIGHT - 12);
+    // Shares the neon-cyan menu palette.
+    expect(link.style.color).toBe('#00ffff');
+  });
+
+  it('AC2 — pointer-down opens the repository in a new tab', async () => {
+    const scene = await bootMenu();
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    findText(scene, '🐙  GitHub').emit('pointerdown');
+
+    expect(openSpy).toHaveBeenCalledWith(
+      GITHUB_REPO_URL,
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('AC3 — pointerover highlights in #88ffff and pointerout restores the menu colour', async () => {
+    const scene = await bootMenu();
+    const link = findText(scene, '🐙  GitHub');
+
+    link.emit('pointerover');
+    expect(link.style.color).toBe('#88ffff');
+
+    link.emit('pointerout');
+    expect(link.style.color).toBe('#00ffff');
+  });
+
+  it('AC3 — GitHub sits between Leaderboard and Gym Scene Index in the Tab order', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Watch Demo
+    pressKey(scene, { key: 'Tab' }); // Settings
+    pressKey(scene, { key: 'Tab' }); // Leaderboard
+    expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+  });
+
+  it('AC3+AC5 — Enter on the focused GitHub link opens the repository', async () => {
+    const scene = await bootMenu();
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    pressKey(scene, { key: 'Tab' }); // Watch Demo
+    pressKey(scene, { key: 'Tab' }); // Settings
+    pressKey(scene, { key: 'Tab' }); // Leaderboard
+    pressKey(scene, { key: 'Tab' }); // GitHub
+    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+
+    pressKey(scene, { key: 'Enter' });
+
+    expect(openSpy).toHaveBeenCalledWith(
+      GITHUB_REPO_URL,
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('AC3+AC5 — Space on the focused GitHub link opens the repository', async () => {
+    const scene = await bootMenu();
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+
+    pressKey(scene, { key: ' ' });
+
+    expect(openSpy).toHaveBeenCalledWith(
+      GITHUB_REPO_URL,
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('AC4 — GITHUB_REPO_URL is re-exported from MenuScene and points at the repo', () => {
+    expect(GITHUB_REPO_URL).toBe('https://github.com/SorraTheOrc/AI_Hell');
   });
 });

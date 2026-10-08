@@ -112,6 +112,22 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     expect(boss.getHealthSegments()).toBe(BOSS_PHASE_COUNT);
   });
 
+  it('AC3 — the health bar is a camera-fixed scene child, not a boss-container child', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    const bar = boss.getHealthBarGraphics();
+
+    // Re-parented out of the boss container (AH-0MUZMTRJM003ISD5) so the bar
+    // renders at absolute screen coordinates, unaffected by the boss position.
+    expect(boss.list).not.toContain(bar);
+    expect(bar.parentContainer).toBeNull();
+    expect(bar.scrollFactorX).toBe(0);
+    expect(bar.scrollFactorY).toBe(0);
+    expect(bar.depth).toBe(100);
+    // It is on the scene display list rather than inside the container.
+    expect(scene.children.list).toContain(bar);
+  });
+
   it('AC4 — Phase 1 (Spread) attack pattern fires', async () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;

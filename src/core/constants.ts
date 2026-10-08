@@ -116,6 +116,14 @@ export const MAGNET_ATTRACTION_SPEED = 120;
 /** Render depth of the standalone HUD — above gameplay objects. */
 export const HUD_DEPTH = 1000;
 
+/**
+ * Canonical URL of the project's public GitHub repository
+ * (AH-0MUZI83EO003WVTG). Single source of truth for the main-menu GitHub
+ * link's click target; the displayed label is `🐙  GitHub`. Fork
+ * maintainers point this at their own repository.
+ */
+export const GITHUB_REPO_URL = 'https://github.com/SorraTheOrc/AI_Hell';
+
 // ── Entity collision hit radii (GDD §2.6) ──────────────────────────
 
 /**

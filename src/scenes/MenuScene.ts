@@ -8,10 +8,12 @@
  *   before starting a session (parent AH-0MU9LPZ0G0015292).
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
  *   for testing individual gym components.
+ * - **GitHub** — footer link (bottom-left) that opens the project's source
+ *   repository in a new browser tab (AH-0MUZI83EO003WVTG).
  *
  * Keyboard navigation (AH-0MU9LKQEP008LCX9-C2) is provided by a shared
  * {@link FocusManager}: Play Game is focused by default, Tab and the arrow
- * keys cycle focus among the three controls (wrapping), and Enter/Space
+ * keys cycle focus among the controls (wrapping), and Enter/Space
  * activate the focused control. Pointer handlers are unchanged (keyboard
  * support is additive).
  *
@@ -21,7 +23,7 @@
 
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { GAME_HEIGHT, GAME_WIDTH, GITHUB_REPO_URL } from '../core/constants';
 import { FocusManager } from '../utils/focusManager';
 import { installGameAudio } from '../audio/effects';
 import { loadTelemetryConsent } from '../core/telemetryConsentStore';
@@ -36,6 +38,15 @@ import {
 const MENU_TEXT_COLOR = '#00ffff';
 /** Secondary text colour for the dev tool button. */
 const DEV_TEXT_COLOR = '#888888';
+
+/** Display label for the footer GitHub link (AH-0MUZI83EO003WVTG). */
+const GITHUB_LINK_LABEL = '🐙  GitHub';
+
+/**
+ * Re-exported so tests and callers can assert the link target against the
+ * single source of truth (AH-0MUZI83EO003WVTG AC4).
+ */
+export { GITHUB_REPO_URL };
 
 /**
  * Idle time (ms) before the attract/demo run starts on its own (Q4a/Q4b,
@@ -252,6 +263,38 @@ export class MenuScene extends Phaser.Scene {
 
     this.controls.push({ label: '🏆  Leaderboard', text: leaderboardButton });
 
+    // ── GitHub link (footer, bottom-left) ────────────────────────
+    // Opens the project's source repository in a new tab
+    // (AH-0MUZI83EO003WVTG). Mirrors the Gym Scene Index dev button's
+    // bottom-corner offset on the opposite side, and joins the Tab cycle
+    // after Leaderboard.
+    const githubButton = this.add.text(
+      16,
+      GAME_HEIGHT - 12,
+      GITHUB_LINK_LABEL,
+      {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 12, y: 6 },
+      },
+    ).setOrigin(0, 1);
+    githubButton.setInteractive({ useHandCursor: true });
+
+    githubButton.on('pointerover', () => {
+      githubButton.setStyle({ color: '#88ffff' });
+    });
+    githubButton.on('pointerout', () => {
+      githubButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    githubButton.on('pointerdown', () => {
+      this.openGithubRepo();
+    });
+
+    this.controls.push({ label: GITHUB_LINK_LABEL, text: githubButton });
+
     // ── Gym Scene Index button (dev tool) ────────────────────────
     const devButton = this.add.text(
       GAME_WIDTH - 16,
@@ -310,6 +353,9 @@ export class MenuScene extends Phaser.Scene {
     this.focusManager.register(leaderboardButton, () => {
       this.scene.start('LeaderboardScene');
     });
+    this.focusManager.register(githubButton, () => {
+      this.openGithubRepo();
+    });
     this.focusManager.register(devButton, () => {
       this.scene.start('GymIndex');
     });
@@ -330,6 +376,17 @@ export class MenuScene extends Phaser.Scene {
       this.attractTimer?.remove(false);
       this.attractTimer = null;
     });
+  }
+
+  /**
+   * Opens the project's GitHub repository in a new browser tab
+   * (AH-0MUZI83EO003WVTG AC2/AC3). Called synchronously from both the
+   * pointer and keyboard handlers so the browser treats the call as a user
+   * gesture and does not block the popup. `noopener,noreferrer` drops the
+   * `window.opener` reference on the opened page (tab-nabbing protection).
+   */
+  openGithubRepo(): void {
+    window.open(GITHUB_REPO_URL, '_blank', 'noopener,noreferrer');
   }
 
   // ── Public query helpers (unit-testable) ───────────────────────
