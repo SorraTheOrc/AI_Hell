@@ -4061,6 +4061,148 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     });
   });
 
+  // ── Narrowed demo take-over (AH-0MUYP6M6W006Z1AY) ───────────────
+
+  describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
+    /** Boots a live game and starts the demo, returning the PlayScene. */
+    async function bootDemo(): Promise<PlayScene> {
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+        deterministicBoot: true,
+      });
+      const scene = booted.scene as PlayScene;
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+      return scene;
+    }
+
+    /** Dispatches a keydown through the scene keyboard plugin. */
+    function pressKey(scene: PlayScene, key: string): void {
+      scene.input.keyboard!.emit('keydown', {
+        key,
+        repeat: false,
+        preventDefault: () => {},
+      } as KeyboardEvent);
+    }
+
+    function takeOverHandlerOf(scene: PlayScene): unknown {
+      return (scene as unknown as { demoTakeOverHandler: unknown })
+        .demoTakeOverHandler;
+    }
+
+    it('AC1 — ESC leaves the demo for MenuScene and does not pause', async () => {
+      const scene = await bootDemo();
+
+      pressKey(scene, 'Escape');
+      await new Promise((r) => setTimeout(r, 80));
+
+      // Exactly one ESC action applies: return to the menu, never pause.
+      expect(scene.isPaused()).toBe(false);
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    });
+
+    it('AC1 — ESC does not take over the run (no in-place hand-off)', async () => {
+      const scene = await bootDemo();
+      pressKey(scene, 'Escape');
+      await new Promise((r) => setTimeout(r, 80));
+      // The demo was abandoned to the menu, not handed to the keyboard.
+      expect(scene.isPaused()).toBe(false);
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    });
+
+    it('AC2 — an arrow key takes over the demo in place', async () => {
+      const scene = await bootDemo();
+
+      pressKey(scene, 'ArrowUp');
+
+      expect(scene.isDemoMode()).toBe(false);
+      // In place — the run continues on the live PlayScene.
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    });
+
+    it('AC2 — a configured movement key takes over the demo', async () => {
+      const scene = await bootDemo();
+
+      pressKey(scene, 'w');
+
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    it('AC2 — a rebind is honoured: the new movement key takes over, the old one does not', async () => {
+      const scene = await bootDemo();
+
+      // Rebind moveUp from `w` to `i`, exactly as SettingsScene persists it.
+      localStorage.setItem(
+        'ai_hell_settings',
+        JSON.stringify({
+          sfxVolume: 1,
+          sfxMuted: false,
+          bindings: { moveUp: 'i' },
+        }),
+      );
+      (scene as unknown as { _applyBindings(): void })._applyBindings();
+
+      // The old default `w` is no longer movement → ignored.
+      pressKey(scene, 'w');
+      expect(scene.isDemoMode()).toBe(true);
+
+      // The new binding `i` takes over.
+      pressKey(scene, 'i');
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    it('AC3 — a non-movement key is ignored and the demo keeps playing', async () => {
+      const scene = await bootDemo();
+
+      for (const key of [' ', 'Enter', 'Tab', 'x', '7', 'F1']) {
+        pressKey(scene, key);
+      }
+
+      expect(scene.isDemoMode()).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    });
+
+    it('AC3 — the pointer no longer takes over the demo', async () => {
+      const scene = await bootDemo();
+
+      scene.input.emit('pointerdown', { x: 100, y: 100 });
+
+      expect(scene.isDemoMode()).toBe(true);
+    });
+
+    it('AC5 — normal play registers no take-over listener and ESC still pauses', async () => {
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+        deterministicBoot: true,
+      });
+      const scene = booted.scene as PlayScene;
+      expect(scene.isDemoMode()).toBe(false);
+      expect(takeOverHandlerOf(scene)).toBeNull();
+
+      pressKey(scene, 'Escape');
+      await new Promise((r) => setTimeout(r, 80));
+
+      expect(scene.isPaused()).toBe(true);
+      expect(booted.game.scene.isActive('PlayScene')).toBe(true);
+    });
+
+    it('AC6 — the take-over listener is cleaned up on take-over and ESC-exit', async () => {
+      const scene = await bootDemo();
+      expect(takeOverHandlerOf(scene)).not.toBeNull();
+
+      // Movement take-over removes the listener (via `setDemoMode(false)`).
+      pressKey(scene, 'ArrowLeft');
+      expect(scene.isDemoMode()).toBe(false);
+      expect(takeOverHandlerOf(scene)).toBeNull();
+
+      // Re-arm, then leave via ESC: the listener is removed before the menu.
+      scene.setDemoMode(true);
+      expect(takeOverHandlerOf(scene)).not.toBeNull();
+      pressKey(scene, 'Escape');
+      expect(takeOverHandlerOf(scene)).toBeNull();
+    });
+  });
+
   // ── End-of-run page-side signal (AH-0MUXZ4BXK001QCEK) ───────────
 
   describe('End-of-run page-side signal (AH-0MUXZ4BXK001QCEK)', () => {

@@ -340,11 +340,22 @@ export class PlayScene extends CombatScene<
   private demoDwellMs?: number;
 
   /**
-   * Press-to-take-over handler active only while the demo runs
+   * Demo take-over handler active only while the demo runs
    * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
-   * carries no extra input listener.
+   * carries no extra input listener. Narrows to a movement key (take over)
+   * or the pause key/ESC (return to the main menu) — all other input and the
+   * pointer are ignored (AH-0MUYP6M6W006Z1AY AC1–AC3).
    */
-  private demoTakeOverHandler: (() => void) | null = null;
+  private demoTakeOverHandler: ((event: KeyboardEvent) => void) | null = null;
+
+  /**
+   * DOM key names that count as deliberate movement input during demo
+   * take-over (AH-0MUYP6M6W006Z1AY AC2). Populated from the same resolved
+   * settings bindings as the Phaser movement keys (`_applyBindings`), so a
+   * rebind is honoured. Arrow keys are handled separately as the built-in
+   * defaults.
+   */
+  private movementKeyNames = new Set<string>();
 
   /**
    * Human-like input layer for the demo bot (AH-0MUXXQ1MN002RXGB): samples
@@ -569,14 +580,19 @@ export class PlayScene extends CombatScene<
 
     // ESC toggles the pause menu (parent AH-0MU9LPZ0G0015292). Registered
     // here because the keyboard plugin is torn down on scene shutdown, so
-    // there is no cross-session listener leak.
+    // there is no cross-session listener leak. While the demo runs the demo
+    // take-over handler owns the pause key instead — ESC returns to the main
+    // menu, never the pause menu (AH-0MUYP6M6W006Z1AY AC1/AC5).
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      if (event.key === this.pauseKeyName && !event.repeat) this.togglePause();
+      if (event.key === this.pauseKeyName && !event.repeat && !this.demoMode) {
+        this.togglePause();
+      }
     });
 
-    // Press-to-take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3):
-    // the first keyboard/pointer input hands control to the player without
-    // restarting the run.
+    // Narrowed take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3,
+    // AH-0MUYP6M6W006Z1AY AC1–AC3): only a movement key hands control to the
+    // player (in place) and only the pause key/ESC returns to the main menu;
+    // every other key and the pointer are ignored.
     if (this.demoMode) this._enableDemoTakeOver();
 
     // Power-up drop pool.
@@ -652,6 +668,15 @@ export class PlayScene extends CombatScene<
       D: keyForAction('moveRight'),
     } as WasdKeysLike;
     this.teleportKey = keyForAction('layerDrop');
+
+    // The demo take-over keys must be the *same* source as normal-play
+    // movement: the resolved `moveUp`/`moveDown`/`moveLeft`/`moveRight`
+    // bindings (arrow-key defaults are added separately).
+    this.movementKeyNames = new Set(
+      (['moveUp', 'moveDown', 'moveLeft', 'moveRight'] as ActionName[]).map(
+        (action) => this._normaliseKeyName(keyFor(bindings, action)),
+      ),
+    );
   }
 
   /**
@@ -2395,27 +2420,67 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Wires press-to-take-over while the demo runs (AC3): any keyboard or
-   * pointer input leaves demo mode **in place** — the run keeps going, only
-   * the input source changes from the bot to the player. Idempotent.
+   * Wires the narrowed press-to-take-over while the demo runs
+   * (AH-0MUX4966Z0009P9Q AC3, AH-0MUYP6M6W006Z1AY AC1–AC3): a **movement key**
+   * (an arrow key or a configured movement binding) leaves demo mode **in
+   * place** — the run keeps going, only the input source changes from the bot
+   * to the player. The **pause key** (ESC by default) leaves the demo and
+   * returns to the main menu instead of pausing. Any other key and the
+   * pointer are ignored. Idempotent.
    */
   private _enableDemoTakeOver(): void {
     if (this.demoTakeOverHandler) return;
-    const handler = () => this.setDemoMode(false);
+    const handler = (event: KeyboardEvent): void => {
+      if (event.repeat) return;
+      if (event.key === this.pauseKeyName) {
+        // ESC/pause → leave the demo: clean up the listener before the
+        // transition so no stale handler leaks into the menu.
+        this._disableDemoTakeOver();
+        this.scene.start('MenuScene');
+        return;
+      }
+      if (this._isMovementKey(event)) this.setDemoMode(false);
+      // Every other key (and the pointer) is ignored — the demo keeps
+      // playing unattended.
+    };
     this.demoTakeOverHandler = handler;
     this.input.keyboard?.on('keydown', handler);
-    this.input.on('pointerdown', handler);
   }
 
   /**
-   * Removes the demo take-over listeners. Called on take-over and on scene
-   * shutdown, so no listener leaks across sessions (AC3/AC4).
+   * Whether `event` is a deliberate movement key for demo take-over: an arrow
+   * key (built-in defaults) or one of the resolved `moveUp`/`moveDown`/
+   * `moveLeft`/`moveRight` bindings — the same source normal play uses, so a
+   * rebind is honoured (AH-0MUYP6M6W006Z1AY AC2).
+   */
+  private _isMovementKey(event: KeyboardEvent): boolean {
+    const name = this._normaliseKeyName(event.key);
+    return (
+      name === 'ArrowUp' ||
+      name === 'ArrowDown' ||
+      name === 'ArrowLeft' ||
+      name === 'ArrowRight' ||
+      this.movementKeyNames.has(name)
+    );
+  }
+
+  /**
+   * Normalises a DOM `KeyboardEvent.key` to the form stored for bindings:
+   * single characters are lower-cased (so Shift + letter matches the
+   * binding), named keys are compared verbatim.
+   */
+  private _normaliseKeyName(key: string): string {
+    return key.length === 1 ? key.toLowerCase() : key;
+  }
+
+  /**
+   * Removes the demo take-over listener. Called on take-over, on ESC-to-menu
+   * and on scene shutdown, so no listener leaks across sessions (AC3/AC4).
    */
   private _disableDemoTakeOver(): void {
     const handler = this.demoTakeOverHandler;
     if (!handler) return;
     this.input.keyboard?.off('keydown', handler);
-    this.input.off('pointerdown', handler);
     this.demoTakeOverHandler = null;
   }
 

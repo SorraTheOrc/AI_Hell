@@ -577,6 +577,42 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     expect(play.isDemoMode()).toBe(false);
   });
 
+  it('AC3 — a non-movement key during the demo does not take over', async () => {
+    await bootMenu();
+    findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'Enter',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+
+    // The demo keeps playing unattended.
+    expect(play.isDemoMode()).toBe(true);
+  });
+
+  it('AC1 — ESC during the demo returns to the main menu (not pause)', async () => {
+    await bootMenu();
+    findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'Escape',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
   // ── Explicit start-data contract (AH-0MUY4881P007FJ8R) ──────────
   //
   // Phaser only rewrites `settings.data` for a *truthy* `data`, so a

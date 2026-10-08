@@ -156,8 +156,12 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   the modal hold-full choice overlay auto-selects its first option after
   `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run
   never stalls on the selection screen. Normal play never auto-selects.
-- **Take over:** pressing any key or the pointer leaves demo mode in place
+- **Take over (AH-0MUYP6M6W006Z1AY):** pressing a **movement key** (W/A/S/D
+  per the configured bindings, or an arrow key) leaves demo mode in place
   (`setDemoMode(false)`) — the run continues under player control, no restart.
+  **ESC** (the pause key) instead leaves the demo and returns to the main
+  menu; every other key and the pointer are ignored, so a stray keypress or
+  click cannot drop an unattended attract loop into human control.
 - **Non-scoring:** on death or victory a demo run returns straight to the main
   menu (it never enters `GameOverScene`), so it writes no leaderboard entry and
   no session state.

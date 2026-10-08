@@ -295,6 +295,77 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(restarted.isDemoMode()).toBe(false);
   });
 
+  // ── Narrowed demo take-over (AH-0MUYP6M6W006Z1AY) ──────────────
+
+  it('AC1 — ESC during the demo returns to the live MenuScene, not pause', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'Escape',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    await wait(150);
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    expect(play.isPaused()).toBe(false);
+  });
+
+  it('AC2 — a movement key takes over the live demo in place', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'ArrowLeft',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+
+    // Control handed to the keyboard mid-run: the bot seam is off and the
+    // ship now moves under the player's keys.
+    expect(play.isDemoMode()).toBe(false);
+    expect(botInputOf(play)).toBeNull();
+    const player = play.getPlayer()!;
+    const cursors = cursorsOf(play);
+    const beforeX = player.x;
+    cursors.right.isDown = true;
+    for (let i = 0; i < 20; i += 1) play.tick(1 / 60);
+    cursors.right.isDown = false;
+    expect(player.x).toBeGreaterThan(beforeX);
+  });
+
+  it('AC3 — other input during the demo is a no-op', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    for (const key of [' ', 'Enter', 'Tab']) {
+      play.input.keyboard!.emit('keydown', {
+        key,
+        repeat: false,
+        preventDefault: () => {},
+      } as KeyboardEvent);
+    }
+    play.input.emit('pointerdown', { x: 100, y: 100 });
+
+    // Unattended: the bot is still in control.
+    expect(play.isDemoMode()).toBe(true);
+    expect(botInputOf(play)).not.toBeNull();
+  });
+
   // ── Stale scene-start data leak (AH-0MUY4881P007FJ8R) ──────────
   //
   // Phaser's `Systems.start(data)` only writes `settings.data` for a
