@@ -23,6 +23,8 @@
  *   {@link DEV_BOSS_DEFAULT_HITS} hits remaining (the recorded demo).
  * - `boss` — the same jump, with the hit count tunable via the
  *   `bossHits` parameter (e.g. `?scenario=boss&bossHits=12`).
+ * - `defeat` — clear the wave and end the run in defeat on release (the
+ *   recorded defeat-path demo for full-run capture verification).
  *
  * Any other value resolves to `null` (no scenario), so a typo can never
  * silently change a normal run.
@@ -37,13 +39,16 @@ export const DEV_SCENARIO_BOSS = 'boss';
 /** Value of the `scenario` parameter for the recorded four-hit boss demo. */
 export const DEV_SCENARIO_BOSS_FOUR_HITS = 'boss-four-hits';
 
+/** Value of the `scenario` parameter for the recorded defeat-path demo. */
+export const DEV_SCENARIO_DEFEAT = 'defeat';
+
 /** Query parameter that tunes the boss scenario's remaining hits. */
 export const DEV_BOSS_HITS_PARAM = 'bossHits';
 
 /** Hits remaining in the recorded `boss-four-hits` scenario. */
 export const DEV_BOSS_DEFAULT_HITS = 4;
 
-/** A resolved dev scenario. Currently only the boss shortcut exists. */
+/** A resolved dev scenario. */
 export interface DevBossScenario {
   /** Discriminant so future scenarios can extend the union. */
   readonly kind: 'boss';
@@ -51,8 +56,19 @@ export interface DevBossScenario {
   readonly bossHitsRemaining: number;
 }
 
-/** The resolved dev-scenario union (one member today). */
-export type DevScenario = DevBossScenario;
+/**
+ * A resolved defeat dev scenario (AH-0MUX2K8U7000GFNU producer-audit
+ * follow-up): the run is cleared and frozen, then ends in defeat when the
+ * recorder releases it, so the defeat end-of-run signal is verifiable in a
+ * real browser.
+ */
+export interface DevDefeatScenario {
+  /** Discriminant so future scenarios can extend the union. */
+  readonly kind: 'defeat';
+}
+
+/** The resolved dev-scenario union. */
+export type DevScenario = DevBossScenario | DevDefeatScenario;
 
 /** True when dev scenarios should be honoured (dev builds only). */
 export function isDevScenarioEnabled(): boolean {
@@ -135,6 +151,9 @@ export function resolveDevScenario(search: string): DevScenario | null {
       kind: 'boss',
       bossHitsRemaining: resolveBossHits(params.get(DEV_BOSS_HITS_PARAM)),
     };
+  }
+  if (normalised === DEV_SCENARIO_DEFEAT) {
+    return { kind: 'defeat' };
   }
   return null;
 }

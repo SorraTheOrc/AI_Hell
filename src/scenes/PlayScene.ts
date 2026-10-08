@@ -1467,6 +1467,44 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Drops the run straight into a deterministic **defeat** (the dev-gated
+   * recorder scenario for the defeat path, AH-0MUX2K8U7000GFNU producer-audit
+   * follow-up).
+   *
+   * The current wave is cleared and the run is frozen so the recorder can
+   * start before the (instant) end. Releasing the page-side handle drains the
+   * ship's remaining lives, ending the run in defeat through the normal
+   * `_loseLife` → `_finishRun(false)` path — so `npm run capture -- --scenario
+   * defeat` exercises the defeat end-of-run signal and the recorder's tail
+   * exactly as a natural loss would.
+   *
+   * Public so tests and the capture tool can drive it directly; the URL query
+   * path in `create()` calls this only when the dev flag is on.
+   */
+  startDevDefeatScenario(): void {
+    this._clearWaveForScenario();
+    this._refreshHudText();
+    this.setPaused(true);
+    // Reuse the shared release handle: `hitsRemaining: 0` marks the run as
+    // already over and the recorder only needs `resume()`.
+    installDevScenarioHandle({
+      hitsRemaining: 0,
+      resume: () => this._forceDevDefeat(),
+    });
+  }
+
+  /**
+   * Ends a released defeat scenario through the normal fatal-loss path: with
+   * one life left, a fatal `_loseLife` reaches zero and `_finishRun(false)`
+   * emits the defeat end-of-run signal before the game-over transition.
+   */
+  private _forceDevDefeat(): void {
+    this.setPaused(false);
+    this.gameState.lives = 1;
+    this._loseLife(true);
+  }
+
+  /**
    * Clears the active regular wave for the dev boss scenario without scoring
    * or advancing the campaign: destroys the spawned enemies, drops their
    * bullets, cancels planned asteroid/Harvester releases, closes any open
@@ -1521,6 +1559,8 @@ export class PlayScene extends CombatScene<
     if (!scenario) return;
     if (scenario.kind === 'boss') {
       this.startDevBossScenario(scenario.bossHitsRemaining);
+    } else if (scenario.kind === 'defeat') {
+      this.startDevDefeatScenario();
     }
   }
 

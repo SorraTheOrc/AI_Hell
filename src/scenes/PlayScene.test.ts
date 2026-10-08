@@ -4297,6 +4297,32 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(details).toEqual([{ won: false, score: gs.score }]);
     });
 
+    it('AC1 — the defeat dev scenario emits the defeat signal on release', async () => {
+      const scene = await bootPlay();
+      scene.startDevDefeatScenario();
+
+      // Frozen until the recorder releases it, with the shared page-side
+      // handle exposed so `npm run capture -- --scenario defeat` is
+      // deterministic.
+      expect(scene.isPaused()).toBe(true);
+      expect(window.__aiHellScenario?.hitsRemaining).toBe(0);
+
+      const details = withRunEndedEvents(() => {
+        window.__aiHellScenario?.resume();
+      });
+
+      expect(scene.isPaused()).toBe(false);
+      expect(scene.getGameState().lives).toBe(0);
+      expect(window.__aiHellRunState).toEqual({
+        ended: true,
+        won: false,
+        score: scene.getGameState().score,
+      });
+      expect(details).toEqual([
+        { won: false, score: scene.getGameState().score },
+      ]);
+    });
+
     it('AC2 — the signal is dev-gated: a production build emits nothing', async () => {
       const scene = await bootPlay();
       vi.stubEnv('DEV', false);

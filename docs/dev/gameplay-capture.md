@@ -103,13 +103,17 @@ A real run reaches the Central AI boss only after all five levels, and the
 boss then needs **400 hits** (4 phases × 100) to destroy — so neither the
 recorder nor a human reviewer can practically observe the victory celebration
 (AH-0MUWZ5HCV0034H44 producer-audit follow-up). A **dev scenario** is an
-additive, dev-only shortcut that drops the run straight into a short boss
-encounter:
+additive, dev-only shortcut that drops the run straight into a short,
+deterministic encounter:
 
 ```bash
 # dev builds only: Play Game loads /?scenario=boss-four-hits, jumps to the
 # boss with 4 hits remaining and freezes the run until the recorder releases it
 npm run capture -- --scenario boss-four-hits
+
+# dev builds only: /?scenario=defeat clears the wave and ends the run in
+# defeat on release, so the defeat end-of-run signal + tail can be verified
+npm run capture -- --scenario defeat
 ```
 
 The scenario is selected by the `scenario` URL query parameter, parsed by the
@@ -121,12 +125,15 @@ Supported values:
 |---|---|
 | `boss-four-hits` | Jump to the boss with **4** hits remaining (the recorded demo). |
 | `boss` | The same jump, with the hits tunable via `&bossHits=N` (e.g. `?scenario=boss&bossHits=12`). |
+| `defeat` | Clear the wave and end the run in **defeat** on release (the defeat-path demo for full-run capture verification). |
 
-The scenario clears the opening wave, spawns the boss in its final phase with
-no minions and its attacks disabled, and places the ship to the boss's left
-facing it, so the auto-fire lands without input. The run is then **frozen** so
-recording starts before the deliberately short fight ends; once the recorder
-is live the capture releases it through the page-side scenario handle
+The boss scenario clears the opening wave, spawns the boss in its final phase
+with no minions and its attacks disabled, and places the ship to the boss's
+left facing it, so the auto-fire lands without input. The defeat scenario
+clears the opening wave and drains the ship's remaining lives through the
+normal fatal-loss path once released. Both are then **frozen** so recording
+starts before the deliberately short run ends; once the recorder is live the
+capture releases it through the page-side scenario handle
 (`window.__aiHellScenario.resume()`), so no keystroke is simulated and the
 release is deterministic.
 
