@@ -19,13 +19,19 @@
  */
 
 import { BotBrain, type BotBrainOptions } from '../botBrain';
+import { buildBotWorld } from '../worldModel';
 import { createLegacyBotPolicy } from '../legacyPolicy';
+import type { BotContent } from '../content';
+import { COMPETENT_BOT_CONTENT } from './content';
 import { createCompetentBehaviours } from './behaviours';
 import { createCompetentGoals } from './goals';
 import {
   resolveCompetentTunables,
   type CompetentBotTunables,
 } from './tunables';
+
+export { COMPETENT_BOT_CONTENT } from './content';
+export { createBotContent, type BotContent } from '../content';
 
 export {
   COMPETENT_BOT_TUNABLES,
@@ -36,10 +42,12 @@ export {
   COMPETENT_BEHAVIOUR_IDS,
   COMPETENT_GOAL_IDS,
   asteroidTargets,
+  bestWeightedTarget,
   createCompetentGoals,
   enemyTargets,
   nearestTarget,
   survivalUrgency,
+  type ContentTarget,
   type NearestTarget,
 } from './goals';
 export { createCompetentBehaviours } from './behaviours';
@@ -61,6 +69,12 @@ export interface CompetentBotOptions {
   /** Partial override of {@link COMPETENT_BOT_TUNABLES}. */
   readonly tunables?: Partial<CompetentBotTunables>;
   /**
+   * Content registry (enemy/drop profiles). Defaults to the shipped
+   * {@link COMPETENT_BOT_CONTENT}; pass a custom registry to add synthetic or
+   * custom content.
+   */
+  readonly content?: BotContent;
+  /**
    * Fallback policy used when no goal applies or its behaviour declines.
    * Defaults to the legacy decision adapter; pass `null` to fall back to
    * idle.
@@ -78,11 +92,15 @@ export function createCompetentBotBrain(
   options: CompetentBotOptions = {},
 ): BotBrain {
   const tunables = resolveCompetentTunables(options.tunables);
+  const content = options.content ?? COMPETENT_BOT_CONTENT;
   return new BotBrain({
-    goals: createCompetentGoals(tunables),
-    behaviours: createCompetentBehaviours(tunables),
+    goals: createCompetentGoals(tunables, content),
+    behaviours: createCompetentBehaviours(tunables, content),
     commitment: tunables.commitment,
-    worldTunables: tunables.world,
+    // The content registry is authoritative for the asteroid partition, so
+    // the world model is built with both the tunables and the content.
+    worldModel: (snapshot) =>
+      buildBotWorld(snapshot, tunables.world, content),
     fallback:
       options.fallback === undefined
         ? createLegacyBotPolicy()

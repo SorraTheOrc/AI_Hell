@@ -1,6 +1,6 @@
 /**
  * Behaviour content for the structured competent bot
- * (AH-0MUY08WX3000ZEVO, AC2/AC3/AC4).
+ * (AH-0MUY08WX3000ZEVO, AC2/AC3/AC4; content-adaptive in AH-0MUY08X98002TRHT).
  *
  * A behaviour executes the committed goal and returns a steering intent, or
  * `null` when it cannot act (the brain then falls back). Every behaviour
@@ -8,11 +8,15 @@
  * filter is applied uniformly: no behaviour can steer into a wall, hazard or
  * predicted shot when a safe alternative exists (AC4).
  *
- * - `collect` (mineral / power-up): approach and scoop, braking so the ship
- *   arrives rather than barrels through.
- * - `engage` (enemy / asteroid): line up the target inside the engagement
- *   range, then hold the aim axis and coast so the forward-firing weapon
- *   stays on target instead of aiming only by accident of travel (AC3).
+ * - `collect` (mineral / power-up): approach and scoop the best target —
+ *   nearest for minerals, highest value-per-distance for power-ups via the
+ *   content registry — braking so the ship arrives rather than barrelling
+ *   through.
+ * - `engage` (enemy / asteroid): pick the best target (nearest, weighted by
+ *   each archetype's registered threat), line it up inside its preferred
+ *   engagement range, then hold the aim axis and coast so the forward-firing
+ *   weapon stays on target (AC3). An archetype whose content profile declares
+ *   `aim: 'none'` is closed on without aim reasoning.
  * - `evade`: predictive path away from the threats (away from the weighted
  *   centroid of threatening shots), with the steering fan pathing around
  *   anything else in the way (AC2).
@@ -28,32 +32,62 @@ import type {
 } from '../registry';
 import { createBehaviourRegistry } from '../registry';
 import type { BotWorld } from '../worldModel';
+import type { BotContent } from '../content';
+import { createBotContent } from '../content';
 import {
   COMPETENT_BEHAVIOUR_IDS,
   COMPETENT_GOAL_IDS,
   asteroidTargets,
+  bestWeightedTarget,
   enemyTargets,
   nearestTarget,
+  type ContentTarget,
 } from './goals';
 import { idleIntent, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
 
-/** Collects the nearest mineral (mineral goal) or power-up (power-up goal). */
-function collectBehaviour(t: CompetentBotTunables): BotBehaviour {
+/** The collect targets for a goal: minerals or power-ups as content targets. */
+function collectTargets(
+  world: BotWorld,
+  isMineral: boolean,
+): ContentTarget[] {
+  if (isMineral) {
+    return world.minerals.map((mineral) => ({
+      x: mineral.x,
+      y: mineral.y,
+      contentId: mineral.type,
+    }));
+  }
+  return world.drops.map((drop) => ({
+    x: drop.x,
+    y: drop.y,
+    contentId: drop.type,
+  }));
+}
+
+/** Collects the best mineral (mineral goal) or power-up (power-up goal). */
+function collectBehaviour(
+  t: CompetentBotTunables,
+  content: BotContent,
+): BotBehaviour {
   return {
     id: COMPETENT_BEHAVIOUR_IDS.collect,
     run: (view: BotBehaviourContext) => {
       const player = view.world.player;
       if (!player) return null;
       const isMineral = view.goal.id === COMPETENT_GOAL_IDS.collectMineral;
-      const targets = isMineral ? view.world.minerals : view.world.drops;
-      const nearest = nearestTarget(targets, player);
-      if (!nearest) return null;
+      const targets = collectTargets(view.world, isMineral);
+      const weight = isMineral
+        ? () => 1
+        : (target: ContentTarget) =>
+            content.resolveDrop(target.contentId).value;
+      const best = bestWeightedTarget(targets, player, weight);
+      if (!best) return null;
 
-      const distance = nearest.distance;
+      const distance = best.distance;
       const objective = {
-        x: nearest.point.x - player.x,
-        y: nearest.point.y - player.y,
+        x: best.point.x - player.x,
+        y: best.point.y - player.y,
       };
       return planSteering(objective, view.world, t, {
         thrust: mayThrust(
@@ -68,8 +102,11 @@ function collectBehaviour(t: CompetentBotTunables): BotBehaviour {
   };
 }
 
-/** Engages the nearest enemy (enemy goal) or asteroid (asteroid goal). */
-function engageBehaviour(t: CompetentBotTunables): BotBehaviour {
+/** Engages the best enemy (enemy goal) or asteroid (asteroid goal). */
+function engageBehaviour(
+  t: CompetentBotTunables,
+  content: BotContent,
+): BotBehaviour {
   return {
     id: COMPETENT_BEHAVIOUR_IDS.engage,
     run: (view: BotBehaviourContext) => {
@@ -79,22 +116,32 @@ function engageBehaviour(t: CompetentBotTunables): BotBehaviour {
       const targets = isEnemy
         ? enemyTargets(view.world)
         : asteroidTargets(view.world);
-      const nearest = nearestTarget(targets, player);
-      if (!nearest) return null;
+      const best = bestWeightedTarget(
+        targets,
+        player,
+        (target: ContentTarget) =>
+          content.resolveEnemy(target.contentId).threat,
+      );
+      if (!best) return null;
 
-      const distance = nearest.distance;
+      const profile = content.resolveEnemy(best.point.contentId);
+      const engagementRange = profile.engagementRange ?? t.engagementRange;
+      const distance = best.distance;
       const objective = {
-        x: nearest.point.x - player.x,
-        y: nearest.point.y - player.y,
+        x: best.point.x - player.x,
+        y: best.point.y - player.y,
       };
-      const inRange = distance <= t.engagementRange;
+      const inRange = distance <= engagementRange;
+      const holdAim = profile.aim !== 'none';
       return planSteering(objective, view.world, t, {
         // Inside the standoff, keep the hull aimed at the target and coast so
         // the forward-firing weapon stays on it (AC3). Outside, close while
-        // the forward model allows.
-        thrust: inRange
-          ? false
-          : mayThrust(view.snapshot, t, distance, t.engagementRange),
+        // the forward model allows. An archetype with `aim: 'none'` never
+        // holds the axis.
+        thrust:
+          inRange && holdAim
+            ? false
+            : mayThrust(view.snapshot, t, distance, engagementRange),
         longTravel: distance >= t.longTravelDistance,
       });
     },
@@ -166,13 +213,20 @@ function repositionBehaviour(t: CompetentBotTunables): BotBehaviour {
   };
 }
 
-/** Builds the competent behaviour set. */
+/**
+ * Builds the competent behaviour set.
+ *
+ * @param t — competent tunables.
+ * @param content — content registry; defaults to an empty registry whose
+ *   neutral profiles preserve the pre-content behaviour.
+ */
 export function createCompetentBehaviours(
   t: CompetentBotTunables,
+  content: BotContent = createBotContent(),
 ): BehaviourRegistry {
   return createBehaviourRegistry([
-    collectBehaviour(t),
-    engageBehaviour(t),
+    collectBehaviour(t, content),
+    engageBehaviour(t, content),
     evadeBehaviour(t),
     repositionBehaviour(t),
   ]);

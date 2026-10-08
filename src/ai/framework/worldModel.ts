@@ -30,6 +30,7 @@ import type {
   BotPlayer,
   BotSnapshot,
 } from '../botSnapshot';
+import type { BotContent } from './content';
 
 /** A plain 2-D point used by the derived world view. */
 export interface BotWorldPoint {
@@ -112,14 +113,19 @@ export interface BotWorld {
  */
 export class BotWorldModel {
   private readonly tunables: Partial<BotWorldTunables>;
+  private readonly content: BotContent | undefined;
 
-  constructor(tunables: Partial<BotWorldTunables> = {}) {
+  constructor(
+    tunables: Partial<BotWorldTunables> = {},
+    content?: BotContent,
+  ) {
     this.tunables = tunables;
+    this.content = content;
   }
 
   /** Derives the world view for `snapshot`. */
   observe(snapshot: BotSnapshot): BotWorld {
-    return buildBotWorld(snapshot, this.tunables);
+    return buildBotWorld(snapshot, this.tunables, this.content);
   }
 }
 
@@ -130,23 +136,30 @@ export class BotWorldModel {
  * @param snapshot — the read-only game state.
  * @param tunableOverrides — optional partial override of
  *   {@link BOT_WORLD_TUNABLES}.
+ * @param content — optional content registry whose `asteroidLike` profile
+ *   decides the asteroid partition (AC1). When omitted, the legacy
+ *   `archetype === 'asteroid'` convention is preserved so direct callers are
+ *   unaffected.
  */
 export function buildBotWorld(
   snapshot: BotSnapshot,
   tunableOverrides?: Partial<BotWorldTunables>,
+  content?: BotContent,
 ): BotWorld {
   const tunables: BotWorldTunables = {
     ...BOT_WORLD_TUNABLES,
     ...(tunableOverrides ?? {}),
   };
   const player = snapshot.player;
+  const isAsteroidLike = (archetype: string): boolean =>
+    content ? content.isAsteroidLike(archetype) : archetype === 'asteroid';
 
   const liveEnemies: BotEnemy[] = [];
   const liveAsteroids: BotEnemy[] = [];
   const hazards: BotWorldPoint[] = [];
   for (const enemy of snapshot.enemies) {
     if (!enemy.alive) continue;
-    if (enemy.archetype === 'asteroid') {
+    if (isAsteroidLike(enemy.archetype)) {
       liveAsteroids.push(enemy);
     } else {
       liveEnemies.push(enemy);
@@ -171,7 +184,7 @@ export function buildBotWorld(
       ? nearestDistance(
           player,
           snapshot.enemies.filter(
-            (enemy) => enemy.alive && enemy.archetype !== 'asteroid',
+            (enemy) => enemy.alive && !isAsteroidLike(enemy.archetype),
           ),
         )
       : Number.POSITIVE_INFINITY,

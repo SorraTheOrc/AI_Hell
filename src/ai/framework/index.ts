@@ -52,6 +52,18 @@ export {
 } from './registry';
 
 export {
+  BotContent,
+  DEFAULT_DROP_PROFILE,
+  DEFAULT_ENEMY_PROFILE,
+  EMPTY_BOT_CONTENT,
+  createBotContent,
+  type BotContentSpec,
+  type DropContentProfile,
+  type EnemyAimBehaviour,
+  type EnemyContentProfile,
+} from './content';
+
+export {
   BOT_WORLD_TUNABLES,
   BotWorldModel,
   buildBotWorld,
@@ -76,6 +88,7 @@ export { createLegacyBotPolicy } from './legacyPolicy';
 
 export {
   COMPETENT_BEHAVIOUR_IDS,
+  COMPETENT_BOT_CONTENT,
   COMPETENT_BOT_TUNABLES,
   COMPETENT_GOAL_IDS,
   createCompetentBotBrain,

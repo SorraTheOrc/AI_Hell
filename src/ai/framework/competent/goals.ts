@@ -1,11 +1,21 @@
 /**
  * Goal content for the structured competent bot
- * (AH-0MUY08WX3000ZEVO, AC1).
+ * (AH-0MUY08WX3000ZEVO, AC1; content-adaptive in AH-0MUY08X98002TRHT).
  *
  * Goals are **data** registered by id; the framework core never switches on
  * them. Each goal scores the current view (`utility`) and knows when its
  * premise no longer holds (`isValid`) or when it is done (`isAchieved`); the
  * {@link BotBrain}'s commitment mechanism applies the hysteresis.
+ *
+ * ## Content adaptivity (AH-0MUY08X98002TRHT)
+ *
+ * The engagement bands are not hard-coded to "enemies" and "asteroids":
+ * each enemy archetype's registered
+ * {@link EnemyContentProfile.threat} scales its proximity score and its
+ * `asteroidLike` flag is what the world model uses to partition it. Drop
+ * utility likewise scales with the registered
+ * {@link DropContentProfile.value}, so a new power-up/weapon is a config
+ * entry (AC2/AC3).
  *
  * ## Priority order
  *
@@ -18,8 +28,8 @@
  * |---------------|-----------------|--------------------|
  * | survival      | 10 – 15         | `survive`          |
  * | minerals      | 4.0 – 4.5       | `collect-mineral`  |
- * | power-ups     | 3.0 – 3.5       | `collect-powerup`  |
- * | enemies       | 2.0 – 2.9       | `engage-enemy`     |
+ * | power-ups     | 3.0 – 3.75      | `collect-powerup`  |
+ * | enemies       | 2.0 – 2.75      | `engage-enemy`     |
  * | asteroids     | 1.0 – 1.5       | `engage-asteroid`  |
  * | reposition    | 0.1             | `reposition`       |
  *
@@ -35,6 +45,8 @@
 import type { BotGoal, BotGoalView, GoalRegistry } from '../registry';
 import { createGoalRegistry } from '../registry';
 import type { BotWorld, BotWorldPoint } from '../worldModel';
+import type { BotContent } from '../content';
+import { createBotContent } from '../content';
 import type { CompetentBotTunables } from './tunables';
 
 /** Stable behaviour ids the goals name. */
@@ -55,6 +67,15 @@ export const COMPETENT_GOAL_IDS = {
   reposition: 'reposition',
 } as const;
 
+/**
+ * A target that carries the content id needed to look up its
+ * {@link EnemyContentProfile}/{@link DropContentProfile}.
+ */
+export interface ContentTarget extends BotWorldPoint {
+  /** The archetype (enemy) or drop type looked up in the content registry. */
+  readonly contentId: string;
+}
+
 /** Clamps a number into `[0, 1]`. */
 function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value;
@@ -67,21 +88,46 @@ function proximity(dist: number, range: number): number {
 }
 
 /** The nearest of `points` to the player, with its distance. */
-export interface NearestTarget {
-  readonly point: BotWorldPoint;
+export interface NearestTarget<T extends BotWorldPoint = BotWorldPoint> {
+  readonly point: T;
   readonly distance: number;
 }
 
 /** Nearest point to the player, or `null` when the list is empty. */
-export function nearestTarget(
-  points: readonly BotWorldPoint[],
+export function nearestTarget<T extends BotWorldPoint>(
+  points: readonly T[],
   player: BotWorldPoint,
-): NearestTarget | null {
-  let best: NearestTarget | null = null;
+): NearestTarget<T> | null {
+  let best: NearestTarget<T> | null = null;
   for (const point of points) {
     const distance = Math.hypot(point.x - player.x, point.y - player.y);
     if (best === null || distance < best.distance) {
       best = { point, distance };
+    }
+  }
+  return best;
+}
+
+/**
+ * The best-scoring target under a content weight.
+ *
+ * `weight / (1 + distance)` keeps the ordering identical to nearest-first
+ * when every weight is equal (the neutral default), while letting a
+ * higher-threat enemy or higher-value drop win from slightly farther away.
+ */
+export function bestWeightedTarget<T extends ContentTarget>(
+  targets: readonly T[],
+  player: BotWorldPoint,
+  weight: (target: T) => number,
+): NearestTarget<T> | null {
+  let best: NearestTarget<T> | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const target of targets) {
+    const distance = Math.hypot(target.x - player.x, target.y - player.y);
+    const score = weight(target) / (1 + distance);
+    if (score > bestScore) {
+      bestScore = score;
+      best = { point: target, distance };
     }
   }
   return best;
@@ -110,19 +156,49 @@ export function survivalUrgency(
   return urgency;
 }
 
-/** The live enemies plus the live boss, as points. */
-export function enemyTargets(world: BotWorld): BotWorldPoint[] {
-  const targets: BotWorldPoint[] = world.liveEnemies.map((enemy) => ({
+/** The live enemies plus the live boss, as content targets. */
+export function enemyTargets(world: BotWorld): ContentTarget[] {
+  const targets: ContentTarget[] = world.liveEnemies.map((enemy) => ({
     x: enemy.x,
     y: enemy.y,
+    contentId: enemy.archetype,
   }));
-  if (world.boss) targets.push({ x: world.boss.x, y: world.boss.y });
+  if (world.boss) {
+    targets.push({ x: world.boss.x, y: world.boss.y, contentId: 'boss' });
+  }
   return targets;
 }
 
-/** The live asteroids as points. */
-export function asteroidTargets(world: BotWorld): BotWorldPoint[] {
-  return world.liveAsteroids.map((enemy) => ({ x: enemy.x, y: enemy.y }));
+/** The live asteroids as content targets. */
+export function asteroidTargets(world: BotWorld): ContentTarget[] {
+  return world.liveAsteroids.map((enemy) => ({
+    x: enemy.x,
+    y: enemy.y,
+    contentId: enemy.archetype,
+  }));
+}
+
+/**
+ * Utility for a set of content targets: the highest `base + span * proximity
+ * * weight` across the targets, `0` when there are none.
+ */
+function weightedUtility(
+  view: BotGoalView,
+  targets: readonly ContentTarget[],
+  base: number,
+  range: number,
+  span: number,
+  weight: (target: ContentTarget) => number,
+): number {
+  const player = view.world.player;
+  if (!player) return 0;
+  let best = 0;
+  for (const target of targets) {
+    const distance = Math.hypot(target.x - player.x, target.y - player.y);
+    const score = base + span * proximity(distance, range) * weight(target);
+    if (score > best) best = score;
+  }
+  return best;
 }
 
 /** A `survive` goal: valid only while a shot urgently threatens the ship. */
@@ -137,28 +213,33 @@ function surviveGoal(t: CompetentBotTunables): BotGoal {
   };
 }
 
+/** A goal whose target set is derived from the world each tick. */
+type TargetSelector = (world: BotWorld) => readonly ContentTarget[];
+
 /** A collection goal (minerals or power-ups). */
 function collectGoal(
   id: string,
   t: CompetentBotTunables,
   base: number,
   range: number,
-  targets: (world: BotWorld) => readonly BotWorldPoint[],
+  select: TargetSelector,
+  weight: (target: ContentTarget) => number,
 ): BotGoal {
-  const score = (view: BotGoalView): number => {
-    const player = view.world.player;
-    if (!player) return 0;
-    const nearest = nearestTarget(targets(view.world), player);
-    if (!nearest) return 0;
-    return base + t.prioritySpan * proximity(nearest.distance, range);
-  };
   return {
     id,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.collect,
-    utility: score,
+    utility: (view) =>
+      weightedUtility(
+        view,
+        select(view.world),
+        base,
+        range,
+        t.prioritySpan,
+        weight,
+      ),
     isValid: (view) =>
-      view.world.player !== null && targets(view.world).length > 0,
-    isAchieved: (view) => targets(view.world).length === 0,
+      view.world.player !== null && select(view.world).length > 0,
+    isAchieved: (view) => select(view.world).length === 0,
   };
 }
 
@@ -168,22 +249,24 @@ function engageGoal(
   t: CompetentBotTunables,
   base: number,
   range: number,
-  targets: (world: BotWorld) => readonly BotWorldPoint[],
+  select: TargetSelector,
+  weight: (target: ContentTarget) => number,
 ): BotGoal {
-  const score = (view: BotGoalView): number => {
-    const player = view.world.player;
-    if (!player) return 0;
-    const nearest = nearestTarget(targets(view.world), player);
-    if (!nearest) return 0;
-    return base + t.prioritySpan * proximity(nearest.distance, range);
-  };
   return {
     id,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.engage,
-    utility: score,
+    utility: (view) =>
+      weightedUtility(
+        view,
+        select(view.world),
+        base,
+        range,
+        t.prioritySpan,
+        weight,
+      ),
     isValid: (view) =>
-      view.world.player !== null && targets(view.world).length > 0,
-    isAchieved: (view) => targets(view.world).length === 0,
+      view.world.player !== null && select(view.world).length > 0,
+    isAchieved: (view) => select(view.world).length === 0,
   };
 }
 
@@ -200,10 +283,20 @@ function repositionGoal(t: CompetentBotTunables): BotGoal {
  * Builds the competent goal set in priority/tie-break order. Registration
  * order is the deterministic tie-break, so the higher-priority goals are
  * registered first.
+ *
+ * @param t — competent tunables.
+ * @param content — content registry; defaults to an empty registry whose
+ *   neutral profiles preserve the pre-content behaviour.
  */
 export function createCompetentGoals(
   t: CompetentBotTunables,
+  content: BotContent = createBotContent(),
 ): GoalRegistry {
+  const enemyThreat = (target: ContentTarget): number =>
+    content.resolveEnemy(target.contentId).threat;
+  const dropValue = (target: ContentTarget): number =>
+    content.resolveDrop(target.contentId).value;
+
   return createGoalRegistry([
     surviveGoal(t),
     collectGoal(
@@ -211,14 +304,26 @@ export function createCompetentGoals(
       t,
       t.mineralBase,
       t.mineralSeekRange,
-      (world) => world.minerals,
+      (world) =>
+        world.minerals.map((mineral) => ({
+          x: mineral.x,
+          y: mineral.y,
+          contentId: mineral.type,
+        })),
+      () => 1,
     ),
     collectGoal(
       COMPETENT_GOAL_IDS.collectPowerUp,
       t,
       t.powerUpBase,
       t.powerUpSeekRange,
-      (world) => world.drops,
+      (world) =>
+        world.drops.map((drop) => ({
+          x: drop.x,
+          y: drop.y,
+          contentId: drop.type,
+        })),
+      dropValue,
     ),
     engageGoal(
       COMPETENT_GOAL_IDS.engageEnemy,
@@ -226,6 +331,7 @@ export function createCompetentGoals(
       t.enemyBase,
       t.enemySeekRange,
       enemyTargets,
+      enemyThreat,
     ),
     engageGoal(
       COMPETENT_GOAL_IDS.engageAsteroid,
@@ -233,6 +339,7 @@ export function createCompetentGoals(
       t.asteroidBase,
       t.asteroidSeekRange,
       asteroidTargets,
+      enemyThreat,
     ),
     repositionGoal(t),
   ]);

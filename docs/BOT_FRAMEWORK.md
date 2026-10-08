@@ -5,9 +5,11 @@ per-frame priority ladder. This document is the overview of that framework
 and the guide to extending it with goals and behaviours.
 
 > **Status:** framework core (AH-0MUY08WKB002N1N6) plus the structured
-> competent bot content (AH-0MUY08WX3000ZEVO) described in
-> [section 9](#9-the-structured-competent-bot). The framework still ships the
-> legacy survival heuristic as the brain's default fallback (see
+> competent bot content (AH-0MUY08WX3000ZEVO) and its content-adaptive
+> configuration (AH-0MUY08X98002TRHT) described in
+> [section 9](#9-the-structured-competent-bot) and
+> [section 11](#11-teaching-the-bot-about-new-content). The framework still
+> ships the legacy survival heuristic as the brain's default fallback (see
 > [Legacy adapter](#7-legacy-adapter)).
 
 ## 1. Why a framework
@@ -340,6 +342,8 @@ The framework's unit tests live beside it:
 
 - `worldModel.test.ts` — prediction in isolation, including a player dodge.
 - `registry.test.ts` — registration, lookup, duplicate protection, order.
+- `content.test.ts` — content lookup, the documented unknown-content default,
+  and duplicate protection.
 - `commitment.test.ts` — the three release rules and deterministic replay.
 - `botBrain.test.ts` — selection, dispatch, fallback, world integration and
   deterministic replay of a decision sequence.
@@ -350,13 +354,108 @@ The competent content is tested in `src/ai/framework/competent/`:
 - `steering.test.ts` — safe/unsafe bearings, path-around, aim, forward model.
 - `goals.test.ts` — utility bands and priority order.
 - `behaviours.test.ts` — collect/engage/evade/reposition intents.
+- `content.test.ts` — synthetic enemy/asteroid/drop content, the shipped
+  registry completeness guard, and graceful unknown content (AC3/AC4).
 - `competentBot.test.ts` — commitment/hysteresis and dispatch.
 - `competentBot.integration.test.ts` — a deterministic seeded run, the
   hard-constraint dodge, and the priority-weighted A/B against the legacy
   ladder (AC6).
 
-`botFrameworkDocs.test.ts` and `competent/competentBotDocs.test.ts` guard the
-presence of this document and its key sections.
+`botFrameworkDocs.test.ts`, `competent/competentBotDocs.test.ts` and
+`contentDocs.test.ts` guard the presence of this document and its key
+sections.
+
+## 11. Teaching the bot about new content
+
+New enemies, power-ups and weapons are handled through the **content
+registry** (`src/ai/framework/content.ts`) — no core, goal or behaviour code
+changes (AH-0MUY08X98002TRHT). The registry has two profile kinds.
+
+### 11.1 Enemy archetype profiles (`EnemyContentProfile`)
+
+```ts
+export interface EnemyContentProfile {
+  id: string;                     // archetype key, e.g. 'diver'
+  threat: number;                 // relative threat, neutral 1
+  engagementRange?: number;       // preferred standoff px (optional)
+  aim: 'none' | 'direct' | 'lead';// how to hold the aim axis
+  asteroidLike: boolean;          // true = asteroid-band hazard
+}
+```
+
+- **`threat`** scales the archetype's proximity score inside the enemy band,
+  so a more dangerous enemy is engaged first. It is relative and **never**
+  lets the enemy band outrank the collection bands.
+- **`engagementRange`** is the preferred standoff. Omit it to use the
+  behaviour tunable (`COMPETENT_BOT_TUNABLES.engagementRange`), keeping ranges
+  single-sourced unless an archetype needs its own.
+- **`aim`** is how the bot holds its aim axis. `direct` points the hull at the
+  target and coasts once in range; `none` closes without aim reasoning (e.g.
+  the mineral-seeking harvester); `lead` is reserved for predictive lead and
+  currently behaves as `direct` because the read-only snapshot exposes no
+  enemy velocity.
+- **`asteroidLike`** is what the world model uses to partition the archetype
+  into `liveAsteroids` (the `engage-asteroid` band). An unknown archetype is
+  treated as a non-asteroid combat target.
+
+### 11.2 Power-up / weapon drop profiles (`DropContentProfile`)
+
+```ts
+export interface DropContentProfile {
+  id: string;      // drop id, e.g. 'extra_life' or 'nova'
+  value: number;   // collection desirability, neutral 1
+}
+```
+
+`value` is consumed twice: the `collect-powerup` goal scorer scales its
+utility by it, and the `collect` behaviour prefers the best
+`value / (1 + distance)` target. A higher value therefore beats a slightly
+nearer lower-value drop, while a value of `1` reproduces the legacy
+nearest-first behaviour exactly.
+
+### 11.3 Registering synthetic or custom content
+
+Build a registry and pass it to the brain; the factory's `content` option
+defaults to the shipped `COMPETENT_BOT_CONTENT`:
+
+```ts
+import { createBotContent, createCompetentBotBrain } from './framework';
+
+const content = createBotContent({
+  enemies: [
+    { id: 'sapper', threat: 1.4, engagementRange: 180, aim: 'direct',
+      asteroidLike: false },
+    { id: 'void_rock', threat: 1, aim: 'direct', asteroidLike: true },
+  ],
+  drops: [{ id: 'quantum_core', value: 1.5 }],
+});
+
+const brain = createCompetentBotBrain({ content });
+```
+
+The brain now treats `sapper` as a priority combat target, `void_rock` as an
+asteroid-band hazard, and `quantum_core` as a high-value collection target —
+with no code change anywhere in the framework or the competent content.
+
+### 11.4 Unknown content (documented default)
+
+Lookup for an id that is not registered resolves to the documented default
+rather than throwing:
+
+| Unknown | Resolves to | Effect |
+|---|---|---|
+| enemy archetype | `DEFAULT_ENEMY_PROFILE` | `threat: 1`, `aim: 'direct'`, `asteroidLike: false`, tunable engagement range |
+| drop id | `DEFAULT_DROP_PROFILE` | `value: 1` (neutral, nearest-first collection) |
+
+This mirrors the enemy factory, which falls back to `Scout` for a custom
+Save-As archetype, so a new entity never freezes or derails the bot.
+
+### 11.5 Where the shipped content lives
+
+The shipped profiles are in `src/ai/framework/competent/content.ts`
+(`COMPETENT_BOT_CONTENT`): every archetype `createEnemyFromConfig` can spawn
+and every id in `POWER_UP_CATALOGUE` / `WEAPON_DROP_IDS` has an entry. A guard
+test fails if a new game id is added without a profile.
 
 ## References
 
