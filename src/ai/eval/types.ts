@@ -16,6 +16,8 @@
  * @module src/ai/eval/types
  */
 
+import type { BotHumanInputTunables } from '../botHumanLike';
+
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
 
@@ -129,6 +131,13 @@ export interface ArenaConfig {
   readonly seed: number;
   /** Maximum ticks to simulate (a run may end early on death). */
   readonly ticks: number;
+  /**
+   * Optional human-like input governor tunables (style matching). Defaults to
+   * the shipped `BOT_HUMAN_INPUT_TUNABLES`. Style fitting maps a human
+   * recording's reaction latency and key-hold distribution onto these so a
+   * styled bot reproduces the human's input cadence (AH-0MUY08XXN003NV0I).
+   */
+  readonly humanInput?: Partial<BotHumanInputTunables>;
   /** Fixed simulation step, seconds. Defaults to 1/60. */
   readonly dt?: number;
   /** Playfield width, px. Defaults to 960. */

@@ -557,6 +557,16 @@ documented in **[docs/EVALUATION.md](./docs/EVALUATION.md)**
 flags, metrics and how to interpret the A/B confidence interval); it writes
 `report.json` and `runs.jsonl` under the git-ignored `eval-output/`.
 
+#### Style matching from telemetry
+
+The pipeline that makes the bot **match a recorded player's style** — extract
+style features from a human recording, fit the structured bot's tunables to
+them (the preferred path, which keeps every safety guarantee), optionally
+clone the recorded actions, and evaluate whether the styled bot is measurably
+closer to the human without regressing competence — is documented in
+**[docs/STYLE_MATCHING.md](./docs/STYLE_MATCHING.md)**
+(AH-0MUY08XXN003NV0I).
+
 #### Configuration (CSV)
 
 Enemy and ship tuning is held in committed CSV files — the **single, human-editable source of truth**. No code edit is needed to retune or add an archetype.
