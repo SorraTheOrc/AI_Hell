@@ -548,6 +548,15 @@ so the game and gyms stay at parity. Implementation is tracked by the sibling
 epic **AH-0MUZMTTYH008KVS2**; the metric is a *proxy* for excitement and must
 be calibrated before it drives difficulty.
 
+#### Same-seed evaluation harness
+
+The reproducible evaluation of the bot — headless same-seed runs, metrics,
+A/B comparison with confidence and the optional side-by-side capture plan — is
+documented in **[docs/EVALUATION.md](./docs/EVALUATION.md)**
+(AH-0MUY08XLD009K4W4). Run it with `npm run evaluate` (see the document for
+flags, metrics and how to interpret the A/B confidence interval); it writes
+`report.json` and `runs.jsonl` under the git-ignored `eval-output/`.
+
 #### Configuration (CSV)
 
 Enemy and ship tuning is held in committed CSV files — the **single, human-editable source of truth**. No code edit is needed to retune or add an archetype.
