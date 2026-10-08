@@ -128,7 +128,10 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   heading stays committed for the human reaction window; each forward-thrust
   press is held for a human-like burst (200–225 ms normally, extended to
   400 ms on a long-travel leg) so the reflex cannot toggle the key every
-  frame (AC15/AC16).
+  frame (AC15/AC16). Each press is then gently shortened by a per-press
+  random **1–5 %** of its drawn duration, so the bot is a little gentler on
+  the thrusters (AH-0MUYRJQE50021T4A); the tunable bounds live in
+  `BOT_HUMAN_INPUT_TUNABLES` (`thrustPressGentleMinPct`/`thrustPressGentleMaxPct`).
 - **Same input path as a player:** the bot's decision flows through the shared
   `CombatCoreScene.getBotInput()` seam, which `_readPlayerInput()` consults
   before the keyboard — so the demo ship obeys exactly the same
