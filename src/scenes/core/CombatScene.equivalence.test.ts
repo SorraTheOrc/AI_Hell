@@ -53,10 +53,9 @@ const SHARED_METHODS = [
   '_collectDrop',
   '_spawnPlayerExplosion',
   '_clearEnemyBullets',
-  '_handleTeleport',
+  '_updateAutoDefence',
   '_readPlayerInput',
   '_tickPlayer',
-  '_updatePhaseShiftAutoTrigger',
 ] as const;
 
 /**
@@ -477,7 +476,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
       '_clearEnemyBullets',
       '_spawnPlayerExplosion',
       '_readPlayerInput',
-      '_handleTeleport',
+      '_updateAutoDefence',
     ] as const) {
       expect(
         (PlayScene.prototype as unknown as Record<string, unknown>)[method],
@@ -1840,7 +1839,7 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
   ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
-  ['_handleTeleport', 'src/scenes/core/CombatScene.ts'],
+  ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],

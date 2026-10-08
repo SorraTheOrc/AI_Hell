@@ -467,7 +467,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
     collectCombatDrop(scene, 'phase_shift');
 
     // First danger episode consumes the stored charge.
-    expect(registry.updateDanger(true, 0.016)).toBe(true);
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
     registry.tick(1.4);
     expect(registry.isPhased).toBe(true);
     registry.tick(0.2);
@@ -477,7 +477,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
     // Danger clears, the cooldown elapses, then a second pickup re-arms.
     registry.updateDanger(false, 1);
     collectCombatDrop(scene, 'phase_shift');
-    expect(registry.updateDanger(true, 0.016)).toBe(true);
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
   });
 });
 
@@ -704,7 +704,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     for (const method of [
       '_collectDrop',
       '_clearEnemyBullets',
-      '_handleTeleport',
+      '_updateAutoDefence',
       'triggerTeleport',
       '_hitPlayer',
       '_readPlayerInput',
@@ -789,36 +789,23 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     booted.game.destroy(true);
   });
 
-  it('AC5 — the shared teleport activates on ↓ (adopted S+↓ fix)', async () => {
+  it('AC1/AC3 — the shared automatic defence warps on danger with no key input', async () => {
     const booted = await bootScene([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
-    scene.getEffectsRegistry().applyCollect('teleport');
-    expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
+    collectCombatDrop(scene, 'teleport');
+    const registry = scene.getEffectsRegistry();
+    expect(registry.hasTeleport()).toBe(true);
 
-    // Only the down-arrow is held/just-down; S is not. The inherited
-    // `_handleTeleport` must still consume the stack and grant Phase Shift — the
-    // deliberate S+↓ fix that replaces the gym's old S-only
-    // implementation (parent AC5b).
-    const sKey = scene.input.keyboard!.addKey('S');
-    const downKey = scene.input.keyboard!.addKey(
-      Phaser.Input.Keyboard.KeyCodes.DOWN,
-    );
-    (sKey as unknown as { _justDown: boolean })._justDown = false;
-    sKey.isDown = false;
-    (downKey as unknown as { _justDown: boolean })._justDown = true;
-    downKey.isDown = true;
-    (
-      scene as unknown as { teleportKey: Phaser.Input.Keyboard.Key | null }
-    ).teleportKey = sKey;
-    (
-      scene as unknown as { downKey: Phaser.Input.Keyboard.Key | null }
-    ).downKey = downKey;
+    // Park the ship inside the 3-scout V-formation (all within
+    // DANGER_RADIUS) so the shared danger feed selects the stored Teleport
+    // and warps — with no key input at all (S / ↓ are no longer wired).
+    // `respawn` syncs the internal movement state so the tick keeps it here.
+    const player = scene.getPlayer()!;
+    player.respawn(192, 125);
+    scene.tick(0.016);
 
-    scene['_handleTeleport']();
-
-    // The ↓ key (not S) consumed the Teleport stack and granted Phase Shift on arrival.
-    expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
-    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isPhased).toBe(true);
     booted.game.destroy(true);
   });
 });

@@ -11,7 +11,7 @@
  *
  * - {@link CombatScene._spawnPlayerExplosion} (inherited from the base)
  * - {@link CombatScene._clearEnemyBullets} (inherited from the base)
- * - {@link CombatScene._handleTeleport} / {@link CombatScene.triggerTeleport}
+ * - {@link CombatScene._updateAutoDefence} / {@link CombatScene.triggerTeleport}
  * - {@link CombatScene._hitPlayer}
  * - {@link CombatScene._handleCollisions}
  *
@@ -143,10 +143,6 @@ export abstract class CombatScene<
   /** Centred countdown overlay (created lazily; hidden when idle). */
   protected countdownText: Phaser.GameObjects.Text | null = null;
 
-  /** Teleport teleport activation keys: S / ↓ (JustDown semantics). */
-  protected teleportKey: Phaser.Input.Keyboard.Key | null = null;
-  protected downKey: Phaser.Input.Keyboard.Key | null = null;
-
   // ── Participant contract (subclass accessors) ────────────────────
 
   /** The keyboard-controlled player ship (null when the scene has none). */
@@ -162,23 +158,27 @@ export abstract class CombatScene<
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
 
-  // ── Automatic Phase Shift danger feed ──────────────────────
+  // ── Automatic defence danger feed ──────────────────────────
 
   /**
-   * Shared per-frame danger feed for the automatic Phase Shift (parent
-   * AH-0MUIYX1EE008FVS8, Q1/Q2/Q3).
+   * Shared per-frame danger feed for the automatic defences (Phase Shift,
+   * parent AH-0MUIYX1EE008FVS8; Teleport, AH-0MUZE4AIP009HZWC).
    *
    * Counts the live hostile bodies and enemy bullets whose centre lies
    * within `DANGER_RADIUS` of the ship (via the pure `isInDanger` helper)
-   * and hands the result to the effects registry, which auto-activates
-   * Phase Shift when a charge is available and the re-arm conditions are
-   * met. Every combat scene calls this once per frame immediately before
-   * `_handleCollisions`, so the game and the gyms share one implementation
-   * and one ordering and cannot diverge.
+   * and hands the result to the effects registry. Under one shared re-arm
+   * governor the registry selects — at most once per danger episode — which
+   * defence to spend by comparing the available counts ({@link
+   * selectAutoDefence}). When it reports Phase Shift it has already
+   * activated the pass-through; when it selects Teleport the scene performs
+   * the warp through {@link CombatScene.triggerTeleport} (consuming one FIFO
+   * stack and granting Phase Shift on arrival). Every combat scene calls this
+   * once per frame immediately before `_handleCollisions`, so the game and
+   * the gyms share one implementation and one ordering and cannot diverge.
    *
-   * @param dt — frame delta (seconds); advances the Phase Shift re-arm cooldown.
+   * @param dt — frame delta (seconds); advances the shared re-arm cooldown.
    */
-  protected _updatePhaseShiftAutoTrigger(dt: number): void {
+  protected _updateAutoDefence(dt: number): void {
     const registry = this.getEffectsRegistry();
     const player = this.getPlayer();
     if (!player) {
@@ -193,9 +193,18 @@ export abstract class CombatScene<
       x: bullet.graphics.x,
       y: bullet.graphics.y,
     }));
-    const fired = registry.updateDanger(isInDanger(player, bodies, bullets), dt);
-    // Dedicated activation cue on every auto-trigger (parent AH-0MUIYX1EE008FVS8).
-    if (fired) playPhaseShiftSound();
+    const decision = registry.updateDanger(
+      isInDanger(player, bodies, bullets),
+      dt,
+    );
+    // Dedicated activation cue on every automatic Phase Shift trigger
+    // (parent AH-0MUIYX1EE008FVS8). The Teleport path plays the same cue
+    // inside `triggerTeleport` once the warp lands.
+    if (decision === 'phase_shift') {
+      playPhaseShiftSound();
+    } else if (decision === 'teleport') {
+      this.triggerTeleport();
+    }
   }
 
   // ── Shared effect gating (Shield shield / Phase Shift phase) ─────────────────
@@ -757,28 +766,6 @@ export abstract class CombatScene<
   // ── Teleport ─────────────────────────────────────────────────────
 
   /**
-   * Handles the S / ↓ key press for a Teleport teleport (JustDown semantics).
-   */
-  protected _handleTeleport(): void {
-    const player = this.getPlayer();
-    if (!player || !this.teleportKey) return;
-    const JustDown = (
-      Phaser.Input.Keyboard as unknown as {
-        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
-      }
-    ).JustDown;
-    const sDown = JustDown
-      ? JustDown(this.teleportKey)
-      : this.teleportKey.isDown;
-    const downDown = this.downKey
-      ? JustDown
-        ? JustDown(this.downKey)
-        : this.downKey.isDown
-      : false;
-    if (sDown || downDown) this.triggerTeleport();
-  }
-
-  /**
    * Consumes one Teleport teleport stack and warps the player to the nearest
    * safe spot along the heading (granting Phase Shift on arrival via the
    * registry). Public so tests can trigger it deterministically.
@@ -1307,8 +1294,6 @@ export abstract class CombatScene<
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
-    this.teleportKey = null;
-    this.downKey = null;
     this.waveTimeoutTimer = 0;
     this.waveTimeoutActive = false;
     this.waveTimeoutDuration = 0;
@@ -1333,8 +1318,6 @@ export abstract class CombatScene<
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
-    this.teleportKey = null;
-    this.downKey = null;
     this.waveTimeoutBar?.destroy();
     this.waveTimeoutBar = null;
     this.waveTimeoutActive = false;

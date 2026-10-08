@@ -3,11 +3,11 @@
  * menus (AH-0MUA8BK1E001UZUC — child of the In-game menu epic
  * AH-0MU9LPZ0G0015292).
  *
- * Covers: PlayScene movement/layer-drop/pause keys read from
- * `ai_hell_settings` (defaults unchanged), rebound keys drive the ship,
- * old keys no longer trigger, the layer-drop JustDown contract with a
- * rebound key, menu navigation using the configured up/down/pause keys,
- * and the invalid-binding fallback.
+ * Covers: PlayScene movement/pause keys read from `ai_hell_settings`
+ * (defaults unchanged), rebound keys drive the ship, old keys no longer
+ * trigger, the layer-drop action being retained in settings but no longer
+ * wired to Teleport (automatic since AH-0MUZE4AIP009HZWC), menu navigation
+ * using the configured up/down/pause keys, and the invalid-binding fallback.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,6 +16,8 @@ import Phaser from 'phaser';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import {
   DEFAULT_BINDINGS,
+  loadSettings,
+  resolveBindings,
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
@@ -57,8 +59,6 @@ interface PlayInternals {
         D: Phaser.Input.Keyboard.Key;
       }
     | undefined;
-  teleportKey: Phaser.Input.Keyboard.Key | null;
-  downKey: Phaser.Input.Keyboard.Key | null;
   pauseKeyName: string;
 }
 
@@ -86,21 +86,24 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
 
   // ── AC1 — default bindings unchanged ────────────────────────────
 
-  it('AC1 — default bindings keep WASD, S layer-drop and ESC pause', async () => {
+  it('AC1 — default bindings keep WASD + ESC pause; Teleport holds no key', async () => {
     const scene = await bootPlay();
     const internals = scene as unknown as PlayInternals;
     expect(internals.wasd!.W.keyCode).toBe(KC.W);
     expect(internals.wasd!.A.keyCode).toBe(KC.A);
     expect(internals.wasd!.S.keyCode).toBe(KC.S);
     expect(internals.wasd!.D.keyCode).toBe(KC.D);
-    expect(internals.teleportKey!.keyCode).toBe(KC.S);
-    expect(internals.downKey!.keyCode).toBe(KC.DOWN);
     expect(internals.pauseKeyName).toBe('Escape');
+    // Teleport is automatic now (AH-0MUZE4AIP009HZWC): S is the moveDown
+    // binding only and the scene holds no Teleport key.
+    const asRecord = scene as unknown as Record<string, unknown>;
+    expect(asRecord.teleportKey).toBeUndefined();
+    expect(asRecord.downKey).toBeUndefined();
   });
 
   // ── AC1 — rebound gameplay keys ─────────────────────────────────
 
-  it('AC1 — gameplay reads movement / layer-drop keys from the bindings', async () => {
+  it('AC1 — gameplay reads movement keys from the bindings', async () => {
     persistBindings(REBOUND);
     const scene = await bootPlay();
     const internals = scene as unknown as PlayInternals;
@@ -108,10 +111,15 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     expect(internals.wasd!.A.keyCode).toBe(KC.J);
     expect(internals.wasd!.S.keyCode).toBe(KC.K);
     expect(internals.wasd!.D.keyCode).toBe(KC.L);
-    expect(internals.teleportKey!.keyCode).toBe(KC.O);
     // The old WASD keys are no longer wired to the movement handler.
     expect(internals.wasd!.W.keyCode).not.toBe(KC.W);
     expect(internals.wasd!.S.keyCode).not.toBe(KC.S);
+    // The layerDrop binding is retained in the settings model (unwired,
+    // reserved for the reverse-thruster item) but the scene holds no key.
+    expect(resolveBindings(loadSettings().bindings).layerDrop).toBe('o');
+    expect(
+      (scene as unknown as Record<string, unknown>).teleportKey,
+    ).toBeUndefined();
   });
 
   it('AC1/AC5 — the rebound movement key moves the ship (old key inert)', async () => {
@@ -150,36 +158,34 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     expect(scene.isPaused()).toBe(false);
   });
 
-  // ── AC4 — layer-drop JustDown preserved with a rebound key ──────
+  // ── AC4 — layerDrop retained in settings, no longer wired to Teleport ──
 
-  it('AC4 — rebound layer-drop key keeps JustDown semantics', async () => {
+  it('AC4 — S / ↓ no longer consume a Teleport stack (automatic only)', async () => {
     persistBindings(REBOUND);
     const scene = await bootPlay();
-    const internals = scene as unknown as PlayInternals;
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a Teleport teleport stack.
+    // Collect a Teleport stack.
     const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
     expect(registry.teleportStacks()).toBe(1);
 
-    const key = internals.teleportKey!;
-    expect(key.keyCode).toBe(KC.O);
-    internals.downKey!.isDown = false;
+    // The layerDrop action still exists in settings, but no key consumes it
+    // and the scene holds no Teleport key. Pressing S / ↓ / the rebound
+    // layerDrop key leaves the stored stack untouched (no danger here).
+    expect(resolveBindings(loadSettings().bindings).layerDrop).toBe('o');
+    const asRecord = scene as unknown as Record<string, unknown>;
+    expect(asRecord.teleportKey).toBeUndefined();
+    expect(asRecord.downKey).toBeUndefined();
 
-    // Holding the key without a fresh press does not retrigger.
-    key.isDown = true;
-    (key as unknown as { _justDown: boolean })._justDown = false;
+    pressKey('o');
+    pressKey('s');
+    pressKey('ArrowDown');
     scene.tick(0.05);
     expect(registry.teleportStacks()).toBe(1);
-
-    // A fresh JustDown fires the teleport.
-    (key as unknown as { _justDown: boolean })._justDown = true;
-    scene.tick(0.05);
-    expect(registry.teleportStacks()).toBe(0);
   });
 
   // ── AC2 — menu navigation uses configured bindings ──────────────

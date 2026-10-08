@@ -7,6 +7,7 @@ import {
   P10_SCOOP_DURATION,
   applySpeedMultiplier,
   magnetRadius,
+  selectAutoDefence,
   MAGNET_ATTRACTION_SPEED,
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
@@ -595,7 +596,7 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
 
-    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     expect(reg.isPhased).toBe(true);
     expect(reg.remaining('phase_shift')).toBeCloseTo(
       resolvePowerUpAtLevel('phase_shift', 0).phaseDuration!,
@@ -606,14 +607,14 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 
   it('does not trigger without a charge', () => {
     const reg = new EffectsRegistry();
-    expect(reg.updateDanger(true, 0.016)).toBe(false);
+    expect(reg.updateDanger(true, 0.016)).toBeNull();
     expect(reg.isPhased).toBe(false);
   });
 
   it('does not trigger when not in danger', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
-    expect(reg.updateDanger(false, 0.016)).toBe(false);
+    expect(reg.updateDanger(false, 0.016)).toBeNull();
     expect(reg.isPhased).toBe(false);
     expect(reg.phaseCharges()).toBe(1);
   });
@@ -633,12 +634,12 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     reg.applyCollect('phase_shift', true);
     expect(reg.isPhasePermanent()).toBe(true);
 
-    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     reg.tick(PHASE_DURATION + 0.01);
     expect(reg.isPhased).toBe(false);
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
 
-    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     expect(reg.phaseCharges()).toBe(0); // permanent never consumes
   });
 
@@ -647,7 +648,7 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     reg.applyCollect('phase_shift', true);
     reg.updateDanger(true, 0.016);
     reg.tick(PHASE_DURATION + 0.01);
-    expect(reg.updateDanger(true, 5)).toBe(false);
+    expect(reg.updateDanger(true, 5)).toBeNull();
     expect(reg.isPhased).toBe(false);
   });
 
@@ -658,8 +659,8 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     reg.tick(PHASE_DURATION + 0.01);
 
     reg.updateDanger(false, 0.1);
-    expect(reg.updateDanger(true, 0)).toBe(false); // blocked by cooldown
-    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe(true);
+    expect(reg.updateDanger(true, 0)).toBeNull(); // blocked by cooldown
+    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('phase_shift');
   });
 
   it('applyPhaseShift refreshes an active phase to the full P7 duration', () => {
@@ -683,6 +684,109 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     expect(reg.isPhasePermanent()).toBe(false);
     expect(reg.isPhased).toBe(false);
     expect(store.getLevel('phase_shift')).toBe(0);
+  });
+});
+
+// ── Automatic defence selection: Phase Shift vs Teleport ─────────────
+
+describe('selectAutoDefence: charge-count selection (AC2)', () => {
+  it('returns null when neither defence is available', () => {
+    expect(selectAutoDefence(0, false, 0)).toBeNull();
+  });
+
+  it('returns the only available defence', () => {
+    expect(selectAutoDefence(1, false, 0)).toBe('phase_shift');
+    expect(selectAutoDefence(0, false, 2)).toBe('teleport');
+  });
+
+  it('spends the ability with the greater available count', () => {
+    expect(selectAutoDefence(1, false, 3)).toBe('teleport');
+    expect(selectAutoDefence(3, false, 1)).toBe('phase_shift');
+  });
+
+  it('breaks an exact tie with the injected RNG (both outcomes reachable)', () => {
+    expect(selectAutoDefence(2, false, 2, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(2, false, 2, () => 0.49)).toBe('phase_shift');
+    expect(selectAutoDefence(2, false, 2, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(2, false, 2, () => 0.99)).toBe('teleport');
+  });
+
+  it('treats a permanent Phase Shift as unbounded and outranks Teleport', () => {
+    expect(selectAutoDefence(0, true, 5)).toBe('phase_shift');
+    expect(selectAutoDefence(0, true, 0)).toBe('phase_shift');
+  });
+});
+
+describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
+  it('selects Teleport without consuming the stack (the scene warps)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    // The registry does not own the warp, so it must not consume the stack.
+    expect(reg.teleportStacks()).toBe(1);
+    expect(reg.isPhased).toBe(false);
+  });
+
+  it('latches the danger episode so Teleport is not drained continuously', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+    reg.applyCollect('teleport'); // level 2 → 3 stacks
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    // Still in danger on the same episode → no second selection.
+    expect(reg.updateDanger(true, 5)).toBeNull();
+    expect(reg.teleportStacks()).toBe(3);
+  });
+
+  it('re-arms only after danger clears and the phase cooldown elapses', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    // The scene completes the warp: consume the stack + grant phase.
+    expect(reg.consumeTeleport()).toBe(true);
+    expect(reg.isPhased).toBe(true);
+    reg.tick(PHASE_DURATION + 0.01); // phase expires → cooldown starts
+
+    // Re-collect a Teleport stack for the next episode.
+    reg.applyCollect('teleport');
+
+    reg.updateDanger(false, 0.1); // danger clears, cooldown still running
+    expect(reg.updateDanger(true, 0)).toBeNull(); // blocked by cooldown
+    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('teleport');
+  });
+
+  it('spends the more abundant stock when both are available', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift'); // 1 charge
+    reg.applyCollect('teleport'); // 1 stack
+    reg.applyCollect('teleport'); // level 2 → 3 stacks
+    expect(reg.phaseCharges()).toBe(1);
+    expect(reg.teleportStacks()).toBe(3);
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+  });
+
+  it('uses the seeded RNG for the exact-tie pick', () => {
+    const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
+    phaseFirst.applyCollect('phase_shift');
+    phaseFirst.applyCollect('teleport');
+    expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
+
+    const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
+    teleportFirst.applyCollect('phase_shift');
+    teleportFirst.applyCollect('teleport');
+    expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
+  });
+
+  it('permanent Phase Shift outranks stored Teleports, which are conserved', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift', true);
+    reg.applyCollect('teleport');
+
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(reg.teleportStacks()).toBe(1);
   });
 });
 

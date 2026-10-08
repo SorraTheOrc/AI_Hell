@@ -61,11 +61,12 @@
  *   activates a `phaseDuration` pass-through the moment the player is in
  *   real danger and a charge is available. After expiry it re-arms only once
  *   danger has cleared and a short cooldown has elapsed (Q2/Q3).
- * - **Teleport** — stored FIFO stacks (no timer); Space consumes one use
- *   and grants Phase Shift for `teleportPhaseDuration` at the landing
- *   spot without consuming an auto-activation charge (Q6). Safe-spot
- *   resolution is the scene's responsibility; this module tracks only the
- *   stored count.
+ * - **Teleport** — stored FIFO stacks (no timer); the shared automatic
+ *   defence feed spends one FIFO use when Teleport is selected
+ *   (AH-0MUZE4AIP009HZWC) and grants Phase Shift for
+ *   `teleportPhaseDuration` at the landing spot without consuming an
+ *   auto-activation charge (Q6). Safe-spot resolution is the scene's
+ *   responsibility; this module tracks only the stored count.
  *
  * The registry is pure (no Phaser imports). The scene layers
  * movement/ship integration, bullet clearing, hit-response and teleport
@@ -197,6 +198,67 @@ export function magnetRadius(shipSize: number, stacks: number): number {
 /** Supplies the run-scoped level store the registry should consume. */
 export type PowerUpLevelStoreResolver = () => PowerUpLevelStore | null;
 
+// ── Automatic defence selection (AH-0MUZE4AIP009HZWC) ───────────────
+
+/** A defensive ability the automatic defence feed may spend. */
+export type AutoDefenceChoice = 'phase_shift' | 'teleport';
+
+/**
+ * Outcome of feeding one frame of the shared danger signal into
+ * {@link EffectsRegistry.updateDanger}:
+ *
+ * - `'phase_shift'` — the registry activated Phase Shift itself.
+ * - `'teleport'` — Teleport was selected; the scene must perform the warp
+ *   through its shared `triggerTeleport` path (which consumes one FIFO
+ *   stack and grants Phase Shift on arrival).
+ * - `null` — nothing should fire this frame.
+ */
+export type DangerDecision = AutoDefenceChoice | null;
+
+/**
+ * Picks the defensive ability to spend from the available stocks, using the
+ * producer's charge-count rule (AH-0MUZE4AIP009HZWC, AC2):
+ *
+ * - Neither available → `null`.
+ * - Only one available → that ability.
+ * - Both available → the ability with the **greater** available count.
+ * - Equal finite counts → a uniform 50/50 pick driven by `rng`.
+ * - A permanent Phase Shift is **unbounded** (count `Infinity`) and so
+ *   always outranks a finite Teleport stack, conserving Teleports while
+ *   unlimited Phase Shift is owned (documented assumption).
+ *
+ * Pure and engine-agnostic so the game and every gym share one rule and the
+ * tie-break is deterministically testable via an injectable `rng`.
+ *
+ * @param phaseCharges — stored Phase Shift auto-activation charges.
+ * @param phasePermanent — whether the Phase Shift reward is unlimited.
+ * @param teleportStacks — stored Teleport FIFO stacks.
+ * @param rng — random source in `[0, 1)`; only consulted for an exact tie
+ *   between two finite counts. Injectable/seeded for deterministic tests.
+ * @returns the ability to spend, or `null` when none is available.
+ */
+export function selectAutoDefence(
+  phaseCharges: number,
+  phasePermanent: boolean,
+  teleportStacks: number,
+  rng: () => number = Math.random,
+): AutoDefenceChoice | null {
+  const phaseCount = phasePermanent
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, phaseCharges);
+  const teleportCount = Math.max(0, teleportStacks);
+  const phaseAvailable = phaseCount > 0;
+  const teleportAvailable = teleportCount > 0;
+
+  if (!phaseAvailable && !teleportAvailable) return null;
+  if (phaseAvailable && !teleportAvailable) return 'phase_shift';
+  if (teleportAvailable && !phaseAvailable) return 'teleport';
+  if (phaseCount > teleportCount) return 'phase_shift';
+  if (teleportCount > phaseCount) return 'teleport';
+  // Both finite and equal — uniform 50/50 tie-break.
+  return rng() < 0.5 ? 'phase_shift' : 'teleport';
+}
+
 // ── Effects registry ────────────────────────────────────────────────
 
 interface TimedEffectState {
@@ -235,15 +297,22 @@ export class EffectsRegistry {
   /** Active timed weapons: each weapon has its own countdown. */
   private _weapons: Map<WeaponId, WeaponEffect> = new Map();
 
-  // ── Phase Shift auto-trigger timing state (Q2/Q3/Q6) ──────────────────────
+  // ── Shared automatic-defence timing state (Q2/Q3/Q6, AH-0MUZE4AIP009HZWC) ──
   /**
-   * Whether danger has cleared since the last auto-trigger. A fresh Phase Shift is
-   * armed (`true`); firing latches it off until danger drops below the
-   * threshold (Q2).
+   * Whether danger has cleared since the last auto-activation. A fresh
+   * defence is armed (`true`); firing latches it off until danger drops below
+   * the threshold (Q2). One governor covers both Phase Shift and Teleport, so
+   * at most one ability fires per danger episode (AC5).
    */
-  private _phaseDangerCleared = true;
-  /** Seconds of re-arm cooldown remaining after the last phase expired. */
-  private _phaseRearmCooldown = 0;
+  private _dangerCleared = true;
+  /** Seconds of shared re-arm cooldown remaining after the last phase expired. */
+  private _rearmCooldown = 0;
+  /**
+   * Random source for the Phase Shift/Teleport exact-tie pick (AC2).
+   * Injectable/seeded via the constructor or {@link setRng} so the tie-break
+   * is deterministically testable.
+   */
+  private _rng: () => number;
 
   // ── Shield shield remaining-absorptions state (AH-0MUVM9RAO004Y3LB) ──
   /**
@@ -285,8 +354,17 @@ export class EffectsRegistry {
    *   scenes inject the player's store via {@link setStore} or
    *   {@link setStoreResolver}.
    */
-  constructor(store?: PowerUpLevelStore) {
+  constructor(store?: PowerUpLevelStore, rng: () => number = Math.random) {
     this._store = store ?? new PowerUpLevelStore();
+    this._rng = rng;
+  }
+
+  /**
+   * Injects the random source used for the Phase Shift/Teleport tie-break
+   * (AC2). Pass a seeded generator for deterministic tests.
+   */
+  setRng(rng: () => number): void {
+    this._rng = rng;
   }
 
   /** Binds the registry to a specific run-scoped level store instance. */
@@ -491,9 +569,11 @@ export class EffectsRegistry {
     effect.remaining = 0;
     if (effect.permanent) return;
     this._timed.delete(id);
-    // Start the Phase Shift re-arm cooldown the moment a phase expires (Q2).
+    // Start the shared re-arm cooldown the moment an auto-triggered phase
+    // expires (Q2) — this covers both a Phase Shift activation and the Phase
+    // Shift granted on a Teleport arrival (AC5).
     if (id === 'phase_shift') {
-      this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
+      this._rearmCooldown = PHASE_REARM_COOLDOWN;
     }
     // The shield's remaining absorptions end with its bubble; the temporary
     // level is cleared above and the permanent level persists (AC3).
@@ -637,40 +717,57 @@ export class EffectsRegistry {
   }
 
   /**
-   * Feeds the shared per-frame danger signal into the Phase Shift auto-trigger model
-   * (Q1/Q2/Q3). Call once per frame after {@link tick}.
+   * Feeds the shared per-frame danger signal into the automatic-defence model
+   * (Q1/Q2/Q3; AH-0MUZE4AIP009HZWC). Call once per frame after {@link tick}.
    *
-   * When `inDanger` is true, the player is not already phased, a charge is
-   * available (or the reward is permanent), danger has cleared since the
-   * last trigger and the re-arm cooldown has elapsed, this activates Phase
-   * Shift for the level-resolved `phaseDuration` and consumes one charge
-   * (permanent rewards do not consume).
+   * When `inDanger` is true, the player is not already phased, danger has
+   * cleared since the last activation and the shared re-arm cooldown has
+   * elapsed, this selects which defensive ability to spend via
+   * {@link selectAutoDefence} (greater charge count wins; an exact tie is a
+   * seeded 50/50) and, for Phase Shift, activates the level-resolved
+   * `phaseDuration` and consumes one charge (permanent rewards do not
+   * consume). Teleport is **not** consumed here — the registry has no player
+   * or warp — so the scene performs the warp on the returned decision. Either
+   * way the danger episode is latched so at most one ability fires per
+   * episode (AC5).
    *
    * @param inDanger — whether the danger helper reports the ship surrounded.
-   * @param dt — frame delta in seconds (advances the re-arm cooldown).
-   * @returns whether Phase Shift was auto-activated this frame.
+   * @param dt — frame delta in seconds (advances the shared re-arm cooldown).
+   * @returns the ability fired/selected this frame, or `null` for none.
    */
-  updateDanger(inDanger: boolean, dt: number): boolean {
-    if (this._phaseRearmCooldown > 0) {
-      this._phaseRearmCooldown = Math.max(0, this._phaseRearmCooldown - dt);
+  updateDanger(inDanger: boolean, dt: number): DangerDecision {
+    if (this._rearmCooldown > 0) {
+      this._rearmCooldown = Math.max(0, this._rearmCooldown - dt);
     }
     if (!inDanger) {
       // Danger has cleared — re-arm for the next episode.
-      this._phaseDangerCleared = true;
-      return false;
+      this._dangerCleared = true;
+      return null;
     }
-    if (this._timed.has('phase_shift')) return false;
-    if (!this._phaseDangerCleared) return false;
-    if (this._phaseRearmCooldown > 0) return false;
+    if (this._timed.has('phase_shift')) return null;
+    if (!this._dangerCleared) return null;
+    if (this._rearmCooldown > 0) return null;
 
     const store = this._levelStore;
-    // `consumePhaseCharge` returns false only when neither a real charge nor
-    // the permanent reward is available (AC3: one derived charge model).
-    if (!store.consumePhaseCharge()) return false;
+    const choice = selectAutoDefence(
+      store.phaseCharges(),
+      store.isPhasePermanent(),
+      store.teleportStacks(),
+      this._rng,
+    );
+    if (choice === null) return null;
 
-    this._activatePhase(store.stats('phase_shift').phaseDuration ?? 1.5);
-    this._phaseDangerCleared = false;
-    return true;
+    // Latch the episode regardless of which ability is spent, so a failed or
+    // interrupted scene-side Teleport does not retry every frame (AC5).
+    this._dangerCleared = false;
+
+    if (choice === 'phase_shift') {
+      // `consumePhaseCharge` returns false only when neither a real charge
+      // nor the permanent reward is available (AC3: one derived model).
+      if (!store.consumePhaseCharge()) return null;
+      this._activatePhase(store.stats('phase_shift').phaseDuration ?? 1.5);
+    }
+    return choice;
   }
 
   /** Stored Phase Shift auto-activation charges (0 for a permanent reward). */
@@ -969,8 +1066,8 @@ export class EffectsRegistry {
   reset(): void {
     this._timed.clear();
     this._weapons.clear();
-    this._phaseDangerCleared = true;
-    this._phaseRearmCooldown = 0;
+    this._dangerCleared = true;
+    this._rearmCooldown = 0;
     this._shieldRemaining = 0;
     this._bombPermanent = false;
     this._bombPulseTimer = 0;

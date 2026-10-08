@@ -2760,12 +2760,10 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
   function inputState(scene: PlayScene): {
     cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
     wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
-    teleportKey: Phaser.Input.Keyboard.Key | null;
   } {
     return scene as unknown as {
       cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
       wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
-      teleportKey: Phaser.Input.Keyboard.Key | null;
     };
   }
 
@@ -2815,7 +2813,7 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     expect(scene.getPlayerBullets().length).toBeGreaterThan(before);
   });
 
-  it('AC1 — the S/↓ layer-drop key triggers a P7 teleport', async () => {
+  it('AC1 — automatic Teleport fires on danger with no key press', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
@@ -2827,17 +2825,21 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     scene.tick(0.016);
     expect(registry.teleportStacks()).toBe(1);
 
-    // Move off-centre, then simulate the layer-drop key being just-pressed.
-    player.setPosition(300, 400);
+    // Move, then place three hostile bullets within DANGER_RADIUS (40 px) so
+    // the shared danger feed selects the stored Teleport — no key input.
+    // `respawn` syncs the internal movement state so the next tick keeps the
+    // ship here (a bare `setPosition` is overwritten by `physicsTick`).
+    player.respawn(300, 400);
+    for (let i = 0; i < 3; i++) {
+      scene.spawnEnemyBullet(300 + i * 8, 400, 0, 0, 0xff4444, 10);
+    }
     const beforeX = player.x;
     const beforeY = player.y;
-    const { teleportKey } = inputState(scene);
-    expect(teleportKey).not.toBeNull();
-    (teleportKey as unknown as { _justDown: boolean })._justDown = true;
     scene.tick(0.016);
 
     // The warp consumed the stack and moved the ship.
     expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });
 

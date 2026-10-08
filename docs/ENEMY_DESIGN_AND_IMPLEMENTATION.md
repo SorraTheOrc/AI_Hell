@@ -180,7 +180,7 @@ the first three enemy gym scenes duplicated:
   `CombatCoreScene` (AH-0MUD8E015004C4JO; standalone-gym consolidation
   AH-0MUDCT7EU0061OSZ). The eight combat/lifecycle template methods
   (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`,
-  `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`,
+  `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_updateAutoDefence`,
   `_readPlayerInput`) are defined exactly once across all production scenes —
   the input/auto-fire/drop-collection group in `CombatCoreScene`, the
   combat-only collision/hit/teleport group in `CombatScene` — and dispatch to
@@ -214,11 +214,11 @@ the first three enemy gym scenes duplicated:
 
   **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
   `GymMinerals` has no field power-up drops, so its rewards come from the
-  hold-full choice overlay. Because the choice can grant Teleport, the
-  S / ↓ teleport keys are bound whenever a player exists and the shared
-  `_handleTeleport()` runs every tick — independent of `powerUpsEnabled` —
-  so a stored Teleport use is consumable; `canTeleport()` accepts a stored use in
-  addition to the opt-in drop layer. The effects registry ticks (and the
+  hold-full choice overlay. Because the choice can grant Teleport, the shared
+  automatic-defence feed (`_updateAutoDefence()`) runs every tick —
+  independent of `powerUpsEnabled` — so a stored Teleport use is spent
+  automatically when the ship is in danger; `canTeleport()` accepts a stored
+  use in addition to the opt-in drop layer. The effects registry ticks (and the
   HUD refreshes) every frame in all formation gyms, so a Phase Shift granted on
   teleport arrival expires normally. The overlay renders the caller's
   stored options, so the displayed label is the option applied.
@@ -833,7 +833,7 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   ship passes through bullets and bodies for the **1.5 s** effect window (no
   `getPlayerHitCount()` increment, no respawn). Since the automatic Phase
   Shift change (parent AH-0MUIYX1EE008FVS8) the phase is triggered by the
-  shared per-frame danger feed (`CombatScene._updatePhaseShiftAutoTrigger`,
+  shared per-frame danger feed (`CombatScene._updateAutoDefence`,
   called in `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat`
   immediately before `_handleCollisions`): when **3 or more** hostile
   bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and a
