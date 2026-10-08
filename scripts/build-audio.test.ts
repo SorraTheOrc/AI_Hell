@@ -40,6 +40,8 @@ import {
   main,
   pinPathFor,
   planRenderJobs,
+  resolveMainCheckout,
+  resolveToneForge,
   sha256,
   verifyAssets,
   verifyPinnedDependency,
@@ -491,6 +493,62 @@ describe('ToneForge pin', () => {
     const result = verifyPinnedDependency({ repoRoot: root });
 
     expect(result.ok).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('resolveToneForge (worktree sibling resolution)', () => {
+  it('resolves the sibling CLI next to the main checkout from inside a worktree', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aihell-tf-'));
+    const mainRoot = join(root, 'AI_Hell');
+    const worktree = join(mainRoot, '.worklog', 'worktrees', 'wl-AH-test');
+    mkdirSync(worktree, { recursive: true });
+    const siblingCli = join(root, 'ToneForge', 'bin', 'dev-cli.js');
+    mkdirSync(join(root, 'ToneForge', 'bin'), { recursive: true });
+    writeFileSync(siblingCli, '// fake CLI\n');
+
+    const fakeSpawn = ((command: string) => {
+      if (command === 'git') {
+        return { status: 0, stdout: `${join(mainRoot, '.git')}\n`, stderr: '' };
+      }
+      return { status: 1, stdout: '', stderr: '' };
+    }) as unknown as typeof spawnSync;
+
+    const cli = resolveToneForge({ repoRoot: worktree, env: {}, spawn: fakeSpawn });
+
+    expect(cli).not.toBeNull();
+    expect(cli?.prefixArgs).toContain(siblingCli);
+    expect(cli?.source).toBe(siblingCli);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('derives the main checkout root from the shared git directory', () => {
+    const fakeSpawn = (() => ({
+      status: 0,
+      stdout: '/tmp/example/AI_Hell/.git\n',
+      stderr: '',
+    })) as unknown as typeof spawnSync;
+
+    expect(resolveMainCheckout({ repoRoot: '/tmp/example/worktree', spawn: fakeSpawn })).toBe(
+      '/tmp/example/AI_Hell',
+    );
+  });
+
+  it('prefers TONEFORGE_CLI over sibling resolution', () => {
+    const cli = resolveToneForge({
+      repoRoot: '/nonexistent/repo',
+      env: { TONEFORGE_CLI: '/somewhere/dev-cli.js' },
+    });
+
+    expect(cli?.prefixArgs).toEqual(['/somewhere/dev-cli.js']);
+    expect(cli?.source).toBe('TONEFORGE_CLI');
+  });
+
+  it('returns null when neither a sibling nor a PATH CLI is available', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aihell-tf-none-'));
+    const fakeSpawn = (() => ({ status: 1, stdout: '', stderr: '' })) as unknown as typeof spawnSync;
+
+    expect(resolveToneForge({ repoRoot: root, env: {}, spawn: fakeSpawn })).toBeNull();
     rmSync(root, { recursive: true, force: true });
   });
 });

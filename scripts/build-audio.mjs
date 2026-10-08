@@ -203,17 +203,44 @@ export function assetFsPath(repoRoot, assetPath) {
 }
 
 /**
+ * Resolves the main checkout root for *repoRoot* via git.
+ *
+ * Inside a `.worklog/worktrees/wl-*` worktree, `repoRoot` is nested under the
+ * main checkout, so `join(repoRoot, '..', 'ToneForge')` misses the sibling
+ * ToneForge checkout that sits next to the **main** checkout. Git records
+ * the shared `.git` directory (`--git-common-dir`); its parent is the main
+ * checkout root, which lets us locate that sibling (AH-0MUZJDT88002L536).
+ *
+ * Returns the main checkout root, or `null` when git cannot determine it.
+ */
+export function resolveMainCheckout({ repoRoot = REPO_ROOT, spawn = spawnSync } = {}) {
+  const result = spawn('git', ['-C', repoRoot, 'rev-parse', '--git-common-dir'], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0 || typeof result.stdout !== 'string') return null;
+  const commonDir = result.stdout.trim();
+  if (!commonDir) return null;
+  return dirname(resolve(repoRoot, commonDir));
+}
+
+/**
  * Resolves the ToneForge CLI to invoke.
  *
  * Resolution order:
  *   1. `TONEFORGE_CLI` environment variable (path to a JS file or a
  *      command on PATH) — used by tests and pinned checkouts.
- *   2. Sibling checkout `../ToneForge/bin/dev-cli.js`.
- *   3. `tf` / `toneforge` on PATH.
+ *   2. Sibling checkout `../ToneForge/bin/dev-cli.js` next to `repoRoot`.
+ *   3. Sibling checkout next to the **main** checkout (so worktrees nested
+ *      under `.worklog/worktrees/` still find it).
+ *   4. `tf` / `toneforge` on PATH.
  *
  * Returns `{ command, prefixArgs, source }` or `null` when unavailable.
  */
-export function resolveToneForge({ repoRoot = REPO_ROOT, env = process.env } = {}) {
+export function resolveToneForge({
+  repoRoot = REPO_ROOT,
+  env = process.env,
+  spawn = spawnSync,
+} = {}) {
   const fromEnv = env.TONEFORGE_CLI;
   if (fromEnv) {
     if (/\.(c|m)?js$/.test(fromEnv)) {
@@ -222,16 +249,24 @@ export function resolveToneForge({ repoRoot = REPO_ROOT, env = process.env } = {
     return { command: fromEnv, prefixArgs: [], source: 'TONEFORGE_CLI' };
   }
 
-  const sibling = join(repoRoot, '..', 'ToneForge', 'bin', 'dev-cli.js');
-  if (existsSync(sibling)) {
-    return { command: process.execPath, prefixArgs: [sibling], source: sibling };
+  const candidateRoots = [repoRoot];
+  const mainCheckout = resolveMainCheckout({ repoRoot, spawn });
+  if (mainCheckout && mainCheckout !== repoRoot) {
+    candidateRoots.push(mainCheckout);
+  }
+  for (const root of candidateRoots) {
+    const sibling = join(root, '..', 'ToneForge', 'bin', 'dev-cli.js');
+    if (existsSync(sibling)) {
+      return { command: process.execPath, prefixArgs: [sibling], source: sibling };
+    }
   }
 
-  const which = spawnSync('sh', ['-c', 'command -v tf || command -v toneforge'], {
+  const which = spawn('sh', ['-c', 'command -v tf || command -v toneforge'], {
     encoding: 'utf8',
     env,
   });
-  const found = which.status === 0 ? which.stdout.trim() : '';
+  const found =
+    which.status === 0 && typeof which.stdout === 'string' ? which.stdout.trim() : '';
   if (found) return { command: found, prefixArgs: [], source: found };
   return null;
 }
