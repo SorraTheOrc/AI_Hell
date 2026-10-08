@@ -529,6 +529,25 @@ added by AH-0MUWTNPYJ0031FQE):
 - **Recommendation, rejected alternatives and measured CI cost:** see
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md).
 
+#### On-screen action intensity (research & decision)
+
+The recorded measure of how much action is on screen during a run — and the
+research/decision behind it — is documented in
+**[docs/dev/action-intensity.md](./docs/dev/action-intensity.md)**
+(AH-0MUZCSJXQ004TREN). The chosen approach is a **hybrid layered metric**:
+a deterministic, O(entities) weighted on-screen object count (refined seed
+weights — player bullets 0.5, enemy bullets / enemies / enemy explosions /
+asteroids / drops per the document, player explosions 20, bosses / boss
+explosions 5), plus a sliding **event-window** burst layer, normalised to a
+`[0, 1)` `intensity` and smoothed into an EMA with a `burstiness`
+derivative. It is recorded through the existing telemetry pipeline (a
+`actionIntensity` field on the per-tick state, plus a derived versioned JSONL
+time series joinable to captured WebM for highlight selection), is a strict
+no-op when telemetry is disabled, and is implemented once in the shared core
+so the game and gyms stay at parity. Implementation is tracked by the sibling
+epic **AH-0MUZMTTYH008KVS2**; the metric is a *proxy* for excitement and must
+be calibrated before it drives difficulty.
+
 #### Configuration (CSV)
 
 Enemy and ship tuning is held in committed CSV files — the **single, human-editable source of truth**. No code edit is needed to retune or add an archetype.

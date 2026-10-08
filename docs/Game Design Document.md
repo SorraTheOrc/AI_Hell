@@ -1318,6 +1318,7 @@ The following are explicitly **out of scope** for the MVP but should be tracked 
 | Feature | Description |
 |---------|-------------|
 | **Difficulty scaling** | Easy / Normal / Hard modes with adjusted enemy counts, bullet speeds, and fire rates. |
+| **Action-intensity tracking & pacing** | A recorded measure of on-screen action per run (weighted object count + event bursts) to evaluate pacing, calibrate difficulty and pick highlight clips. Research + decision: [docs/dev/action-intensity.md](./dev/action-intensity.md) (AH-0MUZCSJXQ004TREN); implementation epic AH-0MUZMTTYH008KVS2. |
 | **Online leaderboard** | Backend service for persistent, cross-machine leaderboards. |
 | **Additional levels** | Levels 6–10+ with new enemy types and pattern variations. |
 | **Online multiplayer** | Co-op or competitive play over network. |
