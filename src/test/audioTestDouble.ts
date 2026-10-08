@@ -6,8 +6,8 @@
  * times that the production cue code requests, so tests can assert the
  * playback contract without any real audio hardware.
  *
- * Extracted from `src/audio/effectsMaster.test.ts` so the master
- * volume/mute suite and the new cue-contract suite share one double.
+ * Extracted so the master volume/mute checks and the cue-contract suite
+ * (`src/audio/effects.contract.test.ts`) share one double.
  */
 
 /** A single scheduled `AudioParam` automation event. */

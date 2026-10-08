@@ -1,0 +1,102 @@
+# AI Hell cue: aihell-victory-explosion — Grand explosion burst for victory fireworks.
+# Deep low-frequency boom with a sharp transient attack, layered noise for texture.
+# Seed range 32250-32254: renders five pitch-jittered variants for variety.
+version: "0.1"
+meta:
+  name: aihell-victory-explosion
+  description: Grand explosion burst — layered saw/sub noise boom with sharp attack for victory fireworks.
+  category: AIHell
+  tags:
+    - victory
+    - explosion
+    - fireworks
+  duration: 0.65
+nodes:
+  # Layer 1: Sawtooth boom — mid-range punch
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 110
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 110
+        - kind: exponentialRamp
+          time: 0.15
+          value: 80
+        - kind: exponentialRamp
+          time: 0.55
+          value: 32
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.15
+      sustain: 0.15
+      release: 0.5
+  g0:
+    kind: gain
+    params:
+      gain: 0.32
+  # Layer 2: Sub bass — deep rumble
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 55
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 55
+        - kind: exponentialRamp
+          time: 0.3
+          value: 30
+  e1:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.25
+      sustain: 0.1
+      release: 0.65
+  g1:
+    kind: gain
+    params:
+      gain: 0.4
+  # Layer 3: Noise texture — crackle overlay
+  v2:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f2:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 4000
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.08
+      sustain: 0
+      release: 0.1
+  g2:
+    kind: gain
+    params:
+      gain: 0.15
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [v2, f2, e2, g2, mix]
+  - from: mix
+    to: out

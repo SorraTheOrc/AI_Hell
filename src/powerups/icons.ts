@@ -8,7 +8,7 @@
 
 import Phaser from 'phaser';
 
-import { PowerUpType } from './types';
+import { PowerUpId } from './types';
 import { WeaponId } from '../utils/weapons';
 import {
   POWER_UP_BUBBLE_GLOW_ALPHA,
@@ -17,15 +17,15 @@ import {
 } from '../core/constants';
 
 /** Icon stroke colours per type. */
-const ICON_COLORS: Record<PowerUpType, number> = {
-  [PowerUpType.SHIELD]: 0x3399ff, // blue — shield
-  [PowerUpType.BOMB]: 0xff3333, // red — bomb
-  [PowerUpType.SPEED_BOOST]: 0x00ffff, // cyan — speed
-  [PowerUpType.PHASE_SHIFT]: 0xaaaaaa, // grey — ghost/phase
-  [PowerUpType.TELEPORT]: 0xffcc00, // amber — teleport portal
-  [PowerUpType.EXTRA_LIFE]: 0xff6ec7, // pink — life
-  [PowerUpType.MAGNET]: 0xb57bff, // purple — magnet
-  [PowerUpType.MINERAL_SCOOP]: 0x33ff99, // neon green — mineral scoop
+const ICON_COLORS: Record<PowerUpId, number> = {
+  shield: 0x3399ff, // blue — shield
+  bomb: 0xff3333, // red — bomb
+  speed_boost: 0x00ffff, // cyan — speed
+  phase_shift: 0xaaaaaa, // grey — ghost/phase
+  teleport: 0xffcc00, // amber — teleport portal
+  extra_life: 0xff6ec7, // pink — life
+  magnet: 0xb57bff, // purple — magnet
+  mineral_scoop: 0x33ff99, // neon green — mineral scoop
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -76,13 +76,13 @@ export type WeaponDropIconId = WeaponId | 'reset';
  */
 export function drawPowerUpIcon(
   graphics: Phaser.GameObjects.Graphics,
-  type: PowerUpType,
+  id: PowerUpId,
   x: number,
   y: number,
   size: number,
 ): void {
   graphics.clear();
-  _drawPowerUpIcon(graphics, type, x, y, size);
+  _drawPowerUpIcon(graphics, id, x, y, size);
 }
 
 /**
@@ -92,36 +92,36 @@ export function drawPowerUpIcon(
  */
 function _drawPowerUpIcon(
   graphics: Phaser.GameObjects.Graphics,
-  type: PowerUpType,
+  id: PowerUpId,
   x: number,
   y: number,
   size: number,
 ): void {
-  graphics.lineStyle(2, ICON_COLORS[type], 1);
+  graphics.lineStyle(2, ICON_COLORS[id], 1);
 
-  switch (type) {
-    case PowerUpType.SHIELD:
+  switch (id) {
+    case 'shield':
       drawShield(graphics, x, y, size);
       break;
-    case PowerUpType.BOMB:
+    case 'bomb':
       drawBomb(graphics, x, y, size);
       break;
-    case PowerUpType.SPEED_BOOST:
+    case 'speed_boost':
       drawLightning(graphics, x, y, size);
       break;
-    case PowerUpType.PHASE_SHIFT:
+    case 'phase_shift':
       drawPhase(graphics, x, y, size);
       break;
-    case PowerUpType.TELEPORT:
+    case 'teleport':
       drawTeleport(graphics, x, y, size);
       break;
-    case PowerUpType.EXTRA_LIFE:
+    case 'extra_life':
       drawHeart(graphics, x, y, size);
       break;
-    case PowerUpType.MAGNET:
+    case 'magnet':
       drawMagnet(graphics, x, y, size);
       break;
-    case PowerUpType.MINERAL_SCOOP:
+    case 'mineral_scoop':
       drawMineralScoop(graphics, x, y, size);
       break;
   }
@@ -285,7 +285,7 @@ function drawMagnet(
   const width = s * 0.7;
   const thick = s * 0.28;
 
-  g.lineStyle(2, ICON_COLORS[PowerUpType.MAGNET], 1);
+  g.lineStyle(2, ICON_COLORS.magnet, 1);
   // Left arm
   g.beginPath();
   g.moveTo(x - width / 2, y - arm);
@@ -312,7 +312,7 @@ function drawMagnet(
 /**
  * Mineral scoop — a shovel/scoop bowl with a handle and mineral dots
  * gathering inside it. Distinct neon-green hue so it never reads as the
- * purple P9 Magnet.
+ * purple Magnet.
  */
 function drawMineralScoop(
   g: Phaser.GameObjects.Graphics,
@@ -645,8 +645,8 @@ export function dropCollectRadius(size: number, scale: number): number {
 }
 
 /** Bubble aura colour for a non-combat power-up type. */
-function powerUpBubbleColor(type: PowerUpType): number {
-  return ICON_COLORS[type];
+function powerUpBubbleColor(id: PowerUpId): number {
+  return ICON_COLORS[id];
 }
 
 /** Bubble aura colour for a weapon/reset drop. */
@@ -694,14 +694,14 @@ export function drawDropBubble(
  */
 export function drawPowerUpDrop(
   graphics: Phaser.GameObjects.Graphics,
-  type: PowerUpType,
+  id: PowerUpId,
   x: number,
   y: number,
   size: number,
 ): void {
   graphics.clear();
-  drawDropBubble(graphics, x, y, size, powerUpBubbleColor(type));
-  _drawPowerUpIcon(graphics, type, x, y, size);
+  drawDropBubble(graphics, x, y, size, powerUpBubbleColor(id));
+  _drawPowerUpIcon(graphics, id, x, y, size);
 }
 
 /**

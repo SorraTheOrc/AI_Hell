@@ -3,7 +3,7 @@
  * children AC1–AC10): discovery by the gym index, scene boot + player ship
  * with thrust movement and screen-wrap, scout V-formation + SHOOT toggle,
  * combat power-up collection, hit response, round-robin spawn, back button,
- * and visual feedback (shield bubble, phase ghost, bomb notice).
+ * and visual feedback (shield bubble, phase ghost, Bomb pulse ring).
  *
  * Uses gameHarness (Phaser headless via happy-dom) — no rasterised canvas
  * checks; visuals tested via commandBuffer where applicable.
@@ -56,7 +56,7 @@ async function bootCombat(): Promise<GymPowerUpsCombat> {
  */
 function collectCombatDrop(
   scene: GymPowerUpsCombat,
-  id: 'P3' | 'P4' | 'P6' | 'P7',
+  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport',
 ): void {
   const player = scene.getPlayer()!;
   player.setPosition(480, 270);
@@ -245,30 +245,30 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     scene.tick(0.016);
     let drops = scene.getDrops();
     expect(drops.length).toBeGreaterThanOrEqual(1);
-    expect(drops[0].powerUp.id).toBe('P3'); // first in COMBAT_ORDER
+    expect(drops[0].powerUp.id).toBe('shield'); // first in COMBAT_ORDER
 
-    // Advance through one full cycle (P3 despawn → P4 spawn → P6 → P7).
+    // Advance through one full cycle (Shield despawn → Bomb spawn → Phase Shift → Teleport).
     // Each drop has POWER_UP_LIFETIME seconds of life.
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
     }
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
-    expect(drops[0].powerUp.id).toBe('P4'); // second in cycle
+    expect(drops[0].powerUp.id).toBe('bomb'); // second in cycle
 
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
     }
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
-    expect(drops[0].powerUp.id).toBe('P6'); // third
+    expect(drops[0].powerUp.id).toBe('phase_shift'); // third
 
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
     }
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
-    expect(drops[0].powerUp.id).toBe('P7'); // fourth
+    expect(drops[0].powerUp.id).toBe('teleport'); // fourth
   });
 
   it('drops spawn at the configured size (16 px)', () => {
@@ -297,7 +297,7 @@ describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
 
     // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
     // ship hull is already touching the crisp bubble ring → collected.
-    const drop = scene.spawnDrop('P3', 511, 270);
+    const drop = scene.spawnDrop('shield', 511, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.tick(1 / 60); // one frame runs the overlap collection
 
@@ -309,7 +309,7 @@ describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
     const scene = await bootCombatBoundary();
     scene.getPlayer()!.setPosition(480, 270);
 
-    const drop = scene.spawnDrop('P3', 480 + 34, 270); // 34 px > 32.4 px boundary
+    const drop = scene.spawnDrop('shield', 480 + 34, 270); // 34 px > 32.4 px boundary
     scene.advanceDrops(0.5); // full size, collectible but out of range
     scene.tick(1 / 60);
 
@@ -318,7 +318,7 @@ describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
   });
 });
 
-// ── AC4: P3 Shield collection + visual ─────────────────────────────────
+// ── AC4: Shield collection + visual ─────────────────────────────────
 
 describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
   let booted: BootedGame | null = null;
@@ -330,7 +330,7 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
 
   it('collecting P3 arms the shield effect', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P3');
+    collectCombatDrop(scene, 'shield');
 
     const registry = scene.getEffectsRegistry();
     expect(registry.isShielded).toBe(true);
@@ -339,7 +339,7 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
 
   it('shield bubble is rendered while active', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P3');
+    collectCombatDrop(scene, 'shield');
 
     // The scene tracks shield bubble visibility via the registry.
     expect(scene.isShieldBubbleVisible()).toBe(true);
@@ -347,7 +347,7 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
 
   it('shield absorbs one hit then pops', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P3');
+    collectCombatDrop(scene, 'shield');
     const registry = scene.getEffectsRegistry();
 
     expect(registry.isShielded).toBe(true);
@@ -359,20 +359,20 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
 
   it('shield refreshes on re-collect (timer back to POWER_UP_LIFETIME)', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P3');
+    collectCombatDrop(scene, 'shield');
     const registry = scene.getEffectsRegistry();
 
     // 10 s after collect, shield has ~5 s remaining; re-collect refreshes.
     registry.tick(10);
-    const before = registry.remaining('P3')!;
+    const before = registry.remaining('shield')!;
     expect(before).toBeGreaterThan(0);
-    collectCombatDrop(scene, 'P3'); // re-collect
-    expect(registry.remaining('P3')).toBeGreaterThan(before); // refreshed
-    expect(registry.remaining('P3')).toBeGreaterThan(14.5); // ~15 s full
+    collectCombatDrop(scene, 'shield'); // re-collect
+    expect(registry.remaining('shield')).toBeGreaterThan(before); // refreshed
+    expect(registry.remaining('shield')).toBeGreaterThan(14.5); // ~15 s full
   });
 });
 
-// ── AC5: P4 Bomb collection + bullet clear + notice ────────────────────
+// ── AC5: Bomb collection + bullet clear + notice ────────────────────
 
 describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', () => {
   let booted: BootedGame | null = null;
@@ -382,47 +382,49 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
     booted = null;
   });
 
-  it('collecting P4 clears all on-screen enemy bullets', async () => {
+  it('collecting P4 clears enemy bullets within range and spares those outside', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Place enemy bullets deterministically so the assertion tests the P4
-    // clear itself, not scout fire cadence vs bullet lifetime
+    // Place enemy bullets deterministically so the assertion tests the Bomb
+    // ranged clear itself, not scout fire cadence vs bullet lifetime
     // (AH-0MU960UTE001PTV0 — shorter lifetimes made the previous
     // tick-until-bullets-exist approach timing-fragile).
-    scene.spawnEnemyBullet(200, 100, 0, 0);
-    scene.spawnEnemyBullet(300, 150, 0, 0);
-    const bulletsBefore = scene.getEnemyBullets();
-    expect(bulletsBefore.length).toBeGreaterThan(0);
+    scene.spawnEnemyBullet(530, 270, 0, 0); // 50 px → inside the 120 px base range
+    scene.spawnEnemyBullet(100, 100, 0, 0); // well outside
+    expect(scene.getEnemyBullets()).toHaveLength(2);
 
-    // Collect P4.
-    scene.spawnDrop('P4', 480, 270);
+    // Collect Bomb on the first tick, then advance one more so the shared bomb
+    // step fires the queued pulse.
+    scene.spawnDrop('bomb', 480, 270);
     scene.advanceDrops(0.5);
-    scene.tick(1 / 60);
+    scene.tick(1 / 60); // collection queues the pulse
+    scene.tick(1 / 60); // the shared bomb step fires it
 
     const bulletsAfter = scene.getEnemyBullets();
-    expect(bulletsAfter).toHaveLength(0);
+    expect(bulletsAfter).toHaveLength(1);
+    expect(bulletsAfter[0].graphics.x).toBeCloseTo(100, 5);
   });
 
-  it('P4 triggers a brief bomb notice', async () => {
+  it('a P4 field pickup is a one-shot and leaves no permanent effect', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    for (let i = 0; i < 200; i++) {
-      scene.tick(1 / 60);
-    }
-
-    scene.spawnDrop('P4', 480, 270);
+    scene.spawnDrop('bomb', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
+    scene.tick(1 / 60);
 
-    expect(scene.isBombNoticeVisible()).toBe(true);
+    expect(scene.getEffectsRegistry().isBombPermanent()).toBe(false);
+    expect(
+      scene.getEffectsRegistry().activeEffects().some((e) => e.id === 'bomb'),
+    ).toBe(false);
   });
 });
 
-// ── AC6: P6 Phase Shift collection + ghost visual ──────────────────────
+// ── AC6: Phase Shift collection + ghost visual ──────────────────────
 
 describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () => {
   let booted: BootedGame | null = null;
@@ -434,7 +436,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
 
   it('collecting P6 stores one auto-activation charge (no immediate phase)', async () => {
     const scene = await bootCombat();
-    collectCombatDrop(scene, 'P6');
+    collectCombatDrop(scene, 'phase_shift');
 
     const registry = scene.getEffectsRegistry();
     expect(registry.isPhased).toBe(false);
@@ -462,7 +464,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
   it('a re-collected charge can auto-trigger a fresh 1.5 s phase', async () => {
     const scene = await bootCombat();
     const registry = scene.getEffectsRegistry();
-    collectCombatDrop(scene, 'P6');
+    collectCombatDrop(scene, 'phase_shift');
 
     // First danger episode consumes the stored charge.
     expect(registry.updateDanger(true, 0.016)).toBe(true);
@@ -474,12 +476,12 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
 
     // Danger clears, the cooldown elapses, then a second pickup re-arms.
     registry.updateDanger(false, 1);
-    collectCombatDrop(scene, 'P6');
+    collectCombatDrop(scene, 'phase_shift');
     expect(registry.updateDanger(true, 0.016)).toBe(true);
   });
 });
 
-// ── AC7: P7 Teleport FIFO stacks + safe-spot ──────────────────────────
+// ── AC7: Teleport FIFO stacks + safe-spot ──────────────────────────
 
 describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
   let booted: BootedGame | null = null;
@@ -494,9 +496,9 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
     const registry = scene.getEffectsRegistry();
 
     expect(registry.hasTeleport()).toBe(false);
-    collectCombatDrop(scene, 'P7'); // level 1 → +1
+    collectCombatDrop(scene, 'teleport'); // level 1 → +1
     expect(registry.teleportStacks()).toBe(1);
-    collectCombatDrop(scene, 'P7'); // level 2 → +2 (level-derived grant)
+    collectCombatDrop(scene, 'teleport'); // level 2 → +2 (level-derived grant)
     expect(registry.teleportStacks()).toBe(3);
     expect(registry.hasTeleport()).toBe(true);
   });
@@ -504,8 +506,8 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
   it('consuming teleport grants P6 phase shift', async () => {
     const scene = await bootCombat();
     const registry = scene.getEffectsRegistry();
-    collectCombatDrop(scene, 'P7');
-    collectCombatDrop(scene, 'P7');
+    collectCombatDrop(scene, 'teleport');
+    collectCombatDrop(scene, 'teleport');
 
     const consumed = registry.consumeTeleport();
     expect(consumed).toBe(true);
@@ -602,7 +604,7 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
     const scene = await boot();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    const drop = scene.spawnDrop('P3', 480, 270);
+    const drop = scene.spawnDrop('shield', 480, 270);
     scene.advanceDrops(0.5);
 
     scene.tick(1 / 60);
@@ -617,7 +619,7 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
     const scene = await boot();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    const drop = scene.spawnDrop('P3', 480, 270);
+    const drop = scene.spawnDrop('shield', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     expect(scene.getCollectAnimations()).toHaveLength(1);
@@ -635,7 +637,7 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
     vi.clearAllMocks();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    scene.spawnDrop('P3', 480, 270);
+    scene.spawnDrop('shield', 480, 270);
     scene.advanceDrops(0.5);
 
     scene.tick(1 / 60);
@@ -673,7 +675,7 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isPaused('GymPowerUpsCombat')).toBe(true);
     const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
-    expect(help.getEntries().map((e) => e.id)).toEqual(['P3', 'P4', 'P6', 'P7']);
+    expect(help.getEntries().map((e) => e.id)).toEqual(['shield', 'bomb', 'phase_shift', 'teleport']);
   });
 
   it('AC4 — ? closes help and resumes the gym where it paused', async () => {
@@ -776,7 +778,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
   it('AC5 — a shielded hit is absorbed without a hit, but still blinks', async () => {
     const booted = await bootScene([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
-    scene.getEffectsRegistry().applyCollect('P3');
+    scene.getEffectsRegistry().applyCollect('shield');
     expect(scene.getEffectsRegistry().isShielded).toBe(true);
 
     scene['_hitPlayer']();
@@ -790,11 +792,11 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
   it('AC5 — the shared teleport activates on ↓ (adopted S+↓ fix)', async () => {
     const booted = await bootScene([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
-    scene.getEffectsRegistry().applyCollect('P7');
+    scene.getEffectsRegistry().applyCollect('teleport');
     expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
 
     // Only the down-arrow is held/just-down; S is not. The inherited
-    // `_handleTeleport` must still consume the stack and grant P6 — the
+    // `_handleTeleport` must still consume the stack and grant Phase Shift — the
     // deliberate S+↓ fix that replaces the gym's old S-only
     // implementation (parent AC5b).
     const sKey = scene.input.keyboard!.addKey('S');
@@ -814,7 +816,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
 
     scene['_handleTeleport']();
 
-    // The ↓ key (not S) consumed the P7 stack and granted P6 on arrival.
+    // The ↓ key (not S) consumed the Teleport stack and granted Phase Shift on arrival.
     expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     booted.game.destroy(true);
@@ -875,7 +877,7 @@ describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
 
   it('P3 shield absorb spawns no player juice', async () => {
     const scene = await bootCombat();
-    scene.getEffectsRegistry().applyCollect('P3');
+    scene.getEffectsRegistry().applyCollect('shield');
     const juiceSpy = vi.spyOn(playerDeathJuiceModule, 'spawnPlayerDeathJuice');
 
     scene['_hitPlayer']();
@@ -902,10 +904,10 @@ describe('GymPowerUpsCombat — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
   it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
     const scene = await boot();
     const registry = scene.getEffectsRegistry();
-    registry.applyCollect('P9', true);
-    registry.applyCollect('P3', true);
+    registry.applyCollect('magnet', true);
+    registry.applyCollect('shield', true);
     registry.applyWeapon('dual', true);
-    registry.applyCollect('P7');
+    registry.applyCollect('teleport');
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.isShielded).toBe(true);
     expect(registry.activeWeapons()).toHaveLength(1);
@@ -926,7 +928,7 @@ describe('GymPowerUpsCombat — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
 
   it('AC2 — teardown clears the ship, drops, scouts and bullet registries', async () => {
     const scene = await boot();
-    scene.spawnDrop('P3', 480, 270);
+    scene.spawnDrop('shield', 480, 270);
     scene.spawnEnemyBullet(10, 10, 0, 0);
     expect(scene.getDrops().length).toBeGreaterThan(0);
     expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
@@ -971,9 +973,6 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC2 — expiry keeps every scout (no detonation), then refreshes the wave after the countdown', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     const scene = await boot();
     const scouts = scene.getScouts();
     expect(scouts.length).toBeGreaterThan(0);
@@ -981,10 +980,9 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // No scout is detonated and the shared major-explosion cue never plays
+    // No scout is detonated: the retired major-explosion cue never plays
     // (carry-over, AH-0MUNS3ZQ1002DJ9S).
     expect(scouts.every((scout) => scout.alive)).toBe(true);
-    expect(cue).not.toHaveBeenCalled();
     expect(scene.isWaveTimeoutActive()).toBe(false);
     expect(scene.isRespawnCountdownActive()).toBe(true);
 

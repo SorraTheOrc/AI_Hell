@@ -1453,19 +1453,15 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC2/AC4 — expiry keeps every survivor (no detonation), then starts the respawn countdown', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     const scene = await bootWithTimeout(1);
     const survivors = scene.formationEntities;
 
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // No survivor is detonated and the major-explosion cue never plays
+    // No survivor is detonated: the retired major-explosion cue never plays
     // (carry-over, AH-0MUNS3ZQ1002DJ9S).
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
-    expect(cue).not.toHaveBeenCalled();
     for (const entity of survivors) expect(entity.alive).toBe(true);
 
     // The timeout is spent and the shared wipe→respawn countdown began.
@@ -1556,16 +1552,12 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC4 — a disabled timeout never detonates the formation', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     booted = await bootScene([makeStubScene(() => [])]);
     const scene = booted!.scene as BootedScene;
 
     scene.tick(120);
 
     expect(scene.aliveCount).toBe(FORMATION_COUNT);
-    expect(cue).not.toHaveBeenCalled();
   });
 });
 
@@ -1912,7 +1904,7 @@ describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
   /** Deterministic layer: round-robin IDs, seeded placement, short interval. */
   function deterministicLayer(): PowerUpLayerConfig {
     return {
-      spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+      spawner: new RoundRobinSpawner<PowerUpId>(['shield', 'bomb', 'phase_shift', 'teleport']),
       placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
       spawnInterval: INTERVAL,
     };
@@ -1974,13 +1966,13 @@ describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
       ids.push(scene.getPowerUpDrops()[0].id);
     }
 
-    expect(ids).toEqual(['P3', 'P4', 'P6', 'P7']);
+    expect(ids).toEqual(['shield', 'bomb', 'phase_shift', 'teleport']);
   });
 
   it('AC3 — positions the drop through the injected placement strategy', async () => {
     const fixed: PowerUpPlacement = { place: () => ({ x: 123, y: 45 }) };
     const scene = await bootWithLayer({
-      spawner: new RoundRobinSpawner<PowerUpId>(['P3']),
+      spawner: new RoundRobinSpawner<PowerUpId>(['shield']),
       placement: fixed,
       spawnInterval: INTERVAL,
     });
@@ -2059,9 +2051,9 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   }
 
   it('AC1 — fly-over collection is gated at 3% scale and hull overlap', async () => {
-    const scene = await boot(layer('P3', CLEAR));
+    const scene = await boot(layer('shield', CLEAR));
     const player = scene.getPlayer()!;
-    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
 
     // Scale 0: on the ship but below the 3% collection threshold.
     expect(drop.powerUp.canCollect()).toBe(false);
@@ -2074,11 +2066,11 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   });
 
   it('AH-0MTVYCM2N002NKE4 — a drop whose hull touches the visible bubble (31 px) is collected', async () => {
-    const scene = await boot(layer('P3', CLEAR));
+    const scene = await boot(layer('shield', CLEAR));
     scene.getPlayer()!.setPosition(480, 270);
 
     // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px.
-    const drop = scene.spawnPowerUpDrop('P3', 480 + 31, 270)!;
+    const drop = scene.spawnPowerUpDrop('shield', 480 + 31, 270)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
     scene.tick(0.016);
 
@@ -2087,10 +2079,10 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   });
 
   it('AH-0MTVYCM2N002NKE4 — a drop just beyond the bubble boundary (34 px) is not collected', async () => {
-    const scene = await boot(layer('P3', CLEAR));
+    const scene = await boot(layer('shield', CLEAR));
     scene.getPlayer()!.setPosition(480, 270);
 
-    const drop = scene.spawnPowerUpDrop('P3', 480 + 34, 270)!; // 34 px > 32.4 px
+    const drop = scene.spawnPowerUpDrop('shield', 480 + 34, 270)!; // 34 px > 32.4 px
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
     scene.tick(0.016);
 
@@ -2099,11 +2091,11 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   });
 
   it('AC2 — collecting applies the effect through the shared EffectsRegistry', async () => {
-    const scene = await boot(layer('P9', CLEAR));
+    const scene = await boot(layer('magnet', CLEAR));
     const player = scene.getPlayer()!;
     expect(scene.getEffectsRegistry().magnetEffectStacks()).toBe(0);
 
-    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.spawnPowerUpDrop('magnet', player.x, player.y);
     scene.tick(0.1);
 
     // Field pickup is now timed: 1 effective stack (one-stack radius).
@@ -2111,16 +2103,16 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   });
 
   it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
-    const scene = await boot(layer('P5', CLEAR));
+    const scene = await boot(layer('speed_boost', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Baseline: no P5, both multipliers normal.
+    // Baseline: no Speed Boost, both multipliers normal.
     scene.tick(0.1);
     const baseThrust = player.getMovementConfig().thrust;
     expect(player.getFireRateMultiplier()).toBe(1);
 
-    // Collect P5 on the ship.
-    scene.spawnPowerUpDrop('P5', player.x, player.y);
+    // Collect Speed Boost on the ship.
+    scene.spawnPowerUpDrop('speed_boost', player.x, player.y);
     scene.tick(0.1);
     expect(scene.getEffectsRegistry().fireRateMultiplier()).toBe(1.5);
 
@@ -2132,32 +2124,32 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
 
     // Expires after 10 s → both speeds return to normal.
     for (let i = 0; i < 110; i++) scene.tick(0.1); // ~11 s
-    expect(scene.getEffectsRegistry().isActive('P5')).toBe(false);
+    expect(scene.getEffectsRegistry().isActive('speed_boost')).toBe(false);
     scene.tick(0.1);
     expect(player.getFireRateMultiplier()).toBe(1);
     expect(player.getMovementConfig().thrust).toBeCloseTo(baseThrust);
   });
 
   it('AC3 — renders the standalone HUD with lives counter and active-effect rows', async () => {
-    const scene = await boot(layer('P9', CLEAR));
+    const scene = await boot(layer('magnet', CLEAR));
     const hud = scene.getHUD();
     expect(hud).not.toBeNull();
     expect(hud!.getLivesLabel()).toBe('Lives: 3');
 
     const player = scene.getPlayer()!;
-    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.spawnPowerUpDrop('magnet', player.x, player.y);
     scene.tick(0.1);
     hud!.refresh();
 
-    expect(hud!.getRows().some((row) => row.id === 'P9')).toBe(true);
+    expect(hud!.getRows().some((row) => row.id === 'magnet')).toBe(true);
   });
 
   it('AC4 — P8 updates the lives counter', async () => {
-    const scene = await boot(layer('P8', CLEAR));
+    const scene = await boot(layer('extra_life', CLEAR));
     const player = scene.getPlayer()!;
     expect(scene.getEffectsRegistry().lives()).toBe(3);
 
-    scene.spawnPowerUpDrop('P8', player.x, player.y);
+    scene.spawnPowerUpDrop('extra_life', player.x, player.y);
     scene.tick(0.1);
 
     expect(scene.getEffectsRegistry().lives()).toBe(4);
@@ -2166,40 +2158,48 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
   it('AC4 — P9 permanent stacks capped at five', async () => {
     // Field pickups no longer stack; permanent stacks require the upgrade path.
     // Test the permanent path directly on the registry.
-    const scene = await boot(layer('P9', CLEAR));
+    const scene = await boot(layer('magnet', CLEAR));
     const reg = scene.getEffectsRegistry();
     for (let i = 0; i < 8; i += 1) {
-      reg.applyCollect('P9', true);
+      reg.applyCollect('magnet', true);
     }
 
     expect(reg.magnetStacks()).toBe(5);
     expect(reg.magnetEffectStacks()).toBe(5);
   });
 
-  it('AC4 — P4 clears on-screen enemy bullets without damaging enemies', async () => {
-    const collect = (enemy: StubEnemy) => [new StubBullet(enemy.scene, 0, 0)];
-    const scene = await boot(layer('P4', CLEAR), collect);
+  it('AC4 — P4 clears in-range enemy bullets without damaging enemies', async () => {
+    // Spawn bullets on the ship (480, 270) so they sit inside the base
+    // 120 px bomb range for the ranged clear.
+    const collect = (enemy: StubEnemy) => {
+      const bullet = new StubBullet(enemy.scene);
+      bullet.graphics.setPosition(480, 270);
+      return [bullet];
+    };
+    const scene = await boot(layer('bomb', CLEAR), collect);
 
     // Let the formation produce a batch of on-screen enemy bullets.
     scene.tick(0.05);
     expect(scene.activeBullets.length).toBeGreaterThan(0);
     const aliveBefore = scene.aliveCount;
 
-    // Collect a P4 on the ship — the bomb clears every on-screen bullet.
+    // Collect a Bomb on the ship — the bomb clears in-range bullets.
     const player = scene.getPlayer()!;
-    scene.spawnPowerUpDrop('P4', player.x, player.y);
-    scene.tick(0.05);
+    const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
+    scene.tick(0.05); // collection queues the pulse
+    scene.tick(0.05); // the shared bomb step fires it
 
     expect(scene.activeBullets).toHaveLength(0);
     expect(scene.aliveCount).toBe(aliveBefore);
   });
 
   it('AC4 — P7 teleport consumes a stack, moves the ship and grants P6', async () => {
-    const scene = await boot(layer('P7', CLEAR));
+    const scene = await boot(layer('teleport', CLEAR));
     const player = scene.getPlayer()!;
 
-    // Collect a P7 to gain a teleport stack.
-    scene.spawnPowerUpDrop('P7', player.x, player.y);
+    // Collect a Teleport to gain a teleport stack.
+    scene.spawnPowerUpDrop('teleport', player.x, player.y);
     scene.tick(0.1);
 
     const registry = scene.getEffectsRegistry();
@@ -2268,7 +2268,7 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
       expect(seen.has(weaponId)).toBe(true);
     }
     // Power-up IDs remain in the pool.
-    expect([...seen].some((id) => id.startsWith('P'))).toBe(true);
+    expect([...seen].some((id) => !isWeaponDrop(id))).toBe(true);
   });
 
   it('AC — a weapon drop is rendered with the weapon icon and carries weaponDropId', async () => {
@@ -2352,7 +2352,7 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
     it('AC — weapon drops are positioned through the placement strategy (never on bodies)', async () => {
     const scene = await boot({
       spawner: new WeightedRandomSpawner<DropId>(
-        [...WEAPON_DROP_IDS, 'P3'],
+        [...WEAPON_DROP_IDS, 'shield'],
         createSeededRng(3),
       ),
       placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
@@ -2423,7 +2423,7 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
     ).list
       .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
       .map((c) => c.text);
-    expect(texts).toContain(`Weapon: spread Lv.${level}`);
+    expect(texts).toContain(`Weapon: spread Lvl ${level}`);
   });
 });
 
@@ -2455,9 +2455,9 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 
   it('collection starts the absorb animation and keeps the Graphics alive', async () => {
     const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
-    const scene = await boot(layer('P9'));
+    const scene = await boot(layer('magnet'));
     const player = scene.getPlayer()!;
-    const drop = scene.spawnPowerUpDrop('P9', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('magnet', player.x, player.y)!;
 
     scene.tick(0.1);
 
@@ -2468,9 +2468,9 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
   });
 
   it('the absorb animation completes and destroys the drop Graphics', async () => {
-    const scene = await boot(layer('P9'));
+    const scene = await boot(layer('magnet'));
     const player = scene.getPlayer()!;
-    const drop = scene.spawnPowerUpDrop('P9', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('magnet', player.x, player.y)!;
 
     scene.tick(0.1);
     expect(scene.getCollectAnimations()).toHaveLength(1);
@@ -2484,10 +2484,10 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 
   it('collection plays the generic pop SFX exactly once (no re-collect)', async () => {
     const popSound = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
-    const scene = await boot(layer('P9'));
+    const scene = await boot(layer('magnet'));
     vi.clearAllMocks();
     const player = scene.getPlayer()!;
-    scene.spawnPowerUpDrop('P9', player.x, player.y);
+    scene.spawnPowerUpDrop('magnet', player.x, player.y);
 
     scene.tick(0.1);
     expect(popSound).toHaveBeenCalledTimes(1);
@@ -2500,7 +2500,7 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 /**
  * Regression for the parent bug AH-0MUHM66ES0027QQV: the enemy gym
  * (`GymFormationScene`, base of `GymEnemies`/`GymBoss`/`GymMinerals`)
- * recorded P3/P6 in the shared `EffectsRegistry` but never consulted it in
+ * recorded Shield/Phase Shift in the shared `EffectsRegistry` but never consulted it in
  * the shared hit path, so the player still took hits. These tests pin the
  * expected enemy-gym behaviour and are the red-to-green proof for the
  * shared-gating fix.
@@ -2584,10 +2584,10 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   }
 
   it('AC1 — P6 phase shift makes the gym player immune to enemy bullets; the next hit lands after it expires', async () => {
-    const { scene, parkAt, armed } = await bootGated('P6');
+    const { scene, parkAt, armed } = await bootGated('phase_shift');
     const player = scene.getPlayer()!;
 
-    collectOnShip(scene, 'P6');
+    collectOnShip(scene, 'phase_shift');
     expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     expect(scene.getPlayerHitCount()).toBe(0);
@@ -2609,8 +2609,8 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   });
 
   it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
-    const { scene } = await bootGated('P6');
-    collectOnShip(scene, 'P6');
+    const { scene } = await bootGated('phase_shift');
+    collectOnShip(scene, 'phase_shift');
     expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
@@ -2625,10 +2625,10 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   });
 
   it('AC2 — P3 shield absorbs exactly one hit in the gym; the next hit lands after the invulnerability window', async () => {
-    const { scene, parkAt, armed } = await bootGated('P3');
+    const { scene, parkAt, armed } = await bootGated('shield');
     const player = scene.getPlayer()!;
 
-    collectOnShip(scene, 'P3');
+    collectOnShip(scene, 'shield');
     expect(scene.getEffectsRegistry().isShielded).toBe(true);
 
     // First hit: absorbed — no hit counted, shield consumed, the post-hit
@@ -2653,12 +2653,12 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   });
 
   it('AC4 — P3 shield renders the shared bubble in the gym and clears it when the shield pops', async () => {
-    const { scene, parkAt, armed } = await bootGated('P3');
+    const { scene, parkAt, armed } = await bootGated('shield');
     const player = scene.getPlayer()!;
 
     expect(scene.isShieldBubbleVisible()).toBe(false);
 
-    collectOnShip(scene, 'P3');
+    collectOnShip(scene, 'shield');
     expect(scene.getEffectsRegistry().isShielded).toBe(true);
     expect(scene.isShieldBubbleVisible()).toBe(true);
 
@@ -2672,10 +2672,10 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   });
 
   it('AC4 — P6 applies the shared phase-ghost alpha and restores it on expiry', async () => {
-    const { scene } = await bootGated('P6');
+    const { scene } = await bootGated('phase_shift');
     const player = scene.getPlayer()!;
 
-    collectOnShip(scene, 'P6');
+    collectOnShip(scene, 'phase_shift');
     scene.getEffectsRegistry().updateDanger(true, 0.05);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     // The shared visuals pass applies the ghost alpha on the next tick.
@@ -2691,7 +2691,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
 
   it('AC4 — the shared visual update is safe when the scene has no player', async () => {
     const powerUps: PowerUpLayerConfig = {
-      spawner: new RoundRobinSpawner<PowerUpId>(['P3']),
+      spawner: new RoundRobinSpawner<PowerUpId>(['shield']),
       placement: CLEAR,
       spawnInterval: INTERVAL,
     };
@@ -3132,13 +3132,13 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
 
     // Apply one of every category the registry can hold — all permanent so
     // a timer expiry could never be mistaken for the reset under test.
-    registry.applyCollect('P9', true); // permanent magnet stack
-    registry.applyCollect('P5', true); // permanent speed boost
+    registry.applyCollect('magnet', true); // permanent magnet stack
+    registry.applyCollect('speed_boost', true); // permanent speed boost
     registry.applyWeapon('spread', true); // permanent weapon
-    registry.applyCollect('P7'); // stored teleport use
+    registry.applyCollect('teleport'); // stored teleport use
 
     expect(registry.magnetStacks()).toBe(1);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.activeWeapons()).toHaveLength(1);
     expect(registry.hasTeleport()).toBe(true);
 
@@ -3152,7 +3152,7 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
 
     // Apply again before restart so this also proves `create()` resets the
     // registry, not only `SHUTDOWN`.
-    registry.applyCollect('P9', true);
+    registry.applyCollect('magnet', true);
     expect(registry.magnetStacks()).toBe(1);
 
     expect(() => scene.create()).not.toThrow();
@@ -3176,7 +3176,7 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
     const registry = scene.getEffectsRegistry();
     expect(scene.isPowerUpLayerEnabled()).toBe(true);
 
-    registry.applyCollect('P3', true);
+    registry.applyCollect('shield', true);
     expect(registry.isShielded).toBe(true);
 
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);

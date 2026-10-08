@@ -44,6 +44,13 @@ export class MineralChoiceScene extends Phaser.Scene {
   private details: Phaser.GameObjects.Text[] = [];
   /** Optional generic selection handler supplied by the launcher. */
   private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
+  /**
+   * Demo-only auto-select delay (ms); 0 disables auto-select so the overlay
+   * waits for a real pointer/keyboard selection (AH-0MUXXQ1MN002RXGB).
+   */
+  private autoSelectMs = 0;
+  /** Pending demo auto-select timer (null when disabled or already fired). */
+  private autoSelectTimer: Phaser.Time.TimerEvent | null = null;
 
   constructor() {
     super('MineralChoiceScene');
@@ -56,17 +63,22 @@ export class MineralChoiceScene extends Phaser.Scene {
    * @param data.onSelect — the single selection contract every launcher
    *   supplies: receives the chosen index and option. When omitted the
    *   overlay simply closes (used by isolated tests).
+   * @param data.autoSelectMs — when > 0 the overlay auto-selects the first
+   *   option after this delay (the shipped attract/demo mode). Normal play
+   *   omits it and waits for a real selection.
    */
   init(
     data: {
       options?: ChoiceOption[];
       strategy?: ChoiceStrategy;
       onSelect?: (index: number, option: ChoiceOption) => void;
+      autoSelectMs?: number;
     } = {},
   ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
     this.options = data.options ?? strategy.choose(3);
     this.onSelect = data.onSelect ?? null;
+    this.autoSelectMs = data.autoSelectMs ?? 0;
   }
 
   create(): void {
@@ -130,6 +142,16 @@ export class MineralChoiceScene extends Phaser.Scene {
       const n = Number.parseInt(event.key, 10);
       if (n >= 1 && n <= this.options.length) this.select(n - 1);
     });
+
+    // Demo/attract mode: pick the first option automatically after a
+    // human-like delay so the run never stalls on the overlay
+    // (AH-0MUXXQ1MN002RXGB · AC4). Normal play leaves `autoSelectMs` at 0 and
+    // waits for a real selection (AC5).
+    if (this.autoSelectMs > 0) {
+      this.autoSelectTimer = this.time.delayedCall(this.autoSelectMs, () =>
+        this.select(0),
+      );
+    }
   }
 
   /** The options currently presented (copy). */
@@ -161,6 +183,9 @@ export class MineralChoiceScene extends Phaser.Scene {
     const option = this.options[index];
     if (!option) return null;
 
+    // Cancel any pending demo auto-select so it cannot fire twice.
+    this.autoSelectTimer?.remove(false);
+    this.autoSelectTimer = null;
     const handler = this.onSelect;
     this.onSelect = null;
     handler?.(index, option);

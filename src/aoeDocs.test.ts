@@ -46,10 +46,10 @@ describe('AOE weapons are documented (F7 AC1/AC2/AC5)', () => {
     ]) {
       expect(gdd).toContain(value);
     }
-    // The trigger model and the P4 non-interference note.
+    // The trigger model and the Bomb non-interference note.
     expect(gdd).toMatch(/onFire/);
     expect(gdd).toMatch(/onImpact/);
-    expect(gdd).toMatch(/P4 Bomb is unchanged/);
+    expect(gdd).toMatch(/AOE does not alter Bomb/);
   });
 
   it('the README references the AOE weapons in the weapon catalogue', () => {

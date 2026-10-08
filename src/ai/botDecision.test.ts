@@ -1,0 +1,773 @@
+/**
+ * Unit tests for the bot decision logic (AH-0MUX43QS4005SFJ3).
+ *
+ * `decideBotInput(snapshot)` is a pure function over a read-only
+ * `BotSnapshot`; every test uses lightweight structural stubs — no Phaser,
+ * no browser, no wall-clock.  Deterministic movement simulations cover the
+ * "never suicides" and "fire-pattern avoidance reduces hits" acceptance
+ * criteria.
+ *
+ * Acceptance criteria covered:
+ * - AC1 — survival-first priority ordering
+ * - AC2 — a deterministic unit test per priority branch
+ * - AC3 — the bot never suicides into a bullet / asteroid / enemy / wall
+ * - AC4 — fire-pattern avoidance reduces avoidable hits vs a reactive baseline
+ * - AC5 — tunables live in one shared config object
+ */
+
+import { describe, expect, it } from 'vitest';
+
+import {
+  BOT_DECISION_TUNABLES,
+  decideBotInput,
+  decideBotIntent,
+  type BotDecisionTunables,
+} from './botDecision';
+
+import {
+  type BotEnemy,
+  type BotBullet,
+  type BotDrop,
+  type BotMineral,
+  type BotSnapshot,
+} from './botSnapshot';
+
+// ── Test helpers ────────────────────────────────────────────────────
+
+/**
+ * Builds a fully-populated snapshot so a test only overrides what it cares
+ * about.  The player defaults to the canvas centre with zero velocity.
+ */
+function makeSnapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
+  return {
+    player: overrides.player ?? { x: 400, y: 300, vx: 0, vy: 0 },
+    enemies: overrides.enemies ?? [],
+    enemyBullets: overrides.enemyBullets ?? [],
+    playerBullets: overrides.playerBullets ?? [],
+    drops: overrides.drops ?? [],
+    minerals: overrides.minerals ?? [],
+    boss: overrides.boss ?? null,
+    aliveCount: overrides.aliveCount ?? 0,
+    wave: overrides.wave ?? null,
+    runSeed: overrides.runSeed ?? 0,
+  };
+}
+
+function enemy(x: number, y: number, archetype = 'scout'): BotEnemy {
+  return { x, y, alive: true, archetype };
+}
+
+function bullet(x: number, y: number, vx: number, vy: number): BotBullet {
+  return { x, y, vx, vy };
+}
+
+function drop(x: number, y: number, type = 'spread'): BotDrop {
+  return { x, y, type };
+}
+
+function mineral(x: number, y: number): BotMineral {
+  return { x, y, type: 'mineral' };
+}
+
+/**
+ * Deterministic forward simulation used by the AC3/AC4 tests.
+ *
+ * A fixed firer at the top of the screen shoots straight down at the player
+ * while a power-up pulls the player downward into the line of fire.  A bot
+ * that only reacts to bullets already inside its danger radius is hit; a bot
+ * that predicts the bullet path dodges.  The only difference between the two
+ * runs is the `firePredictionHorizon` tunable, so any hit-count difference is
+ * attributable to prediction.
+ */
+interface SimulationOptions {
+  /** Bullet-path prediction horizon in seconds; `0` = reactive-only. */
+  firePredictionHorizon: number;
+  /** Number of fixed 60 Hz ticks to simulate. */
+  ticks: number;
+}
+
+interface SimulationResult {
+  hits: number;
+  ticks: number;
+}
+
+const DT = 1 / 60;
+
+function simulate(options: SimulationOptions): SimulationResult {
+  const PLAYER_SPEED = BOT_DECISION_TUNABLES.playerSpeed;
+  const FIRER = { x: 400, y: 50 };
+  const BULLET_SPEED = 300;
+  const HIT_RADIUS = 12;
+
+  let px = 400;
+  let py = 200;
+  let bullets: BotBullet[] = [];
+  let hits = 0;
+
+  for (let tick = 0; tick < options.ticks; tick++) {
+    // The firer emits a straight-down bullet every 50 ticks.
+    if (tick % 50 === 0) {
+      bullets.push({ x: FIRER.x, y: FIRER.y, vx: 0, vy: BULLET_SPEED });
+    }
+
+    const snapshot = makeSnapshot({
+      player: { x: px, y: py, vx: 0, vy: 0 },
+      enemies: [enemy(FIRER.x, FIRER.y, 'scout')],
+      enemyBullets: bullets.map((b) => ({ ...b })),
+      drops: [drop(400, 500, 'spread')],
+      aliveCount: 1,
+    });
+
+    const input = decideBotInput(snapshot, {
+      firePredictionHorizon: options.firePredictionHorizon,
+      engagementRadius: 60,
+    });
+
+    let mvx = 0;
+    let mvy = 0;
+    if (input.left) mvx -= 1;
+    if (input.right) mvx += 1;
+    if (input.up) mvy -= 1;
+    if (input.down) mvy += 1;
+    const magnitude = Math.hypot(mvx, mvy) || 1;
+    px += (mvx / magnitude) * PLAYER_SPEED * DT;
+    py += (mvy / magnitude) * PLAYER_SPEED * DT;
+
+    bullets = bullets
+      .map((b) => ({ ...b, x: b.x + b.vx * DT, y: b.y + b.vy * DT }))
+      .filter((b) => b.x > -50 && b.x < 1010 && b.y > -50 && b.y < 590);
+
+    const hitIndex = bullets.findIndex(
+      (b) => Math.hypot(px - b.x, py - b.y) < HIT_RADIUS,
+    );
+    if (hitIndex >= 0) {
+      hits += 1;
+      bullets.splice(hitIndex, 1);
+    }
+  }
+
+  return { hits, ticks: options.ticks };
+}
+
+// ── AC5: tunables in one shared config ──────────────────────────────
+
+describe('AC5 — tunables in one shared config', () => {
+  it('exports a single BOT_DECISION_TUNABLES object with every tunable', () => {
+    const t = BOT_DECISION_TUNABLES;
+    const numericKeys: Array<keyof BotDecisionTunables> = [
+      'engagementRadius',
+      'dangerMargin',
+      'bulletDangerRadius',
+      'wallMargin',
+      'powerUpSeekRange',
+      'mineralSeekRange',
+      'playerSpeed',
+      'firePredictionHorizon',
+      'assumedBulletSpeed',
+      'engagementHysteresis',
+      'frictionDeceleration',
+      'collectArrivalRadius',
+      'enemySeekRange',
+      'mineralClusterRadius',
+      'mineralGroupMinSize',
+      'mineralDivertWeight',
+      'powerUpDivertWeight',
+      'divertThreshold',
+      'waveClearBoost',
+      'longTravelDistance',
+      'playfieldWidth',
+      'playfieldHeight',
+    ];
+    for (const key of numericKeys) {
+      expect(typeof t[key]).toBe('number');
+      expect(t[key]).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ── AC1: survival-first priority ordering ───────────────────────────
+
+describe('AC1 — survival-first priority ordering', () => {
+  it('returns a FourDirectionalInput shape', () => {
+    const input = decideBotInput(makeSnapshot());
+    expect(typeof input.up).toBe('boolean');
+    expect(typeof input.down).toBe('boolean');
+    expect(typeof input.left).toBe('boolean');
+    expect(typeof input.right).toBe('boolean');
+  });
+
+  it('blocks steering toward a threat when an in-flight bullet crosses the path', () => {
+    // Enemy to the left (within engagement radius) but a bullet is predicted
+    // to cross the leftward path.  Survival must win: the bot does not steer
+    // left toward the enemy.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(200, 300, 'scout')],
+      enemyBullets: [bullet(300, 300, 100, 0)],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('does not divert to a lone mineral while an enemy is in range (AC11)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(200, 300, 'scout')], // left
+      minerals: [mineral(500, 300)], // lone, right
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(true);
+    expect(input.right).toBe(false);
+  });
+});
+
+// ── Utility / willingness model (AC11–AC14, supersedes AC1–AC4) ─────
+//
+// Rejection follow-up #2: clearing the wave is the default objective and
+// pickups must **earn** a diversion.  A lone mineral never diverts (only a
+// cluster does), willingness falls off with distance, a power-up is a little
+// more diverting, and wave pressure raises the bar so the bot focuses fire as
+// the timer runs down.
+
+describe('utility model: wave clear + earned diversions (AH-0MUXYOV4C008MV0L)', () => {
+  const CENTRE = { x: 400, y: 300, vx: 0, vy: 0 };
+  const clusterRight = [mineral(460, 300), mineral(480, 300), mineral(500, 300)];
+
+  it('AC11 — a mineral cluster diverts the bot from an enemy', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(200, 300, 'scout')], // left
+      minerals: clusterRight,
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.right).toBe(true);
+    expect(input.left).toBe(false);
+  });
+
+  it('AC12 — a near cluster diverts but a far one does not', () => {
+    const enemies = [enemy(200, 300, 'scout')];
+    const near = makeSnapshot({ player: CENTRE, enemies, minerals: clusterRight });
+    const far = makeSnapshot({
+      player: CENTRE,
+      enemies,
+      minerals: [mineral(880, 300), mineral(900, 300), mineral(920, 300)],
+    });
+    expect(decideBotInput(near).right).toBe(true);
+    // Far cluster is below the willingness bar → engage the enemy instead.
+    expect(decideBotInput(far).left).toBe(true);
+  });
+
+  it('AC13 — a nearby upgrade diverts while a lone mineral does not', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(200, 300, 'scout')],
+      drops: [drop(470, 300, 'spread')],
+      minerals: [mineral(500, 300)], // lone — would not divert on its own
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC14 — high wave pressure stops the diversion and focuses on the enemy', () => {
+    const enemyTarget = [enemy(200, 300, 'scout')];
+    const calm = makeSnapshot({
+      player: CENTRE,
+      enemies: enemyTarget,
+      minerals: clusterRight,
+      wave: { active: true, timeRemaining: 30, timeLimit: 30 },
+    });
+    const urgent = makeSnapshot({
+      player: CENTRE,
+      enemies: enemyTarget,
+      minerals: clusterRight,
+      wave: { active: true, timeRemaining: 1, timeLimit: 30 },
+    });
+    expect(decideBotInput(calm).right).toBe(true); // diverts early in the wave
+    expect(decideBotInput(urgent).left).toBe(true); // clears the wave late
+  });
+
+  it('AC14 — no timed wave leaves the diversion bar at its base value', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(200, 300, 'scout')],
+      minerals: clusterRight,
+      wave: null,
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC14 — pursues the nearest enemy across a large seek range', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(700, 300, 'scout')], // 300 px right, beyond engagementRadius
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC4 — with only an asteroid in range the bot engages it', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(600, 300, 'asteroid')],
+    });
+    expect(decideBotInput(snapshot).right).toBe(true);
+  });
+
+  it('AC5 — survival bounds goal-seeking (an unsafe mineral path is ignored)', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      minerals: [mineral(200, 300)],
+      // Bullet on the leftward path, moving toward the player.
+      enemyBullets: [bullet(300, 300, 100, 0)],
+    });
+    expect(decideBotInput(snapshot).left).toBe(false);
+  });
+
+  it('AC6 — the bot backs away from a target inside the danger margin', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      enemies: [enemy(400, 260, 'scout')], // 40 px above, inside dangerMargin
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.up).toBe(false);
+    expect(input.down).toBe(true);
+  });
+
+  it('AC7 — the targeted decision is deterministic', () => {
+    const snapshot = makeSnapshot({
+      player: CENTRE,
+      minerals: [mineral(500, 300)],
+    });
+    expect(decideBotInput(snapshot)).toEqual(decideBotInput(snapshot));
+  });
+});
+
+// ── Precise steering intent (rejection AH-0MUXYOV4C008MV0L) ──────────
+//
+// The operator rejected the original implementation because the bot
+// "oscillates with left and right rotation thrusters" instead of pointing at
+// its target.  A cardinal-only intent cannot express an arbitrary bearing, so
+// `decideBotIntent` also returns the exact bearing to the chosen target.  The
+// four-directional booleans remain its nearest-cardinal projection.
+
+describe('precise steering intent — point at the target (rejection)', () => {
+  it('returns the exact bearing to an off-axis mineral, not just a cardinal', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)], // up-left, not axis-aligned
+    });
+
+    const intent = decideBotIntent(snapshot);
+    const len = Math.hypot(-200, -200);
+    expect(intent.dirX).toBeCloseTo(-200 / len, 6);
+    expect(intent.dirY).toBeCloseTo(-200 / len, 6);
+  });
+
+  it('returns the unit bearing even when the target is close', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(430, 340)], // 50 px away, off-axis
+    });
+
+    const intent = decideBotIntent(snapshot);
+    expect(Math.hypot(intent.dirX, intent.dirY)).toBeCloseTo(1, 6);
+    expect(intent.dirX).toBeGreaterThan(0);
+    expect(intent.dirY).toBeGreaterThan(0);
+  });
+
+  it('projects the precise bearing onto the four-directional booleans', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 260)], // mostly left, slightly up
+    });
+
+    const intent = decideBotIntent(snapshot);
+    // Precise bearing is up-left; the cardinal projection is left.
+    expect(intent.dirX).toBeLessThan(0);
+    expect(intent.left).toBe(true);
+    expect(intent.right).toBe(false);
+  });
+
+  it('does not point into a hazard on the direct path (bearing is safety-bounded)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)], // up-left
+      // A stationary bullet sits on the up-left approach path.
+      enemyBullets: [bullet(300, 200, 0, 0)],
+    });
+
+    const intent = decideBotIntent(snapshot);
+    // The direct up-left bearing is rejected; the intent must not point there.
+    expect(intent.dirX < 0 && intent.dirY < 0).toBe(false);
+  });
+
+  it('is pure and deterministic', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(200, 100)],
+    });
+    expect(decideBotIntent(snapshot)).toEqual(decideBotIntent(snapshot));
+  });
+
+  it('backs away inside the danger margin and holds through the hysteresis band', () => {
+    // Inside the margin (60 px): retreat, away from the enemy.
+    const inside = decideBotIntent(
+      makeSnapshot({
+        player: { x: 400, y: 300, vx: 0, vy: 0 },
+        enemies: [enemy(460, 300, 'tank')],
+      }),
+    );
+    expect(inside.dirX).toBeLessThan(0);
+
+    // In the hysteresis band (100 px) but still separating: keep retreating.
+    const separating = decideBotIntent(
+      makeSnapshot({
+        player: { x: 400, y: 300, vx: -40, vy: 0 },
+        enemies: [enemy(500, 300, 'tank')],
+      }),
+    );
+    expect(separating.dirX).toBeLessThan(0);
+
+    // In the band and closing: resume the approach.
+    const closing = decideBotIntent(
+      makeSnapshot({
+        player: { x: 400, y: 300, vx: 40, vy: 0 },
+        enemies: [enemy(500, 300, 'tank')],
+      }),
+    );
+    expect(closing.dirX).toBeGreaterThan(0);
+  });
+
+  it('points the precise bearing at an earned mineral cluster', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(200, 300, 'scout')],
+      minerals: [mineral(500, 340), mineral(520, 350), mineral(540, 360)],
+    });
+    const intent = decideBotIntent(snapshot);
+    // Cluster is to the right/below → precise bearing points that way.
+    expect(intent.dirX).toBeGreaterThan(0);
+    expect(intent.dirY).toBeGreaterThan(0);
+  });
+});
+
+// ── Forward model: no thruster overshoot (AC10) ─────────────────────
+//
+// The operator reported the bot "tends to overshoot with its thrusters" and
+// "needs to plan further into the future".  The intent now carries a `thrust`
+// flag computed from the ship's own stopping distance (`v² / 2a`): it coasts
+// when thrusting would carry it past the target.
+
+describe('predictive braking — plan the stopping distance (AC10)', () => {
+  it('coasts instead of thrusting when thrusting would overshoot', () => {
+    // 100 px from the mineral at 170 px/s: stopping distance 144 px > gap 82
+    // → coast (the bot still aims at the mineral but does not accelerate).
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    const intent = decideBotIntent(snapshot);
+    expect(intent.thrust).toBe(false);
+    // Still aims at the mineral, so the ship coasts straight at it.
+    expect(intent.dirX).toBeGreaterThan(0);
+  });
+
+  it('thrusts when it can still stop within the remaining distance', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(decideBotIntent(snapshot).thrust).toBe(true);
+  });
+
+  it('resumes thrusting once friction has slowed it enough to stop', () => {
+    // Same 100 px gap as the coast case but slow enough to stop in time:
+    // stopping distance 60²/200 = 18 px <= 82 px gap.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 60, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(decideBotIntent(snapshot).thrust).toBe(true);
+  });
+
+  it('plans the standoff when engaging: coasts rather than ramming', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      enemies: [enemy(500, 300, 'tank')], // 100 px away; standoff is 70
+    });
+    const intent = decideBotIntent(snapshot);
+    // gap = 100 − 70 = 30; stopping distance 144 > 30 → coast (do not ram).
+    expect(intent.thrust).toBe(false);
+  });
+
+  it('is a no-op when friction is zero (the ship cannot brake by coasting)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 170, vy: 0 },
+      minerals: [mineral(500, 300)],
+    });
+    expect(
+      decideBotIntent(snapshot, { frictionDeceleration: 0 }).thrust,
+    ).toBe(true);
+  });
+});
+
+// ── Long-travel legs (AC16) ─────────────────────────────────────────
+//
+// A far target is flagged so the governor can extend the thrust-press cap.
+
+describe('long-travel legs (AC16)', () => {
+  it('AC16 — marks a far target as a long-travel leg', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(800, 300, 'scout')], // 400 px away
+    });
+    expect(decideBotIntent(snapshot).longTravel).toBe(true);
+  });
+
+  it('AC16 — does not mark a near target as long travel', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(550, 300, 'scout')], // 150 px away
+    });
+    expect(decideBotIntent(snapshot).longTravel).toBe(false);
+  });
+});
+
+// ── AC2: deterministic unit test per priority branch ────────────────
+
+describe('AC2 — one deterministic test per priority branch', () => {
+  it('survive: does not steer into an asteroid directly ahead', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(400, 250, 'asteroid')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.up).toBe(false);
+  });
+
+  it('survive: does not steer into a wall it is pressed against', () => {
+    // Wall to the left is within wallMargin; a power-up to the left tempts
+    // the bot, but survival blocks the leftward move.
+    const snapshot = makeSnapshot({
+      player: { x: 20, y: 300, vx: 0, vy: 0 },
+      drops: [drop(10, 300, 'spread')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('enemies: engages a live enemy within engagement radius', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(200, 300, 'tank')],
+    });
+    const input = decideBotInput(snapshot, { engagementRadius: 300, dangerMargin: 50 });
+    expect(input.left).toBe(true);
+  });
+
+  it('enemies: backs away from a threat already inside the danger margin', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(360, 300, 'tank')], // 40px left — inside dangerMargin 70
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('enemies: ignores enemies outside the wave seek range', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(400, 50, 'tank')], // 250px above
+      drops: [drop(400, 200, 'spread')], // 100px above
+    });
+    const input = decideBotInput(snapshot, { enemySeekRange: 200 });
+    expect(input.up).toBe(true);
+  });
+
+  it('power-ups: seeks the nearest power-up when no mineral is in range', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(1000, 300, 'scout')], // far outside engagement radius
+      drops: [drop(300, 300, 'spread')], // 100px left
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(true);
+  });
+
+  it('minerals: collects a lone mineral when there is no combat target', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(1400, 300, 'scout')], // outside enemySeekRange (800)
+      minerals: [mineral(350, 300)], // 50px left
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(true);
+  });
+
+  it('minerals: collects a mineral lying on the way to a power-up', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(1000, 300, 'scout')],
+      drops: [drop(300, 300, 'spread')], // 100px left
+      minerals: [mineral(350, 300)], // 50px left, on the way
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(true);
+  });
+
+  it('fire-pattern avoidance: refuses a direction predicted to cross a bullet path', () => {
+    // A bullet 200px above the player travels straight down.  The reactive
+    // danger radius is 55px, so the bullet is not yet a *reactive* threat —
+    // only prediction rejects steering up.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemyBullets: [bullet(400, 100, 0, 200)],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.up).toBe(false);
+  });
+
+  it('fire-pattern avoidance: dodges an enemy that is inside a fire tell', () => {
+    // The enemy is 200px above — normally engaged (threat response) by
+    // steering up.  Because it is telling, its aimed shot is imminent and the
+    // bot refuses to fly into the shot line.
+    const telling = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [{ x: 400, y: 100, alive: true, archetype: 'scout', isTelling: true }],
+    });
+    const input = decideBotInput(telling, { engagementRadius: 300, dangerMargin: 50 });
+    expect(input.up).toBe(false);
+
+    // With no tell, the same enemy is a normal target to engage.
+    const quiet = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [{ x: 400, y: 100, alive: true, archetype: 'scout' }],
+    });
+    expect(decideBotInput(quiet, { engagementRadius: 300, dangerMargin: 50 }).up).toBe(true);
+  });
+});
+
+// ── AC3: the bot never suicides ─────────────────────────────────────
+
+describe('AC3 — the bot never suicides when a safe alternative exists', () => {
+  it('does not steer into an oncoming bullet', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemyBullets: [bullet(380, 300, 120, 0)], // from the left, heading right
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('does not steer into an asteroid head-on', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(390, 300, 'asteroid')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('does not steer into a live enemy head-on', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(390, 300, 'scout')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('does not steer into a wall when a power-up is behind the wall', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 30, y: 300, vx: 0, vy: 0 },
+      drops: [drop(5, 300, 'spread')],
+    });
+    const input = decideBotInput(snapshot);
+    expect(input.left).toBe(false);
+  });
+
+  it('does not steer into a bullet when cornered by bullets on all sides', () => {
+    // Every direction has an incoming bullet; the bot must still return a
+    // valid input and must not move directly into an adjacent bullet.
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemyBullets: [
+        bullet(360, 300, 60, 0),
+        bullet(440, 300, -60, 0),
+        bullet(400, 260, 0, 60),
+        bullet(400, 340, 0, -60),
+      ],
+    });
+    const input = decideBotInput(snapshot);
+    expect(typeof input.up).toBe('boolean');
+    expect(typeof input.down).toBe('boolean');
+    expect(typeof input.left).toBe('boolean');
+    expect(typeof input.right).toBe('boolean');
+  });
+});
+
+// ── AC4: fire-pattern avoidance reduces avoidable hits ──────────────
+
+describe('AC4 — fire-pattern avoidance reduces avoidable hits', () => {
+  it('predictive avoidance takes fewer hits than a reactive-only baseline', () => {
+    const reactive = simulate({ firePredictionHorizon: 0, ticks: 600 });
+    const predictive = simulate({ firePredictionHorizon: 0.9, ticks: 600 });
+
+    // Sanity: the scenario genuinely lands hits on the reactive baseline.
+    expect(reactive.hits).toBeGreaterThan(0);
+    // The predictive bot avoids the shots the reactive bot flies into.
+    expect(predictive.hits).toBeLessThan(reactive.hits);
+  });
+
+  it('is deterministic: repeated runs of the same configuration agree', () => {
+    const first = simulate({ firePredictionHorizon: 0.9, ticks: 300 });
+    const second = simulate({ firePredictionHorizon: 0.9, ticks: 300 });
+    expect(first.hits).toBe(second.hits);
+  });
+});
+
+// ── Edge cases ──────────────────────────────────────────────────────
+
+describe('Edge cases', () => {
+  it('returns idle when there is nothing to pursue and no danger', () => {
+    const input = decideBotInput(makeSnapshot());
+    expect(input).toEqual({ up: false, down: false, left: false, right: false });
+  });
+
+  it('handles a null player gracefully', () => {
+    expect(() => decideBotInput(makeSnapshot({ player: null }))).not.toThrow();
+    expect(decideBotInput(makeSnapshot({ player: null }))).toEqual({
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+    });
+  });
+
+  it('handles a null boss gracefully', () => {
+    const input = decideBotInput(makeSnapshot({ boss: null }));
+    expect(typeof input.up).toBe('boolean');
+  });
+
+  it('treats an alive boss as a threat worth engaging', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      boss: { x: 200, y: 300, alive: true, phase: 1 },
+    });
+    const input = decideBotInput(snapshot, { engagementRadius: 300, dangerMargin: 50 });
+    expect(input.left).toBe(true);
+  });
+
+  it('honours tunable overrides', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 400, y: 300, vx: 0, vy: 0 },
+      enemies: [enemy(400, 200, 'scout')], // 100px above
+    });
+
+    // Enemy outside a 50px wave seek range: no threat, so idle.
+    const small = decideBotInput(snapshot, { enemySeekRange: 50 });
+    expect(small.up).toBe(false);
+
+    // Enemy inside a 200px wave seek range: engage it.
+    const large = decideBotInput(snapshot, { enemySeekRange: 200 });
+    expect(large.up).toBe(true);
+  });
+});

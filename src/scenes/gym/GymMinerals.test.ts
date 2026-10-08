@@ -18,7 +18,6 @@ import type { FormationSceneBullet } from './core/GymFormationScene';
 import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
-import * as effectsModule from '../../audio/effects';
 
 /** Live asteroid entities of the given tier in a mineral gym. */
 function liveAsteroids(scene: GymMinerals): Asteroid[] {
@@ -92,8 +91,8 @@ describe('GymMinerals', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
     // Two permanent scoop stacks → radius 1×20×(1+0.5×2) = 40 px.
-    registry.applyCollect('P10', true);
-    registry.applyCollect('P10', true);
+    registry.applyCollect('mineral_scoop', true);
+    registry.applyCollect('mineral_scoop', true);
 
     const mineral = scene.getMinerals()[0];
     mineral.setPosition(player.x + 30, player.y);
@@ -192,7 +191,7 @@ describe('GymMinerals', () => {
 });
 
 /**
- * Hold-full choice → P7 teleport and P3/P6 hit-gating in the minerals gym
+ * Hold-full choice → Teleport teleport and Shield/Phase Shift hit-gating in the minerals gym
  * (AH-0MUHMXWGC0058BO4 · AC1/AC2/AC3/AC4).
  *
  * The minerals gym omits the opt-in field power-up layer, so it is the
@@ -247,8 +246,8 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     const scene = await bootMinerals();
     const offered: ChoiceOption[] = [
       { id: 'dual', name: 'Dual Shot', kind: 'weapon' },
-      { id: 'P5', name: 'Speed Boost', kind: 'powerup' },
-      { id: 'P9', name: 'Magnet', kind: 'powerup' },
+      { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+      { id: 'magnet', name: 'Magnet', kind: 'powerup' },
     ];
     scene.setMineralChoiceStrategy({ choose: () => offered });
     const drawn = scene.openMineralChoice();
@@ -263,12 +262,13 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
   });
 
-  it('the hold-full choice receives the player weapon levels (AC1/AC2)', async () => {
+  it('the hold-full choice receives the player permanent weapon levels (AC1/AC2)', async () => {
     const scene = await bootMinerals();
     const player = scene.getPlayer()!;
-    player.equipWeapon('spread');
-    player.equipWeapon('spread');
-    player.equipWeapon('rapid');
+    // Permanent grants only: a field pickup's temporary level is not priced.
+    player.equipWeapon('spread', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('rapid', true);
 
     let captured: ChoiceContext | undefined;
     scene.setMineralChoiceStrategy({
@@ -288,7 +288,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   it('AC2 — P7 granted by the choice teleports on S/↓ and grants P6', async () => {
     const scene = await bootMinerals();
     const player = scene.getPlayer()!;
-    grantViaChoice(scene, { id: 'P7', name: 'Teleport', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'teleport', name: 'Teleport', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
     expect(registry.hasTeleport()).toBe(true);
@@ -314,7 +314,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
   it('AC3 — P6 Protects against enemy bullets in the minerals gym', async () => {
     const scene = await bootMinerals();
-    grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
     expect(registry.updateDanger(true, 0.016)).toBe(true);
@@ -329,7 +329,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
   it('AC3 — P6 phase also passes the player through enemy bodies', async () => {
     const scene = await bootMinerals();
-    grantViaChoice(scene, { id: 'P6', name: 'Phase Shift', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' });
     expect(scene.getEffectsRegistry().updateDanger(true, 0.016)).toBe(true);
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
@@ -344,7 +344,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 
   it('AC4 — P3 absorbs the first hit, then the next hit registers', async () => {
     const scene = await bootMinerals();
-    grantViaChoice(scene, { id: 'P3', name: 'Shield', kind: 'powerup' });
+    grantViaChoice(scene, { id: 'shield', name: 'Shield', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
     expect(registry.isShielded).toBe(true);
@@ -385,9 +385,9 @@ describe('GymMinerals — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)'
     // The minerals gym has no field-drop layer, so this is the exact
     // stale-registry vector from gap 10: apply a permanent effect as the
     // hold-full choice does, then stop/restart the same instance.
-    registry.applyCollect('P9', true);
+    registry.applyCollect('magnet', true);
     registry.applyWeapon('spread', true);
-    registry.applyCollect('P7');
+    registry.applyCollect('teleport');
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.activeWeapons()).toHaveLength(1);
     expect(registry.hasTeleport()).toBe(true);
@@ -433,9 +433,6 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
   });
 
   it('AC2 — asteroids survive the timeout silently and the formation refreshes', async () => {
-    const cue = vi
-      .spyOn(effectsModule, 'playMajorExplosionSound')
-      .mockImplementation(() => undefined);
     const scene = await boot();
     const initial = liveAsteroids(scene);
     const before = initial.length;
@@ -444,11 +441,10 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
     scene.setWaveTimeoutRemaining(0.05);
     scene.tick(0.1);
 
-    // Nothing detonates and the shared major-explosion cue never plays: the
+    // Nothing detonates: the retired major-explosion cue never plays, and the
     // asteroids persist (carry-over, AH-0MUNS3ZQ1002DJ9S). The player's
     // continuous auto-fire may destroy some during the countdown, so assert
     // the field is not wiped by the timeout rather than tracking identities.
-    expect(cue).not.toHaveBeenCalled();
     expect(liveAsteroids(scene).length).toBeGreaterThan(0);
     expect(scene.isWaveTimeoutActive()).toBe(false);
     expect(scene.isRespawnCountdownActive()).toBe(true);

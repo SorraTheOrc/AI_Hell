@@ -47,7 +47,14 @@ describe('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN)', () => {
 
   async function bootPlay(): Promise<PausablePlayScene> {
     booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
-    return booted.scene as unknown as PausablePlayScene;
+    const scene = booted.scene as unknown as PausablePlayScene;
+    // Isolate the suite from the random offscreen asteroid spawner: it plans
+    // spawns from `Math.random()` and releases one by elapsed wave time, so a
+    // live spawn during a `tick()` adds an entity to `spawned` and desyncs the
+    // `before` snapshot from the post-resume read (AH-0MUZDXF2U001MJW1).
+    // Same isolation `PlayScene.test.ts` uses for its deterministic suites.
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
   }
 
   // ── AC1 — ESC toggles the paused state ───────────────────────────
@@ -167,7 +174,10 @@ describe('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN)', () => {
 
   it('AC4 — resuming continues from the exact paused state', async () => {
     const scene = await bootPlay();
-    const before = scene.getEnemies().map((e) => ({ x: e.x, y: e.y }));
+    // Capture the entities themselves, not just positions: comparing by
+    // identity keeps the assertion correct even if an unrelated entity
+    // appears (the random spawner is disabled above).
+    const before = scene.getEnemies().map((e) => ({ entity: e, x: e.x }));
     const scoreBefore = scene.getGameState().score;
 
     scene.setPaused(true);
@@ -177,12 +187,13 @@ describe('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN)', () => {
 
     // Nothing advanced while paused: the first post-resume tick moves the
     // formation from the paused position, not a jumped-ahead one.
-    const after = scene.getEnemies().map((e) => ({ x: e.x, y: e.y }));
     const maxDelta = Math.max(
-      ...after.map((e, i) => Math.abs(e.x - before[i].x)),
+      ...before.map(({ entity, x }) => Math.abs(entity.x - x)),
     );
     expect(maxDelta).toBeLessThanOrEqual(0.2);
     expect(scene.getGameState().score).toBe(scoreBefore);
+    // The pause/resume window neither adds nor drops entities.
+    expect(scene.getEnemies().length).toBe(before.length);
   });
 
   it('AC4 — no time is counted during the pause (wave timer continuity)', async () => {

@@ -18,11 +18,11 @@
  * lives/game-over). The gym formation base runs the same shared path, so
  * the game and gyms cannot diverge.
  *
- * **Shared power-up drop layer:** the drop lifecycle, collection gate, P9
- * magnet, P4 bomb notice and per-type pickup cues are inherited from the
- * shared drop layer (`src/scenes/core/dropLayer.ts`, `BombNotice.ts`); this
- * scene supplies only the kill-chance spawn *source* (AH-0MUII3CXX0023H24,
- * gap 4).
+ * **Shared power-up drop layer:** the drop lifecycle, collection gate, Magnet
+ * magnet and per-type pickup cues are inherited from the shared drop layer
+ * (`src/scenes/core/dropLayer.ts`); the Bomb ranged bomb pulse is driven by
+ * the shared `CombatCoreScene._updateP4Bomb` path. This scene supplies only
+ * the kill-chance spawn *source* (AH-0MUII3CXX0023H24, gap 4).
  *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
  *
@@ -44,6 +44,7 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState } from '../core/GameState';
+import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
   playArcFireSound,
@@ -78,7 +79,11 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
-import { spawnVictoryJuice } from '../vfx/endOfRunJuice';
+import {
+  ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
+  spawnVictoryFireworks,
+  spawnVictoryJuice,
+} from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
@@ -93,11 +98,25 @@ import {
   type CollectAnimationHandle,
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
-import { BombNotice } from './core/BombNotice';
 import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
+import type { ControlInput } from '../utils/movementModel';
+import { decideBotIntent } from '../ai/botDecision';
+import { buildBotSnapshot } from '../ai/botSnapshot';
+import {
+  BOT_MINERAL_CHOICE_DELAY_MS,
+  BotInputGovernor,
+} from '../ai/botHumanLike';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import { emitRunEndedSignal } from '../core/runEndedSignal';
+import {
+  clearDevScenarioHandle,
+  installDevScenarioHandle,
+  isDevScenarioEnabled,
+  resolveDevScenario,
+  type DevScenario,
+} from '../core/devScenario';
 import {
   DEFAULT_BINDINGS,
   keyFor,
@@ -114,7 +133,7 @@ import {
   computeHarvesterSpawns,
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
-import { Boss } from '../entities/Boss';
+import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
@@ -198,12 +217,27 @@ const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 export const POWER_UP_DROP_CHANCE = 0.18;
 
 /**
- * Short in-run hold (ms) after the victory celebration is triggered and
- * before the `GameOverScene` transition. Keeps the moment-of-win flourish
- * visible without a long blocking delay; the sustained celebration then
- * continues on `GameOverScene`. Set to 0 to transition immediately.
+ * In-run hold (ms) after the victory celebration is triggered and before the
+ * `GameOverScene` transition. Set to the sustained fireworks duration
+ * ({@link ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS}, 3–5 s) so the whole
+ * boss-position-anchored explosion/firework display plays before the screen
+ * changes (AH-0MUWZ5HCV0034H44). Set to 0 to transition immediately.
  */
-export const VICTORY_TRANSITION_HOLD_MS = 250;
+export const VICTORY_TRANSITION_HOLD_MS = ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS;
+
+/**
+ * Render depth of the in-run victory fireworks: above the gameplay layer
+ * (depth 0) so the display reads at the boss's death position, but below the
+ * HUD ({@link HUD_DEPTH} 1000) and the banner/score text (500).
+ */
+export const VICTORY_FIREWORK_DEPTH = 300;
+
+/**
+ * Background depth for the play scene. Set well below the juice layers
+ * (negative −10…−7) so the in-run celebration renders above the playfield
+ * backdrop instead of behind it (mirrors `GameOverScene`'s −100 background).
+ */
+const PLAYSCENE_BACKGROUND_DEPTH = -1000;
 
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
@@ -290,6 +324,46 @@ export class PlayScene extends CombatScene<
   PlayEnemyBullet,
   PlayDrop
 > {
+  /**
+   * Whether this run is the bot-driven demo/attract mode
+   * (AH-0MUX495VG0014MIY). Opt-in via
+   * `scene.start('PlayScene', { demo: true })`; false for normal play, so the
+   * demo can never leak into a real session (AC1/AC7).
+   */
+  private demoMode = false;
+
+  /**
+   * Optional demo game-over dwell override in milliseconds, forwarded to
+   * `GameOverScene` for a demo run (AH-0MUXZ4CAE008QRFZ). `undefined` uses the
+   * single-source production default; tests inject a short/zero value.
+   */
+  private demoDwellMs?: number;
+
+  /**
+   * Demo take-over handler active only while the demo runs
+   * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
+   * carries no extra input listener. Narrows to a movement key (take over)
+   * or the pause key/ESC (return to the main menu) — all other input and the
+   * pointer are ignored (AH-0MUYP6M6W006Z1AY AC1–AC3).
+   */
+  private demoTakeOverHandler: ((event: KeyboardEvent) => void) | null = null;
+
+  /**
+   * DOM key names that count as deliberate movement input during demo
+   * take-over (AH-0MUYP6M6W006Z1AY AC2). Populated from the same resolved
+   * settings bindings as the Phaser movement keys (`_applyBindings`), so a
+   * rebind is honoured. Arrow keys are handled separately as the built-in
+   * defaults.
+   */
+  private movementKeyNames = new Set<string>();
+
+  /**
+   * Human-like input layer for the demo bot (AH-0MUXXQ1MN002RXGB): samples
+   * the pure decision at a human reaction cadence and resolves it to the
+   * ship's own control scheme (W/A/D — never a reverse key).
+   */
+  private botGovernor = new BotInputGovernor();
+
   /** Session state (lives, score, level). */
   private gameState: GameState;
   /** Wave/level progression state machine. */
@@ -322,12 +396,10 @@ export class PlayScene extends CombatScene<
   /** Resolved DOM key name that toggles pause (from the bindings). */
   private pauseKeyName = 'Escape';
 
-  /** Shield bubble (P3) — drawn around the ship while shielded, cleared on absorb. */
+  /** Shield bubble (Shield) — drawn around the ship while shielded, cleared on absorb. */
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
-  /** P4 Bomb notice — shared component (gap 4), hidden until collected. */
-  private bombNotice: BombNotice | null = null;
 
   private driftX = 0;
   private driftDir = 1;
@@ -387,11 +459,28 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
-   * Explicit run seed for `dynamic` wave regeneration (test seam). When null
-   * (the default) a seed is derived once per run from the scene RNG, so each
-   * run differs while remaining reproducible for a seeded RNG.
+   * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
+   * by {@link _initRunSeed}: the explicit {@link setRunSeed} value when one
+   * was supplied, otherwise a fresh random seed, so each unseeded run
+   * differs while a seeded run reproduces exactly. Exposed via
+   * {@link getRunSeed} and mirrored onto `GameState.runSeed` for telemetry.
    */
-  private runSeed: number | null = null;
+  private runSeed = 0;
+
+  /**
+   * Explicit run seed supplied by a caller (test/headless seam); `null`
+   * when the run should generate a fresh seed. Cleared after each run so a
+   * restart without an explicit seed gets a new random run.
+   */
+  private injectedRunSeed: number | null = null;
+
+  /**
+   * Whether an RNG was injected via {@link setRng}. When true, `create()`
+   * leaves the injected stream untouched (tests that script the RNG keep
+   * their sequence); when false, `create()` seeds the stream from the run
+   * seed.
+   */
+  private rngInjected = false;
 
   /**
    * Asteroid spawn events planned for the active wave (empty outside a
@@ -422,28 +511,63 @@ export class PlayScene extends CombatScene<
 
   // ── Scene lifecycle ─────────────────────────────────────────────
 
+  /**
+   * Reads the scene-start data. Demo/attract mode is opt-in: only an explicit
+   * `{ demo: true }` turns it on, so absent, `undefined` or non-`true` data is
+   * always non-demo (AC1/AC7). A `seed` supplied here becomes the run seed
+   * (AH-0MUY08V6W001SJJN), letting a caller start a reproducible run without
+   * the {@link setRunSeed} seam.
+   *
+   * Scene-start data contract (AH-0MUY4881P007FJ8R): Phaser reuses this scene
+   * instance and `Systems.start(data)` only rewrites `settings.data` for a
+   * truthy `data`. A no-argument `scene.start('PlayScene')` therefore receives
+   * the **previous** payload via `init()` — so every normal caller must pass an
+   * explicit `{ demo: false }` (see `MenuScene`). This guard only protects a
+   * genuinely absent payload; it cannot distinguish a stale one.
+   */
+  init(data?: { demo?: boolean; seed?: number; demoDwellMs?: number }): void {
+    this.demoMode = data?.demo === true;
+    this.demoDwellMs = data?.demoDwellMs;
+    if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
+  }
+
   create(): void {
     // Reset any state carried over from a previous session (restarts reuse
     // the same scene instance — never leak stale enemies/bullets/timers).
     this.resetRunState();
+    // Fresh human-like bot input state for this run.
+    this.botGovernor.reset();
+    // Resolve and seed the per-run RNG before anything draws from it
+    // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
+    // are created so every gameplay draw comes from the seeded stream.
+    this._initRunSeed();
+    // Seed the bot's per-press jitter from the run seed so demo press
+    // lengths are reproducible per run (AC15).
+    this.botGovernor.seed(this.getRunSeed());
 
-    this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
+    this.add
+      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
+      .setOrigin(0)
+      .setDepth(PLAYSCENE_BACKGROUND_DEPTH);
 
     // Player ship (auto-fire, weapons, effects).
     this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
     this.add.existing(this.player);
+    // The demo drives whichever control scheme the ship is configured with
+    // (the shipped default is `asteroids`); the human-like governor resolves
+    // the bot's steering intent to that scheme, so the demo ship looks and
+    // handles like the player's ship rather than a four-directional impostor
+    // (AH-0MUX2NENC008AHOQ producer review).
     this.cursors = this.input.keyboard?.createCursorKeys();
     // Movement / layer-drop / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
     this._applyBindings();
-    // P7 Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
+    // Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
     this.downKey =
       this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
-    // P3 Shield bubble — rendered above gameplay (below the HUD).
+    // Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    // P4 Bomb notice — shared component (gap 4), hidden until collected.
-    this.bombNotice = new BombNotice(this);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, {
@@ -456,10 +580,20 @@ export class PlayScene extends CombatScene<
 
     // ESC toggles the pause menu (parent AH-0MU9LPZ0G0015292). Registered
     // here because the keyboard plugin is torn down on scene shutdown, so
-    // there is no cross-session listener leak.
+    // there is no cross-session listener leak. While the demo runs the demo
+    // take-over handler owns the pause key instead — ESC returns to the main
+    // menu, never the pause menu (AH-0MUYP6M6W006Z1AY AC1/AC5).
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      if (event.key === this.pauseKeyName && !event.repeat) this.togglePause();
+      if (event.key === this.pauseKeyName && !event.repeat && !this.demoMode) {
+        this.togglePause();
+      }
     });
+
+    // Narrowed take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3,
+    // AH-0MUYP6M6W006Z1AY AC1–AC3): only a movement key hands control to the
+    // player (in place) and only the pause key/ESC returns to the main menu;
+    // every other key and the pointer are ignored.
+    if (this.demoMode) this._enableDemoTakeOver();
 
     // Power-up drop pool.
     const rules = loadRules();
@@ -487,10 +621,9 @@ export class PlayScene extends CombatScene<
     // (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves regenerate per
     // run while staying reproducible for a given seed.
     if (rules.sequencedWavesEnabled) {
-      const seed = this._resolveRunSeed();
       this.waveManager.setLevels(
         resolveCampaignLevels(rules, () =>
-          buildSequencedLevels(undefined, undefined, { seed }),
+          buildSequencedLevels(undefined, undefined, { seed: this.runSeed }),
         ),
       );
     }
@@ -504,6 +637,10 @@ export class PlayScene extends CombatScene<
     // A rebind made in SettingsScene must take effect when the player
     // returns to the paused game (parent AH-0MU9LPZ0G0015292).
     this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
+
+    // Dev-gated recorder scenario (AH-0MUWZ5HCV0034H44): when the URL asks
+    // for one, drop straight into the boss encounter. No-op in production.
+    this._applyDevScenarioFromUrl();
   }
 
   /**
@@ -531,6 +668,15 @@ export class PlayScene extends CombatScene<
       D: keyForAction('moveRight'),
     } as WasdKeysLike;
     this.teleportKey = keyForAction('layerDrop');
+
+    // The demo take-over keys must be the *same* source as normal-play
+    // movement: the resolved `moveUp`/`moveDown`/`moveLeft`/`moveRight`
+    // bindings (arrow-key defaults are added separately).
+    this.movementKeyNames = new Set(
+      (['moveUp', 'moveDown', 'moveLeft', 'moveRight'] as ActionName[]).map(
+        (action) => this._normaliseKeyName(keyFor(bindings, action)),
+      ),
+    );
   }
 
   /**
@@ -599,6 +745,8 @@ export class PlayScene extends CombatScene<
    */
   protected override teardownRunState(): void {
     super.teardownRunState();
+    clearDevScenarioHandle();
+    this._disableDemoTakeOver();
     for (const s of this.spawned) s.entity.destroy(true);
     this.spawned = [];
     for (const b of this.enemyBullets) b.graphics.destroy();
@@ -609,8 +757,6 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNotice?.destroy();
-    this.bombNotice = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -674,6 +820,13 @@ export class PlayScene extends CombatScene<
       this._moveEnemies(dt);
       this._collectEnemyFire();
       this._handleCarriedSurvivorCollisions();
+      // Between-waves mineral passes (AH-0MUX96GJF006CAZP, AC1/AC3): the
+      // player and carried-over survivors keep collecting/absorbing minerals
+      // through the transition breather, and the shared Mineral Scoop scoop keeps
+      // attracting them. `true` bypasses the Phase Shift phase gate for the pause only
+      // (AC2) — normal wave play still blocks phased collection (Q7).
+      this._applyMineralScoop(this.minerals, dt);
+      this._handleMinerals(true);
       if (this.transitionTimer === 0) this._onTransitionComplete();
     } else {
       this._moveEnemies(dt);
@@ -686,22 +839,26 @@ export class PlayScene extends CombatScene<
     // Player input, thrust and auto-fire run in every phase, including the
     // wave/level transition pause.
     //
-    // P7 Teleport (S/↓ JustDown) runs first so the warp position is
+    // Teleport (S/↓ JustDown) runs first so the warp position is
     // consumed by this frame's physics.
     this._handleTeleport();
+    // Human-like demo bot: sample the decision at a human reaction cadence
+    // before the shared player step reads the input seam
+    // (AH-0MUXXQ1MN002RXGB).
+    this._advanceDemoBot(dt);
     // Shared player-control step (timers → multipliers → input → physics →
     // auto-fire) — identical in every scene (AH-0MUII39KX007YUQ0, AC1).
     this._tickPlayer(dt);
 
     this._advanceBullets(dt);
     if (!transitioning) {
-      // Automatic Phase Shift (P6): feed live danger before collision gating
+      // Automatic Phase Shift: feed live danger before collision gating
       // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
       this._updatePhaseShiftAutoTrigger(dt);
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
       this._updateSpawnAnimations(dt);
-      // P10 Mineral Scoop attractor runs before the shared mineral collection
+      // Mineral Scoop attractor runs before the shared mineral collection
       // inside _handleCollisions, so a mineral pulled into the hull this frame
       // is collected this frame (parity with every gym).
       this._applyMineralScoop(this.minerals, dt);
@@ -795,7 +952,14 @@ export class PlayScene extends CombatScene<
   /** Instantiates one enemy from its spawn descriptor. */
   private _spawnEnemy(spawn: EnemySpawn): void {
     const cfg = loadEnemyConfig(spawn.enemyKey);
-    const entity = createEnemyFromConfig(this, cfg, spawn.x, spawn.y, spawn.offset);
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      spawn.x,
+      spawn.y,
+      spawn.offset,
+      this.rng,
+    );
     entity.shootEnabled = spawn.shootEnabled;
 
     // ── Wormhole spawn animation (AC1–AC4) ────────────────────────
@@ -887,6 +1051,7 @@ export class PlayScene extends CombatScene<
       vx: event.vx,
       vy: event.vy,
       enterFromOffscreen: true,
+      rng: this.rng,
     });
     this.add.existing(entity);
     this.spawned.push({
@@ -969,6 +1134,7 @@ export class PlayScene extends CombatScene<
       event.x,
       event.y,
       { row: 0, col: 0 },
+      this.rng,
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -1226,17 +1392,136 @@ export class PlayScene extends CombatScene<
   /**
    * Spawns the Central AI boss at the screen centre and summons its
    * Phase-1 minion wave (GDD §4.3).
+   *
+   * @param options — dev/test overrides: `initialHp` / `initialPhase` tune the
+   *   starting health/phase, and `spawnMinions: false` skips the Phase-1 minion
+   *   wave (used by the dev boss scenario so the fight is deterministic).
    */
-  protected spawnBoss(): void {
+  protected spawnBoss(
+    options: {
+      initialHp?: number;
+      initialPhase?: number;
+      spawnMinions?: boolean;
+    } = {},
+  ): void {
     this.boss = new Boss(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
+      rng: this.rng,
+      initialHp: options.initialHp,
+      initialPhase: options.initialPhase,
     });
     this.add.existing(this.boss);
-    this._spawnMinions(1);
+    if (options.spawnMinions !== false) this._spawnMinions(1);
     // No per-wave time limit applies to the boss encounter.
     this._hideWaveTimer();
+  }
+
+  // ── Dev scenarios (AH-0MUWZ5HCV0034H44) ──────────────────────────
+
+  /**
+   * Drops the run straight into the boss encounter with `hitsRemaining`
+   * further hits required to win (the dev-gated recorder scenario).
+   *
+   * The current regular wave is cleared without awarding score or triggering a
+   * transition, the boss spawns in its final phase with no minions and its
+   * attacks disabled, and the ship is placed directly below the boss facing it
+   * so the auto-fire lands on its own. The run is then frozen so the recorder
+   * can start capturing before the (short) fight begins; the pause key resumes
+   * it (see `docs/dev/gameplay-capture.md`).
+   *
+   * Public so tests and the capture tool can drive it directly; the URL query
+   * path in `create()` calls this only when the dev flag is on.
+   *
+   * @param hitsRemaining — further boss hits before the run is won.
+   */
+  startDevBossScenario(hitsRemaining: number): void {
+    this._clearWaveForScenario();
+    this.waveManager.beginBoss();
+    this.spawnBoss({
+      initialHp: hitsRemaining,
+      // Show the final, desperation visuals: a low-HP boss reads as an
+      // about-to-explode boss rather than a healthy Phase-1 one.
+      initialPhase: BossPhase.Desperation,
+      spawnMinions: false,
+    });
+    if (this.boss) {
+      // No attacks: the display is the spectacle, and a stray volley could
+      // kill the ship (or the minions could soak the player's fire) before
+      // the 4 hits land. Draw the core once so the paused boss is fully
+      // rendered before the first tick.
+      this.boss.shootEnabled = false;
+      this.boss.update(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    }
+    this._positionPlayerForBossScenario();
+    this._refreshHudText();
+    this.setPaused(true);
+    // Expose a deterministic release hook so the recorder can start the short
+    // fight after recording is live, without simulating the pause key
+    // (AH-0MUWZ5HCV0034H44). No-op in production.
+    installDevScenarioHandle({
+      hitsRemaining,
+      resume: () => this.setPaused(false),
+    });
+  }
+
+  /**
+   * Clears the active regular wave for the dev boss scenario without scoring
+   * or advancing the campaign: destroys the spawned enemies, drops their
+   * bullets, cancels planned asteroid/Harvester releases, closes any open
+   * wormhole and hides the wave timer.
+   */
+  private _clearWaveForScenario(): void {
+    if (this._spawnWormhole) {
+      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
+      this._spawnWormhole = null;
+    }
+    for (const s of this.spawned) {
+      if (s.entity.alive) s.entity.destroySelf();
+    }
+    this.spawned = [];
+    for (const bullet of this.enemyBullets) bullet.graphics.destroy();
+    this.enemyBullets = [];
+    this.pendingAsteroidSpawns = [];
+    this.pendingHarvesterSpawns = [];
+    this.asteroidsSpawnedThisWave = 0;
+    this.harvestersSpawnedThisWave = 0;
+    this._hideWaveTimer();
+  }
+
+  /**
+   * Places the ship to the boss's left at the same height and leaves it
+   * stationary, aiming the auto-fire at the boss with no player input.
+   *
+   * The default heading is to the right in **both** control schemes (the
+   * Asteroids scheme starts at `facing: 0`; the 4-directional scheme's
+   * stationary default heading is also 0), so the scenario never has to touch
+   * the ship's facing or control scheme.
+   */
+  private _positionPlayerForBossScenario(): void {
+    const boss = this.boss;
+    const player = this.player;
+    if (!boss || !player) return;
+    const x = Math.max(40, boss.x - 260);
+    player.respawn(x, boss.y);
+  }
+
+  /**
+   * Applies a URL-selected dev scenario at the end of {@link create} when the
+   * dev flag is on. No-op in production and for an absent/unknown scenario, so
+   * a normal run is byte-for-byte unchanged.
+   */
+  private _applyDevScenarioFromUrl(): void {
+    if (!isDevScenarioEnabled()) return;
+    if (typeof window === 'undefined') return;
+    const scenario: DevScenario | null = resolveDevScenario(
+      window.location?.search ?? '',
+    );
+    if (!scenario) return;
+    if (scenario.kind === 'boss') {
+      this.startDevBossScenario(scenario.bossHitsRemaining);
+    }
   }
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
@@ -1259,10 +1544,14 @@ export class PlayScene extends CombatScene<
     const previousPhase = boss.getPhaseNumber();
     const result = boss.takeDamage();
     if (result.destroyed) {
+      // Capture the boss's death position before anything else can move or
+      // destroy it — the celebration is anchored here (AC3).
+      const deathX = boss.x;
+      const deathY = boss.y;
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
-      this._triggerVictoryCelebration();
+      this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
     }
@@ -1277,15 +1566,24 @@ export class PlayScene extends CombatScene<
 
   /**
    * Fires the end-of-run victory treatment at the moment the boss dies
-   * (parent AH-0MUTV7632000ZWCB AC1/AC6): the dedicated fanfare plays once
-   * and the shared `spawnVictoryJuice` celebration is spawned into this
-   * scene's registry. The sustained celebration is re-rendered on
-   * `GameOverScene`, so the transition needs only a short tunable hold
-   * ({@link VICTORY_TRANSITION_HOLD_MS}) for the in-run flourish to read.
+   * (parent AH-0MUTV7632000ZWCB AC1/AC6; extended by
+   * AH-0MUWZ5HCV0034H44): the dedicated fanfare plays once, the shared
+   * `spawnVictoryJuice` celebration is spawned at `(x, y)`, and the sustained
+   * `spawnVictoryFireworks` sequence explodes around the same boss-death
+   * anchor for {@link ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS}. The celebration
+   * then continues on `GameOverScene`, so the in-run transition waits
+   * {@link VICTORY_TRANSITION_HOLD_MS} for the display to play.
+   *
+   * @param x — boss death X (the firework anchor).
+   * @param y — boss death Y.
    */
-  private _triggerVictoryCelebration(): void {
+  private _triggerVictoryCelebration(x: number, y: number): void {
     playVictoryFanfareSound();
-    spawnVictoryJuice(this, { registry: this.victoryEffects });
+    spawnVictoryJuice(this, { registry: this.victoryEffects, x, y });
+    spawnVictoryFireworks(this, x, y, {
+      registry: this.victoryEffects,
+      depth: VICTORY_FIREWORK_DEPTH,
+    });
   }
 
   /**
@@ -1304,6 +1602,36 @@ export class PlayScene extends CombatScene<
   }
 
   // ── Player input & fire ─────────────────────────────────────────
+
+  /**
+   * Demo/attract-mode bot input (AC2). With demo mode on, the shared input
+   * seam consumes the human-like governed decision over a fresh read-only
+   * snapshot of this scene's live state instead of the keyboard. Off (the
+   * default) → null, and the keyboard path is used unchanged (AC4).
+   */
+  protected override getBotInput(): ControlInput | null {
+    if (!this.demoMode) return null;
+    return this.botGovernor.current();
+  }
+
+  /**
+   * Samples the pure bot decision and feeds it to the human-like input
+   * governor (AH-0MUXXQ1MN002RXGB). Called once per tick, before the shared
+   * player-control step reads the seam, so the committed input the governor
+   * holds is what the ship flies with.
+   */
+  private _advanceDemoBot(dt: number): void {
+    if (!this.demoMode) return;
+    const player = this.getPlayer();
+    this.botGovernor.update(
+      decideBotIntent(buildBotSnapshot(this)),
+      dt,
+      {
+        scheme: player?.getScheme() ?? 'asteroids',
+        facing: player?.getMovementState().facing ?? 0,
+      },
+    );
+  }
 
   /**
    * Plays the per-weapon shoot cue when a weapon fires — the hook for
@@ -1505,7 +1833,7 @@ export class PlayScene extends CombatScene<
    * absorb them. Neither contact causes damage, and bullets pass straight
    * through (no mineral bullet pass exists).
    */
-  private _handleMinerals(): void {
+  private _handleMinerals(transitioning = false): void {
     if (!this.player) return;
     // Non-asteroid enemies absorb minerals; asteroids are inert (GDD §4.5).
     const absorbers = this.spawned
@@ -1513,13 +1841,16 @@ export class PlayScene extends CombatScene<
       .map((s) => s.entity);
     // Shared collection/absorption routine — the same code the gyms run
     // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
-    // (Q7); enemy absorption still runs.
+    // (Q7); enemy absorption still runs. The between-waves transition is a
+    // non-combat breather, so it bypasses the phase gate — an automatic
+    // defensive Phase Shift activation at wave-clear must not cost earned minerals
+    // (AH-0MUX96GJF006CAZP, AC2).
     this.minerals = collectMinerals(
       this.minerals,
       this.player,
       absorbers,
       () => this._collectMineral(),
-      { playerPhased: this.isPlayerPhased() },
+      { playerPhased: this.isPlayerPhased() && !transitioning },
     );
   }
 
@@ -1570,6 +1901,7 @@ export class PlayScene extends CombatScene<
     splitAsteroid({
       scene: this,
       parent,
+      rng: this.rng,
       register: (child) => {
         this.spawned.push({
           entity: child,
@@ -1650,17 +1982,17 @@ export class PlayScene extends CombatScene<
     this._startInvulnerability();
   }
 
-  // ── Power-up visuals (P3 shield bubble, P6 phase ghost) ──────────
+  // ── Power-up visuals (Shield shield bubble, Phase Shift phase ghost) ──────────
 
   /**
-   * Updates effect visuals each tick: the P3 shield bubble is drawn around
+   * Updates effect visuals each tick: the Shield shield bubble is drawn around
    * the ship while shielded (shared helper — continuously pulsing rim +
    * low-alpha fill, radius SHIP_SIZE × 1.6, with the shared ending fade in
    * the final second, mirrors GymPowerUpsCombat) and cleared otherwise, and
-   * the P6 phase ghost alpha is applied when phased.
+   * the Phase Shift phase ghost alpha is applied when phased.
    */
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while P3 is active (shared helper,
+    // Shield bubble: drawn around the ship while Shield is active (shared helper,
     // including the continuous rim pulse and ending fade).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
@@ -1669,21 +2001,13 @@ export class PlayScene extends CombatScene<
         this.effectsRegistry,
       );
     }
-    // Phase ghost: semi-transparent ship while P6 is active (keeps the
+    // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the
     // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
     // Bomb notice: advanced by the shared drop layer (`_updateDropLayer`).
   }
 
   // ── Power-up drops ──────────────────────────────────────────────
-
-  /**
-   * The scene's P4 bomb notice (shared component, gap 4) — the shared
-   * collect path shows it through this accessor (AC3).
-   */
-  protected override _getBombNotice(): BombNotice | null {
-    return this.bombNotice;
-  }
 
   /** Rolls (and possibly spawns) a power-up drop at a kill position. */
   private _maybeDropPowerUp(x: number, y: number): void {
@@ -1716,13 +2040,13 @@ export class PlayScene extends CombatScene<
     if (isWeaponDrop(id)) {
       drawWeaponDrop(graphics, id, 0, 0, POWER_UP_DROP_SIZE);
     } else {
-      drawPowerUpDrop(graphics, getPowerUpById(id).type, 0, 0, POWER_UP_DROP_SIZE);
+      drawPowerUpDrop(graphics, getPowerUpById(id).id, 0, 0, POWER_UP_DROP_SIZE);
     }
     graphics.setScale(0);
 
     const drop: PlayDrop = {
       dropId: id,
-      powerUp: new PowerUp(isWeaponDrop(id) ? 'P3' : (id as PowerUpId)),
+      powerUp: new PowerUp(isWeaponDrop(id) ? 'shield' : (id as PowerUpId)),
       weaponDropId: isWeaponDrop(id) ? id : undefined,
       x,
       y,
@@ -1734,7 +2058,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * Advances the drop layer through the single shared sequence (gap 4):
-   * advance the P4 notice, apply the P9 magnet, advance the lifecycle,
+   * advance the Bomb notice, apply the Magnet magnet, advance the lifecycle,
    * collect overlaps and advance the absorb VFX. The per-scene spawn
    * *source* (kill chance) stays in `_maybeDropPowerUp` (OQ6).
    */
@@ -1743,13 +2067,13 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Game extras after a power-up is collected: the shared P4 bomb notice
-   * plus the P8 extra life (keeping the HUD lives counter aligned with run
-   * state). The base shows the notice through `_getBombNotice()`.
+   * Game extras after a power-up is collected: the Extra Life extra life (keeping
+   * the HUD lives counter aligned with run state). The Bomb bomb is handled
+   * by the shared pulse path, not here.
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
     super.onPowerUpCollected(drop);
-    if (drop.dropId === 'P8') {
+    if (drop.dropId === 'extra_life') {
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
@@ -1945,6 +2269,28 @@ export class PlayScene extends CombatScene<
 
   /** Transitions to GameOverScene with the final score. */
   private _finishRun(won: boolean): void {
+    // Dev-gated end-of-run signal (AH-0MUXZ4BXK001QCEK), emitted *before* the
+    // scene transition so a demo run that returns to the menu still signals.
+    // `window` receives the `aihell:run-ended` CustomEvent and the
+    // `window.__aiHellRunState` fallback; `npm run capture` consumes both.
+    emitRunEndedSignal(won, this.gameState.score);
+    if (this.demoMode) {
+      // Non-scoring demo (AC2): start the shared GameOverScene in demo mode so
+      // it renders VICTORY/DEFEAT + final score without leaderboard
+      // qualification or initials, then auto-returns to the menu after the
+      // demo dwell (AH-0MUXZ4CAE008QRFZ). Demo runs never touch the
+      // leaderboard, and normal play still reaches the interactive
+      // GameOverScene unchanged (AC3).
+      this.demoMode = false;
+      this._disableDemoTakeOver();
+      this.scene.start('GameOverScene', {
+        won,
+        score: this.gameState.score,
+        demo: true,
+        demoDwellMs: this.demoDwellMs,
+      });
+      return;
+    }
     this.scene.start('GameOverScene', { won, score: this.gameState.score });
   }
 
@@ -1975,17 +2321,12 @@ export class PlayScene extends CombatScene<
     return this.player;
   }
 
-  /** Whether the P3 shield bubble was drawn in the last visual update (for tests). */
+  /** Whether the Shield shield bubble was drawn in the last visual update (for tests). */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
   }
 
-  /** Whether the P4 bomb notice is currently visible (for tests). */
-  isBombNoticeVisible(): boolean {
-    return this.bombNotice?.isVisible() ?? false;
-  }
-
-  /** Whether the P6 phase ghost is currently active (for tests). */
+  /** Whether the Phase Shift phase ghost is currently active (for tests). */
   isPhaseGhostActive(): boolean {
     return this.effectsRegistry.isPhased;
   }
@@ -2008,6 +2349,19 @@ export class PlayScene extends CombatScene<
   /** Number of live enemies. */
   getAliveCount(): number {
     return this.spawned.filter((s) => s.entity.alive).length;
+  }
+
+  /**
+   * The active timed wave's state (AH-0MUXYOV4C008MV0L AC14), read by the
+   * demo bot so it can prioritise clearing the wave before the time limit
+   * carries survivors over.
+   */
+  getWaveState(): { active: boolean; timeRemaining: number; timeLimit: number } {
+    return {
+      active: this.waveTimerActive,
+      timeRemaining: this.waveTimer,
+      timeLimit: WAVE_TIME_LIMIT_SECONDS,
+    };
   }
 
   /** Player bullets in flight. */
@@ -2033,6 +2387,101 @@ export class PlayScene extends CombatScene<
   /** True while a wave/level transition is in progress. */
   isTransitioning(): boolean {
     return this.transitionTimer > 0;
+  }
+
+  // ── Demo / attract mode (AH-0MUX495VG0014MIY) ───────────────────
+
+  /**
+   * Whether this run is the bot-driven demo/attract mode (AC1). Set when the
+   * scene is started with `{ demo: true }` (or via `setDemoMode`).
+   */
+  isDemoMode(): boolean {
+    return this.demoMode;
+  }
+
+  /**
+   * Turns demo mode on/off at runtime. On, the shared input seam consumes the
+   * bot decision; off, control returns to the keyboard with no bot input read
+   * (AC4/AC7). Used by the menu attract lifecycle and tests.
+   */
+  setDemoMode(demo: boolean): void {
+    this.demoMode = demo;
+    if (demo) {
+      // Start the human-like input layer from a clean slate. The demo keeps
+      // the ship's configured control scheme (default `asteroids`); the
+      // governor resolves the bot's steering intent to it
+      // (AH-0MUX2NENC008AHOQ producer review).
+      this.botGovernor.seed(this.getRunSeed());
+      this.botGovernor.reset();
+      this._enableDemoTakeOver();
+    } else {
+      this._disableDemoTakeOver();
+    }
+  }
+
+  /**
+   * Wires the narrowed press-to-take-over while the demo runs
+   * (AH-0MUX4966Z0009P9Q AC3, AH-0MUYP6M6W006Z1AY AC1–AC3): a **movement key**
+   * (an arrow key or a configured movement binding) leaves demo mode **in
+   * place** — the run keeps going, only the input source changes from the bot
+   * to the player. The **pause key** (ESC by default) leaves the demo and
+   * returns to the main menu instead of pausing. Any other key and the
+   * pointer are ignored. Idempotent.
+   */
+  private _enableDemoTakeOver(): void {
+    if (this.demoTakeOverHandler) return;
+    const handler = (event: KeyboardEvent): void => {
+      if (event.repeat) return;
+      if (event.key === this.pauseKeyName) {
+        // ESC/pause → leave the demo: clean up the listener before the
+        // transition so no stale handler leaks into the menu.
+        this._disableDemoTakeOver();
+        this.scene.start('MenuScene');
+        return;
+      }
+      if (this._isMovementKey(event)) this.setDemoMode(false);
+      // Every other key (and the pointer) is ignored — the demo keeps
+      // playing unattended.
+    };
+    this.demoTakeOverHandler = handler;
+    this.input.keyboard?.on('keydown', handler);
+  }
+
+  /**
+   * Whether `event` is a deliberate movement key for demo take-over: an arrow
+   * key (built-in defaults) or one of the resolved `moveUp`/`moveDown`/
+   * `moveLeft`/`moveRight` bindings — the same source normal play uses, so a
+   * rebind is honoured (AH-0MUYP6M6W006Z1AY AC2).
+   */
+  private _isMovementKey(event: KeyboardEvent): boolean {
+    const name = this._normaliseKeyName(event.key);
+    return (
+      name === 'ArrowUp' ||
+      name === 'ArrowDown' ||
+      name === 'ArrowLeft' ||
+      name === 'ArrowRight' ||
+      this.movementKeyNames.has(name)
+    );
+  }
+
+  /**
+   * Normalises a DOM `KeyboardEvent.key` to the form stored for bindings:
+   * single characters are lower-cased (so Shift + letter matches the
+   * binding), named keys are compared verbatim.
+   */
+  private _normaliseKeyName(key: string): string {
+    return key.length === 1 ? key.toLowerCase() : key;
+  }
+
+  /**
+   * Removes the demo take-over listener. Called on take-over, on ESC-to-menu
+   * and on scene shutdown, so no listener leaks across sessions (AC3/AC4).
+   */
+  private _disableDemoTakeOver(): void {
+    const handler = this.demoTakeOverHandler;
+    if (!handler) return;
+    this.input.keyboard?.off('keydown', handler);
+    this.demoTakeOverHandler = null;
   }
 
   // ── Pause control (parent AH-0MU9LPZ0G0015292) ──────────────────
@@ -2100,6 +2549,7 @@ export class PlayScene extends CombatScene<
       y,
       formationOffset: { row: 0, col: 0 },
       sizeTier,
+      rng: this.rng,
     });
     this.add.existing(entity);
     this.spawned.push({
@@ -2173,6 +2623,12 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
+        // Demo mode auto-selects after a human-like delay so the bot never
+        // stalls on the overlay; normal play waits for a real selection
+        // (AH-0MUXXQ1MN002RXGB · AC4/AC5).
+        ...(this.demoMode
+          ? { autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS }
+          : {}),
         // Single overlay contract (AH-0MUII3DHM008L7JF · AC3): the launcher
         // supplies the selection callback; the overlay never reaches back
         // into `PlayScene` by key.
@@ -2294,9 +2750,18 @@ export class PlayScene extends CombatScene<
     return this.invulnerable > 0;
   }
 
-  /** Injects an RNG for deterministic drop rolls (tests). */
+  /**
+   * Injects an RNG for deterministic drop rolls (tests).
+   *
+   * Also shared with the shared core's random-AOE seam. Because it is an
+   * explicit injection, `create()` will not overwrite it with a
+   * seed-derived stream, so the injected sequence is preserved across a
+   * restart.
+   */
   setRng(rng: () => number): void {
     this.rng = rng;
+    this.sceneRng = rng;
+    this.rngInjected = true;
     const rules = loadRules();
     this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
@@ -2306,23 +2771,42 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Injects the run seed used to regenerate `dynamic` waves (tests). The seed
-   * is read at `create()` time; when never injected a seed is derived from the
-   * scene RNG so production runs differ from one another.
+   * Injects the per-run seed (tests / headless runner seam). It is read at
+   * the next `create()`; when never injected, `create()` generates a fresh
+   * random seed so production runs differ from one another.
    */
   setRunSeed(seed: number): void {
-    this.runSeed = seed;
+    this.injectedRunSeed = normaliseSeed(seed);
   }
 
   /**
-   * The run seed for `dynamic` wave regeneration: an explicit
-   * {@link setRunSeed} value when present, otherwise a 32-bit seed derived
-   * once from the scene RNG. Deriving only happens when the sequenced-campaign
-   * toggle is on, so the static path consumes no RNG values.
+   * The seed driving every gameplay RNG draw for the current run
+   * (AH-0MUY08V6W001SJJN). Assigned by {@link _initRunSeed} at scene start,
+   * so it is always a valid 32-bit integer once the scene has been created.
    */
-  private _resolveRunSeed(): number {
-    if (this.runSeed !== null) return this.runSeed;
-    return Math.floor(this.rng() * 0x100000000) >>> 0;
+  getRunSeed(): number {
+    return this.runSeed;
+  }
+
+  /**
+   * Resolves and installs the run's RNG stream. Called once at the top of
+   * `create()` before any gameplay draw:
+   *
+   * 1. seed = explicit {@link setRunSeed} value, else a fresh
+   *    {@link randomSeed};
+   * 2. unless an RNG was injected via {@link setRng}, install a
+   *    {@link createSeededRng} stream for that seed (also wiring the shared
+   *    core AOE seam);
+   * 3. mirror the seed onto `GameState` for telemetry.
+   */
+  private _initRunSeed(): void {
+    const seed = this.injectedRunSeed ?? randomSeed();
+    this.runSeed = seed;
+    if (!this.rngInjected) {
+      this.rng = createSeededRng(seed);
+      this.sceneRng = this.rng;
+    }
+    this.gameState.runSeed = seed;
   }
 
   /**

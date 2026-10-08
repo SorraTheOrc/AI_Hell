@@ -6,19 +6,27 @@
   "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build-audio": "scripts/build-audio.sh",
+    "build-audio:render": "scripts/build-audio.sh --render",
+    "build-audio:verify": "scripts/build-audio.sh --verify",
+    "check-bundle": "node scripts/check-bundle-hygiene.mjs",
+    "build": "npm run build-audio && tsc --noEmit && vite build && npm run check-bundle",
     "preview": "vite preview --port 4173",
+    "capture": "node scripts/capture-gameplay.mjs",
+    "capture:install": "playwright install chromium",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "phaser": "^4.2.1"
+    "phaser": "^4.2.1",
+    "toneforge": "file:../ToneForge"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.11",
     "happy-dom": "^20.11.6",
+    "playwright": "^1.55.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

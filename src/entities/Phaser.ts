@@ -57,7 +57,7 @@ export const PHASER_BULLET_COLOR = 0xff4444;
 export const PHASER_BULLET_SIZE = 3;
 
 /** Bullet speed in px/s. */
-export const PHASER_BULLET_SPEED = 180;
+export const PHASER_BULLET_SPEED = 90;
 
 /** Ring stroke width in px. */
 export const PHASER_RING_WIDTH = 2;
@@ -188,6 +188,11 @@ export class PhaserEntity extends BaseEnemy {
   }
 
   /** VFX pattern name for Phaser explosions. */
+  /** Archetype key (`'phaser'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'phaser';
+  }
+
   protected getExplosionPatternName(): string {
     return 'phaser';
   }

@@ -155,6 +155,9 @@ export class GymWeaponLeveling extends CombatScene<
     choose: (count, _rng, context) => {
       // Prefer a weapon level-up offer so the permanent path is always
       // demonstrable, then fill the remaining slots from the base pool.
+      // `buildChoiceCandidates` already suppresses the base-pool entry for an
+      // owned weapon (AH-0MUVRACE9001WVT2), so the candidate list holds no
+      // base/level pair for the same id and the de-dup below is defensive.
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const levelUps = candidates.filter((o) => o.kind === 'weapon-level');
       const others = candidates.filter((o) => o.kind !== 'weapon-level');

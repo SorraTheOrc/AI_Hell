@@ -163,7 +163,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._color = config.color ?? 0x000000;
     this._bulletColor = config.bulletColor ?? 0xffffff;
     this._bulletSize = config.bulletSize ?? 3;
-    this._bulletSpeed = config.bulletSpeed ?? 200;
+    this._bulletSpeed = config.bulletSpeed ?? 100;
     this._bulletLifetime = config.bulletLifetime ?? 1.5;
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
@@ -283,6 +283,19 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Whether the enemy is alive. */
   get alive(): boolean {
     return this._alive;
+  }
+
+  /**
+   * The enemy archetype key (e.g. `'scout'`, `'diver'`, `'asteroid'`).
+   *
+   * Matches the `enemyKey` used by the scene/formation data and is exposed
+   * for read-only consumers such as the bot snapshot builder
+   * (`src/ai/botSnapshot.ts`). Concrete subclasses override it with their
+   * canonical key; an unknown subclass falls back to `'unknown'` so the
+   * value is always a string.
+   */
+  get archetype(): string {
+    return 'unknown';
   }
 
   // ── Mineral accounting (AH-0MUBVGI62004ED9Q) ─────────────────────

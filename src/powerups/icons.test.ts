@@ -26,7 +26,6 @@ import {
   dropCollectRadius,
   WeaponDropIconId,
 } from './icons';
-import { PowerUpType } from './types';
 import { POWER_UP_DROP_SIZE, WEAPON_DROP_SIZE } from '../core/constants';
 
 /** Minimal scene used only to allocate Graphics objects. */
@@ -266,15 +265,15 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
   it('drawPowerUpDrop renders bubble + icon for every non-combat type — strictly more geometry than the bare icon', async () => {
     const scene = await bootBare();
     for (const type of [
-      PowerUpType.SHIELD,
-      PowerUpType.BOMB,
-      PowerUpType.SPEED_BOOST,
-      PowerUpType.PHASE_SHIFT,
-      PowerUpType.TELEPORT,
-      PowerUpType.EXTRA_LIFE,
-      PowerUpType.MAGNET,
-      PowerUpType.MINERAL_SCOOP,
-    ]) {
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'teleport',
+      'extra_life',
+      'magnet',
+      'mineral_scoop',
+    ] as const) {
       const icon = scene.add.graphics();
       drawPowerUpIcon(icon, type, 0, 0, 32);
       const iconCommands = icon.commandBuffer.length;

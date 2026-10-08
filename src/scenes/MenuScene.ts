@@ -23,11 +23,19 @@ import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FocusManager } from '../utils/focusManager';
+import { installGameAudio } from '../audio/effects';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
 /** Secondary text colour for the dev tool button. */
 const DEV_TEXT_COLOR = '#888888';
+
+/**
+ * Idle time (ms) before the attract/demo run starts on its own (Q4a/Q4b,
+ * AH-0MUX4966Z0009P9Q). Single-source tunable: the menu schedules its timer
+ * from this value and resets it on any input.
+ */
+export const ATTRACT_IDLE_TIMEOUT_MS = 15000;
 
 /**
  * Resumes the Web Audio context if it is suspended (autoplay policy
@@ -59,6 +67,15 @@ export class MenuScene extends Phaser.Scene {
   /** The focusable controls in focus order (label + text object). */
   private controls: { label: string; text: Phaser.GameObjects.Text }[] = [];
 
+  /** Idle-attract timer; rescheduled on any input and cleared on shutdown. */
+  private attractTimer: Phaser.Time.TimerEvent | null = null;
+
+  /**
+   * Active idle timeout (ms). Seeded from {@link ATTRACT_IDLE_TIMEOUT_MS} and
+   * preserved across input resets, so a configured value sticks.
+   */
+  private attractTimeoutMs = ATTRACT_IDLE_TIMEOUT_MS;
+
   constructor() {
     super('MenuScene');
   }
@@ -66,6 +83,11 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     this.focusManager = new FocusManager();
     this.controls = [];
+
+    // Pin the shared SFX playback layer to Phaser's audio context and warm
+    // the baked ToneForge asset cache (AH-0MUTYV92Y000WJ8Z) so exactly one
+    // AudioContext exists and gameplay cues are audible from the first shot.
+    installGameAudio(this.sound);
 
     // ── Background ───────────────────────────────────────────────
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000).setOrigin(0);
@@ -102,10 +124,45 @@ export class MenuScene extends Phaser.Scene {
     playButton.on('pointerdown', () => {
       // Initialise the Web Audio context on user gesture (autoplay policy).
       resumeAudioContext(this.sound);
-      this.scene.start('PlayScene');
+      // Explicit non-demo payload: Phaser only rewrites `settings.data` for a
+      // truthy `data`, so a no-argument start after a demo would reuse the
+      // stale `{ demo: true }` payload and leave the bot in control
+      // (AH-0MUY4881P007FJ8R).
+      this.scene.start('PlayScene', { demo: false });
     });
 
     this.controls.push({ label: '▶  Play Game', text: playButton });
+
+    // ── Watch Demo button (attract/demo mode) ────────────────────
+    // Starts the shipped bot-driven demo (AH-0MUX4966Z0009P9Q AC1/AC2).
+    // Initialising the audio context on the gesture keeps GDD §6.7 intact.
+    const demoButton = this.add.text(
+      GAME_WIDTH / 2,
+      265,
+      '👁  Watch Demo',
+      {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 14, y: 7 },
+      },
+    ).setOrigin(0.5);
+    demoButton.setInteractive({ useHandCursor: true });
+
+    demoButton.on('pointerover', () => {
+      demoButton.setStyle({ color: '#88ffff' });
+    });
+    demoButton.on('pointerout', () => {
+      demoButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    demoButton.on('pointerdown', () => {
+      resumeAudioContext(this.sound);
+      this.startDemo();
+    });
+
+    this.controls.push({ label: '👁  Watch Demo', text: demoButton });
 
     // ── Settings button ───────────────────────────────────────
     // Opens the same settings screen as the pause menu, before starting a
@@ -113,7 +170,7 @@ export class MenuScene extends Phaser.Scene {
     // context on the gesture keeps GDD §6.7 autoplay compliance intact.
     const settingsButton = this.add.text(
       GAME_WIDTH / 2,
-      280,
+      315,
       '⚙  Settings',
       {
         fontFamily: 'monospace',
@@ -143,7 +200,7 @@ export class MenuScene extends Phaser.Scene {
     // Opens the shared, full leaderboard view (AH-0MU9LJ52C00613RX).
     const leaderboardButton = this.add.text(
       GAME_WIDTH / 2,
-      340,
+      365,
       '🏆  Leaderboard',
       {
         fontFamily: 'monospace',
@@ -211,7 +268,13 @@ export class MenuScene extends Phaser.Scene {
     // activation — the scene contains no ad-hoc key routing.
     this.focusManager.register(playButton, () => {
       resumeAudioContext(this.sound);
-      this.scene.start('PlayScene');
+      // Explicit non-demo payload (see the pointerdown handler above) so a
+      // normal start after a demo never inherits `{ demo: true }`.
+      this.scene.start('PlayScene', { demo: false });
+    });
+    this.focusManager.register(demoButton, () => {
+      resumeAudioContext(this.sound);
+      this.startDemo();
     });
     this.focusManager.register(settingsButton, () => {
       resumeAudioContext(this.sound);
@@ -225,8 +288,20 @@ export class MenuScene extends Phaser.Scene {
     });
     this.focusManager.attachKeyboard(this);
 
+    // ── Idle attract timer (AC1/AC4) ─────────────────────────────
+    // Start the demo after a period of inactivity; any keyboard or pointer
+    // input resets the countdown. `scheduleAttractTimer` is the single entry
+    // point, so the timeout lives in one place.
+    this.scheduleAttractTimer();
+    this.input.keyboard?.on('keydown', () => this.scheduleAttractTimer());
+    this.input.on('pointerdown', () => this.scheduleAttractTimer());
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.focusManager.shutdown();
+      // Drop the pending attract timer; the scene clock is also torn down, but
+      // clearing it keeps the intent explicit (never fires off-menu, AC4).
+      this.attractTimer?.remove(false);
+      this.attractTimer = null;
     });
   }
 
@@ -236,5 +311,40 @@ export class MenuScene extends Phaser.Scene {
   getFocusedLabel(): string {
     const index = this.focusManager.getFocusedIndex();
     return this.controls[index]?.label ?? '';
+  }
+
+  /**
+   * Starts the bot-driven attract/demo run (AC2). The `{ demo: true }` flag
+   * is the only difference from a normal start, so the engine owns all demo
+   * behaviour.
+   *
+   * Scene-start data contract (AH-0MUY4881P007FJ8R): every *normal* start
+   * must pass an explicit non-demo payload (`{ demo: false }`). Phaser's
+   * `Systems.start(data)` only writes `settings.data` for a truthy `data`, so
+   * a no-argument `scene.start('PlayScene')` reuses this demo payload and
+   * re-enables the bot. See {@link PlayScene.init}.
+   *
+   * `demoDwellMs` optionally overrides the demo game-over dwell forwarded to
+   * `GameOverScene` (AH-0MUXZ4CAE008QRFZ). Production calls it with no
+   * argument and uses the single-source default; exposed so tests can drive a
+   * short dwell without wall-clock waits (mirrors `scheduleAttractTimer`).
+   */
+  startDemo(demoDwellMs?: number): void {
+    this.scene.start('PlayScene', { demo: true, demoDwellMs });
+  }
+
+  /**
+   * (Re)schedules the idle-attract timer (AC1/AC4). Called on create and on
+   * any input so the countdown restarts; the default timeout is the
+   * single-source {@link ATTRACT_IDLE_TIMEOUT_MS}. Exposed so tests can drive
+   * a short timeout without wall-clock waits.
+   */
+  scheduleAttractTimer(timeoutMs: number = this.attractTimeoutMs): void {
+    this.attractTimeoutMs = timeoutMs;
+    this.attractTimer?.remove(false);
+    this.attractTimer = this.time.delayedCall(timeoutMs, () => {
+      // Guard: only start while this menu is still the active scene (AC4).
+      if (this.sys.isActive()) this.startDemo();
+    });
   }
 }

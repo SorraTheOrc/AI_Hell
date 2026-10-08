@@ -1,8 +1,8 @@
 /**
- * Tests for the shared mineral scoop attraction helper (P10 Mineral Scoop,
+ * Tests for the shared mineral scoop attraction helper (Mineral Scoop,
  * AH-0MUPMR9TX00756BQ AC4).
  *
- * The scoop mirrors the P9 magnet but targets the mineral field: a single
+ * The scoop mirrors the Magnet magnet but targets the mineral field: a single
  * exported `applyMineralScoop` pulls live minerals within the shared radius
  * toward the player at `MAGNET_ATTRACTION_SPEED`, syncing rendered positions;
  * it only ever attracts (collection stays with `collectMinerals`).

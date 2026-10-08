@@ -264,9 +264,12 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(play.style.stroke).toBeTruthy();
   });
 
-  it('AC2 — Tab cycles focus: Play → Settings → Leaderboard → Gym Index → Play (wrap)', async () => {
+  it('AC2/AC5 — Tab cycles focus: Play → Watch Demo → Settings → Leaderboard → Gym Index → Play (wrap)', async () => {
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
@@ -284,6 +287,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
   it('AC3 — ArrowDown cycles in the same order and wraps', async () => {
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
 
     pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
@@ -337,7 +343,8 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC5 — Enter on focused Settings opens SettingsScene', async () => {
     const scene = await bootMenu();
-    pressKey(scene, { key: 'Tab' });
+    pressKey(scene, { key: 'Tab' }); // Watch Demo
+    pressKey(scene, { key: 'Tab' }); // Settings
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
 
     pressKey(scene, { key: 'Enter' });
@@ -349,6 +356,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC6 — Enter on focused Gym Scene Index opens GymIndex', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
@@ -441,6 +449,7 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
 
   it('AC2 — keyboard: Tab to Leaderboard then Enter opens it', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Watch Demo
     pressKey(scene, { key: 'Tab' }); // Settings
     pressKey(scene, { key: 'Tab' }); // Leaderboard
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
@@ -464,5 +473,170 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
     expect((booted!.game.scene.getScene('MenuScene') as MenuScene).getFocusedLabel()).toBe(
       '▶  Play Game',
     );
+  });
+});
+
+describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([MenuScene, PlayScene, GameOverScene, GymIndex]);
+    return booted!.scene as MenuScene;
+  }
+
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('AC1 — renders an interactive Watch Demo control', async () => {
+    const scene = await bootMenu();
+    const demo = findText(scene, '👁  Watch Demo');
+    expect(demo.input?.enabled).toBe(true);
+  });
+
+  it('AC2 — activating Watch Demo starts PlayScene in demo mode', async () => {
+    await bootMenu();
+    findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+  });
+
+  it('AC2 — Enter on the focused Watch Demo control starts the demo', async () => {
+    const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Watch Demo
+    expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
+    pressKey(scene, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
+  });
+
+  it('AC1 — the idle-attract timer starts the demo after the delay', async () => {
+    const scene = await bootMenu();
+    scene.scheduleAttractTimer(60);
+    await new Promise((r) => setTimeout(r, 250));
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
+  });
+
+  it('AC4 — any input resets the idle-attract timer', async () => {
+    const scene = await bootMenu();
+    scene.scheduleAttractTimer(300);
+    await new Promise((r) => setTimeout(r, 50));
+    // A keypress restarts the countdown…
+    pressKey(scene, { key: 'Tab' });
+    // …so 200 ms after the original deadline the menu is still waiting.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    // …and the demo starts shortly after the reset delay.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+  });
+
+  it('AC4 — the idle-attract timer is cleared on shutdown (never fires off-menu)', async () => {
+    const scene = await bootMenu();
+    scene.scheduleAttractTimer(60);
+    // Leave the menu normally before the timer elapses.
+    findText(scene, '▶  Play Game').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(false);
+  });
+
+  it('AC3 — pressing a control during the demo takes over as normal play', async () => {
+    await bootMenu();
+    findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'ArrowLeft',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+
+    // Take-over leaves the run in place — only the input source changes.
+    expect(play.isDemoMode()).toBe(false);
+  });
+
+  it('AC3 — a non-movement key during the demo does not take over', async () => {
+    await bootMenu();
+    findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'Enter',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+
+    // The demo keeps playing unattended.
+    expect(play.isDemoMode()).toBe(true);
+  });
+
+  it('AC1 — ESC during the demo returns to the main menu (not pause)', async () => {
+    await bootMenu();
+    findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    play.input.keyboard!.emit('keydown', {
+      key: 'Escape',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+  });
+
+  // ── Explicit start-data contract (AH-0MUY4881P007FJ8R) ──────────
+  //
+  // Phaser only rewrites `settings.data` for a *truthy* `data`, so a
+  // no-argument normal start after a demo reuses the stale `{ demo: true }`
+  // payload. Every normal Play Game entry point must therefore pass an
+  // explicit non-demo payload.
+
+  it('AC2 — the Play Game pointer handler passes an explicit non-demo payload', async () => {
+    const scene = await bootMenu();
+    const startSpy = vi.spyOn(scene.scene, 'start');
+
+    findText(scene, '▶  Play Game').emit('pointerdown');
+
+    expect(startSpy).toHaveBeenCalledWith('PlayScene', { demo: false });
+    startSpy.mockRestore();
+  });
+
+  it('AC2 — Enter on the focused Play Game control passes an explicit non-demo payload', async () => {
+    const scene = await bootMenu();
+    const startSpy = vi.spyOn(scene.scene, 'start');
+
+    pressKey(scene, { key: 'Enter' });
+
+    expect(startSpy).toHaveBeenCalledWith('PlayScene', { demo: false });
+    startSpy.mockRestore();
   });
 });

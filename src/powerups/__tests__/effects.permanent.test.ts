@@ -23,16 +23,16 @@ class HarnessScene extends Phaser.Scene {
 describe('EffectsRegistry permanent effects', () => {
   it('a normal timed power-up expires', () => {
     const registry = new EffectsRegistry();
-    registry.applyCollect('P5');
+    registry.applyCollect('speed_boost');
     registry.tick(11);
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
   });
 
   it('a permanent timed power-up never expires for the run', () => {
     const registry = new EffectsRegistry();
-    registry.applyCollect('P5', true);
+    registry.applyCollect('speed_boost', true);
     registry.tick(1000);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.speedMultiplier()).toBe(1.5);
   });
 
@@ -52,12 +52,12 @@ describe('EffectsRegistry permanent effects', () => {
 
   it('permanence is scoped to the run — reset() clears it', () => {
     const registry = new EffectsRegistry();
-    registry.applyCollect('P5', true);
+    registry.applyCollect('speed_boost', true);
     registry.applyWeapon('spread', true);
 
     registry.reset();
 
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
     expect(registry.hasWeapon('spread')).toBe(false);
   });
 });

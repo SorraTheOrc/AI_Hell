@@ -22,11 +22,11 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
 | E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | E7 | Harvester | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
-| Boss | The Central AI | §4.3 | 4 attack phases, 10 hits per phase (40 total; 4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
+| Boss | The Central AI | §4.3 | 4 attack phases, 100 hits per phase (400 total; 4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
 
 Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
 E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
-Boss is multi-hit via its 4-phase bar — **10 hits per phase (40 total)**. All enemies **never collide with each
+Boss is multi-hit via its 4-phase bar — **100 hits per phase (400 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
@@ -194,7 +194,7 @@ the first three enemy gym scenes duplicated:
   shared path. The shipped game and the gyms therefore cannot diverge on
   collision, auto-fire, drops, teleport or player-hit behaviour.
 
-  **Shared P3/P6 hit-gating (**AH-0MUHM66ES0027QQV**).** The shield/phase
+  **Shared Shield/Phase Shift hit-gating (**AH-0MUHM66ES0027QQV**).** The shield/phase
   hit-gating hooks are part of the shared core and are **not** per-scene
   overrides: `CombatScene` provides the registry-backed defaults
   `isPlayerPhased()` → `getEffectsRegistry().isPhased` and
@@ -205,21 +205,21 @@ the first three enemy gym scenes duplicated:
   (`GymWeapons`, `GymPowerUpsUtility`). Every `CombatScene` subclass
   inherits the gating exactly once — `PlayScene`, `GymPowerUpsCombat`, and
   `GymFormationScene` (`GymEnemies`/`GymBoss`/`GymMinerals`) — so collecting
-  P3 Shield or P6 Phase Shift behaves identically in the shipped game and
+  Shield or Phase Shift behaves identically in the shipped game and
   the enemy gym. **No scene should re-implement these hooks**; a scene may
-  add a per-type cue only through the `onShieldAbsorbed()` seam. The P3
-  shield-bubble and P6 phase-ghost player visuals live once in
+  add a per-type cue only through the `onShieldAbsorbed()` seam. The Shield
+  shield-bubble and phase-ghost player visuals live once in
   `src/scenes/core/CombatEffectVisuals.ts` and are used by all three scenes
   (see §7.2).
 
   **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
   `GymMinerals` has no field power-up drops, so its rewards come from the
-  hold-full choice overlay. Because the choice can grant P7 Teleport, the
+  hold-full choice overlay. Because the choice can grant Teleport, the
   S / ↓ teleport keys are bound whenever a player exists and the shared
   `_handleTeleport()` runs every tick — independent of `powerUpsEnabled` —
-  so a stored P7 use is consumable; `canTeleport()` accepts a stored use in
+  so a stored Teleport use is consumable; `canTeleport()` accepts a stored use in
   addition to the opt-in drop layer. The effects registry ticks (and the
-  HUD refreshes) every frame in all formation gyms, so a P6 granted on
+  HUD refreshes) every frame in all formation gyms, so a Phase Shift granted on
   teleport arrival expires normally. The overlay renders the caller's
   stored options, so the displayed label is the option applied.
 
@@ -257,7 +257,7 @@ the first three enemy gym scenes duplicated:
   `src/scenes/core/CombatScene.equivalence.test.ts` and the
   dispatch/fallback behaviour by `src/entities/enemyFire.test.ts`.
 - **Shared boss integration** (AH-0MUII3E5E006A93F, gap 6) — the boss
-  advance (`_advanceBoss(dt)`) and the P7 teleport boss-avoidance
+  advance (`_advanceBoss(dt)`) and the teleport boss-avoidance
   (`getAdditionalTeleportBodies()`) live once in `CombatScene` and are
   driven by each scene's own `tick(dt)`, so a single deterministic tick
   advances the boss with the same ordering relative to collisions in the
@@ -614,7 +614,7 @@ enemy is protected (AC4):
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
 
 `GymBoss` also consumes the shared boss hooks (§2.1): its `tick(dt)`
-advances the Boss through `CombatScene._advanceBoss`, P7 teleports avoid the
+advances the Boss through `CombatScene._advanceBoss`, teleports avoid the
 boss via the shared `getAdditionalTeleportBodies()`, and its phase minions
 are summoned from the shared `planMinionSpawns()` plan and advanced on the
 same tick path through `onBossAdvanced()` — so the gym Boss runs the same
@@ -824,10 +824,10 @@ Resolved in the shared `CombatScene._handleCollisions` (inherited by
 > respawn* is in-place. Supersedes the respawn clause of AH-0MTVYBCUW008BEQT
 > AC4 ("the respawn position matches the initial spawn position").
 
-**Power-up hit-gating (P3 Shield / P6 Phase Shift).** The P3/P6 gating is
+**Power-up hit-gating (Shield / Phase Shift).** The Shield/Phase Shift gating is
 inherited from the shared `CombatScene`, not re-implemented in the gym:
 
-- **P6 Phase Shift** — `CombatScene.isPlayerPhased()` returns
+- **Phase Shift** — `CombatScene.isPlayerPhased()` returns
   `getEffectsRegistry().isPhased`; while active, `_handleCollisions()` skips
   both the enemy-bullet-vs-player and player-body-vs-enemy passes, so the
   ship passes through bullets and bodies for the **1.5 s** effect window (no
@@ -842,19 +842,24 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   dropped below the threshold and a **~0.5 s** cooldown has elapsed. While
   phased the shared mineral layer (`collectMinerals({ playerPhased: true })`)
   also blocks **mineral collection**; power-up/weapon drops stay collectable
-  and mineral pickup resumes the instant the phase expires.
-- **P3 Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
+  and mineral pickup resumes the instant the phase expires. **Exception —
+  between waves/levels:** during the wave/level transition pause `PlayScene`
+  runs the shared scoop + collection passes and calls
+  `collectMinerals({ playerPhased: false })`, so a phase active at wave-clear
+  still collects minerals; the Q7 gate is unchanged during normal wave play
+  (AH-0MUX96GJF006CAZP).
+- **Shield** — `CombatScene.tryAbsorbPlayerHit()` consumes exactly one
   shield (`tryAbsorbShield()`), runs the `onShieldAbsorbed()` cue seam (the
   play scene plays `playDestructionSound()`; the gym stays silent), starts
   the shared post-hit invulnerability window and reports the hit absorbed,
   so an absorbed hit costs no life; the following hit lands normally.
-- **Visuals** — `GymFormationScene` draws the same P3 shield bubble
+- **Visuals** — `GymFormationScene` draws the same shield bubble
   (colour `0x3399ff`, line width 2, radius `SHIP_SIZE * 1.6`, fill alpha
-  `0.12`) and P6 phase ghost (alpha `0.45`, blink-aware) as `PlayScene` and
+  `0.12`) and Phase Shift ghost (alpha `0.45`, blink-aware) as `PlayScene` and
   `GymPowerUpsCombat`, through the shared `CombatEffectVisuals` helper. Test
   seams: `isShieldBubbleVisible()`, `isPhaseGhostActive()`.
 
-`GymFormationScene`-based scenes therefore record **and** apply P3/P6
+`GymFormationScene`-based scenes therefore record **and** apply Shield/Phase Shift
 identically to the other combat scenes — a regression is guarded by the
 enemy-gym phase/shield tests and the cross-scene equivalence tests. The
 mineral gate is unit-tested in `src/scenes/core/mineralLayer.test.ts` and
@@ -1011,7 +1016,7 @@ animated by the shared `FormationGlide` helper
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
 | `fireInterval` | `number` | ms between volleys. |
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
-| `bulletSpeed` | `number` | px/s. |
+| `bulletSpeed` | `number` | Bullet velocity (px/s). Enemy archetype values were halved by AH-0MUWZ5GST003NMFQ (Scout **90**, Diver **110**, Tank **75**, Phaser **90**, Swarm **90**, Boss **80**, Asteroid **50**, Harvester **50**); because `bulletLifetime` is unchanged, each enemy's effective range (`bulletSpeed × lifetime`) is halved too. The player's `PLAYER_BULLET_SPEED` (350 px/s) is unchanged. |
 | `burstCount` | `number` | Burst / radial spoke count. |
 | `[extra]` | `unknown` | Open passthrough — future axes without breaking JSON. **Not representable in a flat CSV row and dropped for CSV-sourced configs** (documented limitation). |
 
@@ -1472,8 +1477,14 @@ the wiring is `AH-0MUH6LEYY0054E63`; per-level generated-vs-scripted mixing was
 
 All enemy audio functions live in
 [`src/audio/effects.ts`](../src/audio/effects.ts) — the **single source of
-truth**; never inline an audio call anywhere else. The audio event catalog and
-default sound characters are defined in
+truth**; never inline an audio call anywhere else. Each cue is a **build-time
+baked ToneForge WAV asset** (one recipe slug per cue) played by the thin
+manifest-driven layer in `effects.ts`; the continuous thruster hum is the only
+runtime-synthesised exception and is player-only. The authoritative
+cue→recipe catalogue is the
+[Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md), and the assets
+are rendered by `scripts/build-audio.sh` into `public/audio/sfx/`. The audio
+event catalog and default sound characters are defined in
 [GDD §7.3](Game%20Design%20Document.md); per-enemy audio characters are decided
 **at implementation time** and may deviate from the catalog defaults (see §3.1
 checklist item 6). Scope rules matter — base-class-owned sounds are played
@@ -1502,6 +1513,17 @@ Orchestration rule: entity-specific fire sounds are invoked **where the shots
 are produced** — the entity's own fire/tell logic (Tank's `tryFireRadialBurst`,
 Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
 Scout's two-phase tell) — never re-added in a thin scene class.
+
+**ToneForge recipes per cue:** Scout advance `aihell-scout-advance`, Scout fire
+`weapon-laser-zap`; Diver dive-start `aihell-diver-dive-start`, dive loop
+`aihell-diver-dive-loop`, fire `aihell-diver-fire`, destruction
+`aihell-diver-destruction` (multi-seed 32193–32195); Tank advance
+`aihell-tank-advance`, fire `aihell-tank-fire`; Phaser advance
+`aihell-phaser-advance`, fire `aihell-phaser-fire`; Swarm burst
+`aihell-swarm-burst`; Boss phase cue `aihell-boss-phase-cue` (per-phase seeds
+32204–32207), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
+destruction `aihell-enemy-destruction` (multi-seed 32110–32112). Full catalogue:
+[Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md).
 
 ### Explode / destruction
 

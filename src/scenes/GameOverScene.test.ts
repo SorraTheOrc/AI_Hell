@@ -21,6 +21,10 @@ import {
 } from '../ui/leaderboardView';
 import { GameOverScene, INITIALS_LENGTH, isInitialsLetter } from './GameOverScene';
 import { MenuScene } from './MenuScene';
+import {
+  DEFAULT_CAPTURE_TAIL_MS,
+  DEMO_GAME_OVER_DWELL_MS,
+} from '../../scripts/capture-run-lifecycle.mjs';
 
 async function bootGameOver(): Promise<BootedGame> {
   return bootScene([GameOverScene, MenuScene]);
@@ -594,6 +598,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     booted = await bootGameOver();
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
     const defeatSpy = vi.spyOn(endOfRunModule, 'spawnDefeatScreenJuice');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
 
     booted.game.scene.start('GameOverScene', { won: true, score: 100 });
     await new Promise((r) => setTimeout(r, 350));
@@ -601,9 +606,21 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
 
     expect(victorySpy).toHaveBeenCalledTimes(1);
     expect(defeatSpy).not.toHaveBeenCalled();
+    // The shorter victory-screen fireworks continuation runs on the same
+    // registry with its dedicated 1–2 s duration (AC2).
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
+    const fireworksOptions = fireworksSpy.mock.calls[0][3] as {
+      registry?: unknown[];
+      durationMs?: number;
+    };
+    expect(fireworksOptions.registry).toBe(scene.getEndOfRunEffects());
+    expect(fireworksOptions.durationMs).toBe(
+      endOfRunModule.ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+    );
     // The victory layers are alive in the registry.
     const layers = liveLayers(scene);
     expect(layers.some((t) => t.startsWith('victory'))).toBe(true);
+    expect(layers.some((t) => t === 'victoryFirework')).toBe(true);
     expect(layers.some((t) => t.startsWith('defeat'))).toBe(false);
   });
 
@@ -611,6 +628,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     booted = await bootGameOver();
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
     const defeatSpy = vi.spyOn(endOfRunModule, 'spawnDefeatScreenJuice');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
     const stingSpy = vi.spyOn(effectsModule, 'playDefeatStingSound');
 
     booted.game.scene.start('GameOverScene', { won: false, score: 100 });
@@ -619,6 +637,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
 
     expect(defeatSpy).toHaveBeenCalledTimes(1);
     expect(victorySpy).not.toHaveBeenCalled();
+    expect(fireworksSpy).not.toHaveBeenCalled();
     expect(stingSpy).toHaveBeenCalledTimes(1);
     const layers = liveLayers(scene);
     expect(layers.some((t) => t.startsWith('defeat'))).toBe(true);
@@ -832,5 +851,113 @@ describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUT
       .map((o) => (o.getData ? o.getData('juiceLayer') : undefined));
     expect(layers.some((t) => typeof t === 'string' && t.startsWith('defeat'))).toBe(false);
     expect(layers.some((t) => typeof t === 'string' && t.startsWith('victory'))).toBe(true);
+  });
+});
+
+describe('GameOverScene — demo game-over dwell (AH-0MUXZ4CAE008QRFZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Starts GameOverScene as a demo outcome screen and waits for create(). */
+  async function startDemo(
+    data: { won?: boolean; score?: number; demoDwellMs?: number } = {},
+  ): Promise<GameOverScene> {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', { demo: true, ...data });
+    await new Promise((r) => setTimeout(r, 350));
+    return booted.game.scene.getScene('GameOverScene') as GameOverScene;
+  }
+
+  it('AC1 — a demo game over shows VICTORY/DEFEAT and the final score', async () => {
+    booted = await bootGameOver();
+
+    booted.game.scene.start('GameOverScene', {
+      demo: true,
+      won: true,
+      score: 4321,
+    });
+    await new Promise((r) => setTimeout(r, 350));
+    const victory = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+    expect(victory.isDemoMode()).toBe(true);
+    expect(victory.getWon()).toBe(true);
+    expect(victory.getFinalScore()).toBe(4321);
+    expect(findTextContaining(victory, 'VICTORY')).toBeDefined();
+    expect(findTextContaining(victory, 'Final Score: 4321')).toBeDefined();
+
+    // A defeat renders the DEFEAT header instead.
+    booted.game.scene.start('GameOverScene', {
+      demo: true,
+      won: false,
+      score: 7,
+    });
+    await new Promise((r) => setTimeout(r, 350));
+    const defeat = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+    expect(findTextContaining(defeat, 'DEFEAT')).toBeDefined();
+    expect(findTextContaining(defeat, 'Final Score: 7')).toBeDefined();
+  });
+
+  it('AC1/AC4 — the default demo dwell is at least the capture tail', async () => {
+    const scene = await startDemo({ won: false, score: 10 });
+    expect(scene.getDemoDwellMs()).toBe(DEMO_GAME_OVER_DWELL_MS);
+    expect(scene.getDemoDwellMs()).toBeGreaterThanOrEqual(
+      DEFAULT_CAPTURE_TAIL_MS,
+    );
+    expect(scene.getDemoDwellMs()).toBeGreaterThanOrEqual(5000);
+  });
+
+  it('AC4 — a test override gives a short/zero dwell', async () => {
+    const zero = await startDemo({ score: 10, demoDwellMs: 0 });
+    expect(zero.getDemoDwellMs()).toBe(0);
+
+    const short = await startDemo({ score: 10, demoDwellMs: 40 });
+    expect(short.getDemoDwellMs()).toBe(40);
+  });
+
+  it('AC2 — a demo never qualifies, accepts initials or writes a score', async () => {
+    // Seed the board with a low score so a huge demo score would otherwise
+    // qualify and be writable in normal play.
+    addEntry('AAA', 100);
+    const before = getEntries();
+
+    const scene = await startDemo({ won: true, score: 999_999 });
+    expect(scene.getQualifies()).toBe(false);
+    expect(
+      findTextContaining(scene, 'Demo run — no leaderboard entry.'),
+    ).toBeDefined();
+
+    // No letter is consumed and no initials are accepted.
+    expect(scene.handleKey(new KeyboardEvent('keydown', { key: 'B' }))).toBe(
+      false,
+    );
+    expect(scene.getInitials()).toBe('');
+
+    // Even an explicit submit persists nothing.
+    scene.submitScoreAndReturn();
+    expect(getEntries()).toEqual(before);
+  });
+
+  it('AC1/AC5 — the demo holds during the dwell, then returns to MenuScene', async () => {
+    booted = await bootGameOver();
+    booted.game.scene.start('GameOverScene', {
+      demo: true,
+      won: false,
+      score: 1,
+      demoDwellMs: 600,
+    });
+
+    // Mid-dwell it is still the outcome screen.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
+    expect(booted.game.scene.isActive('MenuScene')).toBe(false);
+
+    // After the dwell it loops back to the menu.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(booted.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted.game.scene.isActive('GameOverScene')).toBe(false);
   });
 });

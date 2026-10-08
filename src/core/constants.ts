@@ -100,7 +100,7 @@ export const POWER_UP_BUBBLE_STROKE_WIDTH = 2;
 /** Alpha of the bubble's soft outer glow halo (0–1). */
 export const POWER_UP_BUBBLE_GLOW_ALPHA = 0.35;
 
-// ── P9 Magnet (GDD §4.4) ────────────────────────────────────────────
+// ── Magnet (GDD §4.4) ────────────────────────────────────────────
 
 /** Base magnet/scoop radius as a multiple of the ship size (1×). */
 export const MAGNET_RADIUS_BASE_MULTIPLIER = 1;
@@ -174,11 +174,11 @@ export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 
 // ── Combat gym — threat-coupled power-ups (GDD §4.4, GymPowerUpsCombat) ─
 
-/** P3 Shield duration in seconds (15 s, absorbs one hit). */
+/** Shield base duration in seconds (15 s; absorptions level separately). */
 export const COMBAT_SHIELD_DURATION = 15;
 
 /**
- * P6 Phase Shift duration in seconds (1.5 s, pass-through). Applied
+ * Phase Shift duration in seconds (1.5 s, pass-through). Applied
  * automatically when the player is in danger and a charge is available
  * (parent AH-0MUIYX1EE008FVS8).
  */
@@ -186,7 +186,7 @@ export const PHASE_DURATION = 1.5;
 
 /**
  * Cooldown (seconds) after a Phase Shift expires before it may auto-trigger
- * again. Combined with the danger-cleared gate, this stops a permanent P6
+ * again. Combined with the danger-cleared gate, this stops a permanent Phase Shift
  * from becoming perpetual invincibility (Q2).
  */
 export const PHASE_REARM_COOLDOWN = 0.5;
@@ -201,7 +201,7 @@ export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 export const COMBAT_HIT_BLINK_INTERVAL = 0.1;
 
 // ── Danger detection (parent AH-0MUIYX1EE008FVS8) ─────────────────
-// Inputs to the automatic Phase Shift (P6) trigger. Danger is the
+// Inputs to the automatic Phase Shift trigger. Danger is the
 // combined count of hostile bodies + hostile bullets whose centre lies
 // within DANGER_RADIUS of the ship; reaching DANGER_THREAT_THRESHOLD
 // makes the player "in danger". Producer decisions Q1 (combined count,

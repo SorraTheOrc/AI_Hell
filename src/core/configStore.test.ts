@@ -736,10 +736,10 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
       [3, 1, 'fixed', 11.4],
       [3, 2, 'fixed', 11.85],
       [3, 3, 'fixed', 12.3],
-      [4, 1, 'curve', 16],
-      [4, 2, 'curve', 24],
-      [4, 3, 'curve', 28],
-      [5, 1, 'curve', 45],
+      [4, 1, 'curve', 14],
+      [4, 2, 'curve', 22],
+      [4, 3, 'curve', 27.5],
+      [5, 1, 'curve', 43.5],
       [5, 2, 'dynamic', 62],
     ]);
   });

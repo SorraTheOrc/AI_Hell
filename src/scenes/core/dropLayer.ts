@@ -4,14 +4,13 @@
  *
  * The power-up drop behaviour — the default weighted spawner, the
  * grow → hold → shrink → despawn lifecycle, the overlap collection gate
- * (≥ 3 % scale + hull radius), the P9 magnet pull, the P4 bomb notice and the
- * per-type pickup cues — was copy-pasted across five scenes with three
- * behavioural drifts (the P9 magnet ran only in `PlayScene`/`GymPowerUpsUtility`,
- * the P4 notice only in `PlayScene`/`GymPowerUpsCombat`, the per-type cues only
- * in `PlayScene`/`GymWeapons`/`GymPowerUpsUtility`). The pure helpers below own
- * each behaviour exactly once; the shared `CombatCoreScene` wraps them as
- * template methods so every scene consumes the same code and enabled drops
- * behave identically everywhere.
+ * (≥ 3 % scale + hull radius), the Magnet magnet pull and the per-type pickup
+ * cues — was copy-pasted across five scenes with three behavioural drifts
+ * (the Magnet magnet ran only in `PlayScene`/`GymPowerUpsUtility`, the per-type
+ * cues only in `PlayScene`/`GymWeapons`/`GymPowerUpsUtility`). The pure
+ * helpers below own each behaviour exactly once; the shared
+ * `CombatCoreScene` wraps them as template methods so every scene consumes
+ * the same code and enabled drops behave identically everywhere.
  *
  * The module is deliberately Phaser-scene-agnostic: it operates on the
  * structural drop shape (position + graphics + `PowerUp` lifecycle + the
@@ -86,7 +85,7 @@ export interface PickupCueDrop {
 
 /**
  * Builds the default weighted-random drop spawner over the combined pool
- * (power-up IDs P3–P10 plus the weapon drops) using the game-rules weights.
+ * (power-up IDs Shield–Mineral Scoop plus the weapon drops) using the game-rules weights.
  * The single implementation behind `PlayScene` and every gym.
  */
 export function buildDefaultDropSpawner(
@@ -165,7 +164,7 @@ export function collectOverlappingDrops<T extends DropLifecycleDrop>(
 }
 
 /**
- * Applies the P9 magnet pull to every collectible drop within range, reusing
+ * Applies the Magnet magnet pull to every collectible drop within range, reusing
  * the shared `applyMagnetAttraction` (range/speed defined in exactly one
  * place). No-op when no stacks are active.
  */
@@ -182,8 +181,8 @@ export function applyDropMagnet<T extends DropLifecycleDrop>(
 /**
  * Plays the per-type pickup cue for a collected drop. One shared dispatcher so
  * every scene plays the same cue: a generic pop on every pickup, then the
- * dedicated P5/P8/P9 cue, the dedicated weapon/Reset cue, or the generic
- * collect chime fallback for types without a dedicated cue (P3/P4/P6/P7).
+ * dedicated Speed Boost/Extra Life/Magnet cue, the dedicated weapon/Reset cue, or the generic
+ * collect chime fallback for types without a dedicated cue (Shield/Bomb/Phase Shift/Teleport).
  * Safe no-op without an AudioContext (headless tests).
  */
 export function playDropPickupCue(drop: PickupCueDrop): void {
@@ -211,22 +210,22 @@ export function playDropPickupCue(drop: PickupCueDrop): void {
       return;
     }
     switch (drop.dropId) {
-      case 'P5':
+      case 'speed_boost':
         playSpeedBoostCollectSound();
         break;
-      case 'P8':
+      case 'extra_life':
         playExtraLifeCollectSound();
         break;
-      case 'P9':
+      case 'magnet':
         playMagnetCollectSound();
         break;
-      case 'P10':
+      case 'mineral_scoop':
         // Mineral Scoop reuses the magnet field-hum cue (optional polish to
         // add a dedicated cue later).
         playMagnetCollectSound();
         break;
       default:
-        // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated cue
+        // Shield shield, Bomb bomb, Phase Shift phase, Teleport teleport have no dedicated cue
         // in the audio module yet — generic chime fallback.
         playPowerUpCollectSound();
     }
