@@ -33,6 +33,12 @@ import {
   type ActionName,
 } from '../core/settingsStore';
 import { playVolumeFeedback, setSfxMuted, setSfxVolume } from '../audio/effects';
+import {
+  DEFAULT_TELEMETRY_CONSENT,
+  loadTelemetryConsent,
+  setTelemetryConsent,
+} from '../core/telemetryConsentStore';
+import { type TelemetryConsentState } from '../telemetry';
 
 /** Neon-cyan colour for the section heading (GDD §7.1). */
 const SETTINGS_TEXT_COLOR = '#00ffff';
@@ -96,6 +102,7 @@ export class SettingsScene extends Phaser.Scene {
   private sfxVolume = DEFAULT_SETTINGS.sfxVolume;
   private sfxMuted = DEFAULT_SETTINGS.sfxMuted;
   private bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
+  private telemetryConsent: TelemetryConsentState = { ...DEFAULT_TELEMETRY_CONSENT };
 
   private controls: SettingsControl[] = [];
   private focusedIndex = 0;
@@ -106,6 +113,7 @@ export class SettingsScene extends Phaser.Scene {
   private sliderHandle!: Phaser.GameObjects.Rectangle;
   private volumeText!: Phaser.GameObjects.Text;
   private muteText!: Phaser.GameObjects.Text;
+  private telemetryText!: Phaser.GameObjects.Text;
   private backText!: Phaser.GameObjects.Text;
   private resetText!: Phaser.GameObjects.Text;
   private conflictText!: Phaser.GameObjects.Text;
@@ -132,6 +140,10 @@ export class SettingsScene extends Phaser.Scene {
     this.sfxVolume = settings.sfxVolume;
     this.sfxMuted = settings.sfxMuted;
     this.bindings = { ...settings.bindings };
+    // Telemetry consent lives in its own store (AH-0MUY08Y9P005ER7A, AC1):
+    // the toggle below can grant or revoke it, and it survives a settings
+    // reset of audio/controls.
+    this.telemetryConsent = loadTelemetryConsent();
     // Menu navigation honours the configured bindings (parent
     // AH-0MU9LPZ0G0015292): pause key = Back, move up/down = focus cycle.
     const configured = resolveBindings(settings.bindings);
@@ -158,6 +170,7 @@ export class SettingsScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this._buildAudioSection();
+    this._buildTelemetrySection();
     this._buildControlsSection();
     this._buildBack();
 
@@ -169,6 +182,7 @@ export class SettingsScene extends Phaser.Scene {
         onRight: () => this._nudgeVolume(SLIDER_KEY_STEP),
       },
       { label: 'mute', activate: () => this._toggleMute() },
+      { label: 'telemetry', activate: () => this.toggleTelemetryConsent() },
       ...ACTION_NAMES.map((action) => ({
         label: action,
         activate: () => this.beginCapturing(action),
@@ -179,6 +193,7 @@ export class SettingsScene extends Phaser.Scene {
 
     this._drawSlider();
     this._drawMute();
+    this._drawTelemetry();
     this._drawBindings();
     this._setFocus(0);
 
@@ -243,6 +258,23 @@ export class SettingsScene extends Phaser.Scene {
     this.muteText.setInteractive({ useHandCursor: true });
     this.muteText.on('pointerdown', () => this._toggleMute());
     this.focusStyles.set('mute', this.muteText);
+  }
+
+  // ── Telemetry consent section ───────────────────────────────────
+
+  private _buildTelemetrySection(): void {
+    this.telemetryText = this.add
+      .text(AUDIO_COL_X, 280, '', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: SETTINGS_DIM_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 12, y: 6 },
+      })
+      .setOrigin(0.5);
+    this.telemetryText.setInteractive({ useHandCursor: true });
+    this.telemetryText.on('pointerdown', () => this.toggleTelemetryConsent());
+    this.focusStyles.set('telemetry', this.telemetryText);
   }
 
   // ── Controls (key bindings) section ─────────────────────────────
@@ -336,6 +368,12 @@ export class SettingsScene extends Phaser.Scene {
     this.muteText.text = this.sfxMuted ? 'SFX: MUTED' : 'SFX: ON';
   }
 
+  private _drawTelemetry(): void {
+    this.telemetryText.text = this.telemetryConsent.granted
+      ? 'Telemetry: ON'
+      : 'Telemetry: OFF';
+  }
+
   private _drawBindings(): void {
     for (const action of ACTION_NAMES) {
       const row = this.bindingRows.get(action);
@@ -381,6 +419,28 @@ export class SettingsScene extends Phaser.Scene {
 
   private _toggleMute(): void {
     this.setMuted(!this.sfxMuted);
+  }
+
+  // ── Telemetry consent actions ───────────────────────────────────
+
+  /**
+   * Flips the telemetry opt-in and persists the decision
+   * (AH-0MUY08Y9P005ER7A, AC1). Returns the new granted value.
+   */
+  toggleTelemetryConsent(): boolean {
+    this.telemetryConsent = setTelemetryConsent(!this.telemetryConsent.granted);
+    this._drawTelemetry();
+    return this.telemetryConsent.granted;
+  }
+
+  /** Whether the player has opted in to production telemetry. */
+  isTelemetryConsentGranted(): boolean {
+    return this.telemetryConsent.granted;
+  }
+
+  /** Whether the player has made an explicit telemetry decision. */
+  hasDecidedTelemetryConsent(): boolean {
+    return this.telemetryConsent.decided;
   }
 
   private _sliderFromPointer(x: number): void {

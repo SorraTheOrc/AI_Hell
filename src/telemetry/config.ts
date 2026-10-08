@@ -31,6 +31,8 @@ export interface TelemetryEnv {
   readonly VITE_TELEMETRY_CONSENT?: string;
   /** Sink selection: `'none'` | `'jsonl'` | `'remote'`. */
   readonly VITE_TELEMETRY_SINK?: string;
+  /** Remote sink endpoint URL; absent disables the remote transport. */
+  readonly VITE_TELEMETRY_ENDPOINT?: string;
   /** Fraction of ticks to record, `0`–`1` (default `1`). */
   readonly VITE_TELEMETRY_SAMPLE_RATE?: string;
   /** Ring-buffer capacity in records (default {@link DEFAULT_TELEMETRY_BUFFER_CAPACITY}). */
@@ -50,6 +52,10 @@ export interface TelemetryConfig {
   readonly consent: boolean;
   /** The selected sink (before the enabled/consent gate is applied). */
   readonly sink: TelemetrySinkKind;
+  /** Whether this is a production build (production requires consent). */
+  readonly production: boolean;
+  /** Remote sink endpoint URL, or `undefined` when none is configured. */
+  readonly endpoint: string | undefined;
   /** Tick sampling rate, `0`–`1`. */
   readonly sampleRate: number;
   /** Ring-buffer capacity in records. */
@@ -85,6 +91,7 @@ export function resolveTelemetryConfig(
   const enabled = parseBoolean(env.VITE_TELEMETRY_ENABLED);
   const consent = parseBoolean(env.VITE_TELEMETRY_CONSENT);
   const sink = parseSink(env.VITE_TELEMETRY_SINK);
+  const endpoint = parseEndpoint(env.VITE_TELEMETRY_ENDPOINT);
   const sampleRate = parseSampleRate(env.VITE_TELEMETRY_SAMPLE_RATE);
 
   const bufferCapacity = parsePositiveInt(
@@ -104,10 +111,33 @@ export function resolveTelemetryConfig(
     enabled,
     consent,
     sink: enabled ? sink : 'none',
+    production: isProduction,
+    endpoint: sink === 'remote' ? endpoint : undefined,
     sampleRate,
     bufferCapacity,
     batchSize,
     recording,
+  };
+}
+
+/**
+ * Applies the player's explicit consent decision to a resolved config
+ * (AC1). The environment's consent flag is replaced by the player's choice
+ * and the effective recording gate is recomputed, so opting out always
+ * disables recording even in a consent-flagged production build.
+ *
+ * @param config - The environment-resolved configuration.
+ * @param consent - The player's decision.
+ * @returns A new configuration reflecting the decision.
+ */
+export function applyUserConsent(
+  config: TelemetryConfig,
+  consent: boolean,
+): TelemetryConfig {
+  return {
+    ...config,
+    consent,
+    recording: config.enabled && (!config.production || consent),
   };
 }
 
@@ -154,6 +184,14 @@ export function parseSink(raw: string | undefined): TelemetrySinkKind {
     default:
       return 'jsonl';
   }
+}
+
+/**
+ * Parses a remote endpoint. Returns `undefined` for an absent/blank value;
+ * trims surrounding whitespace otherwise.
+ */
+export function parseEndpoint(raw: string | undefined): string | undefined {
+  return nonEmpty(raw);
 }
 
 /** Parses a `0`–`1` sampling rate; invalid values fall back to `1`. */

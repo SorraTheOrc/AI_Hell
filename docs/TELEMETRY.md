@@ -2,8 +2,9 @@
 
 > Status: framework landed in AH-0MUY08VJ9006BHJO (epic
 > AH-0MUY089KR003F8S4). The game instrumentation — per-tick state + input and
-> discrete events — landed in child 3 (AH-0MUY08VVQ007HSSH); production opt-in
-> and the remote transport are child 10 (AH-0MUY08Y9P005ER7A).
+> discrete events — landed in child 3 (AH-0MUY08VVQ007HSSH); production
+> opt-in consent, the remote HTTP transport and the privacy/retention policy
+> landed in child 10 (AH-0MUY08Y9P005ER7A).
 
 The telemetry framework is a **versioned, consent-gated, pluggable pipeline**
 that is a **strict no-op unless explicitly enabled**. It records reproducible
@@ -52,7 +53,8 @@ VITE_TELEMETRY_ENABLED=true VITE_TELEMETRY_CONSENT=true npm run build
 |---|---|---|
 | `VITE_TELEMETRY_ENABLED` | `1`/`true`/`yes`/`on` enables telemetry | disabled |
 | `VITE_TELEMETRY_CONSENT` | Consent flag; **required for production recording** | disabled |
-| `VITE_TELEMETRY_SINK` | `jsonl` (local dev) or `remote` (production stub) | `jsonl` |
+| `VITE_TELEMETRY_SINK` | `jsonl` (local dev) or `remote` (production) | `jsonl` |
+| `VITE_TELEMETRY_ENDPOINT` | Remote ingestion URL (required for the remote sink to upload) | unset |
 | `VITE_TELEMETRY_SAMPLE_RATE` | Fraction of ticks to record (`0`–`1`) | `1` |
 | `VITE_TELEMETRY_BUFFER_CAPACITY` | Ring-buffer capacity, in records | `512` |
 | `VITE_TELEMETRY_BATCH_SIZE` | Buffer size that triggers a flush | `64` |
@@ -63,11 +65,42 @@ The consent gate works as follows (see
 
 - `enabled = false` → **no-op recorder**, nothing is buffered or written.
 - dev build + `enabled` → recording without consent.
-- production build + `enabled` → recording **only** when `VITE_TELEMETRY_CONSENT`
-  is also set.
+- production build + `enabled` → recording **only** when consent is given.
 
 `createTelemetryRecorder()` is the single enforcement point: it returns a
 `NoopTelemetryRecorder` unless the effective gate is open.
+
+### Production opt-in consent (AC1/AC3)
+
+In the shipped game the consent decision is the **player's**, not a build
+flag. The persisted decision lives in `localStorage` under
+`ai_hell_telemetry_consent` (see
+[`telemetryConsentStore.ts`](../src/core/telemetryConsentStore.ts)), separate
+from the gameplay settings so a settings reset never re-enables telemetry:
+
+- **Default: off and undecided.** Nothing is recorded until the player opts in.
+- **In-game prompt.** When the build is production + `remote` + enabled and
+  the player has not yet decided, `MenuScene` opens the consent prompt
+  (`TelemetryConsentScene`) once. It summarises the privacy policy, defaults
+  focus to declining, and ESC also declines.
+- **Settings toggle.** The same decision is always reversible in
+  `SettingsScene` ("Telemetry: ON/OFF").
+- **Their choice wins.** Once decided, `resolveEffectiveTelemetryConfig()`
+  recomputes the recording gate from the player's decision, so an opt-out
+  disables recording even in a consent-flagged build. `VITE_TELEMETRY_CONSENT`
+  only applies while the player is undecided (useful for headless/operator
+  runs).
+
+```ts
+import {
+  resolveEffectiveTelemetryConfig,
+  shouldPromptForTelemetryConsent,
+} from '../telemetry';
+import { loadTelemetryConsent } from '../core/telemetryConsentStore';
+
+const consent = loadTelemetryConsent();
+const config = resolveEffectiveTelemetryConfig(import.meta.env, consent);
+```
 
 ## Schema reference (version 1)
 
@@ -134,12 +167,37 @@ where records go:
   line through a pluggable `TelemetryLineWriter`; the default writer appends
   to browser `localStorage` under `ai_hell_telemetry_jsonl`, and an in-memory
   writer is available for headless runs and tests.
-- **`RemoteTelemetrySink`** — the production **stub**. It forwards batches to
-  an injected transport; until the production child wires one, it drops and
+- **`RemoteTelemetrySink`** — the production sink. It forwards the
+  recorder's batches to an HTTP transport. `createTelemetrySink()`
+  auto-wires an `HttpTelemetryTransport` when `VITE_TELEMETRY_ENDPOINT` is
+  configured; without an endpoint (or an injected transport) it drops and
   counts batches (it never silently pretends to send).
 
 Add a new sink by implementing `TelemetrySink` and selecting it in
 `createTelemetrySink()`; no recorder changes are needed.
+
+### Remote transport: batching, retry and the offline path (AC2/AC4)
+
+`HttpTelemetryTransport` (`src/telemetry/transport.ts`) uploads each batch as
+one JSON `POST` (`{ schemaVersion, records }`) to the configured endpoint and
+is designed to be invisible to gameplay:
+
+- **Retry with exponential backoff + jitter** for transient failures —
+  network errors, request timeouts, and retryable HTTP statuses (`408`, `425`,
+  `429`, any `5xx`). A batch is retried up to `maxAttempts` (default 3) and
+  then dropped, counted in `stats.dropped`.
+- **Permanent `4xx` (other than the above) are not retried** — they are
+  counted as rejected and dropped.
+- **Offline short-circuit** — when the browser reports `navigator.onLine ===
+  false` the batch is dropped immediately (`stats.skippedOffline`) instead of
+  burning retries, so a missing network never affects the game.
+- **Never throws** — every failure is counted and swallowed; the caller is
+  the gameplay flush path.
+
+All timing, randomness, networking and connectivity are injectable, so the
+retry/backoff and offline policy is unit-tested hermetically. Inspect
+`transport.stats` for `batches`, `delivered`, `dropped`, `skippedOffline`,
+`rejected`, `attempts`, `retries` and `lastStatus`.
 
 ## Overhead, backpressure and sampling
 
@@ -277,6 +335,60 @@ telemetry.runEnd(won, score);
   be handled by the production consent flow (AH-0MUY08Y9P005ER7A) and
   documented here first.
 
+## Privacy, retention and how playtester data is used (AC3/AC7)
+
+This is the policy shown on the consent screen (in shortened form) and
+linked from the release notes.
+
+- **What is collected.** A run header (RNG seed, build version/commit, start
+  time) plus sampled per-tick state and input, and discrete gameplay events
+  (see the schema above). It is gameplay telemetry only — never personal
+  data.
+- **Why.** Solely to tune and improve the game and the demo/attract bot
+  (reaction times, engagement distances, dodge outcomes, survival and
+  minerals-per-minute). It is **not** sold, shared for advertising, or used
+  to profile individuals.
+- **Storage.** Batches are uploaded over HTTPS to the endpoint configured in
+  `VITE_TELEMETRY_ENDPOINT` and stored in the operator's ingestion store.
+  There is no per-player identifier in any record, so records are not
+  attributable to an individual.
+- **Retention.** Uploaded batches are retained for a bounded period
+  (currently **90 days**) and then deleted. Aggregated, non-identifying
+  metrics may be kept longer. Retention is enforced by the ingestion store,
+  not the client.
+- **Control.** Telemetry is off by default and only runs after an explicit
+  opt-in. The player can revoke it at any time in Settings; revocation stops
+  all further collection immediately. `clearTelemetryConsent()` resets the
+  decision so the player is asked again.
+- **Offline / local dev.** Local development and offline play never upload:
+  the dev sink writes to `localStorage`, and the remote transport drops
+  batches when offline or when no endpoint is configured.
+
+## Inspecting downloaded telemetry (AC5)
+
+`scripts/inspect-telemetry.mjs` reads a JSONL recording (the local dev sink's
+`localStorage` value, or a downloaded/exported production batch) and prints a
+summary: record counts by kind, schema version, run seeds, build ids, the tick
+range and the event histogram. Unknown/corrupt lines are skipped rather than
+crashing the reader.
+
+```bash
+# human-readable
+node scripts/inspect-telemetry.mjs recording.jsonl
+
+# machine-readable (adds `skippedLines`)
+node scripts/inspect-telemetry.mjs recording.jsonl --json
+
+# or from stdin
+cat recording.jsonl | node scripts/inspect-telemetry.mjs
+```
+
+It intentionally does not repackage the deeper offline analysis (histograms,
+reaction latency, engagement distances) which is delivered by the sibling dev
+recording/analysis tooling (AH-0MUY08W7Y004GATZ); the inspector is the quick,
+dependency-free first look at any recording, and its summary shape is the
+stable interface the analysis tool can build on.
+
 ## Testing
 
 The framework is covered by hermetic unit tests under
@@ -286,11 +398,16 @@ The framework is covered by hermetic unit tests under
 |---|---|
 | `schema.test.ts` | `isTelemetryRecord` runtime guard and schema version |
 | `redact.test.ts` | PII/secret redaction and JSON safety |
-| `config.test.ts` | disabled-by-default, consent gate, env parsing |
-| `sinks.test.ts` | no-op sink, JSONL round-trip, remote stub |
+| `config.test.ts` | disabled-by-default, consent gate, env/endpoint parsing, `applyUserConsent` |
+| `consent.test.ts` | prompt predicate and effective (player) consent policy |
+| `sinks.test.ts` | no-op sink, JSONL round-trip, remote sink + transport auto-wiring |
+| `transport.test.ts` | HTTP envelope, batching, retry/backoff, permanent failures, offline drop |
 | `recorder.test.ts` | run header/schema version, batching, ring buffer, sampling, redaction |
 | [`runTelemetry.test.ts`](../src/scenes/core/runTelemetry.test.ts) | concrete state/event serialisation, version/seed tagging, no-op |
 | [`PlaySceneTelemetry.test.ts`](../src/scenes/PlaySceneTelemetry.test.ts) | end-to-end PlayScene recording: state + applied input, run/wave/kill/pickup/choice/run-end events, off = zero records |
+| [`TelemetryConsentScene.test.ts`](../src/scenes/TelemetryConsentScene.test.ts) | consent prompt: privacy copy, safe default, grant/deny/ESC persistence |
+| [`telemetryConsentStore.test.ts`](../src/core/telemetryConsentStore.test.ts) | consent persistence, corrupt/absent fallback |
+| [`inspect-telemetry.test.ts`](../scripts/inspect-telemetry.test.ts) | JSONL parsing, summary and formatting |
 
 Run them with `npx vitest run src/telemetry` (or the full suite via
 `/skill:test`).

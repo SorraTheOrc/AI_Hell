@@ -113,7 +113,7 @@ import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
   createTelemetryRecorder,
   resolveBuildInfo,
-  resolveTelemetryConfig,
+  resolveEffectiveTelemetryConfig,
   type TelemetryRecorder,
 } from '../telemetry';
 import {
@@ -136,6 +136,7 @@ import {
   resolveBindings,
   type ActionName,
 } from '../core/settingsStore';
+import { loadTelemetryConsent } from '../core/telemetryConsentStore';
 import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
@@ -2927,9 +2928,10 @@ export class PlayScene extends CombatScene<
   private _initTelemetry(): void {
     const recorder =
       this.injectedTelemetryRecorder ??
-      createTelemetryRecorder(resolveTelemetryConfig(), {
-        build: resolveBuildInfo(),
-      });
+      createTelemetryRecorder(
+        resolveEffectiveTelemetryConfig(import.meta.env, loadTelemetryConsent()),
+        { build: resolveBuildInfo() },
+      );
     this.runTelemetry = new RunTelemetry(recorder);
     this.runTelemetry.startRun(this.getRunSeed());
   }

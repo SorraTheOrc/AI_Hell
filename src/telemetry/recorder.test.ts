@@ -43,6 +43,8 @@ function enabledConfig(overrides: Partial<TelemetryConfig> = {}): TelemetryConfi
     enabled: true,
     consent: false,
     sink: 'jsonl',
+    production: false,
+    endpoint: undefined,
     sampleRate: 1,
     bufferCapacity: 16,
     batchSize: 4,

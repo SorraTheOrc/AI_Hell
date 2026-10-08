@@ -17,6 +17,10 @@ import {
   DEFAULT_BINDINGS,
   type SettingsRecord,
 } from '../core/settingsStore';
+import {
+  loadTelemetryConsent,
+  setTelemetryConsent,
+} from '../core/telemetryConsentStore';
 import { PauseScene } from './PauseScene';
 import { MenuScene } from './MenuScene';
 import { SettingsScene } from './SettingsScene';
@@ -189,7 +193,62 @@ describe('SettingsScene — SFX volume slider + mute toggle (AH-0MUA8BEUR006RWCI
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
   });
 });
-// ── Key-binding remapping (AH-0MUA8BGE0006UAU4) ────────────────────
+describe('SettingsScene — telemetry consent toggle (AH-0MUY08Y9P005ER7A)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  async function bootSettings(): Promise<SettingsScene> {
+    booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
+    await new Promise((r) => setTimeout(r, 150));
+    return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+  }
+
+  it('defaults telemetry off and undecided', async () => {
+    const scene = await bootSettings();
+    expect(scene.isTelemetryConsentGranted()).toBe(false);
+    expect(scene.hasDecidedTelemetryConsent()).toBe(false);
+  });
+
+  it('toggling on grants consent and persists the decision', async () => {
+    const scene = await bootSettings();
+
+    const granted = scene.toggleTelemetryConsent();
+
+    expect(granted).toBe(true);
+    expect(scene.isTelemetryConsentGranted()).toBe(true);
+    expect(scene.hasDecidedTelemetryConsent()).toBe(true);
+    expect(loadTelemetryConsent()).toEqual({ granted: true, decided: true });
+  });
+
+  it('toggling off revokes consent but keeps the decision recorded', async () => {
+    setTelemetryConsent(true);
+    const scene = await bootSettings();
+    expect(scene.isTelemetryConsentGranted()).toBe(true);
+
+    const granted = scene.toggleTelemetryConsent();
+
+    expect(granted).toBe(false);
+    expect(loadTelemetryConsent()).toEqual({ granted: false, decided: true });
+  });
+
+  it('restores the persisted decision across a reload', async () => {
+    const scene = await bootSettings();
+    scene.toggleTelemetryConsent();
+
+    booted!.game.destroy(true);
+    booted = null;
+    const scene2 = await bootSettings();
+
+    expect(scene2.isTelemetryConsentGranted()).toBe(true);
+    expect(scene2.hasDecidedTelemetryConsent()).toBe(true);
+  });
+});
 
 describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)', () => {
   let booted: BootedGame | null = null;

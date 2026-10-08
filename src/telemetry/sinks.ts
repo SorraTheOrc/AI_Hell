@@ -8,9 +8,10 @@
  * - {@link JsonlTelemetrySink} — the local dev sink: one JSON object per
  *   line, written through a pluggable {@link TelemetryLineWriter} (browser
  *   `localStorage` by default, in-memory for headless use/tests).
- * - {@link RemoteTelemetrySink} — a production stub. It forwards batches to
- *   an injected transport; until the production child
- *   (AH-0MUY08Y9P005ER7A) wires one, it drops batches and counts them.
+ * - {@link RemoteTelemetrySink} — the production sink. It forwards batches
+ *   to an injected transport; {@link createTelemetrySink} wires an HTTP
+ *   transport automatically when an endpoint is configured, otherwise the
+ *   sink drops and counts batches (it never silently pretends to send).
  *
  * The factory {@link createTelemetrySink} enforces the disabled/consent
  * policy: it returns a no-op sink unless `config.recording` is true.
@@ -20,6 +21,10 @@
 
 import { type TelemetryConfig } from './config';
 import { type TelemetryRecord } from './schema';
+import {
+  createHttpTransport,
+  type HttpTelemetryTransportOptions,
+} from './transport';
 
 /** One destination for telemetry records. */
 export interface TelemetrySink {
@@ -109,12 +114,11 @@ export type TelemetryTransport = (
 ) => void | Promise<void>;
 
 /**
- * Production remote sink **stub** (AC2).
+ * Production remote sink (AC2).
  *
- * The concrete network transport is the production child's responsibility
- * (AH-0MUY08Y9P005ER7A). This stub implements the sink contract so the
- * pipeline is complete and testable: batches go to the injected transport,
- * or are counted as dropped when none is wired.
+ * Batches go to the injected transport, or are counted as dropped when none
+ * is wired (no endpoint / no transport). The transport owns upload, retry,
+ * backoff and the offline path (see `transport.ts`).
  */
 export class RemoteTelemetrySink implements TelemetrySink {
   readonly name = 'remote';
@@ -151,13 +155,19 @@ export class RemoteTelemetrySink implements TelemetrySink {
 export interface TelemetrySinkDeps {
   /** Line writer for the JSONL sink (defaults to local storage). */
   readonly lineWriter?: TelemetryLineWriter;
-  /** Transport for the remote sink (defaults to the drop-counting stub). */
+  /** Transport for the remote sink; overrides endpoint auto-wiring. */
   readonly transport?: TelemetryTransport;
+  /** Tuning/injections for the auto-created HTTP transport (AC2). */
+  readonly transportOptions?: Omit<HttpTelemetryTransportOptions, 'endpoint'>;
 }
 
 /**
  * Builds the sink selected by `config`, honouring the disabled/consent
  * gate: a no-op sink is returned unless `config.recording` is true.
+ *
+ * For the `remote` sink, an HTTP transport is created from the configured
+ * endpoint unless one is injected via `deps.transport`. When no endpoint is
+ * configured the sink keeps its drop-and-count behaviour.
  *
  * @param config - Resolved telemetry configuration.
  * @param deps - Optional writer/transport injections.
@@ -173,8 +183,11 @@ export function createTelemetrySink(
       return new JsonlTelemetrySink(
         deps.lineWriter ?? createLocalStorageLineWriter(TELEMETRY_JSONL_STORAGE_KEY),
       );
-    case 'remote':
-      return new RemoteTelemetrySink({ transport: deps.transport });
+    case 'remote': {
+      const transport =
+        deps.transport ?? createHttpTransport(config.endpoint, deps.transportOptions);
+      return new RemoteTelemetrySink({ transport });
+    }
     default:
       return new NoopTelemetrySink();
   }

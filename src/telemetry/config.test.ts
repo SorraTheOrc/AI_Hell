@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_TELEMETRY_BATCH_SIZE,
   DEFAULT_TELEMETRY_BUFFER_CAPACITY,
+  applyUserConsent,
   resolveBuildInfo,
   resolveTelemetryConfig,
 } from './config';
@@ -88,6 +89,51 @@ describe('telemetry config — enable/consent policy', () => {
 
     expect(config.bufferCapacity).toBe(8);
     expect(config.batchSize).toBe(8);
+  });
+
+  it('exposes the production flag and the remote endpoint (AC2)', () => {
+    const prod = resolveTelemetryConfig({
+      PROD: true,
+      VITE_TELEMETRY_ENABLED: 'on',
+      VITE_TELEMETRY_SINK: 'remote',
+      VITE_TELEMETRY_ENDPOINT: '  https://telemetry.example/ingest  ',
+    });
+    expect(prod.production).toBe(true);
+    expect(prod.endpoint).toBe('https://telemetry.example/ingest');
+
+    // A non-remote (or disabled) config never carries an endpoint.
+    expect(
+      resolveTelemetryConfig({
+        VITE_TELEMETRY_ENABLED: 'on',
+        VITE_TELEMETRY_SINK: 'jsonl',
+        VITE_TELEMETRY_ENDPOINT: 'https://telemetry.example/ingest',
+      }).endpoint,
+    ).toBeUndefined();
+    expect(resolveTelemetryConfig({}).endpoint).toBeUndefined();
+  });
+});
+
+describe('applyUserConsent (AC1)', () => {
+  it('recomputes the recording gate from the player decision in production', () => {
+    const base = resolveTelemetryConfig({
+      PROD: true,
+      VITE_TELEMETRY_ENABLED: 'on',
+      VITE_TELEMETRY_SINK: 'remote',
+    });
+    expect(base.recording).toBe(false);
+
+    const granted = applyUserConsent(base, true);
+    expect(granted.consent).toBe(true);
+    expect(granted.recording).toBe(true);
+
+    const denied = applyUserConsent(granted, false);
+    expect(denied.consent).toBe(false);
+    expect(denied.recording).toBe(false);
+  });
+
+  it('never enables recording for an unenabled config', () => {
+    const disabled = resolveTelemetryConfig({ PROD: true });
+    expect(applyUserConsent(disabled, true).recording).toBe(false);
   });
 });
 

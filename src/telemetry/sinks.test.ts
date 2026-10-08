@@ -27,6 +27,8 @@ function config(overrides: Partial<TelemetryConfig>): TelemetryConfig {
     enabled: true,
     consent: false,
     sink: 'jsonl',
+    production: false,
+    endpoint: undefined,
     sampleRate: 1,
     bufferCapacity: 16,
     batchSize: 4,
@@ -141,5 +143,27 @@ describe('remote sink stub (AC2)', () => {
 
   it('is selected by the factory when enabled with the remote sink', () => {
     expect(createTelemetrySink(config({ sink: 'remote' }))).toBeInstanceOf(RemoteTelemetrySink);
+  });
+
+  it('auto-wires an HTTP transport from the configured endpoint (AC2)', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 }));
+    const sink = createTelemetrySink(
+      config({ sink: 'remote', endpoint: 'https://telemetry.example/ingest' }),
+      { transportOptions: { fetchImpl } },
+    );
+
+    await sink.write([HEADER, EVENT]);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, { method: string }];
+    expect(url).toBe('https://telemetry.example/ingest');
+    expect(init.method).toBe('POST');
+  });
+
+  it('drops batches when the remote sink has no endpoint and no transport', async () => {
+    const sink = createTelemetrySink(config({ sink: 'remote', endpoint: undefined }));
+    expect(sink).toBeInstanceOf(RemoteTelemetrySink);
+    await sink.write([HEADER]);
+    expect((sink as RemoteTelemetrySink).droppedBatches).toBe(1);
   });
 });

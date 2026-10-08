@@ -24,6 +24,13 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { FocusManager } from '../utils/focusManager';
 import { installGameAudio } from '../audio/effects';
+import { loadTelemetryConsent } from '../core/telemetryConsentStore';
+import {
+  resolveTelemetryConfig,
+  shouldPromptForTelemetryConsent,
+  type TelemetryConsentState,
+  type TelemetryEnv,
+} from '../telemetry';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
@@ -36,6 +43,18 @@ const DEV_TEXT_COLOR = '#888888';
  * from this value and resets it on any input.
  */
 export const ATTRACT_IDLE_TIMEOUT_MS = 15000;
+
+/**
+ * Whether the production telemetry consent prompt should be shown before
+ * the menu (AH-0MUY08Y9P005ER7A, AC1). Injectable for tests; production
+ * callers use the live environment and persisted consent state.
+ */
+export function shouldShowTelemetryConsentPrompt(
+  env: TelemetryEnv = import.meta.env,
+  state: TelemetryConsentState = loadTelemetryConsent(),
+): boolean {
+  return shouldPromptForTelemetryConsent(resolveTelemetryConfig(env), state);
+}
 
 /**
  * Resumes the Web Audio context if it is suspended (autoplay policy
@@ -83,6 +102,14 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     this.focusManager = new FocusManager();
     this.controls = [];
+
+    // Production telemetry is opt-in (AH-0MUY08Y9P005ER7A, AC1): ask once,
+    // before the menu, when the build records to a remote sink and the player
+    // has not decided yet. On any other build this is a single no-op check.
+    if (shouldShowTelemetryConsentPrompt()) {
+      this.scene.start('TelemetryConsentScene', { origin: 'MenuScene' });
+      return;
+    }
 
     // Pin the shared SFX playback layer to Phaser's audio context and warm
     // the baked ToneForge asset cache (AH-0MUTYV92Y000WJ8Z) so exactly one

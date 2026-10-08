@@ -51,7 +51,9 @@ export {
   DEFAULT_TELEMETRY_BATCH_SIZE,
   DEFAULT_TELEMETRY_BUFFER_CAPACITY,
   DEFAULT_TELEMETRY_SAMPLE_RATE,
+  applyUserConsent,
   parseBoolean,
+  parseEndpoint,
   parsePositiveInt,
   parseSampleRate,
   parseSink,
@@ -61,6 +63,13 @@ export {
   type TelemetryEnv,
   type TelemetrySinkKind,
 } from './config';
+
+export {
+  isTelemetryConsentRequired,
+  resolveEffectiveTelemetryConfig,
+  shouldPromptForTelemetryConsent,
+  type TelemetryConsentState,
+} from './consent';
 
 export {
   JsonlTelemetrySink,
@@ -75,6 +84,21 @@ export {
   type TelemetrySinkDeps,
   type TelemetryTransport,
 } from './sinks';
+
+export {
+  DEFAULT_BASE_DELAY_MS,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_MAX_DELAY_MS,
+  DEFAULT_TIMEOUT_MS,
+  HttpTelemetryTransport,
+  createHttpTransport,
+  isRetryableStatus,
+  type HttpTelemetryTransportOptions,
+  type TelemetryFetch,
+  type TelemetryFetchResponse,
+  type TelemetryTransportStats,
+  type TelemetryUploadBody,
+} from './transport';
 
 export {
   BufferedTelemetryRecorder,
