@@ -1,19 +1,21 @@
 /**
  * Power-up type definitions (GDD §4.4).
  *
- * - **P5 Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
- * - **P8 Extra Life** — +1 life immediately (start 3, cap 5)
- * - **P9 Magnet** — attracts nearby drops toward the ship; a 15 s
+ * - **Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
+ * - **Extra Life** — +1 life immediately (start 3, cap 5)
+ * - **Magnet** — attracts nearby drops toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
- * - **P10 Mineral Scoop** — attracts minerals toward the ship; a 15 s
+ * - **Mineral Scoop** — attracts minerals toward the ship; a 15 s
  *   refreshing field pickup or a permanent stacking upgrade (cap 5)
- * - **P3 Shield** — 15 s bubble, absorbs one hit (timed)
- * - **P4 Bomb** — instant clear of on-screen enemy bullets (no enemy damage)
- * - **P6 Phase Shift** — charge-based automatic pass-through (parent
+ * - **Shield** — 15 s bubble; absorbs a level-resolved number of hits
+ *   (base 1, cap 3) before popping (timed)
+ * - **Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
+ *   field pickup is a single explosion, a hold-full reward pulses
+ * - **Phase Shift** — charge-based automatic pass-through (parent
  *   AH-0MUIYX1EE008FVS8): collecting stores one auto-activation; the shared
  *   danger feed triggers a 1.5 s pass-through when 3+ hostile bodies/bullets
  *   close within 40 px; the hold-full reward makes activations unlimited.
- * - **P7 Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s P6 on arrival
+ * - **Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s Phase Shift on arrival
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -21,14 +23,14 @@
 // ── Power-up IDs ─────────────────────────────────────────────────────
 
 export type PowerUpId =
-  | 'P3'
-  | 'P4'
-  | 'P5'
-  | 'P6'
-  | 'P7'
-  | 'P8'
-  | 'P9'
-  | 'P10';
+  | 'shield'
+  | 'bomb'
+  | 'speed_boost'
+  | 'phase_shift'
+  | 'teleport'
+  | 'extra_life'
+  | 'magnet'
+  | 'mineral_scoop';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -45,40 +47,15 @@ export type WeaponDropId =
   | 'arc';
 
 /**
- * Every drop the combat gyms can spawn: power-up IDs (P3–P10) plus the
+ * Every drop the combat gyms can spawn: all power-up IDs plus the
  * weapon drop IDs (spread, dual, rapid, reset).
  */
 export type DropId = PowerUpId | WeaponDropId;
 
-// ── Power-up types ──────────────────────────────────────────────────
-
-export enum PowerUpType {
-  /** Absorbs one hit for 15 s (timed, P3). */
-  SHIELD = 'shield',
-  /** Clears on-screen enemy bullets instantly (instant, P4). */
-  BOMB = 'bomb',
-  /** +50% movement speed for 10 s (timed). */
-  SPEED_BOOST = 'speed_boost',
-  /** Charge-based automatic pass-through: 1.5 s when in danger (P6). */
-  PHASE_SHIFT = 'phase_shift',
-  /** Stored teleport stacks, Space to consume (stored, P7). */
-  TELEPORT = 'teleport',
-  /** +1 life immediately (start 3, cap 5). */
-  EXTRA_LIFE = 'extra_life',
-  /** Permanent magnet stacks attracting drops (cap 5). */
-  MAGNET = 'magnet',
-  /**
-   * Attracts nearby minerals toward the ship: a timed 15 s effect when
-   * collected as a field drop, permanent and stacking (cap 5) when granted
-   * as a hold-full reward.
-   */
-  MINERAL_SCOOP = 'mineral_scoop',
-}
-
 // ── Catalogue entry ─────────────────────────────────────────────────
 
 export interface PowerUpEntry {
-  /** Unique GDD identifier (e.g. "P5"). */
+  /** Unique GDD identifier (e.g. "speed_boost"). */
   id: PowerUpId;
   /** Human-readable display name. */
   name: string;
@@ -87,8 +64,6 @@ export interface PowerUpEntry {
    * gym help overlay so help copy cannot drift from the catalogue.
    */
   description: string;
-  /** Effect type determining behaviour. */
-  type: PowerUpType;
   /** Duration in seconds for timed effects (undefined for permanent). */
   duration?: number;
   /** Maximum stack count for stackable effects (undefined for non-stackable). */
@@ -102,78 +77,71 @@ export interface PowerUpEntry {
 // ── Power-up catalogue ──────────────────────────────────────────────
 
 /**
- * Full power-up catalogue: P3–P10.
+ * Full power-up catalogue.
  *
  * Entries are ordered by ascending GDD ID so that round-robin spawners
  * cycle in GDD order. Non-combat gym uses a filtered subset; combat gym
- * cycles P3 → P4 → P6 → P7.
+ * cycles shield → bomb → phase_shift → teleport.
  */
 export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
-  P3: {
-    id: 'P3',
+  shield: {
+    id: 'shield',
     name: 'Shield',
     description: 'Absorbs one hit; a bubble protects the ship for 15 s.',
-    type: PowerUpType.SHIELD,
     duration: 15,
   },
-  P4: {
-    id: 'P4',
+  bomb: {
+    id: 'bomb',
     name: 'Bomb',
-    description: 'Instantly clears every on-screen enemy bullet (no enemy damage).',
-    type: PowerUpType.BOMB,
+    description:
+      'Clears enemy bullets in a radius around the ship; a field pickup fires once, a hold-full reward pulses.',
   },
-  P5: {
-    id: 'P5',
+  speed_boost: {
+    id: 'speed_boost',
     name: 'Speed Boost',
     description: '+50% movement speed and rate of fire for 10 s.',
-    type: PowerUpType.SPEED_BOOST,
     duration: 10,
   },
-  P6: {
-    id: 'P6',
+  phase_shift: {
+    id: 'phase_shift',
     name: 'Phase Shift',
     description:
       'Stores one automatic phase; triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward makes it unlimited.',
-    type: PowerUpType.PHASE_SHIFT,
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
   },
-  P7: {
-    id: 'P7',
+  teleport: {
+    id: 'teleport',
     name: 'Teleport',
     description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
-    type: PowerUpType.TELEPORT,
   },
-  P8: {
-    id: 'P8',
+  extra_life: {
+    id: 'extra_life',
     name: 'Extra Life',
     description: '+1 life immediately (starts at 3, capped at 5).',
-    type: PowerUpType.EXTRA_LIFE,
     livesStart: 3,
     livesMax: 5,
   },
-  P9: {
-    id: 'P9',
+  magnet: {
+    id: 'magnet',
     name: 'Magnet',
     description:
       'Pulls nearby drops toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
-    type: PowerUpType.MAGNET,
     duration: 15,
     maxStacks: 5,
   },
-  P10: {
-    id: 'P10',
+  mineral_scoop: {
+    id: 'mineral_scoop',
     name: 'Mineral Scoop',
     description:
       'Pulls nearby minerals toward the ship — a 15 s pickup, or permanent stacking when chosen as a reward (cap 5).',
-    type: PowerUpType.MINERAL_SCOOP,
     duration: 15,
     maxStacks: 5,
   },
 };
 
 /** Power-up IDs cycled by the combat gym round-robin spawner. */
-export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['P3', 'P4', 'P6', 'P7'] as const;
+export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport'] as const;
 
 /**
  * Weapon drop IDs the combat gyms can spawn alongside power-ups.

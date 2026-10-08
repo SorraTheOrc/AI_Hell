@@ -1,55 +1,58 @@
 /**
- * Gym scene — combat-coupled power-ups (P3 Shield, P4 Bomb, P6 Phase Shift,
- * P7 Teleport) with low-level enemy threats (AH-0MTC2P6G3007PJ40).
+ * Gym scene — combat-coupled power-ups (Shield, Bomb, Phase Shift,
+ * Teleport) with low-level enemy threats (AH-0MTC2P6G3007PJ40).
  *
  * Dedicated combat gym (companion to the threat-free `GymPowerUps` gym):
- * demonstrates P3/P4/P6/P7 FULL behaviour which requires threats:
+ * demonstrates Shield/Bomb/Phase Shift/Teleport FULL behaviour which requires threats:
  *
- * - **P3 Shield** — 15 s bubble, absorbs one hit before popping.
- * - **P4 Bomb** — instant clear of on-screen enemy bullets (does not damage
- *   1-HP scouts, GDD §4.4); no enemy damage.
- * - **P6 Phase Shift** — charge-based auto-trigger: collecting P6 stores one
+ * - **Shield** — 15 s bubble, absorbs its level-resolved number of hits
+ *   (base 1, cap 3) before popping.
+ * - **Bomb** — ranged periodic enemy-bullet clear (does not damage
+ *   1-HP scouts, GDD §4.4); a field pickup fires one explosion, a hold-full
+ *   reward pulses at a level-resolved rate.
+ * - **Phase Shift** — charge-based auto-trigger: collecting Phase Shift stores one
  *   use, and the shared danger feed activates a 1.5 s pass-through when three
  *   or more hostile bodies/bullets close within 40 px (parent
  *   AH-0MUIYX1EE008FVS8).
- * - **P7 Teleport** — stored FIFO stacks; S or ↓ teleports to the nearest
+ * - **Teleport** — stored FIFO stacks; S or ↓ teleports to the nearest
  *   safe spot free of enemies/bullets in the direction of travel,
- *   clamped to screen bounds; grants P6 (1.5 s) on arrival. If no safe
+ *   clamped to screen bounds; grants Phase Shift (1.5 s) on arrival. If no safe
  *   spot exists, teleports to the nearest on-screen position along
  *   the heading ray.
  *
  * Threat model: a small E1 Scout V-formation (3 scouts) drifting slowly
  * and firing aimed shots toward the player when shooting is enabled
  * (SHOOT button, on by default for the gym). Bullets and enemy bodies
- * are the threats that make P3/P4/P6/P7 meaningful — the gym is not
+ * are the threats that make Shield/Bomb/Phase Shift/Teleport meaningful — the gym is not
  * used to farm lives or score.
  *
  * Spawn cadence mirrors `GymPowerUps`: one drop at a time, round-robin
- * P3 → P4 → P6 → P7, each living `POWER_UP_LIFETIME` (12.5 s, grow →
+ * Shield → Bomb → Phase Shift → Teleport, each living `POWER_UP_LIFETIME` (12.5 s, grow →
  * hold → shrink, framerate-independent via `PowerUp`), collection
  * gated at >3% full-size scale, same `POWER_UP_DROP_SIZE` (16 px)
  * bubble + icon visuals. NEXT spawn coincides with previous despawn
  * while nothing is collected — one drop on screen.
  *
  * Hit response (with threats): when a bullet/body hits the player
- * - if P6 phased → pass-through (no hit)
- * - else if P3 shielded → shield pops, bullet/body consumed, short
- *   invulnerability blink; no respawn damage
+ * - if Phase Shift phased → pass-through (no hit)
+ * - else if Shield shielded → one absorption consumed, bullet/body consumed,
+ *   short invulnerability blink (the bubble pops only on its last
+ *   absorption); no respawn damage
  * - else → hit recorded, short invulnerability blink + respawn to
  *   centre (no lives/score — gym is for observation).
  *
  * Teleport (S/↓): routed through the shared `CombatScene.triggerTeleport`
  * so the game and every gym resolve teleports through one implementation;
- * it consumes one P7 stack FIFO, warps to the nearest safe spot along the
- * heading ray, clamped to screen bounds, then applies P6. The gym supplies
+ * it consumes one Teleport stack FIFO, warps to the nearest safe spot along the
+ * heading ray, clamped to screen bounds, then applies Phase Shift. The gym supplies
  * only its hit radii (`getTeleportEnemyHitRadius` / `getTeleportBulletHitRadius`)
  * and its enemy list (`getEnemyEntities`); destination selection, FIFO
- * consumption and the P6-on-arrival grant are shared (gap 7,
+ * consumption and the Phase Shift-on-arrival grant are shared (gap 7,
  * AH-0MUII3EPU0039R5O).
  *
- * The drop lifecycle, collection gate, P9 magnet, P4 bomb notice and
- * per-type pickup cues run through the shared `src/scenes/core/dropLayer.ts`
- * template methods and `BombNotice`, so this gym cannot drift from the game;
+ * The drop lifecycle, collection gate, Magnet magnet and per-type pickup cues
+ * run through the shared `src/scenes/core/dropLayer.ts`
+ * template methods, so this gym cannot drift from the game;
  * only the round-robin spawn *source* is gym-specific
  * (AH-0MUII3CXX0023H24, gap 4).
  *
@@ -80,7 +83,6 @@ import {
   getPowerUpById,
 } from '../../powerups/types';
 import { drawPowerUpDrop } from '../../powerups/icons';
-import { BombNotice } from '../core/BombNotice';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 export { findTeleportDestination } from '../../powerups/teleport';
 import { playSpawnSound } from '../../audio/effects';
@@ -98,7 +100,7 @@ import {
 
 // ── Spawn / formation tuning ───────────────────────────────────────
 
-/** Round-robin order for the combat gym (GDD asc: P3 → P4 → P6 → P7). */
+/** Round-robin order for the combat gym (GDD asc: Shield → Bomb → Phase Shift → Teleport). */
 const COMBAT_ORDER: readonly PowerUpId[] = COMBAT_POWER_UP_IDS;
 
 /** Deterministic spawn positions (cycling) — upper/mid screen, clear of formation. */
@@ -161,7 +163,6 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
-  private bombNotice: BombNotice | null = null;
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
@@ -199,12 +200,6 @@ export class GymPowerUpsCombat extends CombatScene<
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
-    this.bombNotice = new BombNotice(this, {
-      x: GAME_WIDTH / 2,
-      y: 24,
-      fontSize: '14px',
-      padding: { x: 6, y: 2 },
-    });
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
@@ -234,7 +229,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.shootButton.setInteractive({ useHandCursor: true });
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'P3 Shield · P4 Bomb · P6 Phase · P7 Teleport (S/↓) — scouts fire aimed shots', {
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'Shield · Bomb · Phase Shift · Teleport (S/↓) — scouts fire aimed shots', {
       fontFamily: 'monospace',
       fontSize: '11px',
       color: '#555555',
@@ -263,7 +258,6 @@ export class GymPowerUpsCombat extends CombatScene<
     this.formationBaseY = COMBAT_START_Y;
     this.shootEnabled = true;
     this.shieldBubble = null;
-    this.bombNotice = null;
     this.shootButton = null;
     this.helpHandle = null;
   }
@@ -286,8 +280,6 @@ export class GymPowerUpsCombat extends CombatScene<
     this.hud = null;
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
-    this.bombNotice?.destroy();
-    this.bombNotice = null;
     this.shootButton?.destroy();
     this.shootButton = null;
     this.helpHandle = null;
@@ -311,7 +303,7 @@ export class GymPowerUpsCombat extends CombatScene<
   /**
    * One deterministic simulation step (seconds). Drives ship movement,
    * formation drift, scout aim + firing, bullet lifecycle, spawner,
-   * drop lifecycles, collection (with P4 bomb), effect timers,
+   * drop lifecycles, collection (with Bomb bomb), effect timers,
    * teleport (S/↓), hit response, and HUD.
    */
   tick(dt: number): void {
@@ -342,11 +334,11 @@ export class GymPowerUpsCombat extends CombatScene<
       this.spawnTimer -= dt;
     }
 
-    // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
+    // ── Shared drop layer (gap 4): Bomb notice, Magnet magnet,
     //    lifecycle, overlap collection, absorb VFX ──
     this.drops = this._updateDropLayer(this.drops, dt);
 
-    // ── Automatic Phase Shift (P6): feed live danger before gating ──
+    // ── Automatic Phase Shift: feed live danger before gating ──
     this._updatePhaseShiftAutoTrigger(dt);
 
     // ── Hit response (bullets + bodies), gated by phase/shield ──
@@ -358,7 +350,7 @@ export class GymPowerUpsCombat extends CombatScene<
     // ── Effect timers ───────────────────────────────────────────
     this.effectsRegistry.tick(dt);
 
-    // ── Visuals (shield bubble + phase ghost + bomb notice) ─
+    // ── Visuals (shield bubble + phase ghost + Bomb pulse ring) ─
     this._updateVisuals();
     this._updatePhaseShiftJuice(dt);
 
@@ -444,12 +436,12 @@ export class GymPowerUpsCombat extends CombatScene<
   // ── Visuals ──────────────────────────────────────────────────────
 
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while P3 is active (shared helper,
+    // Shield bubble: drawn around the ship while Shield is active (shared helper,
     // including the continuous rim pulse and ending fade).
     if (this.shieldBubble) {
       drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
     }
-    // Phase ghost: semi-transparent ship while P6 is active (keeps the
+    // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the
     // blink alpha when invulnerable) — shared helper.
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
   }
@@ -472,7 +464,7 @@ export class GymPowerUpsCombat extends CombatScene<
     const graphics = this.add.graphics();
     graphics.setPosition(x, y);
     const entry = getPowerUpById(id);
-    drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
+    drawPowerUpDrop(graphics, entry.id, 0, 0, POWER_UP_DROP_SIZE);
     graphics.setScale(0);
     const drop: CombatActiveDrop = { powerUp: new PowerUp(id), x, y, graphics, dropId: id };
     this.drops.push(drop);
@@ -533,7 +525,7 @@ export class GymPowerUpsCombat extends CombatScene<
   // Teleports (S/↓) run through the single shared
   // `CombatScene.triggerTeleport` path; the gym supplies only its
   // specifics below. Destination selection, FIFO stack consumption and
-  // the P6-on-arrival grant all live in the shared core (gap 7,
+  // the Phase Shift-on-arrival grant all live in the shared core (gap 7,
   // AH-0MUII3EPU0039R5O). `canTeleport` keeps the shared default
   // (always allowed) — this gym has no opt-in drop layer to gate on.
 
@@ -550,11 +542,6 @@ export class GymPowerUpsCombat extends CombatScene<
   /** Combat gym invulnerability window (0.8 s, operator decision Q2-B). */
   protected override getInvulnerabilityDuration(): number {
     return COMBAT_HIT_INVULNERABLE_DURATION;
-  }
-
-  /** The scene's P4 bomb notice — shown by the shared collect path (AC3). */
-  protected override _getBombNotice(): BombNotice | null {
-    return this.bombNotice;
   }
 
   /** Scouts are persistent threats — ramming does not destroy them. */
@@ -596,10 +583,6 @@ export class GymPowerUpsCombat extends CombatScene<
   /** Whether the phase ghost is currently active (for tests). */
   isPhaseGhostActive(): boolean {
     return this.effectsRegistry.isPhased;
-  }
-  /** Whether the bomb notice is currently visible (for tests). */
-  isBombNoticeVisible(): boolean {
-    return this.bombNotice?.isVisible() ?? false;
   }
   /** Player explosion VFX graphics (empty once tweens end; for tests). */
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {

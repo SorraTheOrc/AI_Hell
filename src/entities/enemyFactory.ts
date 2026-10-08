@@ -61,13 +61,23 @@ export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroi
   FormationReanchorSeam &
   SeekSeam;
 
-/** Build one entity of the right type from the config key / formationKind. */
+/**
+ * Build one entity of the right type from the config key / formationKind.
+ *
+ * @param rng — optional seeded random source threaded into every archetype
+ *   (AH-0MUY08V6W001SJJN). `PlayScene` passes its per-run seeded RNG so
+ *   enemy behaviour (cluster drift, wiggle phase, fire rolls, asteroid
+ *   headings) is reproducible; callers that omit it keep the entity's
+ *   `Math.random` default (interactive gyms, tests that do not assert
+ *   determinism).
+ */
 export function createEnemyFromConfig(
   scene: Phaser.Scene,
   config: EnemyConfig,
   x: number,
   y: number,
   offset: FormationOffset,
+  rng?: () => number,
 ): EnemyEntity {
   const opts = {
     size: config.size,
@@ -80,6 +90,7 @@ export function createEnemyFromConfig(
     burstCount: config.burstCount,
     shotProbability: config.shotProbability,
     health: config.health,
+    rng,
   };
 
   switch (config.key) {

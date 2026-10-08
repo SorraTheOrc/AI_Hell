@@ -60,7 +60,7 @@ export const DIVER_BULLET_COLOR = 0xffee88;
 export const DIVER_BULLET_SIZE = 3;
 
 /** Bullet speed in px/s. */
-export const DIVER_BULLET_SPEED = 220;
+export const DIVER_BULLET_SPEED = 110;
 
 /** Number of projectiles in a spread burst (3–5 range). */
 export const DIVER_BURST_COUNT = 4;
@@ -208,6 +208,11 @@ export class Diver extends BaseEnemy {
   }
 
   /** VFX pattern name for Diver explosions. */
+  /** Archetype key (`'diver'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'diver';
+  }
+
   protected getExplosionPatternName(): string {
     return 'diver';
   }

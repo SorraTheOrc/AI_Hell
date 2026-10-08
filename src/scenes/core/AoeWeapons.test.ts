@@ -110,7 +110,7 @@ class StubBullet implements CombatEnemyBullet {
 /** Minimal drop (the AOE path does not collect, but the base requires it). */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
-  readonly dropId = 'P5' as const;
+  readonly dropId = 'speed_boost' as const;
   absorbing?: boolean;
 
   constructor(
@@ -118,7 +118,7 @@ class StubDrop implements CombatDrop {
     public y: number,
     public readonly graphics: Phaser.GameObjects.Graphics,
   ) {
-    this.powerUp = new PowerUp('P5');
+    this.powerUp = new PowerUp('speed_boost');
   }
 }
 
@@ -398,7 +398,7 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     scene.entities.push(enemy);
     scene.bullets.push(new StubBullet(scene, 100, 100));
 
-    // P4 uses the shared `_clearEnemyBullets` path (no enemy damage).
+    // Bomb uses the shared `_clearEnemyBullets` path (no enemy damage).
     (scene as unknown as { _clearEnemyBullets(): void })._clearEnemyBullets();
 
     expect(scene.bullets).toHaveLength(0);

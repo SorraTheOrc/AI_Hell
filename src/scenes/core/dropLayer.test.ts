@@ -40,7 +40,7 @@ function makeDrop(
   graphics: { setPosition: ReturnType<typeof vi.fn>; setScale: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> };
   powerUp: PowerUp;
 } {
-  const powerUp = new PowerUp('P5');
+  const powerUp = new PowerUp('speed_boost');
   if (overrides.scale !== undefined) powerUp.currentScale = overrides.scale;
   if (overrides.state !== undefined) powerUp.state = overrides.state;
   const graphics = {
@@ -66,14 +66,14 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       () => 0,
     );
     const weights = (spawner as WeightedRandomSpawner<DropId>).getWeights();
-    for (const id of ['P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9'] as const) {
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet'] as const) {
       expect(weights[id]).toBe(DEFAULT_RULES.powerUpWeights[id]);
     }
     for (const id of ['spread', 'dual', 'rapid', 'reset'] as const) {
       expect(weights[id]).toBe(DEFAULT_RULES.weaponWeights[id]);
     }
     // Deterministic rng 0 selects the first pool entry.
-    expect(spawner.next()).toBe('P3');
+    expect(spawner.next()).toBe('shield');
   });
 
   it('gives P8 Extra Life a ≈ 3/31 share of power-up draws (≈2.4× its former 1/25)', () => {
@@ -96,10 +96,10 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       const id = spawner.next();
       if ((WEAPON_DROP_IDS as readonly DropId[]).includes(id)) continue;
       powerUps += 1;
-      if (id === 'P8') extraLives += 1;
+      if (id === 'extra_life') extraLives += 1;
     }
 
-    // P8 weight 3 of the 31 total power-up weight → exactly 3/31.
+    // Extra Life weight 3 of the 31 total power-up weight → exactly 3/31.
     const p8Share = extraLives / powerUps;
     expect(p8Share).toBeCloseTo(3 / 31, 3);
     // Tied to the shipped weight table (not a hard-coded expectation).
@@ -107,9 +107,9 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       (a, b) => a + b,
       0,
     );
-    expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.P8 / weightTotal, 3);
+    expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.extra_life / weightTotal, 3);
     // Relative weight tripled (1 → 3): ≈ 2.4× the former 1/25 normalised share
-    // (the P10 addition widens the denominator from 27 to 31).
+    // (the Mineral Scoop addition widens the denominator from 27 to 31).
     expect(p8Share / (1 / 25)).toBeCloseTo((3 / 31) / (1 / 25), 2);
   });
 });
@@ -126,7 +126,7 @@ describe('dropLayer — advanceDropLifecycles (AC1)', () => {
   });
 
   it('destroys despawned Graphics, drops them and runs the despawn hook once', () => {
-    const powerUp = new PowerUp('P5', 0.1, 0.1, 0.3);
+    const powerUp = new PowerUp('speed_boost', 0.1, 0.1, 0.3);
     const graphics = { setPosition: vi.fn(), setScale: vi.fn(), destroy: vi.fn() };
     const drop: DropLifecycleDrop = { x: 0, y: 0, graphics, powerUp };
     const onDespawn = vi.fn();
@@ -219,14 +219,14 @@ describe('dropLayer — playDropPickupCue (AC4)', () => {
     const magnet = vi.spyOn(effects, 'playMagnetCollectSound');
     const generic = vi.spyOn(effects, 'playPowerUpCollectSound');
 
-    playDropPickupCue({ dropId: 'P5' });
+    playDropPickupCue({ dropId: 'speed_boost' });
     expect(pop).toHaveBeenCalledTimes(1);
     expect(speed).toHaveBeenCalledTimes(1);
 
-    playDropPickupCue({ dropId: 'P8' });
+    playDropPickupCue({ dropId: 'extra_life' });
     expect(life).toHaveBeenCalledTimes(1);
 
-    playDropPickupCue({ dropId: 'P9' });
+    playDropPickupCue({ dropId: 'magnet' });
     expect(magnet).toHaveBeenCalledTimes(1);
 
     expect(generic).not.toHaveBeenCalled();
@@ -254,8 +254,8 @@ describe('dropLayer — playDropPickupCue (AC4)', () => {
   it('falls back to the generic chime for types without a dedicated cue', () => {
     const generic = vi.spyOn(effects, 'playPowerUpCollectSound');
     const pop = vi.spyOn(effects, 'playPowerUpCollectPopSound');
-    playDropPickupCue({ dropId: 'P3' });
-    playDropPickupCue({ dropId: 'P4' });
+    playDropPickupCue({ dropId: 'shield' });
+    playDropPickupCue({ dropId: 'bomb' });
     expect(generic).toHaveBeenCalledTimes(2);
     expect(pop).toHaveBeenCalledTimes(2);
   });

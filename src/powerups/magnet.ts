@@ -31,7 +31,7 @@ export interface MovableDrop {
  *
  * @param drops  — mutable drop objects (position + graphics).
  * @param player — player with `x`/`y` coordinates (and optional `size`).
- * @param stacks — current P9 magnet stack count (0 → no attraction).
+ * @param stacks — current Magnet magnet stack count (0 → no attraction).
  * @param dt     — elapsed time in seconds (frame delta).
  *
  * When `player.size` is present it is used; otherwise `SHIP_SIZE` (20) is

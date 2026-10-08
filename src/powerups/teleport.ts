@@ -1,5 +1,5 @@
 /**
- * Shared P7 Teleport safe-spot resolution (GDD §4.4).
+ * Shared Teleport safe-spot resolution (GDD §4.4).
  *
  * Extracted from `GymPowerUpsCombat` so the shared combat base
  * (`GymFormationScene`) and the standalone combat power-up gym resolve

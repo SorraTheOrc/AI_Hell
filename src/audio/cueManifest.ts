@@ -1,6 +1,11 @@
 /**
  * Cue → ToneForge asset manifest (single source of truth).
  *
+ * The data lives in `audio/toneforge/manifest.json` so that it is consumed
+ * by *both* the deterministic WAV build pipeline (`scripts/build-audio.sh`,
+ * plain Node) and this typed runtime/test view. Keeping one JSON file as
+ * the source avoids the build and the tests drifting apart.
+ *
  * Derived from `docs/AUDIO_TONEFORGE_CUE_MAPPING.md` (produced by
  * Cue-to-recipe mapping and unused-cue audit (AH-0MUTYV7SQ005HURT)).
  *
@@ -15,6 +20,8 @@
  * four inline Boss cues in `src/entities/Boss.ts`) MUST appear here — the
  * contract suite asserts this so a cue can never be silently dropped.
  */
+
+import manifest from '../../audio/toneforge/manifest.json';
 
 /** How a cue is delivered after the ToneForge migration. */
 export type CueDelivery = 'existing-recipe' | 'baked' | 'runtime-shim';
@@ -40,73 +47,18 @@ export interface CueManifestEntry {
  * Cues with no playable asset: start/stop companions that manage the
  * lifetime of a continuous cue rather than producing a sound themselves.
  */
-export const CONTROL_CUES = ['stopDiveSound', 'stopThrusterSound'] as const;
+export const CONTROL_CUES: readonly string[] = manifest.controlCues;
 
 /**
  * Cues retired by the migration (no asset, removed from `effects.ts`).
  * See `docs/AUDIO_TONEFORGE_CUE_MAPPING.md` §"Retired cues" for the
  * consumer-analysis evidence.
  */
-export const RETIRED_CUES = [
-  'playMajorExplosionSound',
-  'playTankDestructionSound',
-  'playWeaponChangeSound',
-] as const;
+export const RETIRED_CUES: readonly string[] = manifest.retiredCues;
 
 /** Every retained, sound-producing cue and its ToneForge mapping. */
-export const CUE_MANIFEST: readonly CueManifestEntry[] = [
-  // ── Existing ToneForge recipes (reused unchanged) ──────────────────
-  { cue: 'playPowerUpCollectSound', recipe: 'card-token-earn', delivery: 'existing-recipe', seeds: [] },
-  { cue: 'playScoutFireSound', recipe: 'weapon-laser-zap', delivery: 'existing-recipe', seeds: [] },
-  { cue: 'playVolumeFeedback', recipe: 'aihell-player-hull-breach', delivery: 'existing-recipe', seeds: [] },
-
-  // ── Baked game-specific recipes (seed block 32100–32199) ───────────
-  { cue: 'playSpawnSound', recipe: 'aihell-enemy-spawn', delivery: 'baked', seeds: [32101] },
-  { cue: 'playDestructionSound', recipe: 'aihell-enemy-destruction', delivery: 'baked', seeds: [32110, 32111, 32112] },
-  { cue: 'playPlayerDestructionSound', recipe: 'aihell-player-hull-breach', delivery: 'baked', seeds: [32120] },
-  { cue: 'playBulletDestructionSound', recipe: 'aihell-bullet-destruction', delivery: 'baked', seeds: [32130] },
-  { cue: 'playTankAdvanceCue', recipe: 'aihell-tank-advance', delivery: 'baked', seeds: [32140] },
-  { cue: 'playTankFireSound', recipe: 'aihell-tank-fire', delivery: 'baked', seeds: [32141] },
-  { cue: 'playPowerUpSpawnSound', recipe: 'aihell-pickup-spawn', delivery: 'baked', seeds: [32150] },
-  { cue: 'playPowerUpDespawnSound', recipe: 'aihell-pickup-despawn', delivery: 'baked', seeds: [32151] },
-  { cue: 'playPowerUpCollectPopSound', recipe: 'aihell-pickup-pop', delivery: 'baked', seeds: [32152] },
-  { cue: 'playSwarmBurstSound', recipe: 'aihell-swarm-burst', delivery: 'baked', seeds: [32160] },
-  { cue: 'playPhaserAdvanceCue', recipe: 'aihell-phaser-advance', delivery: 'baked', seeds: [32170] },
-  { cue: 'playPhaserFireSound', recipe: 'aihell-phaser-fire', delivery: 'baked', seeds: [32171] },
-  { cue: 'playScoutAdvanceCue', recipe: 'aihell-scout-advance', delivery: 'baked', seeds: [32180] },
-  { cue: 'playDiverDiveStartSound', recipe: 'aihell-diver-dive-start', delivery: 'baked', seeds: [32190] },
-  { cue: 'playDiveSound', recipe: 'aihell-diver-dive-loop', delivery: 'baked', seeds: [32191] },
-  { cue: 'playDiverFireSound', recipe: 'aihell-diver-fire', delivery: 'baked', seeds: [32192] },
-  { cue: 'playDiverDestructionSound', recipe: 'aihell-diver-destruction', delivery: 'baked', seeds: [32193, 32194, 32195] },
-  { cue: 'playBossFireSound', recipe: 'aihell-boss-fire', delivery: 'baked', seeds: [32200] },
-  { cue: 'playCannonFireSound', recipe: 'aihell-cannon-fire', delivery: 'baked', seeds: [32210] },
-  { cue: 'playSpreadFireSound', recipe: 'aihell-spread-fire', delivery: 'baked', seeds: [32211] },
-  { cue: 'playDualFireSound', recipe: 'aihell-dual-fire', delivery: 'baked', seeds: [32212] },
-  { cue: 'playRapidFireSound', recipe: 'aihell-rapid-fire', delivery: 'baked', seeds: [32213] },
-  { cue: 'playNovaFireSound', recipe: 'aihell-nova-fire', delivery: 'baked', seeds: [32214] },
-  { cue: 'playMortarFireSound', recipe: 'aihell-mortar-fire', delivery: 'baked', seeds: [32215] },
-  { cue: 'playMortarDetonationSound', recipe: 'aihell-mortar-detonation', delivery: 'baked', seeds: [32216] },
-  { cue: 'playArcFireSound', recipe: 'aihell-arc-fire', delivery: 'baked', seeds: [32217] },
-  { cue: 'playSpreadPickupSound', recipe: 'aihell-pickup-spread', delivery: 'baked', seeds: [32220] },
-  { cue: 'playDualPickupSound', recipe: 'aihell-pickup-dual', delivery: 'baked', seeds: [32221] },
-  { cue: 'playRapidPickupSound', recipe: 'aihell-pickup-rapid', delivery: 'baked', seeds: [32222] },
-  { cue: 'playResetPickupSound', recipe: 'aihell-pickup-reset', delivery: 'baked', seeds: [32223] },
-  { cue: 'playSpeedBoostCollectSound', recipe: 'aihell-pickup-speed', delivery: 'baked', seeds: [32224] },
-  { cue: 'playExtraLifeCollectSound', recipe: 'aihell-pickup-extralife', delivery: 'baked', seeds: [32225] },
-  { cue: 'playMagnetCollectSound', recipe: 'aihell-pickup-magnet', delivery: 'baked', seeds: [32226] },
-  { cue: 'playPhaseShiftSound', recipe: 'aihell-phase-shift', delivery: 'baked', seeds: [32230] },
-  { cue: 'playVictoryFanfareSound', recipe: 'aihell-victory-fanfare', delivery: 'baked', seeds: [32240] },
-  { cue: 'playDefeatStingSound', recipe: 'aihell-defeat-sting', delivery: 'baked', seeds: [32241] },
-
-  // ── Boss cues authored inline in src/entities/Boss.ts ──────────────
-  { cue: 'playBossSpawnSound', recipe: 'aihell-boss-spawn', delivery: 'baked', seeds: [32201] },
-  { cue: 'playBossPhaseTransitionSound', recipe: 'aihell-boss-phase-transition', delivery: 'baked', seeds: [32202] },
-  { cue: 'playBossDestructionSound', recipe: 'aihell-boss-destruction', delivery: 'baked', seeds: [32203] },
-  { cue: 'playBossPhaseCue', recipe: 'aihell-boss-phase-cue', delivery: 'baked', seeds: [32204, 32205, 32206, 32207] },
-
-  // ── Continuous thruster hum (runtime Tone.js shim, not baked) ──────
-  { cue: 'updateThrusterSound', recipe: 'aihell-thruster-hum', delivery: 'runtime-shim', seeds: [] },
-];
+export const CUE_MANIFEST: readonly CueManifestEntry[] =
+  manifest.cues as readonly CueManifestEntry[];
 
 const byCue = new Map<string, CueManifestEntry>(
   CUE_MANIFEST.map((entry) => [entry.cue, entry]),
@@ -131,3 +83,83 @@ export function listCueAssets(delivery?: CueDelivery): CueManifestEntry[] {
 export function bakedAssetFiles(entry: CueManifestEntry): string[] {
   return entry.seeds.map((seed) => `audio/sfx/${entry.recipe}.${seed}.wav`);
 }
+
+/**
+ * Seeds rendered for each recipe, pooled across every manifest entry that
+ * references it. A recipe shared by several cues (e.g. `aihell-player-hull-breach`,
+ * reused by both `playPlayerDestructionSound` and `playVolumeFeedback`) is
+ * rendered once, so a cue that declares no seeds of its own can still resolve
+ * the asset baked for its sibling.
+ */
+const seedsByRecipe = new Map<string, number[]>();
+for (const entry of CUE_MANIFEST) {
+  if (entry.seeds.length === 0) continue;
+  const existing = seedsByRecipe.get(entry.recipe) ?? [];
+  const merged = [...new Set([...existing, ...entry.seeds])];
+  seedsByRecipe.set(entry.recipe, merged);
+}
+
+/**
+ * The seed used to render an `existing-recipe` cue that declares no seeds of
+ * its own. Falls back to the sibling-rendered seed for the same recipe, then
+ * to the manifest's `defaultExistingRecipeSeed`.
+ */
+export function defaultSeedFor(entry: CueManifestEntry): number {
+  if (entry.seeds.length > 0) return entry.seeds[0];
+  const shared = seedsByRecipe.get(entry.recipe);
+  if (shared !== undefined && shared.length > 0) return shared[0];
+  return CUE_MANIFEST_META.defaultExistingRecipeSeed;
+}
+
+/**
+ * The baked WAV filename for a manifest entry, relative to `public/`.
+ *
+ * `seed` overrides the default (used by per-phase cues such as
+ * `playBossPhaseCue`); otherwise a seed is chosen from the entry's baked
+ * variants (the first of the shared pool for `existing-recipe` cues).
+ */
+export function assetUrlFor(entry: CueManifestEntry, seed?: number): string {
+  const chosen = seed ?? defaultSeedFor(entry);
+  return `audio/sfx/${entry.recipe}.${chosen}.wav`;
+}
+
+/**
+ * The baked WAV filename for a cue, or `undefined` when the cue is unmapped or
+ * delivered by a runtime shim (no baked asset).
+ */
+export function cueAssetUrl(cue: string, seed?: number): string | undefined {
+  const entry = getCueAsset(cue);
+  if (entry === undefined || entry.delivery === 'runtime-shim') return undefined;
+  return assetUrlFor(entry, seed);
+}
+
+/** The seeds baked for a cue (empty for `existing-recipe` / `runtime-shim`). */
+export function cueSeeds(cue: string): readonly number[] {
+  return getCueAsset(cue)?.seeds ?? [];
+}
+
+/**
+ * Every baked WAV asset URL the runtime may play, de-duplicated. Derived from
+ * the manifest so the preloader can never drift from the cue→asset contract.
+ * Runtime-shim entries (the thruster hum) contribute no asset.
+ */
+export function allSfxAssetUrls(): string[] {
+  const urls = new Set<string>();
+  for (const entry of CUE_MANIFEST) {
+    if (entry.delivery === 'runtime-shim') continue;
+    for (const url of bakedAssetFiles(entry)) urls.add(url);
+    if (entry.seeds.length === 0) urls.add(assetUrlFor(entry));
+  }
+  return [...urls];
+}
+
+/**
+ * The JSON manifest metadata (directories, seeds) shared with the build
+ * pipeline. Exposed for tests so the build and the runtime agree.
+ */
+export const CUE_MANIFEST_META = {
+  recipeDirectory: manifest.recipeDirectory,
+  outputDirectory: manifest.outputDirectory,
+  checksumsFile: manifest.checksumsFile,
+  defaultExistingRecipeSeed: manifest.defaultExistingRecipeSeed,
+} as const;

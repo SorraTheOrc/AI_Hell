@@ -131,10 +131,10 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
   it('collecting an overlapping drop applies its effect and consumes the drop', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
 
-    // Spawn a P5 drop exactly under the ship and grow it to full size.
-    scene.spawnDrop('P5', 480, 270);
+    // Spawn a Speed Boost drop exactly under the ship and grow it to full size.
+    scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5); // grow window → full size (collectible)
 
     // One simulation frame runs the overlap collection check.
@@ -142,8 +142,8 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
 
     // Effect applied to the registry exactly once (10 s timed; the frame
     // tick already decremented it by its own dt).
-    expect(registry.isActive('P5')).toBe(true);
-    expect(registry.remaining('P5')).toBeGreaterThan(9.9);
+    expect(registry.isActive('speed_boost')).toBe(true);
+    expect(registry.remaining('speed_boost')).toBeGreaterThan(9.9);
 
     // The collected drop is consumed — nothing remains at the ship.
     const atShip = scene
@@ -152,17 +152,41 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     expect(atShip).toHaveLength(0);
   });
 
+  it('gym parity: a field pickup is temporary and reverts on expiry (AC1/AC8)', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+
+    // Field pickup only → temporary level, no permanent grant.
+    scene.spawnDrop('speed_boost', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(1);
+    expect(store.getPermanentLevel('speed_boost')).toBe(0);
+
+    registry.tick(1000);
+    expect(registry.isActive('speed_boost')).toBe(false);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(0);
+
+    // Hold-full reward → permanent level with no timeout.
+    registry.applyCollect('speed_boost', true);
+    expect(store.getPermanentLevel('speed_boost')).toBe(1);
+    registry.tick(1000);
+    expect(registry.isActive('speed_boost')).toBe(true);
+    expect(store.getEffectiveLevel('speed_boost')).toBe(1);
+  });
+
   it('applies the P5 fire-rate multiplier to the player (gym parity, AC4)', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
 
-    // No P5 → normal fire rate.
+    // No Speed Boost → normal fire rate.
     scene.tick(1 / 60);
     expect(player.getFireRateMultiplier()).toBe(1);
 
-    // Collect P5 under the ship.
-    scene.spawnDrop('P5', 480, 270);
+    // Collect Speed Boost under the ship.
+    scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     expect(registry.fireRateMultiplier()).toBe(1.5);
@@ -173,7 +197,7 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
 
     // Expires after 10 s → back to normal.
     for (let i = 0; i < 700; i++) scene.tick(1 / 60); // ~11.7 s
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
     expect(player.getFireRateMultiplier()).toBe(1);
   });
 
@@ -181,7 +205,7 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
 
-    scene.spawnDrop('P8', 480, 270);
+    scene.spawnDrop('extra_life', 480, 270);
     scene.advanceDrops(0.01); // scale ≈ 2%
     scene.tick(0.0005); // ~0.5 ms frame — drop stays below the 3% threshold
 
@@ -196,17 +220,17 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
 
-    // Activate P9 via a direct collection (drop under ship at full size).
-    scene.spawnDrop('P9', 480, 270);
+    // Activate Magnet via a direct collection (drop under ship at full size).
+    scene.spawnDrop('magnet', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     // Field pickup is timed: effective stack count is 1.
     expect(registry.magnetEffectStacks()).toBe(1);
 
-    // Place a fresh P5 drop some distance away (inside the 1-stack magnet
+    // Place a fresh Speed Boost drop some distance away (inside the 1-stack magnet
     // radius of 1×20×(1+0.5) = 30 px; use a drop 20 px away and step the
     // simulation ~0.5 s).
-    const drop = scene.spawnDrop('P5', 500, 270); // 20 px right of the ship
+    const drop = scene.spawnDrop('speed_boost', 500, 270); // 20 px right of the ship
     scene.advanceDrops(0.5); // grow to full size so it can be attracted
 
     const before = { x: drop.x, y: drop.y };
@@ -219,15 +243,15 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
 
-    // Activate P9.
-    scene.spawnDrop('P9', 480, 270);
+    // Activate Magnet.
+    scene.spawnDrop('magnet', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     // Field pickup is timed: effective stack count is 1.
     expect(registry.magnetEffectStacks()).toBe(1);
 
-    // Place a P5 drop 20 px right of the ship (inside the 30 px 1-stack radius).
-    const drop = scene.spawnDrop('P5', 500, 270);
+    // Place a Speed Boost drop 20 px right of the ship (inside the 30 px 1-stack radius).
+    const drop = scene.spawnDrop('speed_boost', 500, 270);
     scene.advanceDrops(0.5); // grow to full size
 
     const beforeGraphics = { x: drop.graphics.x, y: drop.graphics.y };
@@ -249,7 +273,7 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
     const registry = scene.getEffectsRegistry();
     expect(registry.lives()).toBe(3);
 
-    scene.spawnDrop('P8', 480, 270);
+    scene.spawnDrop('extra_life', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     expect(registry.lives()).toBe(4);
@@ -300,7 +324,7 @@ describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
     const hud = scene.getHud();
     expect(hud).toBeInstanceOf(HUD);
     expect(hud!.depth).toBeGreaterThan(0);
-    expect(hud!.getLivesValue()).toBe(3); // P8 lives default visible
+    expect(hud!.getLivesValue()).toBe(3); // Extra Life lives default visible
   });
 });
 
@@ -320,17 +344,17 @@ describe('GymPowerUpsUtility spawn cadence (parent AC2 via the scene)', () => {
     scene.tick(0.016);
     let drops = scene.getDrops();
     expect(drops.length).toBeGreaterThanOrEqual(1);
-    expect(drops[0].powerUp.id).toBe('P5');
+    expect(drops[0].powerUp.id).toBe('speed_boost');
 
-    // Advance ~12.5 s (ignoring collection): the P5 drop despawns at the end
-    // of its 12.5 s lifetime and the next (P8) spawns at the same instant —
+    // Advance ~12.5 s (ignoring collection): the Speed Boost drop despawns at the end
+    // of its 12.5 s lifetime and the next (Extra Life) spawns at the same instant —
     // so exactly one drop is on screen at the boundary (parent AC2).
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
     }
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
-    expect(drops[0].powerUp.id).toBe('P8');
+    expect(drops[0].powerUp.id).toBe('extra_life');
   });
 });
 
@@ -452,7 +476,7 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
   }
 
   /** Collects a fully-grown drop of the given type under the ship. */
-  function collectDrop(scene: GymPowerUpsUtility, id: 'P5' | 'P8' | 'P9' | 'P10'): void {
+  function collectDrop(scene: GymPowerUpsUtility, id: 'speed_boost' | 'extra_life' | 'magnet' | 'mineral_scoop'): void {
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     scene.spawnDrop(id, 480, 270);
@@ -466,7 +490,7 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
     const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
     const scene = await bootPowerUps();
 
-    collectDrop(scene, 'P5');
+    collectDrop(scene, 'speed_boost');
 
     expect(speedSound).toHaveBeenCalledTimes(1);
     expect(lifeSound).not.toHaveBeenCalled();
@@ -479,7 +503,7 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
     const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
     const scene = await bootPowerUps();
 
-    collectDrop(scene, 'P8');
+    collectDrop(scene, 'extra_life');
 
     expect(lifeSound).toHaveBeenCalledTimes(1);
     expect(speedSound).not.toHaveBeenCalled();
@@ -492,7 +516,7 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
     const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
     const scene = await bootPowerUps();
 
-    collectDrop(scene, 'P9');
+    collectDrop(scene, 'magnet');
 
     expect(magnetSound).toHaveBeenCalledTimes(1);
     expect(speedSound).not.toHaveBeenCalled();
@@ -505,7 +529,7 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
     const magnetSound = vi.spyOn(effectsModule, 'playMagnetCollectSound');
     const scene = await bootPowerUps();
 
-    collectDrop(scene, 'P10');
+    collectDrop(scene, 'mineral_scoop');
 
     expect(magnetSound).toHaveBeenCalledTimes(1);
     expect(speedSound).not.toHaveBeenCalled();
@@ -533,7 +557,7 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
 
   it('AC2/AC4 — every spawned drop gets Graphics (bubble + icon) scaled with its lifecycle; despawn destroys the visuals', async () => {
     const scene = await bootPowerUps();
-    const drop = scene.spawnDrop('P5', 480, 270);
+    const drop = scene.spawnDrop('speed_boost', 480, 270);
     const graphics = drop.graphics;
 
     // Bubble+icon graphics created, on the display list, at scale 0.
@@ -561,11 +585,11 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
 
     // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
     // ship hull is already touching the crisp bubble ring → collected.
-    scene.spawnDrop('P5', 495, 270);
+    scene.spawnDrop('speed_boost', 495, 270);
     scene.advanceDrops(0.5); // grow to full size
     scene.tick(1 / 60); // one frame runs the overlap collection
 
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     const atShip = scene
       .getDrops()
       .filter((d) => Math.hypot(d.x - 480, d.y - 270) < 1);
@@ -577,11 +601,11 @@ describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ0
     const registry = scene.getEffectsRegistry();
     scene.getPlayer()!.setPosition(480, 270);
 
-    scene.spawnDrop('P5', 480 + 34, 270); // 34 px > 32.4 px bubble boundary
+    scene.spawnDrop('speed_boost', 480 + 34, 270); // 34 px > 32.4 px bubble boundary
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
 
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
     expect(scene.getDrops().length).toBeGreaterThan(0); // drop still on field
   });
 });
@@ -605,7 +629,7 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
     const scene = await bootPowerUps();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    const drop = scene.spawnDrop('P5', 480, 270);
+    const drop = scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5);
 
     scene.tick(1 / 60);
@@ -620,7 +644,7 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
     const scene = await bootPowerUps();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    const drop = scene.spawnDrop('P5', 480, 270);
+    const drop = scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     expect(scene.getCollectAnimations()).toHaveLength(1);
@@ -638,7 +662,7 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
     vi.clearAllMocks();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    scene.spawnDrop('P5', 480, 270);
+    scene.spawnDrop('speed_boost', 480, 270);
     scene.advanceDrops(0.5);
 
     scene.tick(1 / 60);
@@ -677,7 +701,7 @@ describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isPaused('GymPowerUpsUtility')).toBe(true);
     const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
-    expect(help.getEntries().map((e) => e.id)).toEqual(['P5', 'P8', 'P9', 'P10']);
+    expect(help.getEntries().map((e) => e.id)).toEqual(['speed_boost', 'extra_life', 'magnet', 'mineral_scoop']);
   });
 
   it('AC4 — ? closes help and resumes the gym where it paused', async () => {
@@ -743,12 +767,12 @@ describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, g
   it('AC1 — a same-instance stop/restart clears every applied effect', async () => {
     const scene = await boot();
     const registry = scene.getEffectsRegistry();
-    registry.applyCollect('P9', true);
-    registry.applyCollect('P5', true);
-    registry.applyCollect('P8');
-    registry.applyCollect('P7');
+    registry.applyCollect('magnet', true);
+    registry.applyCollect('speed_boost', true);
+    registry.applyCollect('extra_life');
+    registry.applyCollect('teleport');
     expect(registry.magnetStacks()).toBe(1);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.lives()).toBe(4);
     expect(registry.hasTeleport()).toBe(true);
 
@@ -767,7 +791,7 @@ describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, g
 
   it('AC2 — teardown clears the ship, drops, HUD and animations', async () => {
     const scene = await boot();
-    scene.spawnDrop('P5', 480, 270);
+    scene.spawnDrop('speed_boost', 480, 270);
     expect(scene.getDrops().length).toBeGreaterThan(0);
 
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
@@ -802,10 +826,10 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
 
   it('spawns P10 in its round-robin (P5 → P8 → P9 → P10)', async () => {
     const scene = await bootPowerUps();
-    // Default spawn interval is 12.5 s; the 4th round-robin slot (P10)
+    // Default spawn interval is 12.5 s; the 4th round-robin slot (Mineral Scoop)
     // therefore spawns at ~37.5 s.
     for (let i = 0; i < 39 * 60; i++) scene.tick(1 / 60);
-    expect(scene.getDrops().some((d) => d.powerUp.id === 'P10')).toBe(true);
+    expect(scene.getDrops().some((d) => d.powerUp.id === 'mineral_scoop')).toBe(true);
   });
 
   it('a P10 field pickup activates the timed scoop and pulls an in-range mineral', async () => {
@@ -814,8 +838,8 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Collect P10 under the ship (field pickup → timed, refresh-only).
-    scene.spawnDrop('P10', 480, 270);
+    // Collect Mineral Scoop under the ship (field pickup → timed, refresh-only).
+    scene.spawnDrop('mineral_scoop', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
     expect(registry.isScoopActive()).toBe(true);
@@ -834,8 +858,8 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
   it('the scoop shares the same radius curve as the P9 magnet', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
-    registry.applyCollect('P10', true);
-    registry.applyCollect('P10', true);
+    registry.applyCollect('mineral_scoop', true);
+    registry.applyCollect('mineral_scoop', true);
     expect(registry.scoopStacks()).toBe(2);
     expect(registry.scoopEffectStacks()).toBe(2);
   });
@@ -843,8 +867,8 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
   it('a same-instance stop/restart clears the P10 scoop state and the field', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
-    registry.applyCollect('P10', true);
-    registry.applyCollect('P10');
+    registry.applyCollect('mineral_scoop', true);
+    registry.applyCollect('mineral_scoop');
 
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
     expect(registry.scoopStacks()).toBe(0);

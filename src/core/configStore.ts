@@ -122,6 +122,15 @@ const DEFAULT_FIXED_LEVELS: ReadonlySet<number> = new Set([1, 2, 3]);
  * sensible, non-degenerate composition and the aggregated difficulty keeps
  * rising across levels. A level without an override falls back to the
  * measured calibration spread.
+ *
+ * Levels 4–5 re-derived for the post-halving `enemyDifficulty` scores
+ * (AH-0MUX60S9L0006NJ0): halving every enemy `bulletSpeed`
+ * (AH-0MUWZ5GST003NMFQ) lowered each firing archetype's score by ~0.5–1
+ * point (bulletSpeed weight 5/116), which flipped the sequencer's `argmin`
+ * to degenerate single-enemy waves at the old targets. The targets below
+ * re-select the pre-halving high-quality compositions
+ * (`scoutx18`/`diverx18`/`tankx18`, `phaserx12+scoutx18`) while keeping the
+ * sequencer's measured error within ±1.0 of the target.
  */
 const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
   // Dynamic opening (AH-0MUOCJM0N000RW2B): a narrow ascending band for the
@@ -131,8 +140,8 @@ const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
   // calibration target derived below.
   1: [6, 8],
   2: [9, 10],
-  4: [16, 24, 28],
-  5: [45, 62],
+  4: [14, 22, 27.5],
+  5: [43.5, 62],
 };
 
 /**

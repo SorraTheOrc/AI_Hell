@@ -9,7 +9,6 @@ import {
 } from '../core/constants';
 
 import {
-  PowerUpType,
   PowerUpId,
   POWER_UP_CATALOGUE,
 } from './types';
@@ -69,35 +68,32 @@ describe('power-up lifecycle constants', () => {
 describe('power-up catalogue (types)', () => {
   it('contains the non-combat types P5, P8, P9 (plus combat P3,P4,P6,P7)', () => {
     const ids = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
-    expect(ids).toContain('P5');
-    expect(ids).toContain('P8');
-    expect(ids).toContain('P9');
-    // Combat gym adds P3,P4,P6,P7 (AH-0MTC2P6G3007PJ40)
-    expect(ids).toContain('P3');
-    expect(ids).toContain('P4');
-    expect(ids).toContain('P6');
-    expect(ids).toContain('P7');
+    expect(ids).toContain('speed_boost');
+    expect(ids).toContain('extra_life');
+    expect(ids).toContain('magnet');
+    // Combat gym adds Shield,Bomb,Phase Shift,Teleport (AH-0MTC2P6G3007PJ40)
+    expect(ids).toContain('shield');
+    expect(ids).toContain('bomb');
+    expect(ids).toContain('phase_shift');
+    expect(ids).toContain('teleport');
   });
 
   it('P5 is Speed Boost', () => {
-    const p5 = getPowerUpById('P5');
+    const p5 = getPowerUpById('speed_boost');
     expect(p5).toBeDefined();
-    expect(p5!.type).toBe(PowerUpType.SPEED_BOOST);
-    expect(p5!.id).toBe('P5');
+    expect(p5!.id).toBe('speed_boost');
   });
 
   it('P8 is Extra Life', () => {
-    const p8 = getPowerUpById('P8');
+    const p8 = getPowerUpById('extra_life');
     expect(p8).toBeDefined();
-    expect(p8!.type).toBe(PowerUpType.EXTRA_LIFE);
-    expect(p8!.id).toBe('P8');
+    expect(p8!.id).toBe('extra_life');
   });
 
   it('P9 is Magnet', () => {
-    const p9 = getPowerUpById('P9');
+    const p9 = getPowerUpById('magnet');
     expect(p9).toBeDefined();
-    expect(p9!.type).toBe(PowerUpType.MAGNET);
-    expect(p9!.id).toBe('P9');
+    expect(p9!.id).toBe('magnet');
   });
 
   it('throws for an unknown power-up id', () => {
@@ -121,12 +117,12 @@ describe('round-robin spawner AC2: spawn cadence', () => {
   });
 
   it('a drop spawned at t=0 despawns exactly when the next spawn fires', () => {
-    const lifespan = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const lifespan = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     lifespan.advance(POWER_UP_SPAWN_INTERVAL);
     expect(lifespan.state).toBe(PowerUpState.DESPAWNED);
 
     // Just before the spawn tick the drop is still alive (not yet removed).
-    const nearlyDone = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const nearlyDone = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     nearlyDone.advance(POWER_UP_SPAWN_INTERVAL - 0.001);
     expect(nearlyDone.state).not.toBe(PowerUpState.DESPAWNED);
   });
@@ -135,35 +131,35 @@ describe('round-robin spawner AC2: spawn cadence', () => {
 describe('round-robin spawner AC1: spawn order', () => {
   it('cycles P5 → P8 → P9 in ascending GDD order', () => {
     const order = roundRobinSpawner(3);
-    expect(order[0]).toBe('P5');
-    expect(order[1]).toBe('P8');
-    expect(order[2]).toBe('P9');
+    expect(order[0]).toBe('speed_boost');
+    expect(order[1]).toBe('extra_life');
+    expect(order[2]).toBe('magnet');
   });
 
   it('repeats the cycle', () => {
     const order = roundRobinSpawner(6);
-    expect(order[0]).toBe('P5');
-    expect(order[1]).toBe('P8');
-    expect(order[2]).toBe('P9');
-    expect(order[3]).toBe('P5');
-    expect(order[4]).toBe('P8');
-    expect(order[5]).toBe('P9');
+    expect(order[0]).toBe('speed_boost');
+    expect(order[1]).toBe('extra_life');
+    expect(order[2]).toBe('magnet');
+    expect(order[3]).toBe('speed_boost');
+    expect(order[4]).toBe('extra_life');
+    expect(order[5]).toBe('magnet');
   });
 
   it('handles partial cycles correctly', () => {
     const order = roundRobinSpawner(4);
-    expect(order).toEqual(['P5', 'P8', 'P9', 'P5']);
+    expect(order).toEqual(['speed_boost', 'extra_life', 'magnet', 'speed_boost']);
   });
 
   it('handles a single spawn', () => {
     const order = roundRobinSpawner(1);
-    expect(order).toEqual(['P5']);
+    expect(order).toEqual(['speed_boost']);
   });
 });
 
 describe('spawnOrder', () => {
   it('returns the fixed cycle array', () => {
-    expect(spawnOrder()).toEqual(['P5', 'P8', 'P9']);
+    expect(spawnOrder()).toEqual(['speed_boost', 'extra_life', 'magnet']);
   });
 
   it('returns a new array each call (not shared reference)', () => {
@@ -179,7 +175,7 @@ describe('PowerUp lifecycle AC3: delta-time driven growth/shrink', () => {
   let powerUp: PowerUp;
 
   beforeEach(() => {
-    powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
   });
 
   it('starts at scale 0 (not yet visible)', () => {
@@ -202,12 +198,12 @@ describe('PowerUp lifecycle AC3: delta-time driven growth/shrink', () => {
 
   it('framerate-independent: different delta sequences reach the same scale', () => {
     // Two deltas of 0.25 s each should reach scale 0.5
-    let pu1 = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    let pu1 = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     pu1.advance(0.25);
     pu1.advance(0.25);
 
     // One delta of 0.5 s should reach the same scale
-    let pu2 = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    let pu2 = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     pu2.advance(0.5);
 
     expect(pu1.currentScale).toBeCloseTo(pu2.currentScale);
@@ -239,13 +235,13 @@ describe('PowerUp lifecycle AC3: delta-time driven growth/shrink', () => {
   });
 
   it('is framerate-independent during shrink too', () => {
-    let pu1 = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    let pu1 = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     pu1.advance(TEST_GROW_DURATION);
     pu1.advance(TEST_TOTAL_LIFETIME - TEST_GROW_DURATION - TEST_SHRINK_DURATION);
     pu1.advance(0.25);
     pu1.advance(0.25);
 
-    let pu2 = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    let pu2 = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     pu2.advance(TEST_GROW_DURATION);
     pu2.advance(TEST_TOTAL_LIFETIME - TEST_GROW_DURATION - TEST_SHRINK_DURATION);
     pu2.advance(TEST_SHRINK_DURATION);
@@ -261,7 +257,7 @@ describe('PowerUp lifecycle AC4: 3% collection threshold', () => {
   let powerUp: PowerUp;
 
   beforeEach(() => {
-    powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
   });
 
   it('is NOT collectible during early growth (below 3%)', () => {
@@ -316,7 +312,7 @@ describe('PowerUp lifecycle AC5: uncollected despawn', () => {
   let powerUp: PowerUp;
 
   beforeEach(() => {
-    powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
   });
 
   it('reaches DESPAWNED state after full lifecycle', () => {
@@ -360,15 +356,15 @@ describe('PowerUp lifecycle AC5: uncollected despawn', () => {
 
 describe('PowerUp collection', () => {
   it('applies effect once when collected during hold phase', () => {
-    const powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     powerUp.advance(TEST_GROW_DURATION); // now at full size, holding
     const effect = powerUp.tryCollect();
     expect(effect).toBeDefined();
-    expect(effect?.type).toBe(PowerUpType.SPEED_BOOST);
+    expect(effect?.type).toBe('speed_boost');
   });
 
   it('does not apply effect again after collection', () => {
-    const powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     powerUp.advance(TEST_GROW_DURATION);
     powerUp.tryCollect();
     // Try to collect again — should return undefined
@@ -377,7 +373,7 @@ describe('PowerUp collection', () => {
   });
 
   it('does not apply effect if collected below 3% threshold', () => {
-    const powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     // Advance just a tiny bit — below 3%
     powerUp.advance(0.001);
     const effect = powerUp.tryCollect();
@@ -386,7 +382,7 @@ describe('PowerUp collection', () => {
   });
 
   it('does not apply effect if collected during shrink below 3%', () => {
-    const powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     powerUp.advance(TEST_GROW_DURATION);
     powerUp.advance(TEST_TOTAL_LIFETIME - TEST_GROW_DURATION - TEST_SHRINK_DURATION);
     // Shrink almost to the end — below 3%
@@ -396,7 +392,7 @@ describe('PowerUp collection', () => {
   });
 
   it('tracks whether it has been collected', () => {
-    const powerUp = new PowerUp('P5', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
+    const powerUp = new PowerUp('speed_boost', TEST_GROW_DURATION, TEST_SHRINK_DURATION, TEST_TOTAL_LIFETIME);
     powerUp.advance(TEST_GROW_DURATION);
     expect(powerUp.isCollected()).toBe(false);
     powerUp.tryCollect();

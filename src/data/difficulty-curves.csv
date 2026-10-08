@@ -36,8 +36,8 @@ level,levelName,wave,targetDifficulty,generation
 3,The Core,1,11.4,fixed
 3,The Core,2,11.85,fixed
 3,The Core,3,12.3,fixed
-4,Firestorm,1,16,curve
-4,Firestorm,2,24,curve
-4,Firestorm,3,28,curve
-5,Predictable Death,1,45,curve
+4,Firestorm,1,14,curve
+4,Firestorm,2,22,curve
+4,Firestorm,3,27.5,curve
+5,Predictable Death,1,43.5,curve
 5,Predictable Death,2,62,dynamic

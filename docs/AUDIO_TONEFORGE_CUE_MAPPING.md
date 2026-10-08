@@ -99,11 +99,15 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playDualPickupSound` | Saw 1000→500 then 1200→700 Hz, 0.06 s apart | Dual pickup | `dropLayer` | new | `aihell-pickup-dual` |
 | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | Rapid pickup | `dropLayer` | new | `aihell-pickup-rapid` |
 | `playResetPickupSound` | Sine 900→300 Hz, ~0.2 s | Reset pickup | `dropLayer` | new | `aihell-pickup-reset` |
-| `playSpeedBoostCollectSound` | Square 600→1800 Hz, 0.1 s | P5 Speed Boost | `dropLayer` | new | `aihell-pickup-speed` |
-| `playExtraLifeCollectSound` | Sine 440→880 then 660→990 Hz | P8 Extra Life | `dropLayer` | new | `aihell-pickup-extralife` |
-| `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | P9 Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
-| `playPhaseShiftSound` | Triangle chirp 320→1560 Hz + bandpass noise swing 600→3200 Hz | P6 Phase Shift | `CombatScene` | new | `aihell-phase-shift` |
+| `playSpeedBoostCollectSound` | Square 600→1800 Hz, 0.1 s | Speed Boost | `dropLayer` | new | `aihell-pickup-speed` |
+| `playExtraLifeCollectSound` | Sine 440→880 then 660→990 Hz | Extra Life | `dropLayer` | new | `aihell-pickup-extralife` |
+| `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | Magnet | `dropLayer` | new | `aihell-pickup-magnet` |
+| `playPhaseShiftSound` | Triangle chirp 320→1560 Hz + bandpass noise swing 600→3200 Hz | Phase Shift | `CombatScene` | new | `aihell-phase-shift` |
 | `playVictoryFanfareSound` | Two-phrase fanfare: arpeggio C5-E5-G5-C6 + cadence + sustained chord + bass + sparkle + shimmer, ~3.3 s, ≤ 0.2 | Victory | `PlayScene` | new | `aihell-victory-fanfare` (sequence + stack) |
+| `playVictoryExplosionSound` | Layered saw 110→32 Hz boom + sine sub-rumble + LP noise crackle, ~0.65 s | Victory firework burst/starburst | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-explosion` |
+| `playVictoryCrackSound` | Quick saw 587→140 Hz + HP noise crack, ~0.18 s | Victory firework ring | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-crack` |
+| `playVictoryPopSound` | Short sine 784→240 Hz pop, ~0.09 s | Victory firework implosion | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-pop` |
+| `playVictorySparkleSound` | Bright sine 1400→600 Hz + HP shimmer, ~0.12 s | Victory firework sparkle | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-sparkle` |
 | `playDefeatStingSound` | Five-note descent G4-F4-D4-B3-G3 + sinking 98→73.42 Hz drone + LP rumble tail, ~2.9 s, ≤ 0.2 | Defeat | `GameOverScene` | new | `aihell-defeat-sting` (sequence + stack) |
 | `playVolumeFeedback` | Player hull-breach cue at selected gain, pitch unchanged | Settings volume feedback | `SettingsScene` | **existing** | `aihell-player-hull-breach` (gain-scaled) |
 | `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled, ≤ 0.075 | Thruster hum (held thrust) | `Player`, `movementModel` | new | `aihell-thruster-hum` (runtime shim delivery) |
@@ -166,8 +170,12 @@ repeated kills still vary.
 | `aihell-pickup-magnet` | `playMagnetCollectSound` | Square 180→90→180 Hz + sine undertone | 32226 |
 | `aihell-phase-shift` | `playPhaseShiftSound` | Triangle chirp + bandpass noise swing | 32230 |
 | `aihell-victory-fanfare` | `playVictoryFanfareSound` | Two-phrase fanfare (sequence of arpeggio + cadence + chord + bass + sparkle + shimmer) | 32240 |
+| `aihell-victory-explosion` | `playVictoryExplosionSound` | Layered saw/sub boom + LP noise crackle | 32250–32254 |
+| `aihell-victory-crack` | `playVictoryCrackSound` | Quick saw + HP crack transient | 32255–32257 |
+| `aihell-victory-pop` | `playVictoryPopSound` | Short sine pop | 32258–32260 |
+| `aihell-victory-sparkle` | `playVictorySparkleSound` | Bright sine + HP shimmer | 32261–32263 |
 | `aihell-defeat-sting` | `playDefeatStingSound` | Descending five-note line + sinking drone + LP tail | 32241 |
-| `aihell-thruster-hum` | `updateThrusterSound` | Continuous triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz (runtime shim delivery, not baked) | 32250 |
+| `aihell-thruster-hum` | `updateThrusterSound` | Continuous triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz (runtime shim delivery, not baked) | — |
 
 ### New recipes outside `effects.ts` (Boss.ts surface)
 

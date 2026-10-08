@@ -1022,8 +1022,8 @@ describe('GymWeapons — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
     const registry = scene.getEffectsRegistry();
 
     registry.applyWeapon('spread', true);
-    registry.applyCollect('P9', true);
-    registry.applyCollect('P7');
+    registry.applyCollect('magnet', true);
+    registry.applyCollect('teleport');
     expect(registry.activeWeapons().length).toBeGreaterThan(0);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.hasTeleport()).toBe(true);

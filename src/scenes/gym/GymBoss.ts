@@ -103,7 +103,7 @@ const BOSS_CONFIG: EnemyFormationConfig<
     y: BOSS_PLAYER_SPAWN_Y,
   },
   // Opt-in power-up layer: one drop at a time on the rules interval,
-  // weighted-random ID (P3–P9 plus weapon drops) and
+  // weighted-random ID (Shield–Magnet plus weapon drops) and
   // boss/player-avoiding placement.
   powerUps: {},
   createEntity: (
@@ -127,7 +127,7 @@ const BOSS_CONFIG: EnemyFormationConfig<
  * Reuses the base class for HUD, navigation, and bullet lifecycle
  * management. The Boss itself advances through the shared
  * `CombatScene._advanceBoss` hook on the same `tick(dt)` path as the shipped
- * game, P7 teleports avoid it through the shared
+ * game, Teleport teleports avoid it through the shared
  * `getAdditionalTeleportBodies`, and its phase minions come from the shared
  * `planMinionSpawns` plan and advance via `onBossAdvanced`
  * (AH-0MUII3E5E006A93F, gap 6). Only Boss-specific presentation (health

@@ -1,0 +1,73 @@
+# AI Hell cue: aihell-pickup-magnet — P9 Magnet — square pulse 180 to 90 to 180 Hz with sine undertone.
+version: "0.1"
+meta:
+  name: aihell-pickup-magnet
+  description: P9 Magnet — square pulse 180 to 90 to 180 Hz with sine undertone.
+  category: AIHell
+  tags:
+    - pickup
+    - powerup
+  duration: 0.26
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 180
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 180
+        - kind: exponentialRamp
+          time: 0.12
+          value: 90
+        - kind: exponentialRamp
+          time: 0.24
+          value: 180
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.236
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 80
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 80
+        - kind: exponentialRamp
+          time: 0.24
+          value: 50
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.236
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

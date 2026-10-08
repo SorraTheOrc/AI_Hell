@@ -36,7 +36,7 @@ class HelpHostStub extends Phaser.Scene {
     addBackToMenuOnEsc(this);
     this.handle = addHelpButton(this, {
       gymKey: 'HelpHostStub',
-      drops: ['P5', 'P8', 'P9'],
+      drops: ['speed_boost', 'extra_life', 'magnet'],
     });
   }
 }
@@ -108,13 +108,13 @@ describe('HelpScene — overlay content and lifecycle (AH-0MUAYB67I002REOZ)', ()
     const { help } = await bootAndOpen();
 
     expect(help.getGymKey()).toBe('HelpHostStub');
-    expect(help.getEntries().map((e) => e.id)).toEqual(['P5', 'P8', 'P9']);
+    expect(help.getEntries().map((e) => e.id)).toEqual(['speed_boost', 'extra_life', 'magnet']);
 
     // Each row's name + description are rendered as text.
     const texts = help.children.list
       .filter((c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text)
       .map((t) => t.text);
-    for (const id of ['P5', 'P8', 'P9'] as const) {
+    for (const id of ['speed_boost', 'extra_life', 'magnet'] as const) {
       const entry = getHelpEntry(id);
       expect(texts).toContain(entry.name);
       expect(texts).toContain(entry.description);

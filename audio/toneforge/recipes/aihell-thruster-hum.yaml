@@ -1,0 +1,103 @@
+# AI Hell cue: aihell-thruster-hum — Thruster hum — continuous triangle 60 Hz, sine 35 Hz and BP noise 700-1100 Hz.
+# Runtime shim delivery: the thruster hum is not baked; this recipe documents its character.
+version: "0.1"
+meta:
+  name: aihell-thruster-hum
+  description: Thruster hum — continuous triangle 60 Hz, sine 35 Hz and BP noise 700-1100 Hz.
+  category: AIHell
+  tags:
+    - thruster
+    - hum
+    - loop
+  duration: 1
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 60
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 60
+        - kind: exponentialRamp
+          time: 1
+          value: 60
+  e0:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g0:
+    kind: gain
+    params:
+      gain: 0.05
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 35
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 35
+        - kind: exponentialRamp
+          time: 1
+          value: 35
+  e1:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g1:
+    kind: gain
+    params:
+      gain: 0.04
+  v2:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f2:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 700
+      Q: 1
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 700
+        - kind: exponentialRamp
+          time: 1
+          value: 1100
+  e2:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g2:
+    kind: gain
+    params:
+      gain: 0.03
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [v2, f2, e2, g2, mix]
+  - from: mix
+    to: out

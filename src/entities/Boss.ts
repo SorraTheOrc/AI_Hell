@@ -16,8 +16,8 @@
  * Each attack phase begins with a clear telegraph (glow + audio cue) at
  * least 500 ms before the visual event fires.
  *
- * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (10)
- * player hits, so the Boss is destroyed only after 40 hits total. A hit
+ * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (100)
+ * player hits, so the Boss is destroyed only after 400 hits total. A hit
  * that does not deplete the current phase leaves the phase unchanged and
  * only reduces the health-bar fill; a depleting hit advances the phase
  * (or destroys the Boss after phase 4). `takeDamage()` returns
@@ -36,7 +36,13 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
-import { playBossFireSound, getAudioContext, blip } from '../audio/effects';
+import {
+  playBossDestructionSound,
+  playBossFireSound,
+  playBossPhaseCue,
+  playBossPhaseTransitionSound,
+  playBossSpawnSound,
+} from '../audio/effects';
 import {
   resolvePatterns,
   spawnExplosionParticles,
@@ -68,7 +74,7 @@ export const BOSS_BULLET_COLOR = 0xffffff;
 export const BOSS_BULLET_SIZE = 4;
 
 /** Boss bullet base speed in px/s. */
-export const BOSS_BULLET_SPEED = 160;
+export const BOSS_BULLET_SPEED = 80;
 /**
  * Boss bullet lifetime in seconds. Bullets wrap across all four screen
  * edges while alive and expire once this elapses (AH-0MU960UTE001PTV0).
@@ -86,41 +92,15 @@ const BOSS_DESPERATION_ATTACK_INTERVAL = 700;
 /** Telegraph duration in ms — minimum lead time before attack fires (GDD §7.3). */
 export const BOSS_TELEGRAPH_MS = 600;
 
-/** Boss spawn audio: low rumble (GDD §7.3). */
-export function playBossSpawnSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  // Low rumble ascending to signal boss entrance.
-  blip(80, 220, 0.45, 'sine', 0.18);
-}
-
-/** Boss phase transition: rising tone. */
-export function playBossPhaseTransitionSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  blip(220, 880, 0.35, 'square', 0.12);
-}
-
-/** Boss destruction: heavy, deep sound. */
-export function playBossDestructionSound(): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  blip(180, 20, 0.6, 'sawtooth', 0.22);
-}
-
-/** Boss phase audio cue per attack phase (distinct per phase). */
-export function playBossPhaseCue(phase: BossPhase): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  const cues: Record<number, [number, number]> = {
-    1: [440, 660],  // Spread — moderate rise
-    2: [330, 990],  // Spiral — steep rise
-    3: [220, 440],  // Pulse — slow rise
-    4: [660, 1320], // Desperation — sharp rise
-  };
-  const [start, end] = cues[phase] ?? cues[1];
-  blip(start, end, 0.3, 'square', 0.1);
-}
+// The four Boss-specific cues are delivered by the shared ToneForge playback
+// layer (AH-0MUTYV92Y000WJ8Z). They are re-exported here to preserve the
+// historical Boss.ts surface for callers and tests.
+export {
+  playBossDestructionSound,
+  playBossPhaseCue,
+  playBossPhaseTransitionSound,
+  playBossSpawnSound,
+};
 
 // ── Phase definitions ───────────────────────────────────────────────
 
@@ -139,7 +119,25 @@ export enum BossPhase {
 /** Total number of health phases. */
 export const BOSS_PHASE_COUNT = 4;
 /** Number of hits required to deplete one boss phase. */
-export const BOSS_HIT_POINTS_PER_PHASE = 10;
+export const BOSS_HIT_POINTS_PER_PHASE = 100;
+
+/**
+ * Resolves the boss's starting HP: the full pool by default, else the
+ * requested value clamped to at least one hit and at most the full pool.
+ */
+function resolveInitialHp(
+  initialHp: number | undefined,
+  totalHp: number,
+): number {
+  if (initialHp === undefined || !Number.isFinite(initialHp)) return totalHp;
+  return Math.min(totalHp, Math.max(1, Math.floor(initialHp)));
+}
+
+/** Resolves the boss's starting phase, clamped to the four valid phases. */
+function resolveInitialPhase(initialPhase: number | undefined): number {
+  if (initialPhase === undefined || !Number.isFinite(initialPhase)) return 1;
+  return Math.min(BOSS_PHASE_COUNT, Math.max(1, Math.floor(initialPhase)));
+}
 
 /** Health bar width in px. */
 export const BOSS_HEALTH_BAR_WIDTH = 300;
@@ -168,6 +166,18 @@ export interface BossConfig {
   shotProbability?: number;
   /** Injectable random source for the per-cycle shot roll (defaults to `Math.random`). */
   rng?: () => number;
+  /**
+   * Optional starting health: how many further hits the boss can take.
+   * Defaults to the full 4-phase pool (400). The dev boss scenario
+   * (AH-0MUWZ5HCV0034H44) uses a small value so the run can be won quickly;
+   * clamped to `[1, BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE]`.
+   */
+  initialHp?: number;
+  /**
+   * Optional starting phase (1–4), so a low-HP dev boss can still be shown in
+   * its final, desperation visuals. Defaults to 1; clamped to the phase range.
+   */
+  initialPhase?: number;
 }
 
 // ── Bullet types ────────────────────────────────────────────────────
@@ -225,7 +235,7 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
-  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 40 total hits
+  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 400 total hits
   private _currentHp!: number;
   private _telegraphState: TelegraphState = TelegraphState.Idle;
   private _telegraphStartTime = 0;
@@ -279,7 +289,9 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
     this._totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
-    this._currentHp = this._totalHp;
+    this._currentHp = resolveInitialHp(config.initialHp, this._totalHp);
+    this._currentPhaseNumber = resolveInitialPhase(config.initialPhase);
+    this._currentPhase = this._currentPhaseNumber as BossPhase;
     this.add(this.healthBarGraphics);
 
     this._drawBody();

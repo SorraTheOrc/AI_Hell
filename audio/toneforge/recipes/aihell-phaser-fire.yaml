@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-phaser-fire — Phaser fire — triangle drop 1000 to 500 Hz.
+version: "0.1"
+meta:
+  name: aihell-phaser-fire
+  description: Phaser fire — triangle drop 1000 to 500 Hz.
+  category: AIHell
+  tags:
+    - phaser
+    - fire
+  duration: 0.1
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1000
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1000
+        - kind: exponentialRamp
+          time: 0.08
+          value: 500
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.076
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

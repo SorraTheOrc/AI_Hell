@@ -1,0 +1,71 @@
+# AI Hell cue: aihell-victory-sparkle — Bright shimmer for spark trails and sparkles.
+# High-frequency sine chirp with noise — sparkly, light, celebratory.
+# Seed range 32261-32263: renders three pitch-jittered variants.
+version: "0.1"
+meta:
+  name: aihell-victory-sparkle
+  description: Bright shimmer — high sine chirp with noise for spark trails and sparkle effects.
+  category: AIHell
+  tags:
+    - victory
+    - sparkle
+    - fireworks
+  duration: 0.12
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1400
+        - kind: exponentialRamp
+          time: 0.08
+          value: 600
+  e0:
+    kind: envelope
+    params:
+      attack: 0.0005
+      decay: 0.04
+      sustain: 0.08
+      release: 0.08
+  g0:
+    kind: gain
+    params:
+      gain: 0.2
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 3000
+      Q: 1
+  e1:
+    kind: envelope
+    params:
+      attack: 0.0005
+      decay: 0.05
+      sustain: 0
+      release: 0.05
+  g1:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

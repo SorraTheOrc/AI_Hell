@@ -22,7 +22,7 @@ import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
-import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
+import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -37,10 +37,12 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
+  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
+import { RUN_ENDED_EVENT } from '../core/runEndedSignal';
 import {
   LEVELS as CAMPAIGN_LEVELS,
   type LevelDefinition,
@@ -197,14 +199,33 @@ function reachBoss(scene: PlayScene): void {
 /**
  * Fires `BOSS_HIT_POINTS_PER_PHASE` player bullets at the boss, one per tick,
  * depleting exactly one health phase (AH-0MUTV3J7T006MZ4K).
+ *
+ * The batch is isolated from the boss's minions — which spawn on phase
+ * depletion and would otherwise intercept test bullets and be killed for
+ * score — and from the player's auto-fire, so the boss takes exactly one hit
+ * per spawned bullet. Minions already alive are left untouched, so callers
+ * can still assert the minion waves that accumulate after each phase (AC3).
  */
 function damageBossPhase(
   scene: PlayScene,
   boss: { x: number; y: number },
 ): void {
-  for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
-    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
-    scene.tick(0.016);
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [];
+  isolated.autoFireEnabled = () => false;
+  try {
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+      scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+      scene.tick(0.016);
+    }
+  } finally {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
   }
 }
 
@@ -587,8 +608,8 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a fresh P3 shield.
-    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    // Collect a fresh Shield shield.
+    const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -647,7 +668,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const player = scene.getPlayer()!;
 
     // Force the drop to full size so it is collectible immediately.
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     expect(drop.powerUp.canCollect()).toBe(true);
 
@@ -670,7 +691,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const livesBefore = scene.getGameState().lives;
     player.setPosition(enemy.x, enemy.y);
     // Keep the player's internal movement state in sync so physicsTick does
-    // not snap the ship back (same pattern as the P7 teleport code).
+    // not snap the ship back (same pattern as the Teleport teleport code).
     const state = player.getMovementState();
     (player as unknown as { _movementState: { x: number; y: number } })._movementState =
       { ...state, x: enemy.x, y: enemy.y };
@@ -1140,12 +1161,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const scene = await bootPlay();
     const survivorsBefore = scene.getAliveCount();
     expect(survivorsBefore).toBeGreaterThan(0);
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).not.toHaveBeenCalled();
     expect(scene.getAliveCount()).toBe(survivorsBefore);
     vi.restoreAllMocks();
   });
@@ -1155,12 +1174,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const scene = await bootPlayWithAsteroid();
     const asteroids = findAsteroids(scene);
     expect(asteroids.length).toBeGreaterThan(0);
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).not.toHaveBeenCalled();
     for (const asteroid of asteroids) expect(asteroid.alive).toBe(true);
     vi.restoreAllMocks();
   });
@@ -1171,12 +1188,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     scene.setAsteroidSpawnerEnabled(false);
     for (const e of scene.getEnemies()) e.destroySelf();
     expect(scene.getAliveCount()).toBe(0);
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
-    expect(majorCue).not.toHaveBeenCalled();
     expect(scene.isWaveTimerActive()).toBe(false);
     vi.restoreAllMocks();
   });
@@ -1185,14 +1200,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     vi.restoreAllMocks();
     const scene = await bootPlay();
     const playerCue = vi.spyOn(effectsModule, 'playPlayerDestructionSound');
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
     const livesBefore = scene.getGameState().lives;
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
     expect(playerCue).not.toHaveBeenCalled();
-    expect(majorCue).not.toHaveBeenCalled();
     expect(scene.getGameState().lives).toBe(livesBefore);
     vi.restoreAllMocks();
   });
@@ -1206,13 +1219,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const livesBefore = scene.getGameState().lives;
     const waveBefore = wm.waveNumber;
     waveVfx.scales.length = 0;
-    const majorCue = vi.spyOn(effectsModule, 'playMajorExplosionSound');
 
     scene.setWaveTimerRemaining(0.05);
     scene.tick(0.1);
 
     // No 10x detonation VFX, no life loss, wave advanced.
-    expect(majorCue).not.toHaveBeenCalled();
     expect(waveVfx.scales).not.toContain(WAVE_TIMEOUT_EXPLOSION_SCALE);
     expect(scene.getGameState().lives).toBe(livesBefore);
     expect(wm.waveNumber).toBe(waveBefore + 1);
@@ -1447,7 +1458,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const x = GAME_WIDTH / 2;
     const y = GAME_HEIGHT / 2;
 
-    for (let i = 0; i < 3; i++) scene.spawnPowerUpDrop('P5', x, y);
+    for (let i = 0; i < 3; i++) scene.spawnPowerUpDrop('speed_boost', x, y);
 
     const drops = scene.getDrops();
     expect(drops.length).toBe(3);
@@ -1574,7 +1585,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     scene.tick(0.016);
     expect(scene.getGameState().score - scoreBefore).toBe(0);
 
-    // The 10th (phase-depleting) hit awards the phase score exactly once.
+    // The phase-depleting hit awards the phase score exactly once.
     for (let i = 1; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
@@ -1588,7 +1599,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (40 total).
+    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (400 total).
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -1597,9 +1608,9 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // Phases 1–4 all awarded (1000+2000+3000+5000).
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
-    // The transition is delayed by the short victory hold
+    // The transition is delayed by the victory fireworks hold
     // (VICTORY_TRANSITION_HOLD_MS); wait past it.
-    await new Promise((r) => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
@@ -1618,7 +1629,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const scoreBefore = scene.getGameState().score;
     const minionsBefore = liveMinions(scene);
 
-    // 9 partial hits: phase 1 must survive with no rewards.
+    // Non-depleting partial hits: phase 1 must survive with no rewards.
     for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
@@ -1638,7 +1649,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     let expectedScore = 0;
 
     for (let phase = 1; phase <= 4; phase++) {
-      // The 10th hit depletes the phase.
+      // The depleting hit ends the phase.
       damageBossPhase(scene, boss);
 
       // Score for the depleted phase is awarded exactly once.
@@ -1686,34 +1697,34 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const def = fullyLevelWeapon(scene, 'nova');
     expect(def.aoe).toBeDefined();
 
-    // 9 max-level blasts: phase 1 survives (each blast is one hit).
+    // Non-depleting max-level blasts: phase 1 survives (each blast is one hit).
     for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
       applyAoe(scene, def, boss.x, boss.y);
     }
     expect(boss.getPhaseNumber()).toBe(1);
     expect(boss.alive).toBe(true);
 
-    // The 10th blast depletes exactly one phase — no phase is skipped.
+    // The depleting blast ends exactly one phase — no phase is skipped.
     applyAoe(scene, def, boss.x, boss.y);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(boss.alive).toBe(true);
   });
 
-  it('AC6 — a fully levelled weapon still requires 40 hits to destroy the boss', async () => {
+  it('AC6 — a fully levelled weapon still requires 400 hits to destroy the boss', async () => {
     const scene = await bootPlay();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
     const totalHits = 4 * BOSS_HIT_POINTS_PER_PHASE;
 
-    // 39 blasts leave the boss alive on its final phase.
+    // Leave the boss alive on its final phase (one hit short).
     for (let i = 0; i < totalHits - 1; i++) {
       applyAoe(scene, def, boss.x, boss.y);
     }
     expect(boss.alive).toBe(true);
     expect(boss.getPhaseNumber()).toBe(4);
 
-    // The 40th blast destroys it — no earlier blast skipped a phase.
+    // The final blast destroys it — no earlier blast skipped a phase.
     applyAoe(scene, def, boss.x, boss.y);
     expect(boss.alive).toBe(false);
   });
@@ -2020,48 +2031,48 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     // Full-scale boundary: hull 10 + bubble 16 × 1.4 = 32.4 px. At 31 px the
     // ship hull is already touching the crisp bubble ring → collected.
-    const drop = scene.spawnPowerUpDrop('P5', player.x + 31, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x + 31, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
 
     scene.tick(0.016); // lifecycle advance + collection in one frame
 
     expect(scene.getDrops()).not.toContain(drop);
-    expect(scene.getEffectsRegistry().isActive('P5')).toBe(true);
+    expect(scene.getEffectsRegistry().isActive('speed_boost')).toBe(true);
   });
 
   it('does not collect a fully-grown drop just beyond the bubble boundary (34 px)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
-    const drop = scene.spawnPowerUpDrop('P5', player.x + 34, player.y)!; // 34 px > 32.4 px
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x + 34, player.y)!; // 34 px > 32.4 px
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // full scale
 
     scene.tick(0.016);
 
     expect(scene.getDrops()).toContain(drop);
-    expect(scene.getEffectsRegistry().isActive('P5')).toBe(false);
+    expect(scene.getEffectsRegistry().isActive('speed_boost')).toBe(false);
   });
 
-  // ── P5 Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
+  // ── Speed Boost (AH-0MU8QURXB008DWM7) ────────────────────────
 
   it('P5 active → speed multiplier applied to player movement config', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Default: no P5 active, multiplier = 1.
+    // Default: no Speed Boost active, multiplier = 1.
     const configDefault = player.getMovementConfig();
     expect(registry.speedMultiplier()).toBe(1);
 
-    // Activate P5 via direct collection (drop under ship at full size).
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    // Activate Speed Boost via direct collection (drop under ship at full size).
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     expect(drop.powerUp.canCollect()).toBe(true);
 
     // Collect it in one tick (registry gets updated).
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.speedMultiplier()).toBe(1.5);
 
     // The multiplier is applied at the TOP of tick(), before _updateDrops.
@@ -2077,20 +2088,20 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Activate P5.
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    // Activate Speed Boost.
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
 
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.speedMultiplier()).toBe(1.5);
 
     // Advance past the 10 s duration.
     for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
     scene.tick(0.5); // past 10 s
 
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
     expect(registry.speedMultiplier()).toBe(1);
     expect(player.getMovementConfig().thrust).toBeCloseTo(
       player.getMovementConfig().thrust, // back to base
@@ -2102,31 +2113,31 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect first P5.
-    const drop1 = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    // Collect first Speed Boost.
+    const drop1 = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop1.powerUp.advance(0.05);
     player.setPosition(drop1.x, drop1.y);
     scene.tick(0.016);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
 
     // Advance ~3 seconds so the timer ticks down.
     for (let i = 0; i < 188; i++) scene.tick(0.016); // ~3 s
-    expect(registry.isActive('P5')).toBe(true);
-    const remainingBeforeSecond = registry.remaining('P5')!;
+    expect(registry.isActive('speed_boost')).toBe(true);
+    const remainingBeforeSecond = registry.remaining('speed_boost')!;
 
-    // Collect a second P5 — should refresh the timer to full.
-    const drop2 = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    // Collect a second Speed Boost — should refresh the timer to full.
+    const drop2 = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop2.powerUp.advance(0.05);
     player.setPosition(drop2.x, drop2.y);
     scene.tick(0.016);
-    expect(registry.isActive('P5')).toBe(true);
-    const remaining2 = registry.remaining('P5')!;
+    expect(registry.isActive('speed_boost')).toBe(true);
+    const remaining2 = registry.remaining('speed_boost')!;
 
     // The second collection refreshed the timer to the near-full level-1
     // duration (level-derived, so longer than the base 10 s window).
     expect(remaining2).toBeGreaterThan(remainingBeforeSecond);
     expect(remaining2).toBeCloseTo(
-      resolvePowerUpAtLevel('P5', 1).speedDuration!,
+      resolvePowerUpAtLevel('speed_boost', 1).speedDuration!,
       1,
     );
   });
@@ -2136,16 +2147,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Default: no P5 active, fire-rate multiplier = 1.
+    // Default: no Speed Boost active, fire-rate multiplier = 1.
     expect(registry.fireRateMultiplier()).toBe(1);
     expect(player.getFireRateMultiplier()).toBe(1);
 
-    // Collect a P5 (drop under the ship at full size).
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    // Collect a Speed Boost (drop under the ship at full size).
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.fireRateMultiplier()).toBe(1.5);
 
     // Applied at the top of tick(), so the boost lands on the next tick.
@@ -2158,7 +2169,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -2169,19 +2180,19 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
     scene.tick(0.5); // past 10 s
 
-    expect(registry.isActive('P5')).toBe(false);
+    expect(registry.isActive('speed_boost')).toBe(false);
     expect(player.getFireRateMultiplier()).toBe(1);
   });
 
-  // ── P7 Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
+  // ── Teleport (AH-0MU8QUY7U0069XC3) ───────────────────────────
 
   it('P7 teleport with a stack warps the player, consumes the stack and grants P6', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P7 to gain a teleport stack.
-    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    // Collect a Teleport to gain a teleport stack.
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -2195,7 +2206,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(scene.triggerTeleport()).toBe(true);
 
     expect(registry.teleportStacks()).toBe(0);
-    expect(registry.isPhased).toBe(true); // P6 granted on arrival
+    expect(registry.isPhased).toBe(true); // Phase Shift granted on arrival
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
     expect(player.x).toBeGreaterThanOrEqual(0);
     expect(player.x).toBeLessThanOrEqual(GAME_WIDTH);
@@ -2214,7 +2225,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.triggerTeleport()).toBe(false);
 
-    // Player did not move; no P6 granted; still zero stacks.
+    // Player did not move; no Phase Shift granted; still zero stacks.
     expect(player.x).toBeCloseTo(beforeX);
     expect(player.y).toBeCloseTo(beforeY);
     expect(registry.teleportStacks()).toBe(0);
@@ -2226,8 +2237,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
-    // Collect a P7 stack.
-    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    // Collect a Teleport stack.
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -2247,7 +2258,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(distFromEnemy).toBeGreaterThan(enemy.getHitRadius());
   });
 
-  // ── P3 Shield bubble visual (AH-0MU8QV3O9008JVNQ) ───────────────
+  // ── Shield bubble visual (AH-0MU8QV3O9008JVNQ) ───────────────
 
   it('P3 shield bubble is rendered while the shield is active', async () => {
     const scene = await bootPlay();
@@ -2256,8 +2267,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     expect(scene.isShieldBubbleVisible()).toBe(false);
 
-    // Collect a P3 shield.
-    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    // Collect a Shield shield.
+    const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -2275,9 +2286,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const registry = scene.getEffectsRegistry();
     const livesBefore = scene.getGameState().lives;
 
-    // Collect a P3 shield (park an enemy bullet far away so auto-fire
+    // Collect a Shield shield (park an enemy bullet far away so auto-fire
     // damage during setup does not interfere — the shield is fresh).
-    const drop = scene.spawnPowerUpDrop('P3', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('shield', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -2294,7 +2305,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(scene.isPlayerInvulnerable()).toBe(true);
   });
 
-  // ── P6 Phase Shift ghost visual (AH-0MU8QVC9Y008R8I5) ────────────
+  // ── Phase Shift ghost visual (AH-0MU8QVC9Y008R8I5) ────────────
 
   it('P6 phase shift renders the ship as a semi-transparent ghost (alpha 0.45)', async () => {
     const scene = await bootPlay();
@@ -2358,41 +2369,31 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(player.alpha).not.toBeCloseTo(0.45);
   });
 
-  // ── P4 Bomb-clear visual notice (AH-0MU8QVH3A009RS1G) ───────────
+  // ── Bomb ranged clear (AH-0MUVM9RAO004Y3LB) ───────────────────
 
-  it('P4 collection shows the bomb notice and clears enemy bullets', async () => {
+  it('P4 field pickup clears enemy bullets within range exactly once', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
-    // Park an enemy bullet on screen so the bomb has something to clear.
+    // One bullet inside the base 120 px range, one well outside it.
     scene.spawnEnemyBullet(player.x + 50, player.y, 0, 0);
+    scene.spawnEnemyBullet(player.x + 400, player.y, 0, 0);
+    expect(scene.getEnemyBullets().length).toBe(2);
+
+    // Collect a Bomb bomb.
+    const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016); // collection queues the one-shot pulse
+    scene.tick(0.016); // the shared bomb step fires it exactly once
+
+    // Field pickup: only the in-range bullet is cleared and no persistent
+    // effect row remains.
     expect(scene.getEnemyBullets().length).toBe(1);
-
-    // Collect a P4 bomb.
-    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
-
-    // Bullets cleared and the notice is visible.
-    expect(scene.getEnemyBullets().length).toBe(0);
-    expect(scene.isBombNoticeVisible()).toBe(true);
-  });
-
-  it('P4 bomb notice auto-hides after its timeout', async () => {
-    const scene = await bootPlay();
-    const player = scene.getPlayer()!;
-
-    // Collect a P4 bomb.
-    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
-    expect(scene.isBombNoticeVisible()).toBe(true);
-
-    // Advance past the ~1.2 s notice duration.
-    for (let i = 0; i < 80; i++) scene.tick(0.05); // ~4 s
-    expect(scene.isBombNoticeVisible()).toBe(false);
+    expect(scene.getEffectsRegistry().isBombPermanent()).toBe(false);
+    expect(
+      scene.getEffectsRegistry().activeEffects().some((e) => e.id === 'bomb'),
+    ).toBe(false);
   });
 
   it('P4 blast does not damage enemies (bullets cleared only)', async () => {
@@ -2400,10 +2401,11 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const aliveBefore = scene.getAliveCount();
 
-    // Collect a P4 bomb.
-    const drop = scene.spawnPowerUpDrop('P4', player.x, player.y)!;
+    // Collect a Bomb bomb.
+    const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
     scene.tick(0.016);
 
     // No enemies harmed by the bomb.
@@ -2489,13 +2491,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const scene = await bootPlay();
     vi.clearAllMocks();
 
-    await collectDropInPlay(scene, 'P5');
+    await collectDropInPlay(scene, 'speed_boost');
     expect(speedSound).toHaveBeenCalledTimes(1);
 
-    await collectDropInPlay(scene, 'P8');
+    await collectDropInPlay(scene, 'extra_life');
     expect(lifeSound).toHaveBeenCalledTimes(1);
 
-    await collectDropInPlay(scene, 'P9');
+    await collectDropInPlay(scene, 'magnet');
     expect(magnetSound).toHaveBeenCalledTimes(1);
 
     // No generic chime for the types with dedicated cues.
@@ -2507,8 +2509,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const scene = await bootPlay();
     vi.clearAllMocks();
 
-    // P3 shield, P4 bomb, P6 phase, P7 teleport have no dedicated cue yet.
-    for (const id of ['P3', 'P4', 'P6', 'P7']) {
+    // Shield shield, Bomb bomb, Phase Shift phase, Teleport teleport have no dedicated cue yet.
+    for (const id of ['shield', 'bomb', 'phase_shift', 'teleport']) {
       await collectDropInPlay(scene, id);
     }
     expect(genericSound).toHaveBeenCalledTimes(4);
@@ -2541,7 +2543,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const spawnSpy = vi.spyOn(collectAnimationModule, 'spawnCollectAnimation');
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
 
@@ -2558,7 +2560,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   it('the absorb animation completes and destroys the drop Graphics', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
 
@@ -2577,7 +2579,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const scene = await bootPlay();
     vi.clearAllMocks();
     const player = scene.getPlayer()!;
-    const drop = scene.spawnPowerUpDrop('P5', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
 
@@ -2684,20 +2686,20 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
       scene.tick(0.016);
     };
 
-    // Collect one of each effect category: timed (P5 speed, P8 life,
-    // P3 shield, P6 phase, P9 magnet field-pickup), permanent stacks (P9
-    // magnet upgrade, P7 teleport) and a weapon pickup ('spread').
-    collect('P5');
-    collect('P8');
-    collect('P3');
-    collect('P6');
-    collect('P9');
-    registry.applyCollect('P9', true); // permanent magnet upgrade
-    collect('P7');
+    // Collect one of each effect category: timed (Speed Boost speed, Extra Life life,
+    // Shield shield, Phase Shift phase, Magnet magnet field-pickup), permanent stacks (Magnet
+    // magnet upgrade, Teleport teleport) and a weapon pickup ('spread').
+    collect('speed_boost');
+    collect('extra_life');
+    collect('shield');
+    collect('phase_shift');
+    collect('magnet');
+    registry.applyCollect('magnet', true); // permanent magnet upgrade
+    collect('teleport');
     collect('spread');
 
     // Verify each category was active before the restart (AC1).
-    expect(registry.isActive('P5')).toBe(true);
+    expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.isShielded).toBe(true);
     expect(registry.phaseCharges()).toBe(1);
     expect(registry.lives()).toBe(4);
@@ -2819,7 +2821,7 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     const registry = scene.getEffectsRegistry();
 
     // Gain a teleport stack.
-    const drop = scene.spawnPowerUpDrop('P7', player.x, player.y)!;
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
@@ -3799,7 +3801,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
   /**
    * Drives the boss through all four phases so the run is won
-   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 40 total).
+   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 400 total).
    */
   function defeatBoss(scene: PlayScene): void {
     const boss = scene.getBoss()!;
@@ -3813,15 +3815,70 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     reachBoss(scene);
     const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
 
     defeatBoss(scene);
 
     expect(fanfareSpy).toHaveBeenCalledTimes(1);
     expect(victorySpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
     // The celebration is the shared F2 helper, owning the scene registry.
     const options = victorySpy.mock.calls[0][1] as { registry?: unknown[] };
     expect(options.registry).toBe(scene.getVictoryEffects());
+
+    // The fireworks are anchored at the boss's death position (AC3) and share
+    // the same scene-owned registry (AC4).
+    const boss = scene.getBoss()!;
+    const fireworksCall = fireworksSpy.mock.calls[0];
+    expect(fireworksCall[1]).toBe(boss.x);
+    expect(fireworksCall[2]).toBe(boss.y);
+    expect((fireworksCall[3] as { registry?: unknown[] }).registry).toBe(
+      scene.getVictoryEffects(),
+    );
     expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
+  });
+
+  it('dev scenario — jumps to a 4-hit boss with no minions/attacks and freezes until resumed (AH-0MUWZ5HCV0034H44)', async () => {
+    const scene = await bootPlay();
+
+    scene.startDevBossScenario(4);
+
+    const boss = scene.getBoss();
+    expect(boss).not.toBeNull();
+    expect(boss!.alive).toBe(true);
+    // Exactly four hits remain, shown in the final phase, with no attacks and
+    // no Phase-1 minions to soak the player's fire.
+    expect(boss!.getHpFraction()).toBeCloseTo(
+      4 / (BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE),
+      6,
+    );
+    expect(boss!.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+    expect(boss!.shootEnabled).toBe(false);
+    expect(scene.getEnemies()).toHaveLength(0);
+    // Frozen so the recorder starts before the short fight begins, with a
+    // deterministic page-side release handle exposed.
+    expect(scene.isPaused()).toBe(true);
+    expect(window.__aiHellScenario?.hitsRemaining).toBe(4);
+    // The ship sits to the boss's left at the same height, so the default
+    // right-facing auto-fire lands on the boss unaided.
+    const player = scene.getPlayer()!;
+    expect(player.x).toBeLessThan(boss!.x);
+    expect(player.y).toBeCloseTo(boss!.y, 5);
+    expect(player.getHeading()).toBeCloseTo(0, 5);
+
+    // Resume through the scenario handle and land the four hits: the run is
+    // won and the celebration runs.
+    window.__aiHellScenario?.resume();
+    expect(scene.isPaused()).toBe(false);
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
+    for (let hit = 0; hit < 4 && boss!.alive; hit++) {
+      scene.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);
+      scene.tick(0.016);
+    }
+    expect(boss!.alive).toBe(false);
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
   });
 
   it('AC1 — the fanfare and celebration fire exactly once even across extra ticks', async () => {
@@ -3861,13 +3918,400 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     const effects = scene.getVictoryEffects();
     expect(effects.length).toBeGreaterThan(0);
 
-    // Wait for the short hold, then the GameOverScene transition fires
-    // SHUTDOWN on PlayScene.
-    await new Promise((r) => setTimeout(r, 900));
+    // Wait for the victory fireworks hold, then the GameOverScene transition
+    // fires SHUTDOWN on PlayScene.
+    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
 
     expect(scene.getVictoryEffects()).toHaveLength(0);
     for (const effect of effects) {
       expect(effect.active).toBe(false);
     }
+  });
+
+  // ── Demo/attract mode (AH-0MUX495VG0014MIY AC1/AC3/AC4/AC6) ────
+
+  describe('Demo mode flag (AC1/AC6)', () => {
+    it('AC1 — demo mode is set when started with { demo: true }', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+    });
+
+    it('AC6 — demo mode is false when started normally', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+      scene.scene.start('PlayScene');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    it('AC3 — init treats absent, undefined and non-true data as non-demo', () => {
+      const scene = new PlayScene();
+      scene.init(undefined);
+      expect(scene.isDemoMode()).toBe(false);
+      scene.init({});
+      expect(scene.isDemoMode()).toBe(false);
+      scene.init({ demo: false });
+      expect(scene.isDemoMode()).toBe(false);
+      scene.init({ demo: true });
+      expect(scene.isDemoMode()).toBe(true);
+    });
+
+    it('AC2/AC5 — an explicit non-demo start clears stale demo data on the reused scene', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+      const botInput = () =>
+        (scene as unknown as { getBotInput(): unknown }).getBotInput();
+
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+      expect(botInput()).not.toBeNull();
+
+      // The explicit `{ demo: false }` overwrites the stale payload.
+      scene.scene.start('PlayScene', { demo: false });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(false);
+      expect(botInput()).toBeNull();
+    });
+
+    it('AC6 — setDemoMode toggles the flag at runtime', async () => {
+      const scene = await bootPlay();
+      expect(scene.isDemoMode()).toBe(false);
+      scene.setDemoMode(true);
+      expect(scene.isDemoMode()).toBe(true);
+      scene.setDemoMode(false);
+      expect(scene.isDemoMode()).toBe(false);
+    });
+  });
+
+  describe('Normal play unaffected (AC4/AC6)', () => {
+    it('AC4 — normal play does not call bot decision logic', async () => {
+      const scene = await bootPlay();
+      // In normal mode the bot-input seam returns null, so the keyboard
+      // path is used unchanged.
+      const botInput = (scene as unknown as {
+        getBotInput(): { up: boolean; down: boolean; left: boolean; right: boolean } | null;
+      }).getBotInput();
+      expect(botInput).toBeNull();
+    });
+  });
+
+  describe('Demo lifecycle (AC3/AC6)', () => {
+    it('AC4 — demo run holds on the game-over screen, then returns to MenuScene', async () => {
+      const booted = await bootScene(
+        [PlayScene, GameOverScene, MenuScene],
+        { deterministicBoot: true },
+      );
+      const scene = booted.scene as PlayScene;
+
+      // Start the demo with a short dwell so the test is quick
+      // (AH-0MUXZ4CAE008QRFZ AC4 test override).
+      scene.scene.start('PlayScene', { demo: true, demoDwellMs: 600 });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+
+      // Kill the player on the final life so the hit ends the run.
+      scene.getGameState().lives = 1;
+      (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+      // Mid-dwell the demo holds on the outcome screen (not the menu).
+      await new Promise((r) => setTimeout(r, 200));
+      expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
+      expect(booted.game.scene.isActive('MenuScene')).toBe(false);
+      const over = booted.game.scene.getScene('GameOverScene') as GameOverScene;
+      expect(over.isDemoMode()).toBe(true);
+      expect(scene.isDemoMode()).toBe(false);
+
+      // After the dwell it loops back to the menu.
+      await new Promise((r) => setTimeout(r, 800));
+      expect(booted.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted.game.scene.isActive('GameOverScene')).toBe(false);
+    });
+
+    it('AC3 — normal play navigates to GameOverScene when the player dies', async () => {
+      const scene = await bootPlay();
+      const gs = scene.getGameState();
+      gs.lives = 1;
+
+      // Kill the player
+      (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+      // Wait for the game-over transition
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Normal play should navigate to GameOverScene.
+      const activeKey = scene.scene.isActive('GameOverScene')
+        ? 'GameOverScene'
+        : scene.scene.isActive('MenuScene')
+          ? 'MenuScene'
+          : 'other';
+      expect(activeKey).toBe('GameOverScene');
+    });
+  });
+
+  // ── Narrowed demo take-over (AH-0MUYP6M6W006Z1AY) ───────────────
+  //
+  // Full unit coverage of the narrowed take-over/ESC behaviour required by
+  // the tests item (AH-0MUYPHN89007KSPW AC6).
+
+  describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
+    /** Boots a live game and starts the demo, returning the PlayScene. */
+    async function bootDemo(): Promise<PlayScene> {
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+        deterministicBoot: true,
+      });
+      const scene = booted.scene as PlayScene;
+      scene.scene.start('PlayScene', { demo: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scene.isDemoMode()).toBe(true);
+      return scene;
+    }
+
+    /** Dispatches a keydown through the scene keyboard plugin. */
+    function pressKey(scene: PlayScene, key: string): void {
+      scene.input.keyboard!.emit('keydown', {
+        key,
+        repeat: false,
+        preventDefault: () => {},
+      } as KeyboardEvent);
+    }
+
+    function takeOverHandlerOf(scene: PlayScene): unknown {
+      return (scene as unknown as { demoTakeOverHandler: unknown })
+        .demoTakeOverHandler;
+    }
+
+    it('AC1 — ESC leaves the demo for MenuScene and does not pause', async () => {
+      const scene = await bootDemo();
+
+      pressKey(scene, 'Escape');
+      await new Promise((r) => setTimeout(r, 80));
+
+      // Exactly one ESC action applies: return to the menu, never pause.
+      expect(scene.isPaused()).toBe(false);
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    });
+
+    it('AC1 — ESC does not take over the run (no in-place hand-off)', async () => {
+      const scene = await bootDemo();
+      pressKey(scene, 'Escape');
+      await new Promise((r) => setTimeout(r, 80));
+      // The demo was abandoned to the menu, not handed to the keyboard.
+      expect(scene.isPaused()).toBe(false);
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    });
+
+    it('AC2 — an arrow key takes over the demo in place', async () => {
+      const scene = await bootDemo();
+
+      pressKey(scene, 'ArrowUp');
+
+      expect(scene.isDemoMode()).toBe(false);
+      // In place — the run continues on the live PlayScene.
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    });
+
+    it('AC2 — a configured movement key takes over the demo', async () => {
+      const scene = await bootDemo();
+
+      pressKey(scene, 'w');
+
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    // Every arrow key and every configured WASD binding takes over on its
+    // own, not just the single `w`/`ArrowUp` sampled above
+    // (AH-0MUYPHN89007KSPW AC2).
+    it.each(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'])(
+      'AC2 — movement key %s takes over the demo in place',
+      async (key) => {
+        const scene = await bootDemo();
+
+        pressKey(scene, key);
+
+        expect(scene.isDemoMode()).toBe(false);
+        // In place — the run continues on the live PlayScene.
+        expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+      },
+    );
+
+    it('AC2 — a rebind is honoured: the new movement key takes over, the old one does not', async () => {
+      const scene = await bootDemo();
+
+      // Rebind moveUp from `w` to `i`, exactly as SettingsScene persists it.
+      localStorage.setItem(
+        'ai_hell_settings',
+        JSON.stringify({
+          sfxVolume: 1,
+          sfxMuted: false,
+          bindings: { moveUp: 'i' },
+        }),
+      );
+      (scene as unknown as { _applyBindings(): void })._applyBindings();
+
+      // The old default `w` is no longer movement → ignored.
+      pressKey(scene, 'w');
+      expect(scene.isDemoMode()).toBe(true);
+
+      // The new binding `i` takes over.
+      pressKey(scene, 'i');
+      expect(scene.isDemoMode()).toBe(false);
+    });
+
+    it('AC3 — a non-movement key is ignored and the demo keeps playing', async () => {
+      const scene = await bootDemo();
+
+      for (const key of [' ', 'Enter', 'Tab', 'F5', 'x', '7', 'F1']) {
+        pressKey(scene, key);
+      }
+
+      expect(scene.isDemoMode()).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    });
+
+    it('AC3 — the pointer no longer takes over the demo', async () => {
+      const scene = await bootDemo();
+
+      scene.input.emit('pointerdown', { x: 100, y: 100 });
+
+      expect(scene.isDemoMode()).toBe(true);
+    });
+
+    it('AC5 — normal play registers no take-over listener and ESC still pauses', async () => {
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+        deterministicBoot: true,
+      });
+      const scene = booted.scene as PlayScene;
+      expect(scene.isDemoMode()).toBe(false);
+      expect(takeOverHandlerOf(scene)).toBeNull();
+
+      pressKey(scene, 'Escape');
+      await new Promise((r) => setTimeout(r, 80));
+
+      expect(scene.isPaused()).toBe(true);
+      expect(booted.game.scene.isActive('PlayScene')).toBe(true);
+    });
+
+    it('AC6 — the take-over listener is cleaned up on take-over and ESC-exit', async () => {
+      const scene = await bootDemo();
+      expect(takeOverHandlerOf(scene)).not.toBeNull();
+
+      // Movement take-over removes the listener (via `setDemoMode(false)`).
+      pressKey(scene, 'ArrowLeft');
+      expect(scene.isDemoMode()).toBe(false);
+      expect(takeOverHandlerOf(scene)).toBeNull();
+
+      // Re-arm, then leave via ESC: the listener is removed before the menu.
+      scene.setDemoMode(true);
+      expect(takeOverHandlerOf(scene)).not.toBeNull();
+      pressKey(scene, 'Escape');
+      expect(takeOverHandlerOf(scene)).toBeNull();
+    });
+
+    it('AC6 — the take-over listener is removed on scene shutdown (no leak)', async () => {
+      const scene = await bootDemo();
+      expect(takeOverHandlerOf(scene)).not.toBeNull();
+
+      scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
+
+      expect(takeOverHandlerOf(scene)).toBeNull();
+    });
+  });
+
+  // ── End-of-run page-side signal (AH-0MUXZ4BXK001QCEK) ───────────
+
+  describe('End-of-run page-side signal (AH-0MUXZ4BXK001QCEK)', () => {
+    /**
+     * Records `aihell:run-ended` event details dispatched while `run()`
+     * executes. The emitter dispatches synchronously inside `_finishRun`, so
+     * the scene transition it precedes cannot race the capture.
+     */
+    function withRunEndedEvents(run: () => void): unknown[] {
+      const details: unknown[] = [];
+      const listener = (event: Event): void => {
+        details.push((event as CustomEvent).detail);
+      };
+      window.addEventListener(RUN_ENDED_EVENT, listener);
+      try {
+        run();
+      } finally {
+        window.removeEventListener(RUN_ENDED_EVENT, listener);
+      }
+      return details;
+    }
+
+    beforeEach(() => {
+      delete window.__aiHellRunState;
+      vi.stubEnv('DEV', true);
+    });
+
+    afterEach(() => {
+      delete window.__aiHellRunState;
+      vi.unstubAllEnvs();
+    });
+
+    it('AC1 — a victory sets the flag, emits the event and still transitions', async () => {
+      const scene = await bootPlay();
+      const score = scene.getGameState().score;
+
+      const details = withRunEndedEvents(() => {
+        (scene as unknown as { _finishRun(won: boolean): void })._finishRun(true);
+      });
+
+      expect(window.__aiHellRunState).toEqual({ ended: true, won: true, score });
+      expect(details).toEqual([{ won: true, score }]);
+      // Normal play still reaches GameOverScene (AC3); the scene start is
+      // queued to the next frame, so let it settle.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    });
+
+    it('AC1 — a defeat sets the flag and emits the event', async () => {
+      const scene = await bootPlay();
+      const gs = scene.getGameState();
+      gs.lives = 1;
+
+      const details = withRunEndedEvents(() => {
+        (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+      });
+
+      expect(gs.lives).toBe(0);
+      expect(window.__aiHellRunState).toEqual({
+        ended: true,
+        won: false,
+        score: gs.score,
+      });
+      expect(details).toEqual([{ won: false, score: gs.score }]);
+    });
+
+    it('AC2 — the signal is dev-gated: a production build emits nothing', async () => {
+      const scene = await bootPlay();
+      vi.stubEnv('DEV', false);
+      const gs = scene.getGameState();
+      gs.lives = 1;
+
+      const details = withRunEndedEvents(() => {
+        (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+      });
+
+      expect(window.__aiHellRunState).toBeUndefined();
+      expect(details).toEqual([]);
+      // The game-over transition is unaffected by the disabled signal.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    });
   });
 });

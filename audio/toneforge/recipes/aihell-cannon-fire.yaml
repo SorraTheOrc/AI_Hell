@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-cannon-fire — Player cannon fire — square laser tick 800 to 400 Hz.
+version: "0.1"
+meta:
+  name: aihell-cannon-fire
+  description: Player cannon fire — square laser tick 800 to 400 Hz.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+  duration: 0.08
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 800
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 800
+        - kind: exponentialRamp
+          time: 0.078
+          value: 400
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.074
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.15
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

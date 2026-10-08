@@ -47,7 +47,7 @@ export const HELP_BUTTON_GAP = 12;
 
 /**
  * Every drop the help overlay can describe: the field drops (`DropId`,
- * i.e. P3–P9 plus spread/dual/rapid/reset), the permanent cannon and the
+ * i.e. Shield–Magnet plus spread/dual/rapid/reset), the permanent cannon and the
  * AOE weapon family (nova/mortar/arc).
  */
 export type HelpDropId = DropId | WeaponId;
@@ -111,7 +111,7 @@ export function getHelpEntry(id: HelpDropId): HelpEntry {
     name: powerUp.name,
     description: powerUp.description,
     drawIcon: (graphics, x, y, size) =>
-      drawPowerUpIcon(graphics, powerUp.type, x, y, size),
+      drawPowerUpIcon(graphics, powerUp.id, x, y, size),
   };
 }
 

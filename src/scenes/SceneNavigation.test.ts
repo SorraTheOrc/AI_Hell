@@ -284,7 +284,7 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
       );
     }
     expect(boss).not.toBeNull();
-    // 4 phases, BOSS_HIT_POINTS_PER_PHASE hits each (40 total).
+    // 4 phases, BOSS_HIT_POINTS_PER_PHASE hits each (400 total).
     for (let i = 0; i < 4 * BOSS_HIT_POINTS_PER_PHASE; i++) {
       play.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);
       play.tick(0.016);

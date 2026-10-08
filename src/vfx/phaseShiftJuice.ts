@@ -1,7 +1,7 @@
 /**
  * Phase Shift juice — screen-wide phase treatment (parent AH-0MUIYX1EE008FVS8).
  *
- * Phase Shift (P6) is now automatic, so the player needs an unmistakable,
+ * Phase Shift is now automatic, so the player needs an unmistakable,
  * screen-wide read that it fired. Per producer answer Q4 this module owns the
  * single shared treatment:
  *

@@ -39,6 +39,17 @@ describe('GameState (AH-0MU72SZP1005X14G)', () => {
     expect(gs.gameState).toBe('menu'); // not overridden
   });
 
+  it('stores the per-run seed, defaulting to 0 (AH-0MUY08V6W001SJJN)', () => {
+    expect(new GameState().runSeed).toBe(0);
+    expect(new GameState({ runSeed: 42 }).runSeed).toBe(42);
+  });
+
+  it('does not reset the run seed on startGame (owned per run)', () => {
+    const gs = new GameState({ runSeed: 1234 });
+    gs.startGame();
+    expect(gs.runSeed).toBe(1234);
+  });
+
   // ── startGame ──────────────────────────────────────────────────
 
   it('resets all state and sets gameState to playing', () => {
