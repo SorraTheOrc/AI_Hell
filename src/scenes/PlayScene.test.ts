@@ -17,7 +17,7 @@ import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
@@ -37,7 +37,6 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
-  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -1609,9 +1608,15 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
     // The transition is delayed by the victory fireworks hold
-    // (VICTORY_TRANSITION_HOLD_MS); wait past it.
-    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
-    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    // (VICTORY_TRANSITION_HOLD_MS). Advance the Phaser clock deterministically
+    // (stop the live loop and pump `game.step`) rather than awaiting a
+    // wall-clock `setTimeout`, so the delayed `GameOverScene` transition is
+    // reached even under full-suite load (AH-0MUYALJ9S0002XXZ).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → GameOverScene',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
 
@@ -3920,9 +3925,16 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     const effects = scene.getVictoryEffects();
     expect(effects.length).toBeGreaterThan(0);
 
-    // Wait for the victory fireworks hold, then the GameOverScene transition
-    // fires SHUTDOWN on PlayScene.
-    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
+    // Advance the Phaser clock deterministically past the victory fireworks
+    // hold; the `GameOverScene` transition then fires SHUTDOWN on PlayScene,
+    // tearing down the celebration. No wall-clock wait, so the assertion
+    // cannot race the delayed transition under full-suite load
+    // (AH-0MUYALJ9S0002XXZ).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → SHUTDOWN teardown',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
 
     expect(scene.getVictoryEffects()).toHaveLength(0);
     for (const effect of effects) {

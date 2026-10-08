@@ -449,6 +449,16 @@ load, which makes assertions taken right after boot flaky.
   time and polling for the expected condition, rather than wall-clock waits.
   This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,
   AH-0MTFSM3IR001QR0C, AH-0MUHA0MMP001DZ5C).
+- **Advance Phaser timers with `game.step`, not wall-clock waits.** A
+  production `this.time.delayedCall(...)` transition — for example the
+  `VICTORY_TRANSITION_HOLD_MS` victory hold before `GameOverScene` — is driven
+  by the scene's Phaser `Clock`, which `scene.tick(dt)` does **not** advance.
+  Stop the live loop and pump the clock with the shared
+  `stepGameUntil(game, label, predicate)` helper from `src/test/gameHarness.ts`;
+  it polls the transition state and fails loudly with the simulated step
+  budget if the condition is never met. This replaces `await`-ing a
+  `setTimeout` that can be missed under full-suite parallel load
+  (AH-0MUYALJ9S0002XXZ).
 - **Isolate deterministic suites from the random asteroid spawner.** The
   offscreen asteroid (and Level 4–5 Harvester) spawner plans its releases from
   `Math.random()` and releases them by elapsed wave time, so a `scene.tick(dt)`
