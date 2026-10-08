@@ -90,7 +90,7 @@ export function loadPin(path = pinPathFor()) {
 
 /**
  * Verifies the game's declared ToneForge dependency matches the pin:
- *   - `package.json` `optionalDependencies.toneforge` equals the pin specifier;
+ *   - `package.json` `dependencies.toneforge` equals the pin specifier;
  *   - `package-lock.json` records `node_modules/toneforge` at that specifier.
  * Returns `{ ok, errors, pin }`.
  */
@@ -107,10 +107,10 @@ export function verifyPinnedDependency({ repoRoot = REPO_ROOT, pin } = {}) {
 
   try {
     const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
-    const spec = (pkg.optionalDependencies ?? {}).toneforge;
+    const spec = (pkg.dependencies ?? {}).toneforge;
     if (spec !== resolvedPin.dependencySpecifier) {
       errors.push(
-        `package.json optionalDependencies.toneforge is ${JSON.stringify(spec)}, ` +
+        `package.json dependencies.toneforge is ${JSON.stringify(spec)}, ` +
           `expected ${JSON.stringify(resolvedPin.dependencySpecifier)}`,
       );
     }

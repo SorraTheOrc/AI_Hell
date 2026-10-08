@@ -75,6 +75,16 @@ digests compared before the asset is written, guaranteeing reproducible output.
 fails on any checksum drift. The build is a build-time-only dependency; no
 ToneForge module is imported into the browser entry graph.
 
+> **Required sibling checkout.** `toneforge` is declared as a **required**
+> dependency (`dependencies.toneforge = "file:../ToneForge"` in
+> `package.json`), so a sibling `../ToneForge` checkout must exist before
+> `npm ci` / `npm install` — the install fails without it. `.npmrc` sets
+> `install-links=true` so npm packs the sibling as a regular dependency (the
+> default differs between npm 9 and npm 10). The pinned revision is recorded in
+> [`pin.json`](./pin.json); the Pages deploy workflow clones it at that revision
+> before `npm ci` and installs its dependencies, because the ToneForge CLI runs
+> from source via `tsx`.
+
 ## Recipes
 
 Seed block **32100–32199** is reserved for game-specific recipes. One-shots use

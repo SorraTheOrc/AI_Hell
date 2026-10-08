@@ -6,8 +6,17 @@ ToneForge WAV assets consumed by Phaser.
 
 - **Parent epic:** Switch game audio from procedural Web Audio to ToneForge (AH-0MUTUOB7X007PR9J)
 - **Produced by:** Cue-to-recipe mapping and unused-cue audit (AH-0MUTYV7SQ005HURT)
-- **ToneForge reference:** sibling checkout `../ToneForge`, version 0.1.1, MIT licence
+- **ToneForge reference:** required sibling checkout `../ToneForge`, version 0.1.1, MIT licence
 - **Related:** GDD §7.3 (Audio Direction), `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §7
+
+> **Build prerequisite.** ToneForge is a **required** build dependency: the
+> sibling `../ToneForge` checkout is declared under `dependencies` in
+> `package.json` as `file:../ToneForge` (`.npmrc` sets `install-links=true` so
+> npm packs it as a regular dependency and the lockfile stays consistent
+> between npm 9 and npm 10). `npm ci` / `npm install` therefore fail when the
+> sibling is absent. The pinned revision is recorded in
+> `audio/toneforge/pin.json`; the Pages deploy workflow clones it at that
+> revision before running `npm ci`.
 
 This document is the input to **Author game-specific ToneForge recipes
 (AH-0MUTYV8480019Z51)**, the **Deterministic WAV build pipeline

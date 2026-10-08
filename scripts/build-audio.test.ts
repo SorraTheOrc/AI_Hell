@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   MANIFEST_PATH,
+  REPO_ROOT,
   buildAssets,
   loadManifest,
   loadPin,
@@ -77,7 +78,7 @@ function makeTempRepo(): string {
     join(root, 'package.json'),
     JSON.stringify({
       name: 'aihell-audio-fixture',
-      optionalDependencies: { toneforge: pin.dependencySpecifier },
+      dependencies: { toneforge: pin.dependencySpecifier },
     }),
   );
   writeFileSync(
@@ -394,6 +395,20 @@ describe('ToneForge pin', () => {
     expect(verifyPinnedDependency().ok).toBe(true);
   });
 
+  it('declares toneforge as a required dependency, not an optional one', () => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+    expect(pkg.dependencies?.toneforge).toBe('file:../ToneForge');
+    expect(pkg.optionalDependencies?.toneforge).toBeUndefined();
+  });
+
+  it('pins the file: dependency install strategy for npm 9/npm 10 parity', () => {
+    // npm 9 defaults `install-links=true`, npm 10 defaults it to `false`; the
+    // committed lockfile uses the regular (packed) representation, so the
+    // setting must be pinned for `npm ci` to agree in both toolchains.
+    const npmrc = readFileSync(join(REPO_ROOT, '.npmrc'), 'utf8');
+    expect(npmrc).toMatch(/^install-links=true\s*$/m);
+  });
+
   it('fails when package.json does not declare the pinned specifier', () => {
     const root = mkdtempSync(join(tmpdir(), 'aihell-pin-'));
     mkdirSync(join(root, 'audio', 'toneforge'), { recursive: true });
@@ -408,13 +423,13 @@ describe('ToneForge pin', () => {
         dependencySpecifier: 'file:../ToneForge',
       }),
     );
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ optionalDependencies: {} }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: {} }));
     writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ packages: {} }));
 
     const result = verifyPinnedDependency({ repoRoot: root });
 
     expect(result.ok).toBe(false);
-    expect(result.errors.join(' ')).toMatch(/optionalDependencies/);
+    expect(result.errors.join(' ')).toMatch(/dependencies/);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -434,7 +449,7 @@ describe('ToneForge pin', () => {
     );
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ optionalDependencies: { toneforge: 'file:../ToneForge' } }),
+      JSON.stringify({ dependencies: { toneforge: 'file:../ToneForge' } }),
     );
     writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ packages: {} }));
 
@@ -442,6 +457,40 @@ describe('ToneForge pin', () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors.join(' ')).toMatch(/package-lock/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reads the pin from dependencies and ignores a stray optionalDependencies entry', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aihell-pin-'));
+    mkdirSync(join(root, 'audio', 'toneforge'), { recursive: true });
+    writeFileSync(
+      pinPathFor(root),
+      JSON.stringify({
+        version: 1,
+        repository: 'https://example.test/ToneForge.git',
+        revision: 'd'.repeat(40),
+        licence: 'MIT',
+        cli: 'bin/dev-cli.js',
+        dependencySpecifier: 'file:../ToneForge',
+      }),
+    );
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        dependencies: { toneforge: 'file:../ToneForge' },
+        optionalDependencies: { toneforge: 'file:../Elsewhere' },
+      }),
+    );
+    writeFileSync(
+      join(root, 'package-lock.json'),
+      JSON.stringify({
+        packages: { 'node_modules/toneforge': { resolved: 'file:../ToneForge' } },
+      }),
+    );
+
+    const result = verifyPinnedDependency({ repoRoot: root });
+
+    expect(result.ok).toBe(true);
     rmSync(root, { recursive: true, force: true });
   });
 });
