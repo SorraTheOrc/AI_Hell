@@ -351,7 +351,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     spawns,
   );
 
-  const governor = new BotInputGovernor();
+  const governor = new BotInputGovernor(config.humanInput ?? {});
   governor.seed(config.seed);
   const reset = (policy as { reset?: () => void }).reset;
   if (typeof reset === 'function') reset.call(policy);
