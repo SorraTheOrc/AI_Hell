@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.1.10 (2026-10-08)
+> **Release focus:** This release focuses on polishing the demo and bot experience, with smarter AI behaviour, reliable demo capture including audio, and a watch-and-take-over mode from the menu. It also rebalances combat and progression through slower enemy bullets, a longer final boss fight, improved levelled shields and bombs, and more consistent training gyms and late-game difficulty.
+### Features
+- Game sound effects are now higher quality and more consistent. (AH-0MUTUOB7X007PR9J)
+- The final boss now takes 400 hits to defeat, making the climactic fight last much longer. (AH-0MUWTS07L008KVP9)
+- You can now collect minerals between waves, even while phased. (AH-0MUX96GJF006CAZP)
+- Watch the game play itself from the menu, or jump in anytime to take over. (AH-0MUX2NENC008AHOQ)
+- Power-ups now use clear names instead of codes, so your custom drop settings stay intact. (AH-0MUX6S20F002GHPF)
+- Training gyms now behave exactly like the real game, so practice matches what you'll face. (AH-0MUII2FJ5007MDDA)
+- Demo mode now only responds to movement keys or ESC, so stray inputs won't interrupt it. (AH-0MUYJRHMC0038RAS)
+- Levelled shields now absorb multiple hits, and bombs clear a wider area more often as they level up. (AH-0MUVM9RAO004Y3LB)
+- You can now generate gameplay videos automatically without recording your screen. (AH-0MUWMFF3C002WOBK)
+- Capture now shows live progress and a time estimate, and gives clear setup instructions if it can't start. (AH-0MUWTNPY8003GGAA)
+- Gameplay demo videos now include game audio automatically. (AH-0MUWTNPYJ0031FQE)
+- Enemy bullets now travel half as fast, giving you more time to dodge. (AH-0MUWZ5GST003NMFQ)
+- The demo ship now flies with the same W/A/D asteroid controls you use, with human-like reaction timing. (AH-0MUXXQ1MN002RXGB)
+- The bot now fights smarter, prioritising enemies and only grabbing nearby mineral clusters or upgrades. (AH-0MUXYOV4C008MV0L)
+- Defeating the boss now triggers a huge fireworks show at its location for a real finale. (AH-0MUWZ5HCV0034H44)
+### Bug Fixes
+- Asteroids in training gyms now drop minerals just like in the main game. (AH-0MUHMT5JC004WRSB)
+- Level-up choices no longer show the same weapon twice, so every pick is a real upgrade. (AH-0MUVRACE9001WVT2)
+- Gameplay demo captures now start reliably instead of recording a frozen menu. (AH-0MUXVVYWY009WT3X)
+- Playing a normal game after watching the demo no longer leaves the bot in control of your ship. (AH-0MUY4881P007FJ8R)
+- Later campaign waves now stay challenging and varied instead of becoming too easy. (AH-0MUX60S9L0006NJ0)
+- Demo mode now runs reliably without random failures during play. (AH-0MUYOBU4F003EYRP)
+- Field pickups now boost items temporarily, while permanent upgrades come only from hold-full rewards. (AH-0MUX802450085VZZ)
+
 ## v0.1.9 (2026-10-05)
 ### Features
 - Gym practice now matches the real game exactly, so what you learn there always applies. (AH-0MUII2FJ5007MDDA)
