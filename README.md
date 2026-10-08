@@ -449,6 +449,14 @@ load, which makes assertions taken right after boot flaky.
   time and polling for the expected condition, rather than wall-clock waits.
   This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,
   AH-0MTFSM3IR001QR0C, AH-0MUHA0MMP001DZ5C).
+- **Isolate deterministic suites from the random asteroid spawner.** The
+  offscreen asteroid (and Level 4–5 Harvester) spawner plans its releases from
+  `Math.random()` and releases them by elapsed wave time, so a `scene.tick(dt)`
+  mid-test can add an entity to `getEnemies()` and desync a `before`/`after`
+  snapshot. Suites that snapshot the entity list opt out after boot with the
+  public `scene.setAsteroidSpawnerEnabled(false)` seam (the `PlayScene.test.ts`
+  and `PlayScenePause.test.ts` suites do), and compare captured entities by
+  identity where a list is involved (AH-0MUZDXF2U001MJW1).
 - **Never weaken an assertion to hide a flake** — fix the nondeterminism at its
   source (assertions stay exact; a guard may poll with bounded deterministic
   ticks and fail loudly with diagnostic state).
