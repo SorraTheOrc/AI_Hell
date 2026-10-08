@@ -26,6 +26,10 @@ dist/
 # generated locally by `npm run capture`, never committed.
 capture-output/
 
+# Dev play recordings (AH-0MUY08W7Y004GATZ) — generated locally by
+# `npm run record`, never committed.
+recordings/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

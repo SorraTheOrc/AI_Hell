@@ -384,10 +384,12 @@ cat recording.jsonl | node scripts/inspect-telemetry.mjs
 ```
 
 It intentionally does not repackage the deeper offline analysis (histograms,
-reaction latency, engagement distances) which is delivered by the sibling dev
-recording/analysis tooling (AH-0MUY08W7Y004GATZ); the inspector is the quick,
-dependency-free first look at any recording, and its summary shape is the
-stable interface the analysis tool can build on.
+reaction latency, engagement distances), which is delivered by the sibling dev
+recording/analysis tooling (AH-0MUY08W7Y004GATZ): `npm run record`,
+`npm run analyse` and `npm run replay` — see
+[docs/dev/recording-and-replay.md](./dev/recording-and-replay.md). The
+inspector is the quick, dependency-free first look at any recording, and its
+summary shape is the stable interface the analysis tool builds on.
 
 ## Testing
 

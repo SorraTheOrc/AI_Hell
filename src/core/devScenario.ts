@@ -45,6 +45,14 @@ export const DEV_SCENARIO_DEFEAT = 'defeat';
 /** Query parameter that tunes the boss scenario's remaining hits. */
 export const DEV_BOSS_HITS_PARAM = 'bossHits';
 
+/**
+ * URL query parameter that forces a deterministic run seed in a dev build
+ * (AH-0MUY08W7Y004GATZ). It lets the dev recorder record a human run and a
+ * bot run on the **same** seed for the replay/ghost comparison, without
+ * reaching into Phaser internals.
+ */
+export const DEV_SEED_PARAM = 'seed';
+
 /** Hits remaining in the recorded `boss-four-hits` scenario. */
 export const DEV_BOSS_DEFAULT_HITS = 4;
 
@@ -156,4 +164,24 @@ export function resolveDevScenario(search: string): DevScenario | null {
     return { kind: 'defeat' };
   }
   return null;
+}
+
+/**
+ * Resolves the deterministic dev seed encoded in a URL search string, if any
+ * (AH-0MUY08W7Y004GATZ). Pure and total: an absent, blank or non-finite seed
+ * returns `null`, and a valid seed is normalised to a 32-bit unsigned integer
+ * (matching the run-seed contract).
+ *
+ * @param search — a `location.search` string or bare query string.
+ * @returns the normalised seed, or `null` when none is requested.
+ */
+export function resolveDevSeed(search: string): number | null {
+  const params = new URLSearchParams(
+    search.startsWith('?') ? search.slice(1) : search,
+  );
+  const raw = params.get(DEV_SEED_PARAM);
+  if (raw === null || raw.trim() === '') return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return value >>> 0;
 }

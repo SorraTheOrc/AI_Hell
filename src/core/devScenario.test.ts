@@ -16,6 +16,7 @@ import {
   clearDevScenarioHandle,
   installDevScenarioHandle,
   resolveDevScenario,
+  resolveDevSeed,
 } from './devScenario';
 
 afterEach(() => {
@@ -110,6 +111,29 @@ describe('resolveDevScenario', () => {
 
   it('does not confuse a different parameter carrying the same value', () => {
     expect(resolveDevScenario(`?other=${DEV_SCENARIO_BOSS}`)).toBeNull();
+  });
+});
+
+describe('resolveDevSeed', () => {
+  it('resolves a deterministic seed with or without a leading question mark', () => {
+    expect(resolveDevSeed('?seed=12345')).toBe(12345);
+    expect(resolveDevSeed('seed=12345')).toBe(12345);
+  });
+
+  it('returns null when no seed is requested', () => {
+    expect(resolveDevSeed('')).toBeNull();
+    expect(resolveDevSeed('?scenario=boss')).toBeNull();
+  });
+
+  it('returns null for blank or non-numeric values', () => {
+    expect(resolveDevSeed('?seed=')).toBeNull();
+    expect(resolveDevSeed('?seed=abc')).toBeNull();
+  });
+
+  it('normalises to a 32-bit unsigned integer', () => {
+    expect(resolveDevSeed('?seed=-1')).toBe(0xffffffff);
+    expect(resolveDevSeed('?seed=1.9')).toBe(1);
+    expect(resolveDevSeed('?seed=4294967296')).toBe(0);
   });
 });
 

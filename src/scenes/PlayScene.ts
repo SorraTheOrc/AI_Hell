@@ -127,6 +127,7 @@ import {
   installDevScenarioHandle,
   isDevScenarioEnabled,
   resolveDevScenario,
+  resolveDevSeed,
   type DevScenario,
 } from '../core/devScenario';
 import {
@@ -2978,13 +2979,24 @@ export class PlayScene extends CombatScene<
    * 3. mirror the seed onto `GameState` for telemetry.
    */
   private _initRunSeed(): void {
-    const seed = this.injectedRunSeed ?? randomSeed();
+    const seed = this.injectedRunSeed ?? this._devRunSeed() ?? randomSeed();
     this.runSeed = seed;
     if (!this.rngInjected) {
       this.rng = createSeededRng(seed);
       this.sceneRng = this.rng;
     }
     this.gameState.runSeed = seed;
+  }
+
+  /**
+   * The deterministic run seed a dev build requested through the `seed` URL
+   * query parameter, or `null` (AH-0MUY08W7Y004GATZ). Dev-gated so a
+   * production build ignores the parameter entirely and always draws a fresh
+   * random seed.
+   */
+  private _devRunSeed(): number | null {
+    if (!isDevScenarioEnabled() || typeof window === 'undefined') return null;
+    return resolveDevSeed(window.location?.search ?? '');
   }
 
   /**
