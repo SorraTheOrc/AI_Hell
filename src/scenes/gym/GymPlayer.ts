@@ -523,8 +523,8 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     // Bullet lifecycle: advance + wrap + lifetime expiry (shared helper).
     this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
 
-    // Automatic Phase Shift danger feed, before collision gating (shared).
-    this._updatePhaseShiftAutoTrigger(dt);
+    // Automatic defence danger feed, before collision gating (shared).
+    this._updateAutoDefence(dt);
 
     // Shared collision pass: player bullets vs obstacles, obstacle body vs
     // player (the player hit is handled by the shared player-hit lifecycle).

@@ -53,10 +53,9 @@ const SHARED_METHODS = [
   '_collectDrop',
   '_spawnPlayerExplosion',
   '_clearEnemyBullets',
-  '_handleTeleport',
+  '_updateAutoDefence',
   '_readPlayerInput',
   '_tickPlayer',
-  '_updatePhaseShiftAutoTrigger',
 ] as const;
 
 /**
@@ -305,6 +304,21 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     return { play: play.scene as PlayScene, gym: gym.scene as EquivGymScene };
   }
 
+  it('AC5 — the game and every gym register the same shared explosion-accent seam', async () => {
+    const register = vi.spyOn(effectsModule, 'setExplosionBeatClock');
+    try {
+      const { play, gym } = await bootBoth();
+
+      // Both scenes register their own shared beat clock with the single
+      // audio seam (defined once in `CombatCoreScene.resetRunState`), so the
+      // accent grid is never a per-scene copy.
+      expect(register).toHaveBeenCalledWith(play.getBeatClock());
+      expect(register).toHaveBeenCalledWith(gym.getBeatClock());
+    } finally {
+      register.mockRestore();
+    }
+  });
+
   it('auto-fire produces bullets at the shared PLAYER_BULLET_SPEED in both scenes', async () => {
     const { play, gym } = await bootBoth();
 
@@ -477,7 +491,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
       '_clearEnemyBullets',
       '_spawnPlayerExplosion',
       '_readPlayerInput',
-      '_handleTeleport',
+      '_updateAutoDefence',
     ] as const) {
       expect(
         (PlayScene.prototype as unknown as Record<string, unknown>)[method],
@@ -1840,7 +1854,7 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
   ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
-  ['_handleTeleport', 'src/scenes/core/CombatScene.ts'],
+  ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],

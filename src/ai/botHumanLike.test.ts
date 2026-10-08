@@ -487,6 +487,10 @@ describe('human-like thrust presses (AC15/AC16)', () => {
     thrustPressMaxMs: 225,
     thrustPressMaxMsLong: 400,
     reactionTimeMs: 1000,
+    // Disable the gentle reduction so the existing AC15/AC16 duration bands
+    // (200–225 / 400 ms) remain unchanged for these tests.
+    thrustPressGentleMinPct: 0,
+    thrustPressGentleMaxPct: 0,
   };
   const thrustIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
   const longThrustIntent = { ...thrustIntent, longTravel: true };
@@ -565,5 +569,138 @@ describe('human-like thrust presses (AC15/AC16)', () => {
       }) as AsteroidsInput;
       expect(out.forward).toBe(true);
     }
+  });
+});
+
+// ── Gentler thrust presses (AH-0MUYRJQE50021T4A) ────────────────────
+//
+// Each forward-thrust press is reduced by a random 1–5 % of its drawn
+// duration, making the demo bot slightly less aggressive on the thrusters.
+
+describe('gentler thrust presses (AH-0MUYRJQE50021T4A)', () => {
+  // 1 ms ticks so a 1–5 % reduction (2–11 ms on a normal press) is
+  // measurable; a 60 fps tick (16.7 ms) is coarser than the effect.
+  const DT_MS = 1;
+  const DT = DT_MS / 1000;
+  const T_GENTLE = {
+    thrustPressMinMs: 200,
+    thrustPressMaxMs: 225,
+    thrustPressMaxMsLong: 400,
+    reactionTimeMs: 100000,
+    thrustPressGentleMinPct: 0.01,
+    thrustPressGentleMaxPct: 0.05,
+  };
+  const T_ZERO = {
+    ...T_GENTLE,
+    thrustPressGentleMinPct: 0,
+    thrustPressGentleMaxPct: 0,
+  };
+  const thrustIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
+  const longThrustIntent = { ...thrustIntent, longTravel: true };
+  const coastIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: false };
+
+  /** Measures the on-run (ms) of the press started by a rising thrust edge. */
+  function measurePressMs(
+    governor: BotInputGovernor,
+    intent: FourDirectionalInput & {
+      dirX: number;
+      dirY: number;
+      thrust: boolean;
+      longTravel?: boolean;
+    },
+  ): number {
+    governor.update(intent, DT, { scheme: 'asteroids', facing: 0 });
+    let ticks = 1;
+    for (let i = 0; i < 5000; i += 1) {
+      const out = governor.update(coastIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+      }) as AsteroidsInput;
+      if (!out.forward) break;
+      ticks += 1;
+    }
+    return ticks * DT_MS;
+  }
+
+  it('AC1 — reduces a normal press by a random 1–5 %', () => {
+    // Same seed → identical base draw, so the ratio isolates the reduction.
+    const zero = measurePressMs(new BotInputGovernor(T_ZERO, 7), thrustIntent);
+    const gentle = measurePressMs(
+      new BotInputGovernor(T_GENTLE, 7),
+      thrustIntent,
+    );
+    expect(zero).toBeGreaterThanOrEqual(200);
+    expect(zero).toBeLessThanOrEqual(225);
+    expect(gentle).toBeLessThan(zero);
+    // ±0.008 absorbs the ≤1 ms integer-tick rounding on each measurement.
+    const reduction = (zero - gentle) / zero;
+    expect(reduction).toBeGreaterThanOrEqual(0.01 - 0.008);
+    expect(reduction).toBeLessThanOrEqual(0.05 + 0.008);
+  });
+
+  it('AC1 — reduces a long-travel press by the same 1–5 % band', () => {
+    const zero = measurePressMs(
+      new BotInputGovernor(T_ZERO, 11),
+      longThrustIntent,
+    );
+    const gentle = measurePressMs(
+      new BotInputGovernor(T_GENTLE, 11),
+      longThrustIntent,
+    );
+    expect(zero).toBeGreaterThanOrEqual(200);
+    expect(zero).toBeLessThanOrEqual(400);
+    expect(gentle).toBeLessThan(zero);
+    const reduction = (zero - gentle) / zero;
+    expect(reduction).toBeGreaterThanOrEqual(0.01 - 0.008);
+    expect(reduction).toBeLessThanOrEqual(0.05 + 0.008);
+  });
+
+  it('AC2 — the reduction sequence is identical for two same-seed governors', () => {
+    const first = new BotInputGovernor(T_GENTLE, 42);
+    const second = new BotInputGovernor(T_GENTLE, 42);
+    const seqFirst = [0, 1, 2, 3, 4].map(() =>
+      measurePressMs(first, thrustIntent),
+    );
+    const seqSecond = [0, 1, 2, 3, 4].map(() =>
+      measurePressMs(second, thrustIntent),
+    );
+    expect(seqFirst).toEqual(seqSecond);
+  });
+
+  it('AC2 — the reduction is drawn per press, not a fixed value', () => {
+    // A fixed base (min = max = long cap) makes the drawn reduction visible.
+    const fixedBase = {
+      ...T_GENTLE,
+      thrustPressMinMs: 200,
+      thrustPressMaxMs: 200,
+      thrustPressMaxMsLong: 200,
+    };
+    const governor = new BotInputGovernor(fixedBase, 7);
+    const durations = [0, 1, 2, 3, 4, 5, 6, 7].map(() =>
+      measurePressMs(governor, thrustIntent),
+    );
+    // Every press sits inside the 1–5 % band of the fixed 200 ms base...
+    for (const ms of durations) {
+      expect(ms).toBeGreaterThanOrEqual(200 * 0.95 - DT_MS);
+      expect(ms).toBeLessThanOrEqual(200 * 0.99 + DT_MS);
+    }
+    // ...and the reduction is redrawn each press, so they are not all equal.
+    expect(new Set(durations).size).toBeGreaterThan(1);
+  });
+
+  it('AC3 — continuous thrust has no off-gaps', () => {
+    const governor = new BotInputGovernor(T_GENTLE, 3);
+    for (let i = 0; i < 500; i += 1) {
+      const out = governor.update(thrustIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+      }) as AsteroidsInput;
+      expect(out.forward).toBe(true);
+    }
+  });
+
+  it('AC4 — the gentle bounds are documented tunables with 1 %/5 % defaults', () => {
+    expect(BOT_HUMAN_INPUT_TUNABLES.thrustPressGentleMinPct).toBe(0.01);
+    expect(BOT_HUMAN_INPUT_TUNABLES.thrustPressGentleMaxPct).toBe(0.05);
   });
 });

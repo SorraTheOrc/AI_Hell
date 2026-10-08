@@ -52,6 +52,11 @@
  * changing the chosen target/heading; the ship may overshoot its standoff a
  * little more, which is the deliberate human-feel trade-off.
  *
+ * Each press is then gently shortened by a per-press random factor drawn
+ * uniformly from `[thrustPressGentleMinPct, thrustPressGentleMaxPct]`
+ * (default 1–5 %), making the bot slightly less aggressive on the thrusters
+ * (AH-0MUYRJQE50021T4A).
+ *
  * `PlayScene` never forces a scheme: the demo drives whichever scheme the
  * ship is configured with, so the demo ship looks and handles like the
  * player's ship rather than a four-directional impostor
@@ -120,6 +125,18 @@ export interface BotHumanInputTunables {
    * `longTravelDistance` — so long legs get longer bursts (AC16).
    */
   thrustPressMaxMsLong: number;
+  /**
+   * Minimum fractional reduction (default 0.01 = 1 %) applied to each
+   * forward-thrust press duration to make the demo bot a little gentler
+   * on the thrusters (AH-0MUYRJQE50021T4A).
+   */
+  thrustPressGentleMinPct: number;
+  /**
+   * Maximum fractional reduction (default 0.05 = 5 %) applied to each
+   * forward-thrust press duration to make the demo bot a little gentler
+   * on the thrusters (AH-0MUYRJQE50021T4A).
+   */
+  thrustPressGentleMaxPct: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -130,6 +147,8 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   thrustPressMinMs: 200,
   thrustPressMaxMs: 225,
   thrustPressMaxMsLong: 400,
+  thrustPressGentleMinPct: 0.01,
+  thrustPressGentleMaxPct: 0.05,
 };
 
 /** Default seed for the governor's press-duration RNG (deterministic). */
@@ -270,6 +289,10 @@ export class BotInputGovernor {
 
   /** Per-press duration jitter RNG (seeded for per-run reproducibility). */
   private random: () => number;
+  /** Per-press gentle-reduction RNG — separate stream so the base
+   *  duration sequence is unchanged by the extra draw.
+   */
+  private gentleRandom: () => number;
 
   /** Milliseconds left in the current forward-thrust press (0 = none). */
   private thrustPressRemainingMs = 0;
@@ -282,15 +305,20 @@ export class BotInputGovernor {
   ) {
     this.tunables = { ...BOT_HUMAN_INPUT_TUNABLES, ...tunables };
     this.random = mulberry32(seed);
+    // Separate RNG stream for the gentle reduction so the base-duration
+    // sequence is unchanged (preserves downstream determinism).
+    this.gentleRandom = mulberry32(seed + 1);
   }
 
   /**
    * Re-seeds the per-press duration RNG so a run's press lengths are
    * reproducible (AH-0MUY08V6W001SJJN).  Called by `PlayScene` with the run
-   * seed when the demo starts.
+   * seed when the demo starts.  Also re-seeds the gentle-reduction RNG
+   * (AH-0MUYRJQE50021T4A).
    */
   seed(value: number): void {
     this.random = mulberry32(value);
+    this.gentleRandom = mulberry32(value + 1);
   }
 
   /**
@@ -359,8 +387,11 @@ export class BotInputGovernor {
    * Applies the human-like thrust-press hold (AC15/AC16): once thrust is on
    * it stays on for a duration drawn from
    * `[thrustPressMinMs, thrustPressMaxMs]`, or up to `thrustPressMaxMsLong`
-   * on a long-travel leg, then it follows the live request.  Returns the
-   * effective thrust for this tick.
+   * on a long-travel leg, then it follows the live request.  Each press is
+   * then reduced by a per-press random factor drawn uniformly from
+   * `[thrustPressGentleMinPct, thrustPressGentleMaxPct]` (default 1–5 %)
+   * so the demo bot is slightly gentler on the thrusters (AH-0MUYRJQE50021T4A).
+   * Returns the effective thrust for this tick.
    */
   private resolveThrustPress(
     desiredThrust: boolean,
@@ -375,11 +406,20 @@ export class BotInputGovernor {
       return true;
     }
     if (!desiredThrust) return false;
-    const { thrustPressMinMs, thrustPressMaxMs, thrustPressMaxMsLong } =
-      this.tunables;
+    const {
+      thrustPressMinMs,
+      thrustPressMaxMs,
+      thrustPressMaxMsLong,
+      thrustPressGentleMinPct,
+      thrustPressGentleMaxPct,
+    } = this.tunables;
     const maxMs = longTravel ? thrustPressMaxMsLong : thrustPressMaxMs;
     const span = Math.max(0, maxMs - thrustPressMinMs);
-    this.thrustPressRemainingMs = thrustPressMinMs + this.random() * span;
+    const baseMs = thrustPressMinMs + this.random() * span;
+    const reduction =
+      thrustPressGentleMinPct +
+      this.gentleRandom() * (thrustPressGentleMaxPct - thrustPressGentleMinPct);
+    this.thrustPressRemainingMs = baseMs * (1 - reduction);
     return true;
   }
 

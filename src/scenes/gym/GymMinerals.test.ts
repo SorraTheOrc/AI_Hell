@@ -211,18 +211,20 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     (scene as unknown as { minerals: unknown[] }).minerals.length = 0;
   }
 
-  /** Parks a stationary enemy bullet on the player's current position. */
-  function placeEnemyBulletOnPlayer(scene: GymMinerals): void {
+  /** Parks `count` stationary enemy bullets on the player's current position. */
+  function placeEnemyBulletsOnPlayer(scene: GymMinerals, count = 1): void {
     const player = scene.getPlayer()!;
-    const graphics = scene.add.graphics();
-    graphics.setPosition(player.x, player.y);
-    (scene as unknown as { bullets: FormationSceneBullet[] }).bullets.push({
-      graphics,
-      vx: 0,
-      vy: 0,
-      lifetime: 999,
-      elapsed: 0,
-    });
+    for (let i = 0; i < count; i += 1) {
+      const graphics = scene.add.graphics();
+      graphics.setPosition(player.x, player.y);
+      (scene as unknown as { bullets: FormationSceneBullet[] }).bullets.push({
+        graphics,
+        vx: 0,
+        vy: 0,
+        lifetime: 999,
+        elapsed: 0,
+      });
+    }
   }
 
   /** Grants one effect through the hold-full choice path. */
@@ -285,7 +287,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     ]);
   });
 
-  it('AC2 — P7 granted by the choice teleports on S/↓ and grants P6', async () => {
+  it('AC2 — P7 granted by the choice auto-teleports on danger and grants P6', async () => {
     const scene = await bootMinerals();
     const player = scene.getPlayer()!;
     grantViaChoice(scene, { id: 'teleport', name: 'Teleport', kind: 'powerup' });
@@ -294,17 +296,15 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     expect(registry.hasTeleport()).toBe(true);
 
     // Move off the grid-centre fallback so the safe-spot search must pick a
-    // genuinely different landing position.
-    player.setPosition(300, 400);
+    // genuinely different landing position. `respawn` syncs the internal
+    // movement state so the next tick keeps the ship here.
+    player.respawn(300, 400);
     const beforeX = player.x;
     const beforeY = player.y;
 
-    // Press S (JustDown) and advance one deterministic tick.
-    const key = (
-      scene as unknown as { teleportKey: Phaser.Input.Keyboard.Key | null }
-    ).teleportKey;
-    expect(key).not.toBeNull();
-    (key as unknown as { _justDown: boolean })._justDown = true;
+    // Three parked threats within DANGER_RADIUS → the shared danger feed
+    // selects the stored Teleport and warps — no key input.
+    placeEnemyBulletsOnPlayer(scene, 3);
     scene.tick(0.016);
 
     expect(registry.hasTeleport()).toBe(false);
@@ -317,10 +317,10 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     grantViaChoice(scene, { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' });
 
     const registry = scene.getEffectsRegistry();
-    expect(registry.updateDanger(true, 0.016)).toBe(true);
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
     expect(registry.isPhased).toBe(true);
 
-    placeEnemyBulletOnPlayer(scene);
+    placeEnemyBulletsOnPlayer(scene);
     scene.tick(0.05);
 
     expect(scene.getPlayerHitCount()).toBe(0);
@@ -330,7 +330,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   it('AC3 — P6 phase also passes the player through enemy bodies', async () => {
     const scene = await bootMinerals();
     grantViaChoice(scene, { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' });
-    expect(scene.getEffectsRegistry().updateDanger(true, 0.016)).toBe(true);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.016)).toBe('phase_shift');
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities.find((e) => e.alive)!;
@@ -349,7 +349,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     const registry = scene.getEffectsRegistry();
     expect(registry.isShielded).toBe(true);
 
-    placeEnemyBulletOnPlayer(scene);
+    placeEnemyBulletsOnPlayer(scene);
     scene.tick(0.05);
     expect(scene.getPlayerHitCount()).toBe(0);
     expect(registry.isShielded).toBe(false);
@@ -359,7 +359,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     for (let i = 0; i < 20; i += 1) scene.tick(0.2); // 4 s
     expect(scene.isPlayerInvulnerable()).toBe(false);
 
-    placeEnemyBulletOnPlayer(scene);
+    placeEnemyBulletsOnPlayer(scene);
     scene.tick(0.05);
     expect(scene.getPlayerHitCount()).toBe(1);
   });

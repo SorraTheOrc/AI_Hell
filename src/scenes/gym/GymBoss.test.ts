@@ -30,6 +30,9 @@ import { GymFormationScene } from './core/GymFormationScene';
 import {
   BOSS_PHASE_COUNT,
   BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_MOVE_AMPLITUDE_X,
+  BOSS_MOVE_AMPLITUDE_Y,
+  BOSS_MOVE_PERIOD_MS,
   BOSS_TELEGRAPH_MS,
   BOSS_COLOR,
   BOSS_RADIUS,
@@ -90,9 +93,11 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;
 
-    // Boss is positioned at the configured spawn point.
-    expect(boss.x).toBeCloseTo(BOSS_FORMATION_START_X, 1);
-    expect(boss.y).toBeCloseTo(BOSS_FORMATION_START_Y, 1);
+    // The boss's spawn anchor is the configured formation start; its live
+    // position is the figure-of-eight traced about that anchor
+    // (AH-0MUZMTS8J0029FSS), so assert the anchor rather than the moving x/y.
+    expect(boss.getMoveAnchorX()).toBeCloseTo(BOSS_FORMATION_START_X, 1);
+    expect(boss.getMoveAnchorY()).toBeCloseTo(BOSS_FORMATION_START_Y, 1);
 
     // Body is visible and core is visible.
     expect(boss.bodyVisible).toBe(true);
@@ -343,9 +348,10 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
     const scene = await bootGym();
     const boss = scene.formationBoss;
 
-    // Boss is at the configured spawn position (centre-ish of screen).
-    expect(boss.x).toBeCloseTo(GAME_WIDTH / 2, 0);
-    expect(boss.y).toBeLessThan(GAME_HEIGHT / 2);
+    // Boss is centered on screen (the figure-of-eight anchor is the camera
+    // centre; the live position orbits it).
+    expect(boss.getMoveAnchorX()).toBeCloseTo(GAME_WIDTH / 2, 1);
+    expect(boss.getMoveAnchorY()).toBeLessThan(GAME_HEIGHT / 2);
 
     // Boss doesn't drift (driftSpeed = 0).
     const baseXBefore = scene.formationX;
@@ -775,6 +781,80 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
 
     damageBtn.emit('pointerdown');
     expect(boss.alive).toBe(false);
+  });
+});
+
+describe('GymBoss — figure-of-eight boss movement (AH-0MUZMTS8J0029FSS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('boss-gym-panel')?.remove();
+  });
+
+  async function bootGym(): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    return booted.scene as GymBoss;
+  }
+
+  it('a single tick advances the boss along the shared lemniscate about its anchor', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    const anchorX = boss.getMoveAnchorX();
+    const anchorY = boss.getMoveAnchorY();
+
+    const elapsedBefore = boss.getMoveElapsedMs();
+    scene.tick(0.25); // +250 ms of the 8 s cycle
+
+    const theta =
+      (2 * Math.PI * (elapsedBefore + 250)) / BOSS_MOVE_PERIOD_MS;
+    expect(boss.x).toBeCloseTo(
+      anchorX + BOSS_MOVE_AMPLITUDE_X * Math.sin(theta),
+      3,
+    );
+    expect(boss.y).toBeCloseTo(
+      anchorY + BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta),
+      3,
+    );
+  });
+
+  it('the figure-of-eight is implemented in the shared boss core, not the gym', () => {
+    // `Boss` owns the motion; `GymBoss` must not re-implement it.
+    expect(
+      Object.prototype.hasOwnProperty.call(GymBoss.prototype, '_advanceFigureEight'),
+    ).toBe(false);
+    expect(GymBoss.prototype).toBeInstanceOf(GymFormationScene);
+  });
+
+  it('hit detection uses the boss’s live position after it has moved', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+
+    // Let the boss move away from its anchor, then shoot at its live location.
+    scene.tick(0.5);
+    const hpBefore = boss.getHpFraction();
+    scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(boss.getHpFraction()).toBeLessThan(hpBefore);
+  });
+
+  it('the health bar stays screen-fixed while the boss traces the figure-of-eight', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    const bar = boss.getHealthBarGraphics();
+    const before = [...(bar.commandBuffer as number[])];
+
+    scene.tick(0.5);
+
+    // The bar is a camera-fixed scene child, so its drawn coordinates are
+    // byte-for-byte unchanged even though the boss moved.
+    expect([...(bar.commandBuffer as number[])]).toEqual(before);
+    expect(Math.hypot(
+      boss.x - boss.getMoveAnchorX(),
+      boss.y - boss.getMoveAnchorY(),
+    )).toBeGreaterThan(0);
   });
 });
 

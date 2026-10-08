@@ -411,8 +411,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     // Player bullets: advance + wrap + lifetime expiry (shared helper).
     this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
 
-    // Automatic Phase Shift danger feed (shared), before collision gating.
-    this._updatePhaseShiftAutoTrigger(dt);
+    // Automatic defence danger feed (shared), before collision gating.
+    this._updateAutoDefence(dt);
 
     // Shared collision pass.
     this._handleCollisions();

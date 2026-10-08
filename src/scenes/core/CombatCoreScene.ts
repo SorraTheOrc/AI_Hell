@@ -100,6 +100,7 @@ import {
 } from '../../powerups/mineralScoop';
 import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
+import { setExplosionBeatClock } from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
@@ -859,6 +860,11 @@ export class CombatCoreScene<
     // so without this a restarted run inherits the previous run's beat
     // phase and is not reproducible from its seed.
     this.beatClock.reset();
+    // Route the non-weapon destruction booms onto this shared beat grid
+    // (AH-0MV01HNLU008S5E3): the audio seam schedules them to the next 16th
+    // note of this clock, identically in the game and every gym. A reset
+    // also opens a fresh accent window for the new run.
+    setExplosionBeatClock(this.beatClock);
     // Bind the registry to this scene's live player store, then reset both
     // the timing state and the level store together (AC6). The dynamic
     // resolver means a player created later in `create()` is picked up with
@@ -905,5 +911,8 @@ export class CombatCoreScene<
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
+    // Detach the beat-synced explosion schedule so a stopped scene cannot
+    // leak its clock into the next one (AH-0MV01HNLU008S5E3).
+    setExplosionBeatClock(null);
   }
 }

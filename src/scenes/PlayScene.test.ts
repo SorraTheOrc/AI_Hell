@@ -17,7 +17,7 @@ import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
@@ -37,7 +37,6 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
-  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -626,6 +625,37 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(deathSound).not.toHaveBeenCalled();
     expect(juiceSpy).not.toHaveBeenCalled();
     expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+  });
+
+  it('AC5 — a kill defers only the cue: the boom lands on the beat grid while the death VFX stays immediate', async () => {
+    vi.restoreAllMocks();
+    const plays: Array<{ url: string; delay: number }> = [];
+    effectsModule.setSfxSoundProvider({
+      getAudioContext: () => null,
+      useAudioContext: () => {},
+      play: (url, options) => {
+        plays.push({ url, delay: options?.delay ?? 0 });
+        return { stop: () => {} };
+      },
+      setVolume: () => {},
+      setMuted: () => {},
+      reset: () => {},
+    });
+    const scene = await bootPlay();
+    const clock = scene.getBeatClock();
+    plays.length = 0; // drop any boot-time cues
+    clock.reset();
+    clock.advance(100); // 87.5 ms to the 187.5 ms 16th-note tick
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    // Only the cue is deferred: it is scheduled 87.5 ms out...
+    expect(plays).toHaveLength(1);
+    expect(plays[0].delay).toBeCloseTo(0.0875, 6);
+    // ...while the player-death VFX spawns synchronously on the death frame.
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    effectsModule._resetAudioContextForTests();
   });
 
   it('F7 — SHUTDOWN clears the juice registry (no leak across restart)', async () => {
@@ -1609,9 +1639,15 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
     // The transition is delayed by the victory fireworks hold
-    // (VICTORY_TRANSITION_HOLD_MS); wait past it.
-    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
-    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    // (VICTORY_TRANSITION_HOLD_MS). Advance the Phaser clock deterministically
+    // (stop the live loop and pump `game.step`) rather than awaiting a
+    // wall-clock `setTimeout`, so the delayed `GameOverScene` transition is
+    // reached even under full-suite load (AH-0MUYALJ9S0002XXZ).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → GameOverScene',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
 
@@ -2760,12 +2796,10 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
   function inputState(scene: PlayScene): {
     cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
     wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
-    teleportKey: Phaser.Input.Keyboard.Key | null;
   } {
     return scene as unknown as {
       cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
       wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
-      teleportKey: Phaser.Input.Keyboard.Key | null;
     };
   }
 
@@ -2815,7 +2849,7 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     expect(scene.getPlayerBullets().length).toBeGreaterThan(before);
   });
 
-  it('AC1 — the S/↓ layer-drop key triggers a P7 teleport', async () => {
+  it('AC1 — automatic Teleport fires on danger with no key press', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
@@ -2827,17 +2861,21 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     scene.tick(0.016);
     expect(registry.teleportStacks()).toBe(1);
 
-    // Move off-centre, then simulate the layer-drop key being just-pressed.
-    player.setPosition(300, 400);
+    // Move, then place three hostile bullets within DANGER_RADIUS (40 px) so
+    // the shared danger feed selects the stored Teleport — no key input.
+    // `respawn` syncs the internal movement state so the next tick keeps the
+    // ship here (a bare `setPosition` is overwritten by `physicsTick`).
+    player.respawn(300, 400);
+    for (let i = 0; i < 3; i++) {
+      scene.spawnEnemyBullet(300 + i * 8, 400, 0, 0, 0xff4444, 10);
+    }
     const beforeX = player.x;
     const beforeY = player.y;
-    const { teleportKey } = inputState(scene);
-    expect(teleportKey).not.toBeNull();
-    (teleportKey as unknown as { _justDown: boolean })._justDown = true;
     scene.tick(0.016);
 
     // The warp consumed the stack and moved the ship.
     expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });
 
@@ -3918,9 +3956,16 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     const effects = scene.getVictoryEffects();
     expect(effects.length).toBeGreaterThan(0);
 
-    // Wait for the victory fireworks hold, then the GameOverScene transition
-    // fires SHUTDOWN on PlayScene.
-    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
+    // Advance the Phaser clock deterministically past the victory fireworks
+    // hold; the `GameOverScene` transition then fires SHUTDOWN on PlayScene,
+    // tearing down the celebration. No wall-clock wait, so the assertion
+    // cannot race the delayed transition under full-suite load
+    // (AH-0MUYALJ9S0002XXZ).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → SHUTDOWN teardown',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
 
     expect(scene.getVictoryEffects()).toHaveLength(0);
     for (const effect of effects) {
