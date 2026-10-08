@@ -15,11 +15,15 @@ import {
   ACTION_INTENSITY_CATEGORIES,
   ACTION_INTENSITY_EVENT_TYPES,
   DEFAULT_ACTION_INTENSITY_CONFIG,
+  EventWindowAccumulator,
   computeActionIntensity,
+  computeEventScore,
+  computeEventWindowScore,
   computePresenceScore,
   smoothingAlpha,
   type ActionIntensityConfig,
   type ActionIntensityCounts,
+  type ActionIntensityEvent,
   type ActionIntensityState,
 } from './actionIntensity';
 
@@ -323,5 +327,273 @@ describe('computeActionIntensity — sample shape and layers (AC1)', () => {
 
     expect(second).toEqual(first);
     expect(state.counts).toEqual(counts({ enemies: 2, enemyBullets: 3 }));
+  });
+});
+
+/**
+ * Deterministic (seeded) event sequence for the window tests. Uses a 32-bit
+ * LCG so the sequence is reproducible across runs and platforms; `at` values
+ * are strictly increasing (the accumulator requires non-decreasing time).
+ */
+function seededEventSequence(
+  seed: number,
+  count: number,
+  horizonSeconds: number,
+): ActionIntensityEvent[] {
+  let state = seed >>> 0;
+  const next = (): number => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+
+  const events: ActionIntensityEvent[] = [];
+  const step = horizonSeconds / count;
+  let at = 0;
+  for (let i = 0; i < count; i += 1) {
+    at += step * (0.25 + 1.5 * next());
+    const type =
+      ACTION_INTENSITY_EVENT_TYPES[
+        Math.floor(next() * ACTION_INTENSITY_EVENT_TYPES.length)
+      ];
+    events.push({ type, at });
+  }
+  return events;
+}
+
+describe('computeEventWindowScore — sliding window (AC4)', () => {
+  it('sums the documented event values inside the window', () => {
+    const events: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 0.5 }, // 2
+      { type: 'player_hit', at: 1.0 }, // 20
+      { type: 'powerup_collected', at: 1.5 }, // 1
+      { type: 'enemy_killed', at: 3.0 }, // 2 (outside the t = 1.5 window)
+    ];
+
+    // W = 2 → (1.5 − 2, 1.5] = (−0.5, 1.5] ⇒ 2 + 20 + 1 = 23
+    expect(
+      computeEventWindowScore(events, 1.5, DEFAULT_ACTION_INTENSITY_CONFIG),
+    ).toBe(23);
+  });
+
+  it('excludes an event exactly at the left edge (t − W) and includes one at t', () => {
+    const events: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 0.5 }, // t − W = 0.5 → aged out
+      { type: 'powerup_collected', at: 0.500001 }, // inside
+      { type: 'boss_phase', at: 2.5 }, // at t → inside
+    ];
+
+    // 1 + 5 = 6
+    expect(
+      computeEventWindowScore(events, 2.5, DEFAULT_ACTION_INTENSITY_CONFIG),
+    ).toBe(6);
+  });
+
+  it('returns zero with no events and once every event has aged out', () => {
+    expect(
+      computeEventWindowScore([], 10, DEFAULT_ACTION_INTENSITY_CONFIG),
+    ).toBe(0);
+
+    const events: ActionIntensityEvent[] = [
+      { type: 'player_hit', at: 1 },
+      { type: 'boss_phase', at: 1.5 },
+    ];
+    expect(
+      computeEventWindowScore(events, 4, DEFAULT_ACTION_INTENSITY_CONFIG),
+    ).toBe(0);
+  });
+
+  it('sums a burst of events at the same instant', () => {
+    const burst: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 1 },
+      { type: 'enemy_killed', at: 1 },
+      { type: 'powerup_collected', at: 1 },
+    ];
+
+    expect(
+      computeEventWindowScore(burst, 1, DEFAULT_ACTION_INTENSITY_CONFIG),
+    ).toBe(5);
+  });
+
+  it('ignores events that have not happened yet (at > t)', () => {
+    const events: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 0.5 },
+      { type: 'player_hit', at: 2 }, // future at t = 1
+    ];
+
+    expect(
+      computeEventWindowScore(events, 1, DEFAULT_ACTION_INTENSITY_CONFIG),
+    ).toBe(2);
+  });
+
+  it('uses the configured window width', () => {
+    const config: ActionIntensityConfig = {
+      ...DEFAULT_ACTION_INTENSITY_CONFIG,
+      eventWindowSeconds: 1,
+    };
+    const events: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 0 }, // t − W = 0 → aged out
+      { type: 'enemy_killed', at: 0.5 },
+    ];
+
+    expect(computeEventWindowScore(events, 1, config)).toBe(2);
+  });
+
+  it('matches computeEventScore when the events are already windowed', () => {
+    const events: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 1 },
+      { type: 'wave_clear', at: 1.5 },
+    ];
+
+    expect(computeEventWindowScore(events, 1.5, DEFAULT_ACTION_INTENSITY_CONFIG)).toBe(
+      computeEventScore(events, DEFAULT_ACTION_INTENSITY_CONFIG),
+    );
+  });
+});
+
+describe('EventWindowAccumulator — incremental sliding window (AC4)', () => {
+  it('generates a reproducible seeded event sequence', () => {
+    expect(seededEventSequence(42, 10, 10)).toEqual(
+      seededEventSequence(42, 10, 10),
+    );
+  });
+
+  it('matches the pure window score at every sample of a seeded sequence', () => {
+    const events = seededEventSequence(0x5eed1234, 200, 40);
+    const accumulator = new EventWindowAccumulator();
+    let next = 0;
+
+    for (let t = 0; t <= 45; t += 0.1) {
+      while (next < events.length && events[next].at <= t) {
+        accumulator.push(events[next]);
+        next += 1;
+      }
+      expect(accumulator.scoreAt(t)).toBeCloseTo(
+        computeEventWindowScore(events, t, DEFAULT_ACTION_INTENSITY_CONFIG),
+        9,
+      );
+    }
+  });
+
+  it('evicts an event once it reaches the left edge', () => {
+    const accumulator = new EventWindowAccumulator();
+    accumulator.push({ type: 'player_hit', at: 0 }); // 20
+
+    expect(accumulator.scoreAt(0)).toBe(20);
+    expect(accumulator.scoreAt(1.9)).toBe(20);
+    expect(accumulator.scoreAt(2.0)).toBe(0); // at exactly t − W → evicted
+  });
+
+  it('keeps only the events inside the window', () => {
+    const accumulator = new EventWindowAccumulator();
+    accumulator.push({ type: 'enemy_killed', at: 0 }); // 2
+    accumulator.push({ type: 'player_hit', at: 1 }); // 20
+
+    expect(accumulator.scoreAt(1)).toBe(22);
+    expect(accumulator.scoreAt(2.5)).toBe(20); // enemy at 0 aged out
+    expect(accumulator.scoreAt(3.5)).toBe(0);
+  });
+
+  it('handles a new burst after the queue has fully drained', () => {
+    const accumulator = new EventWindowAccumulator();
+    accumulator.push({ type: 'enemy_killed', at: 0 });
+
+    expect(accumulator.scoreAt(0)).toBe(2);
+    expect(accumulator.scoreAt(5)).toBe(0);
+
+    accumulator.push({ type: 'boss_phase', at: 5 });
+    expect(accumulator.scoreAt(5)).toBe(5);
+  });
+
+  it('resets the running total and the window', () => {
+    const accumulator = new EventWindowAccumulator();
+    accumulator.push({ type: 'player_hit', at: 0 });
+    accumulator.reset();
+
+    expect(accumulator.scoreAt(0)).toBe(0);
+    accumulator.push({ type: 'enemy_killed', at: 0 });
+    expect(accumulator.scoreAt(0)).toBe(2);
+  });
+});
+
+describe('computeActionIntensity — combined raw score R(t) (AC4)', () => {
+  it('combines presence and the windowed event score with k_E', () => {
+    const events: ActionIntensityEvent[] = [
+      { type: 'enemy_killed', at: 1.0 }, // 2
+      { type: 'player_hit', at: 1.5 }, // 20
+    ];
+    const eventScore = computeEventWindowScore(
+      events,
+      1.5,
+      DEFAULT_ACTION_INTENSITY_CONFIG,
+    );
+    expect(eventScore).toBe(22);
+
+    const sample = computeActionIntensity(
+      { counts: counts({ playerBullets: 4, enemies: 6 }), eventScore },
+      DEFAULT_ACTION_INTENSITY_CONFIG,
+    );
+
+    // P = 0.5·4 + 2·6 = 14; R = 14 + 1.0·22 = 36
+    expect(sample.rawScore).toBe(36);
+    expect(sample.intensity).toBeCloseTo(36 / 66, 12);
+  });
+
+  it('honours a custom event blend k_E', () => {
+    const config: ActionIntensityConfig = {
+      ...DEFAULT_ACTION_INTENSITY_CONFIG,
+      eventBlend: 0.5,
+    };
+
+    const sample = computeActionIntensity(
+      { counts: counts({ enemies: 6 }), eventScore: 20 },
+      config,
+    );
+
+    // P = 12; R = 12 + 0.5·20 = 22
+    expect(sample.rawScore).toBe(22);
+  });
+
+  it('adds a pre-windowed events list to a pre-summed event score', () => {
+    const sample = computeActionIntensity(
+      {
+        counts: counts(),
+        eventScore: 10,
+        events: [{ type: 'powerup_collected', at: 1 }],
+      },
+      DEFAULT_ACTION_INTENSITY_CONFIG,
+    );
+
+    // R = 0 + 1.0·(10 + 1) = 11
+    expect(sample.rawScore).toBe(11);
+  });
+
+  it('tracks a seeded sequence through the accumulator into the sample score', () => {
+    const events = seededEventSequence(7, 50, 10);
+    const accumulator = new EventWindowAccumulator();
+    let next = 0;
+    let previousSmoothed: number | undefined;
+
+    for (let t = 0; t <= 12; t += 0.1) {
+      while (next < events.length && events[next].at <= t) {
+        accumulator.push(events[next]);
+        next += 1;
+      }
+
+      const sample = computeActionIntensity(
+        {
+          counts: counts({ enemies: 2, enemyBullets: 3 }),
+          eventScore: accumulator.scoreAt(t),
+          previousSmoothed,
+        },
+        DEFAULT_ACTION_INTENSITY_CONFIG,
+      );
+
+      const presence = 2 * 2 + 1 * 3; // 7
+      expect(sample.rawScore).toBe(
+        presence +
+          computeEventWindowScore(events, t, DEFAULT_ACTION_INTENSITY_CONFIG),
+      );
+      previousSmoothed = sample.smoothed;
+    }
   });
 });

@@ -13,6 +13,10 @@
  *   the discrete-event score over the sliding window, supplied by the caller
  *   either as pre-summed {@link ActionIntensityState.eventScore} or as the
  *   {@link ActionIntensityState.events} observed since the previous sample.
+ *   Two helpers implement the window `E(t) = Σ_{e : t−W < t_e ≤ t} v_e`
+ *   (§6.2): the pure {@link computeEventWindowScore} (for stateless callers
+ *   and tests) and the incremental {@link EventWindowAccumulator} (amortised
+ *   `O(1)` per event, for the telemetry per-tick integration).
  *
  * The combined raw score `R(t) = P(t) + k_E · E(t)` is then normalised with a
  * saturating hyperbola `intensity = R/(R+B)`, smoothed with an exponential
@@ -251,6 +255,97 @@ export function computeEventScore(
     score += config.eventValues[event.type];
   }
   return score;
+}
+
+/**
+ * Layer 2 (sliding window): the event score `E(t)` over the half-open window
+ * `(t − W, t]` (§6.2):
+ *
+ * ```
+ * E(t) = Σ_{e : t−W < t_e ≤ t}  v_e
+ * ```
+ *
+ * The left edge is **exclusive** and the right edge **inclusive**: an event at
+ * exactly `t − W` has aged out, while an event at exactly `t` counts. The
+ * function is pure and `O(events)`; for a per-tick integration that must stay
+ * `O(1)` per event, use {@link EventWindowAccumulator} instead.
+ *
+ * @param events - Candidate events (any order; only those in the window count).
+ * @param currentTime - `t`, in seconds since run start.
+ * @param config - The scoring configuration; defaults to
+ *   {@link DEFAULT_ACTION_INTENSITY_CONFIG}.
+ */
+export function computeEventWindowScore(
+  events: readonly ActionIntensityEvent[],
+  currentTime: number,
+  config: ActionIntensityConfig = DEFAULT_ACTION_INTENSITY_CONFIG,
+): number {
+  const cutoff = currentTime - config.eventWindowSeconds;
+  let score = 0;
+  for (const event of events) {
+    if (event.at > cutoff && event.at <= currentTime) {
+      score += config.eventValues[event.type];
+    }
+  }
+  return score;
+}
+
+/**
+ * Incremental sliding-window accumulator for the event layer (§6.2).
+ *
+ * Feed each discrete event with {@link push} as it happens (events **must** be
+ * pushed in non-decreasing `at` order) and read the windowed score with
+ * {@link scoreAt}, which also evicts events that have aged out. Each event is
+ * pushed and evicted at most once, so the accumulator is `O(1)` amortised per
+ * event and holds only the events currently inside the window.
+ *
+ * Like the rest of the module it is deterministic and introduces no RNG; the
+ * telemetry integration owns one instance per run.
+ */
+export class EventWindowAccumulator {
+  private readonly config: ActionIntensityConfig;
+  private readonly events: ActionIntensityEvent[] = [];
+  /** Index of the oldest live event; avoids `Array#shift`'s `O(n)` copy. */
+  private head = 0;
+  private total = 0;
+
+  constructor(config: ActionIntensityConfig = DEFAULT_ACTION_INTENSITY_CONFIG) {
+    this.config = config;
+  }
+
+  /** Adds an event; it counts until it ages out of the window. */
+  push(event: ActionIntensityEvent): void {
+    this.events.push(event);
+    this.total += this.config.eventValues[event.type];
+  }
+
+  /**
+   * Evicts aged-out events and returns `E(t)` for `currentTime = t`. Call
+   * with a non-decreasing `t`; an event is evicted once `t − W >= t_e`.
+   */
+  scoreAt(currentTime: number): number {
+    const cutoff = currentTime - this.config.eventWindowSeconds;
+    while (
+      this.head < this.events.length &&
+      this.events[this.head].at <= cutoff
+    ) {
+      this.total -= this.config.eventValues[this.events[this.head].type];
+      this.head += 1;
+    }
+    if (this.head > 0 && this.head === this.events.length) {
+      // The queue has fully drained; reclaim it for the next burst.
+      this.events.length = 0;
+      this.head = 0;
+    }
+    return this.total;
+  }
+
+  /** Drops all events and resets the running total to zero. */
+  reset(): void {
+    this.events.length = 0;
+    this.head = 0;
+    this.total = 0;
+  }
 }
 
 /**
