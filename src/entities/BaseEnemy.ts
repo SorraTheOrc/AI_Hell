@@ -242,7 +242,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
       this.y,
       this._color,
       this._size,
-      { patterns: resolvePatterns(this.getExplosionPatternName()), scale },
+      { patterns: resolvePatterns(this.getExplosionPatternName()), scale, kind: 'enemy' },
     );
     if (handle) this.explosionHandles.push(handle);
   }

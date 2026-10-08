@@ -616,6 +616,7 @@ export class CombatCoreScene<
     spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
       patterns: resolvePatterns('player'),
       registry: this.playerExplosions,
+      kind: 'player',
     });
   }
 

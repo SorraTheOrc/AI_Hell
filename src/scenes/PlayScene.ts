@@ -79,6 +79,7 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import { getExplosionVfxCounts } from '../vfx/explosionParticles';
 import {
   ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
   spawnVictoryFireworks,
@@ -2956,6 +2957,7 @@ export class PlayScene extends CombatScene<
   /** The non-snapshot run state the tick vector carries (AC1). */
   private _telemetryExtras(): RunTelemetryExtras {
     const player = this.player;
+    const explosions = getExplosionVfxCounts();
     return {
       heading: player?.getHeading() ?? 0,
       lives: this.gameState.lives,
@@ -2964,6 +2966,9 @@ export class PlayScene extends CombatScene<
       mineralCapacity: this.gameState.mineralCapacity,
       weaponLevels: player?.getWeaponLevels() ?? [],
       powerUpLevels: player?.getPowerUpLevels() ?? [],
+      enemyExplosions: explosions.enemy,
+      bossExplosions: explosions.boss,
+      playerExplosions: explosions.player,
     };
   }
 

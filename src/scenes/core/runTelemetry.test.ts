@@ -138,6 +138,21 @@ describe('actionIntensityCountsFromState (AH-0MUZQEDW9002KHRN, AC3)', () => {
       bosses: 1,
     });
   });
+
+  it('carries the shared explosion-VFX registry counts into the breakdown (AC7)', () => {
+    const state = buildRunTelemetryState(SNAPSHOT, {
+      ...EXTRAS,
+      enemyExplosions: 2,
+      bossExplosions: 1,
+      playerExplosions: 1,
+    });
+
+    expect(actionIntensityCountsFromState(state)).toMatchObject({
+      enemyExplosions: 2,
+      bossExplosions: 1,
+      playerExplosions: 1,
+    });
+  });
 });
 
 describe('buildRunTelemetryState (AC1, AC6)', () => {

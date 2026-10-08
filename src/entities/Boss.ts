@@ -873,7 +873,7 @@ export class Boss extends Phaser.GameObjects.Container {
       this.y,
       BOSS_COLOR,
       BOSS_RADIUS,
-      { patterns: resolvePatterns('boss') },
+      { patterns: resolvePatterns('boss'), kind: 'boss' },
     );
     if (handle) this.explosionHandles.push(handle);
   }

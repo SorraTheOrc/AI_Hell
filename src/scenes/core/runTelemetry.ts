@@ -215,6 +215,16 @@ export interface RunTelemetryState {
     readonly timeLimit: number;
   } | null;
   /**
+   * Live per-kind explosion-VFX counts (§6.1 `enemyExplosions`,
+   * `bossExplosions`, `playerExplosions`), read from the single shared VFX
+   * registry (AH-0MUZQGRQR0086NP6, AC7) so a category is never double-counted.
+   */
+  readonly explosions: {
+    readonly enemy: number;
+    readonly boss: number;
+    readonly player: number;
+  };
+  /**
    * Per-tick action-intensity metric (§7.1 of
    * `docs/dev/action-intensity.md`).
    *
@@ -238,6 +248,14 @@ export interface RunTelemetryExtras {
   readonly mineralCapacity: number;
   readonly weaponLevels: readonly RunTelemetryLevel[];
   readonly powerUpLevels: readonly RunTelemetryLevel[];
+  /**
+   * Live explosion-VFX counts from the shared registry
+   * (`getExplosionVfxCounts()`, AH-0MUZQGRQR0086NP6). Optional; absent means
+   * zero, so call sites that predate the registry keep working.
+   */
+  readonly enemyExplosions?: number;
+  readonly bossExplosions?: number;
+  readonly playerExplosions?: number;
 }
 
 /**
@@ -321,6 +339,11 @@ export function buildRunTelemetryState(
           timeLimit: snapshot.wave.timeLimit,
         }
       : null,
+    explosions: {
+      enemy: extras.enemyExplosions ?? 0,
+      boss: extras.bossExplosions ?? 0,
+      player: extras.playerExplosions ?? 0,
+    },
     actionIntensity: null,
   };
 }
@@ -358,9 +381,9 @@ export function actionIntensityCountsFromState(
     enemies,
     asteroids,
     drops: state.drops.length,
-    enemyExplosions: 0,
-    bossExplosions: 0,
-    playerExplosions: 0,
+    enemyExplosions: state.explosions.enemy,
+    bossExplosions: state.explosions.boss,
+    playerExplosions: state.explosions.player,
     bosses: state.boss?.alive ? 1 : 0,
   };
 }
