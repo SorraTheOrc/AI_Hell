@@ -1,0 +1,228 @@
+# AI Hell cue: aihell-defeat-sting — Defeat sting — five-note descent, sinking drone and LP rumble tail.
+version: "0.1"
+meta:
+  name: aihell-defeat-sting
+  description: Defeat sting — five-note descent, sinking drone and LP rumble tail.
+  category: AIHell
+  tags:
+    - defeat
+    - sting
+  duration: 2.9
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 392
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 392
+        - kind: exponentialRamp
+          time: 0.55
+          value: 392
+  e0:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  v1:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 349.23
+    automation:
+      frequency:
+        - kind: set
+          time: 0.3
+          value: 349.23
+        - kind: exponentialRamp
+          time: 0.85
+          value: 349.23
+  g1:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.3
+          value: 0
+        - kind: linearRamp
+          time: 0.304
+          value: 0.14
+        - kind: exponentialRamp
+          time: 0.85
+          value: 0.0001
+  v2:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 293.66
+    automation:
+      frequency:
+        - kind: set
+          time: 0.6
+          value: 293.66
+        - kind: exponentialRamp
+          time: 1.15
+          value: 293.66
+  g2:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.6
+          value: 0
+        - kind: linearRamp
+          time: 0.604
+          value: 0.14
+        - kind: exponentialRamp
+          time: 1.15
+          value: 0.0001
+  v3:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 246.94
+    automation:
+      frequency:
+        - kind: set
+          time: 0.9
+          value: 246.94
+        - kind: exponentialRamp
+          time: 1.45
+          value: 246.94
+  g3:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.9
+          value: 0
+        - kind: linearRamp
+          time: 0.904
+          value: 0.14
+        - kind: exponentialRamp
+          time: 1.45
+          value: 0.0001
+  v4:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 196
+    automation:
+      frequency:
+        - kind: set
+          time: 1.2
+          value: 196
+        - kind: exponentialRamp
+          time: 1.75
+          value: 196
+  g4:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.2
+          value: 0
+        - kind: linearRamp
+          time: 1.204
+          value: 0.14
+        - kind: exponentialRamp
+          time: 1.75
+          value: 0.0001
+  v5:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 98
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 98
+        - kind: exponentialRamp
+          time: 2.2
+          value: 73.42
+  e5:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g5:
+    kind: gain
+    params:
+      gain: 0.1
+  v6:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f6:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 280
+      Q: 1
+  g6:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 1.2
+          value: 0
+        - kind: linearRamp
+          time: 1.204
+          value: 0.08
+        - kind: exponentialRamp
+          time: 2.6
+          value: 0.0001
+  mix:
+    kind: gain
+    params:
+      gain: 0.7
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, g1, mix]
+  - chain: [v2, g2, mix]
+  - chain: [v3, g3, mix]
+  - chain: [v4, g4, mix]
+  - chain: [v5, e5, g5, mix]
+  - chain: [v6, f6, g6, mix]
+  - from: mix
+    to: out

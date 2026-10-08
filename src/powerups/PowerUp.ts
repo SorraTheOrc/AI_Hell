@@ -20,7 +20,6 @@
 
 import {
   PowerUpEntry,
-  PowerUpType,
   getPowerUpById,
   PowerUpId,
 } from './types';
@@ -83,8 +82,8 @@ export enum PowerUpState {
 // ── Effect returned on collection ───────────────────────────────────
 
 export interface PowerUpEffect {
-  /** The type of effect applied. */
-  type: PowerUpType;
+  /** The power-up ID that produced this effect. */
+  type: PowerUpId;
   /** The power-up ID that produced this effect. */
   id: string;
   /** Duration in seconds for timed effects (undefined for permanent). */
@@ -117,7 +116,7 @@ export interface PowerUpEffect {
  * applies no effect (AC5).
  */
 export class PowerUp {
-  /** The power-up ID (e.g. "P5"). */
+  /** The power-up ID (e.g. "speed_boost"). */
   readonly id: string;
 
   /** The current phase of the lifecycle. */
@@ -224,7 +223,7 @@ export class PowerUp {
 
     const entry = getPowerUpById(this.id as PowerUpEntry['id']);
     const effect: PowerUpEffect = {
-      type: entry.type,
+      type: this.id as PowerUpId,
       id: this.id,
       data: {},
     };

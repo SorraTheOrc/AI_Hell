@@ -1,0 +1,318 @@
+/**
+ * Read-only bot snapshot — type definition and builder.
+ *
+ * The bot decision logic (`decideBotIntent`) is a pure function over a
+ * `BotSnapshot` so it can be unit-tested without a browser, a Phaser scene
+ * or any wall-clock state. This module is the adapter between the live
+ * `PlayScene` and that pure decision layer: `buildBotSnapshot(scene)` reads
+ * the scene's existing public getters and copies the relevant state into a
+ * frozen, plain-object snapshot.
+ *
+ * ## Design
+ *
+ * - The snapshot is a **deep-frozen** plain object (AC4): neither the
+ *   snapshot nor its nested arrays/entries can be mutated after
+ *   construction, so the decision layer cannot accidentally write back into
+ *   live game state.
+ * - The builder depends on a minimal **structural** scene interface
+ *   (`BotSnapshotScene`) rather than `PlayScene` itself. `PlayScene`
+ *   satisfies it via its existing getters, and tests can pass lightweight
+ *   stubs instead of booting Phaser (AC3).
+ * - `PlayScene` is wired to the builder in a later child; this module does
+ *   not import `PlayScene` (avoiding a scene → AI → scene import cycle).
+ *
+ * @module src/ai/botSnapshot
+ */
+
+/** Discriminator stored on every snapshot mineral entry (AC1). */
+export const BOT_MINERAL_TYPE = 'mineral';
+
+// ── Snapshot shape (consumed by the pure decision logic) ─────────────
+
+/** An immutable 2-D point. */
+export interface BotVec2 {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Player position and velocity. */
+export interface BotPlayer {
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly vy: number;
+}
+
+/** A single enemy (or asteroid) and its threat-relevant state. */
+export interface BotEnemy {
+  readonly x: number;
+  readonly y: number;
+  readonly alive: boolean;
+  /** Archetype key, e.g. `'scout'`, `'diver'`, `'asteroid'`. */
+  readonly archetype: string;
+  /**
+   * Whether the enemy is inside a fire "tell" (advance cue) window and is
+   * therefore about to shoot.  Exposed by the firing archetypes that use a
+   * tell (Scout, Phaser); absent for enemies that fire without a tell
+   * (Diver, Tank) and for non-firing entities.  The bot uses this to steer
+   * off an aimed shot's line before it is fired (best-effort
+   * fire-pattern avoidance).
+   */
+  readonly isTelling?: boolean;
+}
+
+/** An in-flight projectile with position and velocity. */
+export interface BotBullet {
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly vy: number;
+}
+
+/** A live power-up / weapon drop. */
+export interface BotDrop {
+  readonly x: number;
+  readonly y: number;
+  /** Drop id, e.g. `'shield'`, `'spread'`. */
+  readonly type: string;
+}
+
+/** A live mineral collectable. */
+export interface BotMineral {
+  readonly x: number;
+  readonly y: number;
+  /** Mineral discriminator (currently always {@link BOT_MINERAL_TYPE}). */
+  readonly type: string;
+}
+
+/** The Central AI boss and its current phase. */
+export interface BotBoss {
+  readonly x: number;
+  readonly y: number;
+  readonly alive: boolean;
+  readonly phase: number;
+}
+
+/**
+ * The active wave's time-limit state.
+ *
+ * Regular waves run against a countdown ({@link WAVE_TIME_LIMIT_SECONDS} in
+ * the game); when it expires the surviving enemies carry over into the next
+ * wave, so the bot uses the remaining time to prioritise clearing them.
+ */
+export interface BotWave {
+  /** Whether a timed wave is currently counting down. */
+  readonly active: boolean;
+  /** Seconds left before the wave-time limit carries survivors over. */
+  readonly timeRemaining: number;
+  /** The full wave time limit (seconds). */
+  readonly timeLimit: number;
+}
+
+/**
+ * The complete read-only game state the bot decides from. Every field is
+ * `readonly`; at runtime the object is deep-frozen by
+ * {@link buildBotSnapshot} (AC4).
+ */
+export interface BotSnapshot {
+  readonly player: BotPlayer | null;
+  readonly enemies: readonly BotEnemy[];
+  readonly enemyBullets: readonly BotBullet[];
+  readonly playerBullets: readonly BotBullet[];
+  readonly drops: readonly BotDrop[];
+  readonly minerals: readonly BotMineral[];
+  readonly boss: BotBoss | null;
+  readonly aliveCount: number;
+  /**
+   * The active timed wave, or `null` when no wave timer is running (boss
+   * fights, transitions, or between waves).
+   */
+  readonly wave: BotWave | null;
+  /**
+   * The per-run RNG seed (AH-0MUY08V6W001SJJN AC4), so telemetry and the
+   * bot layer can correlate observations with a reproducible run.
+   */
+  readonly runSeed: number;
+}
+
+// ── Structural scene seam (PlayScene satisfies this) ─────────────────
+
+/** Minimal player source: position plus the scene's movement state seam. */
+export interface BotPlayerSource {
+  readonly x: number;
+  readonly y: number;
+  getMovementState(): { readonly x: number; readonly y: number; readonly vx: number; readonly vy: number };
+}
+
+/** Minimal enemy source (a `BaseEnemy`/`EnemyEntity` satisfies this). */
+export interface BotEnemySource {
+  readonly x: number;
+  readonly y: number;
+  readonly alive: boolean;
+  readonly archetype: string;
+  /** Present on tell-using archetypes (Scout, Phaser); see {@link BotEnemy.isTelling}. */
+  readonly isTelling?: boolean;
+}
+
+/** Minimal enemy-bullet source: position lives on the drawn `graphics`. */
+export interface BotEnemyBulletSource {
+  readonly graphics: { readonly x: number; readonly y: number };
+  readonly vx: number;
+  readonly vy: number;
+}
+
+/** Minimal player-bullet source. */
+export interface BotPlayerBulletSource {
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly vy: number;
+}
+
+/** Minimal drop source. */
+export interface BotDropSource {
+  readonly x: number;
+  readonly y: number;
+  readonly dropId: string;
+}
+
+/** Minimal mineral source. */
+export interface BotMineralSource {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Minimal boss source. */
+export interface BotBossSource {
+  readonly x: number;
+  readonly y: number;
+  readonly alive: boolean;
+}
+
+/** Minimal wave-timer source (satisfied by `PlayScene.getWaveState`). */
+export interface BotWaveSource {
+  readonly active: boolean;
+  readonly timeRemaining: number;
+  readonly timeLimit: number;
+}
+
+/**
+ * The slice of the owning scene the snapshot builder reads. `PlayScene`
+ * satisfies it through its existing public getters; tests provide stubs.
+ */
+export interface BotSnapshotScene {
+  getPlayer(): BotPlayerSource | null;
+  getBoss(): BotBossSource | null;
+  getBossPhase(): number;
+  getEnemies(): readonly BotEnemySource[];
+  getEnemyBullets(): readonly BotEnemyBulletSource[];
+  getPlayerBullets(): readonly BotPlayerBulletSource[];
+  getDrops(): readonly BotDropSource[];
+  getMinerals(): readonly BotMineralSource[];
+  getAliveCount(): number;
+  /** The active timed wave's state (satisfied by `PlayScene.getWaveState`). */
+  getWaveState(): BotWaveSource;
+  /** The current run's seed (satisfied by `PlayScene.getRunSeed`). */
+  getRunSeed(): number;
+}
+
+// ── Builder ──────────────────────────────────────────────────────────
+
+/**
+ * Builds a deep-frozen {@link BotSnapshot} from the scene's existing
+ * read-only getters (AC2). The source scene is never mutated: every nested
+ * array and entry in the result is a fresh plain object.
+ *
+ * @param scene — a `PlayScene` (or a structural stub in tests).
+ */
+export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
+  const playerSource = scene.getPlayer();
+  const bossSource = scene.getBoss();
+
+  const player: BotPlayer | null = playerSource
+    ? copyMovement(playerSource.getMovementState())
+    : null;
+
+  const boss: BotBoss | null = bossSource
+    ? {
+        x: bossSource.x,
+        y: bossSource.y,
+        alive: bossSource.alive,
+        phase: scene.getBossPhase(),
+      }
+    : null;
+
+  return deepFreeze({
+    player,
+    enemies: scene.getEnemies().map((enemy) => ({
+      x: enemy.x,
+      y: enemy.y,
+      alive: enemy.alive,
+      archetype: enemy.archetype,
+      // Carry the tell flag only when the source exposes it, so snapshots
+      // from non-tell archetypes keep their original shape.
+      ...(enemy.isTelling !== undefined ? { isTelling: enemy.isTelling } : {}),
+    })),
+    enemyBullets: scene.getEnemyBullets().map((bullet) => ({
+      x: bullet.graphics.x,
+      y: bullet.graphics.y,
+      vx: bullet.vx,
+      vy: bullet.vy,
+    })),
+    playerBullets: scene.getPlayerBullets().map((bullet) => ({
+      x: bullet.x,
+      y: bullet.y,
+      vx: bullet.vx,
+      vy: bullet.vy,
+    })),
+    drops: scene.getDrops().map((drop) => ({
+      x: drop.x,
+      y: drop.y,
+      type: drop.dropId,
+    })),
+    minerals: scene.getMinerals().map((mineral) => ({
+      x: mineral.x,
+      y: mineral.y,
+      type: BOT_MINERAL_TYPE,
+    })),
+    boss,
+    aliveCount: scene.getAliveCount(),
+    wave: copyWave(scene.getWaveState()),
+    runSeed: scene.getRunSeed(),
+  });
+}
+
+/** Copies the wave-timer state into a plain `BotWave` object. */
+function copyWave(source: BotWaveSource): BotWave {
+  return {
+    active: source.active,
+    timeRemaining: source.timeRemaining,
+    timeLimit: source.timeLimit,
+  };
+}
+
+/** Copies the movement state into a plain `BotPlayer` object. */
+function copyMovement(state: {
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly vy: number;
+}): BotPlayer {
+  return { x: state.x, y: state.y, vx: state.vx, vy: state.vy };
+}
+
+/**
+ * Recursively freezes an object graph (the snapshot, its arrays and the
+ * plain entries inside them). Cycles are impossible here — the builder
+ * constructs a fresh tree — but `Object.isFrozen` guards re-freezing in
+ * case a future change shares a subtree.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      deepFreeze((value as Record<string, unknown>)[key]);
+    }
+  }
+  return value;
+}

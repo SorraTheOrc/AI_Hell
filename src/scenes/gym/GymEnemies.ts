@@ -171,7 +171,7 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     // major-explosion cue + limiter on expiry.
     timeoutDuration: key === GYM_ENEMIES_BOSS_KEY ? undefined : WAVE_TIME_LIMIT_SECONDS,
     // Opt-in power-up layer: one drop at a time on the rules interval,
-    // weighted-random ID (P3–P9 plus weapon drops) and
+    // weighted-random ID (Shield–Magnet plus weapon drops) and
     // enemy/player-avoiding placement.
     powerUps: {},
     createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>

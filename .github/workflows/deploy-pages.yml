@@ -29,11 +29,28 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      # ToneForge is a required `file:../ToneForge` dependency, so the pinned
+      # sibling checkout must exist before `npm ci` resolves it. Its CLI runs
+      # from source via tsx (a devDependency), so install the sibling's own
+      # dependencies as well; otherwise the build-time render step cannot run.
+      - name: Clone pinned ToneForge
+        run: |
+          revision="$(node -p "require('./audio/toneforge/pin.json').revision")"
+          git clone --quiet https://github.com/TheWizardsCode/ToneForge.git ../ToneForge
+          git -C ../ToneForge checkout --quiet "$revision"
+          npm ci --prefix ../ToneForge
+
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify audio assets
+        run: npm run build-audio:verify
+
       - name: Build
         run: npm run build
+
+      - name: Bundle hygiene check
+        run: npm run check-bundle
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

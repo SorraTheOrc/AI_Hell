@@ -927,7 +927,7 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
-          spawner: new RoundRobinSpawner<PowerUpId>(['P3', 'P4', 'P6', 'P7']),
+          spawner: new RoundRobinSpawner<PowerUpId>(['shield', 'bomb', 'phase_shift', 'teleport']),
           placement: new RandomAvoidingPlacement({ rng: createSeededRng(1) }),
           spawnInterval: INTERVAL,
         };
@@ -1089,7 +1089,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
     booted = null;
   });
 
-  /** Boots GymEnemies whose first drop lands on the ship and is a P8. */
+  /** Boots GymEnemies whose first drop lands on the ship and is a Extra Life. */
   function makeCollectScene(enemyKey: string): typeof Phaser.Scene {
     const atPlayer: PowerUpPlacement = {
       place: (context) => ({ x: context.player.x, y: context.player.y }),
@@ -1098,7 +1098,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
-          spawner: new RoundRobinSpawner<PowerUpId>(['P8']),
+          spawner: new RoundRobinSpawner<PowerUpId>(['extra_life']),
           placement: atPlayer,
           spawnInterval: 1000,
         };
@@ -1114,7 +1114,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
     booted = await bootScene([makeCollectScene(GYM_ENEMIES_DEFAULT_KEY)]);
     const scene = booted.scene as unknown as GymEnemies;
 
-    // The boot loop advances the drop past the 3% threshold, so the P8
+    // The boot loop advances the drop past the 3% threshold, so the Extra Life
     // spawned on the ship is collected: lives go 3 → 4 and the HUD is shown.
     expect(scene.getHUD()).not.toBeNull();
     expect(scene.getEffectsRegistry().lives()).toBe(4);
@@ -1386,7 +1386,7 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
 /**
  * Regression for AH-0MUHM66ES0027QQV on the real reusable enemy gym route:
  * the Diver is an `enemyKey` routed to `GymEnemies`, which inherits the
- * (previously missing) P3/P6 hit-gating. These tests prove the effects gate
+ * (previously missing) Shield/Phase Shift hit-gating. These tests prove the effects gate
  * a hit on the real scene, not just the stub base.
  */
 describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route (AH-0MUHM66ES0027QQV)', () => {
@@ -1441,7 +1441,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
   }
 
   it('AC1 — collecting P6 in the diver gym phases the player through an enemy bullet', async () => {
-    booted = await bootScene([makeGatedScene('diver', 'P6')]);
+    booted = await bootScene([makeGatedScene('diver', 'phase_shift')]);
     const scene = booted.scene as unknown as GymEnemies;
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
@@ -1461,7 +1461,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
   });
 
   it('AC2 — collecting P3 in the diver gym absorbs the next enemy bullet', async () => {
-    booted = await bootScene([makeGatedScene('diver', 'P3')]);
+    booted = await bootScene([makeGatedScene('diver', 'shield')]);
     const scene = booted.scene as unknown as GymEnemies;
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
@@ -1497,8 +1497,8 @@ describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
     const scene = booted.scene as GymEnemies;
     const registry = scene.getEffectsRegistry();
 
-    registry.applyCollect('P9', true);
-    registry.applyCollect('P3', true);
+    registry.applyCollect('magnet', true);
+    registry.applyCollect('shield', true);
     registry.applyWeapon('dual', true);
     expect(registry.magnetStacks()).toBe(1);
     expect(registry.isShielded).toBe(true);

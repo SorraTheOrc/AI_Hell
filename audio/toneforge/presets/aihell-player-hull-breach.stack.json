@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "name": "aihell-player-hull-breach",
+  "description": "Player hull breach \u2014 layered impact crack, rumbling body and debris tail (mirrors the original thump + body + HP-noise-tail synthesis).",
+  "layers": [
+    {
+      "recipe": "slam-transient",
+      "startTime": 0,
+      "gain": 0.4
+    },
+    {
+      "recipe": "rumble-body",
+      "startTime": 0.005,
+      "gain": 0.3
+    },
+    {
+      "recipe": "debris-tail",
+      "startTime": 0.05,
+      "gain": 0.22
+    }
+  ]
+}

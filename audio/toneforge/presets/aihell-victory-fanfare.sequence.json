@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "name": "aihell-victory-fanfare",
+  "description": "Victory fanfare \u2014 success accent, full fanfare and coin cascade (two-phrase fanfare character).",
+  "events": [
+    {
+      "time": 0,
+      "event": "card-success",
+      "seedOffset": 0,
+      "gain": 0.5
+    },
+    {
+      "time": 0.3,
+      "event": "card-victory-fanfare",
+      "seedOffset": 1,
+      "gain": 0.6
+    },
+    {
+      "time": 0.9,
+      "event": "card-coin-collect-hybrid",
+      "seedOffset": 2,
+      "gain": 0.45
+    }
+  ]
+}

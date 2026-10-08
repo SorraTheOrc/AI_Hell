@@ -1,0 +1,52 @@
+# AI Hell cue: aihell-diver-dive-loop — Diver dive — loopable bandpass noise sweep 300 to 900 Hz, ~2 s.
+version: "0.1"
+meta:
+  name: aihell-diver-dive-loop
+  description: Diver dive — loopable bandpass noise sweep 300 to 900 Hz, ~2 s.
+  category: AIHell
+  tags:
+    - diver
+    - dive
+    - loop
+  duration: 2
+nodes:
+  v0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f0:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 300
+      Q: 0.6
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 300
+        - kind: exponentialRamp
+          time: 2
+          value: 900
+  e0:
+    kind: envelope
+    params:
+      attack: 0.05
+      decay: 0
+      sustain: 1
+      release: 0.1
+  g0:
+    kind: gain
+    params:
+      gain: 0.1
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, f0, e0, g0, mix]
+  - from: mix
+    to: out

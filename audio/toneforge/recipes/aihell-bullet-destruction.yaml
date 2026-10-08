@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-bullet-destruction — Player bullet destroys an enemy bullet — square tick 1400 to 900 Hz.
+version: "0.1"
+meta:
+  name: aihell-bullet-destruction
+  description: Player bullet destroys an enemy bullet — square tick 1400 to 900 Hz.
+  category: AIHell
+  tags:
+    - bullet
+    - destruction
+  duration: 0.07
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 1400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1400
+        - kind: exponentialRamp
+          time: 0.068
+          value: 900
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.064
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

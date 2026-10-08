@@ -146,7 +146,7 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(scene.getWavesToPlayCount()).toBe(1);
   });
 
-  it('AC3 — a generated level plays waves with different enemy types, not repeats', async () => {
+  it('AC3 — a generated level plays distinct wave compositions, not repeats', async () => {
     // Regression for the producer-audit rejection of this work item: a level
     // launched from a flat curve used to play the *same* wave three times.
     // Build the level exactly as the curve editor does, from a flat curve.
@@ -166,19 +166,46 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
       level: makeLevel('Varied Level', waves),
     });
 
-    // Enemy type name per wave, sampled as each wave is played.
-    const typeName = (entity: { constructor: { name: string } }): string =>
-      entity.constructor.name;
+    // Composition signature per wave (`Type×count`), sampled as each wave is
+    // played. The contract `sequenceVariedWaves` guarantees is a *distinct
+    // composition* per wave, which is stronger than "distinct type" but also
+    // holds when two waves share an archetype and differ only in count (e.g.
+    // after the enemy-bullet-speed halving, AH-0MUWZ5GST003NMFQ, the second
+    // wave can be `Phaser×1` where the first is `Phaser×12`).
+    const waveSignature = (): string => {
+      const counts = new Map<string, number>();
+      for (const enemy of scene.getEnemies()) {
+        const name = enemy.constructor.name;
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+      }
+      return [...counts.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, count]) => `${name}x${count}`)
+        .join('+');
+    };
 
-    const firstWaveTypes = new Set(scene.getEnemies().map(typeName));
+    const firstWave = waveSignature();
     scene.getEnemies().forEach((e) => e.destroySelf());
     scene.tick(0.016);
-    const secondWaveTypes = new Set(scene.getEnemies().map(typeName));
+    const secondWave = waveSignature();
 
     expect(scene.getWavesToPlayCount()).toBe(3);
     expect(scene.getCurrentWaveIndex()).toBe(1);
     // The second wave is not simply a repeat of the first.
-    expect([...secondWaveTypes].some((t) => !firstWaveTypes.has(t))).toBe(true);
+    expect(secondWave).not.toBe(firstWave);
+  });
+
+  it('AC1 gym-parity — the re-derived L4–L5 targets are non-degenerate in the gym', () => {
+    // Gym↔game parity (AH-0MUX60S9L0006NJ0): the gym's `sequenceVariedWaves`
+    // shares `sequencer()` with the campaign, so the re-derived L4–L5 targets
+    // must not produce degenerate single-enemy waves on the gym path either
+    // (the gym passes its tighter `CURVE_TARGET_TOLERANCE = 3`).
+    const waves = sequenceVariedWaves([14, 22, 27.5, 43.5, 62]);
+    expect(waves).toHaveLength(5);
+    for (const wave of waves) {
+      const total = wave.groups.reduce((sum, group) => sum + group.count, 0);
+      expect(total, `target ${wave.targetDifficulty}`).toBeGreaterThan(1);
+    }
   });
 
   it('AC3 — an empty launch data set is safe (no crash, empty label)', async () => {

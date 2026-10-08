@@ -7,7 +7,7 @@
  * serialisable for the leaderboard stub (AH-0MU6VSKZT006HBTR).
  *
  * Default values:
- * - lives: 3 (up to 5 with P8 Extra Life power-up)
+ * - lives: 3 (up to 5 with Extra Life power-up)
  * - score: 0 (increments on enemy/boss destruction)
  * - level: 1–5 (boss triggered after level 5)
  * - minerals: 0 (run-scoped ship's hold; first-hold capacity 5, doubling
@@ -32,7 +32,7 @@ export type GameSessionState = 'menu' | 'playing' | 'gameover';
 /** Default number of lives the player starts with. */
 export const DEFAULT_LIVES = 3;
 
-/** Maximum number of lives (capped by P8 Extra Life stacking). */
+/** Maximum number of lives (capped by Extra Life stacking). */
 export const MAX_LIVES = 5;
 
 /** Minimum level number. */
@@ -49,6 +49,14 @@ export const BOSS_LEVEL = MAX_LEVEL + 1;
 
 /** Starting score. */
 export const DEFAULT_SCORE = 0;
+
+/**
+ * Placeholder seed used before a run's seed is assigned. A `GameState`
+ * constructed stand-alone (e.g. for leaderboard display) carries this
+ * value; `PlayScene` assigns the per-run seed via {@link GameState.runSeed}
+ * at scene start (AH-0MUY08V6W001SJJN).
+ */
+export const DEFAULT_RUN_SEED = 0;
 
 // ── GameState class ───────────────────────────────────────────────────
 
@@ -67,6 +75,13 @@ export class GameState {
   bossDefeated: boolean;
   /** Current game state (menu / playing / gameover). */
   gameState: GameSessionState;
+  /**
+   * The per-run RNG seed (AH-0MUY08V6W001SJJN). `PlayScene` assigns the
+   * seed for the current run before spawning anything, so the run is
+   * reproducible and the seed can be recorded with telemetry. Owned by the
+   * run, not reset by {@link startGame} — callers set it per run.
+   */
+  runSeed: number;
 
   // ── Ship's hold (minerals, GDD §4.5) ────────────────────────────
 
@@ -87,6 +102,7 @@ export class GameState {
     this.level = overrides?.level ?? MIN_LEVEL;
     this.bossDefeated = overrides?.bossDefeated ?? false;
     this.gameState = overrides?.gameState ?? 'menu';
+    this.runSeed = overrides?.runSeed ?? DEFAULT_RUN_SEED;
     this._hold = new MineralHold({
       capacity: overrides?.mineralCapacity,
       store: overrides?.minerals,

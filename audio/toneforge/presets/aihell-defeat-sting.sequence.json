@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "name": "aihell-defeat-sting",
+  "description": "Defeat sting \u2014 failure accent, descending sting and combo-break tail (five-note descent + sinking drone character).",
+  "events": [
+    {
+      "time": 0,
+      "event": "card-failure",
+      "seedOffset": 0,
+      "gain": 0.6
+    },
+    {
+      "time": 0.35,
+      "event": "card-defeat-sting",
+      "seedOffset": 1,
+      "gain": 0.6
+    },
+    {
+      "time": 0.9,
+      "event": "card-combo-break",
+      "seedOffset": 2,
+      "gain": 0.4
+    }
+  ]
+}

@@ -40,7 +40,7 @@ export const SWARM_BULLET_COLOR = 0x00ccff;
 export const SWARM_BULLET_SIZE = 3;
 
 /** Bullet speed in px/s for coordinated bursts. */
-export const SWARM_BULLET_SPEED = 180;
+export const SWARM_BULLET_SPEED = 90;
 
 /** Milliseconds between coordinated burst volleys. */
 export const SWARM_BURST_INTERVAL = 900;
@@ -114,7 +114,10 @@ export class Swarm extends BaseEnemy {
   private clusterBias: number;
   private clusterDriftPhase = 0;
   // When this member's cluster will next split/rejoin (seconds).
-  private nextSplitTime = 1 + Math.random() * 2;
+  // Seeded: `_rng` is initialised by the `super()` call before this field
+  // initialiser runs, so a seeded run reproduces each swarm's split timing
+  // (AH-0MUY08V6W001SJJN).
+  private nextSplitTime = 1 + this._rng() * 2;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -142,8 +145,8 @@ export class Swarm extends BaseEnemy {
 
     // Each cluster gets a unique angular phase so they weave differently.
     const phaseStep = (Math.PI * 2) / SWARM_CLUSTER_COUNT;
-    this.clusterPhase = this.clusterIdx * phaseStep + Math.random() * 0.3;
-    this.clusterBias = (Math.random() - 0.5) * CLUSTER_MAX_SPREAD;
+    this.clusterPhase = this.clusterIdx * phaseStep + this._rng() * 0.3;
+    this.clusterBias = (this._rng() - 0.5) * CLUSTER_MAX_SPREAD;
 
     // Aim target is bottom-centre (simulated player position).
     this.target = new Phaser.Math.Vector2(
@@ -157,6 +160,11 @@ export class Swarm extends BaseEnemy {
   }
 
   /** VFX pattern name for Swarm explosions. */
+  /** Archetype key (`'swarm'`), matching the scene's enemy key. */
+  override get archetype(): string {
+    return 'swarm';
+  }
+
   protected getExplosionPatternName(): string {
     return 'swarm';
   }
@@ -254,7 +262,7 @@ export class Swarm extends BaseEnemy {
     const dy = this.target.y - this.y;
     const baseAngle = Math.atan2(dy, dx);
     // Spread angle: ±~17° around the aim direction for a tight burst.
-    const spread = (Math.random() - 0.5) * 0.3;
+    const spread = (this._rng() - 0.5) * 0.3;
     const angle = baseAngle + spread;
 
     const { graphics, color } = createBullet({
@@ -303,8 +311,8 @@ export class Swarm extends BaseEnemy {
     // further from or closer to its neighbours.
     if (this.nextSplitTime <= 0) {
       // Flip bias direction (toward or away from cluster centre).
-      this.clusterBias = this.clusterBias * (-0.7 + Math.random() * 0.4); // decay toward 0
-      this.nextSplitTime = 1.5 + Math.random() * 3;
+      this.clusterBias = this.clusterBias * (-0.7 + this._rng() * 0.4); // decay toward 0
+      this.nextSplitTime = 1.5 + this._rng() * 3;
     }
     this.nextSplitTime -= dt;
 

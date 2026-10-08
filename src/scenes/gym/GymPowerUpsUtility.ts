@@ -1,35 +1,35 @@
 /**
- * Gym scene — non-combat power-ups (P5 Speed Boost, P8 Extra Life,
- * P9 Magnet, P10 Mineral Scoop) with round-robin spawning, grow/hold/shrink
+ * Gym scene — non-combat power-ups (Speed Boost, Extra Life,
+ * Magnet, Mineral Scoop) with round-robin spawning, grow/hold/shrink
  * lifecycle, overlap collection, and the standalone HUD (parent AC1–AC6).
  *
  * Threat-free: no enemies, no bullets. The player ship flies around
  * collecting drops; each collected drop applies its FULL GDD §4.4
  * behaviour observable without threats:
  *
- * - **P5 Speed Boost** — +50% thrust/max-speed and +50% rate of fire live
+ * - **Speed Boost** — +50% thrust/max-speed and +50% rate of fire live
  *   for 10 s (refresh on re-collect), applied to the ship via
  *   `Player.setSpeedMultiplier` + `Player.setFireRateMultiplier`.
- * - **P8 Extra Life** — +1 life immediately (starts 3, cap 5).
- * - **P9 Magnet** — drops within `1× ship size +50%/stack` are pulled
+ * - **Extra Life** — +1 life immediately (starts 3, cap 5).
+ * - **Magnet** — drops within `1× ship size +50%/stack` are pulled
  *   toward the ship at `MAGNET_ATTRACTION_SPEED` (slower than ship max
  *   speed); a timed 15 s field pickup (refresh-only) or a permanent
  *   stacking upgrade (cap 5).
- * - **P10 Mineral Scoop** — attracts the gym's live mineral field toward the
+ * - **Mineral Scoop** — attracts the gym's live mineral field toward the
  *   ship at the same range/speed curve (timed 15 s as a field pickup,
  *   permanent stacking when chosen as a hold-full reward).
  *
  * Spawn cadence: one drop every `POWER_UP_SPAWN_INTERVAL` (default 12.5 s),
- * cycling P5 → P8 → P9 → P10; each drop lives for the same interval, so the
+ * cycling Speed Boost → Extra Life → Magnet → Mineral Scoop; each drop lives for the same interval, so the
  * next spawn coincides with the previous drop's despawn (exactly one drop on
  * screen while nothing is collected).
  *
- * The drop lifecycle, collection gate, P9 magnet and per-type pickup cues
+ * The drop lifecycle, collection gate, Magnet magnet and per-type pickup cues
  * run through the shared `src/scenes/core/dropLayer.ts` template methods
  * (`_updateDropLayer`, `_advanceDropLifecycles`, `_collectOverlappingDrops`,
  * `_applyDropMagnet`, `_playPickupCue`), so this gym cannot drift from the
  * game; only the round-robin spawn *source* is gym-specific
- * (AH-0MUII3CXX0023H24, gap 4). The P10 mineral attraction runs through the
+ * (AH-0MUII3CXX0023H24, gap 4). The Mineral Scoop mineral attraction runs through the
  * shared `_applyMineralScoop` template method and the shared
  * `collectMinerals` pass, exactly as in `PlayScene` and `GymFormationScene`.
  *
@@ -60,8 +60,8 @@ import {
   POWER_UP_SPAWN_INTERVAL,
 } from '../../core/constants';
 
-/** Round-robin spawner, ascending by GDD ID (P5 → P8 → P9 → P10). */
-const NON_COMBAT_ORDER: readonly PowerUpId[] = ['P5', 'P8', 'P9', 'P10'];
+/** Round-robin spawner, ascending by GDD ID (Speed Boost → Extra Life → Magnet → Mineral Scoop). */
+const NON_COMBAT_ORDER: readonly PowerUpId[] = ['speed_boost', 'extra_life', 'magnet', 'mineral_scoop'];
 
 /** Number of minerals seeded on the gym's demonstration mineral field. */
 export const UTILITY_MINERAL_SEED_COUNT = 40;
@@ -92,7 +92,7 @@ export interface ActiveDrop {
 /**
  * Non-combat power-ups gym. Extends the narrower shared
  * {@link CombatCoreScene} so drop collection and the input path flow
- * through the one shared implementation; the gym supplies its P5/P8/P9
+ * through the one shared implementation; the gym supplies its Speed Boost/Extra Life/Magnet
  * pickup cues through hooks.
  */
 export class GymPowerUpsUtility extends CombatCoreScene<
@@ -103,7 +103,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   private player: Player | null = null;
   private effectsRegistry = new EffectsRegistry();
   private drops: ActiveDrop[] = [];
-  /** Live mineral field seeded so the P10 scoop is demonstrable (AC5). */
+  /** Live mineral field seeded so the Mineral Scoop scoop is demonstrable (AC5). */
   private minerals: Mineral[] = [];
   /** Per-scene round-robin spawner (fresh index per scene instance). */
   private roundRobinSpawner = new RoundRobinSpawner(NON_COMBAT_ORDER);
@@ -143,7 +143,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
 
-    // Mineral field: seeded so the P10 Mineral Scoop runs the same shared
+    // Mineral field: seeded so the Mineral Scoop runs the same shared
     // attraction + collection pass as the game and the formation gyms (AC5).
     this._seedMinerals(UTILITY_MINERAL_SEED_COUNT);
 
@@ -213,7 +213,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     if (!this.player) return;
 
     // ── Shared player-control step: timers → multipliers → input →
-    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1). The P5 multipliers
+    // physics → auto-fire (AH-0MUII39KX007YUQ0, AC1). The Speed Boost multipliers
     // land here so the boost is live on this frame.
     this._tickPlayer(dt);
 
@@ -225,11 +225,11 @@ export class GymPowerUpsUtility extends CombatCoreScene<
       this.spawnTimer -= dt;
     }
 
-    // ── Shared drop layer (gap 4): P4 notice, P9 magnet,
+    // ── Shared drop layer (gap 4): Bomb notice, Magnet magnet,
     //    lifecycle, overlap collection, absorb VFX ──
     this.drops = this._updateDropLayer(this.drops, dt);
 
-    // ── Mineral field: P10 scoop attraction then shared collection ──
+    // ── Mineral field: Mineral Scoop scoop attraction then shared collection ──
     // Same order and same helpers as PlayScene and GymFormationScene, so an
     // enabled scoop behaves identically here (AC4/AC5).
     if (this.minerals.length > 0) {
@@ -252,7 +252,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
   // ── Spawning / lifecycle ─────────────────────────────────────────
 
-  /** Spawns the next round-robin drop (P5 → P8 → P9) at the next position. */
+  /** Spawns the next round-robin drop (Speed Boost → Extra Life → Magnet) at the next position. */
   private _spawnRoundRobin(): void {
     const id = this.roundRobinSpawner.next();
     const pos = SPAWN_POSITIONS[this.spawnIndex % SPAWN_POSITIONS.length];
@@ -275,7 +275,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // Graphics at the drop's world position.
     graphics.setPosition(x, y);
     const entry = getPowerUpById(id);
-    drawPowerUpDrop(graphics, entry.type, 0, 0, POWER_UP_DROP_SIZE);
+    drawPowerUpDrop(graphics, entry.id, 0, 0, POWER_UP_DROP_SIZE);
     // Start at scale 0 — the lifecycle grows it in.
     graphics.setScale(0);
 
@@ -294,7 +294,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
   /**
    * Seeds `count` minerals scattered across the play area, away from the
-   * ship's start position, so the P10 scoop has a field to attract.
+   * ship's start position, so the Mineral Scoop scoop has a field to attract.
    */
   private _seedMinerals(count: number): void {
     for (let i = 0; i < count; i++) {

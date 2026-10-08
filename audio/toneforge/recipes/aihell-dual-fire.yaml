@@ -1,0 +1,77 @@
+# AI Hell cue: aihell-dual-fire — Player dual fire — saw drop 900 to 300 Hz plus offset sine tick.
+version: "0.1"
+meta:
+  name: aihell-dual-fire
+  description: Player dual fire — saw drop 900 to 300 Hz plus offset sine tick.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+  duration: 0.08
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 900
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 900
+        - kind: exponentialRamp
+          time: 0.06
+          value: 300
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.056
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.15
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1200
+    automation:
+      frequency:
+        - kind: set
+          time: 0.02
+          value: 1200
+        - kind: exponentialRamp
+          time: 0.06
+          value: 800
+  g1:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.02
+          value: 0
+        - kind: linearRamp
+          time: 0.024
+          value: 0.1
+        - kind: exponentialRamp
+          time: 0.06
+          value: 0.0001
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, g1, mix]
+  - from: mix
+    to: out

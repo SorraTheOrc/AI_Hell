@@ -526,6 +526,19 @@ export interface SpawnExplosionOptions {
    */
   scale?: number;
   /**
+   * Delay (ms) before the burst starts animating. Defaults to 0. Used by
+   * staggered firework sequences (`spawnVictoryFireworks`) so a whole
+   * multi-burst display can be scheduled up front with deterministic
+   * timing, without per-burst timers.
+   */
+  delay?: number;
+  /**
+   * Render depth of the burst Graphics. Defaults to 5 (above world bodies,
+   * below the HUD). Firework sequences pass a UI-relative depth so the
+   * burst can sit behind a screen's UI (negative) or below its HUD.
+   */
+  depth?: number;
+  /**
    * Optional Graphics registry (e.g. `playerExplosions`) — the handle's
    * Graphics is pushed here on spawn and spliced on completion, so a
    * SHUTDOWN handler can destroy leftovers exactly like the existing
@@ -639,9 +652,9 @@ export function spawnExplosionParticles(
     }
   };
 
-  // Single Graphics for the whole burst (depth above bodies).
+  // Single Graphics for the whole burst (depth above bodies by default).
   const gfx = scene.add.graphics({ x, y });
-  (gfx as { setDepth(d: number): unknown }).setDepth(5);
+  (gfx as { setDepth(d: number): unknown }).setDepth(opts.depth ?? 5);
 
   let alive = true;
   let lastElapsed = 0;
@@ -684,6 +697,7 @@ export function spawnExplosionParticles(
     targets: gfx,
     alpha: { from: 1, to: 0 },
     duration: lifespan,
+    delay: opts.delay ?? 0,
     onUpdate: () => {
       // Derive elapsed from the tweened property (existing explosion
       // pattern — robust to headless timer quirks).

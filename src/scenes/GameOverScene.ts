@@ -33,9 +33,18 @@ import {
 } from '../core/Leaderboard';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { playDefeatStingSound } from '../audio/effects';
-import { spawnDefeatScreenJuice, spawnVictoryJuice } from '../vfx/endOfRunJuice';
+import {
+  ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+  spawnDefeatScreenJuice,
+  spawnVictoryFireworks,
+  spawnVictoryJuice,
+} from '../vfx/endOfRunJuice';
 import { renderLeaderboard } from '../ui/leaderboardView';
 import { FocusManager } from '../utils/focusManager';
+import {
+  DEMO_GAME_OVER_DWELL_MS,
+  resolveDemoGameOverDwellMs,
+} from '../../scripts/capture-run-lifecycle.mjs';
 
 export { INITIALS_LENGTH };
 
@@ -89,6 +98,21 @@ export class GameOverScene extends Phaser.Scene {
   /** Whether the final score makes the leaderboard. */
   private qualifies: boolean;
 
+  /**
+   * Whether this is a non-scoring demo/attract run (AH-0MUXZ4CAE008QRFZ).
+   * Demo screens render VICTORY/DEFEAT + final score but never qualify,
+   * accept initials or persist a score, and auto-return to the menu after
+   * {@link demoDwellMs}.
+   */
+  private demo = false;
+
+  /**
+   * Resolved demo dwell in milliseconds. Defaults to the single-source
+   * {@link DEMO_GAME_OVER_DWELL_MS} (clamped up to the capture tail); tests
+   * may inject a short/zero override via `{ demoDwellMs }` in the start data.
+   */
+  private demoDwellMs: number = DEMO_GAME_OVER_DWELL_MS;
+
   /** The current initials string being entered (empty on creation). */
   private initials: string;
 
@@ -124,16 +148,34 @@ export class GameOverScene extends Phaser.Scene {
 
   /**
    * Initialises the scene data passed from PlayScene.
+   *
+   * `demo` marks a non-scoring attract run (AH-0MUXZ4CAE008QRFZ): the outcome
+   * is shown without leaderboard qualification or initials, and the scene
+   * auto-returns to the menu after the dwell. `demoDwellMs` is the test/dev
+   * override for that dwell; when omitted the single-source
+   * {@link DEMO_GAME_OVER_DWELL_MS} (clamped to the capture tail) is used.
    */
-  init(data?: { won?: boolean; score?: number }): void {
+  init(data?: {
+    won?: boolean;
+    score?: number;
+    demo?: boolean;
+    demoDwellMs?: number;
+  }): void {
     this.won = data?.won ?? false;
     this.finalScore = data?.score ?? 0;
+    this.demo = data?.demo === true;
+    this.demoDwellMs =
+      data?.demoDwellMs === undefined
+        ? resolveDemoGameOverDwellMs()
+        : resolveDemoGameOverDwellMs(data.demoDwellMs, 0);
   }
 
   create(): void {
     this.focusManager = new FocusManager();
     this.initials = '';
-    this.qualifies = isQualifying(this.finalScore);
+    // A demo run is non-scoring (AC2): it never qualifies and so never offers
+    // initials or persists a score, whatever the final score was.
+    this.qualifies = !this.demo && isQualifying(this.finalScore);
     this.endOfRunEffects = [];
 
     // ── Background ───────────────────────────────────────────────
@@ -150,6 +192,13 @@ export class GameOverScene extends Phaser.Scene {
     // cannot intercept keyboard or pointer input.
     if (this.won) {
       spawnVictoryJuice(this, { registry: this.endOfRunEffects });
+      // Continue the celebration for a shorter beat (1–2 s): a screen-centred
+      // firework/explosion sequence layered on top of the confetti burst
+      // (AH-0MUWZ5HCV0034H44 AC2). Bursts render behind the UI (negative depth).
+      spawnVictoryFireworks(this, GAME_WIDTH / 2, GAME_HEIGHT / 2, {
+        registry: this.endOfRunEffects,
+        durationMs: ENDOFRUN_VICTORY_SCREEN_FIREWORKS_DURATION_MS,
+      });
     } else {
       const defeat = spawnDefeatScreenJuice(this, { registry: this.endOfRunEffects });
       // Defeat sting — exactly once, gated by the shared sound toggle.
@@ -181,13 +230,15 @@ export class GameOverScene extends Phaser.Scene {
     this.add.text(
       GAME_WIDTH / 2,
       MESSAGE_Y,
-      this.qualifies
-        ? 'New high score! Enter your initials.'
-        : 'Score does not qualify for the leaderboard.',
+      this.demo
+        ? 'Demo run — no leaderboard entry.'
+        : this.qualifies
+          ? 'New high score! Enter your initials.'
+          : 'Score does not qualify for the leaderboard.',
       {
         fontFamily: 'monospace',
         fontSize: '14px',
-        color: this.qualifies ? GAME_OVER_COLOR : WARNING_COLOR,
+        color: this.demo || this.qualifies ? GAME_OVER_COLOR : WARNING_COLOR,
       },
     ).setOrigin(0.5);
 
@@ -204,7 +255,7 @@ export class GameOverScene extends Phaser.Scene {
     const menuButton = this.add.text(
       GAME_WIDTH / 2,
       BUTTON_Y,
-      this.qualifies ? '←  Return to Menu' : '←  Skip',
+      this.demo || this.qualifies ? '←  Return to Menu' : '←  Skip',
       {
         fontFamily: 'monospace',
         fontSize: '18px',
@@ -243,6 +294,16 @@ export class GameOverScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
       this.handleKey(event);
     });
+
+    // ── Demo dwell (AH-0MUXZ4CAE008QRFZ) ──────────────────────────
+    // A non-scoring demo holds on this outcome screen long enough for the
+    // captured tail to show VICTORY/DEFEAT, then loops back to the menu.
+    // Normal play never schedules this and is unchanged (AC3).
+    if (this.demo) {
+      this.time.delayedCall(this.demoDwellMs, () => {
+        if (this.sys.isActive()) this.scene.start('MenuScene');
+      });
+    }
 
     // ── Hygiene on shutdown: drop transient input state. ──────────
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -304,6 +365,20 @@ export class GameOverScene extends Phaser.Scene {
   /** Whether the final score qualifies for the leaderboard. */
   getQualifies(): boolean {
     return this.qualifies;
+  }
+
+  /** Whether this game-over screen belongs to a non-scoring demo run. */
+  isDemoMode(): boolean {
+    return this.demo;
+  }
+
+  /**
+   * The resolved demo dwell in milliseconds. Equals the single-source
+   * {@link DEMO_GAME_OVER_DWELL_MS} (clamped to the capture tail) unless a
+   * test/dev override was passed in the start data.
+   */
+  getDemoDwellMs(): number {
+    return this.demoDwellMs;
   }
 
   /**

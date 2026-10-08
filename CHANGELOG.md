@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.10 (2026-10-08)
+> **Release focus:** This release focuses on making the game's demo and capture systems reliable and human-like, with smarter bot behaviour, automatic video and audio recording, and live progress feedback. It also rebalances core combat and progression, including a tougher final boss, slower enemy bullets, multi-hit shields, and clearer upgrade and pickup rules.
+### Features
+- Game sound effects are now generated with a consistent, reliable audio toolchain for clearer, more dependable sound. (AH-0MUTUOB7X007PR9J)
+- The final boss now takes 400 hits to defeat, making the climax a proper endurance fight. (AH-0MUWTS07L008KVP9)
+- The game can now demo itself with a smart bot that dodges fire and grabs loot. (AH-0MUX2NENC008AHOQ)
+- Power-up names are now clearer in-game, with your saved settings kept safe. (AH-0MUX6S20F002GHPF)
+- Later campaign waves now stay challenging and varied instead of becoming trivial single-enemy fights. (AH-0MUX60S9L0006NJ0)
+- Gym practice now matches the real game exactly, so what you learn there holds up in play. (AH-0MUII2FJ5007MDDA)
+- You can now collect minerals between waves instead of losing them during the pause. (AH-0MUX96GJF006CAZP)
+- In demo mode, only movement keys take over and ESC returns to the main menu. (AH-0MUYJRHMC0038RAS)
+- Shields now absorb multiple hits, and bombs clear a wider area more often as they level up. (AH-0MUVM9RAO004Y3LB)
+- You can now generate gameplay demo videos automatically without manual screen recording. (AH-0MUWMFF3C002WOBK)
+- Capture runs now show live progress and a time estimate, and missing setup gives a clear fix instead of looking frozen. (AH-0MUWTNPY8003GGAA)
+- Gameplay demo recordings now include in-game sound automatically. (AH-0MUWTNPYJ0031FQE)
+- Enemy bullets now travel at half speed, giving you more time to dodge. (AH-0MUWZ5GST003NMFQ)
+- The demo ship now flies with realistic human controls and no longer gets stuck on upgrade screens. (AH-0MUXXQ1MN002RXGB)
+- The demo bot now plays smarter: it prioritizes clearing enemies, only grabs grouped minerals or upgrades when worth it, and thrusts in smooth, human-like bursts. (AH-0MUXYOV4C008MV0L)
+- Defeating the boss now triggers a huge fireworks show where it fell. (AH-0MUWZ5HCV0034H44)
+### Bug Fixes
+- Resuming from pause now reliably returns you to the exact same game state. (AH-0MUZDXF2U001MJW1)
+- Asteroids in training gyms now drop minerals just like in the main game. (AH-0MUHMT5JC004WRSB)
+- Gameplay demo recordings now start reliably instead of showing a frozen menu. (AH-0MUXVVYWY009WT3X)
+- Demo mode now runs reliably without random failures during heavy play. (AH-0MUYOBU4F003EYRP)
+- Fixed release builds so new versions can be published reliably. (AH-0MUZ5HW310018DQR)
+- Fixed a bug where the bot would keep controlling your ship after watching the demo and starting a new game. (AH-0MUY4881P007FJ8R)
+- Level-up choices no longer show the same weapon twice, so every pick is a real upgrade. (AH-0MUVRACE9001WVT2)
+- Field pickups now give temporary upgrades that expire, while permanent upgrades only come from hold-full rewards. (AH-0MUX802450085VZZ)
+
 ## v0.1.9 (2026-10-05)
 ### Features
 - Gym practice now matches the real game exactly, so what you learn there always applies. (AH-0MUII2FJ5007MDDA)

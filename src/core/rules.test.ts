@@ -47,16 +47,16 @@ describe('game rules configuration module', () => {
     it('gives standard IDs equal weight and makes P8 Extra Life rarer', () => {
       const weights = DEFAULT_RULES.powerUpWeights;
       for (const id of POWER_UP_WEIGHT_IDS) {
-        if (id === 'P8') continue;
+        if (id === 'extra_life') continue;
         expect(weights[id]).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       }
-      // AH-0MUNS3VAQ0023L1J: P8 raised from 1 to 3 (≈3× by weight) so Extra
+      // AH-0MUNS3VAQ0023L1J: Extra Life raised from 1 to 3 (≈3× by weight) so Extra
       // Life spawns more often; it remains rarer than a standard drop (4).
       expect(DEFAULT_EXTRA_LIFE_WEIGHT).toBe(3);
-      expect(weights.P8).toBe(3);
-      expect(defaultPowerUpWeights().P8).toBe(3);
-      expect(weights.P8).toBeLessThan(weights.P3);
-      // The standard and weapon weights are untouched by the P8 change.
+      expect(weights.extra_life).toBe(3);
+      expect(defaultPowerUpWeights().extra_life).toBe(3);
+      expect(weights.extra_life).toBeLessThan(weights.shield);
+      // The standard and weapon weights are untouched by the Extra Life change.
       expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
       expect(DEFAULT_WEAPON_WEIGHT).toBe(2);
     });
@@ -91,7 +91,7 @@ describe('game rules configuration module', () => {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
         weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, nova: 0.25, mortar: 0.5, arc: 1 },
-        powerUpWeights: { P3: 10, P4: 9, P5: 8, P6: 7, P7: 6, P8: 1, P9: 5, P10: 5 },
+        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5 },
         weaponWeights: {
           spread: 3,
           dual: 4,
@@ -117,7 +117,7 @@ describe('game rules configuration module', () => {
       expect(loaded.beatBpm).toBe(120);
       expect(loaded.weaponSubdivisions.cannon).toBe(4);
       expect(loaded.weaponSubdivisions.spread).toBe(2);
-      expect(loaded.powerUpWeights.P3).toBe(10);
+      expect(loaded.powerUpWeights.shield).toBe(10);
       expect(loaded.weaponWeights.spread).toBe(3);
       expect(loaded.mineralCollectAmount).toBe(2);
       expect(loaded.mineralHoldCapacity).toBe(30);
@@ -150,19 +150,19 @@ describe('game rules configuration module', () => {
     it('merges a partial weight table over the weight defaults', () => {
       window.localStorage.setItem(
         RULES_STORAGE_KEY,
-        JSON.stringify({ powerUpWeights: { P8: 7 } }),
+        JSON.stringify({ powerUpWeights: { extra_life: 7 } }),
       );
 
       const loaded = loadRules();
-      expect(loaded.powerUpWeights.P8).toBe(7);
-      expect(loaded.powerUpWeights.P3).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
+      expect(loaded.powerUpWeights.extra_life).toBe(7);
+      expect(loaded.powerUpWeights.shield).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       expect(loaded.powerUpSpawnInterval).toBe(DEFAULT_POWER_UP_SPAWN_INTERVAL);
     });
 
     it('returns a fresh object each call, so callers cannot mutate the defaults', () => {
       const first = loadRules();
       first.powerUpSpawnInterval = 999;
-      first.powerUpWeights.P3 = 999;
+      first.powerUpWeights.shield = 999;
 
       expect(loadRules()).toEqual(DEFAULT_RULES);
     });
@@ -191,12 +191,12 @@ describe('game rules configuration module', () => {
     it('ignores non-numeric and negative weight entries', () => {
       window.localStorage.setItem(
         RULES_STORAGE_KEY,
-        JSON.stringify({ powerUpWeights: { P3: 'lots', P8: -2 } }),
+        JSON.stringify({ powerUpWeights: { shield: 'lots', extra_life: -2 } }),
       );
 
       const loaded = loadRules();
-      expect(loaded.powerUpWeights.P3).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
-      expect(loaded.powerUpWeights.P8).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
+      expect(loaded.powerUpWeights.shield).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
+      expect(loaded.powerUpWeights.extra_life).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
     });
   });
 
@@ -301,9 +301,9 @@ describe('game rules configuration module', () => {
   describe('defaultPowerUpWeights', () => {
     it('returns a fresh table each call', () => {
       const weights = defaultPowerUpWeights();
-      weights.P8 = 99;
+      weights.extra_life = 99;
 
-      expect(defaultPowerUpWeights().P8).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
+      expect(defaultPowerUpWeights().extra_life).toBe(DEFAULT_EXTRA_LIFE_WEIGHT);
     });
   });
 
@@ -511,6 +511,99 @@ describe('game rules configuration module', () => {
       const loaded = loadRules();
       expect(loaded.mineralCollectAmount).toBe(DEFAULT_MINERAL_COLLECT_AMOUNT);
       expect(loaded.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    });
+
+    // ── Power-up ID rename migration (F4 AH-0MUY0GP4Q008LYO7) ──────
+
+    it('migrates a version-3 P-keyed powerUpWeights table to the name keys', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          powerUpSpawnInterval: 7,
+          powerUpWeights: {
+            P3: 4,
+            P4: 4,
+            P5: 4,
+            P6: 4,
+            P7: 4,
+            P8: 9,
+            P9: 4,
+            P10: 4,
+          },
+        }),
+      );
+
+      const loaded = loadRules();
+
+      // The customised Extra Life weight survives under its name key.
+      expect(loaded.powerUpWeights.extra_life).toBe(9);
+      // Every other code key maps to its name key with the stored value.
+      expect(loaded.powerUpWeights.shield).toBe(4);
+      expect(loaded.powerUpWeights.bomb).toBe(4);
+      expect(loaded.powerUpWeights.speed_boost).toBe(4);
+      expect(loaded.powerUpWeights.phase_shift).toBe(4);
+      expect(loaded.powerUpWeights.teleport).toBe(4);
+      expect(loaded.powerUpWeights.magnet).toBe(4);
+      expect(loaded.powerUpWeights.mineral_scoop).toBe(4);
+      // Other rules are preserved by the migration.
+      expect(loaded.powerUpSpawnInterval).toBe(7);
+      // No legacy code key leaks into the loaded table.
+      expect(Object.keys(loaded.powerUpWeights).sort()).toEqual(
+        [...POWER_UP_WEIGHT_IDS].sort(),
+      );
+    });
+
+    it('keeps the canonical name key when a legacy code and its name are both present', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          powerUpWeights: { P8: 1, extra_life: 9 },
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.powerUpWeights.extra_life).toBe(9);
+    });
+
+    it('ignores unknown and non-numeric entries in a legacy P-keyed table', () => {
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          powerUpWeights: { P8: 9, P11: 5, shield: 'lots' },
+        }),
+      );
+
+      const loaded = loadRules();
+      expect(loaded.powerUpWeights.extra_life).toBe(9);
+      expect(loaded.powerUpWeights.shield).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
+      expect('P11' in loaded.powerUpWeights).toBe(false);
+    });
+
+    it('round-trips a version-4 name-keyed config unchanged', () => {
+      const custom: GameRules = {
+        ...DEFAULT_RULES,
+        powerUpWeights: {
+          ...DEFAULT_RULES.powerUpWeights,
+          extra_life: 9,
+        },
+      };
+
+      saveRules(custom);
+      const loaded = loadRules();
+
+      expect(loaded.powerUpWeights).toEqual(custom.powerUpWeights);
+      expect(loaded).toEqual(custom);
+    });
+
+    it('stamps saved rules with the current schema version', () => {
+      saveRules(DEFAULT_RULES);
+      const raw = window.localStorage.getItem(RULES_STORAGE_KEY);
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw as string).version).toBe(RULES_SCHEMA_VERSION);
+      expect(RULES_SCHEMA_VERSION).toBe(4);
     });
   });
 });

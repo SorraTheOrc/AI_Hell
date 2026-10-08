@@ -131,7 +131,7 @@ export const MORTAR_BURST_SPIKE_COUNT = 8;
 /**
  * Spawns the Mortar detonation burst at (x, y): a filled flash core ringed by
  * radiating spikes, expanding to `radius` while fading. Visually distinct from
- * the Nova concentric rings and from the P4 bomb icon.
+ * the Nova concentric rings and from the Bomb bomb icon.
  *
  * The blast's damage/clear resolves before this is called — the burst is the
  * impact-point feedback.

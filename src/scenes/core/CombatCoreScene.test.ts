@@ -11,6 +11,7 @@ import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
+import type { ControlInput } from '../../utils/movementModel';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
@@ -19,6 +20,7 @@ import {
   type CombatDrop,
   type CombatEnemyBullet,
 } from './CombatCoreScene';
+import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
 // These base tests exercise the fourDirectional input mapping; the app
 // default is Asteroids, so seed the scheme explicitly for the suite.
@@ -41,7 +43,7 @@ class StubBullet implements CombatEnemyBullet {
 /** Minimal drop satisfying the shared collect contract. */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
-  readonly dropId: 'P5' | 'P4';
+  readonly dropId: 'speed_boost' | 'bomb';
   weaponDropId?: string;
   absorbing?: boolean;
 
@@ -49,7 +51,7 @@ class StubDrop implements CombatDrop {
     public x: number,
     public y: number,
     public readonly graphics: Phaser.GameObjects.Graphics,
-    dropId: 'P5' | 'P4',
+    dropId: 'speed_boost' | 'bomb',
     weaponDropId?: string,
     growth = 0.5,
   ) {
@@ -70,6 +72,8 @@ class BareCoreScene extends CombatCoreScene {
   playerRef: Player | null = null;
   effects = new EffectsRegistry();
   bullets: StubBullet[] = [];
+  /** Bot-input seam under test: null by default (keyboard-only). */
+  botInput: ControlInput | null = null;
 
   constructor() {
     super({ key: 'CombatCoreSceneBareStub' });
@@ -91,6 +95,10 @@ class BareCoreScene extends CombatCoreScene {
   }
   protected override setEnemyBullets(bullets: StubBullet[]): void {
     this.bullets = bullets;
+  }
+  /** Bot-input seam override: returns the injected decision (default null). */
+  protected override getBotInput(): ControlInput | null {
+    return this.botInput;
   }
 
   addPlayer(at: { x: number; y: number }): Player {
@@ -124,6 +132,9 @@ class BareCoreScene extends CombatCoreScene {
   }
   runReadInput() {
     return this._readPlayerInput();
+  }
+  runGetBotInput(): ControlInput | null {
+    return this.getBotInput();
   }
   runUpdateCollectAnimations(dt: number): void {
     this._updateCollectAnimations(dt);
@@ -167,6 +178,15 @@ class StubCoreScene extends BareCoreScene {
   runClearEnemyBullets(): void {
     this._clearEnemyBullets();
   }
+  runClearEnemyBulletsInRange(x: number, y: number, range: number): void {
+    this._clearEnemyBulletsInRange(x, y, range);
+  }
+  runUpdateP4Bomb(dt: number): void {
+    this._updateP4Bomb(dt);
+  }
+  getBombPulseEffects(): Phaser.GameObjects.Graphics[] {
+    return this.bombPulseEffects;
+  }
   runSpawnPlayerExplosion(x: number, y: number): void {
     this._spawnPlayerExplosion(x, y);
   }
@@ -179,7 +199,7 @@ class StubCoreScene extends BareCoreScene {
   getCollectAnimations() {
     return this.collectAnimations;
   }
-  addDrop(id: 'P5' | 'P4', weaponDropId?: string): StubDrop {
+  addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
     return new StubDrop(120, 120, g, id, weaponDropId);
   }
@@ -242,6 +262,58 @@ describe('CombatCoreScene — shared base class', () => {
     const input = scene.runReadInput();
     expect(input).not.toBeNull();
     expect(input).toHaveProperty('up');
+  });
+
+  // ── Bot-input seam (AH-0MUX495VG0014MIY AC2) ─────────────────────
+
+  it('AC2 — getBotInput defaults to null (keyboard-only)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    expect(scene.runGetBotInput()).toBeNull();
+  });
+
+  it('AC2/AC4 — _readPlayerInput uses the keyboard when no bot input is supplied', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.pressRight(true);
+
+    expect(scene.runReadInput()).toEqual({
+      up: false,
+      down: false,
+      left: false,
+      right: true,
+    });
+  });
+
+  it('AC2 — a supplied bot input takes precedence over held keys', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    // Keyboard says right; the bot seam says left — the bot wins.
+    scene.pressRight(true);
+    scene.botInput = { up: false, down: false, left: true, right: false };
+
+    expect(scene.runReadInput()).toEqual({
+      up: false,
+      down: false,
+      left: true,
+      right: false,
+    });
+  });
+
+  it('AC2 — the bot input flows through _tickPlayer into the shared movement path', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.botInput = { up: false, down: false, left: false, right: true };
+    const beforeX = player.x;
+
+    scene.runTickPlayer(0.5);
+
+    expect(player.getInput()).toEqual({
+      up: false,
+      down: false,
+      left: false,
+      right: true,
+    });
+    expect(player.x).toBeGreaterThan(beforeX);
   });
 
   // ── AC4 — auto-fire ───────────────────────────────────────────────
@@ -371,13 +443,13 @@ describe('CombatCoreScene — shared base class', () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });
     const baseMaxSpeed = player.getMovementConfig().maxSpeed;
-    scene.effects.applyCollect('P5');
+    scene.effects.applyCollect('speed_boost');
     scene.pressRight(true);
     const beforeX = player.x;
     scene.runTickPlayer(0.5);
     scene.pressRight(false);
 
-    // P5 is 1.5× speed and fire rate, applied live by the shared step.
+    // Speed Boost is 1.5× speed and fire rate, applied live by the shared step.
     expect(player.getFireRateMultiplier()).toBeCloseTo(1.5, 10);
     expect(player.getMovementConfig().maxSpeed).toBeCloseTo(
       baseMaxSpeed * 1.5,
@@ -416,24 +488,24 @@ describe('CombatCoreScene — shared base class', () => {
 
   it('AC4 — _collectDrop applies a power-up, dispatches the hook and starts the absorb animation', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
-    const drop = scene.addDrop('P5');
+    const drop = scene.addDrop('speed_boost');
 
     scene.runCollectDrop(drop);
 
-    expect(scene.hooks).toContain('onPowerUpCollected:P5');
-    expect(scene.hooks).toContain('_playPickupCue:P5');
+    expect(scene.hooks).toContain('onPowerUpCollected:speed_boost');
+    expect(scene.hooks).toContain('_playPickupCue:speed_boost');
     expect(drop.absorbing).toBe(true);
     expect(scene.getCollectAnimations().length).toBe(1);
   });
 
   it('AC4 — _collectDrop applies a weapon, dispatches the weapon hook and starts the absorb animation', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
-    const drop = scene.addDrop('P5', 'spread');
+    const drop = scene.addDrop('speed_boost', 'spread');
 
     scene.runCollectDrop(drop);
 
     expect(scene.hooks).toContain('onWeaponCollected:spread');
-    expect(scene.hooks).toContain('_playPickupCue:P5');
+    expect(scene.hooks).toContain('_playPickupCue:speed_boost');
     expect(scene.effects.hasWeapon('spread')).toBe(true);
     expect(drop.absorbing).toBe(true);
     expect(scene.getCollectAnimations().length).toBe(1);
@@ -442,7 +514,7 @@ describe('CombatCoreScene — shared base class', () => {
   it('AC4 — _collectDrop applies an AOE weapon through the same shared path (F5 AC3)', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 1, y: 1 });
-    const drop = scene.addDrop('P5', 'nova');
+    const drop = scene.addDrop('speed_boost', 'nova');
 
     scene.runCollectDrop(drop);
 
@@ -456,7 +528,7 @@ describe('CombatCoreScene — shared base class', () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     scene.effects.applyWeapon('spread');
     expect(scene.effects.hasWeapon('spread')).toBe(true);
-    const drop = scene.addDrop('P5', 'reset');
+    const drop = scene.addDrop('speed_boost', 'reset');
 
     scene.runCollectDrop(drop);
 
@@ -466,25 +538,132 @@ describe('CombatCoreScene — shared base class', () => {
     expect(drop.absorbing).toBe(true);
   });
 
-  it('AC4 — _collectDrop clears enemy bullets for a P4 bomb', async () => {
+  it('AC4 — _collectDrop queues a P4 pulse; the shared bomb step resolves it', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
-    scene.bullets.push(
-      new StubBullet(scene, 1, 1),
-      new StubBullet(scene, 2, 2),
-    );
-    const drop = scene.addDrop('P4');
+    scene.addPlayer({ x: 120, y: 120 });
+    const inside = new StubBullet(scene, 130, 120);
+    const outside = new StubBullet(scene, 900, 900);
+    scene.bullets.push(inside, outside);
+    const drop = scene.addDrop('bomb');
 
     scene.runCollectDrop(drop);
 
+    // Collection queues the pulse but does not clear anything itself.
+    expect(scene.bullets).toHaveLength(2);
+    expect(scene.hooks).toContain('onPowerUpCollected:bomb');
+
+    // The shared per-frame bomb step fires the queued ranged clear.
+    scene.runUpdateP4Bomb(0.016);
+    expect(scene.bullets).toEqual([outside]);
+    expect(inside.graphics.active).toBe(false);
+  });
+
+  it('AC4 (P4) — _clearEnemyBulletsInRange clears only in-range bullets (inclusive boundary)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const inside = new StubBullet(scene, 100, 100);
+    const edge = new StubBullet(scene, 120, 100); // exactly range → cleared
+    const outside = new StubBullet(scene, 121, 100);
+    scene.bullets.push(inside, edge, outside);
+
+    scene.runClearEnemyBulletsInRange(100, 100, 20);
+
+    expect(scene.bullets).toEqual([outside]);
+    expect(inside.graphics.active).toBe(false);
+    expect(edge.graphics.active).toBe(false);
+    expect(outside.graphics.active).toBe(true);
+
+    // The shared range oracle agrees with the clear.
+    expectRangedClear(
+      [
+        { x: 100, y: 100, destroyed: !inside.graphics.active },
+        { x: 120, y: 100, destroyed: !edge.graphics.active },
+        { x: 121, y: 100, destroyed: !outside.graphics.active },
+      ],
+      100,
+      100,
+      20,
+    );
+  });
+
+  it('AC1 (P4) — a field pickup fires exactly one pulse (no persistent state)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    const inside = new StubBullet(scene, 150, 100);
+    const outside = new StubBullet(scene, 900, 100);
+    scene.bullets.push(inside, outside);
+
+    scene.runCollectDrop(scene.addDrop('bomb'));
+    expect(scene.effects.isBombPermanent()).toBe(false);
+    expect(scene.effects.activeEffects().some((e) => e.id === 'bomb')).toBe(false);
+
+    scene.runUpdateP4Bomb(0.016);
+    expect(scene.bullets).toEqual([outside]);
+
+    // One-shot: no later pulse fires.
+    scene.bullets.push(new StubBullet(scene, 150, 100));
+    scene.runUpdateP4Bomb(10);
+    expect(scene.bullets).toHaveLength(2);
+  });
+
+  it('AC2/AC4 (P4) — a permanent bomb fires immediately, then every interval', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('bomb', true);
+    expect(scene.effects.isBombPermanent()).toBe(true);
+
+    // Immediate pulse on the first update (hold-full reward).
+    scene.bullets.push(new StubBullet(scene, 150, 100));
+    scene.runUpdateP4Bomb(0.016);
     expect(scene.bullets).toHaveLength(0);
-    expect(scene.hooks).toContain('onPowerUpCollected:P4');
+
+    // No pulse again before the resolved interval elapses.
+    scene.bullets.push(new StubBullet(scene, 150, 100));
+    scene.runUpdateP4Bomb(1);
+    expect(scene.bullets).toHaveLength(1);
+
+    // A pulse at the interval boundary clears the refreshed bullet.
+    scene.runUpdateP4Bomb(scene.effects.bombInterval());
+    expect(scene.bullets).toHaveLength(0);
+  });
+
+  it('AC3 (P4) — range resolves live so a level-up enlarges later pulses', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('bomb', true);
+    const baseRange = scene.effects.bombRange();
+
+    // A second collection is a level-up; the live range grows.
+    scene.effects.applyCollect('bomb', true);
+    expect(scene.effects.bombRange()).toBeGreaterThan(baseRange);
+  });
+
+  it('AC5 (P4) — each pulse spawns the shared expanding-ring VFX', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+    expect(scene.getBombPulseEffects()).toHaveLength(0);
+
+    scene.effects.applyCollect('bomb', true);
+    scene.runUpdateP4Bomb(0.016);
+
+    expect(scene.getBombPulseEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AC7 (P4) — reset() clears the permanent flag and pulse state', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.effects.applyCollect('bomb', true);
+    expect(scene.effects.isBombPermanent()).toBe(true);
+
+    scene.effects.reset();
+
+    expect(scene.effects.isBombPermanent()).toBe(false);
+    expect(scene.effects.activeEffects().some((e) => e.id === 'bomb')).toBe(false);
   });
 
   it('AC4 — _collectDrop ignores a drop that is not yet collectible', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const g = scene.add.graphics();
     // Growth 0 leaves the drop below the collection threshold.
-    const uncollectible = new StubDrop(120, 120, g, 'P5', undefined, 0);
+    const uncollectible = new StubDrop(120, 120, g, 'speed_boost', undefined, 0);
 
     scene.runCollectDrop(uncollectible);
 
@@ -495,7 +674,7 @@ describe('CombatCoreScene — shared base class', () => {
 
   it('AC4 — _updateCollectAnimations advances and prunes completed animations', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
-    const drop = scene.addDrop('P5');
+    const drop = scene.addDrop('speed_boost');
     scene.runCollectDrop(drop);
     expect(scene.getCollectAnimations().length).toBe(1);
 
@@ -544,7 +723,7 @@ describe('CombatCoreScene — shared base class', () => {
 
   it('AC3 — the cue/collect/weapon hooks are no-ops by default', async () => {
     const scene = await boot<BareCoreScene>(BareCoreScene);
-    const drop = new StubDrop(1, 1, scene.add.graphics(), 'P5');
+    const drop = new StubDrop(1, 1, scene.add.graphics(), 'speed_boost');
     expect(() => scene.runOnWeaponFired('spread')).not.toThrow();
     expect(() => scene.runPlayPickupCue(drop)).not.toThrow();
     expect(() => scene.runOnPowerUpCollected(drop)).not.toThrow();

@@ -1,0 +1,72 @@
+# AI Hell cue: aihell-victory-crack — Sharp crack pop for mid-size fireworks.
+# Quick descending saw with noise transient — shorter, punchier than the boom.
+# Seed range 32255-32257: renders three pitch-jittered variants.
+version: "0.1"
+meta:
+  name: aihell-victory-crack
+  description: Sharp crack/pop — quick descending saw with noise transient for mid fireworks.
+  category: AIHell
+  tags:
+    - victory
+    - crack
+    - fireworks
+  duration: 0.18
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 587
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 587
+        - kind: exponentialRamp
+          time: 0.12
+          value: 140
+  e0:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.06
+      sustain: 0.08
+      release: 0.12
+  g0:
+    kind: gain
+    params:
+      gain: 0.35
+  # Noise layer for the crack transient
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 1500
+      Q: 1
+  e1:
+    kind: envelope
+    params:
+      attack: 0.0005
+      decay: 0.04
+      sustain: 0
+      release: 0.04
+  g1:
+    kind: gain
+    params:
+      gain: 0.25
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

@@ -111,4 +111,17 @@ describe('deploy-pages.yml trigger contract', () => {
 
     expect(jobNames).toEqual(['build', 'deploy']);
   });
+
+  it('clones the pinned ToneForge sibling before installing dependencies', () => {
+    const build = extractJob(workflow, 'build');
+    const cloneIndex = build.indexOf('Clone pinned ToneForge');
+    const installIndex = build.indexOf('Install dependencies');
+
+    // ToneForge is a required `file:../ToneForge` dependency, so the pinned
+    // sibling checkout must exist before the game installs its dependencies.
+    expect(cloneIndex).toBeGreaterThan(-1);
+    expect(installIndex).toBeGreaterThan(cloneIndex);
+    expect(build).toMatch(/pin\.json/);
+    expect(build).toMatch(/npm ci --prefix \.\.\/ToneForge/);
+  });
 });
