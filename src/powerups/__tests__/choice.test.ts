@@ -12,7 +12,9 @@ import { describe, expect, it } from 'vitest';
 import {
   CHOICE_POOL,
   ChoiceStrategy,
+  OWNED_UPGRADE_BONUS_WEIGHT,
   buildChoiceCandidates,
+  choiceCandidateWeight,
   chooseOptions,
   createRandomChoiceStrategy,
   isWeaponOption,
@@ -369,6 +371,110 @@ describe('power-up choice strategy', () => {
         // A duplicate id would mean the same underlying item was offered
         // twice (base + level-up), which is exactly the reported bug.
         expect(new Set(ids).size).toBe(ids.length);
+      }
+    });
+  });
+
+  describe('owned-upgrade weighting (AH-0MUY47W62005FF74)', () => {
+    /**
+     * Deterministic 32-bit PRNG (mulberry32). A seeded generator keeps the
+     * 10,000-trial distribution test reproducible — no flaky CI — while still
+     * exercising the weighted draw end to end.
+     */
+    function mulberry32(seed: number): () => number {
+      let a = seed;
+      return () => {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    it('AC4 — the bonus weight is a single named constant', () => {
+      expect(OWNED_UPGRADE_BONUS_WEIGHT).toBe(1.1);
+    });
+
+    it('AC1 — owned level-up candidates weigh 1.1×, base-pool candidates 1.0×', () => {
+      expect(
+        choiceCandidateWeight({
+          id: 'spread',
+          name: 'Spread Shot Lv.3',
+          kind: 'weapon-level',
+          level: 3,
+        }),
+      ).toBe(1.1);
+      expect(
+        choiceCandidateWeight({
+          id: 'shield',
+          name: 'Shield Lv.2',
+          kind: 'power-up-level',
+          level: 2,
+        }),
+      ).toBe(1.1);
+      // Unowned base-pool entries retain 1.0×.
+      expect(
+        choiceCandidateWeight({ id: 'spread', name: 'Spread Shot', kind: 'weapon' }),
+      ).toBe(1);
+      expect(
+        choiceCandidateWeight({ id: 'shield', name: 'Shield', kind: 'powerup' }),
+      ).toBe(1);
+    });
+
+    // Candidate set with an owned `spread` level-up and an unowned `dual`
+    // base entry, in `buildChoiceCandidates` order: [dual (1.0), spread (1.1)].
+    const weightingPool = ['spread', 'dual'] as const;
+    const weightingContext = {
+      weaponLevels: [{ id: 'spread' as const, level: 1 }],
+    };
+    const weightingStrategy = createRandomChoiceStrategy(weightingPool);
+
+    it('AC1 — a weighted draw favours the owned upgrade where a uniform draw would not', () => {
+      // Total weight 2.1; r = 0.48 → threshold 1.008, which crosses the
+      // unowned 1.0 weight and lands on the owned level-up. A uniform draw
+      // (total 2.0) at the same r has threshold 0.96 and would pick `dual`.
+      const owned = weightingStrategy.choose(1, () => 0.48, weightingContext);
+      expect(owned[0].kind).toBe('weapon-level');
+      expect(owned[0].id).toBe('spread');
+
+      // Below the unowned weight the base entry is still selected.
+      const unowned = weightingStrategy.choose(1, () => 0.4, weightingContext);
+      expect(unowned[0].kind).toBe('weapon');
+      expect(unowned[0].id).toBe('dual');
+    });
+
+    it('AC5(b) — 10,000 weighted draws match the 1.1× distribution (±3%)', () => {
+      const rng = mulberry32(42);
+      let owned = 0;
+      let unowned = 0;
+      for (let i = 0; i < 10_000; i++) {
+        const options = weightingStrategy.choose(1, rng, weightingContext);
+        if (options[0].kind === 'weapon-level') owned++;
+        else unowned++;
+      }
+      // Owned upgrade appears 1.1× as often as the single unowned entry.
+      const observedRatio = owned / unowned;
+      expect(Math.abs(observedRatio / OWNED_UPGRADE_BONUS_WEIGHT - 1)).toBeLessThan(
+        0.03,
+      );
+      // Absolute proportion is also within 3 percentage points of the
+      // theoretical 1.1 / 2.1 weighted probability.
+      const observedProbability = owned / 10_000;
+      const expectedProbability = OWNED_UPGRADE_BONUS_WEIGHT / (1 + OWNED_UPGRADE_BONUS_WEIGHT);
+      expect(Math.abs(observedProbability - expectedProbability)).toBeLessThan(0.03);
+    });
+
+    it('AC5(b) — without any owned items the draw stays effectively uniform', () => {
+      const rng = mulberry32(7);
+      const counts = new Map<string, number>();
+      const strategy = createRandomChoiceStrategy(['shield', 'bomb', 'magnet']);
+      for (let i = 0; i < 10_000; i++) {
+        const id = strategy.choose(1, rng)[0].id;
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+      for (const count of counts.values()) {
+        expect(Math.abs(count / 10_000 - 1 / 3)).toBeLessThan(0.03);
       }
     });
   });

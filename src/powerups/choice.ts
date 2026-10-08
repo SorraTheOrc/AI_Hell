@@ -7,12 +7,16 @@
  * policy can be swapped (random, weighted, scripted, …) without changing the
  * choice scene or the PlayScene wiring.
  *
- * The default strategy draws `count` **distinct** entries uniformly at random
+ * The default strategy draws `count` **distinct** entries at weighted random
  * from the candidate list — the base drop pool (Shield–Mineral Scoop plus the collectable
  * weapon drops spread/dual/rapid/nova/mortar/arc) with each owned item's
  * base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
- * options) when the list cannot supply the requested count.
+ * options) when the list cannot supply the requested count. Owned level-up
+ * offers (`weapon-level`/`power-up-level`) carry a 1.1× weight
+ * ({@link OWNED_UPGRADE_BONUS_WEIGHT}) while unowned base entries keep 1.0×,
+ * so an owned upgrade appears 10% more often than it would under a uniform
+ * draw (AH-0MUY47W62005FF74).
  *
  * @module src/powerups/choice
  */
@@ -166,6 +170,30 @@ export function toChoiceOption(id: DropId): ChoiceOption {
   return { id, name: POWER_UP_CATALOGUE[id as PowerUpId].name, kind: 'powerup' };
 }
 
+// ── Weighting ───────────────────────────────────────────────────────
+
+/**
+ * Weight multiplier applied to an owned level-up offer (`weapon-level` or
+ * `power-up-level`) during candidate selection. Unowned base-pool entries keep
+ * a weight of 1.0, so an owned upgrade is 1.1× as likely to be drawn as an
+ * unowned item — a 10% bias toward continuing an existing build.
+ *
+ * Named and exported so the bias can be tuned without hunting for a magic
+ * number (AH-0MUY47W62005FF74 AC4).
+ */
+export const OWNED_UPGRADE_BONUS_WEIGHT = 1.1;
+
+/**
+ * Selection weight for a candidate option (AH-0MUY47W62005FF74 AC1). Owned
+ * level-up offers receive {@link OWNED_UPGRADE_BONUS_WEIGHT}; every other
+ * (unowned base-pool) option retains a weight of 1.0.
+ */
+export function choiceCandidateWeight(option: ChoiceOption): number {
+  return option.kind === 'weapon-level' || option.kind === 'power-up-level'
+    ? OWNED_UPGRADE_BONUS_WEIGHT
+    : 1;
+}
+
 // ── Strategy ────────────────────────────────────────────────────────
 
 /**
@@ -291,11 +319,47 @@ export function buildChoiceCandidates(
 }
 
 /**
- * Creates a strategy that draws `count` distinct options uniformly at random
- * from `pool` — with each owned item's base-pool entry suppressed and its
- * level-up offer appended (see {@link buildChoiceCandidates}). When the
- * candidate list holds fewer than `count` entries, all of them are returned
- * (graceful degradation).
+ * Draws `count` **distinct** candidates by weighted sampling without
+ * replacement: each draw picks an option with probability proportional to its
+ * {@link choiceCandidateWeight}, then removes it so no option can be offered
+ * twice. Living here (and only here) keeps the 1.1× owned-upgrade bias in the
+ * strategy layer rather than in {@link buildChoiceCandidates} (AC2).
+ */
+function drawWeightedWithoutReplacement(
+  candidates: readonly ChoiceOption[],
+  count: number,
+  rng: () => number,
+): ChoiceOption[] {
+  const remaining = candidates.map((option) => ({
+    option,
+    weight: choiceCandidateWeight(option),
+  }));
+  const picked: ChoiceOption[] = [];
+  const n = Math.max(0, Math.min(Math.floor(count), remaining.length));
+  for (let i = 0; i < n; i++) {
+    const total = remaining.reduce((sum, entry) => sum + entry.weight, 0);
+    let threshold = rng() * total;
+    let index = 0;
+    // Advance past each entry's slice of the [0, total) range; the last entry
+    // is the fallback (guards against rng() returning exactly 1).
+    while (index < remaining.length - 1 && threshold >= remaining[index].weight) {
+      threshold -= remaining[index].weight;
+      index++;
+    }
+    picked.push(remaining[index].option);
+    remaining.splice(index, 1);
+  }
+  return picked;
+}
+
+/**
+ * Creates a strategy that draws `count` distinct options at **weighted**
+ * random from `pool` — owned `weapon-level`/`power-up-level` offers carry a
+ * {@link OWNED_UPGRADE_BONUS_WEIGHT} (1.1×) bias, unowned base entries 1.0× —
+ * with each owned item's base-pool entry suppressed and its level-up offer
+ * appended (see {@link buildChoiceCandidates}). When the candidate list holds
+ * fewer than `count` entries, all of them are returned (graceful
+ * degradation).
  */
 export function createRandomChoiceStrategy(
   pool: readonly DropId[] = CHOICE_POOL,
@@ -307,16 +371,7 @@ export function createRandomChoiceStrategy(
       context?: ChoiceContext,
     ): ChoiceOption[] {
       const candidates = buildChoiceCandidates(pool, context);
-      const n = Math.max(0, Math.min(Math.floor(count), candidates.length));
-      // Partial Fisher–Yates shuffle: the first n entries become a
-      // uniformly random, distinct sample of the candidates.
-      for (let i = 0; i < n; i++) {
-        const j = i + Math.floor(rng() * (candidates.length - i));
-        const tmp = candidates[i];
-        candidates[i] = candidates[j];
-        candidates[j] = tmp;
-      }
-      return candidates.slice(0, n);
+      return drawWeightedWithoutReplacement(candidates, count, rng);
     },
   };
 }
