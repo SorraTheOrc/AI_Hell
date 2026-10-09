@@ -95,15 +95,17 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
   it('covers every firing archetype with an explicit mapping entry', () => {
     // Guards against a silently-removed mapping: every firing archetype must
     // dispatch through the shared seam (the map is the one place a new
-    // archetype edits). The Harvester and the Galaga capturer are non-firing
-    // and are asserted separately below.
+    // archetype edits). The Harvester, the Galaga capturer, the Pac-Man
+    // ghosts, the Centipede, the Robotron grunt and the Missile Command
+    // orbital strike are non-firing and are asserted separately below.
     const firingKeys = Object.keys(ENEMY_FIRE_METHODS).filter(
       (key) =>
         key !== 'harvester' &&
         key !== 'capturer' &&
         !key.startsWith('ghost-') &&
         key !== 'centipede' &&
-        key !== 'grunt',
+        key !== 'grunt' &&
+        key !== 'orbital-strike',
     );
 
     for (const key of firingKeys) {
@@ -122,6 +124,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       'grunt',
       'harvester',
       'march',
+      'orbital-strike',
       'phaser',
       'raider',
       'scout',
@@ -165,6 +168,13 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     const entity = makeFireSpy();
     expect(enemyFireMethod('grunt')).toBe('tryFireNone');
     expect(fireForEnemy(entity, 'grunt', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Missile Command orbital strike to no fire (its burst is the hazard)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('orbital-strike')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'orbital-strike', 42)).toEqual([]);
     expect(entity.calls).toEqual([]);
   });
 });

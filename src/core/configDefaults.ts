@@ -449,6 +449,37 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     burstCount: 1,
     shotProbability: 0.6,
   },
+  // Missile Command telegraphed orbital strike (AH-0MV01ENX00055CG1): a
+  // non-blocking world hazard that telegraphs its impact point for ≥500 ms,
+  // then falls and detonates in a `burstCount`-shrapnel radial burst. It never
+  // fires on the fire cycle (`shotPattern: 'none'`) and never gates wave
+  // completion (matching the asteroid accounting).
+  'orbital-strike': {
+    key: 'orbital-strike',
+    displayName: 'Orbital Strike',
+    formationKind: 'single',
+    count: 1,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 0,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.25,
+    startXMin: GAME_WIDTH * 0.5,
+    startXMax: GAME_WIDTH * 0.5,
+    startYMin: GAME_HEIGHT * 0.25,
+    startYMax: GAME_HEIGHT * 0.25,
+    size: 20,
+    health: 1,
+    color: 0x8800cc,
+    bulletColor: 0xff4444,
+    bulletSize: 4,
+    shotPattern: 'none',
+    fireInterval: 1000,
+    bulletSpeed: 50,
+    bulletLifetime: 1.5,
+    burstCount: 6,
+    shotProbability: 1,
+  },
   harvester: {
     key: 'harvester',
     displayName: 'Harvester',

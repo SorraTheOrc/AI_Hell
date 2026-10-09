@@ -57,6 +57,11 @@ export const ENEMY_FIRE_METHODS = {
   // the level fire rule (shootEnabled, Levels 4+) and the attack-mode gate are
   // enforced inside the entity's `tryFireAimedBullet`.
   raider: 'tryFireAimedBullet',
+  // Missile Command orbital strike (AH-0MV01ENX00055CG1) never fires bullets
+  // — its threat is the telegraphed falling projectile that detonates in a
+  // radial burst. An explicit non-firing entry keeps it out of the aimed-shot
+  // fallback.
+  'orbital-strike': 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */

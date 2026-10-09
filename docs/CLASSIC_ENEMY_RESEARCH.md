@@ -351,8 +351,26 @@ method with a `radial` burst at detonation. The entity uses
 | Fire | `shotPattern` (`none`) + `burstCount` (shrapnel) | The initial strike has no bullets; the shrapnel burst is the secondary hazard. |
 | Health | `health` (default 1) | Single-hit; the entity must be dodged, not destroyed. |
 
-**Gym scene:** New `GymMissileStrike.ts` scene to exercise the telegraph,
-arc, and detonation behaviour; `GymEnemies` for CSV testing.
+**Gym scene:** The existing `GymEnemies` scene exercises the telegraph, fall,
+and detonation behaviour with a live player (gym↔game parity); `GymLevel`
+may additionally exercise it in a wave context.
+
+**Delivered (AH-0MV01ENX00055CG1):** The shipped vertical slice is the
+`orbital-strike` CSV row (`formationKind: 'single'`, `shotPattern: 'none'`)
+backed by `src/entities/OrbitalStrike.ts` and the pure planner
+`src/waves/StrikeSpawner.ts` (modelled on `AsteroidSpawner`). It diverges from
+the original research sketch in three implementation details, all recorded
+here: the entity is named `OrbitalStrike` (not `MissileStrike`); it is
+**non-firing** — it has no `tryFireMissileStrike` seam and is mapped to
+`tryFireNone` in `src/entities/enemyFire.ts`, because the radial burst is a
+**detonation event** hoisted into the shared enemy-bullet path by the scene,
+not a per-cycle shot; and it falls straight down from off-screen to the
+telegraphed impact point rather than following a parabolic arc. It is a
+**non-blocking world hazard** (not registered with the `WaveManager`,
+matching the asteroid accounting), so a wave can neither stall nor clear early
+on it. No dedicated `GymMissileStrike` scene is needed: the shared entity code
+is exercised by the existing `GymEnemies` scene, enforced by
+`src/scenes/core/CombatScene.equivalence.test.ts`.
 
 ---
 
@@ -446,8 +464,8 @@ document as their design brief.
 | Pac-Man Ghosts | AH-0MV01EH2U008XT3Q |
 | Centipede | AH-0MV01EJ92008ZZ86 |
 | Robotron Horde | AH-0MV01EKTL001NRE6 |
-| Defender | AH-0MV01EM7U0033W7L |
-| Missile Command | AH-0MV01ENX00055CG1 |
+| Defender | AH-0MV01EM7U0033W7L (delivered) |
+| Missile Command | AH-0MV01ENX00055CG1 (delivered) |
 | Frogger | AH-0MV01EPM40008N8T |
 
 ---

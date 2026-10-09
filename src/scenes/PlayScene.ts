@@ -154,6 +154,11 @@ import { LEVELS, type LevelDefinition } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
 import {
+  computeSpawns as computeStrikeSpawns,
+  type SpawnEvent as StrikeSpawnEvent,
+} from '../waves/StrikeSpawner';
+import { OrbitalStrike } from '../entities/OrbitalStrike';
+import {
   computeHarvesterSpawns,
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
@@ -625,6 +630,18 @@ export class PlayScene extends CombatScene<
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
 
+  /**
+   * Whether telegraphed orbital-strike spawning is active (Missile Command
+   * archetype, AH-0MV01ENX00055CG1). Enabled for the campaign; switchable so
+   * tests can isolate the hazard. The strike is a non-blocking world hazard
+   * (like asteroids) — it never gates wave completion.
+   */
+  private orbitalStrikeSpawnerEnabled = true;
+  /** Planned orbital-strike spawns for the active regular wave. */
+  private pendingStrikeSpawns: StrikeSpawnEvent[] = [];
+  /** Number of planned orbital-strike spawns already released this wave. */
+  private strikesSpawnedThisWave = 0;
+
   constructor() {
     super('PlayScene');
     this.gameState = new GameState({ gameState: 'playing' });
@@ -842,6 +859,8 @@ export class PlayScene extends CombatScene<
     this.centipedeSpawnedThisWave = false;
     this.pendingHordeSpawns = [];
     this.hordeSpawnedThisWave = 0;
+    this.pendingStrikeSpawns = [];
+    this.strikesSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this._spawnWormhole = null;
     this.paused = false;
@@ -1017,6 +1036,10 @@ export class PlayScene extends CombatScene<
       // (AH-0MV01EKTL001NRE6); each is registered with the WaveManager so the
       // wave neither clears early nor stalls.
       this._releaseDueHordeSpawns();
+      // Release any planned telegraphed orbital strikes whose time has passed
+      // (AH-0MV01ENX00055CG1); non-blocking world hazards (never registered
+      // with the WaveManager), like asteroids.
+      this._releaseDueStrikeSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -1092,6 +1115,9 @@ export class PlayScene extends CombatScene<
     // Plan the Robotron homing horde for waves that opted in
     // (AH-0MV01EKTL001NRE6); empty for every other wave.
     this.planHordeSpawns();
+    // Plan the telegraphed orbital strikes for this wave (Missile Command
+    // archetype, AH-0MV01ENX00055CG1); empty before wave 3.
+    this.planStrikeSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       // Spawn one wormhole at the first enemy's position.
@@ -1263,6 +1289,91 @@ export class PlayScene extends CombatScene<
       enemyKey: 'asteroid',
       startX: 0,
       startY: 0,
+      spacingX: 0,
+      spacingY: 0,
+    });
+  }
+
+  /**
+   * Plans the telegraphed orbital strikes for the active regular wave
+   * (Missile Command archetype, AH-0MV01ENX00055CG1). Called once per wave
+   * from `spawnWave()` so the scene rng stream advances only at wave
+   * boundaries. Outside a regular wave — before `beginGame()`, during or
+   * after the boss encounter — the plan is cleared and no strikes spawn.
+   */
+  planStrikeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.orbitalStrikeSpawnerEnabled ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingStrikeSpawns = [];
+      this.strikesSpawnedThisWave = 0;
+      return;
+    }
+    const player = this.getPlayer();
+    this.pendingStrikeSpawns = computeStrikeSpawns(
+      wm.globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      player?.x ?? GAME_WIDTH / 2,
+      player?.y ?? GAME_HEIGHT / 2,
+      this.rng,
+    );
+    this.strikesSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned orbital strike whose scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition,
+   * pause or boss encounter) and stops at the first not-yet-due event — the
+   * plan is time-ordered.
+   */
+  private _releaseDueStrikeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.strikesSpawnedThisWave < this.pendingStrikeSpawns.length) {
+      const event = this.pendingStrikeSpawns[this.strikesSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledStrike(event);
+      this.strikesSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned orbital strike at its impact point. Like asteroids,
+   * strikes are NOT registered with the WaveManager (AH-0MV01ENX00055CG1):
+   * they are non-blocking world hazards and never gate wave completion.
+   * Their radial detonation burst is routed through the shared enemy-bullet
+   * path so it can damage the player, but it never touches other enemies.
+   */
+  private _spawnScheduledStrike(event: StrikeSpawnEvent): void {
+    const entity = new OrbitalStrike(this, {
+      x: event.x,
+      y: event.y,
+      formationOffset: { row: 0, col: 0 },
+      rng: this.rng,
+    });
+    this.add.existing(entity);
+    entity.initStrike(event.x, event.y, event.burstCount, this.rng);
+    this.spawned.push({
+      entity,
+      enemyKey: 'orbital-strike',
+      startX: event.x,
+      startY: event.y,
       spacingX: 0,
       spacingY: 0,
     });
@@ -1661,6 +1772,22 @@ export class PlayScene extends CombatScene<
         (s.entity as Asteroid).updatePosition(dt);
         continue;
       }
+      // Orbital strikes run their own telegraph → fall → detonate lifecycle
+      // (Missile Command archetype, AH-0MV01ENX00055CG1); they are not
+      // formation-positioned. Their radial detonation burst is hoisted into
+      // the shared enemy-bullet path here — at detonation time, before the
+      // destroyed entity is skipped — so it can damage the player while never
+      // touching other enemies.
+      if (s.enemyKey === 'orbital-strike') {
+        const strike = s.entity as OrbitalStrike;
+        strike.update(dt);
+        const burst = strike.getBurstBullets();
+        if (burst.length > 0) {
+          this.enemyBullets.push(...burst);
+          strike.clearBurstBullets();
+        }
+        continue;
+      }
       // Live mineral-seek: push the scene's live mineral field so roaming
       // seekers (Harvester) steer toward the nearest mineral, then advance
       // their own motion. The gym's shared tick calls the same seam (F4).
@@ -1851,6 +1978,10 @@ export class PlayScene extends CombatScene<
     this.ghostsSpawnedThisWave = 0;
     this.pendingCentipedeSpawn = null;
     this.centipedeSpawnedThisWave = false;
+    this.pendingHordeSpawns = [];
+    this.hordeSpawnedThisWave = 0;
+    this.pendingStrikeSpawns = [];
+    this.strikesSpawnedThisWave = 0;
     this.waveManager.beginBoss();
     this._startTransition();
   }
@@ -2031,6 +2162,10 @@ export class PlayScene extends CombatScene<
     this.ghostsSpawnedThisWave = 0;
     this.pendingCentipedeSpawn = null;
     this.centipedeSpawnedThisWave = false;
+    this.pendingHordeSpawns = [];
+    this.hordeSpawnedThisWave = 0;
+    this.pendingStrikeSpawns = [];
+    this.strikesSpawnedThisWave = 0;
     this._hideWaveTimer();
   }
 
@@ -3512,6 +3647,21 @@ export class PlayScene extends CombatScene<
     if (!enabled) {
       this.pendingHordeSpawns = [];
       this.hordeSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the telegraphed orbital-strike plan (Missile Command
+   * archetype, AH-0MV01ENX00055CG1). Disabling immediately drops any pending
+   * plan and clears the released counter; re-enabling takes effect from the
+   * next `spawnWave()`. Tuning and test seam mirroring
+   * `setHordeSpawnerEnabled`.
+   */
+  setOrbitalStrikeSpawnerEnabled(enabled: boolean): void {
+    this.orbitalStrikeSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingStrikeSpawns = [];
+      this.strikesSpawnedThisWave = 0;
     }
   }
 }

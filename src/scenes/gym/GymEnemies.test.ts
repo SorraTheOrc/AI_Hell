@@ -48,6 +48,7 @@ import { Ghost } from '../../entities/Ghost';
 import { Grunt } from '../../entities/Grunt';
 import { Raider } from '../../entities/Raider';
 import { Harvester } from '../../entities/Harvester';
+import { OrbitalStrike } from '../../entities/OrbitalStrike';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
@@ -220,6 +221,28 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.activeBullets).toHaveLength(0);
   });
 
+  it('Missile Command orbital strike telegraphs ≥500 ms and never fires (gym parity, AH-0MV01ENX00055CG1)', async () => {
+    const scene = await bootWithKey('orbital-strike');
+    expect(scene.activeEnemyKey).toBe('orbital-strike');
+    expect(scene.formationEntities).toHaveLength(1);
+
+    const strike = scene.formationEntities[0] as unknown as OrbitalStrike;
+    expect(strike).toBeInstanceOf(OrbitalStrike);
+    expect(strike.archetype).toBe('orbital-strike');
+    // The shared entity runs the same code in the gym and the game.
+    expect(strike.tellDuration).toBeGreaterThanOrEqual(500);
+    // A strike is a world hazard, not a firing ship: the fire dispatch
+    // resolves it to `tryFireNone` (asserted in enemyFire.test.ts), and
+    // SHOOT is off by default so `activeBullets` stays empty.
+    expect(strike.shootEnabled).toBe(false);
+    expect(scene.activeBullets).toHaveLength(0);
+    // The seed entity has no target of its own (the game's spawner calls
+    // `initStrike`), so in the gym it sits on its formation slot until a
+    // telegraph is armed.
+    expect(strike.phase).toBe('telegraph');
+    expect(strike.archetype).toBe('orbital-strike');
+  });
+
   it('F5 — the Harvester spawns, renders and is a no-fire roamer', async () => {
     const scene = await bootWithKey('harvester');
     expect(scene.activeEnemyKey).toBe('harvester');
@@ -267,10 +290,16 @@ describe('GymEnemies — single reusable enemy gym', () => {
     // The roaming Asteroid is a non-formation enemy: its position is driven
     // by its own constant-velocity updatePosition (straight-line drift +
     // wrap + rotation), not by a formation slot. The Harvester is likewise a
-    // self-propelled roamer (mineral seek) and the Pac-Man ghosts self-steer.
-    // They still spawn near their configured start with a small boot-delay
-    // drift budget.
-    if (key === 'asteroid' || key === 'harvester' || key.startsWith('ghost-')) {
+    // self-propelled roamer (mineral seek), the Pac-Man ghosts self-steer and
+    // the Missile Command orbital strike is a non-blocking world hazard that
+    // sits on the formation slot until its telegraph fires. They still spawn
+    // near their configured start with a small boot-delay drift budget.
+    if (
+      key === 'asteroid' ||
+      key === 'harvester' ||
+      key === 'orbital-strike' ||
+      key.startsWith('ghost-')
+    ) {
       const e = scene.formationEntities[0];
       expect(Math.abs(e.x - cfg.startX)).toBeLessThan(40);
       expect(Math.abs(e.y - cfg.startY)).toBeLessThan(40);

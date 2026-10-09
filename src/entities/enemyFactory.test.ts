@@ -20,6 +20,7 @@ import { Tank } from './Tank';
 import { createEnemyFromConfig } from './enemyFactory';
 import { Capturer } from './Capturer';
 import { Harvester } from './Harvester';
+import { OrbitalStrike } from './OrbitalStrike';
 import { Raider } from './Raider';
 
 class Harness extends Phaser.Scene {
@@ -126,7 +127,7 @@ describe('Config-aware entity seam', () => {
   it('createEnemyFromConfig maps keys to the right entity class and threads opts', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
-    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid', 'harvester', 'capturer', 'raider'] as const) {
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid', 'harvester', 'capturer', 'raider', 'orbital-strike'] as const) {
       const cfg = { ...DEFAULT_ENEMY_CONFIGS[key], color: 0xabcdef, size: 99 };
       const e = createEnemyFromConfig(scene, cfg as any, 10, 10, { row: 0, col: 0 });
       expect((e as any).effectiveColor).toBe(0xabcdef);
@@ -140,6 +141,7 @@ describe('Config-aware entity seam', () => {
       if (key === 'harvester') expect(e instanceof Harvester).toBe(true);
       if (key === 'capturer') expect(e instanceof Capturer).toBe(true);
       if (key === 'raider') expect(e instanceof Raider).toBe(true);
+      if (key === 'orbital-strike') expect(e instanceof OrbitalStrike).toBe(true);
       e.destroy(true);
     }
   });

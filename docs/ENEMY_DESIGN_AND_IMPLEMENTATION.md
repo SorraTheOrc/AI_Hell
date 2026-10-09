@@ -102,6 +102,28 @@ through every other enemy (GDD §2.6 — no enemy–enemy collision). The existi
 `GymEnemies` scene runs the same shared entity/state-machine code with a live
 player for gym↔game parity.
 
+The **Missile Command telegraphed orbital strike** (AH-0MV01ENX00055CG1) is the
+fifth delivered classic archetype and is a **non-blocking world hazard**
+rather than a wave-gating ship. It is a single CSV row (`orbital-strike`,
+`formationKind: single`, `shotPattern: none`) backed by a dedicated
+`src/entities/OrbitalStrike.ts` entity and the pure planner
+`src/waves/StrikeSpawner.ts` (modelled on `AsteroidSpawner`). The entity
+lifecycle is a three-phase state machine — **telegraph → fall → detonate**:
+a visible marker pulses at the predicted impact point for a configurable tell
+of at least 500 ms (`TELEGRAPH_DURATION`, reusing the Scout advance cue), then
+a fast projectile falls from off-screen to that exact point and detonates in a
+`burstCount`-shrapnel radial burst. The strike never fires on the fire cycle
+(`tryFireNone`), so its only threat is the telegraphed projectile and the
+detonation burst; it never collides with or damages other enemies (GDD §2.6),
+and — matching the asteroid accounting (AH-0MUJM746P000QAEO) — it is **not
+registered with the `WaveManager`**, so a wave can neither stall nor clear
+early on it. The radial detonation burst is hoisted into the shared
+enemy-bullet path (so it can damage the player) while the strike entity itself
+is skipped once destroyed. Because the tell is driven by the simulation `dt`
+accumulated in `update(dt)`, the game and every gym run the identical
+lifecycle. The existing `GymEnemies` scene runs the same shared entity code
+with a live player for gym↔game parity.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed

@@ -132,6 +132,12 @@ export class OrbitalStrike extends BaseEnemy {
   private _phase: StrikePhase = 'telegraph';
   private _tellStartTime = 0;
 
+  /** Whether this strike is currently telling (telegraph phase). */
+  private _isTelling = false;
+
+  /** Whether `initStrike` has armed this strike with a target. */
+  private _initialised = false;
+
   /** The impact point (resolved when the strike enters the falling phase). */
   private _impactPoint: ImpactPoint | null = null;
 
@@ -157,11 +163,13 @@ export class OrbitalStrike extends BaseEnemy {
   /** Number of radial burst bullets. */
   private _burstCount = 6;
 
-  /** Injectable RNG (optional, for determinism in tests). */
-  private _rng?: () => number;
+
 
   /** Burst bullets produced by the last detonation. */
   private _burstBullets: OrbitalStrikeBullet[] = [];
+
+  /** Optional config-driven telegraph colour override. */
+  private _telegraphColorOverride?: number;
 
   // ── Construction ─────────────────────────────────────────────────
 
@@ -175,6 +183,9 @@ export class OrbitalStrike extends BaseEnemy {
     };
     super(scene, config.x, config.y, baseConfig);
 
+    // Store telegraph colour override if provided.
+    this._telegraphColorOverride = config.telegraphColor;
+
     // Draw the body.
     this._drawBody();
 
@@ -186,8 +197,18 @@ export class OrbitalStrike extends BaseEnemy {
   }
 
   /** Archetype key (`'orbital-strike'`), matching the scene's enemy key. */
-  override get archetype(): string {
+  get archetype(): string {
     return 'orbital-strike';
+  }
+
+  /** Effective visual half-size in px (exposed for parity/test checks). */
+  get effectiveSize(): number {
+    return this._size;
+  }
+
+  /** Effective body colour (exposed for parity/test checks). */
+  get effectiveColor(): number {
+    return this._color;
   }
 
   /** VFX pattern name for orbital strike explosions. */
@@ -264,19 +285,22 @@ export class OrbitalStrike extends BaseEnemy {
     targetX: number,
     targetY: number,
     burstCount: number,
-    rng?: () => number,
+    _rng?: () => number,
   ): void {
     this._targetX = targetX;
     this._targetY = targetY;
     this._burstCount = burstCount;
-    this._rng = rng;
     // Start from off-screen top.
     this._spawnY = -(this._size + 10);
     this.y = this._spawnY;
     // Start the telegraph phase.
     this._phase = 'telegraph';
     this._isTelling = true;
-    this._tellStartTime = this.scene.time.now;
+    this._initialised = true;
+    // Accumulated telegraph elapsed time (ms), advanced by `update(dt)` so the
+    // tell is driven by the scene's simulation step rather than a wall clock
+    // — identical in the game and the gym, and deterministic under test.
+    this._tellStartTime = 0;
     // Draw the telegraph marker.
     this._drawTelegraphMarker();
     // Play the advance cue.
@@ -288,21 +312,23 @@ export class OrbitalStrike extends BaseEnemy {
   /**
    * Update the strike's lifecycle state each frame.
    *
-   * @param now — current time in ms.
+   * @param dt — elapsed time in **seconds** since the last update.
    */
-  update(now: number): void {
+  update(dt: number): void {
     if (!this._alive) return;
+    const dtMs = dt * 1000;
 
     // Update the telegraph marker pulse (visual emphasis).
     if (this._phase === 'telegraph') {
       this._pulsePhase += 0.05;
       this._drawTelegraphMarker();
-      // Check if the tell duration has elapsed.
-      if (now - this._tellStartTime >= TELEGRAPH_DURATION) {
+      // Accumulate the tell and check whether it has elapsed.
+      this._tellStartTime += dtMs;
+      if (this._tellStartTime >= TELEGRAPH_DURATION) {
         this._startFall();
       }
     } else if (this._phase === 'falling') {
-      this._updateFall(now);
+      this._updateFall(dt);
     }
   }
 
@@ -318,7 +344,7 @@ export class OrbitalStrike extends BaseEnemy {
 
     const pulse = Math.sin(this._pulsePhase) * 0.3 + 0.7; // 0.4–1.0
     const pulseSize = ORBITAL_STRIKE_TELEGRAPH_SIZE * (0.8 + 0.2 * pulse);
-    const color = this._config?.telegraphColor ?? ORBITAL_STRIKE_TELEGRAPH_COLOR;
+    const color = this._telegraphColorOverride ?? ORBITAL_STRIKE_TELEGRAPH_COLOR;
 
     this._telegraphGraphics.lineStyle(2, color, pulse);
     this._telegraphGraphics.strokeCircle(
@@ -361,7 +387,8 @@ export class OrbitalStrike extends BaseEnemy {
     // Create the falling projectile.
     this._fallingBullet = this._createFallingProjectile();
     // Set the projectile to start from off-screen top at the target X.
-    this._fallingBullet.graphics.position.set(this._targetX, this._spawnY);
+    this._fallingBullet.graphics.x = this._targetX;
+    this._fallingBullet.graphics.y = this._spawnY;
     this.y = this._spawnY;
   }
 
@@ -389,17 +416,18 @@ export class OrbitalStrike extends BaseEnemy {
 
   /**
    * Update the falling projectile's position and check for arrival.
+   *
+   * @param dt — elapsed time in seconds since the last update.
    */
-  private _updateFall(_now: number): void {
+  private _updateFall(dt: number): void {
     if (!this._fallingBullet || !this._impactPoint) return;
 
     // Move the projectile downward.
-    const dt = this.scene.time.physicsElapsedMS / 1000;
-    this._fallingBullet.graphics.position.y += this._fallingBullet.vy * dt;
-    this.y = this._fallingBullet.graphics.position.y;
+    this._fallingBullet.graphics.y += this._fallingBullet.vy * dt;
+    this.y = this._fallingBullet.graphics.y;
 
     // Check if the projectile has reached the impact point.
-    if (this._fallingBullet.graphics.position.y >= this._impactPoint.y) {
+    if (this._fallingBullet.graphics.y >= this._impactPoint.y) {
       this._detonate();
     }
   }
@@ -428,7 +456,7 @@ export class OrbitalStrike extends BaseEnemy {
     this._burstBullets = this._createRadialBurst();
 
     // Trigger destruction — the scene will handle cleanup.
-    this.triggerDestruction();
+    this.destroySelf();
   }
 
   /**
@@ -446,7 +474,7 @@ export class OrbitalStrike extends BaseEnemy {
       const bullet = createBullet({
         scene: this.scene,
         color: ORBITAL_STRIKE_BULLET_COLOR,
-        size: ORBITAL_STRIKE_BURST_BULLET_SIZE,
+        size: ORBITAL_STRIKE_BULLET_SIZE,
         x: this._impactPoint!.x,
         y: this._impactPoint!.y,
       });
@@ -488,10 +516,19 @@ export class OrbitalStrike extends BaseEnemy {
     baseX: number,
     baseY: number,
     _dt: number,
-    spacingX: number,
-    spacingY: number,
+    _spacingX: number,
+    _spacingY: number,
   ): void {
     if (!this._alive) return;
+
+    // An uninitialised strike (`initStrike` not yet called) has no target of
+    // its own: in the gym it sits on its formation slot, while the game only
+    // ever spawns initialised strikes. This keeps gym↔game parity without a
+    // divergent copy.
+    if (!this._initialised) {
+      this.setPosition(baseX, baseY);
+      return;
+    }
 
     if (this._phase === 'telegraph') {
       // During telegraph, stay at the target position.
@@ -499,8 +536,8 @@ export class OrbitalStrike extends BaseEnemy {
     } else if (this._phase === 'falling') {
       // During fall, follow the projectile position.
       this._fallingBullet && this.setPosition(
-        this._fallingBullet.graphics.position.x,
-        this._fallingBullet.graphics.position.y,
+        this._fallingBullet.graphics.x,
+        this._fallingBullet.graphics.y,
       );
     } else {
       // During detonation or after, stay at the impact point.
@@ -511,12 +548,12 @@ export class OrbitalStrike extends BaseEnemy {
   /**
    * Clean up all Phaser objects. Called on destruction.
    */
-  override destroy(): void {
+  destroy(fromScene?: boolean): void {
     this._telegraphGraphics?.destroy();
     this._telegraphGraphics = null;
     this._fallingBullet?.graphics.destroy();
     this._fallingBullet = null;
-    super.destroy();
+    super.destroy(fromScene);
   }
 
   /**

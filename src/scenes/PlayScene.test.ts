@@ -53,6 +53,11 @@ import {
 } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns } from '../waves/AsteroidSpawner';
+import {
+  computeSpawns as computeStrikeSpawns,
+  STRIKE_SPAWN_START_WAVE,
+} from '../waves/StrikeSpawner';
+import { OrbitalStrike } from '../entities/OrbitalStrike';
 import { CENTIPEDE_SEGMENT_COUNT } from '../waves/CentipedeSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
@@ -4953,5 +4958,187 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
     for (let i = 0; i < 20; i++) scene.tick(0.05);
     expect(raider.mode).toBe('attack');
     expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+
+  // ── Missile Command telegraphed orbital strike (AH-0MV01ENX00055CG1) ──
+
+  describe('Missile Command telegraphed orbital strike (AH-0MV01ENX00055CG1)', () => {
+    const STRIKE_SEED = 424242;
+
+    /** Single-scout waves so the campaign advances quickly to a strike wave. */
+    function strikeCampaign(waveCount: number): LevelDefinition[] {
+      return [
+        {
+          level: 1,
+          name: 'Strike Test',
+          waves: Array.from({ length: waveCount }, () => ({
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v' as const,
+                count: 1,
+                spacingX: 20,
+                spacingY: 20,
+                startX: 200,
+                startY: 200,
+              },
+            ],
+            shootEnabled: false,
+          })),
+        },
+      ];
+    }
+
+    /** Boots a campaign long enough to reach the first strike wave. */
+    async function bootStrikeScene(
+      waveCount: number,
+    ): Promise<{ scene: PlayScene; plan: ReturnType<typeof computeStrikeSpawns> }> {
+      const { booted: game, scene } = await bootSceneWithLevels(strikeCampaign(waveCount));
+      booted = game;
+      // Isolate the strike hazard from the random asteroid spawner.
+      scene.setAsteroidSpawnerEnabled(false);
+      scene.setOrbitalStrikeSpawnerEnabled(true);
+      // Advance to the first strike wave by clearing the earlier ones.
+      const wm = scene.getWaveManager();
+      let guard = 0;
+      while (wm.globalWaveIndex < STRIKE_SPAWN_START_WAVE && guard++ < waveCount + 5) {
+        killAllEnemies(scene);
+        finishTransition(scene);
+      }
+      expect(wm.globalWaveIndex).toBeGreaterThanOrEqual(STRIKE_SPAWN_START_WAVE);
+      // Re-plan deterministically with a known seed so the plan is predictable.
+      scene.setRng(createSeededRng(STRIKE_SEED));
+      scene.planStrikeSpawns();
+      const plan = computeStrikeSpawns(
+        wm.globalWaveIndex,
+        GAME_WIDTH,
+        GAME_HEIGHT,
+        WAVE_TIME_LIMIT_SECONDS,
+        scene.getPlayer()?.x ?? GAME_WIDTH / 2,
+        scene.getPlayer()?.y ?? GAME_HEIGHT / 2,
+        createSeededRng(STRIKE_SEED),
+      );
+      return { scene, plan };
+    }
+
+    it('releases a planned strike that does not gate wave completion', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      const wm = scene.getWaveManager();
+      const aliveBefore = wm.enemiesAlive;
+      const before = new Set(scene.getEnemies());
+
+      // Advance the wave clock to the first strike's due time.
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strikes = scene
+        .getEnemies()
+        .filter((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive);
+      expect(strikes).toHaveLength(1);
+      expect(strikes[0].archetype).toBe('orbital-strike');
+      expect(strikes[0].tellDuration).toBeGreaterThanOrEqual(500);
+      // Released strikes are NOT registered with the WaveManager — they are
+      // non-blocking world hazards (matching the asteroid accounting).
+      expect(wm.enemiesAlive).toBe(aliveBefore);
+      expect(scene.getEnemies().length).toBe(before.size + 1);
+
+      // The wave still clears while the strike is mid-telegraph.
+      killAllEnemies(scene);
+      finishTransition(scene);
+      expect(scene.isTransitioning()).toBe(false);
+    });
+
+    it('telegraphs ≥500 ms before the projectile falls and detonates', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strike = scene
+        .getEnemies()
+        .find((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive)!;
+      expect(strike).toBeDefined();
+      expect(strike.isTelling).toBe(true);
+      expect(strike.phase).toBe('telegraph');
+      // No enemy bullets until detonation.
+      expect(scene.getEnemyBullets()).toHaveLength(0);
+
+      // After the tell elapses the strike is falling, not yet detonated.
+      scene.tick(strike.tellDuration / 1000 + 0.05);
+      expect(strike.phase).toBe('falling');
+
+      // The radial detonation burst reuses the shared enemy-bullet path, so it
+      // can damage the player; it never touches other enemies.
+      let guard = 0;
+      while (strike.alive && guard++ < 200) scene.tick(0.05);
+      expect(strike.alive).toBe(false);
+      expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
+    });
+
+    it('the detonation burst damages the player through the shared enemy-bullet path', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strike = scene
+        .getEnemies()
+        .find((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive)!;
+      // Detonate the strike.
+      let guard = 0;
+      while (strike.alive && guard++ < 200) scene.tick(0.05);
+      expect(strike.alive).toBe(false);
+      const burst = scene.getEnemyBullets();
+      expect(burst.length).toBeGreaterThan(0);
+
+      // Place every shrapnel bullet on the live player and advance one frame:
+      // the shared enemy-bullet collision path must damage the player.
+      const player = scene.getPlayer()!;
+      const livesBefore = scene.getGameState().lives;
+      for (const bullet of burst) {
+        bullet.graphics.x = player.x;
+        bullet.graphics.y = player.y;
+        bullet.vx = 0;
+        bullet.vy = 0;
+      }
+      scene.tick(0.016);
+      expect(scene.getGameState().lives).toBeLessThan(livesBefore);
+    });
+
+    it('the detonation burst never collides with or damages other enemies', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strike = scene
+        .getEnemies()
+        .find((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive)!;
+      let guard = 0;
+      while (strike.alive && guard++ < 200) scene.tick(0.05);
+      expect(strike.alive).toBe(false);
+
+      // Move every shrapnel bullet onto a live, non-strike enemy and advance:
+      // the strike must never damage another enemy (GDD §2.6).
+      const other = scene
+        .getEnemies()
+        .find((e) => !(e instanceof OrbitalStrike) && e.alive);
+      expect(other).toBeDefined();
+      const healthBefore = (other as unknown as { health: number }).health;
+      for (const bullet of scene.getEnemyBullets()) {
+        bullet.graphics.x = other!.x;
+        bullet.graphics.y = other!.y;
+        bullet.vx = 0;
+        bullet.vy = 0;
+      }
+      scene.tick(0.016);
+      expect(other!.alive).toBe(true);
+      expect((other as unknown as { health: number }).health).toBe(healthBefore);
+    });
   });
 });

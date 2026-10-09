@@ -55,3 +55,4 @@ ghost-flank,Ghost (Flank),single,1,0,0,0,480,135,480,480,135,135,16,0x22ffff,0xf
 ghost-wander,Ghost (Wander),single,1,0,0,0,480,135,480,480,135,135,16,0xffb852,0xffffff,3,none,1000,50,1.5,1,0,1,,,,
 grunt,Grunt Horde,swarm,16,30,26,110,480,189,480,480,189,189,12,0xff00aa,0xffffff,3,none,1000,50,1.5,1,0,1,,,,4,1.6,,
 raider,Raider,single,1,0,0,140,480,135,480,480,135,135,18,0xff4433,0xffddaa,3,aimed,1100,110,1.4,1,0.6,2,,,,,,,320,260
+orbital-strike,Orbital Strike,single,1,0,0,0,480,135,480,480,135,135,20,0x8800cc,0xff4444,4,none,1000,50,1.5,6,1,1,,,,,,,,

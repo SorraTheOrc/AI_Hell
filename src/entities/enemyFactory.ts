@@ -15,6 +15,7 @@ import { Ghost, personalityFromKey } from './Ghost';
 import { Grunt } from './Grunt';
 import { Harvester } from './Harvester';
 import { Diver } from './Diver';
+import { OrbitalStrike } from './OrbitalStrike';
 import { PhaserEntity } from './Phaser';
 import { Raider } from './Raider';
 import { Scout } from './Scout';
@@ -61,7 +62,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt | Raider) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt | Raider | OrbitalStrike) &
   DestructionAudioSeam &
   FormationReanchorSeam &
   SeekSeam & {
@@ -112,6 +113,13 @@ export function createEnemyFromConfig(
     // actor with a patrol/attack state machine. Patrol speed is the config's
     // `driftSpeed`; the committed attack speed and commit range come from the
     // raider-specific columns. The aimed shot reuses the Scout fire seam.
+    case 'orbital-strike':
+      return new OrbitalStrike(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+      });
     case 'raider':
       return new Raider(scene, {
         x,
