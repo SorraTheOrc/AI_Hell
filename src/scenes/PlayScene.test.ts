@@ -20,6 +20,7 @@ import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { Ghost } from '../entities/Ghost';
+import { Centipede } from '../entities/Centipede';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
@@ -49,6 +50,7 @@ import {
 } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns } from '../waves/AsteroidSpawner';
+import { CENTIPEDE_SEGMENT_COUNT } from '../waves/CentipedeSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
@@ -4597,5 +4599,126 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
     scene.setGhostSpawnerEnabled(false);
     releaseGhosts(scene);
     expect(liveGhosts(scene)).toHaveLength(0);
+  });
+});
+
+// ── Centipede linked chain (AH-0MV01EJ92008ZZ86) ──────────────────────
+
+describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single empty wave so centipede accounting is
+   * isolated from any formation kills. `centipede` toggles the wave opt-in.
+   */
+  async function bootWithCentipedeWave(centipede: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Centipede Test',
+        waves: [{ groups: [], shootEnabled: false, centipede }],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setCentipedeSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveSegments(scene: PlayScene): Centipede[] {
+    return scene.getEnemies().filter((e): e is Centipede => e instanceof Centipede && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window in one tick, then
+   * ticks once more to position the freshly released chain. Collisions run
+   * before the release step, so the chain is alive when this returns.
+   */
+  function releaseCentipede(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  it('spawns the linked chain as a wave-accounted group', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    const wm = scene.getWaveManager();
+    expect(wm.enemiesAlive).toBe(0);
+
+    releaseCentipede(scene);
+
+    const segments = liveSegments(scene);
+    expect(segments).toHaveLength(CENTIPEDE_SEGMENT_COUNT);
+    for (const segment of segments) {
+      expect(segment.x).toBeGreaterThanOrEqual(0);
+      expect(segment.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(segment.y).toBeGreaterThanOrEqual(0);
+      expect(segment.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    }
+    // Every spawned segment is registered with the wave accounting.
+    expect(wm.enemiesAlive).toBe(CENTIPEDE_SEGMENT_COUNT);
+  });
+
+  it('segments never fire at any level (no enemy bullets)', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    releaseCentipede(scene);
+    const segments = liveSegments(scene);
+    expect(segments).toHaveLength(CENTIPEDE_SEGMENT_COUNT);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const segment of segments) {
+      expect(segment.effectiveShotPattern).toBe('none');
+      expect(segment.shootEnabled).toBe(false);
+    }
+  });
+
+  it('killing a middle segment splits the chain into two sub-chains and advances accounting once', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    const wm = scene.getWaveManager();
+    releaseCentipede(scene);
+    expect(wm.enemiesAlive).toBe(CENTIPEDE_SEGMENT_COUNT);
+
+    const segments = liveSegments(scene);
+    const chain = segments[0].chain;
+    expect(chain.subChainCount()).toBe(1);
+
+    const victim = segments[2];
+    const before = wm.enemiesAlive;
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+
+    expect(victim.alive).toBe(false);
+    expect(chain.aliveCount()).toBe(CENTIPEDE_SEGMENT_COUNT - 1);
+    expect(chain.subChainCount()).toBe(2);
+    expect(chain.runs()).toEqual([
+      [0, 1],
+      [3, 4, 5],
+    ]);
+    expect(wm.enemiesAlive).toBe(before - 1);
+  });
+
+  it('does not spawn the chain for a wave without the opt-in', async () => {
+    const scene = await bootWithCentipedeWave(false);
+    releaseCentipede(scene);
+    expect(liveSegments(scene)).toHaveLength(0);
+    expect(scene.getWaveManager().enemiesAlive).toBe(0);
+  });
+
+  it('the centipede spawner disable seam suppresses the chain', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    scene.setCentipedeSpawnerEnabled(false);
+    releaseCentipede(scene);
+    expect(liveSegments(scene)).toHaveLength(0);
   });
 });

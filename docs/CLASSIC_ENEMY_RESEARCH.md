@@ -174,34 +174,54 @@ horizontal tracks, dropping down a row when it reaches an edge. When a segment
 is destroyed, the next segment changes direction, creating a cascading
 reversal.
 
-**AI_Hell adaptation:** A chain of 5–8 connected entities where each segment
-follows the one ahead at a fixed offset. Destruction of one segment triggers a
-direction reversal for the remaining chain (a new `reversed` flag on the
-formation drift). Segments use `single` formation offsets (they are not in a
-grid — they are a line).
+**AI_Hell adaptation:** A linked chain of segments. The lead weaves
+laterally (reversing at the left/right arena bounds) while descending at a
+fixed rate, wrapping back to the top at the bottom edge; every following
+segment trails the one ahead at a fixed arc-length, so the chain reads as a
+continuous snake through every reversal. Destroying a **middle** segment
+splits the chain into **two independent sub-chains** (the segments ahead and
+behind), each with its own lead and path; destroying the **lead** or the
+**tail** simply shortens the remaining chain. The chain speeds up
+monotonically as segments are destroyed. Segments **never fire** — the
+weaving linked body is the threat, resolved by the existing enemy-body
+collision rule. The weave/descent movement is the whole threat, and each
+segment has `health` 1 (single-hit) — the chain length is the difficulty
+lever.
 
-**Divergence from original:** No fixed horizontal tracks — the chain roams
-freely in 2D. The segment-connection is expressed via the shared
-`FormationGlide` helper for smooth repositioning rather than snap-to-grid.
+**Divergence from original:** No fixed horizontal tracks or mushroom field —
+the chain roams freely in the 2D arena and wraps at the bottom rather than
+stepping down a row. The original's "destroyed segment reverses the chain"
+is expressed as a clean split into two independent sub-chains (the work-item
+adaptation), which reads as the same cascading disruption without a
+per-segment direction flag. The dedicated `GymCentipede` gym scene exercises
+the same shared chain code for gym-to-game parity.
 
-**Pipeline fit:** New `src/entities/Centipede.ts` entity class representing a
-chain of segments. Each segment is a `single`-offset entity. The factory maps
-the centipede key to this entity. Fire dispatch uses a new `tryFireCentipede`
-method in `enemyFire.ts` with a `radial` pattern (segments fire outward). The
-`enemyDifficulty` module needs no change — the `count` factor captures the chain
-length.
+**Pipeline fit:** **Not** expressible as an `EnemyConfig`/CSV formation row —
+a linked chain is a coordinated group, not an independent formation slot. It
+is delivered by a dedicated `src/entities/Centipede.ts` entity (one segment)
+plus the pure shared model `src/scenes/core/centipedeChain.ts` (weave,
+descent, edge handling, split, speed-up) and the pure planner
+`src/waves/CentipedeSpawner.ts` (one chain per opted-in wave). The factory
+`EnemyEntity` union includes `Centipede`; `enemyFire.ts` maps the
+`centipede` key to an explicit `tryFireNone` so it can never fall back to the
+aimed shot. `PlayScene` registers **every** spawned segment with the
+`WaveManager` (the Harvester/Ghost invariant; unlike the Asteroid), gated
+behind a per-wave `centipede: true` opt-in so existing wave data is
+unchanged. The `enemyDifficulty` module needs no change — the `count` factor
+captures the chain length.
 
 **Difficulty scoring inputs:**
 
 | Factor | Type | Notes |
 |--------|------|-------|
-| Movement | `count` + `driftSpeed` | Chain length directly affects difficulty; direction reversals add unpredictability. |
-| Fire | `shotPattern` (`radial`) + `burstCount` + `fireInterval` | Each segment fires outward — a ring of bullets. |
-| Health | `health` (default 1 per segment) | Multiple single-hit segments; the chain length is the key difficulty lever. |
+| Movement | `count` (segments) + `driftSpeed` + `formationKind` (`single`) | Chain length is the primary lever; the weave/reversal adds unpredictability. |
+| Fire | `shotPattern` (`none`) | Never fires at any level; the firing factors contribute zero. |
+| Health | `health` (default 1 per segment) | Multiple single-hit segments; the chain length is the key durability lever. |
 
-**Gym scene:** New `GymCentipede.ts` scene (extending `GymFormationScene`) to
-exercise the chain movement and direction-reversal behaviour, alongside
-`GymEnemies` for the basic CSV configuration test.
+**Gym scene:** New `GymCentipede.ts` scene (extending `GymFormationScene`)
+that builds the same `CentipedeChain`/`Centipede` code the game runs, so it
+exercises the weave, descent, split and no-fire behaviour for gym-to-game
+parity.
 
 ---
 

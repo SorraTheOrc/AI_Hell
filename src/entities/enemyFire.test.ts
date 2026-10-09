@@ -101,7 +101,8 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       (key) =>
         key !== 'harvester' &&
         key !== 'capturer' &&
-        !key.startsWith('ghost-'),
+        !key.startsWith('ghost-') &&
+        key !== 'centipede',
     );
 
     for (const key of firingKeys) {
@@ -111,6 +112,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     }
     expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual([
       'capturer',
+      'centipede',
       'diver',
       'ghost-ambush',
       'ghost-chase',
@@ -146,6 +148,13 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       expect(enemyFireMethod(key), key).toBe('tryFireNone');
       expect(fireForEnemy(entity, key, 42), key).toEqual([]);
     }
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Centipede to no fire (the weaving body is the threat)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('centipede')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'centipede', 42)).toEqual([]);
     expect(entity.calls).toEqual([]);
   });
 });

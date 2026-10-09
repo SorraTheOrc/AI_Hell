@@ -88,6 +88,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // entry per EnemyConfig). The 5 legacy per-enemy gyms
     // (Scout/Diver/Tank/Phaser/Swarm) were retired (AH-0MTHG5JVP006U6K7).
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
+      'Centipede',
       'Level',
       'Minerals',
       'Player',
@@ -97,6 +98,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Weapons',
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
+      'GymCentipede',
       'GymLevel',
       'GymMinerals',
       'GymPlayer',

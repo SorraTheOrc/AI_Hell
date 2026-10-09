@@ -77,6 +77,14 @@ export interface WaveDefinition {
    * for existing campaign data.
    */
   ghosts?: boolean;
+  /**
+   * Opt-in flag for the Centipede chain (classic-arcade archetype,
+   * AH-0MV01EJ92008ZZ86). When `true`, the wave schedules one linked
+   * Centipede chain through the shared `CentipedeSpawner`; every segment is
+   * registered with the `WaveManager` so it gates wave completion. Absent
+   * (the default) leaves the wave exactly as it was.
+   */
+  centipede?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */

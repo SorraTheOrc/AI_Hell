@@ -54,6 +54,22 @@ four-personality group and `PlayScene` registers every released ghost with the
 data is unchanged). The entity never fires — body contact is the threat — and
 its `tryFireNone` dispatch entry keeps it out of the aimed-shot fallback.
 
+The **Centipede linked chain** (AH-0MV01EJ92008ZZ86) is the second delivered
+classic archetype and the first that is **not** expressible as a CSV
+formation: a coordinated chain of segments is delivered by a dedicated
+`src/entities/Centipede.ts` entity (one segment) plus the pure shared model
+`src/scenes/core/centipedeChain.ts` and the `src/waves/CentipedeSpawner.ts`
+planner. The lead weaves laterally (reversing at the left/right bounds) while
+descending, wrapping at the bottom edge; every following segment trails at a
+fixed arc-length. Destroying a **middle** segment splits the chain into two
+independent sub-chains (lead/tail deaths simply shorten it), and the chain
+speeds up monotonically as segments die. Segments **never fire** — body
+contact is the threat — its `tryFireNone` dispatch entry keeps it out of the
+aimed-shot fallback, and every spawned segment is registered with the
+`WaveManager`, gated behind a per-wave `centipede: true` opt-in. The dedicated
+`GymCentipede` scene runs the same shared entity/chain code, so the game and
+the gym cannot diverge.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed

@@ -161,6 +161,17 @@ import {
   computeGhostSpawns,
   type GhostSpawnEvent,
 } from '../waves/GhostSpawner';
+import {
+  CENTIPEDE_DESCENT_SPEED,
+  CENTIPEDE_ENEMY_KEY,
+  CENTIPEDE_LATERAL_SPEED,
+  CENTIPEDE_SEGMENT_SPACING,
+  centipedeArena,
+  computeCentipedeSpawn,
+  type CentipedeSpawnEvent,
+} from '../waves/CentipedeSpawner';
+import { Centipede } from '../entities/Centipede';
+import { CentipedeChain } from './core/centipedeChain';
 import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -210,6 +221,9 @@ export const SCORE_VALUES: Record<string, number> = {
   asteroid: 50,
   // Harvester: a durable five-hit mineral-denial threat (GDD §4.5, E7).
   harvester: 400,
+  // Centipede: a linked chain of weaving segments (classic-arcade archetype,
+  // AH-0MV01EJ92008ZZ86). Each destroyed segment scores.
+  centipede: 120,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
@@ -572,6 +586,18 @@ export class PlayScene extends CombatScene<
   /** Number of planned ghost spawns already released this wave. */
   private ghostsSpawnedThisWave = 0;
 
+  /**
+   * Whether the Centipede chain is planned for a wave (classic-arcade
+   * archetype, AH-0MV01EJ92008ZZ86). The chain additionally requires the
+   * wave's `centipede: true` opt-in, so the shipped campaign is unchanged
+   * until a wave enables it. Tuning/test seam.
+   */
+  private centipedeSpawnerEnabled = true;
+  /** The planned Centipede chain for the active wave (`null` unless opted in). */
+  private pendingCentipedeSpawn: CentipedeSpawnEvent | null = null;
+  /** Whether the planned Centipede chain has been released this wave. */
+  private centipedeSpawnedThisWave = false;
+
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
 
@@ -788,6 +814,8 @@ export class PlayScene extends CombatScene<
     this.harvestersSpawnedThisWave = 0;
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
+    this.pendingCentipedeSpawn = null;
+    this.centipedeSpawnedThisWave = false;
     this.shieldBubbleDrawn = false;
     this._spawnWormhole = null;
     this.paused = false;
@@ -955,6 +983,10 @@ export class PlayScene extends CombatScene<
       // (AH-0MV01EH2U008XT3Q); each is registered with the WaveManager so the
       // wave neither clears early nor stalls.
       this._releaseDueGhostSpawns();
+      // Release the planned Centipede chain whose time has passed
+      // (AH-0MV01EJ92008ZZ86); every segment is registered with the
+      // WaveManager so the wave neither clears early nor stalls.
+      this._releaseDueCentipedeSpawn();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -1024,6 +1056,9 @@ export class PlayScene extends CombatScene<
     // Plan the Pac-Man ghost-pursuer group for waves that opted in
     // (AH-0MV01EH2U008XT3Q); empty for every other wave.
     this.planGhostSpawns();
+    // Plan the Centipede chain for waves that opted in
+    // (AH-0MV01EJ92008ZZ86); empty for every other wave.
+    this.planCentipedeSpawn();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       // Spawn one wormhole at the first enemy's position.
@@ -1367,6 +1402,100 @@ export class PlayScene extends CombatScene<
     this.waveManager.registerDynamicSpawn(1);
   }
 
+  /**
+   * Plans the Centipede chain for the active regular wave (classic-arcade
+   * archetype, AH-0MV01EJ92008ZZ86). Only waves that opt in with
+   * `centipede: true` produce a plan; every other wave is unchanged. Called
+   * once per wave from `spawnWave()` so the scene rng stream advances only at
+   * wave boundaries.
+   */
+  planCentipedeSpawn(): void {
+    const wm = this.waveManager;
+    if (
+      !this.centipedeSpawnerEnabled ||
+      wm.currentWave()?.centipede !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingCentipedeSpawn = null;
+      this.centipedeSpawnedThisWave = false;
+      return;
+    }
+    this.pendingCentipedeSpawn = computeCentipedeSpawn(
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.centipedeSpawnedThisWave = false;
+  }
+
+  /**
+   * Releases the planned Centipede chain once its scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition, pause
+   * or boss encounter).
+   */
+  private _releaseDueCentipedeSpawn(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated ||
+      this.centipedeSpawnedThisWave ||
+      !this.pendingCentipedeSpawn
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    if (elapsed + 1e-9 < this.pendingCentipedeSpawn.timeSeconds) return;
+    this._spawnScheduledCentipede(this.pendingCentipedeSpawn);
+    this.centipedeSpawnedThisWave = true;
+  }
+
+  /**
+   * Spawns the planned Centipede chain: one shared `CentipedeChain` and one
+   * `Centipede` entity per segment. Every segment is registered with the
+   * `WaveManager` so the wave neither clears early nor stalls while any
+   * segment is alive (the Harvester/Ghost invariant; unlike Asteroids).
+   */
+  private _spawnScheduledCentipede(event: CentipedeSpawnEvent): void {
+    const arena = centipedeArena(GAME_WIDTH, GAME_HEIGHT);
+    const chain = new CentipedeChain({
+      startX: event.x,
+      startY: event.y,
+      arena,
+      segmentCount: event.segmentCount,
+      spacing: CENTIPEDE_SEGMENT_SPACING,
+      lateralSpeed: CENTIPEDE_LATERAL_SPEED,
+      descentSpeed: CENTIPEDE_DESCENT_SPEED,
+      initialDir: event.dir,
+    });
+    for (let id = 0; id < event.segmentCount; id++) {
+      const segment = chain.segment(id);
+      const entity = new Centipede(this, {
+        x: segment?.x ?? event.x,
+        y: segment?.y ?? event.y,
+        formationOffset: { row: 0, col: id },
+        chain,
+        segmentId: id,
+        rng: this.rng,
+      });
+      this.add.existing(entity);
+      this.spawned.push({
+        entity,
+        enemyKey: CENTIPEDE_ENEMY_KEY,
+        startX: event.x,
+        startY: event.y,
+        spacingX: 0,
+        spacingY: 0,
+      });
+      this.waveManager.registerDynamicSpawn(1);
+    }
+  }
+
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
     // Formation drift advances unconditionally — no entity can freeze it (the
@@ -1598,6 +1727,8 @@ export class PlayScene extends CombatScene<
     this.asteroidsSpawnedThisWave = 0;
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
+    this.pendingCentipedeSpawn = null;
+    this.centipedeSpawnedThisWave = false;
     this.waveManager.beginBoss();
     this._startTransition();
   }
@@ -1776,6 +1907,8 @@ export class PlayScene extends CombatScene<
     this.harvestersSpawnedThisWave = 0;
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
+    this.pendingCentipedeSpawn = null;
+    this.centipedeSpawnedThisWave = false;
     this._hideWaveTimer();
   }
 
@@ -3227,6 +3360,21 @@ export class PlayScene extends CombatScene<
     if (!enabled) {
       this.pendingGhostSpawns = [];
       this.ghostsSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the Centipede plan independently of the wave
+   * `centipede: true` opt-in (classic-arcade archetype, AH-0MV01EJ92008ZZ86).
+   * Disabling immediately drops any pending plan; re-enabling takes effect
+   * from the next `spawnWave()`. Tuning and test seam mirroring
+   * `setGhostSpawnerEnabled`.
+   */
+  setCentipedeSpawnerEnabled(enabled: boolean): void {
+    this.centipedeSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingCentipedeSpawn = null;
+      this.centipedeSpawnedThisWave = false;
     }
   }
 }

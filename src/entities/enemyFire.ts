@@ -43,6 +43,10 @@ export const ENEMY_FIRE_METHODS = {
   'ghost-ambush': 'tryFireNone',
   'ghost-flank': 'tryFireNone',
   'ghost-wander': 'tryFireNone',
+  // Centipede segments (classic-arcade archetype, AH-0MV01EJ92008ZZ86) never
+  // fire at any level — the weaving linked body is the threat. An explicit
+  // non-firing entry keeps the key out of the aimed-shot fallback.
+  centipede: 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */

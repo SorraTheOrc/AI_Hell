@@ -10,6 +10,7 @@ import Phaser from 'phaser';
 
 import { Asteroid } from './Asteroid';
 import { Capturer } from './Capturer';
+import { Centipede } from './Centipede';
 import { Ghost, personalityFromKey } from './Ghost';
 import { Harvester } from './Harvester';
 import { Diver } from './Diver';
@@ -58,7 +59,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede) &
   DestructionAudioSeam &
   FormationReanchorSeam &
   SeekSeam & {
