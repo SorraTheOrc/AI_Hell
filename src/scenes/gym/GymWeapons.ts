@@ -98,6 +98,7 @@ const ROUND_ROBIN_ORDER: readonly DropType[] = [
   'rapid',
   'wave_laser',
   'ricochet',
+  'cluster',
   'nova',
   'mortar',
   'arc',

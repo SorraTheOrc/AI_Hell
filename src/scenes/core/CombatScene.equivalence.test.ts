@@ -2656,3 +2656,96 @@ describe('CombatScene — ricochet bounce parity (AH-0MV1BIV5L005NJAI)', () => {
     expect(gameBullet.x).toBeCloseTo(gymBullet.x, 5);
   });
 });
+
+// ── Missile Command cluster split parity (AH-0MV1BIVIJ007KYXU) ────────
+
+describe('CombatScene — cluster-missile split parity (AH-0MV1BIVIJ007KYXU)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and GymWeapons share the single splitProjectile seam', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, 'splitProjectile'),
+        `${name}.prototype must not define splitProjectile`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>).splitProjectile,
+        `${name}.prototype.splitProjectile must be the shared core method`,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)
+          .splitProjectile,
+      );
+    }
+  });
+
+  it('a cluster missile splits into identical warheads in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'cluster-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'cluster-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Park both ships and clear any auto-fired bullets so only the injected
+    // cluster missiles are split and counted.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+    const clear = (owner: PlayScene | EquivGymScene) => {
+      (owner as unknown as { playerBullets: PlayerBullet[] }).playerBullets.length = 0;
+    };
+    clear(playScene);
+    clear(gymScene);
+
+    const spawn = (owner: PlayScene | EquivGymScene): PlayerBullet => {
+      const bullet = owner.spawnPlayerBullet(
+        200,
+        200,
+        PLAYER_BULLET_SPEED,
+        0,
+        WEAPON_CATALOGUE.cluster.bulletColor,
+        2,
+        3,
+      );
+      bullet.splitWeapon = WEAPON_CATALOGUE.cluster;
+      return bullet;
+    };
+    const gameBullet = spawn(playScene);
+    const gymBullet = spawn(gymScene);
+
+    // Both scenes split through the same shared core method.
+    const split = (owner: PlayScene | EquivGymScene, bullet: PlayerBullet) => {
+      (
+        owner as unknown as { splitProjectile(b: PlayerBullet): void }
+      ).splitProjectile(bullet);
+      (
+        owner as unknown as { flushPendingSplitWarheads(): void }
+      ).flushPendingSplitWarheads();
+      return (owner as unknown as { playerBullets: PlayerBullet[] })
+        .playerBullets;
+    };
+    const gameWarheads = split(playScene, gameBullet).filter(
+      (b) => b.splitWeapon === undefined,
+    );
+    const gymWarheads = split(gymScene, gymBullet).filter(
+      (b) => b.splitWeapon === undefined,
+    );
+
+    expect(gameWarheads).toHaveLength(WEAPON_CATALOGUE.cluster.splits!);
+    expect(gymWarheads).toHaveLength(gameWarheads.length);
+    // Identical radial spray: same velocity magnitude and colour.
+    for (let i = 0; i < gameWarheads.length; i++) {
+      expect(gymWarheads[i].vx).toBeCloseTo(gameWarheads[i].vx, 5);
+      expect(gymWarheads[i].vy).toBeCloseTo(gameWarheads[i].vy, 5);
+      expect(gymWarheads[i].color).toBe(gameWarheads[i].color);
+    }
+  });
+});

@@ -34,7 +34,7 @@ import {
   type WeaponId,
 } from '../../utils/weapons';
 import { HelpScene } from '../HelpScene';
-import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
+import { HELP_BUTTON_LABEL, getHelpEntry } from '../../utils/gymHelp';
 
 describe('GymWeapons AC1/AC3: gym index discovery', () => {
   let booted: BootedGame | null = null;
@@ -186,6 +186,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       rapid: [],
       wave_laser: [],
       ricochet: [],
+      cluster: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -395,14 +396,14 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → wave laser → ricochet → nova → mortar → arc → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → wave laser → ricochet → cluster → nova → mortar → arc → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle through the rest of the order (conventional, wave laser, ricochet, AOE, then Reset).
-    for (const expected of ['dual', 'rapid', 'wave_laser', 'ricochet', 'nova', 'mortar', 'arc', 'reset']) {
+    // Cycle through the rest of the order (conventional, wave laser, ricochet, cluster, AOE, then Reset).
+    for (const expected of ['dual', 'rapid', 'wave_laser', 'ricochet', 'cluster', 'nova', 'mortar', 'arc', 'reset']) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
@@ -936,6 +937,7 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'rapid',
       'wave_laser',
       'ricochet',
+      'cluster',
       'nova',
       'mortar',
       'arc',
@@ -1297,5 +1299,63 @@ describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI
     scene.tick(0.3);
 
     expect(scene.getBullets()).not.toContain(bullet);
+  });
+});
+
+describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYXU)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('renders the Cluster Missile row from the shared catalogue (help entry)', () => {
+    const entry = getHelpEntry('cluster');
+    expect(entry.name).toBe('Cluster Missile');
+    expect(entry.description).toBe(WEAPON_CATALOGUE.cluster.description);
+  });
+
+  it('a cluster missile fired in the gym splits into warheads via the shared seam', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    // Aim a cluster missile at a practice target: the shared bullet-vs-enemy
+    // pass splits it on impact (the same code the game runs).
+    const target = scene.getTargets()[0];
+    const missile = scene.spawnPlayerBullet(
+      target.x,
+      target.y,
+      0,
+      0,
+      WEAPON_CATALOGUE.cluster.bulletColor,
+      2,
+      3,
+    );
+    missile.splitWeapon = WEAPON_CATALOGUE.cluster;
+
+    // First tick: the missile impacts the target and queues its warheads.
+    scene.tick(0.01);
+    expect(missile.splitSpawned).toBe(true);
+
+    // Second tick: the shared player step flushes the warheads into the live
+    // bullet list, so the gym demonstrates the same split the game does.
+    scene.tick(0.01);
+    const warheads = scene
+      .getBullets()
+      .filter(
+        (b) =>
+          b.color === WEAPON_CATALOGUE.cluster.bulletColor &&
+          b.splitWeapon === undefined,
+      );
+    expect(warheads.length).toBeGreaterThan(0);
   });
 });

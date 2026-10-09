@@ -36,6 +36,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   rapid: 0xffff00, // neon yellow — stacked dots
   wave_laser: 0x3366ff, // neon blue — piercing beam
   ricochet: 0x33ff66, // neon green — edge-bouncing pellet
+  cluster: 0xff3366, // neon hot pink — splitting warhead cluster
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
@@ -410,6 +411,9 @@ function _drawWeaponIcon(
     case 'ricochet':
       drawRicochetIcon(graphics, x, y, size);
       break;
+    case 'cluster':
+      drawClusterIcon(graphics, x, y, size);
+      break;
     case 'nova':
       drawNovaIcon(graphics, x, y, size);
       break;
@@ -563,6 +567,35 @@ function drawWaveLaserIcon(
     g.moveTo(x + s * cx, y - s * 0.5);
     g.lineTo(x + s * (cx + 0.25), y);
     g.lineTo(x + s * cx, y + s * 0.5);
+    g.strokePath();
+  }
+}
+
+/**
+ * Cluster missile icon — a central warhead with four fragment dots radiating
+ * outward along short spokes, hinting at the Missile Command MIRV split.
+ */
+function drawClusterIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Central missile body (stroked, matching the other weapon icon style).
+  g.beginPath();
+  g.arc(x, y, s * 0.28, 0, Math.PI * 2);
+  g.strokePath();
+  // Four fragment warheads radiating along short spokes.
+  for (let i = 0; i < 4; i++) {
+    const angle = (Math.PI / 2) * i + Math.PI / 4;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    g.beginPath();
+    g.moveTo(x + dx * s * 0.4, y + dy * s * 0.4);
+    g.lineTo(x + dx * s * 0.72, y + dy * s * 0.72);
+    g.strokePath();
+    g.beginPath();
+    g.arc(x + dx * s * 0.88, y + dy * s * 0.88, s * 0.14, 0, Math.PI * 2);
     g.strokePath();
   }
 }

@@ -492,6 +492,7 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     rapid: 0.75,
     wave_laser: 2.0,
     ricochet: 3.2,
+    cluster: 1.8,
     nova: 0.5,
     mortar: 2.0,
     arc: 0.5,
@@ -720,6 +721,50 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'ricochet') continue;
       expect(resolveWeaponDefinition(id, 50).bounce).toBeUndefined();
+    }
+  });
+});
+
+// ── Missile Command cluster split budget (AH-0MV1BIVIJ007KYXU) ───────
+
+describe('cluster-missile split budget (AH-0MV1BIVIJ007KYXU)', () => {
+  test('the base definition supplies a split warhead count of 2', () => {
+    expect(WEAPON_CATALOGUE.cluster.splits).toBe(2);
+    expect(resolveWeaponDefinition('cluster', 0).splits).toBe(2);
+  });
+
+  test('the level-resolved splitCount variable grows monotonically within its spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.splitCount.cap;
+    let previous = resolveWeaponAtLevel('cluster', 0).splitCount;
+    expect(previous).toBe(0);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponAtLevel('cluster', level).splitCount;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The first level is responsive: it grants an extra split immediately.
+    expect(resolveWeaponAtLevel('cluster', 1).splitCount).toBeGreaterThan(0);
+  });
+
+  test('the resolved warhead count grows monotonically and never exceeds the spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.splitCount.cap;
+    let previous = resolveWeaponDefinition('cluster', 0).splits!;
+    expect(previous).toBe(2);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponDefinition('cluster', level).splits!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The warhead count saturates at the finite spec cap.
+    expect(resolveWeaponDefinition('cluster', 100).splits).toBe(cap);
+  });
+
+  test('weapons without a base split count never gain one', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'cluster') continue;
+      expect(resolveWeaponDefinition(id, 50).splits).toBeUndefined();
     }
   });
 });

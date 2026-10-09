@@ -32,6 +32,9 @@ import {
   WEAPON_WAVE_LASER_SUBDIVISION,
   WEAPON_RICOCHET_FIRE_RATE,
   WEAPON_RICOCHET_SUBDIVISION,
+  WEAPON_CLUSTER_FIRE_RATE,
+  WEAPON_CLUSTER_SUBDIVISION,
+  CLUSTER_BASE_WARHEADS,
   WEAPON_NOVA_FIRE_RATE,
   WEAPON_MORTAR_FIRE_RATE,
   WEAPON_ARC_FIRE_RATE,
@@ -55,14 +58,15 @@ import {
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
-  test('contains the six conventional/beam weapons plus the three AOE weapons', () => {
-    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(9);
+  test('contains the seven conventional/beam weapons plus the three AOE weapons', () => {
+    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(10);
     expect(WEAPON_CATALOGUE.cannon).toBeDefined();
     expect(WEAPON_CATALOGUE.spread).toBeDefined();
     expect(WEAPON_CATALOGUE.dual).toBeDefined();
     expect(WEAPON_CATALOGUE.rapid).toBeDefined();
     expect(WEAPON_CATALOGUE.wave_laser).toBeDefined();
     expect(WEAPON_CATALOGUE.ricochet).toBeDefined();
+    expect(WEAPON_CATALOGUE.cluster).toBeDefined();
     expect(WEAPON_CATALOGUE.nova).toBeDefined();
     expect(WEAPON_CATALOGUE.mortar).toBeDefined();
     expect(WEAPON_CATALOGUE.arc).toBeDefined();
@@ -617,6 +621,7 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
       rapid: 8,
       wave_laser: 1,
       ricochet: 1,
+      cluster: 0.5,
       nova: 0.25,
       mortar: 0.5,
       arc: 1,
@@ -707,5 +712,45 @@ describe('Centipede ricochet (AH-0MV1BIV5L005NJAI)', () => {
       WEAPON_CATALOGUE.cannon.bulletColor,
     );
     expect(WEAPON_CATALOGUE.ricochet.piercing).toBeUndefined();
+  });
+});
+describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
+  test('is a catalogue weapon with a name and a player-facing description', () => {
+    const def = WEAPON_CATALOGUE.cluster;
+    expect(def.name).toBe('Cluster Missile');
+    expect(def.description.length).toBeGreaterThan(0);
+  });
+
+  test('fires a single aimed missile along the ship heading (one [0] offset)', () => {
+    const def = WEAPON_CATALOGUE.cluster;
+    expect(def.offsets).toEqual([0]);
+    expect(def.sideOffsets).toBeUndefined();
+  });
+
+  test('fires once every 2 beats (0.5 subdivision → 1500 ms at 80 BPM) on the grid', () => {
+    expect(WEAPON_CLUSTER_SUBDIVISION).toBe(0.5);
+    expect(WEAPON_CLUSTER_FIRE_RATE).toBe(1500);
+    expect(WEAPON_CATALOGUE.cluster.fireRateMs).toBe(1500);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.cluster.fireRateMs)).toBe(true);
+  });
+
+  test('supplies a base split warhead count of 2 (the level curve grows it)', () => {
+    expect(WEAPON_CATALOGUE.cluster.splits).toBe(CLUSTER_BASE_WARHEADS);
+    expect(CLUSTER_BASE_WARHEADS).toBe(2);
+  });
+
+  test('is a timed weapon drop (not permanent) and not part of the AOE family', () => {
+    expect(isTimedWeapon('cluster')).toBe(true);
+    expect(isAoeWeapon('cluster')).toBe(false);
+    expect(WEAPON_CATALOGUE.cluster.aoe).toBeUndefined();
+  });
+
+  test('carries a distinct neon-hot-pink colour and no pierce/bounce budget', () => {
+    expect(WEAPON_CATALOGUE.cluster.bulletColor).toBe(BULLET_COLORS.cluster);
+    expect(WEAPON_CATALOGUE.cluster.bulletColor).not.toBe(
+      WEAPON_CATALOGUE.cannon.bulletColor,
+    );
+    expect(WEAPON_CATALOGUE.cluster.piercing).toBeUndefined();
+    expect(WEAPON_CATALOGUE.cluster.bounce).toBeUndefined();
   });
 });

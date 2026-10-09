@@ -175,6 +175,7 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'rapid',
   'wave_laser',
   'ricochet',
+  'cluster',
   'nova',
   'mortar',
   'arc',

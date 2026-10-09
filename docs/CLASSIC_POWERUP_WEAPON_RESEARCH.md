@@ -189,20 +189,21 @@ spray of short-lived warheads rather than independent tracking warheads.
 
 **Pipeline fit:**
 
-- `WeaponId`: `'cluster_missile'`; a new `WEAPON_CATALOGUE` entry with a single
-  `[0]` offset pattern.
+- `WeaponId`: `'cluster'` (`'Cluster Missile'`); a new `WEAPON_CATALOGUE` entry with a single `[0]` offset pattern.
 - Fire subdivision: **1 shot every 2 beats** (`0.5` → 1500 ms at 80 BPM), on
   the shared grid — the slower cadence the split payload pays for.
-- Seam: **new shared combat-core split dispatch seam**, reusing the
-  **`AoEDescriptor` `'onImpact'` trigger** that is already retained in
-  `src/utils/weapons.ts` for exactly this kind of future projectile: the
-  descriptor launches the shell and, at expiry/impact, a new shared split step
-  spawns `splitCount + 1` warheads. The split step lives in shared core so game
-  and gyms agree on fragment count and spread.
-- `weaponLevels.ts` variables: **Split** (`splitCount`, 0 → 3, k=0.20 — the
-  planned variable this weapon exercises), **Area** (`aoeRadius`, MVP; scales
-  the cluster spread radius), **Fire rate** (`fireRate`, MVP) and **Damage**
-  (`damage`).
+- Seam: **new shared combat-core split dispatch seam** in
+  `src/scenes/core/CombatCoreScene.ts` (`splitProjectile`), reading a neutral
+  `WeaponDefinition.splits` field. This is deliberately **not** an
+  `AoEDescriptor`: the split is a projectile seam, not an area effect. The
+  shared core tags the spawned shell, and at expiry/impact it splits it once
+  into `splits` radial warheads (each an ordinary player bullet that damages
+  enemies on contact) and spawns the shared split-burst VFX. The seam lives in
+  shared core so game and gyms agree on fragment count and spread.
+- `weaponLevels.ts` variables: **Split** (`splitCount`, base 0 → cap 3,
+  k=0.20 — the planned variable this weapon exercises, growing the effective
+  warhead count from the base 2 toward the cap), **Fire rate** (`fireRate`,
+  MVP) and **Damage** (`damage`).
 
 **Balance / coverage:** Spreads damage rather than concentrating it, so a
 single warhead is weak; the slow cadence and fragment cap bound total output.
@@ -496,7 +497,7 @@ one-line deferral reason so the pool can be revisited.
 |---------|------|----------------|------------------|--------------------|----------------------------------------------------|--------------|
 | R-Type wave laser | weapon | `WeaponId: 'wave_laser'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared piercing-collision seam | `piercing`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
 | Centipede ricochet shot | weapon | `WeaponId: 'ricochet'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared bullet-bounce seam | `bounce`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
-| Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster_missile'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam, reuses `AoEDescriptor` `'onImpact'` | `splitCount`, `aoeRadius`, `fireRate`, `damage` | `GymWeapons` |
+| Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
 | Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
 | Pac-Man power pellet | power-up | `PowerUpId: 'power_pellet'` / `POWER_UP_CATALOGUE` | — | New shared enemy-status (frightened) seam | `frightenDuration`, `frightenSpeedMultiplier` | `GymPowerUpsCombat` |
 | Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | New shared screen-wide pulse seam | `smartBombDamage`, `smartBombFrequency` | `GymPowerUpsCombat` |
@@ -504,9 +505,9 @@ one-line deferral reason so the pool can be revisited.
 | Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | None — catalogue entry + `EffectsRegistry` | `mysteryUfoMinerals`, `mysteryUfoScore` | `GymPowerUpsUtility` |
 
 **Existing seams reused without modification:** `WeaponDefinition.offsets` /
-`sideOffsets`, `AoEDescriptor` (`'onImpact'` retained for the MIRV), the
-`EffectsRegistry`, the shared `curve.ts` exponential-saturation curve, the
-`WeightedRandomSpawner` drop pipeline and `src/powerups/icons.ts`.
+`sideOffsets`, `AoEDescriptor` (`'onImpact'` retained as the AOE projectile
+path), the `EffectsRegistry`, the shared `curve.ts` exponential-saturation
+curve, the `WeightedRandomSpawner` drop pipeline and `src/powerups/icons.ts`.
 
 **New seams to be created (per child work item):** shared piercing-collision,
 shared bullet-bounce, shared missile-split, shared orbit-emitter, shared

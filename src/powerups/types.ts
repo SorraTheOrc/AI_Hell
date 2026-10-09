@@ -43,6 +43,7 @@ export type WeaponDropId =
   | 'rapid'
   | 'wave_laser'
   | 'ricochet'
+  | 'cluster'
   | 'reset'
   | 'nova'
   | 'mortar'
@@ -161,6 +162,7 @@ export const WEAPON_DROP_IDS: readonly WeaponDropId[] = [
   'rapid',
   'wave_laser',
   'ricochet',
+  'cluster',
   'nova',
   'mortar',
   'arc',

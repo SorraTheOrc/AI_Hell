@@ -611,6 +611,9 @@ export function expandWeaponPattern(
  * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
+ * - `splits` — the base split warhead count grown by the level's `splitCount`
+ *   upgrade and clamped to its spec cap (weapons with a base `splits` only,
+ *   e.g. the cluster missile; AH-0MV1BIVIJ007KYXU),
  * - `aoe.radius` — area multiplier for AOE weapons.
  *
  * `bulletColor`, `bulletShape` and `sideOffsets` are carried through from the
@@ -655,6 +658,17 @@ export function resolveWeaponDefinition(
     leveled.bounce = Math.min(
       WEAPON_UPGRADE_SPECS.bounce.cap,
       base.bounce + stats.bounce,
+    );
+  }
+  // Split weapons (the Missile Command cluster missile) opt in with a base
+  // warhead count. Their effective count grows with the level-resolved
+  // `splitCount` upgrade, clamped to that variable's finite spec cap so the
+  // radial spray (and per-frame cost) stays bounded (AH-0MV1BIVIJ007KYXU).
+  // Weapons without a base count never split.
+  if (base.splits !== undefined) {
+    leveled.splits = Math.min(
+      WEAPON_UPGRADE_SPECS.splitCount.cap,
+      base.splits + stats.splitCount,
     );
   }
   // An expanded pattern is an angular fan; the base parallel offsets no

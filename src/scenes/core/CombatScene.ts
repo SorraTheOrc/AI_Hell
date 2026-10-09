@@ -357,6 +357,15 @@ export abstract class CombatScene<
       bullet.destroy();
       return true;
     }
+    // A splitting projectile (cluster missile) does not deal a direct hit: it
+    // bursts into radial warheads at the impact point, which damage enemies
+    // on contact through the ordinary bullet path. The split resolves exactly
+    // once and the parent shell is consumed (AH-0MV1BIVIJ007KYXU).
+    if (bullet.splitWeapon) {
+      this.splitProjectile(bullet);
+      bullet.destroy();
+      return true;
+    }
     // Already passed through this enemy on an earlier frame — never re-damage.
     if (bullet.piercedEnemies.has(enemy)) {
       return false;
@@ -987,6 +996,9 @@ export abstract class CombatScene<
           this.onBulletVsBulletImpact(eb, pb);
           // An AOE projectile detonates at the interception point.
           if (pb.aoeWeapon) this.detonateAoeProjectile(pb);
+          // A splitting projectile bursts into warheads at the interception
+          // point (AH-0MV1BIVIJ007KYXU).
+          if (pb.splitWeapon) this.splitProjectile(pb);
           pb.destroy();
           this.playerBullets.splice(i, 1);
           eb.graphics.destroy();

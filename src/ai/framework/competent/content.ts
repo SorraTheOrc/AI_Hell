@@ -79,6 +79,7 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'rapid', value: 1 },
     { id: 'wave_laser', value: 1 },
     { id: 'ricochet', value: 1 },
+    { id: 'cluster', value: 1 },
     { id: 'nova', value: 1 },
     { id: 'mortar', value: 1 },
     { id: 'arc', value: 1 },

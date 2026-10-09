@@ -24,6 +24,9 @@
  * - **ricochet** — a single shot that reflects off the arena edges up to a
  *   budget of bounces (Centipede homage, timed; see
  *   {@link WeaponDefinition.bounce})
+ * - **cluster** — a single missile that splits once, on impact or expiry,
+ *   into a radial cluster of warheads (Missile Command MIRV homage, timed;
+ *   see {@link WeaponDefinition.splits})
  *
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
@@ -59,6 +62,7 @@ export type WeaponId =
   | 'rapid'
   | 'wave_laser'
   | 'ricochet'
+  | 'cluster'
   | 'nova'
   | 'mortar'
   | 'arc';
@@ -161,6 +165,7 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   rapid: 6,
   wave_laser: 1,
   ricochet: 1,
+  cluster: 0.5,
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
@@ -180,6 +185,12 @@ export const WEAPON_WAVE_LASER_SUBDIVISION =
 /** Default ricochet subdivision (1 shot per beat → 750 ms at 80 BPM). */
 export const WEAPON_RICOCHET_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.ricochet;
+/**
+ * Default cluster-missile subdivision (once every 2 beats → 1500 ms at
+ * 80 BPM). The slow cadence is what the split payload pays for.
+ */
+export const WEAPON_CLUSTER_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.cluster;
 /** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 /** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
@@ -248,6 +259,15 @@ export const WEAPON_RICOCHET_FIRE_RATE = beatSubdivisionMs(
 );
 
 /**
+ * Fire rate interval for the Missile Command cluster missile (ms) — 1 shot
+ * every 2 beats (1500 ms at the default 80 BPM). Slow and committed: each
+ * shell is a deliberate split payload rather than a stream of fire.
+ */
+export const WEAPON_CLUSTER_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_CLUSTER_SUBDIVISION,
+);
+
+/**
  * Fire rate interval for the Nova AOE weapon (ms) — 1 shot every 4 beats
  * (3000 ms at the default 80 BPM). Slow and defensive: a sparse pulse that
  * clears the ship's immediate surroundings.
@@ -303,6 +323,12 @@ export const WEAPON_BULLET_LIFETIME = {
    * wall reflections.
    */
   ricochet: 1.6,
+  /**
+   * Cluster missile — a moderate reach (~315 px) so the shell can travel a
+   * little before its split; the warhead spread, not the range, is its
+   * identity.
+   */
+  cluster: 0.9,
   /** Nova — the ring resolves instantly; no travelling bullet. */
   nova: 0.25,
   /**
@@ -330,6 +356,8 @@ export const BULLET_COLORS = {
   wave_laser: 0x3366ff,
   /** Ricochet pellet — neon green, distinct from every other weapon. */
   ricochet: 0x33ff66,
+  /** Cluster missile / warheads — neon hot pink, distinct from every weapon. */
+  cluster: 0xff3366,
   /** Nova ring / projectile — pale cyan. */
   nova: 0x66ffff,
   /** Mortar shell / blast — deep orange. */
@@ -364,6 +392,35 @@ export const AOE_PROJECTILE_SPEEDS = {
   /** Mortar — deliberate travel scale, and the random-detonation range basis. */
   mortar: 180,
 } as const;
+
+// ── Cluster/MIRV split tuning ───────────────────────────────────────
+
+/**
+ * Base number of warheads a cluster missile splits into before leveling — the
+ * un-upgraded cluster size. The `splitCount` weapon-level variable grows the
+ * effective count toward its finite spec cap (3). A cluster always spawns at
+ * least two warheads, so the base weapon already reads as a split payload.
+ */
+export const CLUSTER_BASE_WARHEADS = 2;
+
+/**
+ * Warhead lifetime (seconds) once a cluster missile splits. Short, so the
+ * radial spray covers a burst of nearby space and then expires rather than
+ * saturating the arena with long-lived bullets.
+ */
+export const CLUSTER_WARHEAD_LIFETIME = 0.4;
+
+/**
+ * Warhead radius as a fraction of the spawned projectile's radius. Smaller
+ * than the parent missile so the split reads as a cluster of fragments.
+ */
+export const CLUSTER_WARHEAD_RADIUS_SCALE = 0.7;
+
+/**
+ * Radius (px) of the code-drawn split-burst VFX spawned at the split point,
+ * scaled to the number of warheads by the shared VFX helper.
+ */
+export const CLUSTER_SPLIT_BURST_RADIUS = 24;
 
 /**
  * Bullet shape type — determines how the bullet is drawn.
@@ -446,6 +503,21 @@ export interface WeaponDefinition {
    * `PlayerBullet.advance`).
    */
   bounce?: number;
+  /**
+   * Base **split warhead count** — how many radial warheads a fired
+   * projectile splits into exactly once, on the first enemy/bullet impact or
+   * on lifetime expiry (Missile Command cluster/MIRV homage,
+   * AH-0MV1BIVIJ007KYXU). `undefined`/absent means an ordinary bullet that
+   * never splits. `0` is a degenerate value (no warheads spawned).
+   *
+   * A projectile's effective warhead count is this base value grown by the
+   * weapon's level-resolved `splitCount` upgrade (from `weaponLevels.ts`),
+   * clamped to that variable's finite spec cap; the shared combat-core split
+   * seam reads the field and spawns the warheads identically in the game and
+   * every gym (see `resolveWeaponDefinition` and
+   * `CombatCoreScene.splitProjectile`).
+   */
+  splits?: number;
   /**
    * Area-of-effect descriptor (absent for conventional weapons). When
    * present the shared combat core dispatches the area effect through the
@@ -548,6 +620,23 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     // expires on the next contact. The `bounce` level variable grows it
     // toward the spec cap (4).
     bounce: 2,
+  },
+  cluster: {
+    id: 'cluster',
+    name: 'Cluster Missile',
+    description:
+      'Adds a missile that splits into a radial cluster of warheads for 10 s.',
+    // A single aimed missile along the ship's heading; it splits once.
+    offsets: [0],
+    fireRateMs: WEAPON_CLUSTER_FIRE_RATE,
+    bulletColor: BULLET_COLORS.cluster,
+    bulletShape: 'circle',
+    bulletSize: 0.9,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
+    // Base split payload: the missile bursts into two radial warheads on the
+    // first impact/expiry. The `splitCount` level variable grows the warhead
+    // count toward its spec cap (3).
+    splits: CLUSTER_BASE_WARHEADS,
   },
   nova: {
     id: 'nova',

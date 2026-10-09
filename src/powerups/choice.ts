@@ -52,6 +52,7 @@ export const CHOICE_POOL: readonly DropId[] = [
   'rapid',
   'wave_laser',
   'ricochet',
+  'cluster',
   'nova',
   'mortar',
   'arc',
@@ -129,6 +130,7 @@ const LEVELABLE_WEAPON_IDS: readonly WeaponDropId[] = [
   'rapid',
   'wave_laser',
   'ricochet',
+  'cluster',
   'nova',
   'mortar',
   'arc',
@@ -141,6 +143,7 @@ const WEAPON_NAMES: Record<WeaponDropId, string> = {
   rapid: 'Rapid Fire',
   wave_laser: 'Wave Laser',
   ricochet: 'Ricochet',
+  cluster: 'Cluster Missile',
   nova: 'Nova',
   mortar: 'Mortar',
   arc: 'Arc',
@@ -155,6 +158,7 @@ export function isWeaponDrop(id: DropId): id is WeaponDropId {
     id === 'rapid' ||
     id === 'wave_laser' ||
     id === 'ricochet' ||
+    id === 'cluster' ||
     id === 'nova' ||
     id === 'mortar' ||
     id === 'arc' ||

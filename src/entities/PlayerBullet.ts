@@ -79,6 +79,21 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   aoeDetonated = false;
 
   /**
+   * The weapon definition when this bullet is a **splitting** projectile
+   * (Missile Command cluster/MIRV homage, AH-0MV1BIVIJ007KYXU). The shared
+   * combat core splits it exactly once — on the first impact or on expiry —
+   * into `splits` radial warheads; `undefined` for an ordinary bullet.
+   */
+  splitWeapon?: WeaponDefinition;
+
+  /**
+   * True once a splitting projectile has spawned its warheads, so the split
+   * resolves at most once even if both the collision and expiry paths observe
+   * the same projectile. Never set for an ordinary bullet.
+   */
+  splitSpawned = false;
+
+  /**
    * Remaining pass-through budget: how many **additional** enemies this
    * bullet may damage before it is consumed (R-Type wave laser,
    * AH-0MV1BIUSJ0090W92). `0` for an ordinary single-hit bullet. The shared

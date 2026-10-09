@@ -63,6 +63,9 @@ import {
 import { Player } from '../../entities/Player';
 import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
 import {
+  CLUSTER_SPLIT_BURST_RADIUS,
+  CLUSTER_WARHEAD_LIFETIME,
+  CLUSTER_WARHEAD_RADIUS_SCALE,
   angleToVelocity,
   createBulletsFromHeading,
   type WeaponDefinition,
@@ -106,6 +109,7 @@ import {
   type MovableMineral,
 } from '../../powerups/mineralScoop';
 import { spawnNovaRing } from '../../vfx/aoeEffect';
+import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { setExplosionBeatClock } from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
@@ -228,6 +232,21 @@ export class CombatCoreScene<
    * so an in-flight pulse leaks nothing.
    */
   protected bombPulseEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Live cluster split-burst VFX (AH-0MV1BIVIJ007KYXU). Each burst removes
+   * itself on completion; the registry is also cleared on restart/shutdown
+   * so an in-flight burst leaks nothing.
+   */
+  protected splitBurstEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Warheads queued by {@link CombatCoreScene.splitProjectile}, flushed into
+   * {@link CombatCoreScene.playerBullets} at the start of the next shared
+   * player tick. Queuing (rather than pushing directly) keeps the bullet
+   * array stable while it is being iterated by the collision/advance passes,
+   * so a mid-pass split can never be dropped or mutate the live iteration
+   * (AH-0MV1BIVIJ007KYXU).
+   */
+  private readonly _pendingSplitWarheads: PlayerBullet[] = [];
   /**
    * Continuous time (ms) the player has spent inside an active tractor beam
    * (Galaga capturer, AH-0MV01EFII008298D). Reset whenever the player leaves
@@ -526,6 +545,10 @@ export class CombatCoreScene<
   protected _tickPlayer(dt: number): void {
     const player = this.getPlayer();
     if (!player) return;
+    // Flush any cluster warheads queued by a split on the previous frame so
+    // they take part in this frame's advance/collision passes
+    // (AH-0MV1BIVIJ007KYXU).
+    this.flushPendingSplitWarheads();
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame.
     player.tickWeaponTimers(dt * 1000);
@@ -618,6 +641,13 @@ export class CombatCoreScene<
           // detonation callback through the shared hook.
           bullet.aoeWeapon = def;
           this.onAoeProjectileSpawned(bullet, def);
+        } else if (def.splits !== undefined) {
+          // Tag the projectile so the shared combat core splits it exactly
+          // once on the first impact or on expiry (Missile Command cluster
+          // missile, AH-0MV1BIVIJ007KYXU). The split seam lives in this
+          // shared core, so the game and every gym split identically.
+          bullet.splitWeapon = def;
+          bullet.onExpire = () => this.splitProjectile(bullet);
         }
       }
     }
@@ -666,6 +696,79 @@ export class CombatCoreScene<
     bullet.bounces = bounces;
     this.playerBullets.push(bullet);
     return bullet;
+  }
+
+  /**
+   * Shared **split seam** (Missile Command cluster/MIRV homage,
+   * AH-0MV1BIVIJ007KYXU). Splits a tagged projectile exactly once into
+   * `def.splits` radial warheads and spawns the split-burst VFX.
+   *
+   * Idempotent per projectile: `PlayerBullet.splitSpawned` makes the split
+   * resolve at most once even when both the impact and expiry paths observe
+   * the same projectile. The warheads are **queued** rather than pushed
+   * directly so a split during a collision pass cannot mutate the bullet
+   * array being iterated; {@link CombatCoreScene.flushPendingSplitWarheads}
+   * admits them at the start of the next shared player tick.
+   *
+   * Defined once here so the game and every gym run the same split code. The
+   * split is a projectile seam, not an area effect: each warhead is an
+   * ordinary player bullet that damages enemies on contact through the
+   * shared collision path.
+   *
+   * @param bullet - The tagged projectile to split.
+   */
+  protected splitProjectile(bullet: PlayerBullet): void {
+    const def = bullet.splitWeapon;
+    if (!def || bullet.splitSpawned) return;
+    bullet.splitSpawned = true;
+    const count = Math.max(0, Math.round(def.splits ?? 0));
+    if (count <= 0) return;
+    const speed = Math.hypot(bullet.vx, bullet.vy) || PLAYER_BULLET_SPEED;
+    const baseHeading = Math.atan2(bullet.vy, bullet.vx);
+    const radius =
+      PLAYER_BULLET_RADIUS *
+      (def.levelBulletSize ?? 1) *
+      CLUSTER_WARHEAD_RADIUS_SCALE;
+    for (let i = 0; i < count; i++) {
+      // Even radial fan, phase-locked to the missile's own heading so the
+      // split reads as a predictable burst rather than a random spray.
+      const angle = baseHeading + (2 * Math.PI * i) / count;
+      this._pendingSplitWarheads.push(
+        createPlayerBullet(
+          this,
+          bullet.x,
+          bullet.y,
+          bullet.color,
+          radius,
+          Math.cos(angle) * speed,
+          Math.sin(angle) * speed,
+          CLUSTER_WARHEAD_LIFETIME,
+        ),
+      );
+    }
+    this.spawnSplitBurst(bullet.x, bullet.y, count);
+  }
+
+  /**
+   * Admits every warhead queued by {@link CombatCoreScene.splitProjectile}
+   * into the live player-bullet list. Called at the start of the shared
+   * player tick so split warheads take part in the same frame's
+   * advance/collision passes (AH-0MV1BIVIJ007KYXU).
+   */
+  protected flushPendingSplitWarheads(): void {
+    if (this._pendingSplitWarheads.length === 0) return;
+    this.playerBullets.push(...this._pendingSplitWarheads);
+    this._pendingSplitWarheads.length = 0;
+  }
+
+  /**
+   * Spawns the shared cluster split-burst VFX at the split point. Owned by
+   * the shared core so the game and every gym render the identical feedback.
+   */
+  protected spawnSplitBurst(x: number, y: number, warheads: number): void {
+    spawnSplitBurst(this, x, y, CLUSTER_SPLIT_BURST_RADIUS, warheads, {
+      registry: this.splitBurstEffects,
+    });
   }
 
   /** Spawns the player-death particle burst at (x, y). */
@@ -1013,6 +1116,12 @@ export class CombatCoreScene<
     // In-flight Bomb pulse rings are likewise owned by their registry.
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    // In-flight cluster split bursts and any un-flushed split warheads are
+    // cleared so a restarted run starts clean (AH-0MV1BIVIJ007KYXU).
+    for (const effect of this.splitBurstEffects) effect.destroy();
+    this.splitBurstEffects = [];
+    for (const warhead of this._pendingSplitWarheads) warhead.destroy();
+    this._pendingSplitWarheads.length = 0;
     // Clear any in-flight capture hold/penalty so a restarted run starts
     // clean (Galaga capturer, AH-0MV01EFII008298D).
     this._captureHoldMs = 0;
@@ -1039,6 +1148,10 @@ export class CombatCoreScene<
     this.collectAnimations = [];
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    for (const effect of this.splitBurstEffects) effect.destroy();
+    this.splitBurstEffects = [];
+    for (const warhead of this._pendingSplitWarheads) warhead.destroy();
+    this._pendingSplitWarheads.length = 0;
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();

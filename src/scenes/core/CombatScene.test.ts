@@ -5,7 +5,7 @@ import * as effectsModule from '../../audio/effects';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
 import { Player } from '../../entities/Player';
-import type { PlayerBullet } from '../../entities/PlayerBullet';
+import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
@@ -18,6 +18,7 @@ import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
 import {
+  WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
   type WeaponId,
 } from '../../utils/weapons';
@@ -265,6 +266,12 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   }
   runCollisions() {
     this._handleCollisions();
+  }
+  runFlushSplits() {
+    this.flushPendingSplitWarheads();
+  }
+  runSplitProjectile(bullet: PlayerBullet) {
+    this.splitProjectile(bullet);
   }
   runApplyPlayerHit(player: Player) {
     this.applyPlayerHit(player);
@@ -889,6 +896,7 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       rapid: [],
       wave_laser: [],
       ricochet: [],
+      cluster: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -1116,5 +1124,157 @@ describe('ricochet player bullets — wall-bounce budget (AH-0MV1BIV5L005NJAI)',
     for (const bullet of scene.getPlayerBullets()) {
       expect(bullet.bounces).toBeUndefined();
     }
+  });
+});
+
+// ── Missile Command cluster/MIRV split seam (AH-0MV1BIVIJ007KYXU) ────
+
+describe('cluster-missile split seam (AH-0MV1BIVIJ007KYXU)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  function addEnemy(scene: StubCombatScene, x: number, y: number): StubEnemy {
+    const enemy = new StubEnemy(scene, x, y);
+    scene.add.existing(enemy);
+    scene.entities.push(enemy);
+    return enemy;
+  }
+
+  /** Spawns a base cluster missile (tagged but not yet split). */
+  function spawnCluster(scene: StubCombatScene, x: number, y: number): PlayerBullet {
+    const bullet = scene.spawnPlayerBullet(
+      x,
+      y,
+      PLAYER_BULLET_SPEED,
+      0,
+      WEAPON_CATALOGUE.cluster.bulletColor,
+      1,
+      3,
+    );
+    bullet.splitWeapon = WEAPON_CATALOGUE.cluster;
+    return bullet;
+  }
+
+  it('auto-fire tags a cluster missile with its split definition and leaves ordinary weapons untagged', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+    const clusterBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+    expect(clusterBullets.length).toBeGreaterThan(0);
+    for (const bullet of clusterBullets) {
+      expect(bullet.splitWeapon?.id).toBe('cluster');
+      expect(bullet.splitSpawned).toBe(false);
+    }
+    for (const bullet of scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.cannon.bulletColor)) {
+      expect(bullet.splitWeapon).toBeUndefined();
+    }
+  });
+
+  it('splits into exactly its configured warhead count once on impact', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    addEnemy(scene, 200, 200);
+    const bullet = spawnCluster(scene, 200, 200);
+
+    scene.runCollisions();
+    expect(bullet.splitSpawned).toBe(true);
+    // The parent shell is consumed; the warheads are queued, not yet live.
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+    scene.runFlushSplits();
+    expect(scene.getPlayerBullets()).toHaveLength(
+      WEAPON_CATALOGUE.cluster.splits!,
+    );
+
+    // Splitting again is a no-op — the split resolves exactly once.
+    scene.runSplitProjectile(bullet);
+    expect(scene.getPlayerBullets()).toHaveLength(
+      WEAPON_CATALOGUE.cluster.splits!,
+    );
+  });
+
+  it('each split warhead damages enemies on contact through the shared collision path', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const victim = addEnemy(scene, 200, 200);
+    spawnCluster(scene, 200, 200);
+
+    scene.runCollisions(); // splits; the parent shell deals no direct hit
+    expect(victim.destroyed).toBe(false);
+    scene.runFlushSplits();
+    scene.runCollisions(); // a warhead damages the enemy on contact
+    expect(victim.destroyed).toBe(true);
+  });
+
+  it('splits on lifetime expiry through the shared advance/cull path', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const missile = scene
+      .getPlayerBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+    expect(missile).toBeDefined();
+    const expected = player.getWeaponDef('cluster').splits ?? 0;
+    expect(expected).toBeGreaterThan(0);
+
+    expect(
+      advanceAndCull(missile!, WEAPON_BULLET_LIFETIME.cluster + 0.01),
+    ).toBe(false);
+    expect(missile!.splitSpawned).toBe(true);
+
+    scene.runFlushSplits();
+    const warheads = scene
+      .getPlayerBullets()
+      .filter(
+        (b) =>
+          b.color === WEAPON_CATALOGUE.cluster.bulletColor &&
+          b.splitWeapon === undefined,
+      );
+    expect(warheads).toHaveLength(expected);
+  });
+
+  it('an ordinary weapon never splits and damages its target directly', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const enemy = addEnemy(scene, 200, 200);
+    const bullet = scene.spawnPlayerBullet(
+      200,
+      200,
+      PLAYER_BULLET_SPEED,
+      0,
+      WEAPON_CATALOGUE.cannon.bulletColor,
+      1,
+      3,
+    );
+    expect(bullet.splitWeapon).toBeUndefined();
+
+    scene.runCollisions();
+    expect(enemy.destroyed).toBe(true);
+    scene.runFlushSplits();
+    expect(scene.getPlayerBullets()).toHaveLength(0);
   });
 });
