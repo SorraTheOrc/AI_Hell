@@ -184,6 +184,13 @@ import {
   computeHordeSpawns,
   type HordeSpawnEvent,
 } from '../waves/HordeSpawner';
+import {
+  LANE_TRAFFIC_DEFAULT_LANE_COUNT,
+  LANE_TRAFFIC_DEFAULT_LANE_SPACING,
+  computeLaneTrafficSpawns,
+  type LaneTrafficSpawnEvent,
+} from '../waves/LaneTrafficSpawner';
+import { LaneTraffic } from '../entities/LaneTraffic';
 import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -242,10 +249,23 @@ export const SCORE_VALUES: Record<string, number> = {
   // Defender raider: a patrol-then-attack state machine (classic-arcade
   // archetype, AH-0MV01EM7U0033W7L). Each raider scores.
   raider: 175,
+  // Frogger lane traffic: a fast, non-firing moving hazard (classic-arcade
+  // archetype, AH-0MV01EPM40008N8T). Each lane member scores.
+  'lane-traffic': 150,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
 export const DEFAULT_SCORE_VALUE = 100;
+
+/**
+ * True for non-blocking world hazards — archetypes that are never registered
+ * with the `WaveManager`, never gate wave completion, and are never adopted as
+ * survivors between waves (Asteroid accounting, AH-0MUJM746P000QAEO). The
+ * Frogger lane traffic is the second such hazard (AH-0MV01EPM40008N8T).
+ */
+function isNonBlockingHazard(enemyKey: string): boolean {
+  return enemyKey === 'asteroid' || enemyKey === 'lane-traffic';
+}
 
 /** Points awarded per destroyed boss phase (GDD §4.5). */
 export const BOSS_PHASE_SCORES: Record<number, number> = {
@@ -642,6 +662,16 @@ export class PlayScene extends CombatScene<
   /** Number of planned orbital-strike spawns already released this wave. */
   private strikesSpawnedThisWave = 0;
 
+  /**
+   * Whether the Frogger lane-traffic plan is active (classic-arcade archetype,
+   * AH-0MV01EPM40008N8T). Lane traffic is a non-blocking world hazard, so it
+   * is spawned directly rather than through the WaveManager. Tuning/test seam.
+   */
+  private laneTrafficSpawnerEnabled = true;
+  /** Planned lane-traffic spawns for the active regular wave. */
+  private pendingLaneTrafficSpawns: LaneTrafficSpawnEvent[] = [];
+  /** Number of planned lane-traffic spawns already released this wave. */
+  private laneTrafficSpawnedThisWave = 0;
   constructor() {
     super('PlayScene');
     this.gameState = new GameState({ gameState: 'playing' });
@@ -851,6 +881,8 @@ export class PlayScene extends CombatScene<
     this.waveTimerActive = false;
     this.pendingAsteroidSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
+    this.pendingLaneTrafficSpawns = [];
+    this.laneTrafficSpawnedThisWave = 0;
     this.pendingHarvesterSpawns = [];
     this.harvestersSpawnedThisWave = 0;
     this.pendingGhostSpawns = [];
@@ -1040,6 +1072,10 @@ export class PlayScene extends CombatScene<
       // (AH-0MV01ENX00055CG1); non-blocking world hazards (never registered
       // with the WaveManager), like asteroids.
       this._releaseDueStrikeSpawns();
+      // Release any planned Frogger lane-traffic hazards whose time has passed
+      // (AH-0MV01EPM40008N8T); these are NOT registered with the WaveManager
+      // (non-blocking world hazard, the Asteroid accounting).
+      this._releaseDueLaneTrafficSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -1118,6 +1154,9 @@ export class PlayScene extends CombatScene<
     // Plan the telegraphed orbital strikes for this wave (Missile Command
     // archetype, AH-0MV01ENX00055CG1); empty before wave 3.
     this.planStrikeSpawns();
+    // Plan the Frogger lane traffic for this wave (AH-0MV01EPM40008N8T); it is
+    // a non-blocking world hazard (the Asteroid accounting).
+    this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       // Spawn one wormhole at the first enemy's position.
@@ -1729,6 +1768,102 @@ export class PlayScene extends CombatScene<
     this.waveManager.registerDynamicSpawn(1);
   }
 
+  /**
+   * Plans the Frogger lane-traffic hazards for the active regular wave
+   * (classic-arcade archetype, AH-0MV01EPM40008N8T). Only waves that opt in
+   * with `laneTraffic: true` produce a plan; every other wave is unchanged, so
+   * the shipped campaign is untouched. The lane count, per-lane count, speed
+   * and spacing are all data-driven (the `lane-traffic` CSV row). Called once
+   * per wave from `spawnWave()` so the scene rng stream advances only at wave
+   * boundaries.
+   *
+   * Lane traffic is a non-blocking world hazard (Asteroid accounting), so the
+   * plan is spawned directly and never registered with the `WaveManager`.
+   */
+  planLaneTrafficSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.laneTrafficSpawnerEnabled ||
+      wm.currentWave()?.laneTraffic !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingLaneTrafficSpawns = [];
+      this.laneTrafficSpawnedThisWave = 0;
+      return;
+    }
+    const cfg = loadEnemyConfig('lane-traffic');
+    this.pendingLaneTrafficSpawns = computeLaneTrafficSpawns({
+      gameWidth: GAME_WIDTH,
+      gameHeight: GAME_HEIGHT,
+      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
+      laneCount: cfg.laneCount ?? LANE_TRAFFIC_DEFAULT_LANE_COUNT,
+      perLaneCount: cfg.count,
+      spacing: cfg.spacingX,
+      laneSpacing: cfg.laneSpacing ?? LANE_TRAFFIC_DEFAULT_LANE_SPACING,
+      speed: cfg.driftSpeed,
+      rng: this.rng,
+    });
+    this.laneTrafficSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned lane-traffic hazard whose scheduled time has
+   * passed. Runs only during the regular wave phase (never during a
+   * transition, pause or boss encounter) and stops at the first not-yet-due
+   * event — the plan is time-ordered.
+   */
+  private _releaseDueLaneTrafficSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.laneTrafficSpawnedThisWave < this.pendingLaneTrafficSpawns.length) {
+      const event =
+        this.pendingLaneTrafficSpawns[this.laneTrafficSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledLaneTraffic(event);
+      this.laneTrafficSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned lane-traffic hazard at its lane position and velocity.
+   * Lane traffic is NOT registered with the WaveManager
+   * (AH-0MV01EPM40008N8T): it is a non-blocking world hazard (the Asteroid
+   * accounting), so it can never stall or prematurely clear a wave.
+   */
+  private _spawnScheduledLaneTraffic(event: LaneTrafficSpawnEvent): void {
+    const cfg = loadEnemyConfig(event.enemyKey);
+    const entity = new LaneTraffic(this, {
+      x: event.x,
+      y: event.y,
+      formationOffset: { row: 0, col: 0 },
+      vx: event.vx,
+      size: cfg.size,
+      color: cfg.color,
+      health: cfg.health,
+      rng: this.rng,
+    });
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: event.enemyKey,
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+  }
+
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
     // Formation drift advances unconditionally — no entity can freeze it (the
@@ -1766,10 +1901,11 @@ export class PlayScene extends CombatScene<
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
-      // Asteroids roam independently: constant-velocity straight-line
-      // motion with four-edge wrap (never formation drift).
-      if (s.enemyKey === 'asteroid') {
-        (s.entity as Asteroid).updatePosition(dt);
+      // Non-blocking world hazards (Asteroid, Frogger lane traffic) advance
+      // their own constant-velocity motion with four-edge wrap (never
+      // formation drift).
+      if (isNonBlockingHazard(s.enemyKey)) {
+        s.entity.updatePosition?.(dt);
         continue;
       }
       // Orbital strikes run their own telegraph → fall → detonate lifecycle
@@ -2522,9 +2658,10 @@ export class PlayScene extends CombatScene<
    */
   private _handleMinerals(transitioning = false): void {
     if (!this.player) return;
-    // Non-asteroid enemies absorb minerals; asteroids are inert (GDD §4.5).
+    // Non-blocking hazards absorb no minerals (GDD §4.5): asteroids and lane
+    // traffic are inert, so they are excluded from the absorber list.
     const absorbers = this.spawned
-      .filter((s) => s.enemyKey !== 'asteroid')
+      .filter((s) => !isNonBlockingHazard(s.enemyKey))
       .map((s) => s.entity);
     // Shared collection/absorption routine — the same code the gyms run
     // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
@@ -2569,10 +2706,11 @@ export class PlayScene extends CombatScene<
     this.minerals.push(
       ...resolveMineralKillDrops(this, s.entity, this.rng),
     );
-    // Asteroids are not wave-accounted (AH-0MUJM746P000QAEO): destroying one
-    // must not advance the wave. Only non-asteroid enemy ships drive
-    // wave/level/boss progression.
-    if (s.enemyKey !== 'asteroid') this._advanceAfterKill();
+    // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
+    // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T): destroying one must not
+    // advance the wave. Only non-hazard enemy ships drive wave/level/boss
+    // progression.
+    if (!isNonBlockingHazard(s.enemyKey)) this._advanceAfterKill();
   }
 
   /**
@@ -2832,9 +2970,10 @@ export class PlayScene extends CombatScene<
       return;
     }
 
-    // Asteroids carry over independently and are never wave-accounted; only
-    // non-asteroid survivors gate the next wave (AH-0MUJM746P000QAEO).
-    const carried = survivors.filter((s) => s.enemyKey !== 'asteroid');
+    // Non-blocking hazards carry over independently and are never
+    // wave-accounted; only non-hazard survivors gate the next wave
+    // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T).
+    const carried = survivors.filter((s) => !isNonBlockingHazard(s.enemyKey));
 
     // No detonation, no life loss: advance the wave/level, then adopt the
     // surviving non-asteroid enemies so they count toward the next wave's
@@ -3662,6 +3801,20 @@ export class PlayScene extends CombatScene<
     if (!enabled) {
       this.pendingStrikeSpawns = [];
       this.strikesSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the Frogger lane-traffic plan (classic-arcade archetype,
+   * AH-0MV01EPM40008N8T). Disabling immediately drops any pending plan and
+   * clears the released counter; re-enabling takes effect from the next
+   * `spawnWave()`. Tuning and test seam mirroring `setHordeSpawnerEnabled`.
+   */
+  setLaneTrafficSpawnerEnabled(enabled: boolean): void {
+    this.laneTrafficSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingLaneTrafficSpawns = [];
+      this.laneTrafficSpawnedThisWave = 0;
     }
   }
 }

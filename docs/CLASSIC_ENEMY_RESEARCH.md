@@ -381,21 +381,28 @@ is exercised by the existing `GymEnemies` scene, enforced by
 **Original behaviour:** Frogger must cross roads and a river by timing movement
 between lanes of traffic.
 
-**AI_Hell adaptation:** A horizontal "lane" of 3–5 fast-moving entities that
-cross the arena from left to right at high speed, like vehicles on a road.
-The player must time passage through the gaps. No shooting — purely a movement
-hazard.
+**AI_Hell adaptation:** One to three horizontal "lanes" of 3–5 fast-moving
+entities that cross the arena at constant speed, wrapping at the edges, like
+vehicles on a road. The members never shoot and never home; a combination of
+timing and shooting clears a path. The player may weave through the gaps or
+destroy individual members (1 HP). Lane traffic is a non-blocking world
+hazard (the Asteroid accounting): it never gates wave completion.
 
 **Divergence from original:** No river/lily-pad section; only the road lanes.
 No jumping — movement is continuous 2D rather than discrete lane-hopping.
-The lane is a thin horizontal band; entities within it have no formation
-geometry — they are individually placed at equal horizontal spacing.
+Unlike the original (where traffic is indestructible), the hazards are
+destructible so they fit the "enemies are the bullets" design and the
+asteroid/obstacle model.
 
-**Pipeline fit:** New `src/entities/LaneTraffic.ts` entity class. Factory key
-maps to this entity. Fire dispatch uses `tryFireNone` — the lane traffic is
-a pure movement hazard, no shooting. Uses `formationKind: 'single'` (each
-traffic member is independently positioned). CSV row uses `driftSpeed` to
-control lane velocity.
+**Pipeline fit:** New `src/entities/LaneTraffic.ts` entity class plus the pure
+`src/waves/LaneTrafficSpawner.ts` planner. Factory key maps to this entity.
+Fire dispatch uses `tryFireNone` — the lane traffic is a pure movement hazard,
+no shooting. Uses `formationKind: 'rect'` so the shared `GymEnemies` scene
+displays the lane as a row of `count` members (the game's spawner places the
+same count per lane; a `single` row would show only one member). CSV row uses
+`driftSpeed` for the lane velocity, `spacingX` for the within-lane gap and the
+new neutral `laneCount`/`laneSpacing` columns for the lane count and vertical
+gap.
 
 **Difficulty scoring inputs:**
 
@@ -405,8 +412,9 @@ control lane velocity.
 | Fire | `shotPattern` (`none`) | No bullets — pure collision avoidance. |
 | Health | `health` (default 1) | Single-hit; the hazard is the collision, not the durability. |
 
-**Gym scene:** New `GymLaneTraffic.ts` scene to demonstrate the lane crossing
-hazard; `GymEnemies` for CSV testing.
+**Gym scene:** The existing `GymEnemies` scene (with a live player) runs the
+same shared `LaneTraffic` entity's `updatePosition` seam, so the game and the
+gym cannot diverge (gym↔game parity). No new gym scene is required.
 
 ---
 
@@ -436,7 +444,7 @@ to warrant a child work item in this research round.
 | Robotron Horde | `buildSwarmClusterOffsets` (`swarm`) | `none` | `Grunt.ts` (new) + `gruntSteering.ts` + `HordeSpawner.ts` | `tryFireNone` | `GymEnemies` |
 | Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `Raider.ts` (new) + `raiderPatrol.ts` (new, shared) | `tryFireAimedBullet` (reused) | `GymEnemies` |
 | Missile Strike | `buildSingleOffset` (`single`) | `none` (burst on detonation) | `MissileStrike.ts` (new) | `tryFireMissileStrike` (new) | `GymMissileStrike`, `GymEnemies` |
-| Lane Traffic | `buildSingleOffset` (`single`) | `none` | `LaneTraffic.ts` (new) | `tryFireNone` | `GymLaneTraffic`, `GymEnemies` |
+| Lane Traffic | `buildRectFormationOffsets` (`rect`) | `none` | `LaneTraffic.ts` (new) + `LaneTrafficSpawner.ts` (new) | `tryFireNone` | `GymEnemies` |
 
 **Existing seams used without modification:** `buildRectFormationOffsets`,
 `buildDiverFormationOffsets`, `buildSingleOffset`, `buildVFormationOffsets`,
@@ -447,7 +455,7 @@ to warrant a child work item in this research round.
 `Grunt.ts` + `gruntSteering.ts` + `HordeSpawner.ts` + `tryFireNone` explicit,
 `Raider.ts` + `raiderPatrol.ts` + `tryFireAimedBullet` reuse,
 `MissileStrike.ts` + `tryFireMissileStrike` + `GymMissileStrike`,
-`LaneTraffic.ts` + `tryFireNone` explicit + `GymLaneTraffic`.
+`LaneTraffic.ts` + `LaneTrafficSpawner.ts` + `tryFireNone` explicit.
 
 ---
 

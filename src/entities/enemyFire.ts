@@ -62,6 +62,10 @@ export const ENEMY_FIRE_METHODS = {
   // radial burst. An explicit non-firing entry keeps it out of the aimed-shot
   // fallback.
   'orbital-strike': 'tryFireNone',
+  // Frogger lane traffic (classic-arcade archetype, AH-0MV01EPM40008N8T) never
+  // fires — the moving lane body is the threat. An explicit non-firing entry
+  // keeps the key out of the aimed-shot fallback.
+  'lane-traffic': 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */

@@ -506,6 +506,45 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     burstCount: 1,
     shotProbability: 1.0,
   },
+  // Frogger lane-traffic hazard (classic-arcade archetype,
+  // AH-0MV01EPM40008N8T): fast, non-firing "vehicles" that cross the arena in
+  // horizontal lanes and wrap at the edges. It is a non-blocking world hazard
+  // (Asteroid accounting): destroying one never advances the wave. The lane
+  // count and vertical gap are the neutral `laneCount`/`laneSpacing` columns;
+  // the members-per-lane is the existing `count`, the lane speed is the
+  // existing `driftSpeed` and the within-lane gap is the existing `spacingX`
+  // (see `docs/CLASSIC_ENEMY_RESEARCH.md` §8).
+  'lane-traffic': {
+    key: 'lane-traffic',
+    displayName: 'Lane Traffic',
+    // `rect` so the gym displays the lane as a row of `count` hazards (the
+    // game's `LaneTrafficSpawner` places the same count per lane). A `single`
+    // formation would show only one member in the gym, hiding the lane.
+    formationKind: 'rect',
+    count: 4,
+    spacingX: 140,
+    spacingY: 0,
+    driftSpeed: 180,
+    laneCount: 2,
+    laneSpacing: 120,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.5,
+    startXMin: GAME_WIDTH * 0.5,
+    startXMax: GAME_WIDTH * 0.5,
+    startYMin: GAME_HEIGHT * 0.5,
+    startYMax: GAME_HEIGHT * 0.5,
+    size: 22,
+    health: 1,
+    color: 0xffb020,
+    bulletColor: 0xffffff,
+    bulletSize: 3,
+    shotPattern: 'none',
+    fireInterval: 1000,
+    bulletSpeed: 50,
+    bulletLifetime: 1.5,
+    burstCount: 1,
+    shotProbability: 0,
+  },
 };
 
 export const DEFAULT_ENEMY_KEYS = Object.keys(DEFAULT_ENEMY_CONFIGS);

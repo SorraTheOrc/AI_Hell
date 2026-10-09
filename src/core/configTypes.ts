@@ -102,6 +102,20 @@ export interface EnemyConfig {
    * back to `RAIDER_COMMIT_RANGE` at the movement site.
    */
   commitRange?: number;
+  /**
+   * Number of horizontal traffic lanes for the Frogger `lane-traffic`
+   * archetype (AH-0MV01EPM40008N8T). Neutral for other archetypes; absent
+   * values fall back to `LANE_TRAFFIC_DEFAULT_LANE_COUNT` at the spawner site.
+   */
+  laneCount?: number;
+  /**
+   * Vertical gap (px) between traffic lanes for the Frogger `lane-traffic`
+   * archetype (AH-0MV01EPM40008N8T). Neutral for other archetypes; absent
+   * values fall back to `LANE_TRAFFIC_DEFAULT_LANE_SPACING` at the spawner
+   * site. The within-lane gap uses the existing `spacingX` field and the lane
+   * speed uses the existing `driftSpeed` field.
+   */
+  laneSpacing?: number;
   /** Initial base position (px). */
   startX: number;
   startY: number;

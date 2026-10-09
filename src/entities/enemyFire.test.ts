@@ -105,7 +105,8 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
         !key.startsWith('ghost-') &&
         key !== 'centipede' &&
         key !== 'grunt' &&
-        key !== 'orbital-strike',
+        key !== 'orbital-strike' &&
+        key !== 'lane-traffic',
     );
 
     for (const key of firingKeys) {
@@ -123,6 +124,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       'ghost-wander',
       'grunt',
       'harvester',
+      'lane-traffic',
       'march',
       'orbital-strike',
       'phaser',
@@ -175,6 +177,13 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     const entity = makeFireSpy();
     expect(enemyFireMethod('orbital-strike')).toBe('tryFireNone');
     expect(fireForEnemy(entity, 'orbital-strike', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Frogger lane traffic to no fire (the moving lane is the threat)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('lane-traffic')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'lane-traffic', 42)).toEqual([]);
     expect(entity.calls).toEqual([]);
   });
 });

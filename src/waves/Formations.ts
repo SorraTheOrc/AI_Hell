@@ -93,6 +93,16 @@ export interface WaveDefinition {
    * Absent (the default) leaves the wave exactly as it was.
    */
   horde?: boolean;
+  /**
+   * Opt-in flag for the Frogger lane-traffic hazard (classic-arcade
+   * archetype, AH-0MV01EPM40008N8T). When `true`, the wave schedules one to
+   * three horizontal lanes of non-firing traffic through the shared
+   * `LaneTrafficSpawner`. Traffic is a **non-blocking** world hazard (the
+   * Asteroid accounting): it is never registered with the `WaveManager`, so
+   * it neither gates nor stalls wave completion. Absent (the default) leaves
+   * the wave exactly as it was.
+   */
+  laneTraffic?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */

@@ -46,6 +46,7 @@ import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
 import { Ghost } from '../../entities/Ghost';
 import { Grunt } from '../../entities/Grunt';
+import { LaneTraffic } from '../../entities/LaneTraffic';
 import { Raider } from '../../entities/Raider';
 import { Harvester } from '../../entities/Harvester';
 import { OrbitalStrike } from '../../entities/OrbitalStrike';
@@ -243,6 +244,36 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(strike.archetype).toBe('orbital-strike');
   });
 
+  it('Frogger lane traffic crosses the arena, never fires and stays in bounds (gym parity, AH-0MV01EPM40008N8T)', async () => {
+    const scene = await bootWithKey('lane-traffic');
+    expect(scene.activeEnemyKey).toBe('lane-traffic');
+    expect(scene.formationEntities).toHaveLength(
+      DEFAULT_ENEMY_CONFIGS['lane-traffic'].count,
+    );
+    const traffic = scene.formationEntities[0] as unknown as LaneTraffic;
+    expect(traffic).toBeInstanceOf(LaneTraffic);
+    expect(traffic.archetype).toBe('lane-traffic');
+    // The shared entity runs the same code in the gym and the game.
+    expect(traffic.shootEnabled).toBe(false);
+    expect(traffic.effectiveShotPattern).toBe('none');
+    expect(scene.children.list).toContain(traffic);
+
+    // The shared `updatePosition` seam moves the lane member horizontally and
+    // leaves its lane y fixed; SHOOT is off by default so no bullets appear.
+    const startX = traffic.x;
+    const startY = traffic.y;
+    scene.tick(0.5);
+    expect(traffic.x).not.toBe(startX);
+    expect(traffic.y).toBeCloseTo(startY, 5);
+    // Long run wraps at the edges — always reachable inside the play area and
+    // never frozen offscreen.
+    scene.tick(30);
+    expect(traffic.x).toBeGreaterThanOrEqual(0);
+    expect(traffic.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(traffic.y).toBeCloseTo(startY, 5);
+    expect(scene.activeBullets).toHaveLength(0);
+  });
+
   it('F5 — the Harvester spawns, renders and is a no-fire roamer', async () => {
     const scene = await bootWithKey('harvester');
     expect(scene.activeEnemyKey).toBe('harvester');
@@ -315,6 +346,20 @@ describe('GymEnemies — single reusable enemy gym', () => {
       expect(e.x).toBeLessThanOrEqual(GAME_WIDTH);
       expect(e.y).toBeGreaterThanOrEqual(0);
       expect(e.y).toBeLessThanOrEqual(GAME_HEIGHT);
+      return;
+    }
+
+    // Lane traffic is a self-propelled hazard (its own `updatePosition` seam;
+    // the shared formation positioning is a no-op), so it is not on a
+    // formation slot. Its invariant is that every member stays reachable
+    // inside the play area.
+    if (key === 'lane-traffic') {
+      for (const e of scene.formationEntities) {
+        expect(e.x).toBeGreaterThanOrEqual(0);
+        expect(e.x).toBeLessThanOrEqual(GAME_WIDTH);
+        expect(e.y).toBeGreaterThanOrEqual(0);
+        expect(e.y).toBeLessThanOrEqual(GAME_HEIGHT);
+      }
       return;
     }
 

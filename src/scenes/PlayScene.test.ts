@@ -23,6 +23,7 @@ import { Ghost } from '../entities/Ghost';
 import { Centipede } from '../entities/Centipede';
 import { Grunt } from '../entities/Grunt';
 import { Raider } from '../entities/Raider';
+import { LaneTraffic } from '../entities/LaneTraffic';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
@@ -5140,5 +5141,209 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
       expect(other!.alive).toBe(true);
       expect((other as unknown as { health: number }).health).toBe(healthBefore);
     });
+  });
+});
+
+// ── Frogger lane traffic (AH-0MV01EPM40008N8T) ───────────────────────
+
+describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with one wave-accounted Scout and the random asteroid
+   * spawner disabled, so lane traffic can be isolated from other dynamic
+   * hazards. `shootEnabled` is false so no formation enemy fires.
+   */
+  async function bootWithLaneTrafficWave(): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Lane Traffic Test',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 1,
+                spacingX: 26,
+                spacingY: 22,
+                startX: 240,
+                startY: 135,
+              },
+            ],
+            shootEnabled: false,
+            laneTraffic: true,
+          },
+        ],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.setLaneTrafficSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  function liveTraffic(scene: PlayScene): LaneTraffic[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is LaneTraffic => e instanceof LaneTraffic && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window, then ticks once more
+   * so every planned lane is released (the release runs before the timer
+   * advances, matching the horde/asteroid planners).
+   */
+  function releaseLaneTraffic(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  const config = DEFAULT_ENEMY_CONFIGS['lane-traffic'];
+  const expectedCount = config.count * (config.laneCount ?? 1);
+
+  it('spawns lane traffic as a non-blocking world hazard', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    const wm = scene.getWaveManager();
+    const baseline = wm.enemiesAlive;
+    expect(baseline).toBe(1);
+
+    releaseLaneTraffic(scene);
+
+    const traffic = liveTraffic(scene);
+    expect(traffic).toHaveLength(expectedCount);
+    for (const t of traffic) {
+      expect(t.archetype).toBe('lane-traffic');
+      // The hazards are NOT registered with the WaveManager, so the wave
+      // accounting is unchanged (the lone Scout is still counted).
+      expect(wm.enemiesAlive).toBe(baseline);
+    }
+  });
+
+  it('crosses the arena at a constant speed and wraps at the edges', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const t = liveTraffic(scene)[0];
+    const laneY = t.y;
+    // Place the hazard away from the edge so the measurement is wrap-free.
+    t.x = GAME_WIDTH / 2;
+    const startX = t.x;
+    scene.tick(0.25);
+    expect(t.y).toBeCloseTo(laneY, 5);
+    expect(t.x - startX).toBeCloseTo(t.vx * 0.25, 1);
+
+    // Over a long run the wrap keeps it inside the arena and in its lane.
+    for (let i = 0; i < 200; i++) scene.tick(0.05);
+    expect(t.x).toBeGreaterThanOrEqual(0);
+    expect(t.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(t.y).toBeCloseTo(laneY, 5);
+  });
+
+  it('is destroyed by a single player bullet without advancing the wave', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const wm = scene.getWaveManager();
+    const baseline = wm.enemiesAlive;
+    const target = liveTraffic(scene)[0];
+    target.x = GAME_WIDTH / 2;
+    target.y = 200;
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.001);
+    expect(target.alive).toBe(false);
+    // Non-blocking: destroying a hazard does not change wave accounting.
+    expect(wm.enemiesAlive).toBe(baseline);
+  });
+
+  it('never fires at any level (no enemy bullets)', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const traffic = liveTraffic(scene);
+    expect(traffic.length).toBeGreaterThan(0);
+    for (let i = 0; i < 40; i++) scene.tick(0.1);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const t of traffic) {
+      expect(t.shootEnabled).toBe(false);
+      expect(t.effectiveShotPattern).toBe('none');
+    }
+  });
+
+  it('passes through other enemies (no enemy-enemy collision)', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const traffic = liveTraffic(scene)[0];
+    const scout = scene
+      .getEnemies()
+      .find((e): e is Scout => e instanceof Scout && e.alive)!;
+    expect(scout).toBeDefined();
+    // Overlap the hazard with the Scout: neither may be destroyed by the
+    // other (the shared collision pass is player-bullet vs enemy only).
+    traffic.x = scout.x;
+    traffic.y = scout.y;
+    scene.tick(0.001);
+    expect(traffic.alive).toBe(true);
+    expect(scout.alive).toBe(true);
+  });
+
+  it('the lane-traffic spawner disable seam suppresses the hazard', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    scene.setLaneTrafficSpawnerEnabled(false);
+    releaseLaneTraffic(scene);
+    expect(liveTraffic(scene)).toHaveLength(0);
+  });
+
+  it('does not spawn lane traffic for a wave without the opt-in', async () => {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'No lane traffic',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 1,
+                spacingX: 26,
+                spacingY: 22,
+                startX: 240,
+                startY: 135,
+              },
+            ],
+            shootEnabled: false,
+          },
+        ],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.setLaneTrafficSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    scene.finishSpawnAnimations();
+
+    releaseLaneTraffic(scene);
+    expect(liveTraffic(scene)).toHaveLength(0);
   });
 });

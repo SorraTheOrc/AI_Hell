@@ -75,6 +75,9 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // Defender raider tuning (AH-0MV01EM7U0033W7L): committed attack-run speed
   // and commit range; neutral for other archetypes.
   'attackSpeed', 'commitRange',
+  // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): number of lanes and the
+  // vertical gap between them; neutral for other archetypes.
+  'laneCount', 'laneSpacing',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -334,6 +337,9 @@ export function validateEnemyConfig(
     // Defender raider tuning (AH-0MV01EM7U0033W7L): optional and neutral for
     // other archetypes.
     'attackSpeed', 'commitRange',
+    // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): optional and neutral
+    // for other archetypes.
+    'laneCount', 'laneSpacing',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -522,6 +528,14 @@ export function coerceEnemyConfig(
   }
   if (row.commitRange != null && row.commitRange.trim() !== '') {
     merged.commitRange = coerceNumber(row.commitRange, merged.commitRange ?? 0);
+  }
+  // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T). Optional and neutral
+  // for other archetypes: only override when the CSV row carries a value.
+  if (row.laneCount != null && row.laneCount.trim() !== '') {
+    merged.laneCount = coerceNumber(row.laneCount, merged.laneCount ?? 0);
+  }
+  if (row.laneSpacing != null && row.laneSpacing.trim() !== '') {
+    merged.laneSpacing = coerceNumber(row.laneSpacing, merged.laneSpacing ?? 0);
   }
 
   return merged;

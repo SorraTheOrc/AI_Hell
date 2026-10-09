@@ -14,6 +14,7 @@ import { Centipede } from './Centipede';
 import { Ghost, personalityFromKey } from './Ghost';
 import { Grunt } from './Grunt';
 import { Harvester } from './Harvester';
+import { LaneTraffic } from './LaneTraffic';
 import { Diver } from './Diver';
 import { OrbitalStrike } from './OrbitalStrike';
 import { PhaserEntity } from './Phaser';
@@ -62,7 +63,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt | Raider | OrbitalStrike) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt | Raider | OrbitalStrike | LaneTraffic) &
   DestructionAudioSeam &
   FormationReanchorSeam &
   SeekSeam & {
@@ -109,6 +110,19 @@ export function createEnemyFromConfig(
   };
 
   switch (config.key) {
+    // Frogger lane-traffic hazard (classic-arcade archetype,
+    // AH-0MV01EPM40008N8T): a fast, non-firing "vehicle" that crosses the
+    // arena in a horizontal lane and wraps at the edges. The lane speed is the
+    // config's `driftSpeed`; the GymEnemies spawn uses the default +x
+    // direction (the game's spawner supplies the exact `vx` per lane).
+    case 'lane-traffic':
+      return new LaneTraffic(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        speed: config.driftSpeed,
+      });
     // Defender patrol-and-attack raider (AH-0MV01EM7U0033W7L): a fast single
     // actor with a patrol/attack state machine. Patrol speed is the config's
     // `driftSpeed`; the committed attack speed and commit range come from the

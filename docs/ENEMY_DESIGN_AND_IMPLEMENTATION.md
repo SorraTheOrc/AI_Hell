@@ -124,6 +124,24 @@ accumulated in `update(dt)`, the game and every gym run the identical
 lifecycle. The existing `GymEnemies` scene runs the same shared entity code
 with a live player for gym↔game parity.
 
+The **Frogger lane-traffic hazard** (AH-0MV01EPM40008N8T) is the sixth
+delivered classic archetype. It is a CSV row (`lane-traffic`) backed by the
+`src/entities/LaneTraffic.ts` entity and the pure
+`src/waves/LaneTrafficSpawner.ts` planner. Each wave plans one to three
+horizontal lanes of fast-moving, non-firing hazards that cross the arena at a
+constant speed (`driftSpeed`) and wrap at the edges; `count` is the members per
+lane, `spacingX` the within-lane gap and the neutral `laneCount`/`laneSpacing`
+columns the lane count and vertical gap. Lane traffic is a **non-blocking
+world hazard** (the Asteroid accounting): the `LaneTrafficSpawner` events are
+spawned directly and never registered with the `WaveManager`, so traffic can
+never stall or prematurely clear a wave, and destroying one never advances the
+wave. It **never fires** (an explicit `tryFireNone` dispatch entry keeps it out
+of the aimed-shot fallback), is single-hit destructible, passes through every
+other enemy (GDD §2.6 — no enemy–enemy collision) and is mineral-inert. The
+`formationKind` is `rect` so the existing `GymEnemies` scene displays the lane
+as a row of members and runs the same shared `updatePosition` seam with a live
+player for gym↔game parity.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed
