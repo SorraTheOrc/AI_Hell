@@ -36,6 +36,10 @@ npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 
 # record the dev boss scenario: jump straight to a boss with 4 hits remaining
 npm run capture -- --scenario boss-four-hits
+
+# record a batch of 3 clips in one process (one dev server + one browser)
+npm run capture -- --count 3          # or the short alias: -n 3
+npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -207,6 +211,92 @@ not yet fully deterministic). A **defeat** run is typically much shorter. The
 no frame-exact reproducibility yet (see
 [Determinism gaps](#determinism-gaps)).
 
+## Batch capture (`--count` / `-n`)
+
+`--count <n>` (alias `-n`) records **`n` clips in a single process**
+(AH-0MUYTK941005E2M4). The Vite dev server and the headless Chromium browser
+are booted **once** and reused for every iteration; each iteration gets a
+**fresh page** (the audio tap and run-end listener are re-installed), so there
+is no per-clip boot cost and no game state leaks between clips.
+
+```bash
+# record 3 clips in one process (one server + one browser)
+npm run capture -- --count 3
+npm run capture -- -n 3
+
+# every existing flag applies to each iteration
+npm run capture -- --count 5 --scripted --duration 20000
+```
+
+### Output naming
+
+`--count` makes the output paths deterministic:
+
+| Invocation | Output files |
+|---|---|
+| *(no `--count`)* | `capture-output/gameplay-<ISO-timestamp>.webm` (unchanged) |
+| `--count 1` | same as above |
+| `--count 3` | `capture-output/gameplay-<ISO-timestamp>-1.webm`, `…-2.webm`, `…-3.webm` |
+| `--count 3 --output clips/demo.webm` | `clips/demo-1.webm`, `clips/demo-2.webm`, `clips/demo-3.webm` |
+
+- With `--count > 1` and no `--output`, every clip appends a **1-based
+  iteration index** to one batch timestamp, so a tight loop can never collide
+  on the same millisecond.
+- With `--output <file>`, the index is inserted **before the extension**
+  (`demo.webm` -> `demo-1.webm`); a path with no extension gains a `-<n>`
+  suffix (`demo` -> `demo-1`).
+- `--count 1` (and omitting `--count`) is byte-for-byte the historical
+  single-clip path — no index suffix — so existing invocations are unchanged.
+
+Naming is resolved by the pure `resolveOutputPaths` helper and covered by unit
+tests in `scripts/capture-gameplay.test.ts`.
+
+### Validation
+
+`--count` accepts a **positive integer** only. A non-positive or non-numeric
+value (`0`, `-2`, `abc`, `1.5`) fails fast with a clear message and a
+**non-zero exit code**, before any capture starts:
+
+```
+Invalid --count value: "0" (expected a positive integer)
+```
+
+### Continue-on-failure and exit codes
+
+A failure in one iteration does **not** abort the batch: the remaining
+iterations still run so partial results are captured. The summary names every
+failing iteration and the process exits **non-zero**:
+
+- a batch where **all clips are ok** exits `0`;
+- **any failed iteration** (it threw, produced a trivial clip, or a full run
+  hit the `--max-duration` cap without a signal) exits `1`, and the batch
+  report lists each `FAIL` iteration with its reason.
+
+The batch report and the `--json` aggregate both carry a per-iteration
+`ok`/`error` status, so automation can attribute a failure to an iteration.
+
+### `--json` shape
+
+`--json` is unchanged for a single clip (no regression). A `--count > 1` run
+emits an aggregate object:
+
+```json
+{
+  "count": 3,
+  "succeeded": 2,
+  "failed": 1,
+  "iterations": [
+    { "index": 1, "output": "…/gameplay-…-1.webm", "ok": true, "exitCode": 0, "nonTrivial": true },
+    { "index": 2, "output": "…/gameplay-…-2.webm", "ok": false, "error": "no supported WebM MediaRecorder codec" },
+    { "index": 3, "output": "…/gameplay-…-3.webm", "ok": true, "exitCode": 0, "nonTrivial": true }
+  ]
+}
+```
+
+Each `iterations[]` entry carries the 1-based `index`, the absolute `output`
+path and an `ok` flag; a failed iteration adds `error` and omits the clip
+fields. `succeeded`/`failed` tally the batch.
+
 ## Progress output & dependency preflight
 
 A capture spends ~20 s producing no output (Vite + browser startup, warm-up,
@@ -304,6 +394,11 @@ The clip verdict is now the **combination** of the video probe and the audio
 probe (see [Audio capture](#audio-capture)): a clip with no audio track, or
 with decoded audio at/below the silence floor, fails and the command exits
 non-zero — so `npm run capture` can no longer silently emit a silent clip.
+
+For a `--count` **batch**, the report lists one line per iteration and the
+command exits non-zero if any iteration failed; the naming, validation,
+continue-on-failure and `--json` rules are documented in the **Batch capture**
+section above.
 
 ## Rejected alternatives
 
