@@ -13,7 +13,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { basename, resolve } from 'node:path';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 
 import {
   AUDIO_SILENCE_PEAK_FLOOR,
@@ -1560,5 +1562,59 @@ describe('multi-iteration capture loop and batch JSON (AH-0MUYTK941005E2M4)', ()
     expect(captureExitCode({ iterations: [{ ok: true }, { ok: false }] })).toBe(
       1,
     );
+  });
+});
+
+describe('--count batch end-to-end pure pipeline (AH-0MV1CVDA50028H2A)', () => {
+  it('resolves, writes and reports a 3-clip batch with distinct indexed files', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aihell-capture-batch-'));
+    try {
+      const outputPaths = resolveOutputPaths(join(dir, 'demo.webm'), 3);
+
+      const batch = await runCaptureIterations({
+        outputPaths,
+        captureOne: async ({ outputPath }) => {
+          writeFileSync(outputPath, Buffer.alloc(2048, 7));
+          return {
+            output: outputPath,
+            bytes: 2048,
+            durationMs: 2000,
+            nonTrivial: true,
+            capHit: false,
+            complete: true,
+            reasons: [],
+            pageErrors: [],
+          };
+        },
+      });
+
+      // 3 distinct, index-ordered files actually exist on disk.
+      expect(outputPaths.map((path) => basename(path))).toEqual([
+        'demo-1.webm',
+        'demo-2.webm',
+        'demo-3.webm',
+      ]);
+      expect(new Set(outputPaths).size).toBe(3);
+      for (const outputPath of outputPaths) {
+        expect(existsSync(outputPath)).toBe(true);
+      }
+
+      // The aggregate reports one entry per iteration with its path and status.
+      expect(batch).toMatchObject({ count: 3, succeeded: 3, failed: 0 });
+      expect(batch.iterations.map((it) => it.output)).toEqual(outputPaths);
+      expect(batch.iterations.map((it) => it.index)).toEqual([1, 2, 3]);
+      expect(batch.iterations.every((it) => it.ok)).toBe(true);
+      expect(captureExitCode(batch)).toBe(0);
+
+      // The aggregate round-trips through JSON (the --json contract).
+      const payload = JSON.parse(JSON.stringify(batch));
+      expect(payload.iterations[2]).toMatchObject({
+        index: 3,
+        output: outputPaths[2],
+        ok: true,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
