@@ -19,7 +19,14 @@ export type EnemyShotPattern =
 // Single source of truth for formation kinds lives in `src/utils/formations.ts`
 // (`EnemyFormationKind`). Re-exported here so callers can import from either
 // place without creating a circular dep (both are leaf modules).
-export type EnemyFormationKind = 'v' | 'diver' | 'rect' | 'swarm' | 'orbital' | 'single';
+export type EnemyFormationKind =
+  | 'v'
+  | 'diver'
+  | 'rect'
+  | 'swarm'
+  | 'orbital'
+  | 'single'
+  | 'march';
 
 /**
  * JSON-serializable enemy archetype. Only persisted fields are present
@@ -43,6 +50,18 @@ export interface EnemyConfig {
   spacingY: number;
   /** Rightward drift speed of the formation (px/s). */
   driftSpeed: number;
+  /**
+   * Horizontal step distance (px) for the `march` formation (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). Neutral for other formations; absent
+   * values fall back to `DEFAULT_MARCH_STEP` at the movement site.
+   */
+  marchStep?: number;
+  /**
+   * Vertical drop (px) applied on every arena-edge reversal of the `march`
+   * formation (Space Invaders archetype, AH-0MV01EDZS0005R20). Neutral for
+   * other formations; absent values fall back to `DEFAULT_MARCH_DROP`.
+   */
+  marchDrop?: number;
   /** Initial base position (px). */
   startX: number;
   startY: number;

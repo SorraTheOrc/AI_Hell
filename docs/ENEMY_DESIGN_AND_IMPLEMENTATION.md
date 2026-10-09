@@ -1017,7 +1017,9 @@ animated by the shared `FormationGlide` helper
 |-------|------|---------|
 | `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars) and CSV row identity. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
 | `displayName` | `string` | Human label shown in the index and `GymEnemies` hint. |
-| `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single'` — selects the builder in `src/utils/formations.ts`. |
+| `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single' \| 'march'` — selects the builder in `src/utils/formations.ts`. `march` is the Space Invaders stepping block (AH-0MV01EDZS0005R20) and additionally reads `marchStep`/`marchDrop`. |
+| `marchStep` | `number?` | Horizontal step (px) for the `march` formation; neutral/absent otherwise. |
+| `marchDrop` | `number?` | Vertical drop per arena-edge reversal (px) for the `march` formation; neutral/absent otherwise. |
 | `count` | `number` | Formation size. Must be `1` for the `single` formation (one entity); `validateWaveGroups` reports violations. |
 | `spacingX` / `spacingY` | `number` | Slot spacing (px). |
 | `driftSpeed` | `number` | Rightward drift (px/s). |
@@ -1322,7 +1324,7 @@ constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
 | `bulletSpeed` | 5 | 40–600 px/s | Bullet velocity. |
 | `bulletLifetime` | 6 | 0.1–5.0 s | Bullet TTL — **not** inverted: a longer-lived bullet wraps the screen and stays lethal, so a higher value scores higher. Matches the gym slider range. |
 | `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
-| `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
+| `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, march 3 (rigid block, shares the rect ordinal), swarm 4, orbital 5. |
 | `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
 | `health` | 10 | 1–5 HP | Enemy durability; **not** inverted — a durable multi-hit archetype is harder to survive, so a higher value scores higher. Range covers the single-hit default (1) and the 5-HP Harvester (GDD §4.2). |
 

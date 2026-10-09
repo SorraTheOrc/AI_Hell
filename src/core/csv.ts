@@ -27,7 +27,7 @@ import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
 // ── Valid enum values ───────────────────────────────────────────────
 
 const VALID_FORMATION_KINDS: EnemyFormationKind[] = [
-  'v', 'diver', 'rect', 'swarm', 'orbital', 'single',
+  'v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march',
 ];
 
 const VALID_SHOT_PATTERNS: EnemyShotPattern[] = [
@@ -68,6 +68,7 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'startYMax', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
   'bulletLifetime', 'burstCount', 'shotProbability', 'health',
+  'marchStep', 'marchDrop',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -284,6 +285,9 @@ export function validateEnemyConfig(
     'startXMin', 'startXMax', 'startYMin', 'startYMax',
     'size', 'bulletSize', 'fireInterval', 'bulletSpeed', 'bulletLifetime',
     'burstCount', 'shotProbability',
+    // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20):
+    // optional, but a present value must be numeric.
+    'marchStep', 'marchDrop',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -417,6 +421,15 @@ export function coerceEnemyConfig(
   merged.burstCount = coerceNumber(row.burstCount, merged.burstCount);
   merged.shotProbability = coerceNumber(row.shotProbability, merged.shotProbability);
   merged.health = coerceHealth(row.health, merged.health ?? DEFAULT_ENEMY_HEALTH);
+  // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20).
+  // Optional and neutral for other formations: only override when the CSV row
+  // actually carries a value, so non-march rows keep their seed/default shape.
+  if (row.marchStep != null && row.marchStep.trim() !== '') {
+    merged.marchStep = coerceNumber(row.marchStep, merged.marchStep ?? 0);
+  }
+  if (row.marchDrop != null && row.marchDrop.trim() !== '') {
+    merged.marchDrop = coerceNumber(row.marchDrop, merged.marchDrop ?? 0);
+  }
 
   return merged;
 }

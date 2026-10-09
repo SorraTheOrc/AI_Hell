@@ -119,6 +119,9 @@ const FORMATION_KIND_ORDINAL: Record<string, number> = {
   v: 1,
   diver: 2,
   rect: 3,
+  // The Space Invaders marching block is also a rigid rectangle, so it shares
+  // the `rect` positional-threat ordinal (AH-0MV01EDZS0005R20).
+  march: 3,
   swarm: 4,
   orbital: 5,
 };

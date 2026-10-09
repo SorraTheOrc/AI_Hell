@@ -4386,3 +4386,77 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     });
   });
 });
+
+// ── Space Invaders marching block (AH-0MV01EDZS0005R20) ─────────────
+
+describe('PlayScene — Space Invaders marching block (AH-0MV01EDZS0005R20)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A single non-firing march block, matching the shipped CSV seed shape. */
+  const MARCH_LEVEL: LevelDefinition = {
+    level: 1,
+    name: 'March Test',
+    waves: [
+      {
+        groups: [
+          {
+            enemyKey: 'march',
+            formation: 'march',
+            count: 11,
+            spacingX: 26,
+            spacingY: 24,
+            startX: GAME_WIDTH * 0.5,
+            startY: GAME_HEIGHT * 0.25,
+          },
+        ],
+        shootEnabled: false,
+      },
+    ],
+  };
+
+  interface MarchProbe {
+    marchState: { x: number; y: number; dir: number } | null;
+    marchOptions: unknown;
+  }
+
+  async function bootMarch(): Promise<PlayScene> {
+    const result = await bootSceneWithLevels([MARCH_LEVEL]);
+    booted = result.booted;
+    return result.scene;
+  }
+
+  it('positions the block from the shared march state (step, reverse, drop)', async () => {
+    // `create()` already begins and spawns the injected wave, so the shared
+    // march state is live here.
+    const scene = await bootMarch();
+
+    const probe = scene as unknown as MarchProbe;
+    expect(probe.marchState).not.toBeNull();
+    const startX = probe.marchState!.x;
+    const startY = probe.marchState!.y;
+
+    // marchStep / driftSpeed = 1 s per step at full strength.
+    scene.tick(1.0);
+    expect(probe.marchState!.x).toBeCloseTo(startX + 20, 5);
+
+    // Keep stepping until the block hits the right edge, reverses and drops.
+    let dropped = false;
+    for (let i = 0; i < 60 && !dropped; i++) {
+      scene.tick(1.0);
+      dropped = probe.marchState!.y > startY;
+    }
+    expect(dropped).toBe(true);
+  });
+
+  it('never fires in a non-firing level (L1–3)', async () => {
+    const scene = await bootMarch();
+    for (let i = 0; i < 200; i++) scene.tick(0.1);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+});

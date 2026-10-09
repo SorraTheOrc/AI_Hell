@@ -140,6 +140,33 @@ export function buildRectFormationOffsets(count: number): FormationOffset[] {
   return offsets;
 }
 
+/**
+ * Builds a rectangular "block" grid for a marching formation (Space
+ * Invaders archetype, AH-0MV01EDZS0005R20).
+ *
+ * The block is wider than tall, mirroring the classic invader grid: up to
+ * {@link MARCH_FORMATION_MAX_COLS} columns per row (11 by default), then as
+ * many rows as the count requires. Columns are centred on the formation base
+ * so the block marches symmetrically; offsets are returned in row-major order
+ * (front row first).
+ */
+export const MARCH_FORMATION_MAX_COLS = 11;
+
+export function buildMarchFormationOffsets(count: number): FormationOffset[] {
+  const offsets: FormationOffset[] = [];
+  if (count <= 0) return offsets;
+
+  const cols = Math.min(count, MARCH_FORMATION_MAX_COLS);
+  const rows = Math.ceil(count / cols);
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      if (offsets.length >= count) break;
+      offsets.push({ row, col: col - (cols - 1) / 2 });
+    }
+  }
+  return offsets;
+}
+
 // ── Registry consumed by the enemy-config pipeline (AH-0MTFP7EIC004F1MN) ──
 
 /** Extra formation used by the Phaser orbital path (phase columns). */
@@ -162,7 +189,14 @@ export function buildSingleOffset(_count: number): FormationOffset[] {
   return [{ row: 0, col: 0 }];
 }
 
-export type EnemyFormationKind = 'v' | 'diver' | 'rect' | 'swarm' | 'orbital' | 'single';
+export type EnemyFormationKind =
+  | 'v'
+  | 'diver'
+  | 'rect'
+  | 'swarm'
+  | 'orbital'
+  | 'single'
+  | 'march';
 
 export const FORMATION_BUILDERS: Record<EnemyFormationKind, (count: number) => FormationOffset[]> = {
   v: buildVFormationOffsets,
@@ -171,6 +205,7 @@ export const FORMATION_BUILDERS: Record<EnemyFormationKind, (count: number) => F
   swarm: buildSwarmClusterOffsets,
   orbital: buildOrbitalPhaseOffsets,
   single: buildSingleOffset,
+  march: buildMarchFormationOffsets,
 };
 
 /** Returns a builder for `kind`, falling back to `v` for unknown/invalid values. */

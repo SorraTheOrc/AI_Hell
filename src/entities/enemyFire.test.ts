@@ -106,7 +106,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       expect(entity.calls, `${key} must dispatch`).toHaveLength(1);
     }
     expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual(
-      ['diver', 'harvester', 'phaser', 'scout', 'swarm', 'tank'],
+      ['diver', 'harvester', 'march', 'phaser', 'scout', 'swarm', 'tank'],
     );
   });
 
@@ -172,6 +172,30 @@ describe('shared enemy-fire dispatcher — real entity integration (AC4)', () =>
     expect(bullets).toHaveLength(1);
     expect(bullets[0].vx).toBeGreaterThan(0);
     expect(Math.abs(bullets[0].vy)).toBeLessThan(Math.abs(bullets[0].vx));
+  });
+
+  it('a marching block (Space Invaders) never fires in a non-firing level', async () => {
+    // L1–3 set `shootEnabled: false` on every spawn (GDD §2.4); the shared
+    // dispatcher must yield no bullets for the `march` archetype too.
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+
+    const march = createEnemyFromConfig(
+      scene,
+      { ...DEFAULT_ENEMY_CONFIGS.march, fireInterval: 1, shotProbability: 1 },
+      100,
+      100,
+      { row: 0, col: 0 },
+    ) as unknown as {
+      shootEnabled: boolean;
+      setAimTarget(x: number, y: number): void;
+    };
+    march.shootEnabled = false;
+    march.setAimTarget(400, 100);
+
+    for (let now = 1_000; now <= 10_000; now += 1_000) {
+      expect(fireForEnemy(march, 'march', now)).toEqual([]);
+    }
   });
 
   it('suppresses fire while the enemy is spawning (AH-0MURBER4L00821RR AC4)', () => {

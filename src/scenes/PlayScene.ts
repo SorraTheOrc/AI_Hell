@@ -66,6 +66,15 @@ import {
   type FormationReanchorRequest,
 } from '../utils/formations';
 import { FormationGlide } from './core/formationGlide';
+import {
+  advanceMarch,
+  computeMarchBounds,
+  createMarchState,
+  DEFAULT_MARCH_DROP,
+  DEFAULT_MARCH_STEP,
+  type MarchOptions,
+  type MarchState,
+} from './core/marchFormation';
 import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
@@ -303,6 +312,12 @@ interface SpawnedEnemy {
   startY: number;
   spacingX: number;
   spacingY: number;
+  /**
+   * True when this enemy belongs to a `march` formation block (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). Such enemies are positioned from the
+   * shared march state instead of the global continuous drift.
+   */
+  march?: boolean;
 }
 
 /** A live enemy bullet (matches the entity fire-method return shape). */
@@ -420,6 +435,15 @@ export class PlayScene extends CombatScene<
 
   private driftX = 0;
   private driftDir = 1;
+  /**
+   * Shared march-formation state for the current wave (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). Non-null only when the wave contains a
+   * `march` block; those enemies are positioned from this state rather than
+   * the global drift, so the game runs the same policy as the gym.
+   */
+  private marchState: MarchState | null = null;
+  /** Resolved march tuning for the current wave (null when no march block). */
+  private marchOptions: MarchOptions | null = null;
   /**
    * Diver-group re-anchor offset (px), added only to Diver spawns' origin on
    * top of the drift. A Diver's attack re-anchors the Diver group by adding
@@ -988,6 +1012,7 @@ export class PlayScene extends CombatScene<
     this.driftDir = 1;
     this.diverAnchorX = 0;
     this.diverAnchorY = 0;
+    this._resetMarchFormation(spawns);
     this._startWaveTimer();
     this.runTelemetry.waveStart(
       this.waveManager.level,
@@ -1024,7 +1049,46 @@ export class PlayScene extends CombatScene<
       startY: spawn.startY,
       spacingX: spawn.spacingX,
       spacingY: spawn.spacingY,
+      march: cfg.formationKind === 'march',
     });
+  }
+
+  /**
+   * Initialises (or clears) the shared march-formation state for a wave
+   * (Space Invaders archetype, AH-0MV01EDZS0005R20).
+   *
+   * A wave may contain at most one march block — the block is a single rigid
+   * body, so it marches as one unit. The block's arena-edge bounds are derived
+   * from its widest column and the group spacing, matching the gym's
+   * `_marchBounds` calculation so the game and gym cannot diverge. A wave with
+   * no march spawns clears the state and keeps the legacy continuous drift.
+   */
+  private _resetMarchFormation(spawns: EnemySpawn[]): void {
+    const marchSpawns = spawns.filter(
+      (spawn) => loadEnemyConfig(spawn.enemyKey).formationKind === 'march',
+    );
+    if (marchSpawns.length === 0) {
+      this.marchState = null;
+      this.marchOptions = null;
+      return;
+    }
+
+    const first = marchSpawns[0];
+    const cfg = loadEnemyConfig(first.enemyKey);
+    const maxAbsCol = marchSpawns.reduce(
+      (max, spawn) => Math.max(max, Math.abs(spawn.offset.col)),
+      0,
+    );
+    const bounds = computeMarchBounds(maxAbsCol * first.spacingX, GAME_WIDTH);
+    this.marchState = createMarchState(first.startX, first.startY, 1);
+    this.marchOptions = {
+      step: cfg.marchStep ?? DEFAULT_MARCH_STEP,
+      drop: cfg.marchDrop ?? DEFAULT_MARCH_DROP,
+      referenceSpeed: cfg.driftSpeed,
+      minX: bounds.minX,
+      maxX: bounds.maxX,
+      initialCount: marchSpawns.length,
+    };
   }
 
   /**
@@ -1208,6 +1272,22 @@ export class PlayScene extends CombatScene<
       this.driftDir = 1;
     }
 
+    // Advance the shared march block for this wave (Space Invaders archetype,
+    // AH-0MV01EDZS0005R20): the same pure step/reverse/drop/speed-up policy the
+    // gym runs. The block's cadence scales with its live alive count.
+    if (this.marchState && this.marchOptions) {
+      const alive = this.spawned.reduce(
+        (count, spawn) => count + (spawn.march && spawn.entity.alive ? 1 : 0),
+        0,
+      );
+      this.marchState = advanceMarch(
+        this.marchState,
+        dt,
+        alive,
+        this.marchOptions,
+      );
+    }
+
     // Diver re-anchor (GDD §4.1 — E2): if a Diver's attack finished, re-base
     // the whole unit so its slot lands on the attack end. Applied after the
     // drift and before positioning so every enemy uses the new origin in the
@@ -1234,9 +1314,14 @@ export class PlayScene extends CombatScene<
       // the drift alone and therefore stays where it is when a Diver
       // re-anchors (AC5, AH-0MUL15N63003PUDB).
       const isDiver = s.entity.consumeFormationReanchor != null;
+      // March-block enemies are positioned from the shared march state (which
+      // already carries the drop); every other enemy keeps the global drift.
+      const baseX =
+        s.march && this.marchState ? this.marchState.x : s.startX + this.driftX;
+      const baseY = s.march && this.marchState ? this.marchState.y : s.startY;
       s.entity.applyFormationPosition(
-        s.startX + this.driftX + (isDiver ? this.diverAnchorX : 0),
-        s.startY + (isDiver ? this.diverAnchorY : 0),
+        baseX + (isDiver ? this.diverAnchorX : 0),
+        baseY + (isDiver ? this.diverAnchorY : 0),
         dt,
         s.spacingX,
         s.spacingY,
