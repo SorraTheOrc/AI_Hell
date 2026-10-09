@@ -100,7 +100,7 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
 ## Dev scenarios (`--scenario`)
 
 A real run reaches the Central AI boss only after all five levels, and the
-boss then needs **400 hits** (4 phases × 100) to destroy — so neither the
+boss then needs **200 hits** (4 phases × 50) to destroy — so neither the
 recorder nor a human reviewer can practically observe the victory celebration
 (AH-0MUWZ5HCV0034H44 producer-audit follow-up). A **dev scenario** is an
 additive, dev-only shortcut that drops the run straight into a short,

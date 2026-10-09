@@ -31,7 +31,14 @@ import {
   definesMethod,
 } from '../../test/duplicateBodyGuard';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
-import type { Boss } from '../../entities/Boss';
+import {
+  Boss,
+  BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_MOVE_AMPLITUDE_X,
+  BOSS_MOVE_AMPLITUDE_Y,
+  BOSS_MOVE_PERIOD_MS,
+} from '../../entities/Boss';
+import { minionCountForPhase } from '../../waves/BossMinions';
 import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
@@ -1803,6 +1810,208 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
         (GymBoss.prototype as unknown as Record<string, unknown>)[method],
       ).toBe(core[method]);
     }
+  });
+});
+
+// ── Boss encounter game↔gym parity (AH-0MUZMTU3Y001Y8XZ) ────────────
+
+/**
+ * End-to-end parity checks for the parent boss-encounter epic
+ * (AH-0MUY3X4NS007JR8X, AC6/AC8). The health bar must be screen-fixed, the
+ * figure-of-eight motion must be the single shared `Boss` lemniscate, every
+ * hit must run through the one `Boss.takeDamage` feedback path, and the
+ * per-phase minion counts must come from the shared `planMinionSpawns`
+ * planner — all verified against **both** `PlayScene` and `GymBoss`.
+ */
+describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    localStorage.clear();
+  });
+
+  /** Boots PlayScene past the static campaign and walks it to the boss. */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    // Deterministic static campaign: the default sequenced campaign can
+    // include un-accounted asteroid groups that stall the walk (see the
+    // shared boss integration suite above).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'boss-parity-play-host',
+    );
+    games.push(play);
+    const scene = play.scene as PlayScene;
+    reachPlayBoss(scene);
+    return scene;
+  }
+
+  async function bootBossGym(): Promise<GymBoss> {
+    const gym = await bootScene([GymBoss], 'boss-parity-gym-host');
+    games.push(gym);
+    return gym.scene as GymBoss;
+  }
+
+  /** Zeroes the boss's figure-of-eight clock (test seam). */
+  function resetMotionClock(boss: Boss): void {
+    (boss as unknown as { _moveElapsedMs: number })._moveElapsedMs = 0;
+  }
+
+  /** The boss's offset from its figure-of-eight anchor. */
+  function motionOffset(boss: Boss): { x: number; y: number } {
+    return {
+      x: boss.x - boss.getMoveAnchorX(),
+      y: boss.y - boss.getMoveAnchorY(),
+    };
+  }
+
+  it('AC2 — the boss health bar is screen-fixed and position-independent in both scenes', async () => {
+    const play = await bootPlayAtBoss();
+    const gym = await bootBossGym();
+    const playBoss = play.getBoss()!;
+    const gymBoss = gym.formationBoss;
+
+    const playBar = playBoss.getHealthBarGraphics();
+    const gymBar = gymBoss.getHealthBarGraphics();
+
+    // Both are camera-fixed scene children (never boss-container children),
+    // so the bar never rides the figure-of-eight motion.
+    for (const [scene, bar] of [
+      [play, playBar],
+      [gym, gymBar],
+    ] as const) {
+      expect(bar.parentContainer).toBeNull();
+      expect(bar.scrollFactorX).toBe(0);
+      expect(bar.scrollFactorY).toBe(0);
+      expect(bar.depth).toBe(100);
+      expect(scene.children.list).toContain(bar);
+    }
+
+    const playBefore = [...(playBar.commandBuffer as number[])];
+    const gymBefore = [...(gymBar.commandBuffer as number[])];
+
+    // Move each boss far from its own anchor; the drawn screen coordinates
+    // must be byte-for-byte unchanged (the bar is not transformed by the
+    // boss container).
+    playBoss.setPosition(40, 500);
+    gymBoss.setPosition(920, 40);
+
+    expect([...(playBar.commandBuffer as number[])]).toEqual(playBefore);
+    expect([...(gymBar.commandBuffer as number[])]).toEqual(gymBefore);
+
+    // The game and the gym draw the identical screen-space bar.
+    expect(playBefore).toEqual(gymBefore);
+  });
+
+  it('AC3 — the figure-of-eight trace matches in the game and the gym for the same delta', async () => {
+    const play = await bootPlayAtBoss();
+    const gym = await bootBossGym();
+    const playBoss = play.getBoss()!;
+    const gymBoss = gym.formationBoss;
+
+    // Both scenes host the one shared `Boss` implementation, and the gym does
+    // not re-implement the motion.
+    expect(Object.getPrototypeOf(playBoss)).toBe(Boss.prototype);
+    expect(Object.getPrototypeOf(gymBoss)).toBe(Boss.prototype);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymBoss.prototype,
+        '_advanceFigureEight',
+      ),
+    ).toBe(false);
+
+    // Compare the same delta from a common clock origin.
+    resetMotionClock(playBoss);
+    resetMotionClock(gymBoss);
+    const delta = 0.25;
+    play.tick(delta);
+    gym.tick(delta);
+
+    expect(playBoss.getMoveElapsedMs()).toBeCloseTo(250, 6);
+    expect(gymBoss.getMoveElapsedMs()).toBeCloseTo(250, 6);
+
+    const playOffset = motionOffset(playBoss);
+    const gymOffset = motionOffset(gymBoss);
+    expect(playOffset.x).toBeCloseTo(gymOffset.x, 6);
+    expect(playOffset.y).toBeCloseTo(gymOffset.y, 6);
+
+    // ... and both equal the shared Gerono-lemniscate position for that delta.
+    const theta = (2 * Math.PI * 250) / BOSS_MOVE_PERIOD_MS;
+    expect(playOffset.x).toBeCloseTo(
+      BOSS_MOVE_AMPLITUDE_X * Math.sin(theta),
+      6,
+    );
+    expect(playOffset.y).toBeCloseTo(
+      BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta),
+      6,
+    );
+  });
+
+  it('AC3 — no production scene re-implements the shared boss motion', () => {
+    const definers = productionSceneFiles()
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), '_advanceFigureEight'),
+      )
+      .map((file) => path.relative(process.cwd(), file));
+    expect(definers).toEqual([]);
+  });
+
+  it('AC5 — every boss hit uses the shared per-hit feedback path in both scenes', async () => {
+    const play = await bootPlayAtBoss();
+    const gym = await bootBossGym();
+    const playBoss = play.getBoss()!;
+    const gymBoss = gym.formationBoss;
+
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    try {
+      expect(playBoss.getHitEffects()).toHaveLength(0);
+      expect(gymBoss.getHitEffects()).toHaveLength(0);
+
+      // The same shared `Boss.takeDamage()` entry point with the same hit
+      // point yields the same per-hit feedback in both scenes.
+      playBoss.takeDamage(123, 45);
+      gymBoss.takeDamage(123, 45);
+
+      for (const boss of [playBoss, gymBoss]) {
+        const effects = boss.getHitEffects();
+        expect(effects).toHaveLength(1);
+        expect(effects[0].x).toBeCloseTo(123, 1);
+        expect(effects[0].y).toBeCloseTo(45, 1);
+      }
+      expect(cue).toHaveBeenCalledTimes(2);
+    } finally {
+      cue.mockRestore();
+    }
+  });
+
+  it('parent AC6 — per-phase minion counts are driven by the shared planner in both scenes', async () => {
+    // Both scene sources consume the single shared planner, so the per-phase
+    // counts cannot diverge between the game and the gym.
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/GymBoss.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(source, `${file} must use the shared minion planner`).toContain(
+        'planMinionSpawns(',
+      );
+    }
+
+    // Runtime: the gym opens on the shared phase-1 count, and depleting the
+    // phase adds exactly the shared phase-2 count.
+    const gym = await bootBossGym();
+    expect(gym.getMinions()).toHaveLength(minionCountForPhase(1));
+    for (let hit = 0; hit < BOSS_HIT_POINTS_PER_PHASE; hit++) {
+      gym.damageBoss();
+    }
+    expect(gym.formationBoss.getPhaseNumber()).toBe(2);
+    expect(gym.getMinions()).toHaveLength(
+      minionCountForPhase(1) + minionCountForPhase(2),
+    );
   });
 });
 

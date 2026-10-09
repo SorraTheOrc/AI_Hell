@@ -480,12 +480,13 @@ on entry (AH-0MUJM746P000QAEO).
 **Boss: The Central AI**
 
 - **Appearance**: A large, glowing neon geometric structure (e.g., a rotating dodecahedron or layered ring system) at the center of the screen, with the name "AI_Hell" or a stylized symbol.
-- **Health**: Single health bar divided into **4 phases**, each requiring **100 player hits** (**400 hits total**, `BOSS_HIT_POINTS_PER_PHASE = 100`). The fill is proportional to remaining total HP (`getHpFraction()`), so every hit visibly reduces it, and the four phase-segment dividers are retained. A hit that does not deplete the current phase leaves the phase unchanged; score and the next phase's minions are granted only on the **depleting** hit (hits 100, 200, 300 and 400).
+- **Health**: A single health bar fixed to the **top-centre of the screen** (`BOSS_HEALTH_BAR_Y = 60`; camera-fixed via `setScrollFactor(0)` so it never moves with the boss), divided into **4 phases**, each requiring **50 player hits** (**200 hits total**, `BOSS_HIT_POINTS_PER_PHASE = 50`). The bar is always visible during the encounter and its fill is proportional to remaining total HP (`getHpFraction()`), so every hit visibly reduces it; the four phase-segment dividers are retained. A hit that does not deplete the current phase leaves the phase unchanged; score and the next phase's minions are granted only on the **depleting** hit (hits 50, 100, 150 and 200). Every hit also plays a dedicated boss-hit cue (`playBossHitSound` → `aihell-boss-hit`) and spawns a hot-yellow impact flash (`spawnBulletImpact`, `BOSS_IMPACT_COLOR = 0xffee44`) at the hit point, from the shared feedback path used by both the game and the boss gym; a depleting hit additionally plays the existing phase-transition cue.
+- **Movement**: The boss traces a **figure-of-eight (Gerono lemniscate)** around its spawn anchor: `x = anchorX + BOSS_MOVE_AMPLITUDE_X · sin(θ)`, `y = anchorY + BOSS_MOVE_AMPLITUDE_Y · sin(2θ)`, where `θ = 2π · elapsedMs / BOSS_MOVE_PERIOD_MS`. Horizontal amplitude is **≈120 px**, vertical amplitude **≈60 px**, and one full cycle takes **≈8 s** (`BOSS_MOVE_AMPLITUDE_X = 120`, `BOSS_MOVE_AMPLITUDE_Y = 60`, `BOSS_MOVE_PERIOD_MS = 8000`). The traced position is clamped to the playfield (`BOSS_RADIUS` inset) so the boss never leaves the screen; hit detection uses the boss's live position while the health bar stays put.
 - **Phases**:
-  1. **Scan**: Fires slow, predictable aimed shots; formation enemies spawn on the sides.
-  2. **Firestorm**: Rapid radial bursts in all directions; enemies dive from top and bottom.
-  3. **Pulse**: Screen-wide pulse wave that expands from the boss, followed by aimed shots at the player's last known position.
-  4. **Desperation**: All previous patterns combined at higher speed; boss loses armor (visual cue: core becomes more exposed/bright).
+  1. **Scan**: Fires slow, predictable aimed shots; **12 scouts** (two groups of 6) spawn on the sides.
+  2. **Firestorm**: Rapid radial bursts in all directions; **12 divers** (two groups of 6) dive from the top.
+  3. **Pulse**: Screen-wide pulse wave that expands from the boss, followed by aimed shots at the player's last known position; **no minions** — the pulse is the threat.
+  4. **Desperation**: All previous patterns combined at higher speed; **15 swarm** reinforce the boss; boss loses armour (visual cue: core becomes more exposed/bright).
 - **Pattern design philosophy**: Each phase has clear telegraphing (glow, charge, audio cue) before the attack begins. Patterns should be learnable but require precise movement.
 
 ### 4.4 Power-Ups
@@ -642,7 +643,7 @@ Every cap/rate is recorded with a written rationale beside it in `POWER_UP_LEVEL
 
 - **Score display**: Neon-styled numeric display in the top-right corner.
 
-> **Boss phase scoring (AH-0MUTV3J7T006MZ4K, scaled by AH-0MUWTS07L008KVP9):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **100 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **100, 200, 300 and 400** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **400 player hits** regardless of weapon level.
+> **Boss phase scoring (AH-0MUTV3J7T006MZ4K, scaled by AH-0MUWTS07L008KVP9):** The four `Destroy Boss Phase N` values above are **unchanged**. Because each phase now takes **50 hits** (`BOSS_HIT_POINTS_PER_PHASE`), a phase's points are awarded on the **depleting hit** — hits **50, 100, 150 and 200** — not on every hit. A partial-phase hit awards no score, summons no minions and does not advance the phase; it only reduces the visible health-bar fill. This keeps fully levelled weapons from trivialising the encounter: the Central AI still requires **200 player hits** regardless of weapon level.
 
 ### 4.6 Level Progression Mechanics
 
