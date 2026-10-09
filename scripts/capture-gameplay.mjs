@@ -46,7 +46,7 @@
 
 import { createServer } from 'vite';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -212,6 +212,38 @@ function asSetupError(error) {
   return error;
 }
 
+/**
+ * Number of clips a single capture invocation records when `--count` is not
+ * supplied. `1` preserves the historical single-clip behaviour exactly
+ * (AH-0MUYTK941005E2M4).
+ */
+export const DEFAULT_CAPTURE_COUNT = 1;
+
+/**
+ * Validates a `--count`/`-n` value into a positive integer.
+ *
+ * Rejects non-numeric, non-integer, zero and negative values with a clear,
+ * actionable message so `main()` can fail fast with a non-zero exit code
+ * (AH-0MUYTK941005E2M4, AC4).
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function parseCaptureCount(value) {
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && value >= 1) return value;
+  } else if (value !== undefined && value !== null) {
+    const text = String(value).trim();
+    if (/^\d+$/.test(text)) {
+      const parsed = Number(text);
+      if (parsed >= 1) return parsed;
+    }
+  }
+  throw new Error(
+    `Invalid --count value: ${JSON.stringify(value)} (expected a positive integer)`,
+  );
+}
+
 /** Parses `process.argv`-style flags into an options object. */
 export function parseCaptureArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -223,6 +255,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     maxDurationMs: DEFAULT_MAX_CAPTURE_DURATION_MS,
     warmupMs: DEFAULT_WARMUP_MS,
     output: null,
+    count: DEFAULT_CAPTURE_COUNT,
     port: 0,
     headed: false,
     keepServer: false,
@@ -256,6 +289,12 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         break;
       case '--output':
         options.output = next();
+        break;
+      case '--count':
+      case '-n':
+        // Positive integer only: a non-positive / non-numeric value fails
+        // fast with a clear message (AH-0MUYTK941005E2M4, AC4).
+        options.count = parseCaptureCount(next());
         break;
       case '--port':
         options.port = Number(next());
@@ -462,6 +501,60 @@ function resolveOutputPath(requested) {
     return resolve(REPO_ROOT, 'capture-output', `gameplay-${stamp}.webm`);
   }
   return isAbsolute(requested) ? requested : resolve(process.cwd(), requested);
+}
+
+/**
+ * Inserts an iteration-index suffix before a path's extension
+ * (`demo.webm` → `demo-1.webm`; a path with no extension → `demo-1`).
+ *
+ * @param {string} filePath
+ * @param {number} index — 1-based iteration index.
+ * @returns {string}
+ */
+function withIndexSuffix(filePath, index) {
+  const extension = extname(filePath);
+  const stem = extension ? filePath.slice(0, -extension.length) : filePath;
+  return `${stem}-${index}${extension}`;
+}
+
+/**
+ * Resolves the N output paths a `--count` batch writes to
+ * (AH-0MUYTK941005E2M4).
+ *
+ * `count === 1` is exactly the historical single-clip resolution — no index
+ * suffix — so omitting `--count` cannot regress (AC3). When `count > 1` every
+ * path carries a 1-based iteration index so a tight loop cannot collide, even
+ * at the same millisecond. An explicit `--output` gains an indexed suffix
+ * before its extension (`demo.webm` → `demo-1.webm`); with no `--output` the
+ * default name appends the index to one batch timestamp
+ * (`gameplay-<ts>-1.webm`).
+ *
+ * @param {string | null | undefined} requested — the `--output` value.
+ * @param {number} [count]
+ * @returns {string[]} — one absolute path per iteration, in order.
+ */
+export function resolveOutputPaths(requested, count = DEFAULT_CAPTURE_COUNT) {
+  const total = parseCaptureCount(count);
+  if (total === 1) return [resolveOutputPath(requested)];
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const base = requested
+    ? isAbsolute(requested)
+      ? requested
+      : resolve(process.cwd(), requested)
+    : null;
+
+  return Array.from({ length: total }, (_, index) => {
+    const iteration = index + 1;
+    if (!base) {
+      return resolve(
+        REPO_ROOT,
+        'capture-output',
+        `gameplay-${stamp}-${iteration}.webm`,
+      );
+    }
+    return withIndexSuffix(base, iteration);
+  });
 }
 
 /**
@@ -1161,13 +1254,16 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
     );
     console.log(
       'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only).',
+    );
+    console.log(
+      'Count: --count n (alias -n) records n clips in one process, reusing a single dev server and browser session. Each clip gets a 1-based index; `--output demo.webm` with --count 3 writes demo-1.webm, demo-2.webm, demo-3.webm.',
     );
     return;
   }

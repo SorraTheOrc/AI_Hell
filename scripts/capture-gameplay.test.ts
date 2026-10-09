@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { basename, resolve } from 'node:path';
 
 import {
   AUDIO_SILENCE_PEAK_FLOOR,
@@ -37,6 +38,7 @@ import {
   setupHint,
 } from './capture-progress.mjs';
 import {
+  DEFAULT_CAPTURE_COUNT,
   RUN_ENDED_EVENT,
   RUN_ENDED_STATE_KEY,
   RUN_ENDED_STORE_KEY,
@@ -47,8 +49,10 @@ import {
   captureUrl,
   installRunEndedListener,
   parseCaptureArgs,
+  parseCaptureCount,
   readRunEndedSignal,
   resolveCaptureMode,
+  resolveOutputPaths,
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
 import {
@@ -1349,5 +1353,81 @@ describe('full-run capture integration (AH-0MUXZ4D0M001IWW1)', () => {
     expect(
       shouldDemoReturnToMenu(capturedTailMs, resolveDemoGameOverDwellMs()),
     ).toBe(true);
+  });
+});
+
+describe('--count parsing and multi-output naming (AH-0MUYTK941005E2M4)', () => {
+  it('defaults count to 1 so a single clip is unchanged', () => {
+    expect(DEFAULT_CAPTURE_COUNT).toBe(1);
+    expect(parseCaptureArgs([]).count).toBe(1);
+  });
+
+  it('parses --count and the -n alias as positive integers', () => {
+    expect(parseCaptureArgs(['--count', '3']).count).toBe(3);
+    expect(parseCaptureArgs(['-n', '5']).count).toBe(5);
+    // Last flag wins, matching the parser's last-write-wins behaviour.
+    expect(parseCaptureArgs(['--count', '2', '-n', '4']).count).toBe(4);
+  });
+
+  it('rejects non-positive and non-numeric counts with a clear message', () => {
+    for (const value of ['0', '-2', 'abc', '', '1.5']) {
+      expect(() => parseCaptureCount(value)).toThrow(/Invalid --count value/);
+      expect(() => parseCaptureArgs(['--count', value])).toThrow(
+        /Invalid --count value/,
+      );
+      expect(() => parseCaptureArgs(['-n', value])).toThrow(
+        /Invalid --count value/,
+      );
+    }
+  });
+
+  it('fails fast when --count has no value', () => {
+    expect(() => parseCaptureArgs(['--count'])).toThrow(/Missing value/);
+    expect(() => parseCaptureArgs(['-n'])).toThrow(/Missing value/);
+  });
+
+  it('keeps the default single-clip output path unchanged', () => {
+    const [single] = resolveOutputPaths(null, 1);
+    const [omitted] = resolveOutputPaths(null);
+
+    expect(basename(single)).toMatch(/^gameplay-.*\.webm$/);
+    expect(basename(single)).not.toMatch(/-\d+\.webm$/);
+    // An omitted count resolves to the same single-clip shape.
+    expect(basename(omitted)).toMatch(/^gameplay-.*\.webm$/);
+    expect(basename(omitted)).not.toMatch(/-\d+\.webm$/);
+  });
+
+  it('honours an explicit --output for a single clip', () => {
+    const [single] = resolveOutputPaths('clips/demo.webm', 1);
+    expect(single).toBe(resolve(process.cwd(), 'clips/demo.webm'));
+  });
+
+  it('infers an indexed suffix before the extension for --output with --count > 1', () => {
+    const paths = resolveOutputPaths('clips/demo.webm', 3);
+
+    expect(paths).toHaveLength(3);
+    expect(paths.map((path) => basename(path))).toEqual([
+      'demo-1.webm',
+      'demo-2.webm',
+      'demo-3.webm',
+    ]);
+    // Distinct paths guarantee no two iterations collide.
+    expect(new Set(paths).size).toBe(3);
+  });
+
+  it('appends the iteration index to default names for --count > 1', () => {
+    const names = resolveOutputPaths(null, 2).map((path) => basename(path));
+
+    expect(names).toHaveLength(2);
+    expect(names[0]).toMatch(/^gameplay-.*-1\.webm$/);
+    expect(names[1]).toMatch(/^gameplay-.*-2\.webm$/);
+    expect(new Set(names).size).toBe(2);
+  });
+
+  it('indexes an --output path that carries no extension', () => {
+    const names = resolveOutputPaths('clips/demo', 2).map((path) =>
+      basename(path),
+    );
+    expect(names).toEqual(['demo-1', 'demo-2']);
   });
 });
