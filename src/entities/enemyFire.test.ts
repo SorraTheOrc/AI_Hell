@@ -123,6 +123,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       'harvester',
       'march',
       'phaser',
+      'raider',
       'scout',
       'swarm',
       'tank',

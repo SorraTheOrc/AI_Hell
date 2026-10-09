@@ -1226,6 +1226,23 @@ describe('Enemy health column (F1)', () => {
     expect(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS).health).toBe(3);
   });
 
+  it('raider attack speed and commit range round-trip through serialisation', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.raider, attackSpeed: 411, commitRange: 333 };
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([config]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.attackSpeed).toBe(411);
+    expect(coerced.commitRange).toBe(333);
+  });
+
+  it('a non-raider row leaves attack speed / commit range neutral', async () => {
+    const m = await loadCsvModule();
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([{ ...DEFAULT_ENEMY_CONFIGS.scout }]));
+    const coerced = m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.attackSpeed).toBeUndefined();
+    expect(coerced.commitRange).toBeUndefined();
+  });
+
   it('validateEnemyConfig rejects non-positive and non-integer health', async () => {
     const m = await loadCsvModule();
     const base: Record<string, string> = {

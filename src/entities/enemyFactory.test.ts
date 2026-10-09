@@ -20,6 +20,7 @@ import { Tank } from './Tank';
 import { createEnemyFromConfig } from './enemyFactory';
 import { Capturer } from './Capturer';
 import { Harvester } from './Harvester';
+import { Raider } from './Raider';
 
 class Harness extends Phaser.Scene {
   constructor() { super('Harness'); }
@@ -125,7 +126,7 @@ describe('Config-aware entity seam', () => {
   it('createEnemyFromConfig maps keys to the right entity class and threads opts', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
-    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid', 'harvester', 'capturer'] as const) {
+    for (const key of ['scout', 'diver', 'tank', 'phaser', 'swarm', 'asteroid', 'harvester', 'capturer', 'raider'] as const) {
       const cfg = { ...DEFAULT_ENEMY_CONFIGS[key], color: 0xabcdef, size: 99 };
       const e = createEnemyFromConfig(scene, cfg as any, 10, 10, { row: 0, col: 0 });
       expect((e as any).effectiveColor).toBe(0xabcdef);
@@ -138,8 +139,29 @@ describe('Config-aware entity seam', () => {
       if (key === 'asteroid') expect(e instanceof Asteroid).toBe(true);
       if (key === 'harvester') expect(e instanceof Harvester).toBe(true);
       if (key === 'capturer') expect(e instanceof Capturer).toBe(true);
+      if (key === 'raider') expect(e instanceof Raider).toBe(true);
       e.destroy(true);
     }
+  });
+
+  it('Defender raider threads patrol/attack/commit tuning from the config (AH-0MV01EM7U0033W7L)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const cfg = {
+      ...DEFAULT_ENEMY_CONFIGS.raider,
+      attackSpeed: 411,
+      commitRange: 333,
+    };
+    const e = createEnemyFromConfig(scene, cfg, 100, 100, { row: 0, col: 0 }) as unknown as Raider;
+    expect(e instanceof Raider).toBe(true);
+    expect(e.archetype).toBe('raider');
+    // Patrol speed is the shared `driftSpeed` column; attack speed and commit
+    // range come from the raider-specific columns.
+    expect(e.patrolSpeed).toBe(DEFAULT_ENEMY_CONFIGS.raider.driftSpeed);
+    expect(e.attackSpeed).toBe(411);
+    expect(e.commitRange).toBe(333);
+    expect(e.effectiveShotPattern).toBe('aimed');
+    e.destroy(true);
   });
 
   it('AJ — the Galaga capturer threads beam tuning, is 2 HP and never fires', async () => {

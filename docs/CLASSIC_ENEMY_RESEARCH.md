@@ -295,11 +295,15 @@ parabolic arc). In `RETURN` mode it repositions to a new patrol point.
 target is always the player. The patrol path is a simple horizontal sweep
 rather than a complex figure-eight.
 
-**Pipeline fit:** New `src/entities/DefenderRaider.ts` entity class with a
-`PatrolStateMachine` component. Factory key maps to this entity. Fire
-dispatch uses `tryFireDefenderRaider` with `aimed` pattern (the raider fires
-during its attack dive). Uses `formationKind: 'single'` — each raider is an
-independent actor, not a formation member.
+**Pipeline fit:** New `src/entities/Raider.ts` entity class backed by the
+pure shared state machine `src/scenes/core/raiderPatrol.ts`. Factory key maps
+to this entity. Fire dispatch reuses the Scout's `tryFireAimedBullet` seam
+with the `aimed` pattern (the raider fires only during its committed attack
+run and only when the level fire rule enables firing). Uses
+`formationKind: 'single'` — each raider is an independent actor, not a
+formation member. `driftSpeed` is the patrol speed; the raider-specific
+`attackSpeed` and `commitRange` columns tune the attack run and the commit
+proximity.
 
 **Difficulty scoring inputs:**
 
@@ -309,8 +313,9 @@ independent actor, not a formation member.
 | Fire | `shotPattern` (`aimed`) + `fireInterval` + `shotProbability` | Fires during the attack dive; the approach vector is the primary hazard. |
 | Health | `health` (default 1) | Single-hit; timing is the survival challenge. |
 
-**Gym scene:** New `GymDefender.ts` scene to exercise the patrol/attack/return
-state machine; `GymEnemies` for CSV testing.
+**Gym scene:** The existing `GymEnemies` scene (with a live player) runs the
+same shared `Raider`/`raiderPatrol` code, so the game and the gym cannot
+diverge (gym↔game parity). No new gym scene is required.
 
 ---
 
@@ -411,7 +416,7 @@ to warrant a child work item in this research round.
 | Pac-Man Ghosts | `buildSingleOffset` (`single`) | `none` | `Ghost.ts` (new) | `tryFireNone` | `GymEnemies` |
 | Centipede | `buildSingleOffset` (`single`) | `radial` | `Centipede.ts` (new) | `tryFireCentipede` (new) | `GymCentipede`, `GymEnemies` |
 | Robotron Horde | `buildSwarmClusterOffsets` (`swarm`) | `none` | `Grunt.ts` (new) + `gruntSteering.ts` + `HordeSpawner.ts` | `tryFireNone` | `GymEnemies` |
-| Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `DefenderRaider.ts` (new) | `tryFireDefenderRaider` (new) | `GymDefender`, `GymEnemies` |
+| Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `Raider.ts` (new) + `raiderPatrol.ts` (new, shared) | `tryFireAimedBullet` (reused) | `GymEnemies` |
 | Missile Strike | `buildSingleOffset` (`single`) | `none` (burst on detonation) | `MissileStrike.ts` (new) | `tryFireMissileStrike` (new) | `GymMissileStrike`, `GymEnemies` |
 | Lane Traffic | `buildSingleOffset` (`single`) | `none` | `LaneTraffic.ts` (new) | `tryFireNone` | `GymLaneTraffic`, `GymEnemies` |
 
@@ -422,7 +427,7 @@ to warrant a child work item in this research round.
 
 **New seams to be created (per child work item):** `Ghost.ts` (+ `ghostSteering.ts`, `GhostSpawner.ts`, `tryFireNone`), `Centipede.ts` + `tryFireCentipede` + `GymCentipede`,
 `Grunt.ts` + `gruntSteering.ts` + `HordeSpawner.ts` + `tryFireNone` explicit,
-`DefenderRaider.ts` + `tryFireDefenderRaider` + `GymDefender`,
+`Raider.ts` + `raiderPatrol.ts` + `tryFireAimedBullet` reuse,
 `MissileStrike.ts` + `tryFireMissileStrike` + `GymMissileStrike`,
 `LaneTraffic.ts` + `tryFireNone` explicit + `GymLaneTraffic`.
 
@@ -441,7 +446,7 @@ document as their design brief.
 | Pac-Man Ghosts | AH-0MV01EH2U008XT3Q |
 | Centipede | AH-0MV4* (to be created) |
 | Robotron Horde | AH-0MV01EKTL001NRE6 |
-| Defender | AH-0MV6* (to be created) |
+| Defender | AH-0MV01EM7U0033W7L (delivered) |
 | Missile Command | AH-0MV7* (to be created) |
 | Frogger | AH-0MV8* (to be created) |
 

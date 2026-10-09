@@ -52,6 +52,11 @@ export const ENEMY_FIRE_METHODS = {
   // threat. An explicit non-firing entry keeps the key out of the aimed-shot
   // fallback.
   grunt: 'tryFireNone',
+  // Defender patrol-and-attack raider (classic-arcade archetype,
+  // AH-0MV01EM7U0033W7L) fires an aimed shot during its committed attack run;
+  // the level fire rule (shootEnabled, Levels 4+) and the attack-mode gate are
+  // enforced inside the entity's `tryFireAimedBullet`.
+  raider: 'tryFireAimedBullet',
 } as const;
 
 /** A method name that participates in the shared mapping. */

@@ -89,6 +89,19 @@ export interface EnemyConfig {
    * `HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS` at the spawner site.
    */
   hordeSpawnInterval?: number;
+  /**
+   * Committed attack-run speed (px/s) for the Defender raider archetype
+   * (AH-0MV01EM7U0033W7L). Neutral for other archetypes; absent values fall
+   * back to `RAIDER_ATTACK_SPEED` at the movement site. The raider's patrol
+   * speed uses the existing `driftSpeed` field.
+   */
+  attackSpeed?: number;
+  /**
+   * Distance (px) within which the Defender raider commits to an attack run
+   * (AH-0MV01EM7U0033W7L). Neutral for other archetypes; absent values fall
+   * back to `RAIDER_COMMIT_RANGE` at the movement site.
+   */
+  commitRange?: number;
   /** Initial base position (px). */
   startX: number;
   startY: number;

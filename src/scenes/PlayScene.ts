@@ -234,6 +234,9 @@ export const SCORE_VALUES: Record<string, number> = {
   // Robotron homing horde: a small, fast non-firing grunt (classic-arcade
   // archetype, AH-0MV01EKTL001NRE6). Each grunt scores.
   grunt: 150,
+  // Defender raider: a patrol-then-attack state machine (classic-arcade
+  // archetype, AH-0MV01EM7U0033W7L). Each raider scores.
+  raider: 175,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */

@@ -414,6 +414,41 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     burstCount: 1,
     shotProbability: 0,
   },
+  // Defender patrol-and-attack raider (AH-0MV01EM7U0033W7L): a fast single
+  // actor that sweeps the arena in a horizontal patrol, commits to a
+  // straight high-speed attack run toward the player's snapshotted position,
+  // overshoots and wraps back into patrol. `driftSpeed` is the patrol speed,
+  // `attackSpeed` the committed run speed and `commitRange` the proximity
+  // that triggers a commit (see `docs/CLASSIC_ENEMY_RESEARCH.md` §6). Health
+  // 2 so it survives one hit and demands a committed read.
+  raider: {
+    key: 'raider',
+    displayName: 'Raider',
+    formationKind: 'single',
+    count: 1,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 140,
+    attackSpeed: 320,
+    commitRange: 260,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.25,
+    startXMin: GAME_WIDTH * 0.5,
+    startXMax: GAME_WIDTH * 0.5,
+    startYMin: GAME_HEIGHT * 0.25,
+    startYMax: GAME_HEIGHT * 0.25,
+    size: 18,
+    health: 2,
+    color: 0xff4433,
+    bulletColor: 0xffddaa,
+    bulletSize: 3,
+    shotPattern: 'aimed',
+    fireInterval: 1100,
+    bulletSpeed: 110,
+    bulletLifetime: 1.4,
+    burstCount: 1,
+    shotProbability: 0.6,
+  },
   harvester: {
     key: 'harvester',
     displayName: 'Harvester',

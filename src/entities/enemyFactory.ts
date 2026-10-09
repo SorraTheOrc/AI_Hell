@@ -16,6 +16,7 @@ import { Grunt } from './Grunt';
 import { Harvester } from './Harvester';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
+import { Raider } from './Raider';
 import { Scout } from './Scout';
 import { Swarm } from './Swarm';
 import { Tank } from './Tank';
@@ -60,7 +61,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt | Raider) &
   DestructionAudioSeam &
   FormationReanchorSeam &
   SeekSeam & {
@@ -107,6 +108,20 @@ export function createEnemyFromConfig(
   };
 
   switch (config.key) {
+    // Defender patrol-and-attack raider (AH-0MV01EM7U0033W7L): a fast single
+    // actor with a patrol/attack state machine. Patrol speed is the config's
+    // `driftSpeed`; the committed attack speed and commit range come from the
+    // raider-specific columns. The aimed shot reuses the Scout fire seam.
+    case 'raider':
+      return new Raider(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        patrolSpeed: config.driftSpeed,
+        attackSpeed: config.attackSpeed,
+        commitRange: config.commitRange,
+      });
     // Robotron homing horde (AH-0MV01EKTL001NRE6): a fast non-firing grunt
     // that homes on the live player with bounded steering. The homing speed is
     // the config's `driftSpeed` (the archetype's difficulty movement input);

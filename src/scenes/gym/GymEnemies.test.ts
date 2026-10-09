@@ -46,6 +46,7 @@ import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
 import { Ghost } from '../../entities/Ghost';
 import { Grunt } from '../../entities/Grunt';
+import { Raider } from '../../entities/Raider';
 import { Harvester } from '../../entities/Harvester';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -193,6 +194,32 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(grunt.y).toBeLessThanOrEqual(GAME_HEIGHT);
   });
 
+  it('Defender raider patrols, commits and stays in bounds in the gym (gym parity, AH-0MV01EM7U0033W7L)', async () => {
+    const scene = await bootWithKey('raider');
+    expect(scene.formationEntities).toHaveLength(DEFAULT_ENEMY_CONFIGS.raider.count);
+    const raider = scene.formationEntities[0] as unknown as Raider;
+    expect(raider).toBeInstanceOf(Raider);
+    expect(raider.archetype).toBe('raider');
+    expect(raider.shootEnabled).toBe(false);
+    expect(raider.effectiveShotPattern).toBe('aimed');
+    expect(scene.children.list).toContain(raider);
+
+    // The shared patrol/attack state machine moves the raider.
+    const startX = raider.x;
+    const startY = raider.y;
+    scene.tick(0.5);
+    expect(raider.x !== startX || raider.y !== startY).toBe(true);
+    // Long run stays inside the play area (the arena wrap keeps it reachable);
+    // the gym player is within commit range, so it commits to attack runs.
+    scene.tick(30);
+    expect(raider.x).toBeGreaterThanOrEqual(0);
+    expect(raider.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(raider.y).toBeGreaterThanOrEqual(0);
+    expect(raider.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    // SHOOT is off by default, so the level fire rule produces no bullets.
+    expect(scene.activeBullets).toHaveLength(0);
+  });
+
   it('F5 — the Harvester spawns, renders and is a no-fire roamer', async () => {
     const scene = await bootWithKey('harvester');
     expect(scene.activeEnemyKey).toBe('harvester');
@@ -240,12 +267,25 @@ describe('GymEnemies — single reusable enemy gym', () => {
     // The roaming Asteroid is a non-formation enemy: its position is driven
     // by its own constant-velocity updatePosition (straight-line drift +
     // wrap + rotation), not by a formation slot. The Harvester is likewise a
-    // self-propelled roamer (mineral seek). Both still spawn near their
-    // configured start with a small boot-delay drift budget.
+    // self-propelled roamer (mineral seek) and the Pac-Man ghosts self-steer.
+    // They still spawn near their configured start with a small boot-delay
+    // drift budget.
     if (key === 'asteroid' || key === 'harvester' || key.startsWith('ghost-')) {
       const e = scene.formationEntities[0];
       expect(Math.abs(e.x - cfg.startX)).toBeLessThan(40);
       expect(Math.abs(e.y - cfg.startY)).toBeLessThan(40);
+      return;
+    }
+
+    // The Defender raider owns its own patrol/attack motion (it can commit
+    // and wrap during the boot delay), so it is not on a formation slot. Its
+    // invariant is that it stays inside the play area.
+    if (key === 'raider') {
+      const e = scene.formationEntities[0];
+      expect(e.x).toBeGreaterThanOrEqual(0);
+      expect(e.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(e.y).toBeGreaterThanOrEqual(0);
+      expect(e.y).toBeLessThanOrEqual(GAME_HEIGHT);
       return;
     }
 

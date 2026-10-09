@@ -22,6 +22,7 @@ import { Asteroid } from '../entities/Asteroid';
 import { Ghost } from '../entities/Ghost';
 import { Centipede } from '../entities/Centipede';
 import { Grunt } from '../entities/Grunt';
+import { Raider } from '../entities/Raider';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
@@ -4851,5 +4852,106 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     scene.setHordeSpawnerEnabled(false);
     releaseHorde(scene);
     expect(liveGrunts(scene)).toHaveLength(0);
+  });
+});
+
+// ── Defender patrol-and-attack raider (AH-0MV01EM7U0033W7L) ──────────
+
+describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single raider group and the given per-wave
+   * fire rule, so the raider's wave accounting and fire gating are isolated.
+   */
+  async function bootWithRaiderWave(shootEnabled: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Raider Test',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'raider',
+                formation: 'single',
+                count: 1,
+                spacingX: 0,
+                spacingY: 0,
+                startX: 480,
+                startY: 135,
+              },
+            ],
+            shootEnabled,
+          },
+        ],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Complete the wormhole spawn so the raider is collision-active immediately
+    // (the spawn animation protects spawning enemies).
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  function liveRaiders(scene: PlayScene): Raider[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is Raider => e instanceof Raider && e.alive);
+  }
+
+  it('spawns the raider as a wave-accounted group', async () => {
+    const scene = await bootWithRaiderWave(false);
+    const wm = scene.getWaveManager();
+    const raiders = liveRaiders(scene);
+    expect(raiders).toHaveLength(1);
+    expect(wm.enemiesAlive).toBe(1);
+    // Spawns inside the arena (reachable).
+    const r = raiders[0];
+    expect(r.x).toBeGreaterThanOrEqual(0);
+    expect(r.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(r.y).toBeGreaterThanOrEqual(0);
+    expect(r.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+
+  it('killing the raider advances wave accounting exactly once', async () => {
+    const scene = await bootWithRaiderWave(false);
+    const wm = scene.getWaveManager();
+    const victim = liveRaiders(scene)[0];
+    expect(victim.health).toBe(2);
+
+    // Two hits: the first leaves the 2 HP raider alive. A second point-blank
+    // bullet (matching the entity's own position) finishes it.
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+
+    expect(victim.alive).toBe(false);
+    expect(wm.enemiesAlive).toBe(0);
+  });
+
+  it('never fires in Levels 1–3 (fire rule off), even during an attack run', async () => {
+    const scene = await bootWithRaiderWave(false);
+    const raider = liveRaiders(scene)[0];
+    // The player sits within commit range, so the raider commits to an attack
+    // run; the level fire rule (shootEnabled false) still suppresses all fire.
+    for (let i = 0; i < 20; i++) scene.tick(0.05);
+    expect(raider.mode).toBe('attack');
+    expect(scene.getEnemyBullets()).toHaveLength(0);
   });
 });

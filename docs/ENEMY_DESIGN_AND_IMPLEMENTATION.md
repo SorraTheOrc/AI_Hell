@@ -86,6 +86,22 @@ spawned grunt is registered with the `WaveManager`, gated behind a per-wave
 `horde: true` opt-in, and the existing `GymEnemies` scene runs the same shared
 entity/steering code with a live player for gym↔game parity.
 
+The **Defender patrol-and-attack raider** (AH-0MV01EM7U0033W7L) is the fourth
+delivered classic archetype. It is a single, fast CSV row (`raider`,
+`formationKind: single`) backed by a dedicated `src/entities/Raider.ts` entity
+and the pure shared state machine `src/scenes/core/raiderPatrol.ts`: the raider
+sweeps the arena in a horizontal patrol (wrapping at the side edges), then
+commits to a straight high-speed attack run toward the player position
+snapshotted at the commit moment, overshoots, wraps at the first edge and
+re-enters patrol, so it can commit repeatedly. The `driftSpeed` column is the
+patrol speed; the raider-specific `attackSpeed` and `commitRange` columns tune
+the attack run and the commit proximity. The entity reuses the Scout's
+aimed-shot tell but fires only during a committed attack and only when the
+level's fire rule enables firing, so it never fires in Levels 1–3; it passes
+through every other enemy (GDD §2.6 — no enemy–enemy collision). The existing
+`GymEnemies` scene runs the same shared entity/state-machine code with a live
+player for gym↔game parity.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed

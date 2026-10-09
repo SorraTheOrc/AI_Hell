@@ -88,6 +88,11 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   // `driftSpeed` sliders.
   hordeGroupSize: { min: 1, max: 20, step: 1 },
   hordeSpawnInterval: { min: 0.2, max: 6, step: 0.1 },
+  // Defender raider tuning (AH-0MV01EM7U0033W7L): neutral for other kinds,
+  // editable so the committed attack speed and commit range can be dialled
+  // in live. The raider's patrol speed uses the existing `driftSpeed` slider.
+  attackSpeed: { min: 40, max: 600, step: 5 },
+  commitRange: { min: 40, max: 600, step: 10 },
   startX: { min: 0, max: GAME_WIDTH, step: 1 },
   startY: { min: 0, max: GAME_HEIGHT, step: 1 },
   // Spawn-position ranges (AH-0MUKCLXLW0032R67): bound to the canvas so a

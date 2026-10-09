@@ -72,6 +72,9 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // Robotron homing-horde tuning (AH-0MV01EKTL001NRE6): group size and
   // spawn cadence; neutral for other archetypes.
   'hordeGroupSize', 'hordeSpawnInterval',
+  // Defender raider tuning (AH-0MV01EM7U0033W7L): committed attack-run speed
+  // and commit range; neutral for other archetypes.
+  'attackSpeed', 'commitRange',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -297,6 +300,9 @@ export function validateEnemyConfig(
     // Homing-horde tuning (Robotron archetype, AH-0MV01EKTL001NRE6): optional
     // and neutral for other archetypes.
     'hordeGroupSize', 'hordeSpawnInterval',
+    // Defender raider tuning (AH-0MV01EM7U0033W7L): optional and neutral for
+    // other archetypes.
+    'attackSpeed', 'commitRange',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -459,6 +465,14 @@ export function coerceEnemyConfig(
       row.hordeSpawnInterval,
       merged.hordeSpawnInterval ?? 0,
     );
+  }
+  // Defender raider tuning (AH-0MV01EM7U0033W7L). Optional and neutral for
+  // other archetypes: only override when the CSV row carries a value.
+  if (row.attackSpeed != null && row.attackSpeed.trim() !== '') {
+    merged.attackSpeed = coerceNumber(row.attackSpeed, merged.attackSpeed ?? 0);
+  }
+  if (row.commitRange != null && row.commitRange.trim() !== '') {
+    merged.commitRange = coerceNumber(row.commitRange, merged.commitRange ?? 0);
   }
 
   return merged;
