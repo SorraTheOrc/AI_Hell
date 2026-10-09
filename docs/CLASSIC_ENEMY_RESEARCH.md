@@ -68,7 +68,7 @@ added to the config/CSV pipeline.
 | Fire | `shotPattern` (`aimed`) + `fireInterval` + `shotProbability` | Staggered aimed shots; individual fire rolls controlled by `shotProbability`. |
 | Health | `health` (default 1) | Single-hit; durability is low but the formation's sheer number compensates. |
 
-**Gym scene:** `GymEnemies` — the new CSV row appears automatically in the
+**Gym scene:** `GymFodderEnemies` — the new CSV row appears automatically in the
 gym index. No new gym scene required.
 
 ---
@@ -105,7 +105,7 @@ geometry uses `diver` offsets (compact chevron, wide at top).
 | Fire | `shotPattern` (`spread`) + `burstCount` + `fireInterval` | Spread bursts on dive completion — multi-angle hazard. |
 | Health | `health` (default 1) | Single-hit; the dive timing is the primary survival challenge, not durability. |
 
-**Gym scene:** `GymEnemies` — new CSV row; the Diver attack path is already
+**Gym scene:** `GymFodderEnemies` — new CSV row; the Diver attack path is already
 exercised in the shared gym base.
 
 ---
@@ -128,7 +128,7 @@ player's live velocity; scatter targets are fixed arena corners. `chase`
 targets the player directly, `ambush` targets ahead of the player's velocity,
 `flank` offsets the ambush pivot perpendicular to the player's heading, and
 `wander` roams a slowly rotating point near itself. The same shared code runs
-in the game and in the `GymEnemies` gym. Body contact is the
+in the game and in the `GymFodderEnemies` gym. Body contact is the
 threat (GDD §2.4) and is resolved by the existing enemy-body collision rule.
 
 **Divergence from original:** No maze or tunnel system — movement is free 2D
@@ -158,7 +158,7 @@ without changing existing waves.
 | Fire | `shotPattern` (`none`) | Never fires at any level; the firing factors (`fireInterval`, `shotProbability`, `bulletSpeed`, `bulletLifetime`, `burstCount`) contribute zero. |
 | Health | `health` (1) | Single-hit; survival depends on reading the personalities, not durability. |
 
-**Gym scene:** `GymEnemies` — each personality row appears automatically in the
+**Gym scene:** `GymFodderEnemies` — each personality row appears automatically in the
 gym index, and the shared `Ghost` / `ghostSteering` code runs in both the gym
 and the game (enforced by `src/scenes/core/CombatScene.equivalence.test.ts`).
 No new gym scene is required.
@@ -242,7 +242,7 @@ relentless. Grunts pass through each other and every other enemy (GDD §2.6 —
 no enemy–enemy collision) and each has `health` 1 (single-hit); the swarm of
 bodies, resolved by the existing enemy-body contact rule, is the whole threat.
 The same shared `Grunt`/`gruntSteering` code is exercised by the existing
-`GymEnemies` gym scene with a live player (gym↔game parity); its CSV row uses
+`GymFodderEnemies` gym scene with a live player (gym↔game parity); its CSV row uses
 the existing `buildSwarmClusterOffsets` (`swarm`) formation builder and the
 existing `none` shot pattern.
 
@@ -272,7 +272,7 @@ no change — the `count` factor captures the horde size.
 | Fire | `shotPattern` (`none`) | Never fires at any level; the firing factors contribute zero. |
 | Health | `health` (default 1) | Single-hit; the sheer number is the challenge. |
 
-**Gym scene:** The existing `GymEnemies` scene (with a live player) exercises
+**Gym scene:** The existing `GymFodderEnemies` scene (with a live player) exercises
 the shared `Grunt`/`gruntSteering` homing and density, so the game and the gym
 run the same code (gym↔game parity).
 
@@ -313,7 +313,7 @@ proximity.
 | Fire | `shotPattern` (`aimed`) + `fireInterval` + `shotProbability` | Fires during the attack dive; the approach vector is the primary hazard. |
 | Health | `health` (default 1) | Single-hit; timing is the survival challenge. |
 
-**Gym scene:** The existing `GymEnemies` scene (with a live player) runs the
+**Gym scene:** The existing `GymFodderEnemies` scene (with a live player) runs the
 same shared `Raider`/`raiderPatrol` code, so the game and the gym cannot
 diverge (gym↔game parity). No new gym scene is required.
 
@@ -351,7 +351,7 @@ method with a `radial` burst at detonation. The entity uses
 | Fire | `shotPattern` (`none`) + `burstCount` (shrapnel) | The initial strike has no bullets; the shrapnel burst is the secondary hazard. |
 | Health | `health` (default 1) | Single-hit; the entity must be dodged, not destroyed. |
 
-**Gym scene:** The existing `GymEnemies` scene exercises the telegraph, fall,
+**Gym scene:** The existing `GymFodderEnemies` scene exercises the telegraph, fall,
 and detonation behaviour with a live player (gym↔game parity); `GymLevel`
 may additionally exercise it in a wave context.
 
@@ -369,7 +369,7 @@ telegraphed impact point rather than following a parabolic arc. It is a
 **non-blocking world hazard** (not registered with the `WaveManager`,
 matching the asteroid accounting), so a wave can neither stall nor clear early
 on it. No dedicated `GymMissileStrike` scene is needed: the shared entity code
-is exercised by the existing `GymEnemies` scene, enforced by
+is exercised by the existing `GymFodderEnemies` scene, enforced by
 `src/scenes/core/CombatScene.equivalence.test.ts`.
 
 ---
@@ -397,7 +397,7 @@ asteroid/obstacle model.
 **Pipeline fit:** New `src/entities/LaneTraffic.ts` entity class plus the pure
 `src/waves/LaneTrafficSpawner.ts` planner. Factory key maps to this entity.
 Fire dispatch uses `tryFireNone` — the lane traffic is a pure movement hazard,
-no shooting. Uses `formationKind: 'rect'` so the shared `GymEnemies` scene
+no shooting. Uses `formationKind: 'rect'` so the shared `GymFodderEnemies` scene
 displays the lane as a row of `count` members (the game's spawner places the
 same count per lane; a `single` row would show only one member). CSV row uses
 `driftSpeed` for the lane velocity, `spacingX` for the within-lane gap and the
@@ -412,7 +412,7 @@ gap.
 | Fire | `shotPattern` (`none`) | No bullets — pure collision avoidance. |
 | Health | `health` (default 1) | Single-hit; the hazard is the collision, not the durability. |
 
-**Gym scene:** The existing `GymEnemies` scene (with a live player) runs the
+**Gym scene:** The existing `GymFodderEnemies` scene (with a live player) runs the
 same shared `LaneTraffic` entity's `updatePosition` seam, so the game and the
 gym cannot diverge (gym↔game parity). No new gym scene is required.
 
@@ -437,14 +437,14 @@ to warrant a child work item in this research round.
 
 | Archetype | Formation builder | Shot pattern | Entity class | Fire method | Gym scene(s) |
 |-----------|-------------------|--------------|--------------|-------------|--------------|
-| Space Invaders | `buildMarchFormationOffsets` (`march`, new) | `aimed` | Scout (reused, custom config) | `tryFireAimedBullet` | `GymEnemies` |
-| Galaga | `buildDiverFormationOffsets` (`diver`) | `spread` | Diver (reused, custom config) | `tryFireSpreadBurst` | `GymEnemies` |
-| Pac-Man Ghosts | `buildSingleOffset` (`single`) | `none` | `Ghost.ts` (new) | `tryFireNone` | `GymEnemies` |
-| Centipede | `buildSingleOffset` (`single`) | `radial` | `Centipede.ts` (new) | `tryFireCentipede` (new) | `GymCentipede`, `GymEnemies` |
-| Robotron Horde | `buildSwarmClusterOffsets` (`swarm`) | `none` | `Grunt.ts` (new) + `gruntSteering.ts` + `HordeSpawner.ts` | `tryFireNone` | `GymEnemies` |
-| Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `Raider.ts` (new) + `raiderPatrol.ts` (new, shared) | `tryFireAimedBullet` (reused) | `GymEnemies` |
-| Missile Strike | `buildSingleOffset` (`single`) | `none` (burst on detonation) | `MissileStrike.ts` (new) | `tryFireMissileStrike` (new) | `GymMissileStrike`, `GymEnemies` |
-| Lane Traffic | `buildRectFormationOffsets` (`rect`) | `none` | `LaneTraffic.ts` (new) + `LaneTrafficSpawner.ts` (new) | `tryFireNone` | `GymEnemies` |
+| Space Invaders | `buildMarchFormationOffsets` (`march`, new) | `aimed` | Scout (reused, custom config) | `tryFireAimedBullet` | `GymFodderEnemies` |
+| Galaga | `buildDiverFormationOffsets` (`diver`) | `spread` | Diver (reused, custom config) | `tryFireSpreadBurst` | `GymFodderEnemies` |
+| Pac-Man Ghosts | `buildSingleOffset` (`single`) | `none` | `Ghost.ts` (new) | `tryFireNone` | `GymFodderEnemies` |
+| Centipede | `buildSingleOffset` (`single`) | `radial` | `Centipede.ts` (new) | `tryFireCentipede` (new) | `GymCentipede`, `GymFodderEnemies` |
+| Robotron Horde | `buildSwarmClusterOffsets` (`swarm`) | `none` | `Grunt.ts` (new) + `gruntSteering.ts` + `HordeSpawner.ts` | `tryFireNone` | `GymFodderEnemies` |
+| Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `Raider.ts` (new) + `raiderPatrol.ts` (new, shared) | `tryFireAimedBullet` (reused) | `GymFodderEnemies` |
+| Missile Strike | `buildSingleOffset` (`single`) | `none` (burst on detonation) | `MissileStrike.ts` (new) | `tryFireMissileStrike` (new) | `GymMissileStrike`, `GymFodderEnemies` |
+| Lane Traffic | `buildRectFormationOffsets` (`rect`) | `none` | `LaneTraffic.ts` (new) + `LaneTrafficSpawner.ts` (new) | `tryFireNone` | `GymFodderEnemies` |
 
 **Existing seams used without modification:** `buildRectFormationOffsets`,
 `buildDiverFormationOffsets`, `buildSingleOffset`, `buildVFormationOffsets`,

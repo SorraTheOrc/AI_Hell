@@ -2,7 +2,7 @@
  * Shared collapse/expand affordance for the plain-DOM gym panels
  * (AH-0MUDYFMUX007Q0W3).
  *
- * Every gym scene (`GymPlayer`, `GymEnemies`, `GymBoss`) builds a
+ * Every gym scene (`GymPlayer`, `GymFodderEnemies`, `GymBoss`) builds a
  * bottom-left tuning panel that shares the `.gym-panel` class
  * (AH-0MUAYB7O4009LWBF). A tall panel such as the ~21-row enemy editor
  * permanently occupies a large part of the screen, so this helper wraps a

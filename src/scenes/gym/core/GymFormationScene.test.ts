@@ -2499,7 +2499,7 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 
 /**
  * Regression for the parent bug AH-0MUHM66ES0027QQV: the enemy gym
- * (`GymFormationScene`, base of `GymEnemies`/`GymBoss`/`GymMinerals`)
+ * (`GymFormationScene`, base of `GymFodderEnemies`/`GymBoss`/`GymMinerals`)
  * recorded Shield/Phase Shift in the shared `EffectsRegistry` but never consulted it in
  * the shared hit path, so the player still took hits. These tests pin the
  * expected enemy-gym behaviour and are the red-to-green proof for the

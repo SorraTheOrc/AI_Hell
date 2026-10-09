@@ -2,7 +2,7 @@
  * Shared enemy-fire dispatcher (parent AH-0MUII2FJ5007MDDA, gap 2).
  *
  * The archetype-key → `tryFire*` mapping used to be duplicated in
- * `PlayScene._fireFor` and `GymEnemies.collectBullets`, with a third copy in
+ * `PlayScene._fireFor` and `GymFodderEnemies.collectBullets`, with a third copy in
  * `GymPowerUpsCombat._tickScouts` that also used a fake fixed 16 ms clock.
  * This module is the single seam: every scene resolves an enemy's fire method
  * here, so wiring a new archetype (e.g. the planned Harvester) is a one-line

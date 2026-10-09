@@ -1,22 +1,19 @@
 /**
- * Gym index — dev-mode entry scene (AC2/AC3/AC4 + enemy-config discovery).
+ * Gym index — dev-mode entry scene (AC2/AC3/AC4).
  *
- * Discovers every gym scene under `src/scenes/gym/` via `import.meta.glob`
- * and, additionally, enumerates every available enemy config via
- * `discoverEnemyGymEntries()` so one entry per enemy boots the same
- * `GymEnemies` scene with `{ enemyKey }`. Adding a new Save As entry makes
- * it appear without editing the index (no hard-coded enemy list). `.test.ts`
- * and `core/` remain excluded; corrupt configs fall back via the storage
- * helper.
+ * Discovers every gym scene under `src/scenes/gym/` via `import.meta.glob`.
+ * The index renders three columns left-to-right (AH-0MV13G5EV008D41E):
  *
- * The index renders four columns left-to-right: plain scenes, ENEMIES
- * (one row per non-boss enemy config, booting `GymEnemies` with
- * `{ enemyKey }`), Bosses (the `boss` enemy config plus the dedicated
- * multi-phase `GymBoss` scene) and Dev Utilities (tooling scenes such as
- * the difficulty-curve sequencer, booted directly via `sceneKey`). The two
- * boss rows are labelled "Boss Swarm" and "Boss" respectively
- * (AH-0MTV8OV9V002D8B7); the Dev Utilities column was added for
- * AH-0MUGXDVPH005TIZL.
+ * - **scenes** — plain scene entries;
+ * - **ENEMIES** — a single "Fodder Enemies" row booting the reusable
+ *   `GymFodderEnemies` scene bare (its in-panel dropdown selects the
+ *   archetype) plus the dedicated multi-phase `GymBoss` "Boss" row;
+ * - **Dev Utilities** — tooling scenes such as the difficulty-curve
+ *   sequencer, booted directly via `sceneKey`.
+ *
+ * A new `Gym<Name>.ts` file dropped into the folder appears automatically;
+ * the EnemyConfig archetypes are discovered *inside* `GymFodderEnemies`'s
+ * panel from the config store, so a Save As entry needs no index change.
  *
  * Keyboard navigation (AH-0MUDZFBYY008P7ZE) is provided by the shared
  * {@link FocusManager}: the first row is focused by default, Tab / Shift+Tab
@@ -35,7 +32,6 @@ import {
   loadGymSceneModules,
   sceneClassFromModule,
 } from '../utils/gymDiscovery';
-import { discoverEnemyGymEntries } from '../utils/enemyGymDiscovery';
 import { FocusManager } from '../utils/focusManager';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 
@@ -45,12 +41,14 @@ export const GYM_INDEX_TITLE = 'GYM INDEX';
 export const GYM_INDEX_HINT =
   'tab/arrows move · enter/space select · ESC returns to menu';
 
+/** Scene key of the reusable fodder-enemy gym (formerly `GymEnemies`). */
+export const FODDER_ENEMIES_SCENE_KEY = 'GymFodderEnemies';
+/** Label of the single fodder-enemy row in the ENEMIES column. */
+export const FODDER_ENEMIES_LABEL = 'Fodder Enemies';
 /** Scene key of the dedicated multi-phase boss (the real Central AI). */
 export const BOSS_SCENE_KEY = 'GymBoss';
-/** Label of the dedicated boss row in the Bosses column. */
+/** Label of the dedicated boss row in the ENEMIES column. */
 export const BOSS_SCENE_LABEL = 'Boss';
-/** Enemy-config key of the plain (non-Central-AI) boss archetype. */
-export const BOSS_CONFIG_KEY = 'boss';
 
 /**
  * Scene keys surfaced in the far-right **Dev Utilities** column rather than
@@ -63,38 +61,36 @@ const DEV_UTILITY_SCENE_KEY_SET: ReadonlySet<string> = new Set(DEV_UTILITY_SCENE
 
 /**
  * Column X positions as fractions of `GAME_WIDTH`, ordered left-to-right:
- * scenes | ENEMIES | Bosses | Dev Utilities (AH-0MTV8OV9V002D8B7,
- * AH-0MUGXDVPH005TIZL).
+ * scenes | ENEMIES | Dev Utilities (AH-0MV13G5EV008D41E; the Bosses column
+ * was retired and its dedicated row moved into ENEMIES).
  */
 export const GYM_INDEX_COLUMN_X = {
   scenes: 0.25,
-  enemies: 0.5,
-  bosses: 0.75,
-  devUtilities: 0.9,
+  enemies: 0.55,
+  devUtilities: 0.85,
 } as const;
 
 /** Header label for the middle ENEMIES column (kept uppercase). */
 export const GYM_INDEX_ENEMIES_HEADER = 'ENEMIES';
-/** Header label for the right-most Bosses column. */
-export const GYM_INDEX_BOSSES_HEADER = 'Bosses';
 /** Header label for the far-right Dev Utilities column. */
 export const GYM_INDEX_DEV_UTILITIES_HEADER = 'Dev Utilities';
 
 /**
- * A clickable row rendered in the ENEMIES, Bosses or Dev Utilities column.
+ * A clickable row rendered in the ENEMIES or Dev Utilities column.
  *
  * Two flavours are merged here:
- * - **config rows** carry `enemyKey` and boot `GymEnemies` with `{ enemyKey }`;
+ * - **config rows** carry `enemyKey` and boot `GymFodderEnemies` with
+ *   `{ enemyKey }` (kept for completeness/deep links);
  * - **scene rows** carry `sceneKey` and boot that scene directly (the
- *   dedicated multi-phase `GymBoss` and the Dev Utilities tooling scenes are
- *   surfaced this way).
+ *   reusable `GymFodderEnemies` row, the dedicated `GymBoss` row and the
+ *   Dev Utilities tooling scenes are surfaced this way).
  */
 export interface EnemyColumnEntry {
-  /** Unique row key: `GymEnemies:<configKey>` for config rows, scene key for scene rows. */
+  /** Unique row key: scene key for scene rows, `GymFodderEnemies:<configKey>` for config rows. */
   key: string;
   /** Human label shown on the index. */
   label: string;
-  /** Enemy config key for rows routed to `GymEnemies` as `{ enemyKey }`. */
+  /** Enemy config key for rows routed to `GymFodderEnemies` as `{ enemyKey }`. */
   enemyKey?: string;
   /** Dedicated scene key for rows that boot a scene directly (e.g. `GymBoss`). */
   sceneKey?: string;
@@ -109,7 +105,6 @@ export class GymIndex extends Phaser.Scene {
 
   private entries: GymSceneEntry[] = [];
   private enemyEntries: EnemyColumnEntry[] = [];
-  private bossEntries: EnemyColumnEntry[] = [];
   private devEntries: EnemyColumnEntry[] = [];
 
   constructor() {
@@ -125,11 +120,10 @@ export class GymIndex extends Phaser.Scene {
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
-    // Genuine scene entries (GymPlayer, etc.). Filter out GymEnemies — it
-    // is no longer listed as a bare scene; individual enemies appear via
-    // the per-config list below instead. Filter out GymBoss — the real
-    // boss is surfaced as a dedicated row in the Bosses column instead of
-    // the plain scene list (AH-0MUAYB28C004KK7X).
+    // Genuine scene entries (GymPlayer, etc.). Filter out GymFodderEnemies —
+    // it is no longer listed as a bare scene; a single ENEMIES row boots it.
+    // Filter out GymBoss — the real boss is surfaced as a dedicated row in
+    // the ENEMIES column instead of the plain scene list (AH-0MUAYB28C004KK7X).
     const all = discoverGymScenes(loadGymSceneModules());
 
     // Far-right Dev Utilities column — tooling scenes categorised away from
@@ -142,72 +136,38 @@ export class GymIndex extends Phaser.Scene {
 
     this.entries = all.filter(
       (e) =>
-        e.key !== 'GymEnemies' &&
+        e.key !== FODDER_ENEMIES_SCENE_KEY &&
         e.key !== BOSS_SCENE_KEY &&
         !DEV_UTILITY_SCENE_KEY_SET.has(e.key),
     );
-    // Register every discovered scene class (plain + Dev Utilities) so
-    // `scene.start(key)` works for each index row. GymEnemies and GymBoss are
-    // registered separately below (they are booted with/without params).
+
+    // Register every discovered scene so `scene.start(key)` works for each
+    // index row (plain scenes, Dev Utilities, the reusable fodder gym and the
+    // dedicated boss). The fodder and boss scenes are not in the plain list
+    // but are booted directly by their ENEMIES rows.
     for (const entry of all) {
-      if (entry.key === 'GymEnemies' || entry.key === BOSS_SCENE_KEY) continue;
       if (!this.scene.manager.getScene(entry.key)) {
         const sceneClass = sceneClassFromModule(entry.module, entry.key);
         if (sceneClass) this.scene.add(entry.key, sceneClass as typeof Phaser.Scene);
       }
     }
 
-    // Register the dedicated boss scene so the "Boss" Bosses row can boot
-    // it directly. GymBoss is still excluded from the plain scene list
-    // (left column); it is surfaced as the real boss row below.
-    const bossModule = all.find((e) => e.key === BOSS_SCENE_KEY)?.module;
-    if (bossModule && !this.scene.manager.getScene(BOSS_SCENE_KEY)) {
-      const bossClass = sceneClassFromModule(bossModule, BOSS_SCENE_KEY);
-      if (bossClass) this.scene.add(BOSS_SCENE_KEY, bossClass as typeof Phaser.Scene);
-    }
-
-    // Enemy-config rows, each routed to GymEnemies with `{ enemyKey }`.
-    const configEntries: EnemyColumnEntry[] = discoverEnemyGymEntries().map((e) => ({
-      key: e.key,
-      label: e.label,
-      enemyKey: e.enemyKey,
-    }));
-
-    // Middle ENEMIES column — non-boss config rows, alphabetical by label.
-    // The `boss` config row is deliberately omitted here; it is grouped with
-    // the dedicated boss scene in the Bosses column below (AH-0MTV8OV9V002D8B7).
-    this.enemyEntries = configEntries
-      .filter((e) => e.enemyKey !== BOSS_CONFIG_KEY)
-      .sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
-
-    // Right-hand Bosses column — both boss rows grouped together: the plain
-    // `boss` config row (boots GymEnemies via `enemyKey`) and the dedicated
-    // multi-phase GymBoss scene (booted directly via `sceneKey`). Sorted by
-    // label, so "Boss" (the real boss) precedes "Boss Swarm" (the config).
-    const bossConfigRow = configEntries.find((e) => e.enemyKey === BOSS_CONFIG_KEY);
-    this.bossEntries = [
-      ...(bossConfigRow ? [bossConfigRow] : []),
+    // Middle ENEMIES column (AH-0MV13G5EV008D41E): the single reusable fodder
+    // gym (booted bare; its dropdown selects the archetype) followed by the
+    // dedicated multi-phase `GymBoss` scene. Per-config rows, the `boss`
+    // "Boss Swarm" row and the Bosses column were retired.
+    this.enemyEntries = [
+      {
+        key: FODDER_ENEMIES_SCENE_KEY,
+        label: FODDER_ENEMIES_LABEL,
+        sceneKey: FODDER_ENEMIES_SCENE_KEY,
+      },
       {
         key: BOSS_SCENE_KEY,
         label: BOSS_SCENE_LABEL,
         sceneKey: BOSS_SCENE_KEY,
       },
-    ].sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
-
-    if (configEntries.length > 0 && !this.scene.manager.getScene('GymEnemies')) {
-      // Reuse the class discovered via glob if available; otherwise lazy import.
-      const enemiesModule = all.find((e) => e.key === 'GymEnemies')?.module;
-      const cls = enemiesModule ? sceneClassFromModule(enemiesModule, 'GymEnemies') : null;
-      if (cls) this.scene.add('GymEnemies', cls as typeof Phaser.Scene);
-      else {
-        // Fallback: import directly so enemy entries still route even if glob
-        // somehow hid GymEnemies (defensive; shouldn't happen).
-        // Lazy path kept synchronous via require-style fallback handled by
-        // GymEnemies itself being globally importable — skip if still null.
-      }
-    }
-    // De-duplicate enemy labels that collide (keep first, suffix later ones).
-    // Keep labels stable and alphabetical as discovered above.
+    ];
 
     // ── Title ────────────────────────────────────────────────────────
     this.add
@@ -218,7 +178,7 @@ export class GymIndex extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // ── Four-column layout ─────────────────────────────────────────
+    // ── Three-column layout ────────────────────────────────────────
     const entryStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: 'monospace',
       fontSize: '18px',
@@ -234,12 +194,11 @@ export class GymIndex extends Phaser.Scene {
     const rowGap = 42;
     const startY = 150;
     const headerY = startY - 18;
-    // Left column = plain scenes; middle = enemy configs; right = boss
-    // scenes; far-right = Dev Utilities tooling scenes. Columns are
-    // distributed left-to-right across the screen width.
+    // Left column = plain scenes; middle = ENEMIES; far-right = Dev Utilities
+    // tooling scenes. Columns are distributed left-to-right across the width.
     const scenesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.scenes;
     const enemiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
-    const bossesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses;
+    const devUtilitiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
 
     // Left column — scene entries (alphabetical).
     this.entries.forEach((entry, index) => {
@@ -249,17 +208,8 @@ export class GymIndex extends Phaser.Scene {
       this.registerRow(row, entry.label, () => this.scene.start(entry.key));
     });
 
-    // Middle column — ENEMIES header + enemy entries.
+    // Middle column — ENEMIES header + fodder/boss rows.
     this.renderColumn(this.enemyEntries, enemiesColX, GYM_INDEX_ENEMIES_HEADER, {
-      startY,
-      headerY,
-      rowGap,
-      entryStyle,
-      headerStyle,
-    });
-
-    // Right column — Bosses header + boss scene entries.
-    this.renderColumn(this.bossEntries, bossesColX, GYM_INDEX_BOSSES_HEADER, {
       startY,
       headerY,
       rowGap,
@@ -269,7 +219,6 @@ export class GymIndex extends Phaser.Scene {
 
     // Far-right column — Dev Utilities header + tooling scene entries
     // (AH-0MUGXDVPH005TIZL).
-    const devUtilitiesColX = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
     this.renderColumn(
       this.devEntries,
       devUtilitiesColX,
@@ -280,10 +229,9 @@ export class GymIndex extends Phaser.Scene {
     // ── Keyboard focus (AH-0MUDZFBYY008P7ZE) ─────────────────────────
     // The shared FocusManager owns Tab / arrow cycling and Enter / Space
     // activation. Rows are registered in reading order (plain scenes →
-    // ENEMIES → Bosses → Dev Utilities), so the first row is focused by
-    // default. Pointer handlers stay unchanged — keyboard support is
-    // additive. Tear the listener down on scene shutdown so a restart does
-    // not leak it.
+    // ENEMIES → Dev Utilities), so the first row is focused by default.
+    // Pointer handlers stay unchanged — keyboard support is additive. Tear
+    // the listener down on scene shutdown so a restart does not leak it.
     this.focusManager.attachKeyboard(this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.focusManager.shutdown();
@@ -302,9 +250,9 @@ export class GymIndex extends Phaser.Scene {
   // ── Rendering helpers ─────────────────────────────────────────────
 
   /**
-   * Renders one header + clickable rows for an index column (ENEMIES,
-   * Bosses or Dev Utilities). No-op when the column has no entries, so the
-   * header never floats alone.
+   * Renders one header + clickable rows for an index column (ENEMIES or Dev
+   * Utilities). No-op when the column has no entries, so the header never
+   * floats alone.
    */
   private renderColumn(
     entries: EnemyColumnEntry[],
@@ -333,13 +281,14 @@ export class GymIndex extends Phaser.Scene {
   // ── Activation & focus helpers ────────────────────────────────────
 
   /**
-   * Activation shared by pointer and keyboard for an ENEMIES/Bosses/Dev
-   * Utilities row: scene rows boot their `sceneKey` directly, config rows
-   * boot `GymEnemies` with `{ enemyKey }`.
+   * Activation shared by pointer and keyboard for an ENEMIES/Dev Utilities
+   * row: scene rows boot their `sceneKey` directly (including the bare
+   * `GymFodderEnemies` and `GymBoss` rows), config rows boot
+   * `GymFodderEnemies` with `{ enemyKey }`.
    */
   private activateEntry(entry: EnemyColumnEntry): void {
     if (entry.sceneKey) this.scene.start(entry.sceneKey);
-    else this.scene.start('GymEnemies', { enemyKey: entry.enemyKey });
+    else this.scene.start(FODDER_ENEMIES_SCENE_KEY, { enemyKey: entry.enemyKey });
   }
 
   /**
@@ -360,27 +309,17 @@ export class GymIndex extends Phaser.Scene {
 
   // ── Public test accessors ─────────────────────────────────────────
 
-  /** Discovered gym scenes (left column; excludes bare GymEnemies, GymBoss and Dev Utilities). */
+  /** Discovered gym scenes (left column; excludes GymFodderEnemies, GymBoss and Dev Utilities). */
   get listedScenes(): { key: string; label: string }[] {
     return this.entries.map((e) => ({ key: e.key, label: e.label }));
   }
 
   /**
-   * Middle ENEMIES column rows: one per available non-boss `EnemyConfig`,
-   * each routed to `GymEnemies` via `enemyKey`.
+   * Middle ENEMIES column rows: the single reusable fodder-enemy row
+   * (booted bare) followed by the dedicated `GymBoss` row.
    */
   get listedEnemyScenes(): EnemyColumnEntry[] {
     return this.enemyEntries.map((e) => ({ ...e }));
-  }
-
-  /**
-   * Right-hand Bosses column rows: both boss entries — the `boss` enemy
-   * config (routed to `GymEnemies` via `enemyKey`, labelled "Boss Swarm")
-   * and the dedicated `GymBoss` scene (booted directly via `sceneKey`,
-   * labelled "Boss").
-   */
-  get listedBossScenes(): EnemyColumnEntry[] {
-    return this.bossEntries.map((e) => ({ ...e }));
   }
 
   /**
@@ -396,7 +335,7 @@ export class GymIndex extends Phaser.Scene {
     return this.focusManager.getFocusedIndex();
   }
 
-  /** Total number of focusable rows registered across all four columns. */
+  /** Total number of focusable rows registered across all columns. */
   getFocusControlCount(): number {
     return this.focusManager.getControlCount();
   }

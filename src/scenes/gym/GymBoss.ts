@@ -58,7 +58,7 @@ import {
   FormationSceneBullet,
 } from './core/GymFormationScene';
 
-/** Player spawn position for the Boss gym (bottom centre, same as GymEnemies). */
+/** Player spawn position for the Boss gym (bottom centre, same as GymFodderEnemies). */
 const BOSS_PLAYER_SPAWN_X = GAME_WIDTH / 2;
 const BOSS_PLAYER_SPAWN_Y = GAME_HEIGHT - 40;
 

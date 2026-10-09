@@ -1,10 +1,10 @@
 /**
  * Live spawn-interval control for the combat gyms (GDD §4.4, §6.3).
  *
- * Builds a plain-DOM range input (patterned on the `GymPlayer`/`GymEnemies`
+ * Builds a plain-DOM range input (patterned on the `GymPlayer`/`GymFodderEnemies`
  * panel sliders) that changes the running scene's power-up spawn cadence
  * immediately and persists the value through the game-rules config. Shared
- * by `GymEnemies` (which already owns a panel) and `GymBoss` (which uses it
+ * by `GymFodderEnemies` (which already owns a panel) and `GymBoss` (which uses it
  * as its only control) so the control is defined once.
  *
  * The row carries a stable id and data attributes so tests can assert it

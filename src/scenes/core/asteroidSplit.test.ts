@@ -174,7 +174,7 @@ describe('asteroidSplit — single definition and shared consumption (AC1)', () 
   const HELPER_FILE = 'src/scenes/core/asteroidSplit.ts';
   const CONSUMER_FILES = [
     'src/scenes/PlayScene.ts',
-    'src/scenes/gym/GymEnemies.ts',
+    'src/scenes/gym/GymFodderEnemies.ts',
     'src/scenes/gym/GymMinerals.ts',
   ];
 

@@ -25,7 +25,7 @@ import {
 
 /**
  * The committed enemy-config key for each personality. One CSV row per
- * personality keeps the tuning data-driven and lets the single `GymEnemies`
+ * personality keeps the tuning data-driven and lets the single `GymFodderEnemies`
  * scene exercise every personality independently.
  */
 export const GHOST_ARCHETYPE_BY_PERSONALITY: Record<GhostPersonality, string> = {

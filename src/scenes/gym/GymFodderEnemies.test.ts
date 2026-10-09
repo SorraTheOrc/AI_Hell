@@ -1,5 +1,5 @@
 /**
- * AH-0MTHG5B83007W4W4 — Single reusable enemy gym scene (GymEnemies).
+ * AH-0MTHG5B83007W4W4 — Single reusable enemy gym scene (GymFodderEnemies).
  *
  * Happy-dom boot per seed (count/spacing), corruption fallback, and
  * discoverability via the gym index glob. Wipe → 3s countdown → respawn
@@ -39,7 +39,7 @@ vi.mock('../../core/configStore', async (importOriginal) => {
 });
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
-import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY, GYM_ENEMIES_BOSS_KEY, ENEMY_DIFFICULTY_ID, ENEMY_TOGGLE_PLAYER_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymEnemies';
+import { GymFodderEnemies, GYM_FODDER_ENEMIES_DEFAULT_KEY, GYM_FODDER_ENEMIES_BOSS_KEY, ENEMY_DIFFICULTY_ID, ENEMY_SELECT_ID, ENEMY_TOGGLE_PLAYER_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymFodderEnemies';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
@@ -54,7 +54,7 @@ import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
 
-// GymIndex discovery helper (glob) — verify GymEnemies is listed without extra registration.
+// GymIndex discovery helper (glob) — verify GymFodderEnemies is listed without extra registration.
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { RoundRobinSpawner, WeightedRandomSpawner } from '../../powerups/spawner';
 import { RandomAvoidingPlacement, type PowerUpPlacement } from '../../powerups/placement';
@@ -101,7 +101,7 @@ function bodyStrokeColor(entity: Phaser.GameObjects.GameObject): number | null {
   return null;
 }
 
-describe('GymEnemies — single reusable enemy gym', () => {
+describe('GymFodderEnemies — single reusable enemy gym', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
@@ -120,12 +120,12 @@ describe('GymEnemies — single reusable enemy gym', () => {
     document.getElementById('gym-config-panel')?.remove();
   });
 
-  async function bootWithKey(enemyKey?: string): Promise<GymEnemies> {
+  async function bootWithKey(enemyKey?: string): Promise<GymFodderEnemies> {
     // Boot via a one-off wrapper so init({ enemyKey }) is invoked before create().
-    // Direct bootScene([GymEnemies]) would default to scout; wrapper lets us
+    // Direct bootScene([GymFodderEnemies]) would default to scout; wrapper lets us
     // exercise per-seed formation without changing the harness.
-    const key = enemyKey ?? GYM_ENEMIES_DEFAULT_KEY;
-    class Wrapper extends GymEnemies {
+    const key = enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+    class Wrapper extends GymFodderEnemies {
       override init(_data?: { enemyKey?: string }): void {
         super.init({ enemyKey: key });
       }
@@ -133,14 +133,14 @@ describe('GymEnemies — single reusable enemy gym', () => {
     // Give wrapper a unique Phaser key to avoid collisions across loops.
     Object.defineProperty(Wrapper, 'name', { value: `Wrapper_${key}` });
     booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
-    return booted.scene as unknown as GymEnemies;
+    return booted.scene as unknown as GymFodderEnemies;
   }
 
   it('boots with default key (scout) when no init data is provided', async () => {
-    booted = await bootScene([GymEnemies]);
-    const scene = booted.scene as GymEnemies;
+    booted = await bootScene([GymFodderEnemies]);
+    const scene = booted.scene as GymFodderEnemies;
     expect(scene.sys.isActive()).toBe(true);
-    expect(scene.activeEnemyKey).toBe(GYM_ENEMIES_DEFAULT_KEY);
+    expect(scene.activeEnemyKey).toBe(GYM_FODDER_ENEMIES_DEFAULT_KEY);
     expect(scene.formationEntities.length).toBe(DEFAULT_ENEMY_CONFIGS.scout.count);
   });
 
@@ -507,7 +507,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
     'wave-timeout is active for enemy key "%s" except the boss',
     async (key) => {
       const scene = await bootWithKey(key);
-      if (key === GYM_ENEMIES_BOSS_KEY) {
+      if (key === GYM_FODDER_ENEMIES_BOSS_KEY) {
         expect(scene.isWaveTimeoutActive()).toBe(false);
         expect(scene.getWaveTimeoutRemaining()).toBe(0);
       } else {
@@ -524,8 +524,8 @@ describe('GymEnemies — single reusable enemy gym', () => {
 
   it('is discoverable by GymIndex via import.meta.glob (no extra registration)', async () => {
     const entries = discoverGymScenes(loadGymSceneModules());
-    const found = entries.find((e) => e.key === 'GymEnemies');
-    expect(found, 'GymEnemies not discovered by glob').toBeDefined();
+    const found = entries.find((e) => e.key === 'GymFodderEnemies');
+    expect(found, 'GymFodderEnemies not discovered by glob').toBeDefined();
     expect(found!.label.toLowerCase()).toContain('enemies');
   });
 
@@ -956,7 +956,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
   // ── Swarm AC3 — aimed burst hits player (AH-0MTFTJ01K000JG4I) ─────
   // Retired GymSwarm AC3 (epic AH-0MTFPDKDU006QUDC, one-off flake under
   // full-suite parallel load) preserved in the config-driven gym after
-  // the 5bbaa2d GymEnemies merge. Mirrors the GymScout AC2 poll idiom
+  // the 5bbaa2d GymFodderEnemies merge. Mirrors the GymScout AC2 poll idiom
   // (commit e48b046): the swarm uses the same deterministic tick +
   // frozen scene.time.now seam as the scout. The retired single-volley
   // form relied on one burst's random spread (±0.15 rad per bullet) —
@@ -1012,11 +1012,11 @@ describe('GymEnemies — single reusable enemy gym', () => {
 
   describe('stop/restart of the SAME registered instance — gym-index vector (AH-0MTPLHLZ3006MOC4)', () => {
     it('AC1/AC2 — repeated scene.start across enemy keys never crashes and never doubles entities', async () => {
-      // Boot the real registered GymEnemies instance (no per-key wrapper).
-      booted = await bootScene([GymEnemies]);
+      // Boot the real registered GymFodderEnemies instance (no per-key wrapper).
+      booted = await bootScene([GymFodderEnemies]);
       const manager = booted.game.scene;
-      const sameInstance = booted.scene as GymEnemies;
-      expect(sameInstance.activeEnemyKey).toBe(GYM_ENEMIES_DEFAULT_KEY);
+      const sameInstance = booted.scene as GymFodderEnemies;
+      expect(sameInstance.activeEnemyKey).toBe(GYM_FODDER_ENEMIES_DEFAULT_KEY);
 
       // Cycle through several enemy keys via the real scene manager — the
       // exact gym-index restart vector (scene.start on the same registered
@@ -1026,9 +1026,9 @@ describe('GymEnemies — single reusable enemy gym', () => {
       // undefined `scene` and crashed.
       const cycle = ['tank', 'swarm', 'diver', 'phaser', 'scout'];
       for (const key of cycle) {
-        expect(() => manager.start('GymEnemies', { enemyKey: key })).not.toThrow();
+        expect(() => manager.start('GymFodderEnemies', { enemyKey: key })).not.toThrow();
 
-        const scene = manager.getScene('GymEnemies') as GymEnemies;
+        const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
         // The restart must reuse the SAME scene instance (the leak vector).
         expect(scene).toBe(sameInstance);
         expect(scene.activeEnemyKey).toBe(key);
@@ -1116,7 +1116,160 @@ describe('GymEnemies — single reusable enemy gym', () => {
   });
 });
 
-describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
+describe('GymFodderEnemies — in-panel enemy selector (AH-0MV13G5EV008D41E)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+  });
+
+  async function bootWithKey(enemyKey?: string): Promise<GymFodderEnemies> {
+    const key = enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+    class Wrapper extends GymFodderEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: key });
+      }
+    }
+    Object.defineProperty(Wrapper, 'name', { value: `SelectorWrapper_${key}` });
+    booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
+    return booted.scene as unknown as GymFodderEnemies;
+  }
+
+  function enemySelect(): HTMLSelectElement {
+    const select = document.getElementById(ENEMY_SELECT_ID);
+    expect(select, 'enemy selector missing').not.toBeNull();
+    return select as HTMLSelectElement;
+  }
+
+  function selectEnemy(select: HTMLSelectElement, key: string): void {
+    select.value = key;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  it('AC — renders exactly one enemy <select> listing every non-boss config key with the active key selected', async () => {
+    const scene = await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    // Exactly one enemy selector (id-scoped; formationKind/shotPattern have
+    // their own data-config selects but no enemy id).
+    expect(panel.querySelectorAll(`#${ENEMY_SELECT_ID}`)).toHaveLength(1);
+
+    const select = enemySelect();
+    const optionKeys = Array.from(select.options).map((o) => o.value);
+    const expectedKeys = Object.keys(DEFAULT_ENEMY_CONFIGS).filter(
+      (k) => k !== GYM_FODDER_ENEMIES_BOSS_KEY,
+    );
+    expect([...optionKeys].sort()).toEqual([...expectedKeys].sort());
+    // The boss archetype is deliberately excluded.
+    expect(optionKeys).not.toContain(GYM_FODDER_ENEMIES_BOSS_KEY);
+    // Seeded from the scene's active key.
+    expect(select.value).toBe('scout');
+    expect(scene.activeEnemyKey).toBe('scout');
+  });
+
+  it('AC — seeds the selection from a deep-linked init({ enemyKey })', async () => {
+    const scene = await bootWithKey('swarm');
+    expect(enemySelect().value).toBe('swarm');
+    expect(scene.activeEnemyKey).toBe('swarm');
+  });
+
+  it('AC — a Save As key appears in the selector after re-boot (discovery-driven, no hard-coded list)', async () => {
+    seedConfigStore([
+      ...Object.values(DEFAULT_ENEMY_CONFIGS),
+      { ...DEFAULT_ENEMY_CONFIGS.scout, key: 'zzz-custom', displayName: 'Zzz Custom' },
+    ]);
+    await bootWithKey('scout');
+    const select = enemySelect();
+    const custom = Array.from(select.options).find((o) => o.value === 'zzz-custom');
+    expect(custom, 'Save As key missing from selector').toBeDefined();
+    expect(custom!.textContent).toBe('Zzz Custom');
+  });
+
+  it('AC — selection change rebuilds the scene for two different keys, destroying old entities and player bullets', async () => {
+    const scene = await bootWithKey('scout');
+    const select = enemySelect();
+
+    const scoutEntities = scene.formationEntities.slice();
+    expect(scoutEntities.length).toBe(DEFAULT_ENEMY_CONFIGS.scout.count);
+    const staleBullet = scene.spawnPlayerBullet(50, 50, 0, 0);
+    expect(scene.getPlayerBullets()).toContain(staleBullet);
+
+    // scout → swarm (different count/geometry).
+    selectEnemy(select, 'swarm');
+    expect(scene.activeEnemyKey).toBe('swarm');
+    const swarmEntities = scene.formationEntities;
+    expect(swarmEntities.length).toBe(DEFAULT_ENEMY_CONFIGS.swarm.count);
+    for (const old of scoutEntities) expect(swarmEntities).not.toContain(old);
+    // Player bullets are cleared and the stale reference is no longer live.
+    expect(scene.getPlayerBullets()).not.toContain(staleBullet);
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.currentConfig.key).toBe('swarm');
+
+    // swarm → tank (a second key, exercising the rebuild again).
+    selectEnemy(select, 'tank');
+    expect(scene.activeEnemyKey).toBe('tank');
+    const tankEntities = scene.formationEntities;
+    expect(tankEntities.length).toBe(DEFAULT_ENEMY_CONFIGS.tank.count);
+    for (const old of swarmEntities) expect(tankEntities).not.toContain(old);
+    expect(scene.currentConfig.key).toBe('tank');
+  });
+
+  it('AC — panel resync: every control reloads from the new config and later edits apply to the new key', async () => {
+    const scene = await bootWithKey('scout');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const spacingInput = panel.querySelector<HTMLInputElement>('input[data-config="spacingX"]')!;
+
+    // Unsaved edit against the previous (scout) enemy.
+    spacingInput.value = '33';
+    spacingInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.spacingX).toBe(33);
+
+    // Selecting tank reloads the control from tank's persisted config,
+    // discarding the unsaved scout edit.
+    selectEnemy(enemySelect(), 'tank');
+    expect(Number(spacingInput.value)).toBe(DEFAULT_ENEMY_CONFIGS.tank.spacingX);
+    expect(scene.currentConfig.spacingX).toBe(DEFAULT_ENEMY_CONFIGS.tank.spacingX);
+
+    // The formation-kind select and difficulty readout resync too.
+    const formationSelect = panel.querySelector<HTMLSelectElement>(
+      'select[data-config="formationKind"]',
+    )!;
+    expect(formationSelect.value).toBe(DEFAULT_ENEMY_CONFIGS.tank.formationKind);
+    expect(document.getElementById(ENEMY_DIFFICULTY_ID)!.textContent).toBe(
+      `${enemyDifficulty(scene.currentConfig).score.toFixed(1)} / 100`,
+    );
+
+    // A subsequent edit now applies to the newly selected enemy.
+    spacingInput.value = '60';
+    spacingInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.key).toBe('tank');
+    expect(scene.currentConfig.spacingX).toBe(60);
+  });
+
+  it('AC — selecting a Save As archetype spawns it (fodder dropdown is discovery-driven)', async () => {
+    seedConfigStore([
+      ...Object.values(DEFAULT_ENEMY_CONFIGS),
+      { ...DEFAULT_ENEMY_CONFIGS.swarm, key: 'zzz-custom', displayName: 'Zzz Custom' },
+    ]);
+    const scene = await bootWithKey('scout');
+    selectEnemy(enemySelect(), 'zzz-custom');
+    expect(scene.activeEnemyKey).toBe('zzz-custom');
+    expect(scene.currentConfig.key).toBe('zzz-custom');
+    expect(scene.formationEntities.length).toBe(DEFAULT_ENEMY_CONFIGS.swarm.count);
+  });
+});
+
+describe('GymFodderEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1126,9 +1279,9 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
 
   const INTERVAL = 15;
 
-  /** Boots GymEnemies with a deterministic, short-interval power-up layer. */
+  /** Boots GymFodderEnemies with a deterministic, short-interval power-up layer. */
   function makeScene(enemyKey: string): typeof Phaser.Scene {
-    class PowerUpGymEnemies extends GymEnemies {
+    class PowerUpGymFodderEnemies extends GymFodderEnemies {
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
@@ -1138,14 +1291,14 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
         };
       }
     }
-    Object.defineProperty(PowerUpGymEnemies, 'name', {
-      value: `PowerUpGymEnemies_${enemyKey}`,
+    Object.defineProperty(PowerUpGymFodderEnemies, 'name', {
+      value: `PowerUpGymFodderEnemies_${enemyKey}`,
     });
-    return PowerUpGymEnemies as unknown as typeof Phaser.Scene;
+    return PowerUpGymFodderEnemies as unknown as typeof Phaser.Scene;
   }
 
   /** Asserts the current drop is clear of every live enemy and the player. */
-  function expectDropClear(scene: GymEnemies): void {
+  function expectDropClear(scene: GymFodderEnemies): void {
     const drop = scene.getPowerUpDrops()[0];
     expect(drop).toBeDefined();
     const bodies = scene.formationEntities
@@ -1159,8 +1312,8 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
   }
 
   it('AC1/AC3 — spawns one drop at a time and avoids enemies/player (scout)', async () => {
-    booted = await bootScene([makeScene(GYM_ENEMIES_DEFAULT_KEY)]);
-    const scene = booted.scene as unknown as GymEnemies;
+    booted = await bootScene([makeScene(GYM_FODDER_ENEMIES_DEFAULT_KEY)]);
+    const scene = booted.scene as unknown as GymFodderEnemies;
 
     expect(scene.isPowerUpLayerEnabled()).toBe(true);
     expect(scene.getPowerUpSpawnCount()).toBe(1);
@@ -1176,7 +1329,7 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
     'AC1/AC3 — spawns and avoids overlap for every archetype ("%s")',
     async (key) => {
       booted = await bootScene([makeScene(key)]);
-      const scene = booted.scene as unknown as GymEnemies;
+      const scene = booted.scene as unknown as GymFodderEnemies;
 
       expect(scene.isPowerUpLayerEnabled()).toBe(true);
       scene.tick(INTERVAL);
@@ -1185,7 +1338,7 @@ describe('GymEnemies — power-up spawning layer (AH-0MU44M9CA007GBTZ)', () => {
   );
 });
 
-describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
+describe('GymFodderEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1193,7 +1346,7 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
     booted = null;
   });
 
-  /** Boots GymEnemies whose spawner yields weapon drops (at the player). */
+  /** Boots GymFodderEnemies whose spawner yields weapon drops (at the player). */
   function makeWeaponScene(
     enemyKey: string,
     spawner: PowerUpSpawner<DropId>,
@@ -1201,7 +1354,7 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
       place: (context) => ({ x: context.player.x, y: context.player.y }),
     },
   ): typeof Phaser.Scene {
-    class WeaponGymEnemies extends GymEnemies {
+    class WeaponGymFodderEnemies extends GymFodderEnemies {
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
@@ -1211,20 +1364,20 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
         };
       }
     }
-    Object.defineProperty(WeaponGymEnemies, 'name', {
-      value: `WeaponGymEnemies_${enemyKey}`,
+    Object.defineProperty(WeaponGymFodderEnemies, 'name', {
+      value: `WeaponGymFodderEnemies_${enemyKey}`,
     });
-    return WeaponGymEnemies as unknown as typeof Phaser.Scene;
+    return WeaponGymFodderEnemies as unknown as typeof Phaser.Scene;
   }
 
   it('AC4 — a weapon drop is collectible and equips the weapon in the registry', async () => {
     booted = await bootScene([
       makeWeaponScene(
-        GYM_ENEMIES_DEFAULT_KEY,
+        GYM_FODDER_ENEMIES_DEFAULT_KEY,
         new WeightedRandomSpawner<DropId>(['rapid'], createSeededRng(1)),
       ),
     ]);
-    const scene = booted.scene as unknown as GymEnemies;
+    const scene = booted.scene as unknown as GymFodderEnemies;
 
     // The boot loop advances the drop past the 3% threshold, so the
     // 'rapid' drop spawned on the ship is collected and equipped.
@@ -1246,7 +1399,7 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
           new RandomAvoidingPlacement({ rng: createSeededRng(3) }),
         ),
       ]);
-      const scene = booted.scene as unknown as GymEnemies;
+      const scene = booted.scene as unknown as GymFodderEnemies;
 
       const drop = scene.getPowerUpDrops()[0];
       expect(drop).toBeDefined();
@@ -1265,11 +1418,11 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
   it('AC4 — the Reset drop preserves equipped weapons', async () => {
     booted = await bootScene([
       makeWeaponScene(
-        GYM_ENEMIES_DEFAULT_KEY,
+        GYM_FODDER_ENEMIES_DEFAULT_KEY,
         new WeightedRandomSpawner<DropId>(['spread'], createSeededRng(1)),
       ),
     ]);
-    const scene = booted.scene as unknown as GymEnemies;
+    const scene = booted.scene as unknown as GymFodderEnemies;
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
 
@@ -1286,7 +1439,7 @@ describe('GymEnemies — weapon drops (AH-0MU3VOQKH005YOBH)', () => {
   });
 });
 
-describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => {
+describe('GymFodderEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1294,12 +1447,12 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
     booted = null;
   });
 
-  /** Boots GymEnemies whose first drop lands on the ship and is a Extra Life. */
+  /** Boots GymFodderEnemies whose first drop lands on the ship and is a Extra Life. */
   function makeCollectScene(enemyKey: string): typeof Phaser.Scene {
     const atPlayer: PowerUpPlacement = {
       place: (context) => ({ x: context.player.x, y: context.player.y }),
     };
-    class CollectGymEnemies extends GymEnemies {
+    class CollectGymFodderEnemies extends GymFodderEnemies {
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
@@ -1309,15 +1462,15 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
         };
       }
     }
-    Object.defineProperty(CollectGymEnemies, 'name', {
-      value: `CollectGymEnemies_${enemyKey}`,
+    Object.defineProperty(CollectGymFodderEnemies, 'name', {
+      value: `CollectGymFodderEnemies_${enemyKey}`,
     });
-    return CollectGymEnemies as unknown as typeof Phaser.Scene;
+    return CollectGymFodderEnemies as unknown as typeof Phaser.Scene;
   }
 
   it('AC2/AC5 — a drop collected on the ship applies its effect and the HUD renders', async () => {
-    booted = await bootScene([makeCollectScene(GYM_ENEMIES_DEFAULT_KEY)]);
-    const scene = booted.scene as unknown as GymEnemies;
+    booted = await bootScene([makeCollectScene(GYM_FODDER_ENEMIES_DEFAULT_KEY)]);
+    const scene = booted.scene as unknown as GymFodderEnemies;
 
     // The boot loop advances the drop past the 3% threshold, so the Extra Life
     // spawned on the ship is collected: lives go 3 → 4 and the HUD is shown.
@@ -1327,7 +1480,7 @@ describe('GymEnemies — power-up collection and HUD (AH-0MU44M9NQ0006613)', () 
   });
 });
 
-describe('GymEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () => {
+describe('GymFodderEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
@@ -1351,16 +1504,16 @@ describe('GymEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () 
   it('AC1/AC3 — slider is present and seeded from the rules config', async () => {
     saveRules({ ...loadRules(), powerUpSpawnInterval: 7 });
 
-    booted = await bootScene([GymEnemies]);
-    const scene = booted.scene as GymEnemies;
+    booted = await bootScene([GymFodderEnemies]);
+    const scene = booted.scene as GymFodderEnemies;
 
     expect(getSlider().value).toBe('7');
     expect(scene.getPowerUpSpawnInterval()).toBe(7);
   });
 
   it('AC2/AC4 — changing the slider applies live and persists across a reboot', async () => {
-    booted = await bootScene([GymEnemies]);
-    const scene = booted.scene as GymEnemies;
+    booted = await bootScene([GymFodderEnemies]);
+    const scene = booted.scene as GymFodderEnemies;
 
     const slider = getSlider();
     slider.value = '4';
@@ -1372,16 +1525,16 @@ describe('GymEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () 
     // Reboot the scene: the value is restored from the rules config.
     booted.game.destroy(true);
     booted = null;
-    booted = await bootScene([GymEnemies]);
-    const rested = booted.scene as GymEnemies;
+    booted = await bootScene([GymFodderEnemies]);
+    const rested = booted.scene as GymFodderEnemies;
 
     expect(rested.getPowerUpSpawnInterval()).toBe(4);
     expect(getSlider().value).toBe('4');
   });
 
   it('AC5 — SHUTDOWN removes the spawn-interval panel from the DOM', async () => {
-    booted = await bootScene([GymEnemies]);
-    const scene = booted.scene as GymEnemies;
+    booted = await bootScene([GymFodderEnemies]);
+    const scene = booted.scene as GymFodderEnemies;
 
     expect(document.getElementById('enemy-gym-panel')).not.toBeNull();
     scene.events.emit(Phaser.Scenes.Events.SHUTDOWN);
@@ -1389,7 +1542,7 @@ describe('GymEnemies — live spawn-interval control (AH-0MU44M9Z0007ZGPI)', () 
   });
 });
 
-describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
+describe('GymFodderEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
@@ -1404,19 +1557,19 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
     document.getElementById('enemy-gym-panel')?.remove();
   });
 
-  async function bootAsteroidGym(): Promise<GymEnemies> {
+  async function bootAsteroidGym(): Promise<GymFodderEnemies> {
     const key = 'asteroid';
-    class Wrapper extends GymEnemies {
+    class Wrapper extends GymFodderEnemies {
       override init(_data?: { enemyKey?: string }): void {
         super.init({ enemyKey: key });
       }
     }
     Object.defineProperty(Wrapper, 'name', { value: 'Wrapper_asteroid_gym_test' });
     booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
-    return booted.scene as unknown as GymEnemies;
+    return booted.scene as unknown as GymFodderEnemies;
   }
 
-  function liveAsteroids(scene: GymEnemies): Asteroid[] {
+  function liveAsteroids(scene: GymFodderEnemies): Asteroid[] {
     return scene.formationEntities.filter(
       (e): e is Asteroid => e instanceof Asteroid && e.alive,
     );
@@ -1590,11 +1743,11 @@ describe('GymEnemies — asteroid support (AH-0MU8BZ2ZM004J47F)', () => {
 
 /**
  * Regression for AH-0MUHM66ES0027QQV on the real reusable enemy gym route:
- * the Diver is an `enemyKey` routed to `GymEnemies`, which inherits the
+ * the Diver is an `enemyKey` routed to `GymFodderEnemies`, which inherits the
  * (previously missing) Shield/Phase Shift hit-gating. These tests prove the effects gate
  * a hit on the real scene, not just the stub base.
  */
-describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route (AH-0MUHM66ES0027QQV)', () => {
+describe('GymFodderEnemies — P3 shield / P6 phase hit-gating on the real diver route (AH-0MUHM66ES0027QQV)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
@@ -1610,10 +1763,10 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
     document.getElementById('enemy-gym-panel')?.remove();
   });
 
-  /** Boots the real GymEnemies diver route with a deterministic power-up layer
+  /** Boots the real GymFodderEnemies diver route with a deterministic power-up layer
    *  whose next drop lands on the ship. */
   function makeGatedScene(enemyKey: string, id: PowerUpId): typeof Phaser.Scene {
-    class GatedGymEnemies extends GymEnemies {
+    class GatedGymFodderEnemies extends GymFodderEnemies {
       override init(): void {
         super.init({ enemyKey });
         this.config.powerUps = {
@@ -1623,14 +1776,14 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
         };
       }
     }
-    Object.defineProperty(GatedGymEnemies, 'name', {
-      value: `GatedGymEnemies_${enemyKey}_${id}`,
+    Object.defineProperty(GatedGymFodderEnemies, 'name', {
+      value: `GatedGymFodderEnemies_${enemyKey}_${id}`,
     });
-    return GatedGymEnemies as unknown as typeof Phaser.Scene;
+    return GatedGymFodderEnemies as unknown as typeof Phaser.Scene;
   }
 
   /** Parks a stationary enemy bullet on the player's current position. */
-  function placeEnemyBulletOnPlayer(scene: GymEnemies): FormationSceneBullet {
+  function placeEnemyBulletOnPlayer(scene: GymFodderEnemies): FormationSceneBullet {
     const player = scene.getPlayer()!;
     const graphics = scene.add.graphics();
     graphics.setPosition(player.x, player.y);
@@ -1647,7 +1800,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
 
   it('AC1 — collecting P6 in the diver gym phases the player through an enemy bullet', async () => {
     booted = await bootScene([makeGatedScene('diver', 'phase_shift')]);
-    const scene = booted.scene as unknown as GymEnemies;
+    const scene = booted.scene as unknown as GymFodderEnemies;
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
 
@@ -1667,7 +1820,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
 
   it('AC2 — collecting P3 in the diver gym absorbs the next enemy bullet', async () => {
     booted = await bootScene([makeGatedScene('diver', 'shield')]);
-    const scene = booted.scene as unknown as GymEnemies;
+    const scene = booted.scene as unknown as GymFodderEnemies;
     const player = scene.getPlayer()!;
     vi.spyOn(player, 'tryFire').mockReturnValue([]);
 
@@ -1683,7 +1836,7 @@ describe('GymEnemies — P3 shield / P6 phase hit-gating on the real diver route
   });
 });
 
-describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
+describe('GymFodderEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
   let booted: BootedGame | null = null;
 
   beforeEach(() => {
@@ -1697,9 +1850,9 @@ describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
   });
 
   it('AC1 — a real scene.start restart of the same instance clears every applied effect', async () => {
-    booted = await bootScene([GymEnemies]);
+    booted = await bootScene([GymFodderEnemies]);
     const manager = booted.game.scene;
-    const scene = booted.scene as GymEnemies;
+    const scene = booted.scene as GymFodderEnemies;
     const registry = scene.getEffectsRegistry();
 
     registry.applyCollect('magnet', true);
@@ -1711,9 +1864,9 @@ describe('GymEnemies — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)',
 
     // The exact gym-index restart vector: scene.start on the same key
     // stops and restarts the SAME registered instance.
-    manager.start('GymEnemies', { enemyKey: 'scout' });
+    manager.start('GymFodderEnemies', { enemyKey: 'scout' });
 
-    const restarted = manager.getScene('GymEnemies') as GymEnemies;
+    const restarted = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
     expect(restarted).toBe(scene);
     expect(restarted.getEffectsRegistry()).toBe(registry);
     expect(registry.activeEffects()).toHaveLength(0);
@@ -1764,7 +1917,7 @@ describe('normaliseSpawnRanges (AH-0MUKCLXLW0032R67, AC3c/AC3d)', () => {
   });
 });
 
-describe('GymEnemies — wormhole spawn animation parity (AH-0MURBER4L00821RR AC5)', () => {
+describe('GymFodderEnemies — wormhole spawn animation parity (AH-0MURBER4L00821RR AC5)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1773,15 +1926,15 @@ describe('GymEnemies — wormhole spawn animation parity (AH-0MURBER4L00821RR AC
     localStorage.clear();
   });
 
-  async function bootGym(): Promise<GymEnemies> {
-    class Wrapper extends GymEnemies {
+  async function bootGym(): Promise<GymFodderEnemies> {
+    class Wrapper extends GymFodderEnemies {
       override init(_data?: { enemyKey?: string }): void {
         super.init({ enemyKey: 'scout' });
       }
     }
     Object.defineProperty(Wrapper, 'name', { value: 'Wrapper_scout_gym_spawn_test' });
     booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
-    return booted.scene as unknown as GymEnemies;
+    return booted.scene as unknown as GymFodderEnemies;
   }
 
   it('spawns enemies at 1 pixel, marked spawning, and grows them to full size', async () => {

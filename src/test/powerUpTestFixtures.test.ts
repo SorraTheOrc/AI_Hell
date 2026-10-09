@@ -13,7 +13,7 @@ import Phaser from 'phaser';
 import {
   bodiesOverlap,
   bootCombatGymBoss,
-  bootCombatGymEnemies,
+  bootCombatGymFodderEnemies,
   createSeededRng,
   createSeededWeightedSpawner,
   createSequenceRng,
@@ -21,7 +21,7 @@ import {
   isClearOfBodies,
   stubBody,
 } from './powerUpTestFixtures';
-import { GYM_ENEMIES_DEFAULT_KEY } from '../scenes/gym/GymEnemies';
+import { GYM_FODDER_ENEMIES_DEFAULT_KEY } from '../scenes/gym/GymFodderEnemies';
 import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
 
 describe('powerUpTestFixtures — deterministic test infrastructure', () => {
@@ -127,20 +127,20 @@ describe('powerUpTestFixtures — deterministic test infrastructure', () => {
   // ── Combat-gym boot helpers ───────────────────────────────────────
 
   describe('combat-gym boot helpers', () => {
-    it('boots GymEnemies with the default key, its formation and a player', async () => {
-      const { game, scene } = await bootCombatGymEnemies();
+    it('boots GymFodderEnemies with the default key, its formation and a player', async () => {
+      const { game, scene } = await bootCombatGymFodderEnemies();
       games.push(game);
 
       expect(scene.sys.isActive()).toBe(true);
-      expect(scene.activeEnemyKey).toBe(GYM_ENEMIES_DEFAULT_KEY);
+      expect(scene.activeEnemyKey).toBe(GYM_FODDER_ENEMIES_DEFAULT_KEY);
       expect(scene.formationEntities.length).toBe(
-        DEFAULT_ENEMY_CONFIGS[GYM_ENEMIES_DEFAULT_KEY].count,
+        DEFAULT_ENEMY_CONFIGS[GYM_FODDER_ENEMIES_DEFAULT_KEY].count,
       );
       expect(scene.getPlayer()).not.toBeNull();
     });
 
-    it('boots GymEnemies with an explicit enemy key', async () => {
-      const { game, scene } = await bootCombatGymEnemies('tank');
+    it('boots GymFodderEnemies with an explicit enemy key', async () => {
+      const { game, scene } = await bootCombatGymFodderEnemies('tank');
       games.push(game);
 
       expect(scene.activeEnemyKey).toBe('tank');

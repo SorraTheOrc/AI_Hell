@@ -14,7 +14,7 @@ import {
 } from '../../test/duplicateBodyGuard';
 import { Player } from '../../entities/Player';
 import { Capturer, CapturerState } from '../../entities/Capturer';
-import { GymEnemies } from '../gym/GymEnemies';
+import { GymFodderEnemies } from '../gym/GymFodderEnemies';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
@@ -339,10 +339,10 @@ describe('capture beam — the game and the player-bearing gym both run it', () 
     vi.restoreAllMocks();
   });
 
-  async function bootGymCapturer(): Promise<GymEnemies> {
+  async function bootGymCapturer(): Promise<GymFodderEnemies> {
     resetConfigStore();
     seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
-    class Wrapper extends GymEnemies {
+    class Wrapper extends GymFodderEnemies {
       override init(): void {
         super.init({ enemyKey: 'capturer' });
       }
@@ -350,7 +350,7 @@ describe('capture beam — the game and the player-bearing gym both run it', () 
     Object.defineProperty(Wrapper, 'name', { value: 'CapturerParityGym' });
     const booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
     games.push(booted);
-    const scene = booted.scene as unknown as GymEnemies;
+    const scene = booted.scene as unknown as GymFodderEnemies;
     // Suppress player fire so the test isolates the beam interaction: a live
     // auto-firing player would destroy the 2-HP capturer before the capture
     // hold fills, which is valid gameplay but not what this test asserts.
@@ -398,7 +398,7 @@ describe('capture beam — the game and the player-bearing gym both run it', () 
     return scene;
   }
 
-  it('GymEnemies — the capturer’s beam drags the live player and captures it', async () => {
+  it('GymFodderEnemies — the capturer’s beam drags the live player and captures it', async () => {
     const scene = await bootGymCapturer();
     const player = scene.getPlayer()!;
     player.respawn(480, 270);

@@ -1831,7 +1831,7 @@ export class GymFormationScene<
    * the wipe→countdown path calls it too.
    *
    * Player bullets are intentionally kept — a subclass that wants a clean
-   * slate clears them before calling this (see `GymEnemies._onRespawn`).
+   * slate clears them before calling this (see `GymFodderEnemies._onRespawn`).
    */
   protected respawnFormation(): void {
     // Clear enemy bullets so a stale shot does not instantly hit the player

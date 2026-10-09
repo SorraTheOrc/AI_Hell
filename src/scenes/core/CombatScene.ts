@@ -213,7 +213,7 @@ export abstract class CombatScene<
    * Whether the player is Phase Shift phase-shifted and therefore immune to enemy
    * bullets and enemy body contact. Backed by the shared effects registry,
    * so every `CombatScene` subclass (including `GymFormationScene` and its
-   * `GymEnemies`/`GymBoss`/`GymMinerals` subclasses) inherits the same
+   * `GymFodderEnemies`/`GymBoss`/`GymMinerals` subclasses) inherits the same
    * gating exactly once and cannot diverge.
    */
   protected override isPlayerPhased(): boolean {

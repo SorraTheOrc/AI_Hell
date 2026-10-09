@@ -10,7 +10,7 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { GymMinerals } from './GymMinerals';
-import { GymEnemies } from './GymEnemies';
+import { GymFodderEnemies } from './GymFodderEnemies';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
@@ -133,8 +133,8 @@ describe('GymMinerals', () => {
   });
 
   it('existing gym scenes are seeded with 100 minerals too', async () => {
-    booted = await bootScene([GymEnemies, MineralChoiceScene]);
-    const scene = booted.scene as GymEnemies;
+    booted = await bootScene([GymFodderEnemies, MineralChoiceScene]);
+    const scene = booted.scene as GymFodderEnemies;
 
     expect(scene.getSeededMineralCount()).toBe(100);
     expect(scene.getMinerals().length).toBeGreaterThan(80);

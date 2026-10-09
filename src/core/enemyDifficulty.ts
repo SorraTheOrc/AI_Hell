@@ -76,7 +76,7 @@ const WEIGHT_SUM = Object.values(FACTOR_WEIGHTS).reduce((s, w) => s + w, 0);
  *   normalised(value) = clamp01((value - min) / (max - min)) × 100
  *
  * Ranges cover the full span of values across all seed archetypes plus the
- * slider ranges defined in the gym editor (`GymEnemies.ENEMY_SLIDER_RANGES`).
+ * slider ranges defined in the gym editor (`GymFodderEnemies.ENEMY_SLIDER_RANGES`).
  */
 export const FACTOR_RANGES: Record<string, { min: number; max: number }> = {
   count: { min: 1, max: 200 },

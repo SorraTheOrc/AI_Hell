@@ -2,7 +2,7 @@
  * Shared enemy-fire dispatcher — behaviour tests (AH-0MUII3BBW000XZ46).
  *
  * The dispatcher is the single archetype-key → `tryFire*` mapping used by
- * `PlayScene`, `GymEnemies` and `GymPowerUpsCombat`. Tests assert observable
+ * `PlayScene`, `GymFodderEnemies` and `GymPowerUpsCombat`. Tests assert observable
  * behaviour: which entity method fires for each archetype, how single/array
  * results are normalised, and the unknown-key fallback — never a copy of the
  * production mapping table.

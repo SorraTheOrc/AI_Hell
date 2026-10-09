@@ -1,5 +1,7 @@
 /**
- * Single reusable enemy gym scene (AH-0MTHG5B83007W4W4 + editor panel AH-0MTHG5BIB006PP0P).
+ * Single reusable *fodder* enemy gym scene (AH-0MTHG5B83007W4W4 + editor
+ * panel AH-0MTHG5BIB006PP0P; renamed from `GymEnemies` and given an
+ * in-panel enemy selector in AH-0MV13G5EV008D41E).
  *
  * Parameterized by an `EnemyConfig` key via `init({ enemyKey })`. Resolves
  * the active config through `loadEnemyConfig(enemyKey)` — so an empty or
@@ -7,17 +9,22 @@
  * derives every formation property + entity/shot behaviour from the config
  * and its registries (`FORMATION_BUILDERS`, `createEnemyFromConfig`).
  *
- * Editor panel (plain-DOM, mirrors `GymPlayer`): sliders/selects/colour
- * inputs for movement/shot/visuals/formationKind plus Save / Save As…
- * buttons. Live-applies to in-memory config and to spawned entities where
- * sensible; Save overwrites the active key, Save As sanitizes + validates
- * and creates a new entry. Removed on scene SHUTDOWN to avoid DOM leakage.
+ * Editor panel (plain-DOM, mirrors `GymPlayer`): an enemy-type `<select>`
+ * (every non-boss config, discovery-driven), sliders/selects/colour inputs
+ * for movement/shot/visuals/formationKind plus Save / Save As… buttons.
+ * Choosing a different enemy rebuilds the scene through the shared
+ * `respawnFormation()` clean-slate seam and resyncs every panel control from
+ * the newly selected config (discarding unsaved edits). Live-applies to
+ * in-memory config and to spawned entities where sensible; Save overwrites
+ * the active key, Save As sanitizes + validates and creates a new entry.
+ * Removed on scene SHUTDOWN to avoid DOM leakage.
  */
 
 import Phaser from 'phaser';
 
 import {
   loadEnemyConfig,
+  loadAllEnemyConfigs,
   saveEnemyConfig,
   sanitizeEnemyKey,
   isValidEnemyKey,
@@ -41,14 +48,14 @@ import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
-export const GYM_ENEMIES_DEFAULT_KEY = 'scout';
+export const GYM_FODDER_ENEMIES_DEFAULT_KEY = 'scout';
 
 /**
  * Enemy-config key of the boss archetype. The boss is deliberately excluded
  * from the gym wave-timeout — the operator asked for a timeout on every
  * enemy gym *except* the boss (AH-0MUNR5LM1004B223).
  */
-export const GYM_ENEMIES_BOSS_KEY = 'boss';
+export const GYM_FODDER_ENEMIES_BOSS_KEY = 'boss';
 
 /**
  * Panel DOM ids — stable selectors for tests. The panel is a plain-DOM
@@ -61,6 +68,8 @@ export const ENEMY_SAVE_ID = 'enemy-gym-save';
 export const ENEMY_SAVE_AS_ID = 'enemy-gym-save-as';
 export const ENEMY_SAVE_STATUS_ID = 'enemy-gym-save-status';
 export const ENEMY_SAVE_AS_INPUT_ID = 'enemy-gym-save-as-input';
+/** In-panel enemy-type selector (`<select>`); options are discovery-driven. */
+export const ENEMY_SELECT_ID = 'enemy-gym-select';
 export const ENEMY_RESPAWN_ID = 'enemy-gym-respawn';
 export const ENEMY_TOGGLE_PLAYER_ID = 'enemy-gym-toggle-player';
 /** Live 0–100 archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5). */
@@ -159,20 +168,20 @@ function hexToColor(value: string): number {
   return parseInt(value.replace('#', ''), 16);
 }
 
-type GymEnemiesBullet = FormationSceneBullet;
+type GymFodderEnemiesBullet = FormationSceneBullet;
 
-function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<EnemyEntity, GymEnemiesBullet> {
-  const cfg: EnemyConfig = loadEnemyConfig(enemyKey ?? GYM_ENEMIES_DEFAULT_KEY);
-  const key = cfg.key || enemyKey || GYM_ENEMIES_DEFAULT_KEY;
+function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<EnemyEntity, GymFodderEnemiesBullet> {
+  const cfg: EnemyConfig = loadEnemyConfig(enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY);
+  const key = cfg.key || enemyKey || GYM_FODDER_ENEMIES_DEFAULT_KEY;
   const builder = getFormationBuilder(cfg.formationKind);
 
   // Shared archetype→tryFire dispatch (AH-0MUII3BBW000XZ46): a new
   // archetype is wired once, in `src/entities/enemyFire.ts`.
-  const collectBullets = (entity: EnemyEntity, now: number): GymEnemiesBullet[] =>
-    fireForEnemy<GymEnemiesBullet>(entity, key, now);
+  const collectBullets = (entity: EnemyEntity, now: number): GymFodderEnemiesBullet[] =>
+    fireForEnemy<GymFodderEnemiesBullet>(entity, key, now);
 
   return {
-    sceneKey: 'GymEnemies',
+    sceneKey: 'GymFodderEnemies',
     buildOffsets: builder,
     count: cfg.count,
     spacingX: cfg.spacingX,
@@ -193,7 +202,7 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     // Every enemy gym gets the shared wave-timeout except the boss
     // (AH-0MUNR5LM1004B223). The base class runs the shared
     // major-explosion cue + limiter on expiry.
-    timeoutDuration: key === GYM_ENEMIES_BOSS_KEY ? undefined : WAVE_TIME_LIMIT_SECONDS,
+    timeoutDuration: key === GYM_FODDER_ENEMIES_BOSS_KEY ? undefined : WAVE_TIME_LIMIT_SECONDS,
     // Opt-in power-up layer: one drop at a time on the rules interval,
     // weighted-random ID (Shield–Magnet plus weapon drops) and
     // enemy/player-avoiding placement.
@@ -209,7 +218,7 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     onEntityDestroyed: (entity: EnemyEntity): void => {
       if (!(entity instanceof Asteroid)) return;
       const scene = entity.scene as
-        | GymFormationScene<EnemyEntity, GymEnemiesBullet>
+        | GymFormationScene<EnemyEntity, GymFodderEnemiesBullet>
         | null;
       if (!scene) return;
       splitAsteroid({
@@ -221,18 +230,18 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
   };
 }
 
-export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet> {
-  private pendingKey: string = GYM_ENEMIES_DEFAULT_KEY;
-  private activeConfig: EnemyConfig = loadEnemyConfig(GYM_ENEMIES_DEFAULT_KEY);
+export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEnemiesBullet> {
+  private pendingKey: string = GYM_FODDER_ENEMIES_DEFAULT_KEY;
+  private activeConfig: EnemyConfig = loadEnemyConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY);
   private panel: HTMLDivElement | null = null;
   private _playerEnabled = true;
 
   constructor() {
-    super(enemyConfigToFormationConfig(GYM_ENEMIES_DEFAULT_KEY));
+    super(enemyConfigToFormationConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY));
   }
 
   init(data?: { enemyKey?: string }): void {
-    const key = data?.enemyKey ?? GYM_ENEMIES_DEFAULT_KEY;
+    const key = data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
     this.pendingKey = key;
     this.activeConfig = loadEnemyConfig(key);
     const next = enemyConfigToFormationConfig(key);
@@ -273,6 +282,12 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     difficultyValue.setAttribute('aria-label', 'Enemy difficulty (0-100)');
     difficultyRow.append(difficultyLabel, difficultyValue);
     panel.appendChild(difficultyRow);
+
+    // Enemy-type selector (AH-0MV13G5EV008D41E): one option per non-boss
+    // `EnemyConfig`, resolved from the config store so seed and Save As
+    // entries both appear with no hard-coded key list. Choosing an option
+    // rebuilds the scene and resyncs the rest of the panel.
+    panel.appendChild(this._enemySelectRow());
 
     // Numeric sliders.
     for (const [field, range] of Object.entries(ENEMY_SLIDER_RANGES)) {
@@ -400,6 +415,49 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
     select.addEventListener('change', () => this._onConfigInput(field));
     row.append(label, select);
     return row;
+  }
+
+  /**
+   * The enemy-type selector row (AH-0MV13G5EV008D41E). Options are the
+   * non-boss `EnemyConfig` keys discovered from the config store (seed +
+   * Save As), labelled by `displayName` and sorted alphabetically; the
+   * scene's active key is preselected. The `boss` archetype is deliberately
+   * excluded — it has its own dedicated gym entry.
+   */
+  private _enemySelectRow(): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'gym-panel-row';
+    const label = document.createElement('span');
+    label.textContent = 'enemy';
+    label.className = 'gym-panel-label';
+    const select = document.createElement('select');
+    select.id = ENEMY_SELECT_ID;
+    select.setAttribute('aria-label', 'Enemy type');
+    for (const cfg of this._selectableEnemyConfigs()) {
+      const o = document.createElement('option');
+      o.value = cfg.key;
+      o.textContent = cfg.displayName;
+      select.appendChild(o);
+    }
+    select.value = this.pendingKey;
+    select.addEventListener('change', () => this._onEnemySelect());
+    row.append(label, select);
+    return row;
+  }
+
+  /**
+   * Non-boss configs offered by the enemy selector, sorted alphabetically by
+   * display name then key. Reads the live config store so a Save As entry is
+   * picked up on the next boot without a code change; corrupt storage falls
+   * back to the seed defaults via {@link loadAllEnemyConfigs}.
+   */
+  private _selectableEnemyConfigs(): EnemyConfig[] {
+    return loadAllEnemyConfigs()
+      .filter((cfg) => cfg.key !== GYM_FODDER_ENEMIES_BOSS_KEY)
+      .sort(
+        (a, b) =>
+          a.displayName.localeCompare(b.displayName) || a.key.localeCompare(b.key),
+      );
   }
 
   // ── Panel ↔ config sync ─────────────────────────────────────────
@@ -551,6 +609,49 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
   }
 
   // ── Respawn / Player toggle ─────────────────────────────────────
+
+  /**
+   * Enemy-selector change handler (AH-0MV13G5EV008D41E): swaps the active
+   * archetype to the chosen key, rebuilding the whole scene from that config.
+   * Unknown/empty values are ignored.
+   */
+  private _onEnemySelect(): void {
+    const select = this.panel?.querySelector<HTMLSelectElement>(`#${ENEMY_SELECT_ID}`);
+    const key = select?.value;
+    if (!key) return;
+    this._selectEnemy(key);
+  }
+
+  /**
+   * Rebuilds the scene for `key` through the shared clean-slate seam:
+   *
+   * 1. load the selected `EnemyConfig` and rebuild the formation config
+   *    (entity factory, bullet dispatch, formation builder, timeout);
+   * 2. destroy every live formation entity and the player's in-flight
+   *    bullets via `respawnFormation()` (the same path the Respawn button
+   *    uses — no forked destroy/spawn logic);
+   * 3. reload every panel control from the newly selected config, discarding
+   *    unsaved edits made against the previous enemy.
+   */
+  private _selectEnemy(key: string): void {
+    this.pendingKey = key;
+    this.activeConfig = loadEnemyConfig(key);
+    this.config = enemyConfigToFormationConfig(key);
+
+    // A selection change is a clean slate for the player's shots too (the
+    // shared respawn seam deliberately keeps them).
+    for (const pb of this.playerBullets) pb.destroy();
+    this.playerBullets = [];
+
+    // Shared formation-respawn seam — destroys the old formation and spawns
+    // the newly selected one at the initial geometry.
+    this.respawnFormation();
+
+    // Reload every other control from the new persisted config.
+    this._applyPanelValues(this.activeConfig);
+    const select = this.panel?.querySelector<HTMLSelectElement>(`#${ENEMY_SELECT_ID}`);
+    if (select) select.value = this.activeConfig.key || key;
+  }
 
   private _onRespawn(): void {
     // Read the freshest panel values (sliders may have changed since last input event

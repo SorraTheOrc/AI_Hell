@@ -13,7 +13,7 @@ import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { GymPowerUpsCombat } from '../gym/GymPowerUpsCombat';
-import { GymEnemies } from '../gym/GymEnemies';
+import { GymFodderEnemies } from '../gym/GymFodderEnemies';
 import { GymPowerUpsUtility } from '../gym/GymPowerUpsUtility';
 import { GymWeapons } from '../gym/GymWeapons';
 import {
@@ -878,7 +878,7 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
     expect(definers).toEqual([FIRE_HELPER_FILE]);
   });
 
-  it('PlayScene and GymEnemies consume the dispatcher and keep no local switch', () => {
+  it('PlayScene and GymFodderEnemies consume the dispatcher and keep no local switch', () => {
     // The game's private archetype switch (`_fireFor`) is deleted entirely.
     expect(
       Object.prototype.hasOwnProperty.call(PlayScene.prototype, '_fireFor'),
@@ -886,7 +886,7 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
 
     for (const file of [
       'src/scenes/PlayScene.ts',
-      'src/scenes/gym/GymEnemies.ts',
+      'src/scenes/gym/GymFodderEnemies.ts',
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
       expect(source, `${file} must consume the shared dispatcher`).toContain(
@@ -2174,7 +2174,7 @@ describe('shared enemy fire — cross-scene equivalence for every archetype (AC2
       [PlayScene, GameOverScene, MenuScene],
       'fire-equiv-play-host',
     );
-    const gym = await bootScene([GymEnemies], 'fire-equiv-gym-host');
+    const gym = await bootScene([GymFodderEnemies], 'fire-equiv-gym-host');
     games.push(play, gym);
     const playScene = play.scene;
     const gymScene = gym.scene;
@@ -2240,15 +2240,15 @@ describe('shared mineral-seek seam — game/gym parity for the Harvester (F4)', 
     for (const game of games.splice(0)) game.game.destroy(true);
   });
 
-  it('the Harvester seeks and absorbs identically in PlayScene and GymEnemies', async () => {
+  it('the Harvester seeks and absorbs identically in PlayScene and GymFodderEnemies', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'seek-equiv-play-host',
     );
-    const gym = await bootScene([GymEnemies], 'seek-equiv-gym-host');
+    const gym = await bootScene([GymFodderEnemies], 'seek-equiv-gym-host');
     games.push(play, gym);
     const playScene = play.scene as PlayScene;
-    const gymScene = gym.scene as GymEnemies;
+    const gymScene = gym.scene as GymFodderEnemies;
 
     // Place a deterministic mineral field and a Harvester in each scene.
     // Start the Harvester within absorption reach of the nearest mineral so

@@ -2,7 +2,7 @@
  * Config-aware enemy factory.
  *
  * Maps an `EnemyConfig` to an entity constructor so the single
- * `GymEnemies` scene can spawn any archetype without branching on type.
+ * `GymFodderEnemies` scene can spawn any archetype without branching on type.
  * Kept thin — only a seam for tests and the gym scene; not a full ECS.
  */
 
@@ -113,7 +113,7 @@ export function createEnemyFromConfig(
     // Frogger lane-traffic hazard (classic-arcade archetype,
     // AH-0MV01EPM40008N8T): a fast, non-firing "vehicle" that crosses the
     // arena in a horizontal lane and wraps at the edges. The lane speed is the
-    // config's `driftSpeed`; the GymEnemies spawn uses the default +x
+    // config's `driftSpeed`; the GymFodderEnemies spawn uses the default +x
     // direction (the game's spawner supplies the exact `vx` per lane).
     case 'lane-traffic':
       return new LaneTraffic(scene, {

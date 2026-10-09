@@ -9,6 +9,10 @@
  *  - keyboard navigation: default focus, Tab/arrow cycling with wrap,
  *    Enter/Space activation per row flavour, and shutdown cleanup.
  *
+ * Since AH-0MV13G5EV008D41E the ENEMIES column is a single "Fodder Enemies"
+ * row (booting the reusable `GymFodderEnemies` scene bare) plus the dedicated
+ * `GymBoss` "Boss" row; the Bosses column and the per-config rows are gone.
+ *
  * Discovery runs through the real `import.meta.glob` (Vitest supports it),
  * so these tests exercise the actual files on disk — a new `Gym<Name>.ts`
  * appearing in the folder is picked up without editing the list.
@@ -25,8 +29,11 @@ import {
   GYM_INDEX_TITLE,
   GYM_INDEX_COLUMN_X,
   GYM_INDEX_ENEMIES_HEADER,
-  GYM_INDEX_BOSSES_HEADER,
   GYM_INDEX_DEV_UTILITIES_HEADER,
+  FODDER_ENEMIES_SCENE_KEY,
+  FODDER_ENEMIES_LABEL,
+  BOSS_SCENE_KEY,
+  BOSS_SCENE_LABEL,
 } from './GymIndex';
 import { GymBoss } from './gym/GymBoss';
 import { MenuScene } from './MenuScene';
@@ -81,12 +88,10 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // GymPlayer, GymMinerals, GymPowerUpsUtility, GymWeapons and
     // GymPowerUpsCombat are on disk. GymBoss is excluded from the *plain
     // scene list* (left column) — the real, multi-phase boss is surfaced as
-    // the dedicated "Boss" row in the Bosses column instead
-    // (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Labels strip the leading
-    // "Gym" and are sorted alphabetically. GymEnemies is likewise not listed
-    // as a bare scene — individual enemies appear via listedEnemyScenes (one
-    // entry per EnemyConfig). The 5 legacy per-enemy gyms
-    // (Scout/Diver/Tank/Phaser/Swarm) were retired (AH-0MTHG5JVP006U6K7).
+    // the dedicated "Boss" row in the ENEMIES column instead
+    // (AH-0MUAYB28C004KK7X, AH-0MV13G5EV008D41E). Labels strip the leading
+    // "Gym" and are sorted alphabetically. GymFodderEnemies is likewise not
+    // listed as a bare scene — a single fodder row boots it.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'Centipede',
       'Level',
@@ -107,29 +112,15 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymWeaponLeveling',
       'GymWeapons',
     ]);
-    // Middle column: one config row per non-boss seed archetype, no scene
-    // rows. The `boss` config row is grouped in the Bosses column instead
-    // (AH-0MTV8OV9V002D8B7).
-    const enemyKeys = scene.listedEnemyScenes
-      .filter((s) => s.enemyKey)
-      .map((s) => s.enemyKey)
-      .sort();
-    expect(enemyKeys).toEqual(['asteroid', 'capturer', 'diver', 'ghost-ambush', 'ghost-chase', 'ghost-flank', 'ghost-wander', 'grunt', 'harvester', 'lane-traffic', 'march', 'orbital-strike', 'phaser', 'raider', 'scout', 'swarm', 'tank']);
-    expect(
-      scene.listedEnemyScenes
-        .filter((s) => s.enemyKey)
-        .every((s) => s.key === `GymEnemies:${s.enemyKey}`),
-    ).toBe(true);
-    // AC3 — neither the boss config nor the dedicated boss scene is in ENEMIES.
-    expect(scene.listedEnemyScenes.some((s) => s.enemyKey === 'boss')).toBe(false);
-    expect(scene.listedEnemyScenes.some((s) => s.sceneKey === 'GymBoss')).toBe(false);
-    // Both boss rows live together in the Bosses column, with distinct
-    // labels: "Boss" (the GymBoss scene / real Central AI) and "Boss Swarm"
-    // (the plain `boss` config).
-    expect(scene.listedBossScenes).toEqual([
-      { key: 'GymBoss', label: 'Boss', sceneKey: 'GymBoss' },
-      { key: 'GymEnemies:boss', label: 'Boss Swarm', enemyKey: 'boss' },
+
+    // Middle column: exactly two scene rows — the reusable fodder gym and the
+    // dedicated boss. No per-config rows (the archetype dropdown lives inside
+    // GymFodderEnemies) and no `boss` "Boss Swarm" row.
+    expect(scene.listedEnemyScenes).toEqual([
+      { key: FODDER_ENEMIES_SCENE_KEY, label: FODDER_ENEMIES_LABEL, sceneKey: FODDER_ENEMIES_SCENE_KEY },
+      { key: BOSS_SCENE_KEY, label: BOSS_SCENE_LABEL, sceneKey: BOSS_SCENE_KEY },
     ]);
+    expect(scene.listedEnemyScenes.every((s) => s.enemyKey === undefined)).toBe(true);
 
     // No .test.ts module leaks into the list, and the index itself is not
     // listed (it lives outside the globbed folder).
@@ -139,42 +130,42 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     }
   });
 
-  it('AC1 — the real boss is a "Boss" Bosses-column row that boots GymBoss', async () => {
+  it('AC1 — clicking the "Fodder Enemies" row boots GymFodderEnemies bare (default scout)', async () => {
     const scene = await bootIndex();
 
-    // The index registers every discovered left-column scene so scene.start(key) works.
+    const enemyKeys = scene.listedEnemyScenes.map((e) => e.key);
+    expect(enemyKeys).toContain(FODDER_ENEMIES_SCENE_KEY);
+
+    const enemiesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
+    const fodderRow = findTextAt(scene, FODDER_ENEMIES_LABEL, enemiesCol);
+    expect(fodderRow.getData('sceneKey')).toBe(FODDER_ENEMIES_SCENE_KEY);
+    fodderRow.emit('pointerdown');
+    await new Promise((r) => setTimeout(r, 350));
+
+    expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(false);
+    const gym = booted!.game.scene.getScene(FODDER_ENEMIES_SCENE_KEY) as unknown as {
+      activeEnemyKey: string;
+    };
+    expect(gym.activeEnemyKey).toBe('scout');
+  });
+
+  it('AC1 — the dedicated boss row lives in the ENEMIES column and boots GymBoss', async () => {
+    const scene = await bootIndex();
+
+    // The index registers every discovered scene so scene.start(key) works.
     for (const { key } of scene.listedScenes) {
       expect(booted!.game.scene.getScene(key)).not.toBeNull();
     }
 
-    // The real (multi-phase Central AI) boss is the dedicated GymBoss row in
-    // the Bosses (right-most) column.
-    const bossRow = scene.listedBossScenes.find((s) => s.sceneKey === 'GymBoss');
-    expect(bossRow?.label).toBe('Boss');
-
-    findTextAt(scene, 'Boss', GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses).emit('pointerdown');
+    const enemiesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
+    const bossRow = findTextAt(scene, BOSS_SCENE_LABEL, enemiesCol);
+    expect(bossRow.getData('sceneKey')).toBe(BOSS_SCENE_KEY);
+    bossRow.emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
 
-    expect(booted!.game.scene.isActive('GymBoss')).toBe(true);
-    expect(booted!.game.scene.isActive('GymEnemies')).toBe(false);
-  });
-
-  it('AC1+AC2 — the boss config archetype is labelled "Boss Swarm" and boots GymEnemies with enemyKey boss', async () => {
-    const scene = await bootIndex();
-
-    // Both boss rows are in the Bosses column; the config row is the one
-    // carrying `enemyKey`.
-    const bossConfig = scene.listedBossScenes.find((s) => s.enemyKey === 'boss');
-    expect(bossConfig?.label).toBe('Boss Swarm');
-
-    findTextAt(scene, 'Boss Swarm', GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses).emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
-
-    expect(booted!.game.scene.isActive('GymEnemies')).toBe(true);
-    const enemies = booted!.game.scene.getScene('GymEnemies') as unknown as {
-      activeEnemyKey: string;
-    };
-    expect(enemies.activeEnemyKey).toBe('boss');
+    expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(false);
   });
 });
 
@@ -204,7 +195,8 @@ describe('GymIndex — back to index from a gym scene (AC5)', () => {
     expect(booted!.game.scene.isActive('GymBoss')).toBe(false);
   });
 });
-describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
+
+describe('GymIndex — layout (AH-0MV13G5EV008D41E)', () => {
   let booted: BootedGame | null = null;
   afterEach(() => {
     booted?.game.destroy(true);
@@ -214,100 +206,37 @@ describe('GymIndex — enemy config discovery (AH-0MTHG5BSP006A81R)', () => {
     document.getElementById('gym-config-panel')?.remove();
   });
 
-  it('routes an enemy entry to GymEnemies with the correct enemyKey', async () => {
-    booted = await bootScene([GymIndex]);
-    const idx = booted.scene as GymIndex;
-    const scout = idx.listedEnemyScenes.find((s) => s.enemyKey === 'scout');
-    expect(scout).toBeDefined();
-    // Enemy "Scout" row is unique after retirement; bare GymScout no longer exists.
-    const matches = (idx.children.list as Phaser.GameObjects.Text[]).filter(
-      (c) => c instanceof Phaser.GameObjects.Text && c.text === scout!.label,
-    );
-    expect(matches.length).toBeGreaterThanOrEqual(1);
-    const enemyRow =
-      matches.find((c) => (c as unknown as { getData?: (k: string) => unknown }).getData?.('enemyKey') === 'scout') ??
-      matches[0]!;
-    enemyRow.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
-    expect(booted.game.scene.isActive('GymEnemies')).toBe(true);
-  });
-
-  it('Save As enemy appears on next index load without code changes', async () => {
-    const { DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
-    const { seedConfigStore } = await import('../core/configStore');
-    seedConfigStore([
-      ...Object.values(DEFAULT_ENEMY_CONFIGS),
-      { ...DEFAULT_ENEMY_CONFIGS.scout, key: 'zzz-custom', displayName: 'Zzz Custom' },
-    ]);
-    booted = await bootScene([GymIndex]);
-    const idx = booted.scene as GymIndex;
-    expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'zzz-custom')).toBe(true);
-    expect(idx.listedEnemyScenes.some((s) => s.label === 'Zzz Custom')).toBe(true);
-  });
-
-  it('AC2 — a stale persisted boss displayName does not shadow the "Boss Swarm" label', async () => {
-    // The gym panel's Save persists the whole config (including displayName).
-    // A config saved by an older build labelled the `boss` seed "Boss"; that
-    // stale label must not shadow the registry rename, or the index would show
-    // two identical "Boss" rows (AH-0MTV8OV9V002D8B7).
-    const { DEFAULT_ENEMY_CONFIGS } = await import('../core/enemyConfig');
-    const { seedConfigStore } = await import('../core/configStore');
-    seedConfigStore([
-      ...Object.values(DEFAULT_ENEMY_CONFIGS).filter((c) => c.key !== 'boss'),
-      { ...DEFAULT_ENEMY_CONFIGS.boss, displayName: 'Boss' },
-    ]);
-    booted = await bootScene([GymIndex]);
-    const idx = booted.scene as GymIndex;
-    const bossConfig = idx.listedBossScenes.find((s) => s.enemyKey === 'boss');
-    expect(bossConfig?.label).toBe('Boss Swarm');
-    // The dedicated scene row stays "Boss" — the two labels must remain distinct.
-    expect(idx.listedBossScenes.find((s) => s.sceneKey === 'GymBoss')?.label).toBe('Boss');
-  });
-
-  it('an empty registry does not crash the index (falls back to seed keys)', async () => {
-    const { resetConfigStore } = await import('../core/configStore');
-    resetConfigStore();
-    booted = await bootScene([GymIndex]);
-    const idx = booted.scene as GymIndex;
-    expect(idx.listedEnemyScenes.length).toBeGreaterThan(0);
-    expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'scout')).toBe(true);
-  });
-
-  it('AC5 — renders a three-column layout (scenes | ENEMIES | Bosses)', async () => {
+  it('AC5 — renders a three-column layout (scenes | ENEMIES | Dev Utilities)', async () => {
     booted = await bootScene([GymIndex]);
     const idx = booted.scene as GymIndex;
     const scenesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.scenes;
     const enemiesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
-    const bossesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses;
+    const devCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
 
-    // AC2/AC3 — the real boss row is in the right-most Bosses column and
-    // carries no enemyKey (it boots the GymBoss scene directly).
-    const bossSceneRow = findTextAt(idx, 'Boss', bossesCol);
-    expect(bossSceneRow.getData('sceneKey')).toBe('GymBoss');
-    expect(bossSceneRow.getData('enemyKey')).toBeUndefined();
+    // Both ENEMIES rows sit in the middle column and boot their scene directly.
+    expect(findTextAt(idx, FODDER_ENEMIES_LABEL, enemiesCol).getData('sceneKey')).toBe(
+      FODDER_ENEMIES_SCENE_KEY,
+    );
+    expect(findTextAt(idx, BOSS_SCENE_LABEL, enemiesCol).getData('sceneKey')).toBe(BOSS_SCENE_KEY);
 
-    // AC1 — the `boss` config row is grouped in the Bosses column too and
-    // still routes through GymEnemies via enemyKey.
-    const bossConfigRow = findTextAt(idx, 'Boss Swarm', bossesCol);
-    expect(bossConfigRow.getData('enemyKey')).toBe('boss');
-
-    // AC3 — the boss config is absent from the ENEMIES column (no row with
-    // that enemyKey sits at the middle column X).
-    expect(idx.listedEnemyScenes.some((s) => s.enemyKey === 'boss')).toBe(false);
-
-    // A regular enemy config (Scout) is in the ENEMIES column.
-    expect(findTextAt(idx, 'Scout', enemiesCol)).toBeDefined();
-
-    // Headers sit above their columns.
+    // Headers sit above their columns; the Bosses header is gone entirely.
     expect(findTextAt(idx, GYM_INDEX_ENEMIES_HEADER, enemiesCol)).toBeDefined();
-    expect(findTextAt(idx, GYM_INDEX_BOSSES_HEADER, bossesCol)).toBeDefined();
+    expect(findTextAt(idx, GYM_INDEX_DEV_UTILITIES_HEADER, devCol)).toBeDefined();
+    expect(
+      (idx.children.list as Phaser.GameObjects.Text[]).some(
+        (c) => c instanceof Phaser.GameObjects.Text && c.text === 'Bosses',
+      ),
+    ).toBe(false);
+
+    // No per-enemy config rows remain in the index.
+    expect(idx.listedEnemyScenes.some((s) => s.enemyKey !== undefined)).toBe(false);
 
     // A plain scene (Minerals) is in the left column.
     expect(findTextAt(idx, 'Minerals', scenesCol)).toBeDefined();
 
     // Columns are strictly ordered left-to-right.
     expect(scenesCol).toBeLessThan(enemiesCol);
-    expect(enemiesCol).toBeLessThan(bossesCol);
+    expect(enemiesCol).toBeLessThan(devCol);
   });
 });
 
@@ -338,8 +267,8 @@ describe('GymIndex — Dev Utilities section (AH-0MUGXDVPH005TIZL)', () => {
     const row = findTextAt(idx, 'CurveSequencer', devCol);
     expect(row.getData('sceneKey')).toBe('GymCurveSequencer');
 
-    // The Dev Utilities column sits to the right of the other three.
-    expect(devCol).toBeGreaterThan(GAME_WIDTH * GYM_INDEX_COLUMN_X.bosses);
+    // The Dev Utilities column sits to the right of the other two.
+    expect(devCol).toBeGreaterThan(GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies);
   });
 
   it('AC2 — clicking the Dev Utilities row launches GymCurveSequencer', async () => {
@@ -428,7 +357,6 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     return [
       ...scene.listedScenes.map((s) => s.label),
       ...scene.listedEnemyScenes.map((s) => s.label),
-      ...scene.listedBossScenes.map((s) => s.label),
       ...scene.listedDevUtilityScenes.map((s) => s.label),
     ];
   }
@@ -445,7 +373,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     const order = readingOrder(scene);
 
     expect(order.length).toBeGreaterThan(0);
-    // Every rendered row across all four columns is registered.
+    // Every rendered row across all three columns is registered.
     expect(scene.getFocusControlCount()).toBe(order.length);
     expect(focusableRows(scene)).toHaveLength(order.length);
 
@@ -509,41 +437,41 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
   });
 
-  it('AC3 — Space activates a focused enemy-config row via GymEnemies + enemyKey', async () => {
+  it('AC3 — Space activates the focused "Fodder Enemies" row via GymFodderEnemies', async () => {
     const scene = await bootIndex();
-    const enemyIndex = scene.listedEnemyScenes.findIndex((e) => e.enemyKey === 'scout');
+    const enemyIndex = scene.listedEnemyScenes.findIndex(
+      (e) => e.key === FODDER_ENEMIES_SCENE_KEY,
+    );
     expect(enemyIndex).toBeGreaterThanOrEqual(0);
-    const enemy = scene.listedEnemyScenes[enemyIndex];
     const targetIndex = scene.listedScenes.length + enemyIndex;
 
     for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe(enemy.label);
+    expect(scene.getFocusedLabel()).toBe(FODDER_ENEMIES_LABEL);
 
     pressKey(scene, { key: ' ' });
     await new Promise((r) => setTimeout(r, 350));
 
-    expect(booted!.game.scene.isActive('GymEnemies')).toBe(true);
-    const enemies = booted!.game.scene.getScene('GymEnemies') as unknown as {
+    expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(true);
+    const gym = booted!.game.scene.getScene(FODDER_ENEMIES_SCENE_KEY) as unknown as {
       activeEnemyKey: string;
     };
-    expect(enemies.activeEnemyKey).toBe('scout');
+    expect(gym.activeEnemyKey).toBe('scout');
   });
 
   it('AC3 — Enter activates the focused dedicated boss (GymBoss) row', async () => {
     const scene = await bootIndex();
-    const bossIndex = scene.listedBossScenes.findIndex((e) => e.sceneKey === 'GymBoss');
+    const bossIndex = scene.listedEnemyScenes.findIndex((e) => e.sceneKey === BOSS_SCENE_KEY);
     expect(bossIndex).toBeGreaterThanOrEqual(0);
-    const targetIndex =
-      scene.listedScenes.length + scene.listedEnemyScenes.length + bossIndex;
+    const targetIndex = scene.listedScenes.length + bossIndex;
 
     for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe('Boss');
+    expect(scene.getFocusedLabel()).toBe(BOSS_SCENE_LABEL);
 
     pressKey(scene, { key: 'Enter' });
     await new Promise((r) => setTimeout(r, 350));
 
-    expect(booted!.game.scene.isActive('GymBoss')).toBe(true);
-    expect(booted!.game.scene.isActive('GymEnemies')).toBe(false);
+    expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(false);
   });
 
   it('AC3 — Enter activates the focused Dev Utilities row directly', async () => {
@@ -552,8 +480,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(dev).toBeDefined();
     const targetIndex =
       scene.listedScenes.length +
-      scene.listedEnemyScenes.length +
-      scene.listedBossScenes.length;
+      scene.listedEnemyScenes.length;
 
     for (let i = 0; i < targetIndex; i++) pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe(dev!.label);
@@ -582,4 +509,3 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     }
   });
 });
-
