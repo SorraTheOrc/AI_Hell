@@ -914,7 +914,7 @@ src/
 │   │                      ranged bomb pulse); WaveManager-driven levels 1–5 +
 │   │                      Central AI boss, player/collisions/power-ups/HUD, transitions
 │   │                      to GameOverScene on win or loss; **ESC pauses** the run and
-│   │                      opens PauseScene (movement/layer-drop/pause keys are rebindable);
+│   │                      opens PauseScene (movement/pause keys are rebindable);
 │   │                      mineral drops/hold and the hold-full power-up choice overlay
 │   ├── MineralChoiceScene.ts — Modal hold-full power-up choice (implemented): 3 distinct
 │   │                      options, paused SceneManager overlay; the only selection contract is
@@ -1145,7 +1145,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Key | Content |
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
-| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, layer-drop, pause toggle). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
+| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.

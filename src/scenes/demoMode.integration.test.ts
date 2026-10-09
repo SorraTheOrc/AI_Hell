@@ -543,13 +543,15 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
       const input = botInputOf(play);
       expect(input).not.toBeNull();
-      // The asteroid input shape is exactly W/A/D — no four-directional and
-      // therefore no down/S field at all.
+      // The asteroid input carries exactly W/A/D plus an explicit
+      // reverse:false — no four-directional and therefore no down/S field.
       expect(Object.keys(input!).sort()).toEqual([
         'forward',
+        'reverse',
         'turnLeft',
         'turnRight',
       ]);
+      expect((input as { reverse?: boolean }).reverse).toBe(false);
       expect('down' in input!).toBe(false);
       expect('up' in input!).toBe(false);
     });

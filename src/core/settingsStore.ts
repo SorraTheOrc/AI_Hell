@@ -20,7 +20,6 @@ export type ActionName =
   | 'moveDown'
   | 'moveLeft'
   | 'moveRight'
-  | 'layerDrop'
   | 'pauseToggle';
 
 /**
@@ -46,10 +45,6 @@ export const DEFAULT_BINDINGS: Record<ActionName, string> = {
   moveDown: 's',
   moveLeft: 'a',
   moveRight: 'd',
-  // `layerDrop` is retained but unwired (Teleport is automatic since
-  // AH-0MUZE4AIP009HZWC); the reverse-thruster item AH-0MUZCSB4B00107RG
-  // will reuse or remove it.
-  layerDrop: 's', // intentional overlap: same as moveDown
   pauseToggle: 'Escape',
 };
 
@@ -66,25 +61,8 @@ export const ACTION_NAMES: ActionName[] = [
   'moveDown',
   'moveLeft',
   'moveRight',
-  'layerDrop',
   'pauseToggle',
 ];
-
-/**
- * Binding pairs the shipped defaults intentionally share (GDD §5.1 / plan
- * decision: `S` is both move-down and layer-drop). These overlaps are not
- * treated as conflicts by `findConflict()`.
- */
-const INTENTIONAL_OVERLAPS: ReadonlyArray<[ActionName, ActionName]> = [
-  ['moveDown', 'layerDrop'],
-];
-
-/** Whether the given pair is one of the shipped defaults' intentional overlaps. */
-function isIntentionalOverlap(a: ActionName, b: ActionName): boolean {
-  return INTENTIONAL_OVERLAPS.some(
-    ([x, y]) => (x === a && y === b) || (x === b && y === a),
-  );
-}
 
 /**
  * Returns a complete, valid binding map. Missing entries, non-string values
@@ -120,8 +98,7 @@ export function keyFor(
 
 /**
  * Returns the first other action whose current binding shares `key` with
- * `action`, or `null` when the key is free. The intentional default overlap
- * (`S` shared by move-down and layer-drop) is never reported as a conflict.
+ * `action`, or `null` when the key is free.
  */
 export function findConflict(
   bindings: Record<ActionName, string>,
@@ -131,7 +108,6 @@ export function findConflict(
   for (const other of ACTION_NAMES) {
     if (other === action) continue;
     if (bindings[other] !== key) continue;
-    if (isIntentionalOverlap(action, other)) continue;
     return other;
   }
   return null;

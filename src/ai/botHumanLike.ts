@@ -32,8 +32,8 @@
  *   The precise bearing is used when present, so the ship points straight at
  *   its target instead of snapping between the four cardinals; the cardinal
  *   booleans remain the fallback for callers without a precise bearing.  The
- *   emitted `AsteroidsInput` has no reverse key at all, so W/A/D is a
- *   structural guarantee rather than a clamp.
+ *   emitted `AsteroidsInput` always carries `reverse: false`, so W/A/D is an
+ *   explicit structural guarantee rather than a clamp (AC6).
  *
  * The governor holds the committed *intent* for the human reaction window but
  * re-resolves it against the ship's **current** facing every tick, so the
@@ -85,6 +85,7 @@ const IDLE_ASTEROIDS_INPUT: AsteroidsInput = Object.freeze({
   forward: false,
   turnLeft: false,
   turnRight: false,
+  reverse: false,
 });
 
 // ── Tunables (single source) ─────────────────────────────────────────
@@ -100,8 +101,8 @@ export interface BotHumanInputTunables {
   /**
    * Whether the bot may use the **down** (S) direction in four-directional
    * mode. Humans drive with W/A/D only, so this defaults to false. In
-   * `asteroids` mode the input shape has no down field at all, so the bot
-   * never reverses regardless of this flag.
+   * `asteroids` mode the bot emits `reverse: false` on every input, so it
+   * never reverses regardless of this flag (AC6).
    */
   allowDown: boolean;
   /**
@@ -207,8 +208,9 @@ export interface BotControlContext {
  * ship's `AsteroidsInput` (W/A/D): rotate toward the desired direction until
  * the ship is within `toleranceRad` of it, then thrust forward.
  *
- * The result never contains a reverse key — `AsteroidsInput` has none — and
- * an idle intent (all four directions false) yields an all-false input.
+ * Every result carries `reverse: false`, so the bot provably never emits the
+ * retro-thrust control (AC6), and an idle intent (all four directions false)
+ * yields an all-false input.
  *
  * @param intent — the bot's four-directional steering intent.
  * @param facing — the ship's current facing angle in radians.
@@ -236,12 +238,18 @@ export function toAsteroidsInput(
   if (Math.abs(error) <= toleranceRad) {
     // Aimed at the target: thrust unless the forward model says coasting
     // (braking) is required to avoid overshooting.
-    return { forward: intent.thrust !== false, turnLeft: false, turnRight: false };
+    return {
+      forward: intent.thrust !== false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: false,
+    };
   }
   return {
     forward: false,
     turnLeft: error < 0,
     turnRight: error > 0,
+    reverse: false,
   };
 }
 

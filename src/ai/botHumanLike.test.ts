@@ -142,7 +142,7 @@ describe('BotInputGovernor — human key set (AC2)', () => {
 });
 
 describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
-  /** Builds an asteroid input with only the named controls set. */
+  /** Builds an asteroid input with only the named controls set (reverse always false). */
   function asteroid(
     ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
   ): AsteroidsInput {
@@ -150,6 +150,7 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -206,12 +207,15 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
         input('right'),
       ]) {
         const out = toAsteroidsInput(intent, facing);
-        // The asteroid input shape has exactly W/A/D — no reverse field.
+        // The asteroid input carries exactly W/A/D plus an explicit
+        // reverse:false — the bot never emits a reverse control (AC6).
         expect(Object.keys(out).sort()).toEqual([
           'forward',
+          'reverse',
           'turnLeft',
           'turnRight',
         ]);
+        expect(out.reverse).toBe(false);
         // A turning command is never paired with forward thrust.
         if (out.turnLeft || out.turnRight) expect(out.forward).toBe(false);
       }
@@ -230,6 +234,7 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
       forward: true,
       turnLeft: false,
       turnRight: false,
+      reverse: false,
     });
     // The asteroid input has no four-directional fields at all.
     expect('up' in committed).toBe(false);
@@ -255,7 +260,12 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
         scheme: 'asteroids',
         facing: 0,
       }),
-    ).toEqual({ forward: false, turnLeft: false, turnRight: true });
+    ).toEqual({
+      forward: false,
+      turnLeft: false,
+      turnRight: true,
+      reverse: false,
+    });
   });
 
   it('holds the committed asteroid input until the reaction window elapses', () => {
@@ -269,19 +279,34 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
     // First call commits immediately: idle steering → no thrust.
     expect(
       governor.update(input(), dt, { scheme: 'asteroids', facing: 0 }),
-    ).toEqual({ forward: false, turnLeft: false, turnRight: false });
+    ).toEqual({
+      forward: false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: false,
+    });
 
     // Inside the reaction window a new "go right" intent is ignored.
     for (let i = 0; i < 4; i += 1) {
       expect(
         governor.update(input('right'), dt, { scheme: 'asteroids', facing: 0 }),
-      ).toEqual({ forward: false, turnLeft: false, turnRight: false });
+      ).toEqual({
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: false,
+      });
     }
 
     // At 100 ms the latest intent commits as forward thrust.
     expect(
       governor.update(input('right'), dt, { scheme: 'asteroids', facing: 0 }),
-    ).toEqual({ forward: true, turnLeft: false, turnRight: false });
+    ).toEqual({
+      forward: true,
+      turnLeft: false,
+      turnRight: false,
+      reverse: false,
+    });
   });
 });
 
@@ -301,6 +326,7 @@ describe('toAsteroidsInput — precise bearing (rejection)', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -355,6 +381,7 @@ describe('BotInputGovernor — closed-loop aiming (rejection)', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -412,6 +439,7 @@ describe('forward-model throttle (AC10)', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 

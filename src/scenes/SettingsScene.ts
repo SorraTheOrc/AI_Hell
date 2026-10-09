@@ -69,7 +69,6 @@ const ACTION_DISPLAY_NAMES: Record<ActionName, string> = {
   moveDown: 'Move Down',
   moveLeft: 'Move Left',
   moveRight: 'Move Right',
-  layerDrop: 'Layer Drop',
   pauseToggle: 'Pause',
 };
 

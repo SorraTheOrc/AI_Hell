@@ -283,12 +283,11 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
   it('AC1 — lists every remappable action with its current binding', async () => {
     const scene = await bootSettings();
     const bindings = scene.getBindings();
-    for (const action of ['moveUp', 'moveDown', 'moveLeft', 'moveRight', 'layerDrop', 'pauseToggle'] as const) {
+    for (const action of ['moveUp', 'moveDown', 'moveLeft', 'moveRight', 'pauseToggle'] as const) {
       expect(bindings[action]).toBe(DEFAULT_BINDINGS[action]);
     }
     // The rendered rows reflect the bindings.
     expect(scene.getBinding('moveUp')).toBe('w');
-    expect(scene.getBinding('layerDrop')).toBe('s');
     expect(scene.getBinding('pauseToggle')).toBe('Escape');
   });
 
@@ -332,17 +331,6 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
     expect(scene.getBinding('moveUp')).toBe('d');
     expect(scene.getConflictMessage()).toContain('Move Right');
     expect(loadSettings().bindings.moveUp).toBe('d');
-  });
-
-  it('AC3 — the intentional S overlap is not treated as a conflict', async () => {
-    const scene = await bootSettings();
-
-    // moveDown and layerDrop both default to 's' — an intentional overlap.
-    const conflict = scene.rebind('layerDrop', 's');
-
-    expect(conflict).toBeNull();
-    expect(scene.getConflictMessage()).toBe('');
-    expect(scene.getBinding('layerDrop')).toBe('s');
   });
 
   // ── AC4 — reset ─────────────────────────────────────────────────

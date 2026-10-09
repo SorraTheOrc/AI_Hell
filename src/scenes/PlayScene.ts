@@ -735,7 +735,7 @@ export class PlayScene extends CombatScene<
     // handles like the player's ship rather than a four-directional impostor
     // (AH-0MUX2NENC008AHOQ producer review).
     this.cursors = this.input.keyboard?.createCursorKeys();
-    // Movement / layer-drop / pause keys come from `ai_hell_settings`
+    // Movement / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
     this._applyBindings();
     // Shield bubble — rendered above gameplay (below the HUD).
@@ -821,9 +821,8 @@ export class PlayScene extends CombatScene<
    * keys for movement and the pause toggle. Arrow keys remain
    * always-available movement defaults. Called on create and again on RESUME
    * so a rebind takes effect immediately on return to the game. Teleport is
-   * automatic (AH-0MUZE4AIP009HZWC), so the `layerDrop` action is retained
-   * in the settings model but no longer wired here — S / ↓ are freed for
-   * movement/reverse thrust.
+   * automatic (AH-0MUZE4AIP009HZWC), so no layer-drop action exists and
+   * S / ↓ are free for reverse thrust.
    */
   private _applyBindings(): void {
     const bindings = resolveBindings(loadSettings().bindings);

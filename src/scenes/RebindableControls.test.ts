@@ -5,8 +5,8 @@
  *
  * Covers: PlayScene movement/pause keys read from `ai_hell_settings`
  * (defaults unchanged), rebound keys drive the ship, old keys no longer
- * trigger, the layer-drop action being retained in settings but no longer
- * wired to Teleport (automatic since AH-0MUZE4AIP009HZWC), menu navigation
+ * trigger, the dead layer-drop action having been removed (no longer
+ * wired to Teleport, which is automatic since AH-0MUZE4AIP009HZWC), menu navigation
  * using the configured up/down/pause keys, and the invalid-binding fallback.
  */
 
@@ -16,8 +16,6 @@ import Phaser from 'phaser';
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import {
   DEFAULT_BINDINGS,
-  loadSettings,
-  resolveBindings,
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
@@ -42,7 +40,6 @@ const REBOUND: Record<ActionName, string> = {
   moveDown: 'k',
   moveLeft: 'j',
   moveRight: 'l',
-  layerDrop: 'o',
   pauseToggle: 'p',
 };
 
@@ -114,9 +111,8 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     // The old WASD keys are no longer wired to the movement handler.
     expect(internals.wasd!.W.keyCode).not.toBe(KC.W);
     expect(internals.wasd!.S.keyCode).not.toBe(KC.S);
-    // The layerDrop binding is retained in the settings model (unwired,
-    // reserved for the reverse-thruster item) but the scene holds no key.
-    expect(resolveBindings(loadSettings().bindings).layerDrop).toBe('o');
+    // The dead layer-drop action was removed entirely; the scene holds no
+    // separate Teleport/layer key.
     expect(
       (scene as unknown as Record<string, unknown>).teleportKey,
     ).toBeUndefined();
@@ -158,7 +154,7 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     expect(scene.isPaused()).toBe(false);
   });
 
-  // ── AC4 — layerDrop retained in settings, no longer wired to Teleport ──
+  // ── AC4 — no layer-drop action; S / ↓ no longer wired to Teleport ──
 
   it('AC4 — S / ↓ no longer consume a Teleport stack (automatic only)', async () => {
     persistBindings(REBOUND);
@@ -173,10 +169,9 @@ describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () =>
     scene.tick(0.016);
     expect(registry.teleportStacks()).toBe(1);
 
-    // The layerDrop action still exists in settings, but no key consumes it
-    // and the scene holds no Teleport key. Pressing S / ↓ / the rebound
-    // layerDrop key leaves the stored stack untouched (no danger here).
-    expect(resolveBindings(loadSettings().bindings).layerDrop).toBe('o');
+    // The dead layer-drop action has been removed from the settings model,
+    // and the scene holds no Teleport key. Pressing S / ↓ / the formerly
+    // reserved 'o' key leaves the stored stack untouched (no danger here).
     const asRecord = scene as unknown as Record<string, unknown>;
     expect(asRecord.teleportKey).toBeUndefined();
     expect(asRecord.downKey).toBeUndefined();
