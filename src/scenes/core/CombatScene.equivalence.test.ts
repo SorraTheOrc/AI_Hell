@@ -2071,6 +2071,11 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   // finalisation (destruction audio + `onEnemyDestroyed`) is defined once in
   // the shared core; a scene must not re-implement it.
   ['finaliseEnemyKill', 'src/scenes/core/CombatScene.ts'],
+  // Reverse-thruster engine selection (AH-0MV13LYCL006LB6J /
+  // AH-0MV13LZO2007ANRP): the engine the Asteroids scheme fires — including
+  // the nose retro-thruster while reversing — is selected by the shared
+  // movement model, so a scene can never re-implement the reverse VFX wiring.
+  ['getEngineActivity', 'src/utils/movementModel.ts'],
   ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
   ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
 ];

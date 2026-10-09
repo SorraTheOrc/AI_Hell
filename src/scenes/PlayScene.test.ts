@@ -241,6 +241,29 @@ function damageBossPhase(
 }
 
 /**
+ * Restricts a scene to a single enemy and disables auto-fire, so a spawned
+ * test bullet can only hit the intended target. Returns a restore function.
+ *
+ * Without this the player's auto-fire and other overlapping enemies can
+ * absorb or add kills, making wave-accounting assertions non-deterministic
+ * (AH-0MV1EN1NS000QLBK).
+ */
+function isolateEnemyForKill(scene: PlayScene, enemy: unknown): () => void {
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [enemy];
+  isolated.autoFireEnabled = () => false;
+  return () => {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  };
+}
+
+/**
  * Walks the run to the boss encounter by repeatedly letting the wave timer
  * expire, so every survivor is carried over each wave/level boundary
  * (AH-0MUNS3ZQ1002DJ9S). No life penalty applies; the high life count just
@@ -3687,11 +3710,17 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
       expect(found[0].y).toBeLessThanOrEqual(GAME_HEIGHT);
 
       // Killing it (five player bullets through the shared collision path)
-      // advances wave accounting exactly once.
+      // advances wave accounting exactly once. Isolate the kill so neither
+      // auto-fire nor an overlapping Scout can absorb a bullet.
       const aliveBeforeKill = wm.enemiesAlive;
-      for (let hit = 0; hit < 5; hit++) {
-        scene.spawnPlayerBullet(found[0].x, found[0].y, 0, 0);
-        scene.tick(0.016);
+      const restoreKill = isolateEnemyForKill(scene, found[0]);
+      try {
+        for (let hit = 0; hit < 5; hit++) {
+          scene.spawnPlayerBullet(found[0].x, found[0].y, 0, 0);
+          scene.tick(0.016);
+        }
+      } finally {
+        restoreKill();
       }
       expect(found[0].alive).toBe(false);
       expect(wm.enemiesAlive).toBe(aliveBeforeKill - 1);
@@ -4590,8 +4619,15 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
 
     const victim = liveGhosts(scene)[0];
     const before = wm.enemiesAlive;
-    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
-    scene.tick(0.001);
+    // Isolate the kill so auto-fire or an overlapping pursuer cannot add a
+    // second kill and double-decrement the wave accounting (AH-0MV1EN1NS000QLBK).
+    const restoreKill = isolateEnemyForKill(scene, victim);
+    try {
+      scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+      scene.tick(0.001);
+    } finally {
+      restoreKill();
+    }
     expect(victim.alive).toBe(false);
     expect(wm.enemiesAlive).toBe(before - 1);
   });
