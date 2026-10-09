@@ -605,6 +605,9 @@ export function expandWeaponPattern(
  * - `offsets` — expanded by `projectileCount`/`spreadAngle`,
  * - `bulletLifetime` — range multiplier,
  * - `levelBulletSize` — bullet-radius upgrade multiplier,
+ * - `piercing` — the base pass-through budget grown by the level's
+ *   `piercing` upgrade and clamped to its spec cap (weapons with a base
+ *   `piercing` only, e.g. the wave laser; AH-0MV1BIUSJ0090W92),
  * - `aoe.radius` — area multiplier for AOE weapons.
  *
  * `bulletColor`, `bulletShape` and `sideOffsets` are carried through from the
@@ -631,6 +634,16 @@ export function resolveWeaponDefinition(
     bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
     levelBulletSize: stats.bulletSize,
   };
+  // Piercing weapons (the R-Type wave laser) opt in with a base budget. Their
+  // effective pass-through grows with the level-resolved `piercing` upgrade,
+  // clamped to the variable's finite spec cap so the budget stays within it
+  // (AH-0MV1BIUSJ0090W92). Weapons without a base budget never gain one.
+  if (base.piercing !== undefined) {
+    leveled.piercing = Math.min(
+      WEAPON_UPGRADE_SPECS.piercing.cap,
+      base.piercing + stats.piercing,
+    );
+  }
   // An expanded pattern is an angular fan; the base parallel offsets no
   // longer line up with the new bullet count.
   delete leveled.sideOffsets;

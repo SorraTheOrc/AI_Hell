@@ -6,6 +6,7 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { PLAYER_BULLET_SPEED } from '../../core/constants';
+import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
@@ -2474,6 +2475,110 @@ describe('CombatScene — shared AOE dispatch/effect is defined once (F6 AC1)', 
           (CombatScene.prototype as unknown as Record<string, unknown>)[method],
         );
       }
+    }
+  });
+});
+
+// ── R-Type wave-laser piercing parity (AH-0MV1BIUSJ0090W92) ──────────
+
+describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  /** Creates a real game enemy on the shared structural contract. */
+  function makeGameEnemy(
+    scene: Phaser.Scene,
+    key: string,
+    x: number,
+    y: number,
+  ): ReturnType<typeof createEnemyFromConfig> {
+    return createEnemyFromConfig(scene, loadEnemyConfig(key), x, y, {
+      row: 0,
+      col: 0,
+    });
+  }
+
+  it('a piercing beam passes through a line of enemies identically in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'piercing-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'piercing-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Clear any auto-fired bullets so only the injected beam collides.
+    (playScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+    (gymScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+
+    // Game: two stationary enemies overlapping the injection point.
+    const gameEnemies = [
+      makeGameEnemy(playScene, 'scout', 700, 400),
+      makeGameEnemy(playScene, 'scout', 706, 400),
+    ];
+    for (const enemy of gameEnemies) playScene.registerEnemy(enemy, 'scout');
+
+    // Gym: reposition its two formation enemies onto the same points.
+    const gymEnemies = (
+      gymScene as unknown as { getEnemyEntities(): EquivEnemy[] }
+    ).getEnemyEntities();
+    expect(gymEnemies).toHaveLength(2);
+    gymEnemies[0].setPosition(700, 400);
+    gymEnemies[1].setPosition(706, 400);
+
+    // Park both ships far away so ram/player-hit passes stay inert.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+
+    const spawnBeam = (owner: PlayScene | EquivGymScene) =>
+      owner.spawnPlayerBullet(
+        703,
+        400,
+        PLAYER_BULLET_SPEED,
+        0,
+        0x3366ff,
+        2,
+        3,
+        WEAPON_CATALOGUE.wave_laser.piercing,
+      );
+    const gameBeam = spawnBeam(playScene);
+    const gymBeam = spawnBeam(gymScene);
+
+    // Run the shared collision pass directly in both scenes.
+    (playScene as unknown as { _handleCollisions(): void })._handleCollisions();
+    (gymScene as unknown as { _handleCollisions(): void })._handleCollisions();
+
+    // The same shared code leaves the same outcome in both scenes.
+    expect(gameEnemies.every((enemy) => !enemy.alive)).toBe(true);
+    expect(gymEnemies.every((enemy) => !enemy.alive)).toBe(true);
+    // Base pierce 3 survived both overlapping enemies (budget 3 → 1) in each.
+    expect(gameBeam.piercing).toBe(1);
+    expect(gymBeam.piercing).toBe(1);
+    expect(playScene.getPlayerBullets()).toContain(gameBeam);
+    expect(gymScene.getPlayerBullets()).toContain(gymBeam);
+  });
+
+  it('the game and GymWeapons both resolve piercing through the shared CombatScene hook', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, 'onPlayerBulletHitsEnemy'),
+        `${name}.prototype must not define onPlayerBulletHitsEnemy`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)
+          .onPlayerBulletHitsEnemy,
+        `${name}.prototype.onPlayerBulletHitsEnemy must be the shared hook`,
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)
+          .onPlayerBulletHitsEnemy,
+      );
     }
   });
 });

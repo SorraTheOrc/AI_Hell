@@ -184,6 +184,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       spread: [],
       dual: [],
       rapid: [],
+      wave_laser: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -399,8 +400,8 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle through the rest of the order (conventional, AOE, then Reset).
-    for (const expected of ['dual', 'rapid', 'nova', 'mortar', 'arc', 'reset']) {
+    // Cycle through the rest of the order (conventional, wave laser, AOE, then Reset).
+    for (const expected of ['dual', 'rapid', 'wave_laser', 'nova', 'mortar', 'arc', 'reset']) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
@@ -932,6 +933,7 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'spread',
       'dual',
       'rapid',
+      'wave_laser',
       'nova',
       'mortar',
       'arc',
@@ -1170,5 +1172,66 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
         (CombatScene.prototype as unknown as Record<string, unknown>)[method],
       );
     }
+  });
+});
+
+describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootAoe(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('a wave-laser beam passes through two aligned practice targets', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    // Park the ship away from the target line so its auto-fire is inert.
+    player.setPosition(50, 50);
+    scene.advanceBullets(2); // clear the boot volley
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const targets = scene.getTargets();
+    // targets[1] (455,205) and targets[2] (505,205) are horizontally aligned.
+    const bullet = scene.spawnPlayerBullet(
+      445,
+      205,
+      100,
+      0,
+      WEAPON_CATALOGUE.wave_laser.bulletColor,
+      3,
+      3,
+      WEAPON_CATALOGUE.wave_laser.piercing,
+    );
+
+    for (let i = 0; i < 8; i++) scene.tick(0.1);
+
+    // The beam damaged both aligned targets and survived each of them.
+    expect(targets[1].alive).toBe(false);
+    expect(targets[2].alive).toBe(false);
+    expect(bullet.piercing).toBeGreaterThan(0);
+  });
+
+  it('an ordinary (non-piercing) bullet stops at the first target', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const targets = scene.getTargets();
+    const bullet = scene.spawnPlayerBullet(445, 205, 100, 0, 0x00ffff, 3, 3, 0);
+
+    for (let i = 0; i < 8; i++) scene.tick(0.1);
+
+    // Only the first target is destroyed; the bullet is consumed.
+    expect(targets[1].alive).toBe(false);
+    expect(targets[2].alive).toBe(true);
+    expect(scene.getBullets()).not.toContain(bullet);
   });
 });

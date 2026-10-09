@@ -604,6 +604,9 @@ export class CombatCoreScene<
           // Weapon leveling grows the bullet: `levelBulletSize` is 1/absent on
           // a base definition, so the base radius is unchanged (AC8).
           PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1),
+          // Pass-through budget (0 for ordinary bullets) — the shared
+          // collision path consumes it one enemy at a time (AH-0MV1BIUSJ0090W92).
+          def.piercing ?? 0,
         );
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
@@ -625,6 +628,10 @@ export class CombatCoreScene<
    * AH-0MUU131PU006O7ZD); `radius` defaults to the shared
    * {@link PLAYER_BULLET_RADIUS}. The shared auto-fire path passes a
    * level-scaled radius when a weapon has bullet-size upgrades.
+   *
+   * `piercing` is the bullet's pass-through budget (extra enemies it survives
+   * before being consumed; 0 for an ordinary bullet). The shared collision
+   * path reads it (AH-0MV1BIUSJ0090W92).
    */
   spawnPlayerBullet(
     x: number,
@@ -634,6 +641,7 @@ export class CombatCoreScene<
     color = 0x00ffff,
     lifetime = 0.75,
     radius = PLAYER_BULLET_RADIUS,
+    piercing = 0,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -645,6 +653,7 @@ export class CombatCoreScene<
       vy,
       lifetime,
     );
+    bullet.piercing = piercing;
     this.playerBullets.push(bullet);
     return bullet;
   }

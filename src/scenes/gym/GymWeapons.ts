@@ -95,6 +95,7 @@ const ROUND_ROBIN_ORDER: readonly DropType[] = [
   'spread',
   'dual',
   'rapid',
+  'wave_laser',
   'nova',
   'mortar',
   'arc',
@@ -305,6 +306,14 @@ export class GymWeapons extends CombatScene<
 
     // ── Bullet lifecycle: advance + wrap + lifetime expiry ─────
     this._advanceBullets(dt);
+
+    // ── Player bullets vs the inert practice targets ───────────
+    // Run the shared player-bullets-vs-enemies pass so every weapon —
+    // including the piercing wave laser — damages the practice targets
+    // through exactly the code the game's collision pass uses. Only this
+    // pass runs (no enemy bullets, no ram): the gym stays threat-free
+    // (AH-0MV1BIUSJ0090W92).
+    this._resolvePlayerBulletsVsEnemies();
 
     // ── Drop lifecycles (grow/hold/shrink) ─────────────────────
     this._applyDropMagnet(this.drops, dt);

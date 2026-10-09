@@ -34,6 +34,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
+  wave_laser: 0x3366ff, // neon blue — piercing beam
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
@@ -402,6 +403,9 @@ function _drawWeaponIcon(
     case 'rapid':
       drawRapidIcon(graphics, x, y, size);
       break;
+    case 'wave_laser':
+      drawWaveLaserIcon(graphics, x, y, size);
+      break;
     case 'nova':
       drawNovaIcon(graphics, x, y, size);
       break;
@@ -530,6 +534,31 @@ function drawRapidIcon(
   for (let i = 0; i < 5; i++) {
     g.beginPath();
     g.arc(x, startY + i * spacing, dotRadius, 0, Math.PI * 2);
+    g.strokePath();
+  }
+}
+
+/**
+ * Wave laser icon — a long horizontal beam with pass-through chevrons,
+ * hinting at the R-Type piercing shot that survives the enemies it hits.
+ */
+function drawWaveLaserIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Long horizontal beam.
+  g.beginPath();
+  g.moveTo(x - s * 0.9, y);
+  g.lineTo(x + s * 0.9, y);
+  g.strokePath();
+  // Two pass-through chevrons along the beam ("pierces onward").
+  for (const cx of [-0.35, 0.25]) {
+    g.beginPath();
+    g.moveTo(x + s * cx, y - s * 0.5);
+    g.lineTo(x + s * (cx + 0.25), y);
+    g.lineTo(x + s * cx, y + s * 0.5);
     g.strokePath();
   }
 }

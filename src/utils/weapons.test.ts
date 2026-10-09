@@ -28,6 +28,8 @@ import {
   WEAPON_SPREAD_FIRE_RATE,
   WEAPON_DUAL_FIRE_RATE,
   WEAPON_RAPID_FIRE_RATE,
+  WEAPON_WAVE_LASER_FIRE_RATE,
+  WEAPON_WAVE_LASER_SUBDIVISION,
   WEAPON_NOVA_FIRE_RATE,
   WEAPON_MORTAR_FIRE_RATE,
   WEAPON_ARC_FIRE_RATE,
@@ -44,18 +46,20 @@ import {
   AOE_PROJECTILE_SPEEDS,
   type WeaponId,
   BULLET_SPEED,
+  BULLET_COLORS,
   WEAPON_BULLET_LIFETIME,
   isTimedWeapon,
 } from './weapons';
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
-  test('contains the four conventional weapons plus the three AOE weapons', () => {
-    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(7);
+  test('contains the five conventional/beam weapons plus the three AOE weapons', () => {
+    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(8);
     expect(WEAPON_CATALOGUE.cannon).toBeDefined();
     expect(WEAPON_CATALOGUE.spread).toBeDefined();
     expect(WEAPON_CATALOGUE.dual).toBeDefined();
     expect(WEAPON_CATALOGUE.rapid).toBeDefined();
+    expect(WEAPON_CATALOGUE.wave_laser).toBeDefined();
     expect(WEAPON_CATALOGUE.nova).toBeDefined();
     expect(WEAPON_CATALOGUE.mortar).toBeDefined();
     expect(WEAPON_CATALOGUE.arc).toBeDefined();
@@ -608,6 +612,7 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
       spread: 3,
       dual: 2,
       rapid: 8,
+      wave_laser: 1,
       nova: 0.25,
       mortar: 0.5,
       arc: 1,
@@ -618,5 +623,46 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
       // slow AOE cadences (rate is an integer multiple of the period).
       expect(isOnBeatGrid(rate, bpm)).toBe(true);
     }
+  });
+});
+
+describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
+  test('is a catalogue weapon with a name and a player-facing description', () => {
+    const def = WEAPON_CATALOGUE.wave_laser;
+    expect(def.name).toBe('Wave Laser');
+    expect(def.description.length).toBeGreaterThan(0);
+  });
+
+  test('fires a single aimed beam along the ship heading (one [0] offset)', () => {
+    const def = WEAPON_CATALOGUE.wave_laser;
+    expect(def.offsets).toEqual([0]);
+    expect(def.sideOffsets).toBeUndefined();
+  });
+
+  test('fires once per beat (1 subdivision → 750 ms at 80 BPM) on the grid', () => {
+    expect(WEAPON_WAVE_LASER_SUBDIVISION).toBe(1);
+    expect(WEAPON_WAVE_LASER_FIRE_RATE).toBe(750);
+    expect(WEAPON_CATALOGUE.wave_laser.fireRateMs).toBe(750);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.wave_laser.fireRateMs)).toBe(true);
+  });
+
+  test('supplies a base pierce budget of 3 (the level curve grows it)', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.piercing).toBe(3);
+  });
+
+  test('is a timed weapon drop (not permanent) and not part of the AOE family', () => {
+    expect(isTimedWeapon('wave_laser')).toBe(true);
+    expect(isAoeWeapon('wave_laser')).toBe(false);
+    expect(WEAPON_CATALOGUE.wave_laser.aoe).toBeUndefined();
+  });
+
+  test('is a long-range beam with a distinct neon-blue bolt', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.bulletLifetime).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.bulletLifetime,
+    );
+    expect(WEAPON_CATALOGUE.wave_laser.bulletColor).toBe(BULLET_COLORS.wave_laser);
+    expect(WEAPON_CATALOGUE.wave_laser.bulletColor).not.toBe(
+      WEAPON_CATALOGUE.cannon.bulletColor,
+    );
   });
 });

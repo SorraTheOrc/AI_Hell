@@ -333,6 +333,12 @@ export abstract class CombatScene<
    * same shared path runs in the game and the gyms, so the feedback cannot
    * diverge (parent AH-0MUI820PM0038HS2 — producer review).
    *
+   * A **piercing** bullet (`bullet.piercing > 0`, R-Type wave laser) damages
+   * the enemy but survives, decrementing its budget and remembering the enemy
+   * so it is never damaged twice; returning `false` lets the shared loop keep
+   * scanning. Once the budget is exhausted the next new enemy consumes the
+   * bullet (AH-0MV1BIUSJ0090W92).
+   *
    * @returns whether the bullet was consumed (stops the scan).
    */
   protected onPlayerBulletHitsEnemy(
@@ -351,12 +357,39 @@ export abstract class CombatScene<
       bullet.destroy();
       return true;
     }
+    // Already passed through this enemy on an earlier frame — never re-damage.
+    if (bullet.piercedEnemies.has(enemy)) {
+      return false;
+    }
+    // Damage the enemy identically for the piercing and consuming paths.
+    this.damageEnemyWithBullet(enemy, bullet);
+    // A piercing bullet survives the hit while it still has budget; remember
+    // the enemy and continue to the next one. Budget 0 falls through and
+    // consumes the bullet.
+    if (bullet.piercing > 0) {
+      bullet.piercedEnemies.add(enemy);
+      bullet.piercing -= 1;
+      return false;
+    }
+    bullet.destroy();
+    return true;
+  }
+
+  /**
+   * Applies one player-bullet damage instance to `enemy` through the shared
+   * kill seam **without** consuming the bullet: a multi-hit entity takes
+   * `takeDamage()` (finalised on the lethal blow, with the shared impact flash
+   * on a non-lethal hit); a single-hit entity is destroyed and finalised.
+   * Shared by the ordinary (consuming) and piercing bullet paths so both
+   * damage identically in the game and every gym (AH-0MV1BIUSJ0090W92).
+   */
+  private damageEnemyWithBullet(enemy: TEnemy, bullet: PlayerBullet): void {
     if (enemy.takeDamage) {
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
-      // cleared `alive`). A non-lethal hit consumes the bullet but flashes at
-      // the impact point so the player can read that the hit registered.
+      // cleared `alive`). A non-lethal hit flashes at the impact point so the
+      // player can read that the hit registered.
       if (!enemy.alive) {
         this.finaliseEnemyKill(enemy);
       } else {
@@ -368,8 +401,6 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
-    bullet.destroy();
-    return true;
   }
 
   /**
@@ -884,18 +915,16 @@ export abstract class CombatScene<
   // ── Collisions ───────────────────────────────────────────────────
 
   /**
-   * Resolves the shared collision passes:
-   *
-   * 1. player bullets vs enemies (and the boss, via hook)
-   * 2. player bullets vs enemy bullets (AC5 impact feedback)
-   * 2b. scene-specific stage (`onAfterBulletVsBullet`, e.g. minerals)
-   * 3. enemy bullets vs player
-   * 4. player body vs enemy body (and the boss, via hook)
+   * Resolves the shared player-bullets-vs-enemies pass (plus the boss via the
+   * {@link CombatScene.onPlayerBulletHitsBoss} hook). Each live enemy is
+   * scanned until the bullet is consumed; a piercing bullet survives the hit
+   * and continues scanning (see
+   * {@link CombatScene.onPlayerBulletHitsEnemy}). The game and every gym run
+   * this one implementation, and `GymWeapons` calls it directly so its inert
+   * practice targets demonstrate weapon piercing through the same code
+   * (AH-0MV1BIUSJ0090W92).
    */
-  protected _handleCollisions(): void {
-    const playerHull = SHIP_SIZE / 2;
-
-    // 1. Player bullets vs enemies (and the boss).
+  protected _resolvePlayerBulletsVsEnemies(): void {
     const keptBullets: PlayerBullet[] = [];
     for (const pb of this.playerBullets) {
       let spent = false;
@@ -919,6 +948,22 @@ export abstract class CombatScene<
       if (!spent) keptBullets.push(pb);
     }
     this.playerBullets = keptBullets;
+  }
+
+  /**
+   * Resolves the shared collision passes:
+   *
+   * 1. player bullets vs enemies (and the boss, via hook)
+   * 2. player bullets vs enemy bullets (AC5 impact feedback)
+   * 2b. scene-specific stage (`onAfterBulletVsBullet`, e.g. minerals)
+   * 3. enemy bullets vs player
+   * 4. player body vs enemy body (and the boss, via hook)
+   */
+  protected _handleCollisions(): void {
+    const playerHull = SHIP_SIZE / 2;
+
+    // 1. Player bullets vs enemies (and the boss) — shared pass.
+    this._resolvePlayerBulletsVsEnemies();
 
     // 2. Player bullets vs enemy bullets — both destroyed (shared AC5 path).
     const bulletRadius = this.getEnemyBulletRadius();

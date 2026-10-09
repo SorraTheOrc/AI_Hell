@@ -71,6 +71,22 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   aoeDetonated = false;
 
   /**
+   * Remaining pass-through budget: how many **additional** enemies this
+   * bullet may damage before it is consumed (R-Type wave laser,
+   * AH-0MV1BIUSJ0090W92). `0` for an ordinary single-hit bullet. The shared
+   * collision path decrements it once per newly hit enemy and consumes the
+   * bullet when it reaches zero.
+   */
+  piercing = 0;
+
+  /**
+   * Enemies this bullet has already damaged. The shared collision path checks
+   * membership before applying damage so a piercing bullet which overlaps the
+   * same enemy across frames damages it exactly once.
+   */
+  readonly piercedEnemies = new Set<object>();
+
+  /**
    * Creates a new bullet Graphics object. Visuals are a filled circle
    * (the project's bullet precedent — see ScoutBullet).
    *

@@ -887,6 +887,7 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       spread: [],
       dual: [],
       rapid: [],
+      wave_laser: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -940,6 +941,128 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
     for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
       expect(at10ms[weapon].length).toBeGreaterThan(0);
       expect(at10ms[weapon]).toEqual(at25ms[weapon]);
+    }
+  });
+});
+
+// ── R-Type wave-laser piercing budget (AH-0MV1BIUSJ0090W92) ──────────
+
+describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Adds a single-hit stub enemy at (x, y) and returns it. */
+  function addEnemy(scene: StubCombatScene, x: number, y: number): StubEnemy {
+    const enemy = new StubEnemy(scene, x, y);
+    scene.add.existing(enemy);
+    scene.entities.push(enemy);
+    return enemy;
+  }
+
+  it('an ordinary bullet (piercing 0) damages one enemy and is consumed', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 240, 200);
+
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 0);
+    scene.runCollisions();
+
+    expect(first.destroyed).toBe(true);
+    expect(second.destroyed).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+  });
+
+  it('a piercing bullet damages its budget of enemies and survives each of them', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+    const third = addEnemy(scene, 320, 200);
+
+    // Budget 2: survive the first two, consume on the third.
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 2);
+
+    scene.runCollisions(); // first
+    expect(first.destroyed).toBe(true);
+    expect(bullet.piercing).toBe(1);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+
+    bullet.setPosition(260, 200);
+    scene.runCollisions(); // second
+    expect(second.destroyed).toBe(true);
+    expect(bullet.piercing).toBe(0);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+
+    bullet.setPosition(320, 200);
+    scene.runCollisions(); // third — budget exhausted, bullet consumed
+    expect(third.destroyed).toBe(true);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+  });
+
+  it('an enemy already passed through is never damaged twice', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const tough = new ToughStubEnemy(scene, 200, 200, 10, 5);
+    scene.add.existing(tough);
+    scene.entities.push(tough);
+
+    scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 3);
+    scene.runCollisions();
+    scene.runCollisions();
+    scene.runCollisions();
+
+    expect(tough.damageCalls).toBe(1);
+    expect(tough.alive).toBe(true);
+  });
+
+  it('the budget boundary: a bullet with piercing 1 stops on its second enemy', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+    const third = addEnemy(scene, 320, 200);
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 1);
+
+    scene.runCollisions();
+    expect(first.destroyed).toBe(true);
+    expect(bullet.piercing).toBe(0);
+    expect(scene.getPlayerBullets()).toContain(bullet); // survived the first
+
+    bullet.setPosition(260, 200);
+    scene.runCollisions();
+    expect(second.destroyed).toBe(true);
+    expect(third.destroyed).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(bullet); // consumed on the second
+  });
+
+  it('auto-fire propagates the weapon piercing budget onto spawned bullets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Equip the wave laser permanently so it fires this frame.
+    player.equipWeapon('wave_laser', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    // Establish a heading (right) without moving the ship far.
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const waveBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor);
+    expect(waveBullets.length).toBeGreaterThan(0);
+    for (const bullet of waveBullets) {
+      expect(bullet.piercing).toBe(WEAPON_CATALOGUE.wave_laser.piercing);
     }
   });
 });

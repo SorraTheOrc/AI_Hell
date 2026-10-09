@@ -490,6 +490,7 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     spread: 1.4,
     dual: 1.4,
     rapid: 0.75,
+    wave_laser: 2.0,
     nova: 0.5,
     mortar: 2.0,
     arc: 0.5,
@@ -631,5 +632,49 @@ describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
     expect(
       formatDelta('Projectiles', Number.POSITIVE_INFINITY, 1, false),
     ).toBe('');
+  });
+});
+
+// ── R-Type wave-laser pierce budget (AH-0MV1BIUSJ0090W92) ───────────
+
+describe('wave-laser piercing budget (AH-0MV1BIUSJ0090W92)', () => {
+  test('the base definition supplies a pierce budget of 3', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.piercing).toBe(3);
+    expect(resolveWeaponDefinition('wave_laser', 0).piercing).toBe(3);
+  });
+
+  test('the level-resolved piercing variable grows monotonically within its spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.piercing.cap;
+    let previous = resolveWeaponAtLevel('wave_laser', 0).piercing;
+    expect(previous).toBe(0);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponAtLevel('wave_laser', level).piercing;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The first level is responsive: it grants a pierce immediately.
+    expect(resolveWeaponAtLevel('wave_laser', 1).piercing).toBeGreaterThan(0);
+  });
+
+  test('the resolved pierce budget grows monotonically and never exceeds the spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.piercing.cap;
+    let previous = resolveWeaponDefinition('wave_laser', 0).piercing!;
+    expect(previous).toBe(3);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponDefinition('wave_laser', level).piercing!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The budget saturates at the finite spec cap.
+    expect(resolveWeaponDefinition('wave_laser', 100).piercing).toBe(cap);
+  });
+
+  test('weapons without a base piercing budget never gain one', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'wave_laser') continue;
+      expect(resolveWeaponDefinition(id, 50).piercing).toBeUndefined();
+    }
   });
 });

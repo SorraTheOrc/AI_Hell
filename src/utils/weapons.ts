@@ -14,11 +14,13 @@
  * expires; a **reset** power-up clears all timed weapons, leaving only the
  * cannon.
  *
- * Four weapons:
+ * Five conventional/beam weapons:
  * - **cannon** — single bullet straight ahead (permanent default starting weapon)
  * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
  * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
  * - **rapid**  — single bullets at a much higher fire rate (timed)
+ * - **wave_laser** — a single slow, wide beam that passes through a budget of
+ *   enemies (R-Type homage, timed; see {@link WeaponDefinition.piercing})
  *
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
@@ -52,6 +54,7 @@ export type WeaponId =
   | 'spread'
   | 'dual'
   | 'rapid'
+  | 'wave_laser'
   | 'nova'
   | 'mortar'
   | 'arc';
@@ -152,6 +155,7 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   spread: 1,
   dual: 1,
   rapid: 6,
+  wave_laser: 1,
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
@@ -165,6 +169,9 @@ export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
 export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
 /** Default rapid subdivision (6 shots per beat). */
 export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
+/** Default wave-laser subdivision (1 shot per beat → 750 ms at 80 BPM). */
+export const WEAPON_WAVE_LASER_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
 /** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 /** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
@@ -215,6 +222,15 @@ export const WEAPON_DUAL_FIRE_RATE = beatSubdivisionMs(WEAPON_DUAL_SUBDIVISION);
 export const WEAPON_RAPID_FIRE_RATE = beatSubdivisionMs(WEAPON_RAPID_SUBDIVISION);
 
 /**
+ * Fire rate interval for the R-Type wave laser (ms) — 1 shot per beat
+ * (750 ms at the default 80 BPM). Deliberately slow so the beam reads as a
+ * committed, aimed shot rather than a rapid stream.
+ */
+export const WEAPON_WAVE_LASER_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_WAVE_LASER_SUBDIVISION,
+);
+
+/**
  * Fire rate interval for the Nova AOE weapon (ms) — 1 shot every 4 beats
  * (3000 ms at the default 80 BPM). Slow and defensive: a sparse pulse that
  * clears the ship's immediate surroundings.
@@ -259,6 +275,11 @@ export const WEAPON_BULLET_LIFETIME = {
   dual: 0.7,
   /** Rapid — short reach balanced by its high fire rate (~131 px). */
   rapid: 0.375,
+  /**
+   * Wave laser — long reach so the beam crosses the arena (~350 px); the
+   * slow cadence and the pass-through budget are its identity.
+   */
+  wave_laser: 1.0,
   /** Nova — the ring resolves instantly; no travelling bullet. */
   nova: 0.25,
   /**
@@ -282,6 +303,8 @@ export const BULLET_COLORS = {
   dual: 0xff00ff,
   /** Rapid weapon bullet — electric yellow. */
   rapid: 0xffff00,
+  /** Wave laser beam — vivid neon blue, distinct from the cyan cannon. */
+  wave_laser: 0x3366ff,
   /** Nova ring / projectile — pale cyan. */
   nova: 0x66ffff,
   /** Mortar shell / blast — deep orange. */
@@ -373,6 +396,17 @@ export interface WeaponDefinition {
    */
   bulletLifetime: number;
   /**
+   * Base **extra** enemies a fired bullet passes through before it is
+   * consumed — the R-Type wave-laser pass-through seam (AH-0MV1BIUSJ0090W92).
+   * `0`/absent means an ordinary single-hit bullet.
+   *
+   * A bullet's effective budget is this base value plus the weapon's
+   * level-resolved `piercing` upgrade (from `weaponLevels.ts`), clamped to
+   * that variable's spec cap; the shared combat core tracks already-hit
+   * enemies so each is damaged once (see `resolveWeaponDefinition`).
+   */
+  piercing?: number;
+  /**
    * Area-of-effect descriptor (absent for conventional weapons). When
    * present the shared combat core dispatches the area effect through the
    * AOE seam rather than treating the shot as an ordinary bullet
@@ -438,6 +472,25 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletShape: 'circle',
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
+  },
+  wave_laser: {
+    id: 'wave_laser',
+    name: 'Wave Laser',
+    description:
+      'Adds a slow, long-range piercing beam that passes through several enemies for 10 s.',
+    // A single aimed beam along the ship's heading.
+    offsets: [0],
+    fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
+    bulletColor: BULLET_COLORS.wave_laser,
+    // The beam is a wide neon bolt; `line` records the intended elongated
+    // look (the shared PlayerBullet visual is a scaled disc).
+    bulletShape: 'line',
+    bulletSize: 1.2,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
+    // Base pass-through budget: the beam survives the first three enemies
+    // (and damages them all) before it is consumed. The `piercing` level
+    // variable grows it toward the spec cap (5).
+    piercing: 3,
   },
   nova: {
     id: 'nova',
