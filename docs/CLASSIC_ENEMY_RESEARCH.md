@@ -110,44 +110,58 @@ exercised in the shared gym base.
 
 ---
 
-## 3. Pac-Man — ghost personalities (chase/ambush/flank/wander)
+## 3. Pac-Man — ghost personality pursuers
 
 **Source game:** *Pac-Man* (Namco, 1980)
 
 **Original behaviour:** Four ghosts each follow a distinct targeting strategy:
-Blinky chases the player directly, Pinky ambushes ahead, Inky flanks using
-Blinky's position, and Clyde wanders when far but chases when close.
+Blinky chases the player directly, Pinky ambushes ahead, Inky flanks using a
+pivot, and Clyde wanders. A shared scatter/chase timer alternates every ghost
+between a corner retreat and its pursuit target.
 
-**AI_Hell adaptation:** A small formation of 3–4 members, each with a different
-movement modifier layered on the formation drift. Blinky-analogue follows the
-player's live position (the `setAimTarget` seam already pushes live coords);
-Pinky-analogue aims ahead of the player (snapshot + offset); Inky-analogue
-tracks a midpoint between Blinky and the player; Clyde-analogue uses a distance
-threshold to switch between chase and wander modes. Each ghost fires using its
-own shot pattern.
+**AI_Hell adaptation:** Four fast, low-HP **non-firing** pursuers (`chase`,
+`ambush`, `flank`, `wander`) enter from the arena edges as a wave-accounted
+group. Each steers toward a personality-specific target resolved by the
+shared, pure `src/scenes/core/ghostSteering.ts` policy, which also owns the
+scatter/chase timer (a pure function of elapsed time). Aim leads use the
+player's live velocity; scatter targets are fixed arena corners. `chase`
+targets the player directly, `ambush` targets ahead of the player's velocity,
+`flank` offsets the ambush pivot perpendicular to the player's heading, and
+`wander` roams a slowly rotating point near itself. The same shared code runs
+in the game and in the `GymEnemies` gym. Body contact is the
+threat (GDD §2.4) and is resolved by the existing enemy-body collision rule.
 
 **Divergence from original:** No maze or tunnel system — movement is free 2D
-within the arena. The ghost personalities are expressed as movement modifiers
-on the formation drift rather than pathfinding through a fixed graph.
+within the arena, clamped to the viewport. There is no literal "ghost house";
+the pursuers enter from the edges. Ambush/flank lead by a tuned number of
+seconds rather than a tile count.
 
-**Pipeline fit:** New `src/entities/Ghost.ts` entity class (replaces the generic
-Scout base) with a configurable personality type. Each ghost uses a different
-`shotPattern` from the existing enum (e.g. Blinky: `aimed`, Pinky: `spread`,
-Inky: `coordinated`, Clyde: `radial`). Factory key maps to `Ghost` in
-`enemyFactory.ts`. Fire dispatch registered in `enemyFire.ts` via a new
-`tryFireGhost` method that selects the pattern based on personality.
+**Pipeline fit:** `EnemyConfig` / CSV rows — **one row per personality**
+(`ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`), all
+`formationKind: 'single'` and `shotPattern: 'none'`. The new
+`src/entities/Ghost.ts` carries the personality (derived from the key) and the
+shared steering; `src/entities/enemyFactory.ts` maps the four keys to `Ghost`;
+`src/entities/enemyFire.ts` maps them explicitly to `tryFireNone` so they can
+never fall back to the aimed shot. A new pure planner
+`src/waves/GhostSpawner.ts` computes the four-personality group, and
+`PlayScene` registers every released ghost with the `WaveManager`
+(`registerDynamicSpawn`) so the wave neither clears early nor stalls (the same
+invariant as the Harvester/Asteroid spawners). The spawner is gated by a
+per-wave `ghosts: true` opt-in so it can be introduced into campaign data
+without changing existing waves.
 
 **Difficulty scoring inputs:**
 
 | Factor | Type | Notes |
 |--------|------|-------|
-| Movement | `driftSpeed` + custom personality modifier | Each ghost adds a unique movement component on top of the base drift. |
-| Fire | `shotPattern` (varies by ghost) + `burstCount` + `fireInterval` | Different patterns per ghost create varied dodging challenges. |
-| Health | `health` (default 1) | Single-hit; the multi-personality approach creates a dynamic threat envelope. |
+| Movement | `count` + pursuit speed (shared `GHOST_PURSUIT_SPEED`) | The threat is the pursuit envelope, not formation drift (`driftSpeed` is neutral/0). Four bodies converging from different edges. |
+| Fire | `shotPattern` (`none`) | Never fires at any level; the firing factors (`fireInterval`, `shotProbability`, `bulletSpeed`, `bulletLifetime`, `burstCount`) contribute zero. |
+| Health | `health` (1) | Single-hit; survival depends on reading the personalities, not durability. |
 
-**Gym scene:** `GymEnemies` — the `Ghost` entity is wired into the factory and
-fire dispatcher; the CSV row uses `formationKind: 'v'` for a loose approach
-formation.
+**Gym scene:** `GymEnemies` — each personality row appears automatically in the
+gym index, and the shared `Ghost` / `ghostSteering` code runs in both the gym
+and the game (enforced by `src/scenes/core/CombatScene.equivalence.test.ts`).
+No new gym scene is required.
 
 ---
 
@@ -357,7 +371,7 @@ to warrant a child work item in this research round.
 |-----------|-------------------|--------------|--------------|-------------|--------------|
 | Space Invaders | `buildMarchFormationOffsets` (`march`, new) | `aimed` | Scout (reused, custom config) | `tryFireAimedBullet` | `GymEnemies` |
 | Galaga | `buildDiverFormationOffsets` (`diver`) | `spread` | Diver (reused, custom config) | `tryFireSpreadBurst` | `GymEnemies` |
-| Pac-Man Ghosts | `buildVFormationOffsets` (`v`) | varied (`aimed`/`spread`/`coordinated`/`radial`) | `Ghost.ts` (new) | `tryFireGhost` (new) | `GymEnemies` |
+| Pac-Man Ghosts | `buildSingleOffset` (`single`) | `none` | `Ghost.ts` (new) | `tryFireNone` | `GymEnemies` |
 | Centipede | `buildSingleOffset` (`single`) | `radial` | `Centipede.ts` (new) | `tryFireCentipede` (new) | `GymCentipede`, `GymEnemies` |
 | Robotron Horde | `buildSingleOffset` (`single`) | `none` (or `coordinated` later) | `RobotronHorde.ts` (new) | `tryFireNone` | `GymRobotronHorde`, `GymEnemies` |
 | Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `DefenderRaider.ts` (new) | `tryFireDefenderRaider` (new) | `GymDefender`, `GymEnemies` |
@@ -369,8 +383,7 @@ to warrant a child work item in this research round.
 `aimed`, `spread`, `radial`, `coordinated`, `none`, `tryFireAimedBullet`
 (default), `tryFireSpreadBurst`, `tryFireNone`.
 
-**New seams to be created (per child work item):** `Ghost.ts` +
-`tryFireGhost`, `Centipede.ts` + `tryFireCentipede` + `GymCentipede`,
+**New seams to be created (per child work item):** `Ghost.ts` (+ `ghostSteering.ts`, `GhostSpawner.ts`, `tryFireNone`), `Centipede.ts` + `tryFireCentipede` + `GymCentipede`,
 `RobotronHorde.ts` + `tryFireNone` explicit + `GymRobotronHorde`,
 `DefenderRaider.ts` + `tryFireDefenderRaider` + `GymDefender`,
 `MissileStrike.ts` + `tryFireMissileStrike` + `GymMissileStrike`,
@@ -388,7 +401,7 @@ document as their design brief.
 |-----------|-----------------|
 | Space Invaders | AH-0MV1* (to be created) |
 | Galaga | AH-0MV2* (to be created) |
-| Pac-Man Ghosts | AH-0MV3* (to be created) |
+| Pac-Man Ghosts | AH-0MV01EH2U008XT3Q |
 | Centipede | AH-0MV4* (to be created) |
 | Robotron Horde | AH-0MV5* (to be created) |
 | Defender | AH-0MV6* (to be created) |

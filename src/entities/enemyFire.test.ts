@@ -98,16 +98,31 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     // archetype edits). The Harvester and the Galaga capturer are non-firing
     // and are asserted separately below.
     const firingKeys = Object.keys(ENEMY_FIRE_METHODS).filter(
-      (key) => key !== 'harvester' && key !== 'capturer',
+      (key) =>
+        key !== 'harvester' &&
+        key !== 'capturer' &&
+        !key.startsWith('ghost-'),
     );
+
     for (const key of firingKeys) {
       const entity = makeFireSpy();
       fireForEnemy(entity, key, 999);
       expect(entity.calls, `${key} must dispatch`).toHaveLength(1);
     }
-    expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual(
-      ['capturer', 'diver', 'harvester', 'march', 'phaser', 'scout', 'swarm', 'tank'],
-    );
+    expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual([
+      'capturer',
+      'diver',
+      'ghost-ambush',
+      'ghost-chase',
+      'ghost-flank',
+      'ghost-wander',
+      'harvester',
+      'march',
+      'phaser',
+      'scout',
+      'swarm',
+      'tank',
+    ]);
   });
 
   it('resolves the Harvester to no fire (never the aimed-shot fallback)', () => {
@@ -122,6 +137,15 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     const entity = makeFireSpy();
     expect(enemyFireMethod('capturer')).toBe('tryFireNone');
     expect(fireForEnemy(entity, 'capturer', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves every Pac-Man ghost personality to no fire (body contact only)', () => {
+    const entity = makeFireSpy();
+    for (const key of ['ghost-chase', 'ghost-ambush', 'ghost-flank', 'ghost-wander']) {
+      expect(enemyFireMethod(key), key).toBe('tryFireNone');
+      expect(fireForEnemy(entity, key, 42), key).toEqual([]);
+    }
     expect(entity.calls).toEqual([]);
   });
 });

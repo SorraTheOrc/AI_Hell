@@ -44,6 +44,16 @@ adaptation, pipeline fit, difficulty scoring inputs, and gym scenes — is in
 not selected" section (Joust, Dig Dug, Q*bert, Star Castle) is also recorded
 there for future roster expansion.
 
+The **Pac-Man ghost personality pursuers** (AH-0MV01EH2U008XT3Q) are the first
+of these to be implemented as a full vertical slice. Four non-firing CSV rows
+(`ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`) share the pure
+`src/scenes/core/ghostSteering.ts` targeting policy and the
+`src/entities/Ghost.ts` entity; `src/waves/GhostSpawner.ts` plans the
+four-personality group and `PlayScene` registers every released ghost with the
+`WaveManager`, gated behind a per-wave `ghosts: true` opt-in (so existing wave
+data is unchanged). The entity never fires — body contact is the threat — and
+its `tryFireNone` dispatch entry keeps it out of the aimed-shot fallback.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed

@@ -10,6 +10,7 @@ import Phaser from 'phaser';
 
 import { Asteroid } from './Asteroid';
 import { Capturer } from './Capturer';
+import { Ghost, personalityFromKey } from './Ghost';
 import { Harvester } from './Harvester';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
@@ -57,7 +58,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost) &
   DestructionAudioSeam &
   FormationReanchorSeam &
   SeekSeam & {
@@ -104,6 +105,19 @@ export function createEnemyFromConfig(
   };
 
   switch (config.key) {
+    // Pac-Man personality pursuers (AH-0MV01EH2U008XT3Q): one key per
+    // personality, each mapped to the shared `Ghost` steering entity.
+    case 'ghost-chase':
+    case 'ghost-ambush':
+    case 'ghost-flank':
+    case 'ghost-wander':
+      return new Ghost(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        personality: personalityFromKey(config.key),
+        ...opts,
+      });
     case 'capturer':
       return new Capturer(scene, {
         x,
