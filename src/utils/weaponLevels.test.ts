@@ -34,7 +34,13 @@ import {
   type WeaponLevelStats,
   type WeaponUpgradeVariable,
 } from './weaponLevels';
-import { WEAPON_CATALOGUE, isOnBeatGrid, type WeaponId } from './weapons';
+import {
+  WEAPON_CATALOGUE,
+  isOnBeatGrid,
+  OPTIONS_BASE_PODS,
+  OPTIONS_MAX_PODS,
+  type WeaponId,
+} from './weapons';
 import { beatPeriodMs, createBeatClock, isOnGrid } from './beat';
 
 const WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
@@ -461,6 +467,12 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     for (const weaponId of WEAPON_IDS) {
       const base = WEAPON_CATALOGUE[weaponId];
       const leveled = resolveWeaponDefinition(weaponId, 6);
+      // Orbit weapons (Options) grow their pod count instead of an angular
+      // offsets pattern, so their offsets never expand.
+      if (base.orbit) {
+        expect(leveled.offsets).toEqual([...base.offsets]);
+        continue;
+      }
       expect(leveled.offsets.length).toBeGreaterThan(base.offsets.length);
       // An expanded pattern is angular, so base side offsets are dropped.
       expect(leveled.sideOffsets).toBeUndefined();
@@ -493,6 +505,7 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     wave_laser: 2.0,
     ricochet: 3.2,
     cluster: 1.8,
+    options: 1.4,
     nova: 0.5,
     mortar: 2.0,
     arc: 0.5,
@@ -765,6 +778,60 @@ describe('cluster-missile split budget (AH-0MV1BIVIJ007KYXU)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'cluster') continue;
       expect(resolveWeaponDefinition(id, 50).splits).toBeUndefined();
+    }
+  });
+});
+
+// ── Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM) ───────
+
+describe('Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM)', () => {
+  test('the base definition carries the base two-pod escort', () => {
+    expect(WEAPON_CATALOGUE.options.orbit?.pods).toBe(OPTIONS_BASE_PODS);
+    expect(OPTIONS_BASE_PODS).toBe(2);
+    expect(resolveWeaponDefinition('options', 0).orbit?.pods).toBe(
+      OPTIONS_BASE_PODS,
+    );
+  });
+
+  test('projectileCount and fireRate resolve within their spec caps', () => {
+    const projectileCap = WEAPON_UPGRADE_SPECS.projectileCount.cap;
+    const fireRateCap = WEAPON_UPGRADE_SPECS.fireRate.cap;
+    for (let level = 0; level <= 100; level++) {
+      const stats = resolveWeaponAtLevel('options', level);
+      expect(stats.projectileCount).toBeLessThanOrEqual(projectileCap);
+      expect(stats.fireRate).toBeLessThanOrEqual(fireRateCap);
+    }
+    // The pod count is bounded by its own legibility cap, independent of the
+    // (larger) projectileCount spec cap.
+    expect(OPTIONS_MAX_PODS).toBeLessThanOrEqual(projectileCap + OPTIONS_BASE_PODS);
+  });
+
+  test('the resolved pod count grows monotonically and saturates at the cap', () => {
+    let previous = resolveWeaponDefinition('options', 0).orbit!.pods;
+    expect(previous).toBe(OPTIONS_BASE_PODS);
+    for (let level = 1; level <= 100; level++) {
+      const pods = resolveWeaponDefinition('options', level).orbit!.pods;
+      expect(pods).toBeGreaterThanOrEqual(previous);
+      expect(pods).toBeLessThanOrEqual(OPTIONS_MAX_PODS);
+      previous = pods;
+    }
+    expect(resolveWeaponDefinition('options', 100).orbit!.pods).toBe(
+      OPTIONS_MAX_PODS,
+    );
+  });
+
+  test('weapons without a base orbit descriptor never gain pods', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'options') continue;
+      expect(resolveWeaponDefinition(id, 50).orbit).toBeUndefined();
+    }
+  });
+
+  test('the Options fire rate stays on the beat grid at every level', () => {
+    for (let level = 0; level <= 100; level++) {
+      expect(
+        isOnBeatGrid(resolveWeaponDefinition('options', level).fireRateMs),
+      ).toBe(true);
     }
   });
 });

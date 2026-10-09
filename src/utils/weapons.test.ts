@@ -35,6 +35,11 @@ import {
   WEAPON_CLUSTER_FIRE_RATE,
   WEAPON_CLUSTER_SUBDIVISION,
   CLUSTER_BASE_WARHEADS,
+  WEAPON_OPTIONS_FIRE_RATE,
+  WEAPON_OPTIONS_SUBDIVISION,
+  OPTIONS_BASE_PODS,
+  OPTIONS_MAX_PODS,
+  OPTIONS_ORBIT_RADIUS,
   WEAPON_NOVA_FIRE_RATE,
   WEAPON_MORTAR_FIRE_RATE,
   WEAPON_ARC_FIRE_RATE,
@@ -58,8 +63,8 @@ import {
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
-  test('contains the seven conventional/beam weapons plus the three AOE weapons', () => {
-    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(10);
+  test('contains the eight conventional/beam weapons plus the three AOE weapons', () => {
+    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(11);
     expect(WEAPON_CATALOGUE.cannon).toBeDefined();
     expect(WEAPON_CATALOGUE.spread).toBeDefined();
     expect(WEAPON_CATALOGUE.dual).toBeDefined();
@@ -67,6 +72,7 @@ describe('WEAPON_CATALOGUE', () => {
     expect(WEAPON_CATALOGUE.wave_laser).toBeDefined();
     expect(WEAPON_CATALOGUE.ricochet).toBeDefined();
     expect(WEAPON_CATALOGUE.cluster).toBeDefined();
+    expect(WEAPON_CATALOGUE.options).toBeDefined();
     expect(WEAPON_CATALOGUE.nova).toBeDefined();
     expect(WEAPON_CATALOGUE.mortar).toBeDefined();
     expect(WEAPON_CATALOGUE.arc).toBeDefined();
@@ -622,6 +628,7 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
       wave_laser: 1,
       ricochet: 1,
       cluster: 0.5,
+      options: 1,
       nova: 0.25,
       mortar: 0.5,
       arc: 1,
@@ -752,5 +759,48 @@ describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
     );
     expect(WEAPON_CATALOGUE.cluster.piercing).toBeUndefined();
     expect(WEAPON_CATALOGUE.cluster.bounce).toBeUndefined();
+  });
+});
+
+describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
+  test('is a catalogue weapon with a name and a player-facing description', () => {
+    const def = WEAPON_CATALOGUE.options;
+    expect(def.name).toBe('Options');
+    expect(def.description.length).toBeGreaterThan(0);
+  });
+
+  test('fires once per beat (1 subdivision → 750 ms at 80 BPM) on the grid', () => {
+    expect(WEAPON_OPTIONS_SUBDIVISION).toBe(1);
+    expect(WEAPON_OPTIONS_FIRE_RATE).toBe(750);
+    expect(WEAPON_CATALOGUE.options.fireRateMs).toBe(750);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.options.fireRateMs)).toBe(true);
+  });
+
+  test('carries an orbit descriptor with the base two pods and the orbit radius', () => {
+    const orbit = WEAPON_CATALOGUE.options.orbit;
+    expect(orbit).toBeDefined();
+    expect(orbit!.pods).toBe(OPTIONS_BASE_PODS);
+    expect(orbit!.pods).toBe(2);
+    expect(orbit!.radius).toBe(OPTIONS_ORBIT_RADIUS);
+    expect(OPTIONS_MAX_PODS).toBeGreaterThanOrEqual(orbit!.pods);
+  });
+
+  test('is a timed weapon drop (not permanent) and not part of the AOE family', () => {
+    expect(isTimedWeapon('options')).toBe(true);
+    expect(isAoeWeapon('options')).toBe(false);
+    expect(WEAPON_CATALOGUE.options.aoe).toBeUndefined();
+    expect(WEAPON_CATALOGUE.options.piercing).toBeUndefined();
+    expect(WEAPON_CATALOGUE.options.bounce).toBeUndefined();
+    expect(WEAPON_CATALOGUE.options.splits).toBeUndefined();
+  });
+
+  test('carries a distinct neon-aquamarine colour and a smaller pod bullet', () => {
+    expect(WEAPON_CATALOGUE.options.bulletColor).toBe(BULLET_COLORS.options);
+    expect(WEAPON_CATALOGUE.options.bulletColor).not.toBe(
+      WEAPON_CATALOGUE.cannon.bulletColor,
+    );
+    expect(WEAPON_CATALOGUE.options.bulletSize).toBeLessThan(
+      WEAPON_CATALOGUE.cannon.bulletSize,
+    );
   });
 });

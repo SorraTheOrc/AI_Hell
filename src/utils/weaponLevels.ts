@@ -54,6 +54,7 @@
  */
 
 import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
+import { resolveOptionsPodCount } from '../scenes/core/optionsEscort';
 import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from './beat';
 import { curveValue, formatDelta, type CurveSpec, type UpgradeCurve } from './curve';
 
@@ -614,6 +615,9 @@ export function expandWeaponPattern(
  * - `splits` — the base split warhead count grown by the level's `splitCount`
  *   upgrade and clamped to its spec cap (weapons with a base `splits` only,
  *   e.g. the cluster missile; AH-0MV1BIVIJ007KYXU),
+ * - `orbit.pods` — the base pod count grown by the level's `projectileCount`
+ *   upgrade and clamped to `OPTIONS_MAX_PODS` (weapons with a base `orbit`
+ *   only, e.g. the Gradius Options escort; AH-0MV1BIVVK0043TEM),
  * - `aoe.radius` — area multiplier for AOE weapons.
  *
  * `bulletColor`, `bulletShape` and `sideOffsets` are carried through from the
@@ -636,7 +640,12 @@ export function resolveWeaponDefinition(
   const leveled: WeaponDefinition = {
     ...base,
     fireRateMs: stats.fireRateMs,
-    offsets: expandWeaponPattern(base, stats).offsets,
+    // Orbit weapons (the Gradius Options escort) fire from their pods, not
+    // from an angular `offsets` fan, so the pattern is never expanded by
+    // `projectileCount` (the level variable grows the pod count instead).
+    offsets: base.orbit
+      ? [...base.offsets]
+      : expandWeaponPattern(base, stats).offsets,
     bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
     levelBulletSize: stats.bulletSize,
   };
@@ -670,6 +679,16 @@ export function resolveWeaponDefinition(
       WEAPON_UPGRADE_SPECS.splitCount.cap,
       base.splits + stats.splitCount,
     );
+  }
+  // Orbit weapons (the Gradius Options escort) grow their pod count with the
+  // level-resolved `projectileCount` upgrade, clamped to the legibility cap so
+  // the escort cannot fill the arena (AH-0MV1BIVVK0043TEM). Weapons without a
+  // base orbit descriptor never gain pods.
+  if (base.orbit) {
+    leveled.orbit = {
+      ...base.orbit,
+      pods: resolveOptionsPodCount(base.orbit.pods, stats.projectileCount),
+    };
   }
   // An expanded pattern is an angular fan; the base parallel offsets no
   // longer line up with the new bullet count.

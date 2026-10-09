@@ -27,6 +27,9 @@
  * - **cluster** — a single missile that splits once, on impact or expiry,
  *   into a radial cluster of warheads (Missile Command MIRV homage, timed;
  *   see {@link WeaponDefinition.splits})
+ * - **options** — orbiting satellite pods that each fire along the ship's
+ *   heading (Gradius Options homage, timed; see
+ *   {@link WeaponDefinition.orbit})
  *
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
@@ -63,6 +66,7 @@ export type WeaponId =
   | 'wave_laser'
   | 'ricochet'
   | 'cluster'
+  | 'options'
   | 'nova'
   | 'mortar'
   | 'arc';
@@ -82,6 +86,23 @@ export type WeaponId =
  *   on the ship (no travelling shot, no forward bias; e.g. the Mortar).
  */
 export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom';
+
+/**
+ * Declarative orbit-emitter descriptor attached to the Gradius Options weapon
+ * (AH-0MV1BIVVK0043TEM). The shared combat core reads it to spawn and drive
+ * the orbiting satellite pods identically in the game and every gym — the
+ * descriptor carries only data, never behaviour. The pure pod geometry lives
+ * in `scenes/core/optionsEscort.ts`.
+ */
+export interface OrbitDescriptor {
+  /**
+   * Level-resolved number of orbiting pods (base grown by the
+   * `projectileCount` upgrade, capped at {@link OPTIONS_MAX_PODS}).
+   */
+  pods: number;
+  /** Orbit radius (px) of the pods around the ship. */
+  radius: number;
+}
 
 /**
  * Declarative area-of-effect descriptor attached to an AOE weapon
@@ -166,6 +187,7 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   wave_laser: 1,
   ricochet: 1,
   cluster: 0.5,
+  options: 1,
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
@@ -191,6 +213,12 @@ export const WEAPON_RICOCHET_SUBDIVISION =
  */
 export const WEAPON_CLUSTER_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.cluster;
+/**
+ * Default Options subdivision (1 shot per beat → 750 ms at 80 BPM). The pods
+ * fire on the same whole-beat cadence as the spread/dual weapons.
+ */
+export const WEAPON_OPTIONS_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.options;
 /** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 /** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
@@ -268,6 +296,14 @@ export const WEAPON_CLUSTER_FIRE_RATE = beatSubdivisionMs(
 );
 
 /**
+ * Fire rate interval for the Gradius Options escort (ms) — 1 shot per beat
+ * (750 ms at the default 80 BPM). Every pod fires on this cadence.
+ */
+export const WEAPON_OPTIONS_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_OPTIONS_SUBDIVISION,
+);
+
+/**
  * Fire rate interval for the Nova AOE weapon (ms) — 1 shot every 4 beats
  * (3000 ms at the default 80 BPM). Slow and defensive: a sparse pulse that
  * clears the ship's immediate surroundings.
@@ -329,6 +365,11 @@ export const WEAPON_BULLET_LIFETIME = {
    * identity.
    */
   cluster: 0.9,
+  /**
+   * Options pods — a modest reach (~245 px) matching the spread/dual; the pod
+   * count (not the range) is the weapon's identity.
+   */
+  options: 0.7,
   /** Nova — the ring resolves instantly; no travelling bullet. */
   nova: 0.25,
   /**
@@ -358,6 +399,11 @@ export const BULLET_COLORS = {
   ricochet: 0x33ff66,
   /** Cluster missile / warheads — neon hot pink, distinct from every weapon. */
   cluster: 0xff3366,
+  /**
+   * Options pod bullets — neon aquamarine, distinct from the cannon's cyan
+   * and the ricochet's green.
+   */
+  options: 0x00ffcc,
   /** Nova ring / projectile — pale cyan. */
   nova: 0x66ffff,
   /** Mortar shell / blast — deep orange. */
@@ -421,6 +467,42 @@ export const CLUSTER_WARHEAD_RADIUS_SCALE = 0.7;
  * scaled to the number of warheads by the shared VFX helper.
  */
 export const CLUSTER_SPLIT_BURST_RADIUS = 24;
+
+// ── Gradius Options orbit tuning ────────────────────────────────────
+
+/**
+ * Base number of orbiting pods before leveling — the un-upgraded Options
+ * escort. The `projectileCount` weapon-level variable adds one pod per point,
+ * capped at {@link OPTIONS_MAX_PODS}.
+ */
+export const OPTIONS_BASE_PODS = 2;
+
+/**
+ * Hard cap on the number of orbiting pods. Keeps the orbit legible (and the
+ * per-frame spawn cost bounded) as `projectileCount` grows toward its spec cap.
+ */
+export const OPTIONS_MAX_PODS = 6;
+
+/**
+ * Orbit radius (px) of the pods around the ship. Shallow enough that the pods
+ * read as an escort rather than a separate formation.
+ */
+export const OPTIONS_ORBIT_RADIUS = 28;
+
+/**
+ * Time (ms) for one full pod orbit revolution. A slow, readable circle so the
+ * player can steer the escort.
+ */
+export const OPTIONS_ORBIT_PERIOD_MS = 2000;
+
+/** Radius (px) of a code-drawn pod. */
+export const OPTIONS_POD_RADIUS = 4;
+
+/**
+ * Pod bullet speed (px/s) — slower than the shared `BULLET_SPEED` so the pod
+ * shots read as a lighter escort than the main gun.
+ */
+export const OPTIONS_POD_BULLET_SPEED = 300;
 
 /**
  * Bullet shape type — determines how the bullet is drawn.
@@ -518,6 +600,19 @@ export interface WeaponDefinition {
    * `CombatCoreScene.splitProjectile`).
    */
   splits?: number;
+  /**
+   * Orbit-emitter descriptor — the Gradius Options companion-entity seam
+   * (AH-0MV1BIVVK0043TEM). When present the weapon does **not** use its
+   * `offsets` pattern: the shared combat core spawns `orbit.pods` satellite
+   * pods that orbit the ship and each fires a bullet along the ship's heading
+   * through the ordinary `PlayerBullet` path. Absent on every conventional
+   * weapon.
+   *
+   * `pods` is the **level-resolved** pod count: {@link resolveWeaponDefinition}
+   * grows the base count with the `projectileCount` upgrade, clamped to
+   * `OPTIONS_MAX_PODS`, so the game and every gym read one count.
+   */
+  orbit?: OrbitDescriptor;
   /**
    * Area-of-effect descriptor (absent for conventional weapons). When
    * present the shared combat core dispatches the area effect through the
@@ -637,6 +732,29 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     // first impact/expiry. The `splitCount` level variable grows the warhead
     // count toward its spec cap (3).
     splits: CLUSTER_BASE_WARHEADS,
+  },
+  options: {
+    id: 'options',
+    name: 'Options',
+    description:
+      'Adds orbiting satellite pods that each fire along your heading for 10 s.',
+    // The orbit descriptor drives pod firing; the single `[0]` offset is a
+    // harmless fallback (the shared core never reads the pattern for an
+    // orbit weapon).
+    offsets: [0],
+    fireRateMs: WEAPON_OPTIONS_FIRE_RATE,
+    bulletColor: BULLET_COLORS.options,
+    bulletShape: 'circle',
+    // Smaller than the cannon's bullet: the pods multiply firepower rather
+    // than matching the main gun.
+    bulletSize: 0.8,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.options,
+    // Two pods by default; the `projectileCount` level variable adds one pod
+    // each, clamped to OPTIONS_MAX_PODS by resolveWeaponDefinition.
+    orbit: {
+      pods: OPTIONS_BASE_PODS,
+      radius: OPTIONS_ORBIT_RADIUS,
+    },
   },
   nova: {
     id: 'nova',

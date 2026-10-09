@@ -2749,3 +2749,97 @@ describe('CombatScene — cluster-missile split parity (AH-0MV1BIVIJ007KYXU)', (
     }
   });
 });
+
+// ── Gradius Options orbit-emitter parity (AH-0MV1BIVVK0043TEM) ────────
+
+describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and GymWeapons share the single fireOptionsPods seam', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      for (const method of ['fireOptionsPods', '_updateOptionsEscort'] as const) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared core method`,
+        ).toBe(
+          (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+            method
+          ],
+        );
+      }
+    }
+  });
+
+  it('the game and a gym spawn identical pod bullets from the shared seam', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'options-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'options-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Park both ships at the same point and clear any auto-fired bullets.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+    (
+      playScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets.length = 0;
+    (
+      gymScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets.length = 0;
+
+    const fire = (owner: PlayScene | EquivGymScene): PlayerBullet[] => {
+      (
+        owner as unknown as {
+          fireOptionsPods(
+            def: typeof WEAPON_CATALOGUE.options,
+            player: NonNullable<ReturnType<PlayScene['getPlayer']>>,
+          ): void;
+        }
+      ).fireOptionsPods(WEAPON_CATALOGUE.options, owner.getPlayer()!);
+      return (
+        owner as unknown as { playerBullets: PlayerBullet[] }
+      ).playerBullets.filter(
+        (b) => b.color === WEAPON_CATALOGUE.options.bulletColor,
+      );
+    };
+    const gamePods = fire(playScene);
+    const gymPods = fire(gymScene);
+
+    expect(gamePods).toHaveLength(WEAPON_CATALOGUE.options.orbit!.pods);
+    expect(gymPods).toHaveLength(gamePods.length);
+    // Identical escort geometry and pod-shot speed (phase starts at 0 in both).
+    for (let i = 0; i < gamePods.length; i++) {
+      expect(gymPods[i].x).toBeCloseTo(gamePods[i].x, 5);
+      expect(gymPods[i].y).toBeCloseTo(gamePods[i].y, 5);
+      expect(Math.hypot(gymPods[i].vx, gymPods[i].vy)).toBeCloseTo(
+        Math.hypot(gamePods[i].vx, gamePods[i].vy),
+        5,
+      );
+      // Each pod fires along its own scene's ship heading.
+      const heading = (owner: PlayScene | EquivGymScene) =>
+        owner.getPlayer()!.getHeading();
+      expect(Math.atan2(gymPods[i].vy, gymPods[i].vx)).toBeCloseTo(
+        heading(gymScene),
+        5,
+      );
+      expect(Math.atan2(gamePods[i].vy, gamePods[i].vx)).toBeCloseTo(
+        heading(playScene),
+        5,
+      );
+    }
+  });
+});

@@ -66,11 +66,20 @@ import {
   CLUSTER_SPLIT_BURST_RADIUS,
   CLUSTER_WARHEAD_LIFETIME,
   CLUSTER_WARHEAD_RADIUS_SCALE,
+  OPTIONS_ORBIT_RADIUS,
+  OPTIONS_POD_BULLET_SPEED,
+  OPTIONS_POD_RADIUS,
   angleToVelocity,
+  bulletVelocity,
   createBulletsFromHeading,
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
+import {
+  advanceOrbitPhase,
+  optionsPodFireDirections,
+  optionsPodPositions,
+} from './optionsEscort';
 import {
   mapControlInput,
   type ControlInput,
@@ -247,6 +256,18 @@ export class CombatCoreScene<
    * (AH-0MV1BIVIJ007KYXU).
    */
   private readonly _pendingSplitWarheads: PlayerBullet[] = [];
+  /**
+   * Orbit phase (radians) of the Gradius Options escort pods
+   * (AH-0MV1BIVVK0043TEM). Advanced once per shared player tick so the pods
+   * orbit deterministically, independent of the weapon's fire cadence.
+   */
+  private _optionsOrbitPhase = 0;
+  /**
+   * Persistent shared Graphics that draws the orbiting Options pods. Created
+   * lazily while the weapon is active and destroyed when it expires or the run
+   * resets, so the game and every gym render identical pods.
+   */
+  protected optionsPodGraphics: Phaser.GameObjects.Graphics | null = null;
   /**
    * Continuous time (ms) the player has spent inside an active tractor beam
    * (Galaga capturer, AH-0MV01EFII008298D). Reset whenever the player leaves
@@ -549,6 +570,10 @@ export class CombatCoreScene<
     // they take part in this frame's advance/collision passes
     // (AH-0MV1BIVIJ007KYXU).
     this.flushPendingSplitWarheads();
+    // Advance and redraw the Gradius Options escort pods before auto-fire so a
+    // pod fired this frame leaves from its current orbit position
+    // (AH-0MV1BIVVK0043TEM).
+    this._updateOptionsEscort(dt);
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame.
     player.tickWeaponTimers(dt * 1000);
@@ -605,6 +630,14 @@ export class CombatCoreScene<
           this.onAoeRandomFired(def, player.x, player.y);
           continue;
         }
+      }
+      // Orbit weapons (the Gradius Options escort) fire one bullet per pod
+      // from each pod's current world position, along the ship's heading. The
+      // pod geometry lives once in the shared `optionsEscort` helper, so the
+      // game and every gym fire identical pods (AH-0MV1BIVVK0043TEM).
+      if (def.orbit) {
+        this.fireOptionsPods(def, player);
+        continue;
       }
       for (const bd of createBulletsFromHeading(
         def,
@@ -769,6 +802,91 @@ export class CombatCoreScene<
     spawnSplitBurst(this, x, y, CLUSTER_SPLIT_BURST_RADIUS, warheads, {
       registry: this.splitBurstEffects,
     });
+  }
+
+  /**
+   * Advances and redraws the Gradius Options escort pods
+   * (AH-0MV1BIVVK0043TEM). One shared implementation consumes the pure
+   * `optionsEscort` geometry so the game and every gym orbit identical pods.
+   *
+   * When the Options weapon is not active the persistent Graphics (if any) is
+   * destroyed and the orbit phase reset, leaving no residual pod on screen.
+   * Otherwise the phase advances by `dt` and the pods are redrawn at their
+   * current positions.
+   *
+   * @param dt - Delta time in seconds.
+   */
+  protected _updateOptionsEscort(dt: number): void {
+    const player = this.getPlayer();
+    if (!player || !player.hasWeapon('options')) {
+      if (this.optionsPodGraphics) {
+        this.optionsPodGraphics.destroy();
+        this.optionsPodGraphics = null;
+      }
+      this._optionsOrbitPhase = 0;
+      return;
+    }
+    this._optionsOrbitPhase = advanceOrbitPhase(
+      this._optionsOrbitPhase,
+      dt * 1000,
+    );
+    const def = player.getWeaponDef('options');
+    const count = def.orbit?.pods ?? 0;
+    const radius = def.orbit?.radius ?? OPTIONS_ORBIT_RADIUS;
+    const graphics = (this.optionsPodGraphics ??= this.add.graphics());
+    graphics.clear();
+    // Faint orbit ring so the escort reads as an intentional formation.
+    graphics.lineStyle(1, def.bulletColor, 0.2);
+    graphics.strokeCircle(player.x, player.y, radius);
+    // Neon pods, drawn at the shared helper's deterministic positions.
+    graphics.fillStyle(def.bulletColor, 1);
+    for (const pod of optionsPodPositions(
+      player.x,
+      player.y,
+      this._optionsOrbitPhase,
+      count,
+      radius,
+    )) {
+      graphics.fillCircle(pod.x, pod.y, OPTIONS_POD_RADIUS);
+    }
+  }
+
+  /**
+   * Fires one bullet from every Options pod along the ship's heading
+   * (AH-0MV1BIVVK0043TEM). Each pod's world position comes from the shared
+   * `optionsEscort` helper; the bullets travel through the ordinary
+   * `PlayerBullet` path so they damage enemies exactly like the main gun.
+   *
+   * @param def - The level-resolved Options definition (carries `orbit`).
+   * @param player - The firing player (position + heading + bullet scale).
+   */
+  protected fireOptionsPods(def: WeaponDefinition, player: Player): void {
+    const orbit = def.orbit;
+    if (!orbit) return;
+    const count = Math.max(0, Math.round(orbit.pods));
+    if (count === 0) return;
+    const heading = player.getHeading();
+    const radius = PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1);
+    const positions = optionsPodPositions(
+      player.x,
+      player.y,
+      this._optionsOrbitPhase,
+      count,
+      orbit.radius,
+    );
+    const directions = optionsPodFireDirections(heading, count);
+    for (let i = 0; i < positions.length; i++) {
+      const vel = bulletVelocity(directions[i], OPTIONS_POD_BULLET_SPEED);
+      this.spawnPlayerBullet(
+        positions[i].x,
+        positions[i].y,
+        vel.vx,
+        vel.vy,
+        def.bulletColor,
+        def.bulletLifetime,
+        radius,
+      );
+    }
   }
 
   /** Spawns the player-death particle burst at (x, y). */
@@ -1122,6 +1240,11 @@ export class CombatCoreScene<
     this.splitBurstEffects = [];
     for (const warhead of this._pendingSplitWarheads) warhead.destroy();
     this._pendingSplitWarheads.length = 0;
+    // Clear the Options escort pods and orbit phase so a restarted run starts
+    // clean (AH-0MV1BIVVK0043TEM).
+    this.optionsPodGraphics?.destroy();
+    this.optionsPodGraphics = null;
+    this._optionsOrbitPhase = 0;
     // Clear any in-flight capture hold/penalty so a restarted run starts
     // clean (Galaga capturer, AH-0MV01EFII008298D).
     this._captureHoldMs = 0;
@@ -1152,6 +1275,8 @@ export class CombatCoreScene<
     this.splitBurstEffects = [];
     for (const warhead of this._pendingSplitWarheads) warhead.destroy();
     this._pendingSplitWarheads.length = 0;
+    this.optionsPodGraphics?.destroy();
+    this.optionsPodGraphics = null;
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();

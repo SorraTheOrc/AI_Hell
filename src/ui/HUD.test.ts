@@ -528,6 +528,16 @@ describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
     destroy(game);
   });
 
+  it('renders the Options weapon row from the catalogue (AH-0MV1BIVVK0043TEM)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('options');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    expect(hudTexts(hud)).toContain('Weapon: options Lvl 0');
+    destroy(game);
+  });
+
   it('drops the row once the weapon expires', async () => {
     const reg = new EffectsRegistry();
     reg.applyWeapon('rapid');

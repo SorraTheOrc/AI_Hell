@@ -20,6 +20,9 @@ import { isOnGrid } from '../../utils/beat';
 import {
   WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
+  OPTIONS_MAX_PODS,
+  OPTIONS_ORBIT_RADIUS,
+  OPTIONS_POD_BULLET_SPEED,
   type WeaponId,
 } from '../../utils/weapons';
 
@@ -897,6 +900,7 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       wave_laser: [],
       ricochet: [],
       cluster: [],
+      options: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -1276,5 +1280,100 @@ describe('cluster-missile split seam (AH-0MV1BIVIJ007KYXU)', () => {
     expect(enemy.destroyed).toBe(true);
     scene.runFlushSplits();
     expect(scene.getPlayerBullets()).toHaveLength(0);
+  });
+});
+
+// ── Gradius Options orbit-emitter seam (AH-0MV1BIVVK0043TEM) ─────────
+
+describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Equips Options and fires one volley, returning only the pod bullets. */
+  function fireOptionsPods(scene: StubCombatScene): PlayerBullet[] {
+    scene.runAutoFire(1);
+    return scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.options.bulletColor);
+  }
+
+  it('auto-fire spawns one pod bullet per orbiting pod, each along the heading', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    const bullets = fireOptionsPods(scene);
+    const expected = player.getWeaponDef('options').orbit?.pods ?? 0;
+    expect(expected).toBe(2);
+    expect(bullets).toHaveLength(expected);
+
+    const heading = player.getHeading();
+    for (const bullet of bullets) {
+      // Each pod fires along the ship's heading at the pod bullet speed.
+      expect(Math.atan2(bullet.vy, bullet.vx)).toBeCloseTo(heading, 5);
+      expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
+        OPTIONS_POD_BULLET_SPEED,
+        5,
+      );
+      // Each pod launches from its own position on the orbit (not the ship
+      // centre), so the escort reads as separate emitters.
+      expect(Math.hypot(bullet.x - player.x, bullet.y - player.y)).toBeCloseTo(
+        OPTIONS_ORBIT_RADIUS,
+        3,
+      );
+    }
+    // Distinct pod launch positions — one per pod.
+    const positions = new Set(
+      bullets.map((b) => `${b.x.toFixed(3)},${b.y.toFixed(3)}`),
+    );
+    expect(positions.size).toBe(expected);
+  });
+
+  it('the pod count is capped at OPTIONS_MAX_PODS at high levels', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Each permanent grant raises the weapon level; the resolved pod count
+    // must saturate at the legibility cap rather than growing without bound.
+    for (let i = 0; i < 30; i++) player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    expect(player.getWeaponDef('options').orbit?.pods).toBe(OPTIONS_MAX_PODS);
+    const bullets = fireOptionsPods(scene);
+    expect(bullets).toHaveLength(OPTIONS_MAX_PODS);
+  });
+
+  it('advances the orbit phase between frames so pods do not fire from a frozen point', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    const first = fireOptionsPods(scene)[0];
+    // Advance the shared player step (which advances the orbit phase) without
+    // firing again, then fire the next volley.
+    (scene as unknown as { _updateOptionsEscort(dt: number): void })
+      ._updateOptionsEscort(0.25);
+    scene.getPlayerBullets().length = 0;
+    const second = fireOptionsPods(scene)[0];
+    expect(second.x).not.toBeCloseTo(first.x, 3);
   });
 });

@@ -41,6 +41,7 @@ describe('power-up choice strategy', () => {
         'wave_laser',
         'ricochet',
         'cluster',
+        'options',
         'nova',
         'mortar',
         'arc',

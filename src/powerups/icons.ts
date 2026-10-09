@@ -37,6 +37,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   wave_laser: 0x3366ff, // neon blue — piercing beam
   ricochet: 0x33ff66, // neon green — edge-bouncing pellet
   cluster: 0xff3366, // neon hot pink — splitting warhead cluster
+  options: 0x00ffcc, // neon aquamarine — orbiting satellite pods
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
@@ -414,6 +415,9 @@ function _drawWeaponIcon(
     case 'cluster':
       drawClusterIcon(graphics, x, y, size);
       break;
+    case 'options':
+      drawOptionsIcon(graphics, x, y, size);
+      break;
     case 'nova':
       drawNovaIcon(graphics, x, y, size);
       break;
@@ -596,6 +600,39 @@ function drawClusterIcon(
     g.strokePath();
     g.beginPath();
     g.arc(x + dx * s * 0.88, y + dy * s * 0.88, s * 0.14, 0, Math.PI * 2);
+    g.strokePath();
+  }
+}
+
+/**
+ * Options icon — a central ship dot ringed by orbiting satellite pods, hinting
+ * at the Gradius Options escort that trails the ship and fires alongside it.
+ */
+function drawOptionsIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Central ship.
+  g.beginPath();
+  g.arc(x, y, s * 0.22, 0, Math.PI * 2);
+  g.strokePath();
+  // Orbit ring.
+  g.beginPath();
+  g.arc(x, y, s * 0.72, 0, Math.PI * 2);
+  g.strokePath();
+  // Two satellite pods on the orbit (base escort).
+  for (let i = 0; i < 2; i++) {
+    const angle = Math.PI * i + Math.PI / 6;
+    g.beginPath();
+    g.arc(
+      x + Math.cos(angle) * s * 0.72,
+      y + Math.sin(angle) * s * 0.72,
+      s * 0.16,
+      0,
+      Math.PI * 2,
+    );
     g.strokePath();
   }
 }

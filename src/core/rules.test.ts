@@ -90,7 +90,7 @@ describe('game rules configuration module', () => {
       const custom: GameRules = {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
-        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, nova: 0.25, mortar: 0.5, arc: 1 },
+        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
         powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5 },
         weaponWeights: {
           spread: 3,
@@ -99,6 +99,7 @@ describe('game rules configuration module', () => {
           wave_laser: 1,
           ricochet: 1,
           cluster: 1,
+          options: 1,
           nova: 1,
           mortar: 1,
           arc: 1,
@@ -217,6 +218,7 @@ describe('game rules configuration module', () => {
         wave_laser: 1,
         ricochet: 1,
         cluster: 0.5,
+        options: 1,
         nova: 0.25,
         mortar: 0.5,
         arc: 1,
@@ -233,7 +235,7 @@ describe('game rules configuration module', () => {
       saveRules({
         ...DEFAULT_RULES,
         beatBpm: 160,
-        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, nova: 0.25, mortar: 0.5, arc: 1 },
+        weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
       });
 
       const loaded = loadRules();
@@ -246,6 +248,7 @@ describe('game rules configuration module', () => {
         wave_laser: 1,
         ricochet: 1,
         cluster: 0.5,
+        options: 1,
         nova: 0.25,
         mortar: 0.5,
         arc: 1,
@@ -283,6 +286,7 @@ describe('game rules configuration module', () => {
         wave_laser: 1,
         ricochet: 1,
         cluster: 0.5,
+        options: 1,
         nova: 0.25,
         mortar: 0.5,
         arc: 1,
