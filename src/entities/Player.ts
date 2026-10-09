@@ -151,10 +151,12 @@ const FOUR_DIR_ENGINES: ReadonlyArray<EnginePortDef> = [
 ];
 
 /**
- * Asteroids scheme: three engines in the ship's local frame (nose = +x,
+ * Asteroids scheme: four engines in the ship's local frame (nose = +x,
  * which rotates to the facing angle via the Graphics rotation). One main
- * rear thruster opposite the direction of travel, plus two smaller (70%)
- * forward-side thrusters further forward on the hull (AC2).
+ * rear thruster opposite the direction of travel, two smaller (70%)
+ * forward-side thrusters further forward on the hull (AC2), plus a
+ * full-size nose retro-thruster at the hull front that fires while
+ * reversing (AC4, AH-0MV13LYCL006LB6J).
  */
 const ASTEROIDS_ENGINES: ReadonlyArray<EnginePortDef> = [
   // main rear thruster — opposite the nose (+x); flame shoots backward
@@ -162,6 +164,11 @@ const ASTEROIDS_ENGINES: ReadonlyArray<EnginePortDef> = [
   // forward-side thrusters — further forward on the hull, 70% size
   { port: 'leftSide', dx: 0.35, dy: -0.8, nx: -0.7071, ny: -0.7071, arcStart: -Math.PI, arcEnd: -Math.PI * 0.5, size: 0.7 },
   { port: 'rightSide', dx: 0.35, dy: 0.8, nx: -0.7071, ny: 0.7071, arcStart: Math.PI * 0.5, arcEnd: Math.PI, size: 0.7 },
+  // nose retro-thruster — at the hull front (nose, +x) with a +x outward
+  // normal, so its flame shoots forward while reversing (AC4). It is not
+  // drawn unless a reverse key fires it (AC3), and the model suppresses
+  // it entirely when `asteroidsReverseEnabled` is false.
+  { port: 'nose', dx: 1, dy: 0, nx: 1, ny: 0, arcStart: -Math.PI * 0.25, arcEnd: Math.PI * 0.25, size: 1 },
 ];
 
 /** Effective movement config: shared physics + scheme-specific rotation. */
@@ -1080,8 +1087,9 @@ export class Player extends Phaser.GameObjects.Graphics {
    * its component-scaled max length (`shipSize × thrustFlameLength ×
    * scale`, AC5); an engine that stops firing decays at 4× the growth
    * rate, so turning leaves no flame behind at the old port. In the
-   * Asteroids scheme the three engines (main + two 70% forward-side)
-   * fire at full scale while forward thrust is held (AC2).
+   * Asteroids scheme the forward engines (main + two 70% forward-side)
+   * fire at full scale while forward thrust is held (AC2), and the nose
+   * retro-thruster fires while reversing (AC4).
    *
    * Also drives the thruster hum (AH-0MTFOSOHN001Q620) via
    * `getEngineSoundLevel(state, input, thrustAcceleration)` →

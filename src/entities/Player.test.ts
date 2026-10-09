@@ -1379,17 +1379,17 @@ describe('Player — Asteroids control scheme', () => {
     expect(player.getScheme()).toBe('fourDirectional');
   });
 
-  it('draws three engine ports on the hull when in Asteroids mode (AC2)', async () => {
+  it('draws four engine ports on the hull when in Asteroids mode (AC2)', async () => {
     const player = await bootAsteroidsPlayer();
 
     const arcSpy = vi.spyOn(player, 'arc');
     player.setConfig({ ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
 
-    // Three engines: main rear + two forward-side thrusters.
-    expect(arcSpy).toHaveBeenCalledTimes(3);
+    // Four engines: main rear + two forward-side thrusters + nose retro.
+    expect(arcSpy).toHaveBeenCalledTimes(4);
 
     // Port radius = shipSize × 0.08 × size. Default shipSize 20:
-    // main 1.6px; forward-side thrusters 20 × 0.08 × 0.7 = 1.12px (70%).
+    // main & nose 1.6px; forward-side thrusters 20 × 0.08 × 0.7 = 1.12px (70%).
     const radii = arcSpy.mock.calls.map((call) => call[2] as number);
     expect(Math.max(...radii)).toBeCloseTo(1.6, 5);
     const small = radii.filter((r) => r < 1.6);
@@ -1523,6 +1523,7 @@ describe('Player — Asteroids control scheme', () => {
       main: 0,
       leftSide: 0,
       rightSide: 0,
+      nose: 0,
     });
 
     player.setInput({ forward: true, turnLeft: false, turnRight: false });
@@ -1533,6 +1534,7 @@ describe('Player — Asteroids control scheme', () => {
     expect(lens.main).toBeCloseTo(15, 2);
     expect(lens.leftSide).toBe(0);
     expect(lens.rightSide).toBe(0);
+    expect(lens.nose).toBe(0);
   });
 
   it('fires only the right-side engine on turn-left (AC1)', async () => {
@@ -1582,6 +1584,111 @@ describe('Player — Asteroids control scheme', () => {
     expect(lens.main).toBeCloseTo(15, 2);
     expect(lens.leftSide).toBeCloseTo(15 * 0.7, 2);
     expect(lens.rightSide).toBe(0);
+    expect(lens.nose).toBe(0);
+  });
+
+  // ── Nose retro-thruster VFX (AH-0MV13LYCL006LB6J, AC4) ──────────
+
+  it('fires only the nose retro-thruster while reverse is held (AC4)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    // Nose is a full-size thruster (like the main engine).
+    expect(lens.nose).toBeCloseTo(15, 2);
+    expect(lens.main).toBe(0);
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBe(0);
+  });
+
+  it('unions the nose retro-thruster with the firing engines (AC4)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: true, turnLeft: false, turnRight: false, reverse: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.main).toBeCloseTo(15, 2);
+    expect(lens.nose).toBeCloseTo(15, 2);
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBe(0);
+  });
+
+  it('grows then decays the nose flame using the animated-flame model (AC4)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    // Partway through the growth ramp the flame is present but not full.
+    // At the default thrust the ramp completes in ~30 ms, so a 5 ms tick
+    // lands partway (asserting the model is animated, not instantaneous).
+    player.preUpdate(0, 5);
+    const partial = player.getFlameLengths().nose;
+    expect(partial).toBeGreaterThan(0);
+    expect(partial).toBeLessThan(15);
+
+    // Continued holding grows it to the full hull-scaled length.
+    player.preUpdate(0, 250);
+    expect(player.getFlameLengths().nose).toBeCloseTo(15, 2);
+
+    // Releasing reverse decays it back to zero.
+    player.setInput({ forward: false, turnLeft: false, turnRight: false });
+    player.preUpdate(0, 5000);
+    expect(player.getFlameLengths().nose).toBe(0);
+  });
+
+  it('draws the nose flame forward from the hull front and rotates with the hull (AC4)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    const calls: Array<{ x: number; y: number }> = [];
+    const record = (x: number, y: number): Player => {
+      calls.push({ x, y });
+      return player;
+    };
+    vi.spyOn(player, 'moveTo').mockImplementation(record);
+    vi.spyOn(player, 'lineTo').mockImplementation(record);
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    player.preUpdate(0, 500);
+
+    // The nose port sits at the front of the hull (+x) with a +x outward
+    // normal, so the exhaust (and its flame wings) point forward: the two
+    // flame wing points are on the hull front at y = ±0.6r, and the flame
+    // tip extends ahead of the hull.
+    const r = DEFAULT_CONFIG.shipSize / 2;
+    expect(calls).toContainEqual({ x: r, y: r * 0.6 });
+    expect(calls).toContainEqual({ x: r, y: -r * 0.6 });
+    expect(calls.some((p) => p.x > r && Math.abs(p.y) < 1e-6)).toBe(true);
+
+    // The flame is drawn in the ship's local frame; rotating the hull
+    // (which Phaser applies to the whole Graphics object) carries it to
+    // the facing direction.
+    player.setInput({ forward: false, turnLeft: true, turnRight: false, reverse: true });
+    player.physicsTick(0.5, 960, 540);
+    // `rotation` is the raw facing angle and `getHeading()` normalises to
+    // [0, 2π), so compare modulo a full turn.
+    const diff = Math.abs(player.rotation - player.getHeading());
+    const wrapped = Math.min(diff, Math.abs(2 * Math.PI - diff));
+    expect(wrapped).toBeLessThan(1e-5);
+  });
+
+  it('draws no nose flame when the reverse thruster is disabled (AC4/AC3)', async () => {
+    const player = await bootAsteroidsPlayer();
+    player.setConfig({
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsReverseEnabled: false,
+    });
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    player.preUpdate(0, 500);
+
+    const lens = player.getFlameLengths();
+    expect(lens.nose).toBe(0);
+    expect(lens.main).toBe(0);
+    expect(lens.leftSide).toBe(0);
+    expect(lens.rightSide).toBe(0);
   });
 
   it('shows no flames while coasting and decays them on release (AC1)', async () => {
@@ -1616,6 +1723,7 @@ describe('Player — Asteroids control scheme', () => {
       main: 0,
       leftSide: 0,
       rightSide: 0,
+      nose: 0,
     });
   });
 
