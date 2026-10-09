@@ -796,12 +796,14 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     const registry = scene.getEffectsRegistry();
     expect(registry.hasTeleport()).toBe(true);
 
-    // Park the ship inside the 3-scout V-formation (all within
-    // DANGER_RADIUS) so the shared danger feed selects the stored Teleport
-    // and warps — with no key input at all (S / ↓ are no longer wired).
+    // Park the ship at the centre of the V-formation so all 3 scouts are
+    // within DANGER_RADIUS (40 px) regardless of formation drift during boot.
+    // From (baseX, 124) the furthest scout is at offset (±32, 14), i.e.
+    // √(32²+14²) ≈ 35 px — comfortably inside the 40 px danger radius.
     // `respawn` syncs the internal movement state so the tick keeps it here.
     const player = scene.getPlayer()!;
-    player.respawn(192, 125);
+    player.respawn(scene.formationX, 124);
+
     scene.tick(0.016);
 
     expect(registry.hasTeleport()).toBe(false);
