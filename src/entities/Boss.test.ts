@@ -13,11 +13,13 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
+import * as bulletImpactModule from '../vfx/bulletImpact';
 import {
   BOSS_ATTACK_INTERVAL,
   BOSS_HEALTH_BAR_WIDTH,
   BOSS_HEALTH_SEGMENTS,
   BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_IMPACT_COLOR,
   BOSS_MOVE_AMPLITUDE_X,
   BOSS_MOVE_AMPLITUDE_Y,
   BOSS_MOVE_PERIOD_MS,
@@ -872,5 +874,131 @@ describe('Boss — figure-of-eight movement in shared core (AH-0MUZMTS8J0029FSS)
 
     expect(boss.x).toBe(liveX);
     expect(boss.y).toBe(liveY);
+  });
+});
+
+// ── Per-hit impact VFX & SFX on the shared feedback path (AH-0MUZMTTPE0074X59) ──
+
+describe('Boss — per-hit impact VFX & SFX (AH-0MUZMTTPE0074X59)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(x = 480, y = 200): Boss {
+    return new Boss(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('AC1 — every landed hit plays the boss-hit cue and registers exactly one impact VFX', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+
+    boss.takeDamage(100, 120);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(impact).toHaveBeenCalledTimes(1);
+    expect(boss.getHitEffects()).toHaveLength(1);
+
+    boss.takeDamage(140, 160);
+    expect(cue).toHaveBeenCalledTimes(2);
+    expect(impact).toHaveBeenCalledTimes(2);
+    expect(boss.getHitEffects()).toHaveLength(2);
+  });
+
+  it('AC1 — the impact is spawned at the supplied hit point with the hot boss colour', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+
+    boss.takeDamage(123, 145);
+
+    expect(impact).toHaveBeenCalledWith(
+      booted.scene,
+      123,
+      145,
+      expect.objectContaining({ color: BOSS_IMPACT_COLOR }),
+    );
+  });
+
+  it('AC1 — the impact falls back to the boss centre when no hit point is supplied', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+
+    boss.takeDamage();
+
+    expect(impact).toHaveBeenCalledWith(
+      booted.scene,
+      480,
+      200,
+      expect.objectContaining({ color: BOSS_IMPACT_COLOR }),
+    );
+  });
+
+  it('AC2 — a depleting hit still plays the phase-transition cue alongside the per-hit cue', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const hitCue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const phaseCue = vi.spyOn(effectsModule, 'playBossPhaseTransitionSound');
+
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) boss.takeDamage();
+    expect(phaseCue).not.toHaveBeenCalled();
+    expect(hitCue).toHaveBeenCalledTimes(BOSS_HIT_POINTS_PER_PHASE - 1);
+
+    boss.takeDamage();
+    expect(phaseCue).toHaveBeenCalledTimes(1);
+    expect(hitCue).toHaveBeenCalledTimes(BOSS_HIT_POINTS_PER_PHASE);
+  });
+
+  it('AC1 — the destroying hit also plays the per-hit cue and spawns an impact', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+
+    for (let i = 0; i < totalHits - 1; i++) boss.takeDamage();
+    expect(cue).toHaveBeenCalledTimes(totalHits - 1);
+    const effectsBefore = boss.getHitEffects().length;
+
+    boss.takeDamage(50, 60);
+    expect(cue).toHaveBeenCalledTimes(totalHits);
+    // The destroying hit still registers exactly one per-hit impact.
+    expect(boss.getHitEffects()).toHaveLength(effectsBefore + 1);
+  });
+
+  it('AC4 — the registry is emptied when an impact flash tween completes', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const tweenSpy = vi.spyOn(booted.scene.tweens, 'add');
+
+    boss.takeDamage(10, 20);
+    expect(boss.getHitEffects()).toHaveLength(1);
+
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(boss.getHitEffects()).toHaveLength(0);
+  });
+
+  it('AC4 — destroy() empties the registry and destroys live impact flashes', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    boss.takeDamage(10, 20);
+    const [flash] = boss.getHitEffects();
+    expect(flash.active).toBe(true);
+
+    boss.destroy();
+
+    expect(boss.getHitEffects()).toHaveLength(0);
+    expect(flash.active).toBe(false);
   });
 });

@@ -1715,13 +1715,17 @@ export class PlayScene extends CombatScene<
    * only a depleting hit awards the phase score and summons the next
    * phase's minions. The run is completed as a victory when the boss dies
    * (GDD §4.5).
+   *
+   * @param hitX — optional world-space X of the hit, forwarded to
+   *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
+   * @param hitY — optional world-space Y of the hit.
    */
-  private _damageBoss(): void {
+  private _damageBoss(hitX?: number, hitY?: number): void {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
 
     const previousPhase = boss.getPhaseNumber();
-    const result = boss.takeDamage();
+    const result = boss.takeDamage(hitX, hitY);
     if (result.destroyed) {
       // Capture the boss's death position before anything else can move or
       // destroy it — the celebration is anchored here (AC3).
@@ -1954,7 +1958,7 @@ export class PlayScene extends CombatScene<
         // phase hit; the blast damages the boss through `onAoeHitsBoss`.
         this.detonateAoeProjectile(pb);
       } else {
-        this._damageBoss();
+        this._damageBoss(pb.x, pb.y);
       }
       pb.destroy();
       return true;
@@ -1979,7 +1983,7 @@ export class PlayScene extends CombatScene<
         this.boss.x, this.boss.y, this.boss.getHitRadius(),
       )
     ) {
-      this._damageBoss();
+      this._damageBoss(x, y);
       return true;
     }
     return false;

@@ -27,8 +27,8 @@
  * remain. The gym scene provides a damage button for testing phase
  * transitions.
  *
- * Audio cues: spawn, phase transition, each phase's unique attack cue,
- * and destruction.
+ * Audio cues: spawn, per-hit impact, phase transition, each phase's
+ * unique attack cue, and destruction.
  */
 
 import Phaser from 'phaser';
@@ -39,6 +39,7 @@ import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import {
   playBossDestructionSound,
   playBossFireSound,
+  playBossHitSound,
   playBossPhaseCue,
   playBossPhaseTransitionSound,
   playBossSpawnSound,
@@ -48,6 +49,7 @@ import {
   spawnExplosionParticles,
   type ExplosionHandle,
 } from '../vfx/explosionParticles';
+import { spawnBulletImpact } from '../vfx/bulletImpact';
 
 
 // ── Visual / behaviour tuning (per GDD §4.3) ────────────────────────
@@ -67,6 +69,8 @@ export const BOSS_RADIUS = 50;
 export const BOSS_CORE_RADIUS = 16;
 /** Core glow radius in px. */
 export const BOSS_CORE_GLOW_RADIUS = 30;
+/** Hot yellow colour for per-hit boss impact VFX. */
+export const BOSS_IMPACT_COLOR = 0xffee44;
 
 // ── Figure-of-eight movement tuning (GDD §4.3, AH-0MUZMTS8J0029FSS) ──
 
@@ -281,6 +285,11 @@ export class Boss extends Phaser.GameObjects.Container {
   // Player tracking for pulse aimed shots
   private _playerTargetX = 480;
   private _playerTargetY = 500;
+
+  // Per-hit VFX registry (AH-0MUZMTTPE0074X59). Tracks live impact flashes
+  // for test observability; each entry is removed when the tween completes
+  // and the array is cleared in `destroy()` to prevent leaks.
+  private _hitEffects: Phaser.GameObjects.Graphics[] = [];
 
   // ── Construction ────────────────────────────────────────────────
 
@@ -734,11 +743,29 @@ export class Boss extends Phaser.GameObjects.Container {
    * `{ destroyed: false, phaseAdvanced: false }`.
    * A depleting hit advances the phase (or destroys the boss after phase 4)
    * and returns `{ phaseAdvanced: true }` or `{ destroyed: true }`.
+   *
+   * On **every** hit the boss plays a dedicated SFX cue and spawns a brief
+   * impact flash at the supplied hit point (or the boss centre when omitted).
+   *
+   * @param hitX — optional world-space X of the hit (for per-hit VFX).
+   * @param hitY — optional world-space Y of the hit (for per-hit VFX).
    */
-  takeDamage(): { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number } {
+  takeDamage(
+    hitX?: number,
+    hitY?: number,
+  ): { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number } {
     if (!this._alive) return { destroyed: false, phaseAdvanced: false, phase: this._currentPhaseNumber, hpRemaining: 0 };
 
     this._currentHp--;
+
+    // Play per-hit SFX and spawn per-hit VFX (shared path — both game and gym).
+    playBossHitSound();
+    const hitXPos = hitX ?? this.x;
+    const hitYPos = hitY ?? this.y;
+    spawnBulletImpact(this.scene as Phaser.Scene, hitXPos, hitYPos, {
+      color: BOSS_IMPACT_COLOR,
+      registry: this._hitEffects,
+    });
 
     if (this._currentHp <= 0) {
       // Boss destroyed.
@@ -971,6 +998,15 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Live per-hit impact-VFX flashes (copy — for tests/SHUTDOWN checks).
+   * Each entry is removed from the registry when its tween completes, and
+   * all entries are destroyed in `destroy()` (AH-0MUZMTTPE0074X59).
+   */
+  getHitEffects(): Phaser.GameObjects.Graphics[] {
+    return this._hitEffects.slice();
+  }
+
+  /**
    * Per-frame update for animation and attack logic.
    * Returns bullets that should be collected by the scene.
    */
@@ -1058,6 +1094,11 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._pulseWaveGraphics) {
       this._pulseWaveGraphics.destroy();
     }
+    // Scene-level per-hit impact flashes are NOT display-list children of
+    // this container — destroy them explicitly and empty the registry so
+    // SHUTDOWN/stop→restart leaks nothing (AH-0MUZMTTPE0074X59).
+    for (const flash of this._hitEffects) flash.destroy();
+    this._hitEffects.length = 0;
     // Scene-level particle Graphics are NOT display-list children —
     // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
     for (const handle of this.explosionHandles) handle.destroy();

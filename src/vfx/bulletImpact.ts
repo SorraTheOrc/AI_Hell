@@ -39,6 +39,8 @@ export interface BulletImpactOptions {
   radius?: number;
   /** Flash lifetime (s). Defaults to {@link BULLET_IMPACT_DURATION}. */
   duration?: number;
+  /** Flash colour (number). Defaults to {@link BULLET_IMPACT_COLOR}. */
+  color?: number;
 }
 
 /**
@@ -55,10 +57,11 @@ export function spawnBulletImpact(
   const radius = options.radius ?? BULLET_IMPACT_RADIUS;
   const duration = options.duration ?? BULLET_IMPACT_DURATION;
   const registry = options.registry;
+  const color = options.color ?? BULLET_IMPACT_COLOR;
 
   const flash = scene.add.graphics();
   flash.setPosition(x, y);
-  flash.fillStyle(BULLET_IMPACT_COLOR, 0.9);
+  flash.fillStyle(color, 0.9);
   flash.fillCircle(0, 0, radius);
   registry?.push(flash);
 

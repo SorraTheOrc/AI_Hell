@@ -1651,6 +1651,28 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
 
+  it('AC5 — a player bullet hit registers a per-hit impact VFX at the hit point', async () => {
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    vi.clearAllMocks();
+    expect(boss.getHitEffects()).toHaveLength(0);
+
+    const hitX = boss.x;
+    const hitY = boss.y;
+    scene.spawnPlayerBullet(hitX, hitY, 0, 0);
+    scene.tick(0.016);
+
+    // The hit is fed through the shared `Boss.takeDamage()` path: one impact
+    // VFX at the bullet's hit point and one dedicated boss-hit cue.
+    const effects = boss.getHitEffects();
+    expect(effects).toHaveLength(1);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(effects[0].x).toBeCloseTo(hitX, 1);
+    expect(effects[0].y).toBeCloseTo(hitY, 1);
+  });
+
   // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
 
   /** Live minion count (the boss is not part of `spawned`). */

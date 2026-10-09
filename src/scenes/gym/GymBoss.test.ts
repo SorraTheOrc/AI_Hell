@@ -782,6 +782,23 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
     damageBtn.emit('pointerdown');
     expect(boss.alive).toBe(false);
   });
+
+  it('AC5 — a DAMAGE hit spawns the shared per-hit impact VFX at the boss centre', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+    expect(boss.getHitEffects()).toHaveLength(0);
+    const centreX = boss.x;
+    const centreY = boss.y;
+
+    scene.damageBoss();
+
+    // The gym reaches the same shared `Boss.takeDamage()` feedback path as
+    // the game; with no hit point supplied it uses the boss centre.
+    const effects = boss.getHitEffects();
+    expect(effects).toHaveLength(1);
+    expect(effects[0].x).toBe(centreX);
+    expect(effects[0].y).toBe(centreY);
+  });
 });
 
 describe('GymBoss — figure-of-eight boss movement (AH-0MUZMTS8J0029FSS)', () => {
