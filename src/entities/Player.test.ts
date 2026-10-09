@@ -1442,6 +1442,61 @@ describe('Player — Asteroids control scheme', () => {
     expect(player.y).toBeCloseTo(270); // no vertical motion
   });
 
+  it('retro-thrusts opposite the facing when reverse is held (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Default config: reverse enabled, 200 px/s². Facing 0 (right), so a
+    // held reverse accelerates left (−x).
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    player.physicsTick(0.1, 960, 540);
+    const { vx, vy } = player.getMovementState();
+    expect(vx).toBeCloseTo(-20, 3); // −200 × 0.1
+    expect(vy).toBeCloseTo(0, 3);
+  });
+
+  it('threads the reverse tunables through setConfig (AC4)', async () => {
+    const player = await bootAsteroidsPlayer();
+    player.setConfig({
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsReverseThrustAcceleration: 400,
+      asteroidsReverseMaxSpeed: 500,
+    });
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    player.physicsTick(0.1, 960, 540);
+    expect(player.getMovementState().vx).toBeCloseTo(-40, 3); // −400 × 0.1
+  });
+
+  it('disabling the reverse thruster makes reverse input a no-op (AC3)', async () => {
+    const player = await bootAsteroidsPlayer();
+    player.setConfig({
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsReverseEnabled: false,
+      asteroidsReverseThrustAcceleration: 400,
+    });
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    player.physicsTick(0.1, 960, 540);
+    // No reverse acceleration: the ship stays at rest.
+    expect(player.getMovementState().vx).toBeCloseTo(0, 6);
+  });
+
+  it('clamps reverse speed to asteroidsReverseMaxSpeed (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+    player.setConfig({
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      asteroidsReverseMaxSpeed: 60,
+    });
+
+    player.setInput({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+    for (let i = 0; i < 40; i++) player.physicsTick(0.05, 960, 540);
+    const { vx, vy } = player.getMovementState();
+    expect(Math.sqrt(vx * vx + vy * vy)).toBeCloseTo(60, 3);
+  });
+
   it('accelerates along the current facing after turning (AC1)', async () => {
     const player = await bootAsteroidsPlayer();
 

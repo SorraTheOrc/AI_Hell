@@ -45,6 +45,12 @@ export interface AsteroidsInput {
   forward: boolean;
   turnLeft: boolean;
   turnRight: boolean;
+  /**
+   * Held reverse (retro) thrust — Asteroids scheme only
+   * (AH-0MV13LY0R006ZO6D). Optional so callers that predate the reverse
+   * thruster remain valid; an absent value is treated as `false`.
+   */
+  reverse?: boolean;
 }
 
 /**
@@ -88,6 +94,7 @@ export interface MovementModel {
     state: MovementState,
     input: ControlInput,
     componentThrust: { dx: number; dy: number } | null,
+    config?: BaseMovementConfig,
   ): Array<{ engine: string; scale: number }>;
 
   /**
@@ -159,6 +166,7 @@ export class FourDirectionalModel implements MovementModel {
     _state: MovementState,
     input: ControlInput,
     componentThrust: { dx: number; dy: number } | null,
+    _config?: BaseMovementConfig,
   ): Array<{ engine: string; scale: number }> {
     if (componentThrust) {
       return enginesForThrust(componentThrust.dx, componentThrust.dy);
@@ -193,6 +201,25 @@ export interface AsteroidsConfig extends BaseMovementConfig {
    * {@link DEFAULT_ROTATION_DECELERATION} (60) when omitted.
    */
   rotationDeceleration?: number;
+  /**
+   * Master on/off switch for the reverse (retro) thruster
+   * (AH-0MV13LY0R006ZO6D). When `false`, the `reverse` input applies no
+   * acceleration, selects no reverse engine and does not suppress
+   * friction. Defaults to `true` when omitted.
+   */
+  reverseEnabled?: boolean;
+  /**
+   * Reverse-thrust acceleration (px/s²) applied opposite the ship's
+   * facing while a reverse key is held. Independent of the forward
+   * `thrust`. Defaults to {@link DEFAULT_REVERSE_ACCELERATION} (200).
+   */
+  reverseAcceleration?: number;
+  /**
+   * Speed cap (px/s) reachable under reverse thrust, independent of the
+   * forward `maxSpeed`. Defaults to {@link DEFAULT_REVERSE_MAX_SPEED}
+   * (120).
+   */
+  reverseMaxSpeed?: number;
 }
 
 /** Default angular acceleration (rad/s²) for the Asteroids spin-up ramp. */
@@ -200,6 +227,12 @@ export const DEFAULT_ROTATION_ACCELERATION = 12;
 
 /** Default angular deceleration (rad/s²) for the Asteroids spin-down ramp. */
 export const DEFAULT_ROTATION_DECELERATION = 60;
+
+/** Default reverse-thrust acceleration (px/s²) for the reverse thruster. */
+export const DEFAULT_REVERSE_ACCELERATION = 200;
+
+/** Default speed cap (px/s) reachable under reverse thrust. */
+export const DEFAULT_REVERSE_MAX_SPEED = 120;
 
 /**
  * Extends MovementState with a facing angle for rotation-based schemes.
@@ -327,8 +360,21 @@ export class AsteroidsModel implements MovementModel {
       vy += Math.sin(facing) * config.thrust * dt;
     }
 
-    // Apply friction (no input → decelerate)
-    if (!aInput.forward) {
+    // Reverse (retro) thrust (AH-0MV13LY0R006ZO6D): while a reverse key is
+    // held and the master toggle is on, accelerate opposite the facing
+    // direction. `speedBeforeReverse` is captured first for the clamp below.
+    const reverseEnabled = rConfig.reverseEnabled ?? true;
+    const reverseActive = aInput.reverse === true && reverseEnabled;
+    const speedBeforeReverse = Math.sqrt(vx * vx + vy * vy);
+    if (reverseActive) {
+      const reverseAcceleration =
+        rConfig.reverseAcceleration ?? DEFAULT_REVERSE_ACCELERATION;
+      vx -= Math.cos(facing) * reverseAcceleration * dt;
+      vy -= Math.sin(facing) * reverseAcceleration * dt;
+    }
+
+    // Apply friction (no forward and no active reverse thrust)
+    if (!aInput.forward && !reverseActive) {
       const speed = Math.sqrt(vx * vx + vy * vy);
       if (speed > 0 && config.friction > 0) {
         const reduction = config.friction * dt;
@@ -339,6 +385,26 @@ export class AsteroidsModel implements MovementModel {
           const factor = (speed - reduction) / speed;
           vx *= factor;
           vy *= factor;
+        }
+      }
+    }
+
+    // Reverse speed clamp (AH-0MV13LY0R006ZO6D): the reverse thruster may
+    // only push the ship up to its own `reverseMaxSpeed`, and must never
+    // abruptly brake pre-existing faster momentum. The cap is therefore
+    // applied *only* when the reverse acceleration increased the speed, and
+    // the cap itself is `max(speedBeforeReverse, reverseMaxSpeed)` — so
+    // reverse can never add speed beyond what the ship already had.
+    if (reverseActive) {
+      const speedAfterReverse = Math.sqrt(vx * vx + vy * vy);
+      if (speedAfterReverse > speedBeforeReverse) {
+        const reverseMaxSpeed =
+          rConfig.reverseMaxSpeed ?? DEFAULT_REVERSE_MAX_SPEED;
+        const cap = Math.max(speedBeforeReverse, reverseMaxSpeed);
+        if (speedAfterReverse > cap) {
+          const scale = cap / speedAfterReverse;
+          vx *= scale;
+          vy *= scale;
         }
       }
     }
@@ -380,6 +446,7 @@ export class AsteroidsModel implements MovementModel {
     _state: MovementState,
     input: ControlInput,
     _componentThrust: { dx: number; dy: number } | null,
+    config?: BaseMovementConfig,
   ): Array<{ engine: string; scale: number }> {
     const a = input as AsteroidsInput;
     const engines: Array<{ engine: string; scale: number }> = [];
@@ -387,10 +454,16 @@ export class AsteroidsModel implements MovementModel {
     //   forward → main rear thruster
     //   turnLeft → right-side thruster (opposite the turn direction)
     //   turnRight → left-side thruster
+    //   reverse → nose retro-thruster (flame shoots forward)
     // Combinations union the entries (e.g. forward+turn → main + side).
     if (a.forward) engines.push({ engine: 'main', scale: 1 });
     if (a.turnLeft) engines.push({ engine: 'rightSide', scale: 1 });
     if (a.turnRight) engines.push({ engine: 'leftSide', scale: 1 });
+    const reverseEnabled =
+      (config as AsteroidsConfig | undefined)?.reverseEnabled ?? true;
+    if (a.reverse === true && reverseEnabled) {
+      engines.push({ engine: 'nose', scale: 1 });
+    }
     return engines;
   }
 
@@ -435,10 +508,13 @@ export class AsteroidsInputHandler implements InputHandler {
     return {
       forward: (c?.up?.isDown ?? false) || (w?.W?.isDown ?? false),
       turnLeft: (c?.left?.isDown ?? false) || (w?.A?.isDown ?? false),
-      // turnRight: D key (WASD) + Right cursor arrow — S is NOT a turn-right
-      // key in the Asteroids scheme (it is a 4-directional backward thrust
-      // binding only). (AH-0MTFORPJ2003RWWQ)
+      // turnRight: D key (WASD) + Right cursor arrow
       turnRight: (c?.right?.isDown ?? false) || (w?.D?.isDown ?? false),
+      // reverse: S key (WASD) + Down cursor arrow — held retro-thrust
+      // (AH-0MV13LY0R006ZO6D). S was previously the 4-directional
+      // backward-thrust binding only; in the Asteroids scheme it now drives
+      // the reverse thruster.
+      reverse: (c?.down?.isDown ?? false) || (w?.S?.isDown ?? false),
     };
   }
 }

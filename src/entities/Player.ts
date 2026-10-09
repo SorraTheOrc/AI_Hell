@@ -169,6 +169,12 @@ type PlayerMovementConfig = MovementConfig & {
   rotationSpeed: number;
   rotationAcceleration: number;
   rotationDeceleration: number;
+  /** Asteroids reverse-thruster master toggle (AH-0MV13LY0R006ZO6D). */
+  reverseEnabled: boolean;
+  /** Reverse-thrust acceleration (px/s²), independent of forward thrust. */
+  reverseAcceleration: number;
+  /** Speed cap (px/s) reachable under reverse thrust. */
+  reverseMaxSpeed: number;
 };
 
 /**
@@ -284,6 +290,9 @@ export class Player extends Phaser.GameObjects.Graphics {
       rotationSpeed: ship.asteroidsRotationSpeed,
       rotationAcceleration: ship.asteroidsRotationAcceleration,
       rotationDeceleration: ship.asteroidsRotationDeceleration,
+      reverseEnabled: ship.asteroidsReverseEnabled,
+      reverseAcceleration: ship.asteroidsReverseThrustAcceleration,
+      reverseMaxSpeed: ship.asteroidsReverseMaxSpeed,
     };
     this._config = { ...this._baseConfig };
 
@@ -440,6 +449,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       this._movementState,
       input,
       null,
+      this._config,
     ).length > 0) {
       for (const port of this._engines()) this._flameLens[port.port] = 0;
     }
@@ -542,6 +552,9 @@ export class Player extends Phaser.GameObjects.Graphics {
       rotationSpeed: config.asteroidsRotationSpeed,
       rotationAcceleration: config.asteroidsRotationAcceleration,
       rotationDeceleration: config.asteroidsRotationDeceleration,
+      reverseEnabled: config.asteroidsReverseEnabled,
+      reverseAcceleration: config.asteroidsReverseThrustAcceleration,
+      reverseMaxSpeed: config.asteroidsReverseMaxSpeed,
     };
     this._applySpeedMultiplier();
     // Loading a saved config restores its control scheme (AC4). If the
@@ -623,6 +636,11 @@ export class Player extends Phaser.GameObjects.Graphics {
       rotationSpeed: this._baseConfig.rotationSpeed,
       rotationAcceleration: this._baseConfig.rotationAcceleration,
       rotationDeceleration: this._baseConfig.rotationDeceleration,
+      // Reverse tunables are carried through unscaled: they are the
+      // player's independent reverse settings (AH-0MV13LY0R006ZO6D).
+      reverseEnabled: this._baseConfig.reverseEnabled,
+      reverseAcceleration: this._baseConfig.reverseAcceleration,
+      reverseMaxSpeed: this._baseConfig.reverseMaxSpeed,
     };
   }
 
@@ -1080,6 +1098,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       this._movementState,
       this._input,
       this._componentThrust,
+      this._config,
     );
     const scales: Record<string, number> = {};
     for (const port of this._engines()) scales[port.port] = 0;
