@@ -95,6 +95,13 @@ import {
   playDropPickupCue,
 } from './dropLayer';
 import {
+  computeCapturePull,
+  isCaptureComplete,
+  DEFAULT_CAPTURE_HOLD_MS,
+  DEFAULT_CAPTURE_DISABLE_MS,
+  type CaptureBeamState,
+} from './captureBeam';
+import {
   applyMineralScoop,
   type MovableMineral,
 } from '../../powerups/mineralScoop';
@@ -136,6 +143,19 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * (AH-0MUII2FJ5007MDDA gym-parity epic).
    */
   setSeekTargets?(minerals: readonly import('../../entities/Mineral').Mineral[]): void;
+  /**
+   * Optional tractor-beam seam (Galaga capturer, AH-0MV01EFII008298D): returns
+   * the entity's live beam, or null when it is not beaming. The shared
+   * {@link CombatCoreScene._updateCaptureBeams} step consumes it so the beam's
+   * bounded pull and temporary capture effect run once for the game and every
+   * player-bearing gym. Entities that do not beam omit it.
+   */
+  getCaptureBeam?(): CaptureBeamState | null;
+  /**
+   * Called by the shared capture step when this entity's beam completed a
+   * capture, so the entity can withdraw and re-form (Galaga capturer).
+   */
+  notifyPlayerCaptured?(): void;
 }
 
 /** Structural contract an enemy bullet must satisfy. */
@@ -208,6 +228,18 @@ export class CombatCoreScene<
    * so an in-flight pulse leaks nothing.
    */
   protected bombPulseEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Continuous time (ms) the player has spent inside an active tractor beam
+   * (Galaga capturer, AH-0MV01EFII008298D). Reset whenever the player leaves
+   * the beam, so the escape condition is "move out of the beam before the
+   * hold fills".
+   */
+  private _captureHoldMs = 0;
+  /**
+   * Remaining temporary, non-fatal capture effect time (ms) — while positive
+   * the player's auto-fire is suppressed.
+   */
+  private _captureDisabledMs = 0;
   /** Lazily-created Phase Shift treatment controller. */
   private phaseShiftJuice: PhaseShiftJuice | null = null;
 
@@ -504,7 +536,12 @@ export class CombatCoreScene<
     const input = this._readPlayerInput();
     if (input) player.setInput(input);
     player.physicsTick(dt, this.scale.width, this.scale.height);
-    if (this.autoFireEnabled()) this._autoFire(dt);
+    // Tractor-beam step (Galaga capturer, AH-0MV01EFII008298D): apply the
+    // bounded pull and resolve the temporary capture before auto-fire, so a
+    // capture on this frame suppresses fire on this frame. Runs after physics
+    // so the drag is applied to the ship's current position.
+    this._updateCaptureBeams(dt);
+    if (this.autoFireEnabled() && !this.isCaptureDisabled()) this._autoFire(dt);
     // Bomb bomb: advance the shared pulse state and fire a ranged clear when
     // one is due. Runs after physics so the pulse is centred on the player's
     // current position, and from this single shared step so the game and
@@ -807,6 +844,77 @@ export class CombatCoreScene<
   }
 
   /**
+   * Shared tractor-beam step (Galaga capturer, AH-0MV01EFII008298D).
+   *
+   * Walks the scene's enemy entities for live, active beams, applies the
+   * **bounded** pull of the strongest overlapping beam to the player through
+   * {@link Player.applyExternalDrag}, and — after a continuous hold of
+   * {@link DEFAULT_CAPTURE_HOLD_MS} — triggers the temporary, non-fatal capture
+   * effect (fire suppressed for {@link DEFAULT_CAPTURE_DISABLE_MS}) and tells
+   * the capturing entity to withdraw.
+   *
+   * Defined once here and driven from {@link CombatCoreScene._tickPlayer}, so
+   * the game and every player-bearing gym run the same capture implementation
+   * (gym↔game parity). Leaving the beam resets the hold; a scene with no
+   * player, or no beams, is a no-op.
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateCaptureBeams(dt: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    const dtMs = dt * 1000;
+
+    if (this._captureDisabledMs > 0) {
+      this._captureDisabledMs = Math.max(0, this._captureDisabledMs - dtMs);
+    }
+
+    let insideBeam = false;
+    let pullVx = 0;
+    let pullVy = 0;
+    let maxPull = 0;
+    let captor: CombatEnemyEntity | null = null;
+    for (const entity of this.getEnemyEntities()) {
+      const beam = entity.getCaptureBeam?.();
+      if (!beam || !beam.active) continue;
+      const pull = computeCapturePull(beam, player.x, player.y);
+      const magnitude = Math.hypot(pull.vx, pull.vy);
+      if (magnitude === 0) continue;
+      insideBeam = true;
+      // The strongest single beam wins, so multiple overlapping beams can
+      // never exceed a single beam's bounded pull.
+      if (magnitude > maxPull) {
+        maxPull = magnitude;
+        pullVx = pull.vx;
+        pullVy = pull.vy;
+        captor = entity;
+      }
+    }
+
+    if (!insideBeam) {
+      this._captureHoldMs = 0;
+      return;
+    }
+
+    player.applyExternalDrag(pullVx, pullVy, dt);
+    this._captureHoldMs += dtMs;
+    if (isCaptureComplete(this._captureHoldMs, DEFAULT_CAPTURE_HOLD_MS)) {
+      this._captureHoldMs = 0;
+      this._captureDisabledMs = DEFAULT_CAPTURE_DISABLE_MS;
+      captor?.notifyPlayerCaptured?.();
+    }
+  }
+
+  /**
+   * Whether the player is currently serving the temporary, non-fatal capture
+   * penalty (auto-fire suppressed). Observable so tests and HUDs can verify
+   * the capture effect without inferring it from fire timing.
+   */
+  isCaptureDisabled(): boolean {
+    return this._captureDisabledMs > 0;
+  }
+
+  /**
    * Advances the shared Bomb bomb pulse and, when the registry reports a pulse
    * is due, clears enemy bullets within the resolved range around the player
    * and spawns the expanding-ring VFX (AH-0MUVM9RAO004Y3LB).
@@ -886,6 +994,10 @@ export class CombatCoreScene<
     // In-flight Bomb pulse rings are likewise owned by their registry.
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    // Clear any in-flight capture hold/penalty so a restarted run starts
+    // clean (Galaga capturer, AH-0MV01EFII008298D).
+    this._captureHoldMs = 0;
+    this._captureDisabledMs = 0;
   }
 
   /**

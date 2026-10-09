@@ -32,6 +32,9 @@ export const ENEMY_FIRE_METHODS = {
   // missing key) keeps it out of the aimed-shot fallback and documents the
   // intent next to the firing archetypes.
   harvester: 'tryFireNone',
+  // The Galaga capturer never fires a bullet — its beam is a distinct hazard
+  // resolved by the shared capture-beam step (AH-0MV01EFII008298D).
+  capturer: 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */

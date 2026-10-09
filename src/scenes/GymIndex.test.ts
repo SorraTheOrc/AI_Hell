@@ -112,7 +112,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       .filter((s) => s.enemyKey)
       .map((s) => s.enemyKey)
       .sort();
-    expect(enemyKeys).toEqual(['asteroid', 'diver', 'harvester', 'march', 'phaser', 'scout', 'swarm', 'tank']);
+    expect(enemyKeys).toEqual(['asteroid', 'capturer', 'diver', 'harvester', 'march', 'phaser', 'scout', 'swarm', 'tank']);
     expect(
       scene.listedEnemyScenes
         .filter((s) => s.enemyKey)

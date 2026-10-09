@@ -1168,6 +1168,30 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Applies a bounded external drag (px/s) for one frame — the Galaga
+   * tractor-beam pull (AH-0MV01EFII008298D). The ship is displaced by
+   * `(vx, vy) * dt` on top of its own motion and the transform is updated,
+   * so a beam can drag the ship off course without altering its
+   * thrust/friction physics. The caller bounds the magnitude (see
+   * `src/scenes/core/captureBeam.ts`); because the default `MAX_SPEED`
+   * (175 px/s) exceeds the default bounded pull speed (90 px/s), a thrusting
+   * player can always escape.
+   *
+   * @param vx - External drag velocity x (px/s), bounded by the caller.
+   * @param vy - External drag velocity y (px/s), bounded by the caller.
+   * @param dt - Frame delta in seconds.
+   */
+  applyExternalDrag(vx: number, vy: number, dt: number): void {
+    if ((vx === 0 && vy === 0) || dt === 0) return;
+    this._movementState = {
+      ...this._movementState,
+      x: this._movementState.x + vx * dt,
+      y: this._movementState.y + vy * dt,
+    };
+    this.setPosition(this._movementState.x, this._movementState.y);
+  }
+
+  /**
    * Relocates the ship to (x, y) with zero velocity and no flame — the
    * respawn behaviour used by scenes after the player takes a hit.
    * Also silences any active thruster hum (AC5 — no orphaned audio on

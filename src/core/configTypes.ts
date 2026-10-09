@@ -62,6 +62,18 @@ export interface EnemyConfig {
    * other formations; absent values fall back to `DEFAULT_MARCH_DROP`.
    */
   marchDrop?: number;
+  /**
+   * Tractor-beam lifetime (ms) for the Galaga capturer archetype
+   * (AH-0MV01EFII008298D). Neutral for other archetypes; absent values fall
+   * back to `DEFAULT_BEAM_DURATION_MS` at the beam site.
+   */
+  beamDuration?: number;
+  /**
+   * Bounded tractor-beam pull speed (px/s) for the Galaga capturer archetype
+   * (AH-0MV01EFII008298D). The pull is bounded so the player can always
+   * out-thrust it and escape; neutral for other archetypes.
+   */
+  pullStrength?: number;
   /** Initial base position (px). */
   startX: number;
   startY: number;

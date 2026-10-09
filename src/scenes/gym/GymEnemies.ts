@@ -77,6 +77,11 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   // cadence and the per-reversal drop can be dialled in live.
   marchStep: { min: 4, max: 80, step: 1 },
   marchDrop: { min: 4, max: 80, step: 1 },
+  // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D):
+  // neutral for other kinds, editable so the beam cadence and bounded pull
+  // can be dialled in live.
+  beamDuration: { min: 200, max: 4000, step: 50 },
+  pullStrength: { min: 0, max: 200, step: 5 },
   startX: { min: 0, max: GAME_WIDTH, step: 1 },
   startY: { min: 0, max: GAME_HEIGHT, step: 1 },
   // Spawn-position ranges (AH-0MUKCLXLW0032R67): bound to the canvas so a
@@ -528,6 +533,9 @@ export class GymEnemies extends GymFormationScene<EnemyEntity, GymEnemiesBullet>
       if ('_fireInterval' in e) (e as Record<string, unknown>)['_fireInterval'] = config.fireInterval;
       if ('_burstCount' in e) (e as Record<string, unknown>)['_burstCount'] = config.burstCount;
       if ('_shotProbability' in e) (e as Record<string, unknown>)['_shotProbability'] = config.shotProbability;
+      // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
+      if ('_beamDuration' in e) (e as Record<string, unknown>)['_beamDuration'] = config.beamDuration ?? 0;
+      if ('_pullStrength' in e) (e as Record<string, unknown>)['_pullStrength'] = config.pullStrength ?? 0;
     }
   }
 

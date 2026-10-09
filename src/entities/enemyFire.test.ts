@@ -95,10 +95,10 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
   it('covers every firing archetype with an explicit mapping entry', () => {
     // Guards against a silently-removed mapping: every firing archetype must
     // dispatch through the shared seam (the map is the one place a new
-    // archetype edits). The Harvester is non-firing and is asserted
-    // separately below.
+    // archetype edits). The Harvester and the Galaga capturer are non-firing
+    // and are asserted separately below.
     const firingKeys = Object.keys(ENEMY_FIRE_METHODS).filter(
-      (key) => key !== 'harvester',
+      (key) => key !== 'harvester' && key !== 'capturer',
     );
     for (const key of firingKeys) {
       const entity = makeFireSpy();
@@ -106,7 +106,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       expect(entity.calls, `${key} must dispatch`).toHaveLength(1);
     }
     expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual(
-      ['diver', 'harvester', 'march', 'phaser', 'scout', 'swarm', 'tank'],
+      ['capturer', 'diver', 'harvester', 'march', 'phaser', 'scout', 'swarm', 'tank'],
     );
   });
 
@@ -115,6 +115,13 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     expect(enemyFireMethod('harvester')).toBe('tryFireNone');
     expect(fireForEnemy(entity, 'harvester', 42)).toEqual([]);
     // The aimed fallback must not have run for the Harvester.
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Galaga capturer to no fire — its beam is the hazard', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('capturer')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'capturer', 42)).toEqual([]);
     expect(entity.calls).toEqual([]);
   });
 });
