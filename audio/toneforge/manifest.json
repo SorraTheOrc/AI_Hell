@@ -183,6 +183,14 @@
       ]
     },
     {
+      "cue": "playBossHitSound",
+      "recipe": "aihell-boss-hit",
+      "delivery": "baked",
+      "seeds": [
+        32208
+      ]
+    },
+    {
       "cue": "playCannonFireSound",
       "recipe": "aihell-cannon-fire",
       "delivery": "baked",

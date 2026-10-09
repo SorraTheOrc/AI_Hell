@@ -113,6 +113,7 @@ derived from the render seed).
 | `aihell-diver-fire.yaml` | `playDiverFireSound` | Saw drop 280→120 Hz | 32192 |
 | `aihell-diver-destruction.yaml` | `playDiverDestructionSound` | Descending saw 280→40 Hz + sine undertone (pitch jitter) | 32193–32195 |
 | `aihell-boss-fire.yaml` | `playBossFireSound` | Saw 200→50 Hz + low sine undertone | 32200 |
+| `aihell-boss-hit.yaml` | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, 0.16 s | 32208 |
 | `aihell-cannon-fire.yaml` | `playCannonFireSound` | Square tick 800→400 Hz, 0.08 s | 32210 |
 | `aihell-spread-fire.yaml` | `playSpreadFireSound` | Triangle 600→1200→800 Hz | 32211 |
 | `aihell-dual-fire.yaml` | `playDualFireSound` | Saw drop 900→300 Hz + offset sine tick | 32212 |

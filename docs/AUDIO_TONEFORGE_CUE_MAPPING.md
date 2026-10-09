@@ -96,6 +96,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | Enemy fire (spread burst) | `entities/Diver` | new | `aihell-diver-fire` |
 | `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s (× pitch jitter) | Enemy destroyed (heavy), scheduled on the next 16th-note beat accent | `entities/Diver` | new | `aihell-diver-destruction` (multi-seed) |
 | `playBossFireSound` | Saw 200→50 Hz + low sine undertone, ~0.2 s | Boss fire | `entities/Boss` | new | `aihell-boss-fire` |
+| `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | Boss per-hit feedback | shared boss feedback path (wired by AH-0MUZMTTPE0074X59) | new | `aihell-boss-hit` |
 | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s, vol 0.15 | Player cannon fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-cannon-fire` |
 | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s, vol 0.15 | Player spread fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-spread-fire` |
 | `playDualFireSound` | Saw 900→300 Hz + offset sine tick, ~0.06 s | Player dual fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-dual-fire` |
@@ -179,6 +180,7 @@ repeated kills still vary.
 | `aihell-diver-fire` | `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | 32192 |
 | `aihell-diver-destruction` | `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s | 32193–32195 |
 | `aihell-boss-fire` | `playBossFireSound` | Saw 200→50 Hz + low sine undertone | 32200 |
+| `aihell-boss-hit` | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | 32208 |
 | `aihell-cannon-fire` | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s | 32210 |
 | `aihell-spread-fire` | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s | 32211 |
 | `aihell-dual-fire` | `playDualFireSound` | Saw 900→300 Hz + sine tick | 32212 |

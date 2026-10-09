@@ -357,6 +357,11 @@ export function playBossFireSound(): void {
   playCue('playBossFireSound');
 }
 
+/** Short punchy impact — Boss hit feedback cue. */
+export function playBossHitSound(): void {
+  playCue('playBossHitSound');
+}
+
 // ── Player weapon fire cues ─────────────────────────────────────────
 
 /** Solid medium blip — Cannon fire. */
