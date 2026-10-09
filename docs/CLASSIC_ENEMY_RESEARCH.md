@@ -10,7 +10,7 @@ and the gym scenes that will exercise them. It also records the candidates that
 were considered but not selected, so the research pool can be revisited later.
 
 **Cross-reference:** `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` — each child work
-item (AH-0MV1*, AH-0MV2*, …) references this document as its design brief.
+item references this document as its design brief.
 
 ---
 
@@ -441,14 +441,14 @@ document as their design brief.
 
 | Archetype | Child work item |
 |-----------|-----------------|
-| Space Invaders | AH-0MV1* (to be created) |
-| Galaga | AH-0MV2* (to be created) |
+| Space Invaders | AH-0MV01EDZS0005R20 |
+| Galaga | AH-0MV01EFII008298D |
 | Pac-Man Ghosts | AH-0MV01EH2U008XT3Q |
-| Centipede | AH-0MV4* (to be created) |
+| Centipede | AH-0MV01EJ92008ZZ86 |
 | Robotron Horde | AH-0MV01EKTL001NRE6 |
-| Defender | AH-0MV01EM7U0033W7L (delivered) |
-| Missile Command | AH-0MV7* (to be created) |
-| Frogger | AH-0MV8* (to be created) |
+| Defender | AH-0MV01EM7U0033W7L |
+| Missile Command | AH-0MV01ENX00055CG1 |
+| Frogger | AH-0MV01EPM40008N8T |
 
 ---
 
