@@ -44,6 +44,7 @@ import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
+import { Ghost } from '../../entities/Ghost';
 import { Harvester } from '../../entities/Harvester';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -146,6 +147,30 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(scene.aliveCount).toBe(expected);
   });
 
+  it.each(['ghost-chase', 'ghost-ambush', 'ghost-flank', 'ghost-wander'] as const)(
+    'Pac-Man ghost "%s" renders, roams and never fires (gym parity)',
+    async (key) => {
+      const scene = await bootWithKey(key);
+      expect(scene.formationEntities).toHaveLength(1);
+      const ghost = scene.formationEntities[0] as unknown as Ghost;
+      expect(ghost).toBeInstanceOf(Ghost);
+      expect(ghost.archetype).toBe(key);
+      expect(ghost.shootEnabled).toBe(false);
+      expect(ghost.effectiveShotPattern).toBe('none');
+      expect(scene.children.list).toContain(ghost);
+      // The shared steering policy moves the ghost over time (roamer).
+      const startX = ghost.x;
+      const startY = ghost.y;
+      scene.tick(0.5);
+      expect(ghost.x !== startX || ghost.y !== startY).toBe(true);
+      scene.tick(30);
+      expect(ghost.x).toBeGreaterThanOrEqual(0);
+      expect(ghost.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(ghost.y).toBeGreaterThanOrEqual(0);
+      expect(ghost.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    },
+  );
+
   it('F5 — the Harvester spawns, renders and is a no-fire roamer', async () => {
     const scene = await bootWithKey('harvester');
     expect(scene.activeEnemyKey).toBe('harvester');
@@ -195,7 +220,7 @@ describe('GymEnemies — single reusable enemy gym', () => {
     // wrap + rotation), not by a formation slot. The Harvester is likewise a
     // self-propelled roamer (mineral seek). Both still spawn near their
     // configured start with a small boot-delay drift budget.
-    if (key === 'asteroid' || key === 'harvester') {
+    if (key === 'asteroid' || key === 'harvester' || key.startsWith('ghost-')) {
       const e = scene.formationEntities[0];
       expect(Math.abs(e.x - cfg.startX)).toBeLessThan(40);
       expect(Math.abs(e.y - cfg.startY)).toBeLessThan(40);

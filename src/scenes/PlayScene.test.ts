@@ -19,6 +19,7 @@ import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
+import { Ghost } from '../entities/Ghost';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
@@ -4480,5 +4481,121 @@ describe('PlayScene — Space Invaders marching block (AH-0MV01EDZS0005R20)', ()
     const scene = await bootMarch();
     for (let i = 0; i < 200; i++) scene.tick(0.1);
     expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+});
+
+// ── Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q) ─────────
+
+describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single empty wave so ghost accounting is
+   * isolated from any formation kills. `ghosts` toggles the wave's opt-in.
+   */
+  async function bootWithGhostWave(ghosts: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Ghost Test',
+        waves: [{ groups: [], shootEnabled: false, ghosts }],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setGhostSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveGhosts(scene: PlayScene): Ghost[] {
+    return scene.getEnemies().filter((e): e is Ghost => e instanceof Ghost && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window in one tick, then
+   * ticks once more to release every planned ghost. Collisions run *before*
+   * the release step, so the freshly released ghosts are still all alive when
+   * this returns (deterministic — no auto-fire window between release and the
+   * assertions).
+   */
+  function releaseGhosts(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  it('spawns one ghost per personality as a wave-accounted group', async () => {
+    const scene = await bootWithGhostWave(true);
+    const wm = scene.getWaveManager();
+    expect(wm.enemiesAlive).toBe(0);
+
+    releaseGhosts(scene);
+
+    const ghosts = liveGhosts(scene);
+    expect(ghosts).toHaveLength(4);
+    // One pursuer per personality, all inside the arena (reachable).
+    expect(new Set(ghosts.map((g) => g.personality))).toEqual(
+      new Set(['chase', 'ambush', 'flank', 'wander']),
+    );
+    for (const g of ghosts) {
+      expect(g.x).toBeGreaterThanOrEqual(0);
+      expect(g.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(g.y).toBeGreaterThanOrEqual(0);
+      expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    }
+    // Every spawned pursuer is registered with the wave accounting.
+    expect(wm.enemiesAlive).toBe(4);
+  });
+
+  it('pursuers never fire at any level (no enemy bullets)', async () => {
+    const scene = await bootWithGhostWave(true);
+    releaseGhosts(scene);
+    const ghosts = liveGhosts(scene);
+    expect(ghosts).toHaveLength(4);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const g of ghosts) {
+      expect(g.effectiveShotPattern).toBe('none');
+      expect(g.shootEnabled).toBe(false);
+    }
+  });
+
+  it('killing a pursuer advances wave accounting exactly once', async () => {
+    const scene = await bootWithGhostWave(true);
+    const wm = scene.getWaveManager();
+    releaseGhosts(scene);
+    expect(wm.enemiesAlive).toBe(4);
+
+    const victim = liveGhosts(scene)[0];
+    const before = wm.enemiesAlive;
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+    expect(victim.alive).toBe(false);
+    expect(wm.enemiesAlive).toBe(before - 1);
+  });
+
+  it('does not spawn pursuers for a wave without the ghosts opt-in', async () => {
+    const scene = await bootWithGhostWave(false);
+    releaseGhosts(scene);
+    expect(liveGhosts(scene)).toHaveLength(0);
+    expect(scene.getWaveManager().enemiesAlive).toBe(0);
+  });
+
+  it('the ghost spawner disable seam suppresses the group', async () => {
+    const scene = await bootWithGhostWave(true);
+    scene.setGhostSpawnerEnabled(false);
+    releaseGhosts(scene);
+    expect(liveGhosts(scene)).toHaveLength(0);
   });
 });

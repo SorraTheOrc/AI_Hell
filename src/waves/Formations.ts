@@ -68,6 +68,15 @@ export interface WaveDefinition {
    * (GDD §2.5).
    */
   shootEnabled: boolean;
+  /**
+   * Opt-in flag for the Pac-Man ghost-pursuer group (classic-arcade
+   * archetype, AH-0MV01EH2U008XT3Q). When `true`, the wave schedules the
+   * four personality pursuers through the shared `GhostSpawner`; they are
+   * registered with the `WaveManager` so they gate wave completion. Absent
+   * (the default) leaves the wave exactly as it was — no behaviour change
+   * for existing campaign data.
+   */
+  ghosts?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */

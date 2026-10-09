@@ -157,6 +157,10 @@ import {
   computeHarvesterSpawns,
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
+import {
+  computeGhostSpawns,
+  type GhostSpawnEvent,
+} from '../waves/GhostSpawner';
 import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -556,6 +560,18 @@ export class PlayScene extends CombatScene<
   /** Number of planned Harvester spawns already released this wave. */
   private harvestersSpawnedThisWave = 0;
 
+  /**
+   * Whether the Pac-Man ghost-pursuer group is planned for a wave
+   * (classic-arcade archetype, AH-0MV01EH2U008XT3Q). Ghosts additionally
+   * require the wave's `ghosts: true` opt-in, so the shipped campaign is
+   * unchanged until a wave enables them. Tuning/test seam.
+   */
+  private ghostSpawnerEnabled = true;
+  /** Planned ghost spawns for the active regular wave (empty unless opted in). */
+  private pendingGhostSpawns: GhostSpawnEvent[] = [];
+  /** Number of planned ghost spawns already released this wave. */
+  private ghostsSpawnedThisWave = 0;
+
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
 
@@ -770,6 +786,8 @@ export class PlayScene extends CombatScene<
     this.asteroidsSpawnedThisWave = 0;
     this.pendingHarvesterSpawns = [];
     this.harvestersSpawnedThisWave = 0;
+    this.pendingGhostSpawns = [];
+    this.ghostsSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this._spawnWormhole = null;
     this.paused = false;
@@ -933,6 +951,10 @@ export class PlayScene extends CombatScene<
       // has passed; each is registered with the WaveManager so wave-clear
       // accounting stays correct (F6).
       this._releaseDueHarvesterSpawns();
+      // Release any planned ghost-pursuer spawns whose time has passed
+      // (AH-0MV01EH2U008XT3Q); each is registered with the WaveManager so the
+      // wave neither clears early nor stalls.
+      this._releaseDueGhostSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -999,6 +1021,9 @@ export class PlayScene extends CombatScene<
     this.planAsteroidSpawns();
     // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
     this.planHarvesterSpawns();
+    // Plan the Pac-Man ghost-pursuer group for waves that opted in
+    // (AH-0MV01EH2U008XT3Q); empty for every other wave.
+    this.planGhostSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       // Spawn one wormhole at the first enemy's position.
@@ -1259,6 +1284,89 @@ export class PlayScene extends CombatScene<
     this.waveManager.registerDynamicSpawn(1);
   }
 
+  /**
+   * Plans the Pac-Man ghost-pursuer group for the active regular wave
+   * (classic-arcade archetype, AH-0MV01EH2U008XT3Q). Only waves that opt in
+   * with `ghosts: true` produce a plan; Levels/campaign data that do not
+   * opt in are unchanged. Called once per wave from `spawnWave()` so the
+   * scene rng stream advances only at wave boundaries.
+   */
+  planGhostSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.ghostSpawnerEnabled ||
+      wm.currentWave()?.ghosts !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingGhostSpawns = [];
+      this.ghostsSpawnedThisWave = 0;
+      return;
+    }
+    this.pendingGhostSpawns = computeGhostSpawns(
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.ghostsSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned ghost spawn whose scheduled time has passed. Runs
+   * only during the regular wave phase (never during a transition, pause or
+   * boss encounter) and stops at the first not-yet-due event — the plan is
+   * time-ordered.
+   */
+  private _releaseDueGhostSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.ghostsSpawnedThisWave < this.pendingGhostSpawns.length) {
+      const event = this.pendingGhostSpawns[this.ghostsSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledGhost(event);
+      this.ghostsSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned ghost at its position and registers it with the
+   * WaveManager so the wave's alive count tracks it. Ghosts are placed
+   * on-screen by the planner, so they are always reachable and never stall
+   * wave completion.
+   */
+  private _spawnScheduledGhost(event: GhostSpawnEvent): void {
+    const cfg = loadEnemyConfig(event.enemyKey);
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      event.x,
+      event.y,
+      { row: 0, col: 0 },
+      this.rng,
+    );
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: event.enemyKey,
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
     // Formation drift advances unconditionally — no entity can freeze it (the
@@ -1488,6 +1596,8 @@ export class PlayScene extends CombatScene<
     // so no spawn can leak in after the transition (AH-0MUGCNZNE002D7QJ).
     this.pendingAsteroidSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
+    this.pendingGhostSpawns = [];
+    this.ghostsSpawnedThisWave = 0;
     this.waveManager.beginBoss();
     this._startTransition();
   }
@@ -1664,6 +1774,8 @@ export class PlayScene extends CombatScene<
     this.pendingHarvesterSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
     this.harvestersSpawnedThisWave = 0;
+    this.pendingGhostSpawns = [];
+    this.ghostsSpawnedThisWave = 0;
     this._hideWaveTimer();
   }
 
@@ -3100,6 +3212,21 @@ export class PlayScene extends CombatScene<
     if (!enabled) {
       this.pendingAsteroidSpawns = [];
       this.asteroidsSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the ghost-pursuer plan independently of the wave
+   * `ghosts: true` opt-in (classic-arcade archetype, AH-0MV01EH2U008XT3Q).
+   * Disabling immediately drops any pending plan and clears the released
+   * counter; re-enabling takes effect from the next `spawnWave()`. Tuning and
+   * test seam mirroring `setAsteroidSpawnerEnabled`.
+   */
+  setGhostSpawnerEnabled(enabled: boolean): void {
+    this.ghostSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingGhostSpawns = [];
+      this.ghostsSpawnedThisWave = 0;
     }
   }
 }

@@ -35,6 +35,14 @@ export const ENEMY_FIRE_METHODS = {
   // The Galaga capturer never fires a bullet — its beam is a distinct hazard
   // resolved by the shared capture-beam step (AH-0MV01EFII008298D).
   capturer: 'tryFireNone',
+  // Pac-Man personality pursuers (AH-0MV01EH2U008XT3Q) never fire at any
+  // level — their threat is body contact, resolved by the shared enemy-body
+  // collision rule. Explicit non-firing entries keep them out of the
+  // aimed-shot fallback.
+  'ghost-chase': 'tryFireNone',
+  'ghost-ambush': 'tryFireNone',
+  'ghost-flank': 'tryFireNone',
+  'ghost-wander': 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */
