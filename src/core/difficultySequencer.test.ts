@@ -337,6 +337,13 @@ describe('defaultCandidatePool', () => {
     const keys = defaultCandidatePool().map((c) => c.enemyKey);
     expect(keys).not.toContain('harvester');
   });
+
+  it('AH-0MV01EKTL001NRE6 — excludes the Robotron homing horde from the default pool', () => {
+    // The grunt horde is a timed edge-spawning pack delivered by the dedicated
+    // HordeSpawner behind a per-wave `horde: true` opt-in, not a static group.
+    const keys = defaultCandidatePool().map((c) => c.enemyKey);
+    expect(keys).not.toContain('grunt');
+  });
 });
 
 // ── Wave-accounting safety (AH-0MUR1HZLQ001ELX9) ───────────────────────

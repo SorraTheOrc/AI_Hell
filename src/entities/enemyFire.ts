@@ -47,6 +47,11 @@ export const ENEMY_FIRE_METHODS = {
   // fire at any level — the weaving linked body is the threat. An explicit
   // non-firing entry keeps the key out of the aimed-shot fallback.
   centipede: 'tryFireNone',
+  // Robotron homing-horde grunts (classic-arcade archetype,
+  // AH-0MV01EKTL001NRE6) never fire at any level — the swarm of bodies is the
+  // threat. An explicit non-firing entry keeps the key out of the aimed-shot
+  // fallback.
+  grunt: 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */

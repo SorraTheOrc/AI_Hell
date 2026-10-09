@@ -70,6 +70,22 @@ aimed-shot fallback, and every spawned segment is registered with the
 `GymCentipede` scene runs the same shared entity/chain code, so the game and
 the gym cannot diverge.
 
+The **Robotron 2084 homing horde** (AH-0MV01EKTL001NRE6) is the third
+delivered classic archetype and is **partly** a CSV row and partly a new
+entity: the horde size, group size, spawn cadence and homing speed are
+data-driven (`count`, `hordeGroupSize`, `hordeSpawnInterval`, `driftSpeed` on
+the `grunt` row), while the movement lives in the pure shared policy
+`src/scenes/core/gruntSteering.ts` and the `src/entities/Grunt.ts` entity. The
+pure `src/waves/HordeSpawner.ts` planner releases small groups from the four
+arena edges over time and **bounded steering** turns each grunt toward the
+live player at a capped turn rate, so it homes in an arc rather than
+snap-reversing. Grunts **never fire** — the swarm of bodies, resolved by the
+existing enemy-body contact rule, is the whole threat — and the explicit
+`tryFireNone` dispatch entry keeps them out of the aimed-shot fallback. Every
+spawned grunt is registered with the `WaveManager`, gated behind a per-wave
+`horde: true` opt-in, and the existing `GymEnemies` scene runs the same shared
+entity/steering code with a live player for gym↔game parity.
+
 ### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed

@@ -172,6 +172,13 @@ import {
 } from '../waves/CentipedeSpawner';
 import { Centipede } from '../entities/Centipede';
 import { CentipedeChain } from './core/centipedeChain';
+import {
+  HORDE_DEFAULT_GROUP_SIZE,
+  HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
+  GRUNT_ENEMY_KEY,
+  computeHordeSpawns,
+  type HordeSpawnEvent,
+} from '../waves/HordeSpawner';
 import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -224,6 +231,9 @@ export const SCORE_VALUES: Record<string, number> = {
   // Centipede: a linked chain of weaving segments (classic-arcade archetype,
   // AH-0MV01EJ92008ZZ86). Each destroyed segment scores.
   centipede: 120,
+  // Robotron homing horde: a small, fast non-firing grunt (classic-arcade
+  // archetype, AH-0MV01EKTL001NRE6). Each grunt scores.
+  grunt: 150,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
@@ -598,6 +608,17 @@ export class PlayScene extends CombatScene<
   /** Whether the planned Centipede chain has been released this wave. */
   private centipedeSpawnedThisWave = false;
 
+  /**
+   * Whether the Robotron homing horde is planned for a wave (classic-arcade
+   * archetype, AH-0MV01EKTL001NRE6). The horde additionally requires the
+   * wave's `horde: true` opt-in, so the shipped campaign is unchanged.
+   */
+  private hordeSpawnerEnabled = true;
+  /** Planned horde spawns for the active regular wave (empty unless opted in). */
+  private pendingHordeSpawns: HordeSpawnEvent[] = [];
+  /** Number of planned horde spawns already released this wave. */
+  private hordeSpawnedThisWave = 0;
+
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
 
@@ -816,6 +837,8 @@ export class PlayScene extends CombatScene<
     this.ghostsSpawnedThisWave = 0;
     this.pendingCentipedeSpawn = null;
     this.centipedeSpawnedThisWave = false;
+    this.pendingHordeSpawns = [];
+    this.hordeSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this._spawnWormhole = null;
     this.paused = false;
@@ -987,6 +1010,10 @@ export class PlayScene extends CombatScene<
       // (AH-0MV01EJ92008ZZ86); every segment is registered with the
       // WaveManager so the wave neither clears early nor stalls.
       this._releaseDueCentipedeSpawn();
+      // Release any planned Robotron homing-horde grunts whose time has passed
+      // (AH-0MV01EKTL001NRE6); each is registered with the WaveManager so the
+      // wave neither clears early nor stalls.
+      this._releaseDueHordeSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -1059,6 +1086,9 @@ export class PlayScene extends CombatScene<
     // Plan the Centipede chain for waves that opted in
     // (AH-0MV01EJ92008ZZ86); empty for every other wave.
     this.planCentipedeSpawn();
+    // Plan the Robotron homing horde for waves that opted in
+    // (AH-0MV01EKTL001NRE6); empty for every other wave.
+    this.planHordeSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       // Spawn one wormhole at the first enemy's position.
@@ -1494,6 +1524,95 @@ export class PlayScene extends CombatScene<
       });
       this.waveManager.registerDynamicSpawn(1);
     }
+  }
+
+  /**
+   * Plans the Robotron homing horde for the active regular wave
+   * (classic-arcade archetype, AH-0MV01EKTL001NRE6). Only waves that opt in
+   * with `horde: true` produce a plan; every other wave is unchanged. The
+   * horde size, group size, spawn cadence and homing speed are all
+   * data-driven (the `grunt` CSV row). Called once per wave from `spawnWave()`
+   * so the scene rng stream advances only at wave boundaries.
+   */
+  planHordeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.hordeSpawnerEnabled ||
+      wm.currentWave()?.horde !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingHordeSpawns = [];
+      this.hordeSpawnedThisWave = 0;
+      return;
+    }
+    const cfg = loadEnemyConfig(GRUNT_ENEMY_KEY);
+    this.pendingHordeSpawns = computeHordeSpawns({
+      gameWidth: GAME_WIDTH,
+      gameHeight: GAME_HEIGHT,
+      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
+      count: cfg.count,
+      groupSize: cfg.hordeGroupSize ?? HORDE_DEFAULT_GROUP_SIZE,
+      spawnIntervalSeconds:
+        cfg.hordeSpawnInterval ?? HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
+      rng: this.rng,
+    });
+    this.hordeSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned horde grunt whose scheduled time has passed. Runs
+   * only during the regular wave phase (never during a transition, pause or
+   * boss encounter) and stops at the first not-yet-due event — the plan is
+   * time-ordered.
+   */
+  private _releaseDueHordeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.hordeSpawnedThisWave < this.pendingHordeSpawns.length) {
+      const event = this.pendingHordeSpawns[this.hordeSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledHorde(event);
+      this.hordeSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned grunt on its arena edge and registers it with the
+   * `WaveManager` so the wave neither clears early nor stalls while the horde
+   * is alive. Grunts are placed inside the play area by the planner, so they
+   * are always reachable.
+   */
+  private _spawnScheduledHorde(event: HordeSpawnEvent): void {
+    const cfg = loadEnemyConfig(event.enemyKey);
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      event.x,
+      event.y,
+      { row: 0, col: 0 },
+      this.rng,
+    );
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: event.enemyKey,
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
   }
 
   /** Advances formation drift and repositions every live enemy. */
@@ -3375,6 +3494,21 @@ export class PlayScene extends CombatScene<
     if (!enabled) {
       this.pendingCentipedeSpawn = null;
       this.centipedeSpawnedThisWave = false;
+    }
+  }
+
+  /**
+   * Enables/disables the Robotron homing-horde plan independently of the wave
+   * `horde: true` opt-in (classic-arcade archetype, AH-0MV01EKTL001NRE6).
+   * Disabling immediately drops any pending plan and clears the released
+   * counter; re-enabling takes effect from the next `spawnWave()`. Tuning and
+   * test seam mirroring `setCentipedeSpawnerEnabled`.
+   */
+  setHordeSpawnerEnabled(enabled: boolean): void {
+    this.hordeSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingHordeSpawns = [];
+      this.hordeSpawnedThisWave = 0;
     }
   }
 }

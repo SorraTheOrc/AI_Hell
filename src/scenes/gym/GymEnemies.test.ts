@@ -45,6 +45,7 @@ import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
 import { Asteroid } from '../../entities/Asteroid';
 import { Ghost } from '../../entities/Ghost';
+import { Grunt } from '../../entities/Grunt';
 import { Harvester } from '../../entities/Harvester';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -170,6 +171,27 @@ describe('GymEnemies — single reusable enemy gym', () => {
       expect(ghost.y).toBeLessThanOrEqual(GAME_HEIGHT);
     },
   );
+
+  it('Robotron grunt horde renders, homes and never fires (gym parity, AH-0MV01EKTL001NRE6)', async () => {
+    const scene = await bootWithKey('grunt');
+    expect(scene.formationEntities).toHaveLength(DEFAULT_ENEMY_CONFIGS.grunt.count);
+    const grunt = scene.formationEntities[0] as unknown as Grunt;
+    expect(grunt).toBeInstanceOf(Grunt);
+    expect(grunt.archetype).toBe('grunt');
+    expect(grunt.shootEnabled).toBe(false);
+    expect(grunt.effectiveShotPattern).toBe('none');
+    expect(scene.children.list).toContain(grunt);
+    // The shared bounded-steering policy moves the grunt over time (homing).
+    const startX = grunt.x;
+    const startY = grunt.y;
+    scene.tick(0.5);
+    expect(grunt.x !== startX || grunt.y !== startY).toBe(true);
+    scene.tick(30);
+    expect(grunt.x).toBeGreaterThanOrEqual(0);
+    expect(grunt.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(grunt.y).toBeGreaterThanOrEqual(0);
+    expect(grunt.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
 
   it('F5 — the Harvester spawns, renders and is a no-fire roamer', async () => {
     const scene = await bootWithKey('harvester');
@@ -411,6 +433,22 @@ describe('GymEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-save-as')).not.toBeNull();
     expect(document.getElementById('enemy-gym-save-as-input')).not.toBeNull();
     expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
+  });
+
+  it('surfaces the homing-horde tuning sliders for the grunt archetype (AH-0MV01EKTL001NRE6)', async () => {
+    const scene = await bootWithKey('grunt');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const groupSlider = panel.querySelector<HTMLInputElement>('input[data-config="hordeGroupSize"]');
+    const cadenceSlider = panel.querySelector<HTMLInputElement>('input[data-config="hordeSpawnInterval"]');
+    expect(groupSlider, 'hordeGroupSize slider missing').not.toBeNull();
+    expect(cadenceSlider, 'hordeSpawnInterval slider missing').not.toBeNull();
+    // Seeded from the active (data-driven) grunt config.
+    expect(Number(groupSlider!.value)).toBe(scene.currentConfig.hordeGroupSize);
+    expect(Number(cadenceSlider!.value)).toBeCloseTo(scene.currentConfig.hordeSpawnInterval!, 5);
+    // Live edit updates the in-memory config (no Save required).
+    groupSlider!.value = '6';
+    groupSlider!.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.hordeGroupSize).toBe(6);
   });
 
   it('renders a collapsible header and toggles the panel body (AH-0MUDYFMUX007Q0W3)', async () => {

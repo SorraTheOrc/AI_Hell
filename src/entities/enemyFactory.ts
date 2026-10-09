@@ -12,6 +12,7 @@ import { Asteroid } from './Asteroid';
 import { Capturer } from './Capturer';
 import { Centipede } from './Centipede';
 import { Ghost, personalityFromKey } from './Ghost';
+import { Grunt } from './Grunt';
 import { Harvester } from './Harvester';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
@@ -59,7 +60,7 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt) &
   DestructionAudioSeam &
   FormationReanchorSeam &
   SeekSeam & {
@@ -106,6 +107,18 @@ export function createEnemyFromConfig(
   };
 
   switch (config.key) {
+    // Robotron homing horde (AH-0MV01EKTL001NRE6): a fast non-firing grunt
+    // that homes on the live player with bounded steering. The homing speed is
+    // the config's `driftSpeed` (the archetype's difficulty movement input);
+    // the shared `Grunt` entity applies the steering law in the game and gyms.
+    case 'grunt':
+      return new Grunt(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        speed: config.driftSpeed,
+      });
     // Pac-Man personality pursuers (AH-0MV01EH2U008XT3Q): one key per
     // personality, each mapped to the shared `Ghost` steering entity.
     case 'ghost-chase':

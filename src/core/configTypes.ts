@@ -74,6 +74,21 @@ export interface EnemyConfig {
    * out-thrust it and escape; neutral for other archetypes.
    */
   pullStrength?: number;
+  /**
+   * Number of grunts released per spawn group by the Robotron homing-horde
+   * spawner (AH-0MV01EKTL001NRE6). Neutral for other archetypes; absent
+   * values fall back to `HORDE_DEFAULT_GROUP_SIZE` at the spawner site. The
+   * horde's total size is the archetype's existing `count`, and its homing
+   * speed is the existing `driftSpeed` (see `docs/CLASSIC_ENEMY_RESEARCH.md`
+   * §5 difficulty inputs).
+   */
+  hordeGroupSize?: number;
+  /**
+   * Seconds between homing-horde spawn groups (AH-0MV01EKTL001NRE6). Neutral
+   * for other archetypes; absent values fall back to
+   * `HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS` at the spawner site.
+   */
+  hordeSpawnInterval?: number;
   /** Initial base position (px). */
   startX: number;
   startY: number;

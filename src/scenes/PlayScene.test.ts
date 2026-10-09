@@ -21,6 +21,7 @@ import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
 import { Ghost } from '../entities/Ghost';
 import { Centipede } from '../entities/Centipede';
+import { Grunt } from '../entities/Grunt';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
@@ -43,6 +44,7 @@ import {
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
+import { DEFAULT_ENEMY_CONFIGS } from '../core/configDefaults';
 import { RUN_ENDED_EVENT } from '../core/runEndedSignal';
 import {
   LEVELS as CAMPAIGN_LEVELS,
@@ -4720,5 +4722,134 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     scene.setCentipedeSpawnerEnabled(false);
     releaseCentipede(scene);
     expect(liveSegments(scene)).toHaveLength(0);
+  });
+});
+
+// ── Robotron homing horde (AH-0MV01EKTL001NRE6) ───────────────────────
+
+describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single empty wave so horde accounting is
+   * isolated from any formation kills. `horde` toggles the wave's opt-in.
+   */
+  async function bootWithHordeWave(horde: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Horde Test',
+        waves: [{ groups: [], shootEnabled: false, horde }],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setHordeSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveGrunts(scene: PlayScene): Grunt[] {
+    return scene.getEnemies().filter((e): e is Grunt => e instanceof Grunt && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window in one tick, then
+   * ticks once more to release every planned grunt. Collisions run *before*
+   * the release step, so the freshly released grunts are still all alive when
+   * this returns (deterministic — no auto-fire window between release and the
+   * assertions).
+   */
+  function releaseHorde(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  it('spawns the configured horde as a wave-accounted group', async () => {
+    const scene = await bootWithHordeWave(true);
+    const wm = scene.getWaveManager();
+    expect(wm.enemiesAlive).toBe(0);
+
+    releaseHorde(scene);
+
+    const grunts = liveGrunts(scene);
+    expect(grunts).toHaveLength(DEFAULT_ENEMY_CONFIGS.grunt.count);
+    // Every grunt spawns inside the arena (reachable).
+    for (const g of grunts) {
+      expect(g.x).toBeGreaterThanOrEqual(0);
+      expect(g.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(g.y).toBeGreaterThanOrEqual(0);
+      expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    }
+    // Every spawned grunt is registered with the wave accounting.
+    expect(wm.enemiesAlive).toBe(DEFAULT_ENEMY_CONFIGS.grunt.count);
+  });
+
+  it('grunts never fire at any level (no enemy bullets)', async () => {
+    const scene = await bootWithHordeWave(true);
+    releaseHorde(scene);
+    const grunts = liveGrunts(scene);
+    expect(grunts.length).toBeGreaterThan(0);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const g of grunts) {
+      expect(g.effectiveShotPattern).toBe('none');
+      expect(g.shootEnabled).toBe(false);
+    }
+  });
+
+  it('homes the grunts toward the player over successive frames', async () => {
+    const scene = await bootWithHordeWave(true);
+    releaseHorde(scene);
+    const grunts = liveGrunts(scene);
+    const g = grunts[0];
+    const before = { x: g.x, y: g.y };
+    for (let i = 0; i < 5; i++) scene.tick(0.05);
+    // The shared homing step moved the grunt (never frozen on its slot).
+    expect(g.x !== before.x || g.y !== before.y).toBe(true);
+    // Still inside the arena after moving.
+    expect(g.x).toBeGreaterThanOrEqual(0);
+    expect(g.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(g.y).toBeGreaterThanOrEqual(0);
+    expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+
+  it('killing a grunt advances wave accounting exactly once', async () => {
+    const scene = await bootWithHordeWave(true);
+    const wm = scene.getWaveManager();
+    releaseHorde(scene);
+    const total = DEFAULT_ENEMY_CONFIGS.grunt.count;
+    expect(wm.enemiesAlive).toBe(total);
+
+    const victim = liveGrunts(scene)[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+    expect(victim.alive).toBe(false);
+    expect(wm.enemiesAlive).toBe(total - 1);
+  });
+
+  it('does not spawn a horde for a wave without the opt-in', async () => {
+    const scene = await bootWithHordeWave(false);
+    releaseHorde(scene);
+    expect(liveGrunts(scene)).toHaveLength(0);
+    expect(scene.getWaveManager().enemiesAlive).toBe(0);
+  });
+
+  it('the horde spawner disable seam suppresses the horde', async () => {
+    const scene = await bootWithHordeWave(true);
+    scene.setHordeSpawnerEnabled(false);
+    releaseHorde(scene);
+    expect(liveGrunts(scene)).toHaveLength(0);
   });
 });

@@ -31,10 +31,12 @@
 #   marchDrop       — Vertical drop (px) per arena-edge reversal for the `march` formation.
 #   beamDuration    — Tractor-beam lifetime (ms) for the `capturer` archetype (neutral otherwise).
 #   pullStrength    — Bounded tractor-beam pull speed (px/s) for the `capturer` archetype.
+#   hordeGroupSize  — Grunts released per spawn group by the `grunt` homing-horde spawner (neutral otherwise).
+#   hordeSpawnInterval — Seconds between `grunt` homing-horde spawn groups (neutral otherwise).
 #
 # To add a new enemy: add a new row with a unique key. The gym index will
 # discover it automatically. Ensure all required columns have values.
-key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,startXMin,startXMax,startYMin,startYMax,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,health,marchStep,marchDrop,beamDuration,pullStrength
+key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,startXMin,startXMax,startYMin,startYMax,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,health,marchStep,marchDrop,beamDuration,pullStrength,hordeGroupSize,hordeSpawnInterval
 scout,Scout,v,6,26,22,40,240,270,240,240,270,270,16,0x00ff00,0xff4444,3,aimed,1200,90,1.4,1,0.45,0.45
 diver,Diver,diver,6,30,25,30,240,243,240,240,243,243,18,0xffff00,0xffee88,3,spread,1000,110,1.5,4,1,1
 tank,Tank,rect,6,50,45,18,240,270,240,240,270,270,28,0xff6600,0xffaa00,4,radial,2400,75,1.5,6,0.3,1
@@ -49,3 +51,4 @@ ghost-chase,Ghost (Chase),single,1,0,0,0,480,135,480,480,135,135,16,0xff2222,0xf
 ghost-ambush,Ghost (Ambush),single,1,0,0,0,480,135,480,480,135,135,16,0xffb8ff,0xffffff,3,none,1000,50,1.5,1,0,1,,,,
 ghost-flank,Ghost (Flank),single,1,0,0,0,480,135,480,480,135,135,16,0x22ffff,0xffffff,3,none,1000,50,1.5,1,0,1,,,,
 ghost-wander,Ghost (Wander),single,1,0,0,0,480,135,480,480,135,135,16,0xffb852,0xffffff,3,none,1000,50,1.5,1,0,1,,,,
+grunt,Grunt Horde,swarm,16,30,26,110,480,189,480,480,189,189,12,0xff00aa,0xffffff,3,none,1000,50,1.5,1,0,1,,,,4,1.6

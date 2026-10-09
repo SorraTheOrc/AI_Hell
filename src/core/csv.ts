@@ -69,6 +69,9 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
   'bulletLifetime', 'burstCount', 'shotProbability', 'health',
   'marchStep', 'marchDrop', 'beamDuration', 'pullStrength',
+  // Robotron homing-horde tuning (AH-0MV01EKTL001NRE6): group size and
+  // spawn cadence; neutral for other archetypes.
+  'hordeGroupSize', 'hordeSpawnInterval',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -291,6 +294,9 @@ export function validateEnemyConfig(
     // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D):
     // optional and neutral for other archetypes.
     'beamDuration', 'pullStrength',
+    // Homing-horde tuning (Robotron archetype, AH-0MV01EKTL001NRE6): optional
+    // and neutral for other archetypes.
+    'hordeGroupSize', 'hordeSpawnInterval',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -441,6 +447,18 @@ export function coerceEnemyConfig(
   }
   if (row.pullStrength != null && row.pullStrength.trim() !== '') {
     merged.pullStrength = coerceNumber(row.pullStrength, merged.pullStrength ?? 0);
+  }
+  // Homing-horde tuning (Robotron archetype, AH-0MV01EKTL001NRE6). Optional
+  // and neutral for other archetypes: only override when the CSV row carries
+  // a value.
+  if (row.hordeGroupSize != null && row.hordeGroupSize.trim() !== '') {
+    merged.hordeGroupSize = coerceNumber(row.hordeGroupSize, merged.hordeGroupSize ?? 0);
+  }
+  if (row.hordeSpawnInterval != null && row.hordeSpawnInterval.trim() !== '') {
+    merged.hordeSpawnInterval = coerceNumber(
+      row.hordeSpawnInterval,
+      merged.hordeSpawnInterval ?? 0,
+    );
   }
 
   return merged;

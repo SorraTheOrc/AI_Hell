@@ -85,6 +85,14 @@ export interface WaveDefinition {
    * (the default) leaves the wave exactly as it was.
    */
   centipede?: boolean;
+  /**
+   * Opt-in flag for the Robotron homing-horde (classic-arcade archetype,
+   * AH-0MV01EKTL001NRE6). When `true`, the wave schedules a timed horde of
+   * grunts from the arena edges through the shared `HordeSpawner`; every
+   * grunt is registered with the `WaveManager` so it gates wave completion.
+   * Absent (the default) leaves the wave exactly as it was.
+   */
+  horde?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */

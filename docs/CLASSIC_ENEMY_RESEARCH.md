@@ -232,32 +232,49 @@ parity.
 **Original behaviour:** Large groups of homogeneous enemies swarm toward the
 player from all directions, moving independently without formation.
 
-**AI_Hell adaptation:** A loose cluster of 10–20 `single`-offset entities that
-drift toward the player's current position in addition to the formation drift.
-Each member independently adjusts its heading toward the player (the
-`setAimTarget` seam provides the live coords; a new `_steerToward` movement
-modifier applies a lateral acceleration).
+**AI_Hell adaptation:** A dense pack of small, fast, **non-firing** grunts
+that pour in from all four arena edges in timed groups and continuously home
+on the live player. The defining top-down adaptation is **bounded steering**:
+a grunt does not snap its velocity at the player — it turns its forward
+heading toward the player at a capped turn rate and always travels forward at
+its homing speed, so the swarm is readable and dodgeable while still feeling
+relentless. Grunts pass through each other and every other enemy (GDD §2.6 —
+no enemy–enemy collision) and each has `health` 1 (single-hit); the swarm of
+bodies, resolved by the existing enemy-body contact rule, is the whole threat.
+The same shared `Grunt`/`gruntSteering` code is exercised by the existing
+`GymEnemies` gym scene with a live player (gym↔game parity); its CSV row uses
+the existing `buildSwarmClusterOffsets` (`swarm`) formation builder and the
+existing `none` shot pattern.
 
-**Divergence from original:** No multi-axis player movement — the arena is
-top-down free 2D but enemies move via a combination of drift and player-
-steering rather than pure free movement. No weapon variety.
+**Divergence from original:** No multi-axis player-movement restriction — the
+arena is top-down free 2D and the horde homes through bounded steering rather
+than instant velocity assignment. No weapon variety: grunts never fire at any
+level.
 
-**Pipeline fit:** New `src/entities/RobotronHorde.ts` entity class with a
-`_steerToward(playerX, playerY)` movement modifier. Factory key maps to this
-entity. Fire dispatch uses `tryFireNone` (the horde is a movement threat, not
-a shooting one) or `coordinated` pattern if shooting is added later. CSV row
-uses `formationKind: 'single'` with a high count.
+**Pipeline fit:** Partly an `EnemyConfig`/CSV row and partly a new entity. The
+horde size, group size, spawn cadence and homing speed are data-driven CSV
+columns (`count`, `hordeGroupSize`, `hordeSpawnInterval`, `driftSpeed`), while
+movement lives in the pure shared policy
+`src/scenes/core/gruntSteering.ts` and the `src/entities/Grunt.ts` entity.
+The horde is delivered by the pure `src/waves/HordeSpawner.ts` planner — a
+dynamic, wave-accounted spawner in the Harvester/Ghost/Centipede mould rather
+than a static formation — gated behind a per-wave `horde: true` opt-in so
+existing wave data is unchanged. The factory `EnemyEntity` union includes
+`Grunt`; `enemyFire.ts` maps the `grunt` key to an explicit `tryFireNone` so
+it can never fall back to the aimed shot. The `enemyDifficulty` module needs
+no change — the `count` factor captures the horde size.
 
 **Difficulty scoring inputs:**
 
 | Factor | Type | Notes |
 |--------|------|-------|
-| Movement | `count` + `driftSpeed` + player-steering modifier | The swarm approach is a positional threat; high count creates a wall of bodies. |
-| Fire | `shotPattern` (`none`) | Primary threat is movement, not bullets. Firing factors contribute zero. |
+| Movement | `count` (horde size) + `driftSpeed` (homing speed) + `formationKind` (`swarm`) | The swarm approach is a positional threat; high count creates a wall of bodies. |
+| Fire | `shotPattern` (`none`) | Never fires at any level; the firing factors contribute zero. |
 | Health | `health` (default 1) | Single-hit; the sheer number is the challenge. |
 
-**Gym scene:** New `GymRobotronHorde.ts` scene to demonstrate the swarm
-steering behaviour; `GymEnemies` for CSV testing.
+**Gym scene:** The existing `GymEnemies` scene (with a live player) exercises
+the shared `Grunt`/`gruntSteering` homing and density, so the game and the gym
+run the same code (gym↔game parity).
 
 ---
 
@@ -393,7 +410,7 @@ to warrant a child work item in this research round.
 | Galaga | `buildDiverFormationOffsets` (`diver`) | `spread` | Diver (reused, custom config) | `tryFireSpreadBurst` | `GymEnemies` |
 | Pac-Man Ghosts | `buildSingleOffset` (`single`) | `none` | `Ghost.ts` (new) | `tryFireNone` | `GymEnemies` |
 | Centipede | `buildSingleOffset` (`single`) | `radial` | `Centipede.ts` (new) | `tryFireCentipede` (new) | `GymCentipede`, `GymEnemies` |
-| Robotron Horde | `buildSingleOffset` (`single`) | `none` (or `coordinated` later) | `RobotronHorde.ts` (new) | `tryFireNone` | `GymRobotronHorde`, `GymEnemies` |
+| Robotron Horde | `buildSwarmClusterOffsets` (`swarm`) | `none` | `Grunt.ts` (new) + `gruntSteering.ts` + `HordeSpawner.ts` | `tryFireNone` | `GymEnemies` |
 | Defender Raider | `buildSingleOffset` (`single`) | `aimed` | `DefenderRaider.ts` (new) | `tryFireDefenderRaider` (new) | `GymDefender`, `GymEnemies` |
 | Missile Strike | `buildSingleOffset` (`single`) | `none` (burst on detonation) | `MissileStrike.ts` (new) | `tryFireMissileStrike` (new) | `GymMissileStrike`, `GymEnemies` |
 | Lane Traffic | `buildSingleOffset` (`single`) | `none` | `LaneTraffic.ts` (new) | `tryFireNone` | `GymLaneTraffic`, `GymEnemies` |
@@ -404,7 +421,7 @@ to warrant a child work item in this research round.
 (default), `tryFireSpreadBurst`, `tryFireNone`.
 
 **New seams to be created (per child work item):** `Ghost.ts` (+ `ghostSteering.ts`, `GhostSpawner.ts`, `tryFireNone`), `Centipede.ts` + `tryFireCentipede` + `GymCentipede`,
-`RobotronHorde.ts` + `tryFireNone` explicit + `GymRobotronHorde`,
+`Grunt.ts` + `gruntSteering.ts` + `HordeSpawner.ts` + `tryFireNone` explicit,
 `DefenderRaider.ts` + `tryFireDefenderRaider` + `GymDefender`,
 `MissileStrike.ts` + `tryFireMissileStrike` + `GymMissileStrike`,
 `LaneTraffic.ts` + `tryFireNone` explicit + `GymLaneTraffic`.
@@ -423,7 +440,7 @@ document as their design brief.
 | Galaga | AH-0MV2* (to be created) |
 | Pac-Man Ghosts | AH-0MV01EH2U008XT3Q |
 | Centipede | AH-0MV4* (to be created) |
-| Robotron Horde | AH-0MV5* (to be created) |
+| Robotron Horde | AH-0MV01EKTL001NRE6 |
 | Defender | AH-0MV6* (to be created) |
 | Missile Command | AH-0MV7* (to be created) |
 | Frogger | AH-0MV8* (to be created) |

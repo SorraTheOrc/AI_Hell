@@ -82,6 +82,12 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   // can be dialled in live.
   beamDuration: { min: 200, max: 4000, step: 50 },
   pullStrength: { min: 0, max: 200, step: 5 },
+  // Robotron homing-horde tuning (AH-0MV01EKTL001NRE6): neutral for other
+  // kinds, editable so the group size and spawn cadence can be dialled in
+  // live. The horde's size and homing speed use the existing `count` and
+  // `driftSpeed` sliders.
+  hordeGroupSize: { min: 1, max: 20, step: 1 },
+  hordeSpawnInterval: { min: 0.2, max: 6, step: 0.1 },
   startX: { min: 0, max: GAME_WIDTH, step: 1 },
   startY: { min: 0, max: GAME_HEIGHT, step: 1 },
   // Spawn-position ranges (AH-0MUKCLXLW0032R67): bound to the canvas so a

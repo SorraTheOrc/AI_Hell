@@ -102,7 +102,8 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
         key !== 'harvester' &&
         key !== 'capturer' &&
         !key.startsWith('ghost-') &&
-        key !== 'centipede',
+        key !== 'centipede' &&
+        key !== 'grunt',
     );
 
     for (const key of firingKeys) {
@@ -118,6 +119,7 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
       'ghost-chase',
       'ghost-flank',
       'ghost-wander',
+      'grunt',
       'harvester',
       'march',
       'phaser',
@@ -155,6 +157,13 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     const entity = makeFireSpy();
     expect(enemyFireMethod('centipede')).toBe('tryFireNone');
     expect(fireForEnemy(entity, 'centipede', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Robotron grunt horde to no fire (the swarm of bodies is the threat)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('grunt')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'grunt', 42)).toEqual([]);
     expect(entity.calls).toEqual([]);
   });
 });

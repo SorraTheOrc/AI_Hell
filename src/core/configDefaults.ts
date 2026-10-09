@@ -271,6 +271,41 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     beamDuration: 1800,
     pullStrength: 90,
   },
+  // Robotron homing horde (AH-0MV01EKTL001NRE6): a dense pack of small, fast
+  // non-firing grunts that pour in from the arena edges and home on the live
+  // player with bounded steering. The horde is delivered by the dynamic
+  // `HordeSpawner` in the game; the formation count is the horde size
+  // (surfaced in the gym as density) and `driftSpeed` is the homing speed
+  // (see `docs/CLASSIC_ENEMY_RESEARCH.md` §5). `hordeGroupSize` /
+  // `hordeSpawnInterval` tune the timed edge spawns.
+  grunt: {
+    key: 'grunt',
+    displayName: 'Grunt Horde',
+    formationKind: 'swarm',
+    count: 16,
+    spacingX: 30,
+    spacingY: 26,
+    driftSpeed: 110,
+    startX: GAME_WIDTH * 0.5,
+    startY: GAME_HEIGHT * 0.35,
+    startXMin: GAME_WIDTH * 0.5,
+    startXMax: GAME_WIDTH * 0.5,
+    startYMin: GAME_HEIGHT * 0.35,
+    startYMax: GAME_HEIGHT * 0.35,
+    size: 12,
+    health: 1,
+    color: 0xff00aa,
+    bulletColor: 0xffffff,
+    bulletSize: 3,
+    shotPattern: 'none',
+    fireInterval: 1000,
+    bulletSpeed: 50,
+    bulletLifetime: 1.5,
+    burstCount: 1,
+    shotProbability: 0,
+    hordeGroupSize: 4,
+    hordeSpawnInterval: 1.6,
+  },
   // Pac-Man personality pursuers (AH-0MV01EH2U008XT3Q): four fast, low-HP
   // non-firing roamer-pursuers, one CSV row per personality so the gym can
   // exercise each independently. They move via the shared `Ghost` steering

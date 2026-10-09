@@ -152,9 +152,13 @@ const COMPOSE_EPSILON = 1e-9;
  * select as a wave group, with sensible count ranges and count as the only
  * adjustable field.
  *
- * Two archetypes are deliberately excluded because they are delivered by
+ * Three archetypes are deliberately excluded because they are delivered by
  * their own spawners:
  *
+ * - the **Grunt homing horde** (classic-arcade archetype,
+ *   AH-0MV01EKTL001NRE6) is a timed edge-spawning pack delivered by the
+ *   dedicated `HordeSpawner`, gated behind a per-wave `horde: true` opt-in —
+ *   it is not a static wave group;
  * - the **Harvester** (F6) is a rare later-level roaming spawn delivered by
  *   the dedicated `HarvesterSpawner`;
  * - the **Asteroid** is delivered by the dedicated random offscreen spawner
@@ -173,7 +177,7 @@ export function defaultCandidatePool(): CandidateGroup[] {
   return Object.entries(DEFAULT_ENEMY_CONFIGS)
     // See the JSDoc above: both archetypes are delivered by their own
     // spawners and must never be selected as a wave group.
-    .filter(([key]) => key !== 'harvester' && key !== 'asteroid')
+    .filter(([key]) => key !== 'harvester' && key !== 'asteroid' && key !== 'grunt')
     .map(([key, cfg]) => {
       // `single`-formation archetypes (e.g. the Boss Swarm) spawn exactly one
       // entity per group regardless of `count` (`buildSingleOffset` ignores its
