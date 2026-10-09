@@ -448,6 +448,27 @@ The following rules govern how enemy entities interact with each other and with 
 - **Fires**: **Never** — `shootEnabled` is a no-op and its effective shot
   pattern is `none`.
 
+#### Classic-arcade roster (research epic AH-0MUYAQ6YH0010G52)
+
+Alongside the E1–E7 roster, eight archetypes selected from the classic arcade
+era (late 1970s–mid 1980s) have been implemented from the research catalogue in
+[`CLASSIC_ENEMY_RESEARCH.md`](./CLASSIC_ENEMY_RESEARCH.md):
+
+| Archetype | Source game | Config key | Behaviour summary |
+|-----------|-------------|------------|-------------------|
+| Space Invaders | Space Invaders (1978) | `march` | Rigid block that steps sideways, reverses and drops at the arena edge, speeding up as it thins |
+| Galaga capturer | Galaga (1981) | `capturer` | Descends to the player's row and projects a bounded tractor beam |
+| Pac-Man ghosts | Pac-Man (1980) | `ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander` | Four pursuers with distinct chase / ambush / flank / wander personalities |
+| Centipede | Centipede (1981) | `centipede` | Linked chain that descends and splits into sub-chains when a middle segment dies |
+| Robotron horde | Robotron 2084 (1982) | `grunt` | Fast, non-firing homing horde that swarm-steers to the player |
+| Defender raider | Defender (1981) | `raider` | Patrol-then-attack raider that commits to a high-speed run |
+| Missile Command strike | Missile Command (1980) | `orbital-strike` | Telegraphed impact marker, falling projectile and radial detonation (non-blocking hazard) |
+| Frogger lane traffic | Frogger (1981) | `lane-traffic` | Fast, non-firing horizontal lanes that wrap at the arena edges (non-blocking hazard) |
+
+The dynamic archetypes are gated behind per-wave opt-ins (`ghosts`,
+`centipede`, `horde`, `laneTraffic`) so the shipped campaign wave data is
+unchanged; the `orbital-strike` hazard is enabled for regular waves.
+
 ### 4.2 Wave / Formation Structures
 
 Each level consists of one or more **waves** of enemies. A wave is a set of
@@ -1356,6 +1377,13 @@ The following are explicitly **out of scope** for the MVP but should be tracked 
 | **Save/load game state** | Pause and resume functionality. |
 | **Achievements** | Unlockable challenges and rewards. |
 | **Mobile support** | Touch controls for mobile devices. |
+
+The classic-arcade roster selected by research epic **AH-0MUYAQ6YH0010G52** is
+now implemented (see §4.1 and
+[`CLASSIC_ENEMY_RESEARCH.md`](./CLASSIC_ENEMY_RESEARCH.md)). The candidates
+considered but **not** selected this round — **Joust**, **Dig Dug**, **Q*bert**
+and **Star Castle** — remain future scope and are recorded with a deferral
+reason each in the research document's "considered but not selected" section.
 
 ---
 

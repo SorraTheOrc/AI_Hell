@@ -29,14 +29,26 @@ E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
 Boss is multi-hit via its 4-phase bar — **50 hits per phase (200 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
-### 1.2 Classic arcade research (AH-0MV01EBUR003BDNK)
+### 1.1 Classic arcade research (AH-0MUYAQ6YH0010G52)
 
 The current roster (E1–E7 + Boss) is a self-contained set of seven archetypes.
 A research epic (AH-0MUYAQ6YH0010G52) selected eight classic arcade enemy
 archetypes for future implementation: Space Invaders, Galaga, Pac-Man Ghosts,
 Centipede, Robotron 2084 Horde, Defender Raider, Missile Command Strike, and
 Frogger Lane Traffic. Each selected archetype has its own child work item that
-implements the full lifecycle (code + tests + gym parity + docs).
+implements the full lifecycle (code + tests + gym parity + docs). All eight are
+now implemented:
+
+| Archetype | Source game | Config key | Formation / seam | Fires |
+|-----------|-------------|------------|------------------|-------|
+| Space Invaders | Space Invaders (1978) | `march` | `march` formation (`Scout` body) | aimed (L4+) |
+| Galaga capturer | Galaga (1981) | `capturer` | `Capturer` + capture beam | never |
+| Pac-Man ghosts | Pac-Man (1980) | `ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander` | `Ghost` + ghost steering | never |
+| Centipede | Centipede (1981) | `centipede` | `Centipede` + chain model | never |
+| Robotron horde | Robotron 2084 (1982) | `grunt` | `Grunt` + grunt steering | never |
+| Defender raider | Defender (1981) | `raider` | `Raider` + patrol state machine | aimed (L4+, attack run) |
+| Missile Command strike | Missile Command (1980) | `orbital-strike` | `OrbitalStrike` + strike spawner (non-blocking hazard) | never |
+| Frogger lane traffic | Frogger (1981) | `lane-traffic` | `LaneTraffic` + lane-traffic spawner (non-blocking hazard) | never |
 
 The full research catalogue — source game, original behaviour, AI_Hell
 adaptation, pipeline fit, difficulty scoring inputs, and gym scenes — is in
@@ -142,7 +154,7 @@ other enemy (GDD §2.6 — no enemy–enemy collision) and is mineral-inert. The
 as a row of members and runs the same shared `updatePosition` seam with a live
 player for gym↔game parity.
 
-### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
+### 1.2 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed
 `src/data/enemy-configs.csv`; at boot the config store parses/validates it into
@@ -151,7 +163,7 @@ loaders. Retuning an enemy — or adding a new one — is a CSV edit (or a gym
 **Save** / **Save As…**), with no TypeScript change required. See §8 for the
 full schema, codec, config-store and Vite-plugin reference.
 
-### 1.2 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
+### 1.3 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
 
 The Asteroid is the first **non-formation** enemy: it does not use the
 formation-drift model at all. It drifts in a straight line at constant
@@ -906,7 +918,7 @@ combat testbeds.
   > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
   > CSV AH-0MTZWZ9TE009CVUA): enemy tuning also lives in
   > `src/data/enemy-configs.csv` (`EnemyConfig`) and is exercised through
-  > the single `GymEnemies` scene (see §1.1 / §8). The per-scene `player`
+  > the single `GymEnemies` scene (see §1.2 / §8). The per-scene `player`
   > seam itself is unchanged — `GymEnemies` reuses it.
 - **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
   `PlayerBullet`s toward its current heading.
