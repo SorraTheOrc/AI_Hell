@@ -70,7 +70,19 @@ const SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> 
   asteroidsRotationSpeed: { min: 0.5, max: 10, step: 0.5 },
   asteroidsRotationAcceleration: { min: 2, max: 60, step: 2 },
   asteroidsRotationDeceleration: { min: 12, max: 300, step: 12 },
+  // Reverse-thruster tunables (AH-0MV13LYOG0066N6U, AC5). Independent of the
+  // forward `thrustAcceleration` / `maxSpeed`, but sharing their slider scales
+  // so the two sets of values are directly comparable in the panel.
+  asteroidsReverseThrustAcceleration: { min: 0, max: 1200, step: 10 },
+  asteroidsReverseMaxSpeed: { min: 0, max: 500, step: 5 },
 };
+
+/**
+ * Boolean ship config values rendered as on/off checkboxes (AC5). The reverse
+ * thruster's master toggle is the first such control; numeric values stay in
+ * {@link SLIDER_RANGES}. Order here is the order they appear in the panel.
+ */
+const BOOLEAN_FIELDS = ['asteroidsReverseEnabled'] as const;
 
 /**
  * The Player gym's fixed obstacle course (deterministic across loads/tests).
@@ -319,6 +331,11 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
       panel.appendChild(this._sliderRow(field, range));
     }
 
+    // Boolean toggles (AC5) — the reverse-thruster master on/off switch.
+    for (const field of BOOLEAN_FIELDS) {
+      panel.appendChild(this._checkboxRow(field));
+    }
+
     // Colour inputs.
     for (const field of COLOR_FIELDS) {
       panel.appendChild(this._colorRow(field));
@@ -372,6 +389,28 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     return row;
   }
 
+  /**
+   * Builds an on/off checkbox row for a boolean config value (AC5). Fires on
+   * `change` so it applies live through the same `_onControlInput` path as the
+   * sliders, and is read/persisted through `_readPanelValues`.
+   */
+  private _checkboxRow(field: string): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'gym-panel-row';
+
+    const label = document.createElement('span');
+    label.textContent = field;
+    label.className = 'gym-panel-label';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset['config'] = field;
+    input.addEventListener('change', () => this._onControlInput());
+
+    row.append(label, input);
+    return row;
+  }
+
   private _colorRow(field: string): HTMLElement {
     const row = document.createElement('label');
     row.className = 'gym-panel-row';
@@ -420,6 +459,13 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
       );
       if (input) (source as unknown as Record<string, unknown>)[field] = hexToColor(input.value);
     }
+    // Boolean toggles are read from their checked state (AC5).
+    for (const field of BOOLEAN_FIELDS) {
+      const input = this.panel?.querySelector<HTMLInputElement>(
+        `input[data-config="${field}"]`,
+      );
+      if (input) (source as unknown as Record<string, unknown>)[field] = input.checked;
+    }
     // The scheme toggle is the source of truth for controlScheme (AC3).
     const toggle = this.panel?.querySelector<HTMLButtonElement>(
       `#${SCHEME_TOGGLE_ID}`,
@@ -451,6 +497,13 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
       if (input) {
         input.value = colorToHex(config[field as keyof ShipConfig] as number);
       }
+    }
+    // Restore boolean toggles from the persisted config (AC5).
+    for (const field of BOOLEAN_FIELDS) {
+      const input = this.panel.querySelector<HTMLInputElement>(
+        `input[data-config="${field}"]`,
+      );
+      if (input) input.checked = Boolean(config[field as keyof ShipConfig]);
     }
     // Sync the scheme toggle button with the config's control scheme.
     const toggle = this.panel.querySelector<HTMLButtonElement>(
