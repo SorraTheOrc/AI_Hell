@@ -88,6 +88,10 @@ export const SHIP_COLUMN_ORDER: (keyof ShipConfig)[] = [
   'shipColor', 'thrustFlameColor', 'thrustFlameInnerColor',
   'frictionDeceleration', 'controlScheme', 'asteroidsRotationSpeed',
   'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
+  // Asteroids reverse thruster (AH-0MV13LXOR001X15X): master toggle plus the
+  // two reverse-only tunables, independent of the forward values.
+  'asteroidsReverseEnabled', 'asteroidsReverseThrustAcceleration',
+  'asteroidsReverseMaxSpeed',
 ];
 
 // ── Helper: hex colour coercion ─────────────────────────────────────
@@ -107,6 +111,33 @@ function coerceNumber(value: string | undefined, fallback: number): number {
   if (value == null || value.trim() === '') return fallback;
   const n = Number(value);
   return Number.isNaN(n) ? 0 : n;
+}
+
+/**
+ * Coerce a numeric string to a number, falling back to `fallback` both when
+ * the value is missing/blank *and* when it is malformed. Used for the
+ * reverse-thruster tunables (AH-0MV13LXOR001X15X), where a bad value should
+ * keep the documented default rather than silently collapse to 0 (which
+ * would disable reverse thrust while the toggle still reads as enabled).
+ */
+function coerceNumberDefault(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === '') return fallback;
+  const n = Number(value);
+  return Number.isNaN(n) ? fallback : n;
+}
+
+/**
+ * Coerce a boolean-ish CSV string to a boolean (AH-0MV13LXOR001X15X). Accepts
+ * `true`/`false` (case-insensitive) and `1`/`0`; a missing/blank value falls
+ * back to `fallback`, and any other malformed value also falls back so the
+ * read path always yields a valid boolean.
+ */
+function coerceBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value == null || value.trim() === '') return fallback;
+  const normalised = value.trim().toLowerCase();
+  if (normalised === 'true' || normalised === '1') return true;
+  if (normalised === 'false' || normalised === '0') return false;
+  return fallback;
 }
 
 // ── Helper: enum coercion with validation ───────────────────────────
@@ -363,12 +394,30 @@ export function validateShipConfig(
     'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
     'frictionDeceleration', 'asteroidsRotationSpeed',
     'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
+    // Reverse-thruster tunables (AH-0MV13LXOR001X15X): optional for legacy
+    // files, but a present value must be numeric.
+    'asteroidsReverseThrustAcceleration', 'asteroidsReverseMaxSpeed',
   ];
   for (const field of numericFields) {
     const val = row[field];
     if (val != null && val.trim() !== '' && Number.isNaN(Number(val))) {
       errors.push(`Malformed number for ${String(field)}: "${val}"`);
     }
+  }
+
+  // Validate the reverse-thruster master toggle when present: legacy files
+  // predate the column, so an absent/blank value is valid (and defaults on
+  // read), but a present value must be a recognised boolean
+  // (AH-0MV13LXOR001X15X).
+  const reverseEnabled = row.asteroidsReverseEnabled;
+  if (
+    reverseEnabled != null &&
+    reverseEnabled.trim() !== '' &&
+    !/^(true|false|1|0)$/i.test(reverseEnabled.trim())
+  ) {
+    errors.push(
+      `Invalid boolean for asteroidsReverseEnabled: "${reverseEnabled}" — expected true, false, 1 or 0`,
+    );
   }
 
   // Validate hex colours.
@@ -506,6 +555,21 @@ export function coerceShipConfig(
   result.asteroidsRotationDeceleration = coerceNumber(
     row.asteroidsRotationDeceleration,
     result.asteroidsRotationDeceleration,
+  );
+  // Asteroids reverse thruster (AH-0MV13LXOR001X15X): legacy/blank cells fall
+  // back to the defaults; malformed numeric cells also keep the default rather
+  // than collapsing to 0.
+  result.asteroidsReverseEnabled = coerceBoolean(
+    row.asteroidsReverseEnabled,
+    result.asteroidsReverseEnabled,
+  );
+  result.asteroidsReverseThrustAcceleration = coerceNumberDefault(
+    row.asteroidsReverseThrustAcceleration,
+    result.asteroidsReverseThrustAcceleration,
+  );
+  result.asteroidsReverseMaxSpeed = coerceNumberDefault(
+    row.asteroidsReverseMaxSpeed,
+    result.asteroidsReverseMaxSpeed,
   );
 
   return result;

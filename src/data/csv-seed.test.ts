@@ -70,6 +70,25 @@ describe('ship-config.csv seed data', () => {
     expect(coerced.shipColor).toBe(DEFAULT_CONFIG.shipColor);
     expect(coerced.controlScheme).toBe(DEFAULT_CONFIG.controlScheme);
   });
+
+  it('ship row carries the reverse-thruster columns matching DEFAULT_CONFIG', async () => {
+    const csv = readCsvFile('ship-config.csv');
+    expect(csv).toContain('asteroidsReverseEnabled');
+    expect(csv).toContain('asteroidsReverseThrustAcceleration');
+    expect(csv).toContain('asteroidsReverseMaxSpeed');
+    const rows = parseCsvRows(csv);
+    const m = await import('../core/csv');
+    const coerced = m.coerceShipConfig(rows[0], DEFAULT_CONFIG);
+    expect(coerced.asteroidsReverseEnabled).toBe(
+      DEFAULT_CONFIG.asteroidsReverseEnabled,
+    );
+    expect(coerced.asteroidsReverseThrustAcceleration).toBe(
+      DEFAULT_CONFIG.asteroidsReverseThrustAcceleration,
+    );
+    expect(coerced.asteroidsReverseMaxSpeed).toBe(
+      DEFAULT_CONFIG.asteroidsReverseMaxSpeed,
+    );
+  });
 });
 
 describe('difficulty-curves.csv seed data', () => {

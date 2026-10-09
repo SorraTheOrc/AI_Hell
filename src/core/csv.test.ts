@@ -989,6 +989,147 @@ describe('Asteroids turn-ramp ship config (AH-0MUNS42NA000N41U)', () => {
   });
 });
 
+// ── Asteroids reverse-thruster ship config (AH-0MV13LXOR001X15X) ─────
+
+describe('Asteroids reverse-thruster ship config (AH-0MV13LXOR001X15X)', () => {
+  function validShipRow(): Record<string, string> {
+    return {
+      thrustAcceleration: '300', maxSpeed: '175', shipSize: '20',
+      thrustFlameLength: '0.75', shipColor: '0x00ffff',
+      thrustFlameColor: '0xff8c00', thrustFlameInnerColor: '0xffff00',
+      frictionDeceleration: '100', controlScheme: 'asteroids',
+      asteroidsRotationSpeed: '3',
+      asteroidsRotationAcceleration: '12',
+      asteroidsRotationDeceleration: '60',
+      asteroidsReverseEnabled: 'true',
+      asteroidsReverseThrustAcceleration: '200',
+      asteroidsReverseMaxSpeed: '120',
+    };
+  }
+
+  it('exposes the reverse columns in SHIP_COLUMN_ORDER', async () => {
+    const m = await loadCsvModule();
+    expect(m.SHIP_COLUMN_ORDER).toContain('asteroidsReverseEnabled');
+    expect(m.SHIP_COLUMN_ORDER).toContain('asteroidsReverseThrustAcceleration');
+    expect(m.SHIP_COLUMN_ORDER).toContain('asteroidsReverseMaxSpeed');
+  });
+
+  it('coerces the reverse fields into values independent of the forward thrust', async () => {
+    const m = await loadCsvModule();
+    const row = validShipRow();
+    // Reverse tunables deliberately differ from the forward values, proving
+    // they are independent (AC2).
+    row.asteroidsReverseThrustAcceleration = '250';
+    row.asteroidsReverseMaxSpeed = '90';
+    const config = m.coerceShipConfig(row, DEFAULT_CONFIG);
+    expect(config.asteroidsReverseEnabled).toBe(true);
+    expect(config.asteroidsReverseThrustAcceleration).toBe(250);
+    expect(config.asteroidsReverseMaxSpeed).toBe(90);
+    // The forward values are untouched by the reverse columns.
+    expect(config.thrustAcceleration).toBe(300);
+    expect(config.maxSpeed).toBe(175);
+  });
+
+  it('accepts the boolean synonyms true/false and 1/0', async () => {
+    const m = await loadCsvModule();
+    const on = m.coerceShipConfig(
+      { ...validShipRow(), asteroidsReverseEnabled: '1' },
+      DEFAULT_CONFIG,
+    );
+    const off = m.coerceShipConfig(
+      { ...validShipRow(), asteroidsReverseEnabled: 'FALSE' },
+      DEFAULT_CONFIG,
+    );
+    expect(on.asteroidsReverseEnabled).toBe(true);
+    expect(off.asteroidsReverseEnabled).toBe(false);
+  });
+
+  it('round-trips all three reverse fields through serialize → parse → coerce', async () => {
+    const m = await loadCsvModule();
+    const config = {
+      ...DEFAULT_CONFIG,
+      asteroidsReverseEnabled: false,
+      asteroidsReverseThrustAcceleration: 275,
+      asteroidsReverseMaxSpeed: 64,
+    };
+    const rows = m.parseCsvRows(m.serializeShipConfigs([config]));
+    const coerced = m.coerceShipConfig(rows[0], DEFAULT_CONFIG);
+    expect(coerced.asteroidsReverseEnabled).toBe(false);
+    expect(coerced.asteroidsReverseThrustAcceleration).toBe(275);
+    expect(coerced.asteroidsReverseMaxSpeed).toBe(64);
+  });
+
+  it('legacy rows without the reverse columns fall back to the defaults', async () => {
+    const m = await loadCsvModule();
+    const row = validShipRow();
+    delete row.asteroidsReverseEnabled;
+    delete row.asteroidsReverseThrustAcceleration;
+    delete row.asteroidsReverseMaxSpeed;
+    const coerced = m.coerceShipConfig(row, DEFAULT_CONFIG);
+    expect(coerced.asteroidsReverseEnabled).toBe(true);
+    expect(coerced.asteroidsReverseThrustAcceleration).toBe(
+      DEFAULT_CONFIG.asteroidsReverseThrustAcceleration,
+    );
+    expect(coerced.asteroidsReverseMaxSpeed).toBe(
+      DEFAULT_CONFIG.asteroidsReverseMaxSpeed,
+    );
+  });
+
+  it('validateShipConfig accepts legacy rows that predate the reverse columns', async () => {
+    const m = await loadCsvModule();
+    const row = validShipRow();
+    delete row.asteroidsReverseEnabled;
+    delete row.asteroidsReverseThrustAcceleration;
+    delete row.asteroidsReverseMaxSpeed;
+    expect(m.validateShipConfig(row, DEFAULT_CONFIG).ok).toBe(true);
+  });
+
+  it('validateShipConfig accepts a row carrying all three reverse fields', async () => {
+    const m = await loadCsvModule();
+    expect(m.validateShipConfig(validShipRow(), DEFAULT_CONFIG).ok).toBe(true);
+  });
+
+  it('reports malformed reverse numbers', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateShipConfig(
+      { ...validShipRow(), asteroidsReverseThrustAcceleration: 'fast' },
+      DEFAULT_CONFIG,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ')).toContain(
+      'asteroidsReverseThrustAcceleration',
+    );
+  });
+
+  it('reports a malformed reverse boolean', async () => {
+    const m = await loadCsvModule();
+    const result = m.validateShipConfig(
+      { ...validShipRow(), asteroidsReverseEnabled: 'yes-please' },
+      DEFAULT_CONFIG,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(' ')).toContain('asteroidsReverseEnabled');
+  });
+
+  it('falls back to defaults for malformed reverse values on the read path', async () => {
+    const m = await loadCsvModule();
+    const row = {
+      ...validShipRow(),
+      asteroidsReverseEnabled: 'maybe',
+      asteroidsReverseThrustAcceleration: 'fast',
+      asteroidsReverseMaxSpeed: 'slow',
+    };
+    const coerced = m.coerceShipConfig(row, DEFAULT_CONFIG);
+    expect(coerced.asteroidsReverseEnabled).toBe(true);
+    expect(coerced.asteroidsReverseThrustAcceleration).toBe(
+      DEFAULT_CONFIG.asteroidsReverseThrustAcceleration,
+    );
+    expect(coerced.asteroidsReverseMaxSpeed).toBe(
+      DEFAULT_CONFIG.asteroidsReverseMaxSpeed,
+    );
+  });
+});
+
 // ── Difficulty-curve codec (AH-0MUITRZZE000OYQE) ────────────────────
 
 describe('Difficulty-curve codec (AH-0MUITRZZE000OYQE)', () => {

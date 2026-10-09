@@ -27,6 +27,17 @@ describe('ship configuration module', () => {
     expect(DEFAULT_CONFIG.asteroidsRotationSpeed).toBe(3);
     expect(DEFAULT_CONFIG.asteroidsRotationAcceleration).toBe(12);
     expect(DEFAULT_CONFIG.asteroidsRotationDeceleration).toBe(60);
+    // Asteroids reverse thruster (AH-0MV13LXOR001X15X): on by default, with
+    // reverse-only tunables independent of the forward thrust/max-speed.
+    expect(DEFAULT_CONFIG.asteroidsReverseEnabled).toBe(true);
+    expect(DEFAULT_CONFIG.asteroidsReverseThrustAcceleration).toBe(200);
+    expect(DEFAULT_CONFIG.asteroidsReverseMaxSpeed).toBe(120);
+    expect(DEFAULT_CONFIG.asteroidsReverseThrustAcceleration).not.toBe(
+      DEFAULT_CONFIG.thrustAcceleration,
+    );
+    expect(DEFAULT_CONFIG.asteroidsReverseMaxSpeed).not.toBe(
+      DEFAULT_CONFIG.maxSpeed,
+    );
   });
 
   it('falls back to defaults before the boot loader has run', () => {

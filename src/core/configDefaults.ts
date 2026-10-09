@@ -524,4 +524,11 @@ export const DEFAULT_CONFIG: ShipConfig = {
   asteroidsRotationSpeed: 3,
   asteroidsRotationAcceleration: 12,
   asteroidsRotationDeceleration: 60,
+  // Asteroids reverse thruster (AH-0MV13LXOR001X15X): enabled by default so
+  // S / ↓ retro-thrust works out of the box, with the master toggle letting
+  // players opt out completely. Reverse acceleration and reverse max speed
+  // are tuned independently of the forward `thrustAcceleration` / `maxSpeed`.
+  asteroidsReverseEnabled: true,
+  asteroidsReverseThrustAcceleration: 200,
+  asteroidsReverseMaxSpeed: 120,
 };

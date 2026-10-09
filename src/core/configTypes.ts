@@ -310,4 +310,23 @@ export interface ShipConfig {
    * Default 60 rad/s².
    */
   asteroidsRotationDeceleration: number;
+  /**
+   * Master on/off switch for the Asteroids-scheme reverse thruster
+   * (AH-0MV13LXOR001X15X). When `false`, S / ↓ apply no reverse acceleration
+   * and render no reverse flame; forward thrust and turning are unaffected.
+   * Default `true`.
+   */
+  asteroidsReverseEnabled: boolean;
+  /**
+   * Reverse-thrust acceleration (px/s²) applied opposite the ship's facing
+   * while a reverse key is held under the Asteroids scheme
+   * (AH-0MV13LXOR001X15X). Independent of the forward `thrustAcceleration`.
+   * Default 200 px/s².
+   */
+  asteroidsReverseThrustAcceleration: number;
+  /**
+   * Speed cap (px/s) reachable under reverse thrust (AH-0MV13LXOR001X15X),
+   * independent of the forward `maxSpeed`. Default 120 px/s.
+   */
+  asteroidsReverseMaxSpeed: number;
 }
