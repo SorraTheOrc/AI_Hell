@@ -86,6 +86,8 @@ function snapshotOf(state: SteeringState, targets: Targets): BotSnapshot {
     aliveCount: 0,
     wave: null,
     runSeed: 1,
+    lives: 3,
+    livesCap: 5,
   };
 }
 

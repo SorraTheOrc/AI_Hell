@@ -77,6 +77,41 @@ describe('collect behaviour (AC2)', () => {
   });
 });
 
+describe('collect behaviour — secure-life target (AH-0MV03GXZQ00801T4)', () => {
+  it('targets the Extra Life drop, not a nearer non-life drop', () => {
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      lives: 3,
+      livesCap: 5,
+      // shield is nearer (left); extra_life is farther (right).
+      drops: [drop(260, 270, 'shield'), drop(700, 270, 'extra_life')],
+    });
+    const intent = collect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.secureLife),
+    );
+    expect(intent).not.toBeNull();
+    // Positive X proves it steered at the Extra Life (right), not the closer
+    // shield (left) the power-up band would have chosen.
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+    expect(intent!.dirY).toBeCloseTo(0, 3);
+  });
+
+  it('declines the secure-life goal when no Extra Life drop is present', () => {
+    const intent = collect.run(
+      context(
+        makeSnapshot({
+          player: PLAYER,
+          lives: 3,
+          livesCap: 5,
+          drops: [drop(260, 270, 'shield')],
+        }),
+        COMPETENT_GOAL_IDS.secureLife,
+      ),
+    );
+    expect(intent).toBeNull();
+  });
+});
+
 describe('engage behaviour (AC3 aim/fire reasoning)', () => {
   it('holds the aim axis and coasts once inside the engagement range', () => {
     const intent = engage.run(

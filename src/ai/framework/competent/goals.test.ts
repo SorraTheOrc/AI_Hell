@@ -107,6 +107,101 @@ describe('utility bands (AC1 priority order)', () => {
   });
 });
 
+describe('secure-life band (AH-0MV03GXZQ00801T4)', () => {
+  const goals = createCompetentGoals(T);
+  const goal = (id: string) => goals.require(id);
+  const lifeGoal = () => goal(COMPETENT_GOAL_IDS.secureLife);
+
+  it('scores an on-screen Extra Life above minerals while below the cap', () => {
+    const view = viewOf(
+      makeSnapshot({
+        player: PLAYER,
+        lives: 3,
+        livesCap: 5,
+        minerals: [mineral(280, 270)],
+        drops: [drop(680, 270, 'extra_life')],
+      }),
+    );
+    expect(lifeGoal().isValid!(view)).toBe(true);
+    expect(lifeGoal().utility(view)).toBeGreaterThan(
+      goal(COMPETENT_GOAL_IDS.collectMineral).utility(view),
+    );
+  });
+
+  it('invalidates the life goal at the cap so the drop falls to the power-up band', () => {
+    const view = viewOf(
+      makeSnapshot({
+        player: PLAYER,
+        lives: 5,
+        livesCap: 5,
+        drops: [drop(680, 270, 'extra_life')],
+      }),
+    );
+    expect(lifeGoal().isValid!(view)).toBe(false);
+    expect(goal(COMPETENT_GOAL_IDS.collectPowerUp).isValid!(view)).toBe(true);
+    expect(
+      goal(COMPETENT_GOAL_IDS.collectPowerUp).utility(view),
+    ).toBeGreaterThan(0);
+  });
+
+  it('is invalid when no Extra Life drop is on screen', () => {
+    const view = viewOf(
+      makeSnapshot({
+        player: PLAYER,
+        lives: 2,
+        livesCap: 5,
+        drops: [drop(680, 270, 'shield')],
+      }),
+    );
+    expect(lifeGoal().isValid!(view)).toBe(false);
+    expect(lifeGoal().isAchieved!(view)).toBe(true);
+  });
+
+  it('keeps survival above the life premium', () => {
+    const view = viewOf(
+      makeSnapshot({
+        player: PLAYER,
+        lives: 1,
+        livesCap: 5,
+        drops: [drop(680, 270, 'extra_life')],
+        enemyBullets: [bullet(440, 270, 100, 0)],
+      }),
+    );
+    expect(goal(COMPETENT_GOAL_IDS.survive).utility(view)).toBeGreaterThan(
+      lifeGoal().utility(view),
+    );
+  });
+
+  it('commits to secure-life over a nearer mineral while below the cap', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    brain.decide(
+      makeSnapshot({
+        player: PLAYER,
+        lives: 2,
+        livesCap: 5,
+        minerals: [mineral(500, 270)],
+        drops: [drop(800, 270, 'extra_life')],
+      }),
+      0.1,
+    );
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.secureLife);
+  });
+
+  it('does not commit secure-life at the cap', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    brain.decide(
+      makeSnapshot({
+        player: PLAYER,
+        lives: 5,
+        livesCap: 5,
+        drops: [drop(280, 270, 'extra_life')],
+      }),
+      0.1,
+    );
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectPowerUp);
+  });
+});
+
 describe('goal lifecycle', () => {
   const goals = createCompetentGoals(T);
   const goal = (id: string) => goals.require(id);

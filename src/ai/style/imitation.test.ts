@@ -32,6 +32,8 @@ function snapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     aliveCount: 0,
     wave: null,
     runSeed: 5,
+    lives: 3,
+    livesCap: 5,
     ...overrides,
   };
 }

@@ -144,6 +144,12 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
 export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport'] as const;
 
 /**
+ * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full
+ * choice and the demo bot's life premium (AH-0MV03GXZQ00801T4 · AC3).
+ */
+export const EXTRA_LIFE_DROP_ID: PowerUpId = POWER_UP_CATALOGUE.extra_life.id;
+
+/**
  * Weapon drop IDs the combat gyms can spawn alongside power-ups.
  * Reset returns the ship to the cannon.
  */

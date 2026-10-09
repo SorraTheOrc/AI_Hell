@@ -133,6 +133,17 @@ export interface BotSnapshot {
    * bot layer can correlate observations with a reproducible run.
    */
   readonly runSeed: number;
+  /**
+   * The ship's current life count (AH-0MV03GXZQ00801T4). Read from the run
+   * state so the bot can prioritise an Extra Life while it is below the cap.
+   */
+  readonly lives: number;
+  /**
+   * The run's life cap (AH-0MV03GXZQ00801T4). The scene supplies it from the
+   * existing game data (`MAX_LIVES` / the Extra Life catalogue entry), so the
+   * bot never introduces its own cap constant (AC3).
+   */
+  readonly livesCap: number;
 }
 
 // ── Structural scene seam (PlayScene satisfies this) ─────────────────
@@ -214,6 +225,10 @@ export interface BotSnapshotScene {
   getWaveState(): BotWaveSource;
   /** The current run's seed (satisfied by `PlayScene.getRunSeed`). */
   getRunSeed(): number;
+  /** The ship's current life count (satisfied by `PlayScene.getLives`). */
+  getLives(): number;
+  /** The run's life cap (satisfied by `PlayScene.getLivesCap`). */
+  getLivesCap(): number;
 }
 
 // ── Builder ──────────────────────────────────────────────────────────
@@ -279,7 +294,17 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
     aliveCount: scene.getAliveCount(),
     wave: copyWave(scene.getWaveState()),
     runSeed: scene.getRunSeed(),
+    lives: scene.getLives(),
+    livesCap: scene.getLivesCap(),
   });
+}
+
+/**
+ * Whether the snapshot's ship is below the run's life cap. The competent bot
+ * uses this to gate its Extra Life preference (AH-0MV03GXZQ00801T4 · AC2/AC3).
+ */
+export function livesBelowCap(snapshot: BotSnapshot): boolean {
+  return snapshot.lives < snapshot.livesCap;
 }
 
 /** Copies the wave-timer state into a plain `BotWave` object. */

@@ -27,6 +27,7 @@
  * | Band          | Range (default) | Goal id            |
  * |---------------|-----------------|--------------------|
  * | survival      | 10 – 15         | `survive`          |
+ * | secure-life   | 6.0 – 6.5       | `secure-life`      |
  * | minerals      | 4.0 – 4.5       | `collect-mineral`  |
  * | power-ups     | 3.0 – 3.75      | `collect-powerup`  |
  * | enemies       | 2.0 – 2.75      | `engage-enemy`     |
@@ -37,7 +38,9 @@
  * (`prioritySpan`) is smaller than the gap between bands, so a closer
  * lower-priority target can never outrank a higher-priority one. Survival is
  * only valid while there is an urgent threat, so the bot does not spend the
- * whole run "surviving".
+ * whole run "surviving". The `secure-life` band is only valid while the ship
+ * is below its life cap and a live Extra Life drop is on screen, so it never
+ * competes at the cap (AH-0MV03GXZQ00801T4).
  *
  * @module src/ai/framework/competent/goals
  */
@@ -45,8 +48,10 @@
 import type { BotGoal, BotGoalView, GoalRegistry } from '../registry';
 import { createGoalRegistry } from '../registry';
 import type { BotWorld, BotWorldPoint } from '../worldModel';
+import { livesBelowCap } from '../../botSnapshot';
 import type { BotContent } from '../content';
 import { createBotContent } from '../content';
+import { SECURE_LIFE_DROP_ID } from './content';
 import type { CompetentBotTunables } from './tunables';
 
 /** Stable behaviour ids the goals name. */
@@ -60,6 +65,7 @@ export const COMPETENT_BEHAVIOUR_IDS = {
 /** Stable goal ids (also the deterministic tie-break keys). */
 export const COMPETENT_GOAL_IDS = {
   survive: 'survive',
+  secureLife: 'secure-life',
   collectMineral: 'collect-mineral',
   collectPowerUp: 'collect-powerup',
   engageEnemy: 'engage-enemy',
@@ -179,6 +185,17 @@ export function asteroidTargets(world: BotWorld): ContentTarget[] {
 }
 
 /**
+ * The live Extra Life drops as content targets. The `secure-life` goal and
+ * behaviour consume this set so an on-screen Extra Life can be prioritised
+ * while the ship is below the life cap (AH-0MV03GXZQ00801T4 · AC2).
+ */
+export function extraLifeTargets(world: BotWorld): ContentTarget[] {
+  return world.drops
+    .filter((drop) => drop.type === SECURE_LIFE_DROP_ID)
+    .map((drop) => ({ x: drop.x, y: drop.y, contentId: drop.type }));
+}
+
+/**
  * Utility for a set of content targets: the highest `base + span * proximity
  * * weight` across the targets, `0` when there are none.
  */
@@ -210,6 +227,36 @@ function surviveGoal(t: CompetentBotTunables): BotGoal {
       t.survivalBase + survivalUrgency(view.world, t) * t.survivalUrgencyPort,
     isValid: (view) => survivalUrgency(view.world, t) > 0,
     isAchieved: (view) => survivalUrgency(view.world, t) <= 0,
+  };
+}
+
+/**
+ * A `secure-life` goal: valid only while the ship is below its life cap and a
+ * live Extra Life drop is on screen. It sits in the band directly below
+ * survival and above minerals, so the bot takes a free life over any other
+ * objective while it can still benefit (AH-0MV03GXZQ00801T4 · AC2). At the
+ * cap the goal is invalid and the drop falls back to the power-up band.
+ */
+function secureLifeGoal(t: CompetentBotTunables): BotGoal {
+  return {
+    id: COMPETENT_GOAL_IDS.secureLife,
+    behaviourId: COMPETENT_BEHAVIOUR_IDS.collect,
+    utility: (view: BotGoalView) =>
+      weightedUtility(
+        view,
+        extraLifeTargets(view.world),
+        t.lifeBase,
+        t.lifeSeekRange,
+        t.prioritySpan,
+        () => 1,
+      ),
+    isValid: (view) =>
+      view.world.player !== null &&
+      livesBelowCap(view.snapshot) &&
+      extraLifeTargets(view.world).length > 0,
+    isAchieved: (view) =>
+      !livesBelowCap(view.snapshot) ||
+      extraLifeTargets(view.world).length === 0,
   };
 }
 
@@ -299,6 +346,7 @@ export function createCompetentGoals(
 
   return createGoalRegistry([
     surviveGoal(t),
+    secureLifeGoal(t),
     collectGoal(
       COMPETENT_GOAL_IDS.collectMineral,
       t,

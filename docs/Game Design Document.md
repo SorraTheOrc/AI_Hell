@@ -163,6 +163,19 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   the modal hold-full choice overlay auto-selects its first option after
   `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run
   never stalls on the selection screen. Normal play never auto-selects.
+- **Extra Life priority (AH-0MV03GXZQ00801T4):** the competent demo brain
+  (`createCompetentBotBrain`) values the ship's remaining lives. While the
+  ship is **below the 5-life cap** it pursues a live **Extra Life** drop above
+  every objective except immediate survival (the `secure-life` band, directly
+  below the hard-constraint survival tier and above minerals), and its
+  hold-full auto-select takes an offered **Extra Life** instead of the first
+  option. When a life would be wasted — at the cap — the drop receives no
+  special priority and the auto-select falls back to the first option. The
+  life count and cap are read from the run state (`GameState.lives` /
+  `MAX_LIVES`), so the bot introduces no cap constant of its own; survival
+  still dominates, so the bot never trades its life for a life. Normal play is
+  unaffected (the preference only drives the demo bot and the demo
+  auto-select).
 - **Take over (AH-0MUYP6M6W006Z1AY):** pressing a **movement key** (W/A/S/D
   per the configured bindings, or an arrow key) leaves demo mode in place
   (`setDemoMode(false)`) — the run continues under player control, no restart.

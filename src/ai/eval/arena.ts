@@ -30,6 +30,7 @@
  */
 
 import { createSeededRng } from '../../core/rng';
+import { MAX_LIVES } from '../../core/GameState';
 import { AsteroidsModel } from '../../utils/movementModel';
 import type {
   AsteroidsConfig,
@@ -271,6 +272,8 @@ function snapshotOf(
     aliveCount: enemies.filter((hostile) => hostile.alive).length,
     wave: null,
     runSeed: seed,
+    lives: world.lives,
+    livesCap: MAX_LIVES,
   };
 }
 

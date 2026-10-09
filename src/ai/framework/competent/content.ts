@@ -24,6 +24,14 @@
  */
 
 import { createBotContent, type BotContent } from '../content';
+import { EXTRA_LIFE_DROP_ID } from '../../../powerups/types';
+
+/**
+ * The drop id the competent bot's `secure-life` goal targets. Single-sourced
+ * from the Extra Life catalogue entry so the bot never hard-codes the id
+ * (AH-0MV03GXZQ00801T4 · AC2/AC3).
+ */
+export const SECURE_LIFE_DROP_ID = EXTRA_LIFE_DROP_ID;
 
 /**
  * The shipped content registry consumed by `createCompetentBotBrain()`.

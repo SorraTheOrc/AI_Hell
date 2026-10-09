@@ -16,6 +16,7 @@ import { createEnemyFromConfig } from '../entities/enemyFactory';
 import {
   BOT_MINERAL_TYPE,
   buildBotSnapshot,
+  livesBelowCap,
   type BotSnapshotScene,
 } from './botSnapshot';
 
@@ -33,6 +34,8 @@ function makeScene(overrides: Partial<BotSnapshotScene> = {}): BotSnapshotScene 
     getAliveCount: () => 0,
     getWaveState: () => ({ active: false, timeRemaining: 0, timeLimit: 30 }),
     getRunSeed: () => 0,
+    getLives: () => 3,
+    getLivesCap: () => 5,
     ...overrides,
   };
 }
@@ -182,6 +185,21 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
       timeRemaining: 0,
       timeLimit: 30,
     });
+  });
+
+  it('maps the ship life count and cap (AH-0MV03GXZQ00801T4)', () => {
+    const scene = makeScene({ getLives: () => 2, getLivesCap: () => 5 });
+    const snapshot = buildBotSnapshot(scene);
+    expect(snapshot.lives).toBe(2);
+    expect(snapshot.livesCap).toBe(5);
+    expect(livesBelowCap(snapshot)).toBe(true);
+  });
+
+  it('reports the ship as not below cap when lives equal the cap', () => {
+    const snapshot = buildBotSnapshot(
+      makeScene({ getLives: () => 5, getLivesCap: () => 5 }),
+    );
+    expect(livesBelowCap(snapshot)).toBe(false);
   });
 });
 

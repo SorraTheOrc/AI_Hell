@@ -272,6 +272,7 @@ lower-priority target can never outrank a higher-priority one):
 | Band | Goal id | Behaviour |
 |---|---|---|
 | survival | `survive` | `evade` |
+| secure-life | `secure-life` | `collect` |
 | minerals | `collect-mineral` | `collect` |
 | power-ups | `collect-powerup` | `collect` |
 | enemies | `engage-enemy` | `engage` |
@@ -285,10 +286,20 @@ released when their target type is gone. The hysteresis (hold, margin,
 challenger persistence) is the framework's commitment mechanism from
 [section 4](#4-commitment--hysteresis).
 
+The `secure-life` band sits directly below survival and above minerals: while
+the ship is below its life cap and a live **Extra Life** drop is on screen,
+the bot pursues that drop over every other objective (an offered Extra Life is
+also the demo bot's preferred hold-full choice). At the cap the goal is
+invalid, so the drop falls back to its normal power-up value; survival still
+dominates, so the bot never trades its life for a life
+(AH-0MV03GXZQ00801T4). The life count and cap come from the scene's run state
+via the read-only snapshot — the bot introduces no cap constant of its own.
+
 ### 9.2 Behaviours
 
-- **`collect`** (mineral/power-up): approach and scoop, braking via the
-  forward model so the ship arrives rather than barrelling through.
+- **`collect`** (mineral/power-up/secure-life): approach and scoop, braking
+  via the forward model so the ship arrives rather than barrelling through.
+  The `secure-life` goal restricts this behaviour to live Extra Life drops.
 - **`engage`** (enemy/asteroid): line the target up inside `engagementRange`,
   then hold the **aim axis** and coast so the forward-firing weapon stays on
   target (aim/fire reasoning, AC3) instead of aiming only by accident of

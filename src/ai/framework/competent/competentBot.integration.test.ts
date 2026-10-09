@@ -139,6 +139,8 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     aliveCount: 0,
     wave: null,
     runSeed: RUN_SEED,
+    lives: 3,
+    livesCap: 5,
   });
 
   const goalTicks: Record<string, number> = {};

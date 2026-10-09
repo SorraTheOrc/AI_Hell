@@ -26,6 +26,12 @@ export interface CompetentBotTunables {
   survivalBase: number;
   /** Utility added per unit of (0..1) survival urgency. */
   survivalUrgencyPort: number;
+  /**
+   * Base utility of the `secure-life` band: an offered/on-screen Extra Life
+   * while below the life cap. It sits below survival and above minerals so a
+   * free life is never traded for another objective (AH-0MV03GXZQ00801T4).
+   */
+  lifeBase: number;
   /** Base utility of the mineral-collection band. */
   mineralBase: number;
   /** Base utility of the power-up band (below minerals, AC1 order). */
@@ -46,6 +52,8 @@ export interface CompetentBotTunables {
   enemyWavePressurePort: number;
 
   // ── Ranges (px) ─────────────────────────────────────────────────
+  /** Radius within which a live Extra Life drop is pursued. */
+  lifeSeekRange: number;
   /** Radius within which a mineral is pursued. */
   mineralSeekRange: number;
   /** Radius within which a power-up is pursued. */
@@ -115,6 +123,7 @@ export interface CompetentBotTunables {
 export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   survivalBase: 10,
   survivalUrgencyPort: 5,
+  lifeBase: 6,
   mineralBase: 4,
   powerUpBase: 3,
   enemyBase: 2,
@@ -123,6 +132,7 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   prioritySpan: 0.5,
   enemyWavePressurePort: 0.4,
 
+  lifeSeekRange: 600,
   mineralSeekRange: 600,
   powerUpSeekRange: 600,
   enemySeekRange: 800,

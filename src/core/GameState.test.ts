@@ -18,8 +18,13 @@ import {
   DEFAULT_SCORE,
   GameSessionState,
 } from './GameState';
+import { POWER_UP_CATALOGUE } from '../powerups/types';
 
 describe('GameState (AH-0MU72SZP1005X14G)', () => {
+  it('keeps the life cap single-sourced with the Extra Life catalogue entry (AH-0MV03GXZQ00801T4 · AC3)', () => {
+    expect(MAX_LIVES).toBe(POWER_UP_CATALOGUE.extra_life.livesMax);
+  });
+
   // ── Construction & defaults ────────────────────────────────────
 
   it('creates a new GameState with default values', () => {

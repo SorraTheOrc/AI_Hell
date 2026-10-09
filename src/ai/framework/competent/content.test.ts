@@ -17,7 +17,7 @@ import { createBotContent, EMPTY_BOT_CONTENT } from '../content';
 import { buildBotWorld } from '../worldModel';
 import { drop, enemy, makeSnapshot } from '../testFixtures';
 import { POWER_UP_CATALOGUE, WEAPON_DROP_IDS } from '../../../powerups/types';
-import { COMPETENT_BOT_CONTENT } from './content';
+import { COMPETENT_BOT_CONTENT, SECURE_LIFE_DROP_ID } from './content';
 import { COMPETENT_GOAL_IDS } from './goals';
 import { createCompetentBotBrain } from './index';
 
@@ -51,6 +51,11 @@ describe('shipped content registry (AC1/AC2)', () => {
   it('flags the asteroid archetype as an asteroid-like hazard (AC1)', () => {
     expect(COMPETENT_BOT_CONTENT.isAsteroidLike('asteroid')).toBe(true);
     expect(COMPETENT_BOT_CONTENT.isAsteroidLike('scout')).toBe(false);
+  });
+
+  it('single-sources the secure-life drop id from the Extra Life catalogue entry (AH-0MV03GXZQ00801T4 · AC3)', () => {
+    expect(SECURE_LIFE_DROP_ID).toBe(POWER_UP_CATALOGUE.extra_life.id);
+    expect(COMPETENT_BOT_CONTENT.hasDrop(SECURE_LIFE_DROP_ID)).toBe(true);
   });
 });
 

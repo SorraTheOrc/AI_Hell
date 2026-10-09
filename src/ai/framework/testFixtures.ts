@@ -36,6 +36,8 @@ export function makeSnapshot(
     aliveCount: overrides.aliveCount ?? 0,
     wave: overrides.wave ?? null,
     runSeed: overrides.runSeed ?? 0,
+    lives: overrides.lives ?? 3,
+    livesCap: overrides.livesCap ?? 5,
   };
 }
 

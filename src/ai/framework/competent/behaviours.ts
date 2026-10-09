@@ -40,6 +40,7 @@ import {
   asteroidTargets,
   bestWeightedTarget,
   enemyTargets,
+  extraLifeTargets,
   nearestTarget,
   type ContentTarget,
 } from './goals';
@@ -76,11 +77,18 @@ function collectBehaviour(
       const player = view.world.player;
       if (!player) return null;
       const isMineral = view.goal.id === COMPETENT_GOAL_IDS.collectMineral;
-      const targets = collectTargets(view.world, isMineral);
-      const weight = isMineral
-        ? () => 1
-        : (target: ContentTarget) =>
-            content.resolveDrop(target.contentId).value;
+      const isSecureLife = view.goal.id === COMPETENT_GOAL_IDS.secureLife;
+      // The secure-life goal only ever targets live Extra Life drops; the
+      // mineral/power-up goals keep their full target sets
+      // (AH-0MV03GXZQ00801T4 · AC2).
+      const targets = isSecureLife
+        ? extraLifeTargets(view.world)
+        : collectTargets(view.world, isMineral);
+      const weight =
+        isMineral || isSecureLife
+          ? () => 1
+          : (target: ContentTarget) =>
+              content.resolveDrop(target.contentId).value;
       const best = bestWeightedTarget(targets, player, weight);
       if (!best) return null;
 

@@ -43,7 +43,7 @@ import {
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../core/constants';
-import { GameState } from '../core/GameState';
+import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
@@ -101,7 +101,7 @@ import {
   type ChoiceStrategy,
 } from '../powerups/choice';
 import { PowerUp } from '../powerups/PowerUp';
-import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
+import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import {
@@ -3467,9 +3467,14 @@ export class PlayScene extends CombatScene<
         options: [...this.mineralChoiceOptions],
         // Demo mode auto-selects after a human-like delay so the bot never
         // stalls on the overlay; normal play waits for a real selection
-        // (AH-0MUXXQ1MN002RXGB · AC4/AC5).
+        // (AH-0MUXXQ1MN002RXGB · AC4/AC5). Below the life cap the bot takes
+        // the offered Extra Life instead of the first option
+        // (AH-0MV03GXZQ00801T4 · AC1).
         ...(this.demoMode
-          ? { autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS }
+          ? {
+              autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
+              autoSelectIndex: this._preferredDemoChoiceIndex(),
+            }
           : {}),
         // Single overlay contract (AH-0MUII3DHM008L7JF · AC3): the launcher
         // supplies the selection callback; the overlay never reaches back
@@ -3478,6 +3483,20 @@ export class PlayScene extends CombatScene<
       });
     }
     return [...this.mineralChoiceOptions];
+  }
+
+  /**
+   * The demo bot's preferred hold-full option index: the offered Extra Life
+   * while below the run's life cap, otherwise the first option (the previous
+   * behaviour). Only used by the demo auto-select, so normal play is
+   * unaffected (AH-0MV03GXZQ00801T4 · AC1).
+   */
+  private _preferredDemoChoiceIndex(): number {
+    if (this.gameState.lives >= MAX_LIVES) return 0;
+    const index = this.mineralChoiceOptions.findIndex(
+      (option) => option.id === EXTRA_LIFE_DROP_ID,
+    );
+    return index >= 0 ? index : 0;
   }
 
   /**
@@ -3630,6 +3649,22 @@ export class PlayScene extends CombatScene<
    */
   getRunSeed(): number {
     return this.runSeed;
+  }
+
+  /**
+   * The ship's current life count (satisfied for the bot snapshot builder,
+   * AH-0MV03GXZQ00801T4).
+   */
+  getLives(): number {
+    return this.gameState.lives;
+  }
+
+  /**
+   * The run's life cap (from the existing run state, AH-0MV03GXZQ00801T4 ·
+   * AC3). The bot reads this rather than hard-coding a cap of its own.
+   */
+  getLivesCap(): number {
+    return MAX_LIVES;
   }
 
   /**

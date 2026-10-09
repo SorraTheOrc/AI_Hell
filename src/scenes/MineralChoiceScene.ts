@@ -51,6 +51,8 @@ export class MineralChoiceScene extends Phaser.Scene {
   private autoSelectMs = 0;
   /** Pending demo auto-select timer (null when disabled or already fired). */
   private autoSelectTimer: Phaser.Time.TimerEvent | null = null;
+  /** Demo-only option index the auto-select picks (default 0, the first). */
+  private autoSelectIndex = 0;
 
   constructor() {
     super('MineralChoiceScene');
@@ -63,9 +65,13 @@ export class MineralChoiceScene extends Phaser.Scene {
    * @param data.onSelect — the single selection contract every launcher
    *   supplies: receives the chosen index and option. When omitted the
    *   overlay simply closes (used by isolated tests).
-   * @param data.autoSelectMs — when > 0 the overlay auto-selects the first
-   *   option after this delay (the shipped attract/demo mode). Normal play
-   *   omits it and waits for a real selection.
+   * @param data.autoSelectMs — when > 0 the overlay auto-selects an option
+   *   after this delay (the shipped attract/demo mode). Normal play omits it
+   *   and waits for a real selection.
+   * @param data.autoSelectIndex — the option index the demo auto-select
+   *   picks (default `0`, the first option). The demo launcher passes the
+   *   preferred option (e.g. the offered Extra Life below the life cap);
+   *   normal play never sets it (AH-0MV03GXZQ00801T4 · AC1).
    */
   init(
     data: {
@@ -73,12 +79,14 @@ export class MineralChoiceScene extends Phaser.Scene {
       strategy?: ChoiceStrategy;
       onSelect?: (index: number, option: ChoiceOption) => void;
       autoSelectMs?: number;
+      autoSelectIndex?: number;
     } = {},
   ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
     this.options = data.options ?? strategy.choose(3);
     this.onSelect = data.onSelect ?? null;
     this.autoSelectMs = data.autoSelectMs ?? 0;
+    this.autoSelectIndex = data.autoSelectIndex ?? 0;
   }
 
   create(): void {
@@ -143,13 +151,15 @@ export class MineralChoiceScene extends Phaser.Scene {
       if (n >= 1 && n <= this.options.length) this.select(n - 1);
     });
 
-    // Demo/attract mode: pick the first option automatically after a
-    // human-like delay so the run never stalls on the overlay
+    // Demo/attract mode: pick an option automatically after a human-like
+    // delay so the run never stalls on the overlay
     // (AH-0MUXXQ1MN002RXGB · AC4). Normal play leaves `autoSelectMs` at 0 and
-    // waits for a real selection (AC5).
+    // waits for a real selection (AC5). The demo launcher may nominate a
+    // preferred index (e.g. an offered Extra Life); default 0 keeps the
+    // previous first-option behaviour (AH-0MV03GXZQ00801T4 · AC1).
     if (this.autoSelectMs > 0) {
       this.autoSelectTimer = this.time.delayedCall(this.autoSelectMs, () =>
-        this.select(0),
+        this.select(this.autoSelectIndex),
       );
     }
   }

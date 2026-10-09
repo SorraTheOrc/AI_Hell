@@ -48,6 +48,8 @@ const SNAPSHOT: BotSnapshot = {
   aliveCount: 1,
   wave: { active: true, timeRemaining: 30, timeLimit: 45 },
   runSeed: 0x0badf00d,
+  lives: 2,
+  livesCap: 5,
 };
 
 const EXTRAS: RunTelemetryExtras = {
