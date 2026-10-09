@@ -608,6 +608,9 @@ export function expandWeaponPattern(
  * - `piercing` — the base pass-through budget grown by the level's
  *   `piercing` upgrade and clamped to its spec cap (weapons with a base
  *   `piercing` only, e.g. the wave laser; AH-0MV1BIUSJ0090W92),
+ * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
+ *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
+ *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
  * - `aoe.radius` — area multiplier for AOE weapons.
  *
  * `bulletColor`, `bulletShape` and `sideOffsets` are carried through from the
@@ -642,6 +645,16 @@ export function resolveWeaponDefinition(
     leveled.piercing = Math.min(
       WEAPON_UPGRADE_SPECS.piercing.cap,
       base.piercing + stats.piercing,
+    );
+  }
+  // Ricochet-style weapons opt in with a base wall-bounce budget. Their
+  // effective budget grows with the level-resolved `bounce` upgrade, clamped
+  // to the variable's finite spec cap so it stays bounded (AH-0MV1BIV5L005NJAI).
+  // Weapons without a base budget never gain one (they keep wrapping).
+  if (base.bounce !== undefined) {
+    leveled.bounce = Math.min(
+      WEAPON_UPGRADE_SPECS.bounce.cap,
+      base.bounce + stats.bounce,
     );
   }
   // An expanded pattern is an angular fan; the base parallel offsets no

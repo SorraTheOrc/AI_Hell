@@ -10,6 +10,13 @@
  * asteroids) and remain effective within their configured lifetime
  * (AH-0MU960UTE001PTV0).
  *
+ * A bullet with a **wall-bounce budget** (`bounces`, the Centipede ricochet
+ * homage AH-0MV1BIV5L005NJAI) instead **reflects** off each edge it crosses,
+ * decrementing the budget, and expires on the wall contact once the budget is
+ * spent — it never wraps. An ordinary bullet leaves `bounces` undefined and
+ * keeps the default four-edge wrap. The reflection lives here in the shared
+ * entity so the game and every gym bounce identically.
+ *
  * Bullet appearance (colour, shape, size) is determined by the weapon
  * that fired it — see `src/utils/weapons.ts`.
  */
@@ -25,14 +32,15 @@ import type { WeaponDefinition } from '../utils/weapons';
  * removes them when their lifetime elapses.
  *
  * Bullets wrap across all four screen edges (matching the player ship
- * and asteroid model) and survive until their lifetime expires.
+ * and asteroid model) and survive until their lifetime expires, unless a
+ * wall-bounce budget is set (see {@link PlayerBullet.bounces}).
  */
 export class PlayerBullet extends Phaser.GameObjects.Graphics {
-  /** Horizontal velocity in px/s. */
-  readonly vx: number;
+  /** Horizontal velocity in px/s (reflected on a wall bounce). */
+  vx: number;
 
-  /** Vertical velocity in px/s. */
-  readonly vy: number;
+  /** Vertical velocity in px/s (reflected on a wall bounce). */
+  vy: number;
 
   /** Bullet radius in px. */
   readonly radius: number;
@@ -78,6 +86,23 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
    * bullet when it reaches zero.
    */
   piercing = 0;
+
+  /**
+   * Remaining **wall-bounce budget**: how many arena-edge reflections this
+   * bullet may make before it expires on the next wall contact (Centipede
+   * ricochet homage, AH-0MV1BIV5L005NJAI). `undefined` means an ordinary
+   * bullet that wraps at the edges; a number (including `0`) marks a
+   * ricochet bullet that reflects while the budget remains and then expires
+   * instead of wrapping.
+   */
+  bounces?: number;
+
+  /**
+   * True once a ricochet bullet has hit a wall with no bounces remaining, so
+   * `isExpired()` reports it dead even before its lifetime elapses. Never set
+   * for an ordinary (wrapping) bullet.
+   */
+  private _wallExpired = false;
 
   /**
    * Enemies this bullet has already damaged. The shared collision path checks
@@ -129,9 +154,12 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Advances the bullet by `dt` seconds, wrapping its position at all
-   * four screen edges (matching the player ship / asteroid model), and
-   * increments the elapsed-time counter.
+   * Advances the bullet by `dt` seconds. An ordinary bullet wraps its
+   * position at all four screen edges (matching the player ship / asteroid
+   * model); a bullet with a wall-bounce budget (`bounces !== undefined`)
+   * instead reflects off each edge it crosses, decrementing the budget, and
+   * expires once the budget is spent. Either way the elapsed-time counter is
+   * incremented.
    *
    * @param dt - Time step in seconds.
    */
@@ -139,19 +167,60 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     this._elapsed += dt;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
-    // Four-edge wrap — leave left → reappear right, etc.
-    if (this.x < 0) this.x += GAME_WIDTH;
-    if (this.x >= GAME_WIDTH) this.x -= GAME_WIDTH;
-    if (this.y < 0) this.y += GAME_HEIGHT;
-    if (this.y >= GAME_HEIGHT) this.y -= GAME_HEIGHT;
+    if (this.bounces === undefined) {
+      // Four-edge wrap — leave left → reappear right, etc.
+      if (this.x < 0) this.x += GAME_WIDTH;
+      if (this.x >= GAME_WIDTH) this.x -= GAME_WIDTH;
+      if (this.y < 0) this.y += GAME_HEIGHT;
+      if (this.y >= GAME_HEIGHT) this.y -= GAME_HEIGHT;
+    } else {
+      this._bounceAtEdges();
+    }
     this._draw();
   }
 
   /**
-   * Returns whether this bullet has expired (elapsed time ≥ lifetime).
+   * Reflects the bullet off any arena edge it has crossed, mirroring the
+   * position back inside the arena and reversing the crossed velocity
+   * component. A single wall contact (even at a corner, where both components
+   * cross) spends exactly one bounce. When no bounces remain the bullet is
+   * marked expired instead of wrapping (AH-0MV1BIV5L005NJAI).
+   */
+  private _bounceAtEdges(): void {
+    let hitWall = false;
+    if (this.x < 0) {
+      this.x = -this.x;
+      this.vx = -this.vx;
+      hitWall = true;
+    } else if (this.x >= GAME_WIDTH) {
+      this.x = 2 * GAME_WIDTH - this.x;
+      this.vx = -this.vx;
+      hitWall = true;
+    }
+    if (this.y < 0) {
+      this.y = -this.y;
+      this.vy = -this.vy;
+      hitWall = true;
+    } else if (this.y >= GAME_HEIGHT) {
+      this.y = 2 * GAME_HEIGHT - this.y;
+      this.vy = -this.vy;
+      hitWall = true;
+    }
+    if (!hitWall) return;
+    if ((this.bounces ?? 0) > 0) {
+      this.bounces = (this.bounces ?? 0) - 1;
+    } else {
+      this._wallExpired = true;
+    }
+  }
+
+  /**
+   * Returns whether this bullet has expired — either its lifetime has
+   * elapsed or a ricochet bullet has exhausted its wall-bounce budget at an
+   * edge.
    */
   isExpired(): boolean {
-    return this._elapsed >= this.lifetime;
+    return this._wallExpired || this._elapsed >= this.lifetime;
   }
 }
 

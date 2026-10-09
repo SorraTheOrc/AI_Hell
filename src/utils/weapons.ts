@@ -21,6 +21,9 @@
  * - **rapid**  — single bullets at a much higher fire rate (timed)
  * - **wave_laser** — a single slow, wide beam that passes through a budget of
  *   enemies (R-Type homage, timed; see {@link WeaponDefinition.piercing})
+ * - **ricochet** — a single shot that reflects off the arena edges up to a
+ *   budget of bounces (Centipede homage, timed; see
+ *   {@link WeaponDefinition.bounce})
  *
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
@@ -55,6 +58,7 @@ export type WeaponId =
   | 'dual'
   | 'rapid'
   | 'wave_laser'
+  | 'ricochet'
   | 'nova'
   | 'mortar'
   | 'arc';
@@ -156,6 +160,7 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   dual: 1,
   rapid: 6,
   wave_laser: 1,
+  ricochet: 1,
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
@@ -172,6 +177,9 @@ export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
 /** Default wave-laser subdivision (1 shot per beat → 750 ms at 80 BPM). */
 export const WEAPON_WAVE_LASER_SUBDIVISION =
   DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
+/** Default ricochet subdivision (1 shot per beat → 750 ms at 80 BPM). */
+export const WEAPON_RICOCHET_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.ricochet;
 /** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 /** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
@@ -231,6 +239,15 @@ export const WEAPON_WAVE_LASER_FIRE_RATE = beatSubdivisionMs(
 );
 
 /**
+ * Fire rate interval for the Centipede ricochet (ms) — 1 shot per beat
+ * (750 ms at the default 80 BPM). A measured cadence so each bank shot is a
+ * deliberate aimed reflection rather than a spray.
+ */
+export const WEAPON_RICOCHET_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_RICOCHET_SUBDIVISION,
+);
+
+/**
  * Fire rate interval for the Nova AOE weapon (ms) — 1 shot every 4 beats
  * (3000 ms at the default 80 BPM). Slow and defensive: a sparse pulse that
  * clears the ship's immediate surroundings.
@@ -280,6 +297,12 @@ export const WEAPON_BULLET_LIFETIME = {
    * slow cadence and the pass-through budget are its identity.
    */
   wave_laser: 1.0,
+  /**
+   * Ricochet — a long reach so the shot can reach a wall and bank back
+   * (~560 px); the bounce budget, not the lifetime, bounds the number of
+   * wall reflections.
+   */
+  ricochet: 1.6,
   /** Nova — the ring resolves instantly; no travelling bullet. */
   nova: 0.25,
   /**
@@ -305,6 +328,8 @@ export const BULLET_COLORS = {
   rapid: 0xffff00,
   /** Wave laser beam — vivid neon blue, distinct from the cyan cannon. */
   wave_laser: 0x3366ff,
+  /** Ricochet pellet — neon green, distinct from every other weapon. */
+  ricochet: 0x33ff66,
   /** Nova ring / projectile — pale cyan. */
   nova: 0x66ffff,
   /** Mortar shell / blast — deep orange. */
@@ -407,6 +432,21 @@ export interface WeaponDefinition {
    */
   piercing?: number;
   /**
+   * Base **wall-bounce budget** — how many times a fired bullet reflects off
+   * the arena edges before it expires instead of wrapping (Centipede ricochet
+   * homage, AH-0MV1BIV5L005NJAI). `undefined`/absent means an ordinary
+   * wrapping bullet (the default four-edge wrap). `0` is a degenerate value
+   * (expires on the first wall contact).
+   *
+   * A bullet's effective budget is this base value plus the weapon's
+   * level-resolved `bounce` upgrade (from `weaponLevels.ts`), clamped to that
+   * variable's spec cap; the shared player-bullet step reflects the velocity
+   * component at the edge, decrements the budget, and expires the bullet once
+   * the budget is spent (see `resolveWeaponDefinition` and
+   * `PlayerBullet.advance`).
+   */
+  bounce?: number;
+  /**
    * Area-of-effect descriptor (absent for conventional weapons). When
    * present the shared combat core dispatches the area effect through the
    * AOE seam rather than treating the shot as an ordinary bullet
@@ -491,6 +531,23 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     // (and damages them all) before it is consumed. The `piercing` level
     // variable grows it toward the spec cap (5).
     piercing: 3,
+  },
+  ricochet: {
+    id: 'ricochet',
+    name: 'Ricochet',
+    description:
+      'Adds edge-bouncing shots that ricochet off the arena walls for 10 s.',
+    // A single aimed pellet along the ship's heading; it reflects at the edges.
+    offsets: [0],
+    fireRateMs: WEAPON_RICOCHET_FIRE_RATE,
+    bulletColor: BULLET_COLORS.ricochet,
+    bulletShape: 'circle',
+    bulletSize: 0.8,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.ricochet,
+    // Base wall-bounce budget: the pellet reflects off two walls before it
+    // expires on the next contact. The `bounce` level variable grows it
+    // toward the spec cap (4).
+    bounce: 2,
   },
   nova: {
     id: 'nova',

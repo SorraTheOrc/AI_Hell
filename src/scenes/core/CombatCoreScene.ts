@@ -607,6 +607,10 @@ export class CombatCoreScene<
           // Pass-through budget (0 for ordinary bullets) — the shared
           // collision path consumes it one enemy at a time (AH-0MV1BIUSJ0090W92).
           def.piercing ?? 0,
+          // Wall-bounce budget (`undefined` for ordinary wrapping bullets) —
+          // the shared player-bullet step reflects it at the edges
+          // (AH-0MV1BIV5L005NJAI).
+          def.bounce,
         );
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
@@ -632,6 +636,10 @@ export class CombatCoreScene<
    * `piercing` is the bullet's pass-through budget (extra enemies it survives
    * before being consumed; 0 for an ordinary bullet). The shared collision
    * path reads it (AH-0MV1BIUSJ0090W92).
+   *
+   * `bounces` is the bullet's wall-bounce budget (edge reflections before it
+   * expires; `undefined` for an ordinary wrapping bullet). The shared
+   * player-bullet step reads it (AH-0MV1BIV5L005NJAI).
    */
   spawnPlayerBullet(
     x: number,
@@ -642,6 +650,7 @@ export class CombatCoreScene<
     lifetime = 0.75,
     radius = PLAYER_BULLET_RADIUS,
     piercing = 0,
+    bounces?: number,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -654,6 +663,7 @@ export class CombatCoreScene<
       lifetime,
     );
     bullet.piercing = piercing;
+    bullet.bounces = bounces;
     this.playerBullets.push(bullet);
     return bullet;
   }

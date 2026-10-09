@@ -32,6 +32,7 @@ import {
   definesMethod,
 } from '../../test/duplicateBodyGuard';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
+import { advanceAndCull } from '../../entities/PlayerBullet';
 import {
   Boss,
   BOSS_HIT_POINTS_PER_PHASE,
@@ -2580,5 +2581,78 @@ describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () 
           .onPlayerBulletHitsEnemy,
       );
     }
+  });
+});
+
+// ── Centipede ricochet bounce parity (AH-0MV1BIV5L005NJAI) ────────────
+
+describe('CombatScene — ricochet bounce parity (AH-0MV1BIV5L005NJAI)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and GymWeapons share the single spawnPlayerBullet path', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, 'spawnPlayerBullet'),
+        `${name}.prototype must not define spawnPlayerBullet`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>).spawnPlayerBullet,
+        `${name}.prototype.spawnPlayerBullet must be the shared core method`,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)
+          .spawnPlayerBullet,
+      );
+    }
+  });
+
+  it('a ricochet bullet bounces identically in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'ricochet-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'ricochet-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Park both ships far away so ram/player-hit passes stay inert, and clear
+    // any auto-fired bullets so only the injected pellet is advanced.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+    (playScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+    (gymScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+
+    const spawn = (owner: PlayScene | EquivGymScene) =>
+      owner.spawnPlayerBullet(
+        100,
+        400,
+        -PLAYER_BULLET_SPEED,
+        0,
+        WEAPON_CATALOGUE.ricochet.bulletColor,
+        5,
+        3,
+        0,
+        WEAPON_CATALOGUE.ricochet.bounce,
+      );
+    const gameBullet = spawn(playScene);
+    const gymBullet = spawn(gymScene);
+
+    // Both scenes' bullets advance through the same shared entity step.
+    expect(advanceAndCull(gameBullet, 0.3)).toBe(true);
+    expect(advanceAndCull(gymBullet, 0.3)).toBe(true);
+
+    // The same reflected velocity, position and remaining budget in each.
+    expect(gameBullet.vx).toBeCloseTo(PLAYER_BULLET_SPEED, 5);
+    expect(gymBullet.vx).toBeCloseTo(PLAYER_BULLET_SPEED, 5);
+    expect(gameBullet.bounces).toBe(1);
+    expect(gymBullet.bounces).toBe(1);
+    expect(gameBullet.x).toBeCloseTo(gymBullet.x, 5);
   });
 });

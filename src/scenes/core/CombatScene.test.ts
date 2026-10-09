@@ -888,6 +888,7 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       dual: [],
       rapid: [],
       wave_laser: [],
+      ricochet: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -1063,6 +1064,57 @@ describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)'
     expect(waveBullets.length).toBeGreaterThan(0);
     for (const bullet of waveBullets) {
       expect(bullet.piercing).toBe(WEAPON_CATALOGUE.wave_laser.piercing);
+    }
+  });
+});
+
+// ── Centipede ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI) ──────
+
+describe('ricochet player bullets — wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  it('auto-fire propagates the weapon bounce budget onto spawned bullets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Equip the ricochet permanently so it fires this frame.
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const ricochetBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(ricochetBullets.length).toBeGreaterThan(0);
+    for (const bullet of ricochetBullets) {
+      expect(bullet.bounces).toBe(WEAPON_CATALOGUE.ricochet.bounce);
+    }
+  });
+
+  it('an ordinary weapon leaves the bounce budget undefined on spawned bullets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    for (const bullet of scene.getPlayerBullets()) {
+      expect(bullet.bounces).toBeUndefined();
     }
   });
 });

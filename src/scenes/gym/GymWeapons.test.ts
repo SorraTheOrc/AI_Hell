@@ -185,6 +185,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       dual: [],
       rapid: [],
       wave_laser: [],
+      ricochet: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -394,14 +395,14 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → nova → mortar → arc → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → wave laser → ricochet → nova → mortar → arc → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle through the rest of the order (conventional, wave laser, AOE, then Reset).
-    for (const expected of ['dual', 'rapid', 'wave_laser', 'nova', 'mortar', 'arc', 'reset']) {
+    // Cycle through the rest of the order (conventional, wave laser, ricochet, AOE, then Reset).
+    for (const expected of ['dual', 'rapid', 'wave_laser', 'ricochet', 'nova', 'mortar', 'arc', 'reset']) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
@@ -934,6 +935,7 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'dual',
       'rapid',
       'wave_laser',
+      'ricochet',
       'nova',
       'mortar',
       'arc',
@@ -1232,6 +1234,68 @@ describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)
     // Only the first target is destroyed; the bullet is consumed.
     expect(targets[1].alive).toBe(false);
     expect(targets[2].alive).toBe(true);
+    expect(scene.getBullets()).not.toContain(bullet);
+  });
+});
+
+describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('a ricochet bullet reflects off the arena wall and keeps travelling', async () => {
+    const scene = await bootWeapons();
+    scene.getPlayer()!.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const bullet = scene.spawnPlayerBullet(
+      100,
+      400,
+      -350,
+      0,
+      WEAPON_CATALOGUE.ricochet.bulletColor,
+      5,
+      3,
+      0,
+      WEAPON_CATALOGUE.ricochet.bounce,
+    );
+
+    scene.tick(0.3); // 100 - 105 = -5 → reflects to +5
+
+    expect(scene.getBullets()).toContain(bullet);
+    expect(bullet.vx).toBeCloseTo(350, 5);
+    expect(bullet.bounces).toBe(WEAPON_CATALOGUE.ricochet.bounce! - 1);
+  });
+
+  it('a ricochet bullet with no budget left expires at the wall instead of wrapping', async () => {
+    const scene = await bootWeapons();
+    scene.getPlayer()!.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const bullet = scene.spawnPlayerBullet(
+      100,
+      400,
+      -350,
+      0,
+      WEAPON_CATALOGUE.ricochet.bulletColor,
+      5,
+      3,
+      0,
+      0,
+    );
+
+    scene.tick(0.3);
+
     expect(scene.getBullets()).not.toContain(bullet);
   });
 });

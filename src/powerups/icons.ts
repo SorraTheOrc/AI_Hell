@@ -35,6 +35,7 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
   wave_laser: 0x3366ff, // neon blue — piercing beam
+  ricochet: 0x33ff66, // neon green — edge-bouncing pellet
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
@@ -406,6 +407,9 @@ function _drawWeaponIcon(
     case 'wave_laser':
       drawWaveLaserIcon(graphics, x, y, size);
       break;
+    case 'ricochet':
+      drawRicochetIcon(graphics, x, y, size);
+      break;
     case 'nova':
       drawNovaIcon(graphics, x, y, size);
       break;
@@ -561,6 +565,31 @@ function drawWaveLaserIcon(
     g.lineTo(x + s * cx, y + s * 0.5);
     g.strokePath();
   }
+}
+
+/**
+ * Ricochet icon — a zig-zag "bank shot" path bouncing between two walls,
+ * hinting at the Centipede edge-reflecting pellet.
+ */
+function drawRicochetIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Two vertical walls the pellet banks between.
+  for (const wx of [-0.7, 0.7]) {
+    g.beginPath();
+    g.moveTo(x + s * wx, y - s * 0.8);
+    g.lineTo(x + s * wx, y + s * 0.8);
+    g.strokePath();
+  }
+  // Zig-zag trajectory reflecting off each wall.
+  g.beginPath();
+  g.moveTo(x - s * 0.7, y - s * 0.5);
+  g.lineTo(x + s * 0.7, y + s * 0.1);
+  g.lineTo(x - s * 0.7, y + s * 0.6);
+  g.strokePath();
 }
 
 /**

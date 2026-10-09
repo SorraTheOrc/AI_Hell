@@ -87,15 +87,17 @@ import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 type DropType = WeaponId | 'reset';
 
 /**
- * Round-robin spawn order (AC3, parent AH-0MQUYHY0000MZ2F): the three
- * conventional weapons, the three AOE weapons, then Reset. Interleaving the
- * AOE family means the weapon gym demonstrates every fire mode.
+ * Round-robin spawn order (AC3, parent AH-0MQUYHY0000MZ2F): the
+ * conventional weapons, the ricochet, the three AOE weapons, then Reset.
+ * Interleaving the AOE family means the weapon gym demonstrates every fire
+ * mode.
  */
 const ROUND_ROBIN_ORDER: readonly DropType[] = [
   'spread',
   'dual',
   'rapid',
   'wave_laser',
+  'ricochet',
   'nova',
   'mortar',
   'arc',
