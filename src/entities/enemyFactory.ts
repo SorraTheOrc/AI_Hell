@@ -9,6 +9,7 @@
 import Phaser from 'phaser';
 
 import { Asteroid } from './Asteroid';
+import { Capturer } from './Capturer';
 import { Harvester } from './Harvester';
 import { Diver } from './Diver';
 import { PhaserEntity } from './Phaser';
@@ -56,10 +57,14 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer) &
   DestructionAudioSeam &
   FormationReanchorSeam &
-  SeekSeam;
+  SeekSeam & {
+    /** Tractor-beam seam (Galaga capturer, AH-0MV01EFII008298D). */
+    getCaptureBeam?(): import('../scenes/core/captureBeam').CaptureBeamState | null;
+    notifyPlayerCaptured?(): void;
+  };
 
 /**
  * Build one entity of the right type from the config key / formationKind.
@@ -92,8 +97,21 @@ export function createEnemyFromConfig(
     health: config.health,
     rng,
   };
+  // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
+  const beamOpts = {
+    beamDuration: config.beamDuration,
+    pullStrength: config.pullStrength,
+  };
 
   switch (config.key) {
+    case 'capturer':
+      return new Capturer(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        ...beamOpts,
+      });
     case 'asteroid':
       return new Asteroid(scene, { x, y, formationOffset: offset, ...opts });
     case 'harvester':

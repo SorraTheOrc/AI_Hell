@@ -68,7 +68,7 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'startYMax', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
   'bulletLifetime', 'burstCount', 'shotProbability', 'health',
-  'marchStep', 'marchDrop',
+  'marchStep', 'marchDrop', 'beamDuration', 'pullStrength',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -288,6 +288,9 @@ export function validateEnemyConfig(
     // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20):
     // optional, but a present value must be numeric.
     'marchStep', 'marchDrop',
+    // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D):
+    // optional and neutral for other archetypes.
+    'beamDuration', 'pullStrength',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -429,6 +432,15 @@ export function coerceEnemyConfig(
   }
   if (row.marchDrop != null && row.marchDrop.trim() !== '') {
     merged.marchDrop = coerceNumber(row.marchDrop, merged.marchDrop ?? 0);
+  }
+  // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
+  // Optional and neutral for other archetypes: only override when the CSV row
+  // actually carries a value.
+  if (row.beamDuration != null && row.beamDuration.trim() !== '') {
+    merged.beamDuration = coerceNumber(row.beamDuration, merged.beamDuration ?? 0);
+  }
+  if (row.pullStrength != null && row.pullStrength.trim() !== '') {
+    merged.pullStrength = coerceNumber(row.pullStrength, merged.pullStrength ?? 0);
   }
 
   return merged;
