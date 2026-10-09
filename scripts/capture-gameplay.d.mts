@@ -90,8 +90,50 @@ export function readRunEndedSignal(
   plan?: RunEndedListenerPlan,
   scope?: object,
 ): unknown;
+/** A superficial per-iteration record in a batch summary. */
+export interface CaptureIterationRecord {
+  index: number;
+  output: string;
+  ok: boolean;
+  exitCode?: number;
+  bytes?: number;
+  durationMs?: number;
+  nonTrivial?: boolean;
+  capHit?: boolean;
+  complete?: boolean | null;
+  runOutcome?: { won: boolean; score: number } | null;
+  reasons?: string[];
+  pageErrors?: string[];
+  error?: string;
+}
+
+/** The aggregate shape a multi-clip `--count` run returns. */
+export interface CaptureBatchSummary {
+  count: number;
+  succeeded: number;
+  failed: number;
+  iterations: CaptureIterationRecord[];
+}
+
 export function captureExitCode(result?: {
   fullRun?: boolean;
   capHit?: boolean;
   nonTrivial?: boolean;
+  iterations?: Array<{ ok?: boolean }>;
 }): number;
+export function buildIterationRecord(
+  index: number,
+  clip: Record<string, unknown>,
+): CaptureIterationRecord;
+export function summariseCaptureBatch(
+  iterations?: CaptureIterationRecord[],
+): CaptureBatchSummary;
+export function runCaptureIterations(params: {
+  outputPaths: string[];
+  captureOne: (args: {
+    index: number;
+    outputPath: string;
+  }) => Promise<Record<string, unknown>>;
+  reporter?: object;
+  onIteration?: (record: CaptureIterationRecord) => void;
+}): Promise<CaptureBatchSummary>;

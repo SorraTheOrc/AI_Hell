@@ -42,6 +42,7 @@ import {
   RUN_ENDED_EVENT,
   RUN_ENDED_STATE_KEY,
   RUN_ENDED_STORE_KEY,
+  buildIterationRecord,
   buildRunEndedListenerPlan,
   captureExitCode,
   captureStartKeys,
@@ -53,6 +54,8 @@ import {
   readRunEndedSignal,
   resolveCaptureMode,
   resolveOutputPaths,
+  runCaptureIterations,
+  summariseCaptureBatch,
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
 import {
@@ -1429,5 +1432,133 @@ describe('--count parsing and multi-output naming (AH-0MUYTK941005E2M4)', () => 
       basename(path),
     );
     expect(names).toEqual(['demo-1', 'demo-2']);
+  });
+});
+
+describe('multi-iteration capture loop and batch JSON (AH-0MUYTK941005E2M4)', () => {
+  const clip = (overrides = {}) => ({
+    output: '/tmp/demo-1.webm',
+    bytes: 1000,
+    durationMs: 5000,
+    nonTrivial: true,
+    capHit: false,
+    complete: true,
+    reasons: [],
+    pageErrors: [],
+    ...overrides,
+  });
+
+  it('records one clip per output path, in order, from a single loop', async () => {
+    const seen: Array<{ index: number; outputPath: string }> = [];
+    const batch = await runCaptureIterations({
+      outputPaths: ['/tmp/a-1.webm', '/tmp/a-2.webm', '/tmp/a-3.webm'],
+      captureOne: async ({ index, outputPath }) => {
+        seen.push({ index, outputPath });
+        return clip({ output: outputPath });
+      },
+    });
+
+    expect(seen).toEqual([
+      { index: 1, outputPath: '/tmp/a-1.webm' },
+      { index: 2, outputPath: '/tmp/a-2.webm' },
+      { index: 3, outputPath: '/tmp/a-3.webm' },
+    ]);
+    expect(batch).toMatchObject({ count: 3, succeeded: 3, failed: 0 });
+    expect(batch.iterations.map((it) => it.output)).toEqual([
+      '/tmp/a-1.webm',
+      '/tmp/a-2.webm',
+      '/tmp/a-3.webm',
+    ]);
+    expect(batch.iterations.every((it) => it.ok)).toBe(true);
+  });
+
+  it('continues after a failed iteration and attributes the failure', async () => {
+    const calls: number[] = [];
+    const batch = await runCaptureIterations({
+      outputPaths: ['/tmp/b-1.webm', '/tmp/b-2.webm', '/tmp/b-3.webm'],
+      captureOne: async ({ index, outputPath }) => {
+        calls.push(index);
+        if (index === 2) throw new Error('codec exploded');
+        return clip({ output: outputPath });
+      },
+    });
+
+    // The iteration after the failure still ran (continue-on-failure).
+    expect(calls).toEqual([1, 2, 3]);
+    expect(batch).toMatchObject({ count: 3, succeeded: 2, failed: 1 });
+    expect(batch.iterations[1]).toMatchObject({
+      index: 2,
+      output: '/tmp/b-2.webm',
+      ok: false,
+      error: 'codec exploded',
+    });
+    // Any failed iteration makes the batch exit non-zero.
+    expect(captureExitCode(batch)).toBe(1);
+  });
+
+  it('marks a trivial clip iteration as not ok and fails the batch', async () => {
+    const batch = await runCaptureIterations({
+      outputPaths: ['/tmp/c-1.webm', '/tmp/c-2.webm'],
+      captureOne: async ({ index, outputPath }) =>
+        clip({
+          output: outputPath,
+          nonTrivial: index === 1,
+          reasons: index === 1 ? [] : ['static'],
+        }),
+    });
+
+    expect(batch.succeeded).toBe(1);
+    expect(batch.failed).toBe(1);
+    expect(batch.iterations[1]).toMatchObject({ ok: false, nonTrivial: false });
+    expect(captureExitCode(batch)).toBe(1);
+  });
+
+  it('surfaces per-iteration results through the onIteration hook', async () => {
+    const observed: Array<{ index: number; ok: boolean }> = [];
+    await runCaptureIterations({
+      outputPaths: ['/tmp/d-1.webm', '/tmp/d-2.webm'],
+      captureOne: async ({ index, outputPath }) =>
+        clip({ output: outputPath, nonTrivial: index !== 2 }),
+      onIteration: (record) => observed.push(record),
+    });
+
+    expect(observed.map((record) => [record.index, record.ok])).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+  });
+
+  it('summariseCaptureBatch tallies records and preserves them in order', () => {
+    const summary = summariseCaptureBatch([
+      { index: 1, output: 'a', ok: true },
+      { index: 2, output: 'b', ok: false, error: 'x' },
+      { index: 3, output: 'c', ok: true },
+    ]);
+
+    expect(summary).toMatchObject({ count: 3, succeeded: 2, failed: 1 });
+    expect(summary.iterations.map((it) => it.output)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('buildIterationRecord carries index, path and ok/error status', () => {
+    expect(buildIterationRecord(2, clip({ output: '/tmp/x-2.webm' }))).toMatchObject(
+      {
+        index: 2,
+        output: '/tmp/x-2.webm',
+        ok: true,
+        exitCode: 0,
+      },
+    );
+  });
+
+  it('captureExitCode is 0 for a clean batch and 1 when any iteration fails', () => {
+    expect(
+      captureExitCode(
+        summariseCaptureBatch([{ index: 1, output: 'a', ok: true }]),
+      ),
+    ).toBe(0);
+    expect(captureExitCode({ iterations: [] })).toBe(0);
+    expect(captureExitCode({ iterations: [{ ok: true }, { ok: false }] })).toBe(
+      1,
+    );
   });
 });
