@@ -275,7 +275,10 @@ async function main(argv) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main(process.argv).then(
+  // Pass only the flags (drop the node binary path and this script path);
+  // parseRecordArgs expects flags, not the full process.argv
+  // (AH-0MV2RY8XT007I91E).
+  main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

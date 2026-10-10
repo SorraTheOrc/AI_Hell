@@ -93,6 +93,10 @@ function readStdin() {
 
 /** CLI entry point. */
 function main(argv) {
+  // `argv` is the CLI list (process.argv.slice(2)), passed through to
+  // parseAnalyseArgs.  It must never be the full process.argv, or argv[0]
+  // (the node binary path) would be taken as the recording file
+  // (AH-0MV2RY8XT007I91E).
   const options = parseAnalyseArgs(argv);
   if (options.help) {
     process.stdout.write(
@@ -130,7 +134,7 @@ function main(argv) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
-    process.exit(main(process.argv));
+    process.exit(main(process.argv.slice(2)));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

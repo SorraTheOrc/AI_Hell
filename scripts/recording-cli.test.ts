@@ -11,6 +11,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
 import { parseAnalyseArgs, selectRun as selectAnalyseRun } from './analyse-recording.mjs';
 import { parseReplayArgs, selectRun as selectReplayRun } from './replay-recording.mjs';
@@ -106,5 +109,58 @@ describe('record-session CLI', () => {
     expect(resolveRecordingOutputPath(null, { seed: 7 })).toMatch(/recordings[/\\]session-seed7-/);
     // A null seed (the CLI default) must not be coerced to `seed0`.
     expect(resolveRecordingOutputPath(null, { seed: null })).not.toContain('seed0');
+  });
+});
+
+/**
+ * Regression coverage for AH-0MV2RY8XT007I91E: each CLI entry point must
+ * pass only `process.argv.slice(2)` to its `main`, so `argv[0]` (the node
+ * binary path) is never treated as a flag or as the positional recording
+ * file.  These tests exercise the real entry guards, not just the exported
+ * parsers (which the suites above already cover).
+ */
+describe('CLI entry points (AH-0MV2RY8XT007I91E)', () => {
+  const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+  const MINIMAL_RECORDING = [
+    '{"kind":"run_header","schemaVersion":1,"runSeed":777,"build":{"appVersion":"test","commit":"abc"},"startedAt":1700000000000}',
+    '{"kind":"tick","schemaVersion":1,"tick":0,"state":{},"input":{}}',
+    '{"kind":"tick","schemaVersion":1,"tick":1,"state":{},"input":{}}',
+  ].join('\n');
+
+  const runCli = (script: string, args: string[], input?: string) =>
+    spawnSync(process.execPath, [resolve(SCRIPTS_DIR, script), ...args], {
+      input,
+      encoding: 'utf8',
+    });
+
+  for (const script of ['record-session.mjs', 'analyse-recording.mjs', 'replay-recording.mjs']) {
+    it(`${script} --help runs without treating argv[0] as an argument`, () => {
+      const result = runCli(script, ['--help']);
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('Unknown argument');
+      expect(result.stdout).toContain('Usage: node scripts/');
+    });
+  }
+
+  it('analyse reads a piped recording rather than its own source', () => {
+    // Before the fix, argv[0] became options.file, so stdin was ignored and
+    // the script parsed its own source — reporting "No run found".
+    const result = runCli('analyse-recording.mjs', ['--json'], MINIMAL_RECORDING);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('"runSeed": 777');
+    expect(result.stdout).not.toContain('No run found');
+  });
+
+  it('replay reads a piped recording rather than its own source', () => {
+    const result = runCli('replay-recording.mjs', ['--list'], MINIMAL_RECORDING);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('seed=777');
+    expect(result.stdout).not.toContain('No runs in recording');
+  });
+
+  it('rejects a genuinely unknown flag without masking it as argv[0]', () => {
+    const result = runCli('record-session.mjs', ['--definitely-not-a-flag']);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unknown argument: --definitely-not-a-flag');
   });
 });
