@@ -118,7 +118,11 @@ export type PowerUpLevelVariable =
   /** Smart Bomb — hit points each enemy takes per pulse. */
   | 'smartBombDamage'
   /** Smart Bomb — permanent pulse rate in pulses per second. */
-  | 'smartBombFrequency';
+  | 'smartBombFrequency'
+  /** Force Field — bubble duration in seconds. */
+  | 'forceFieldDuration'
+  /** Force Field — bullets the field reflects before it stops. */
+  | 'forceFieldReflects';
 
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
@@ -141,6 +145,8 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'aoeRadius',
   'smartBombDamage',
   'smartBombFrequency',
+  'forceFieldDuration',
+  'forceFieldReflects',
 ];
 
 /**
@@ -545,6 +551,46 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'wipe; k=0.3 front-loads the first upgrade (~0.26/s, ≈3.8 s period).',
     },
   ],
+
+  // Force Field — Gradius-inspired timed bullet reflector (AH-0MV1BIX1W006XF95).
+  force_field: [
+    {
+      variable: 'forceFieldDuration',
+      powerUpId: 'force_field',
+      label: 'Field time',
+      unit: 's',
+      description: 'How long the reflect bubble lasts.',
+      curve: 'exponential-saturation',
+      base: 8,
+      cap: 18,
+      k: 0.15,
+      discrete: false,
+      rationale:
+        'An 18 s ceiling keeps the bubble a strong but finite defence rather ' +
+        'than perpetual cover; k=0.15 adds ~1.4 s at the first upgrade, so ' +
+        'early levels feel responsive before diminishing. The window is ' +
+        'cleared on expiry, at which point enemy bullets damage the ship ' +
+        'again.',
+    },
+    {
+      variable: 'forceFieldReflects',
+      powerUpId: 'force_field',
+      label: 'Field reflects',
+      unit: '',
+      description: 'Enemy bullets the field returns before it stops reflecting.',
+      curve: 'exponential-saturation',
+      base: 3,
+      cap: 10,
+      k: 0.25,
+      discrete: true,
+      rationale:
+        'Reflection turns incoming fire into offence, so the base budget is ' +
+        'small (3) and the cap modest (10); k=0.25 grants a fourth ' +
+        'reflection at the first upgrade. Once the budget is spent the bubble ' +
+        'keeps counting down but no longer reflects, so it can never become ' +
+        'infinite offence.',
+    },
+  ],
 };
 
 /**
@@ -562,6 +608,7 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'mineral_scoop',
   'power_pellet',
   'smart_bomb',
+  'force_field',
 ];
 
 // ── Resolved stats ──────────────────────────────────────────────────
@@ -617,6 +664,10 @@ export interface PowerUpLevelStats {
   smartBombDamage?: number;
   /** Smart Bomb — permanent pulse rate in pulses per second. */
   smartBombFrequency?: number;
+  /** Force Field — bubble duration in seconds. */
+  forceFieldDuration?: number;
+  /** Force Field — bullets the field reflects before it stops. */
+  forceFieldReflects?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────

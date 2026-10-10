@@ -106,7 +106,7 @@ describe('game rules configuration module', () => {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
         weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
-        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, power_pellet: 5, smart_bomb: 2 },
+        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, power_pellet: 5, smart_bomb: 2, force_field: 4 },
         weaponWeights: {
           spread: 3,
           dual: 4,

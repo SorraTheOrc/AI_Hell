@@ -81,6 +81,8 @@ import {
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
   PHASE_REARM_COOLDOWN,
+  FORCE_FIELD_RADIUS_FACTOR,
+  SHIP_SIZE,
 } from '../core/constants';
 import {
   POWER_UP_LIVES_START,
@@ -355,6 +357,15 @@ export class EffectsRegistry {
    */
   private _smartBombPulsePending = false;
 
+  // ── Force Field reflect state (AH-0MV1BIX1W006XF95) ──────────────────
+  /**
+   * Enemy bullets the active Force Field can still reflect before it stops
+   * (resolved from the level store on every collection: base 3, cap 10).
+   * Run-scoped: reset() and bubble expiry clear it. Zero means "the bubble no
+   * longer reflects" (it may still be counting down).
+   */
+  private _forceFieldRemaining = 0;
+
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
   private _store: PowerUpLevelStore;
@@ -514,6 +525,22 @@ export class EffectsRegistry {
           this._smartBombPulseTimer = this.smartBombInterval();
         }
         break;
+      case 'force_field':
+        // force_field: a timed reflect bubble (Gradius homage,
+        // AH-0MV1BIX1W006XF95). Re-collecting refreshes the bubble to the
+        // newly resolved duration and reflect budget (never additive); the
+        // shared combat core consumes the budget as bullets meet the bubble.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.forceFieldDuration ?? 8,
+          permanent,
+        );
+        this._forceFieldRemaining = Math.max(
+          0,
+          Math.floor(stats.forceFieldReflects ?? 3),
+        );
+        break;
       default:
         // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
         // the level store owns charges/stacks/lives.
@@ -619,6 +646,11 @@ export class EffectsRegistry {
     if (id === 'shield') {
       this._shieldRemaining = 0;
     }
+    // The Force Field stops reflecting when its bubble expires, whether the
+    // window was temporary or permanent (AH-0MV1BIX1W006XF95).
+    if (id === 'force_field') {
+      this._forceFieldRemaining = 0;
+    }
   }
 
   /** Whether the given timed effect is currently active. */
@@ -669,6 +701,48 @@ export class EffectsRegistry {
    */
   shieldAbsorptionsRemaining(): number {
     return this._shieldRemaining;
+  }
+
+  // ── Force Field reflector (AH-0MV1BIX1W006XF95) ──────────────────────
+
+  /**
+   * Whether the Force Field reflect bubble is active. While true an enemy
+   * bullet that meets the bubble is bounced back as a player-owned bullet
+   * (until the reflect budget is spent).
+   */
+  isForceFieldActive(): boolean {
+    return this._timed.has('force_field');
+  }
+
+  /**
+   * Enemy bullets the active Force Field can still reflect (0 when inactive
+   * or exhausted). Surfaced for the HUD's `Force Field ×N` row and consumed
+   * by the shared combat core's reflect branch.
+   */
+  forceFieldRemaining(): number {
+    return this._forceFieldRemaining;
+  }
+
+  /**
+   * The reflect bubble radius in px (`SHIP_SIZE × FORCE_FIELD_RADIUS_FACTOR`).
+   * The shared bubble visual and the combat-core reflect branch use the same
+   * value, so the drawn boundary and the gameplay boundary cannot diverge.
+   */
+  forceFieldRadius(): number {
+    return SHIP_SIZE * FORCE_FIELD_RADIUS_FACTOR;
+  }
+
+  /**
+   * Consumes one reflect from the active Force Field. Returns true when a
+   * reflection is available (bubble active and budget remaining) and
+   * decrements the budget; false when there is no bubble or it has spent its
+   * reflect budget. Once false, enemy bullets damage the ship normally again.
+   */
+  tryConsumeForceFieldReflect(): boolean {
+    if (!this._timed.has('force_field')) return false;
+    if (this._forceFieldRemaining <= 0) return false;
+    this._forceFieldRemaining -= 1;
+    return true;
   }
 
   // ── Bomb bomb pulse (AH-0MUVM9RAO004Y3LB) ────────────────────────────
@@ -1133,7 +1207,11 @@ export class EffectsRegistry {
       // Shield carries its remaining absorptions so the HUD renders `Shield xN`
       // and updates as hits are absorbed (AC6).
       const stacks =
-        effect.id === 'shield' ? this._shieldRemaining : undefined;
+        effect.id === 'shield'
+          ? this._shieldRemaining
+          : effect.id === 'force_field'
+            ? this._forceFieldRemaining
+            : undefined;
       // A permanent base with no active temporary window shows its full
       // duration (it never counts down); an active temporary window shows
       // the window remaining (AC1/AC2).
@@ -1236,6 +1314,7 @@ export class EffectsRegistry {
     this._smartBombPermanent = false;
     this._smartBombPulseTimer = 0;
     this._smartBombPulsePending = false;
+    this._forceFieldRemaining = 0;
     this._levelStore.reset();
   }
 }

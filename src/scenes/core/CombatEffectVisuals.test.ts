@@ -12,7 +12,11 @@ import { SHIP_SIZE } from '../../core/constants';
 import { EffectsRegistry } from '../../powerups/effects';
 import {
   applyPhaseGhost,
+  drawForceFieldBubble,
   drawShieldBubble,
+  FORCE_FIELD_FILL_ALPHA,
+  FORCE_FIELD_LINE_WIDTH,
+  FORCE_FIELD_STROKE_ALPHA,
   PHASE_GHOST_ALPHA,
   SHIELD_BUBBLE_COLOR,
   SHIELD_BUBBLE_ENDING_FILL_ALPHA,
@@ -34,9 +38,41 @@ class FakeGraphics {
   strokeCircleCalls: Array<[number, number, number]> = [];
   fillStyleCalls: Array<[number, number]> = [];
   fillCircleCalls: Array<[number, number, number]> = [];
+  /** Count of path-drawing calls (beginPath/moveTo/lineTo/closePath/strokePath). */
+  pathCommands = 0;
 
   clear(): this {
     this.cleared += 1;
+    return this;
+  }
+
+  beginPath(): this {
+    this.pathCommands += 1;
+    return this;
+  }
+
+  moveTo(): this {
+    this.pathCommands += 1;
+    return this;
+  }
+
+  lineTo(): this {
+    this.pathCommands += 1;
+    return this;
+  }
+
+  closePath(): this {
+    this.pathCommands += 1;
+    return this;
+  }
+
+  strokePath(): this {
+    this.pathCommands += 1;
+    return this;
+  }
+
+  fillPath(): this {
+    this.pathCommands += 1;
     return this;
   }
 
@@ -74,6 +110,22 @@ function shieldAt(remaining: number, shielded = true): EffectsRegistry {
   return {
     isShielded: shielded,
     remaining: (id: string) => (id === 'shield' ? remaining : undefined),
+  } as unknown as EffectsRegistry;
+}
+
+/**
+ * Minimal registry stub reporting an active Force Field with a fixed reflect
+ * window and radius, so the bubble visual can be driven deterministically.
+ */
+function forceFieldAt(
+  remaining: number,
+  active = true,
+  radius = SHIP_SIZE * 1.8,
+): EffectsRegistry {
+  return {
+    isForceFieldActive: () => active,
+    forceFieldRadius: () => radius,
+    remaining: (id: string) => (id === 'force_field' ? remaining : undefined),
   } as unknown as EffectsRegistry;
 }
 
@@ -280,5 +332,64 @@ describe('CombatEffectVisuals — P3 shield ending animation (AH-0MUAYB5HR001HDY
     expect(drawShieldBubble(graphics(g), null, shieldAt(0.2))).toBe(false);
     expect(g.cleared).toBe(1);
     expect(g.strokeCircleCalls).toEqual([]);
+  });
+});
+
+// ── Force Field reflect bubble (AH-0MV1BIX1W006XF95) ─────────────────
+
+describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF95)', () => {
+  it('pins the shared force-bubble tuning', () => {
+    expect(FORCE_FIELD_LINE_WIDTH).toBe(2);
+    expect(FORCE_FIELD_STROKE_ALPHA).toBeGreaterThan(0);
+    expect(FORCE_FIELD_STROKE_ALPHA).toBeLessThanOrEqual(1);
+    expect(FORCE_FIELD_FILL_ALPHA).toBeGreaterThan(0);
+    expect(FORCE_FIELD_FILL_ALPHA).toBeLessThan(1);
+  });
+
+  it('draws the hexagonal bubble at the shared radius while the field is active', () => {
+    const g = new FakeGraphics();
+    const radius = SHIP_SIZE * 1.8;
+    const drawn = drawForceFieldBubble(
+      graphics(g),
+      { x: 100, y: 50 },
+      forceFieldAt(5, true, radius),
+    );
+
+    expect(drawn).toBe(true);
+    expect(g.cleared).toBe(1);
+    // Hexagon (6 vertices + close) + three chevrons (2 segments each).
+    expect(g.pathCommands).toBeGreaterThan(10);
+    expect(g.lineStyleCalls[0]?.[0]).toBe(FORCE_FIELD_LINE_WIDTH);
+    expect(g.fillCircleCalls.some(([, , r]) => r === radius * 0.85)).toBe(true);
+  });
+
+  it('clears and draws nothing when the field is inactive', () => {
+    const g = new FakeGraphics();
+    const drawn = drawForceFieldBubble(
+      graphics(g),
+      { x: 1, y: 2 },
+      forceFieldAt(5, false),
+    );
+    expect(drawn).toBe(false);
+    expect(g.cleared).toBe(1);
+    expect(g.pathCommands).toBe(0);
+  });
+
+  it('clears and draws nothing at expiry (remaining 0)', () => {
+    const g = new FakeGraphics();
+    const drawn = drawForceFieldBubble(
+      graphics(g),
+      { x: 1, y: 2 },
+      forceFieldAt(0),
+    );
+    expect(drawn).toBe(false);
+    expect(g.pathCommands).toBe(0);
+  });
+
+  it('is safe with no graphics or no player (and clears when only the player is missing)', () => {
+    expect(drawForceFieldBubble(null, { x: 1, y: 2 }, forceFieldAt(5))).toBe(false);
+    const g = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(g), null, forceFieldAt(5))).toBe(false);
+    expect(g.cleared).toBe(1);
   });
 });

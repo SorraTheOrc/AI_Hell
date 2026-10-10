@@ -56,6 +56,7 @@ import {
 } from '../../../scenes/core/formationGlide';
 import {
   applyPhaseGhost,
+  drawForceFieldBubble,
   drawShieldBubble,
 } from '../../core/CombatEffectVisuals';
 import {
@@ -513,6 +514,8 @@ export class GymFormationScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the shield bubble was drawn in the last visual update. */
   private shieldBubbleDrawn = false;
+  /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
+  private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
 
   // ── Formation glide (AH-0MUL15N63003PUDB)
 
@@ -669,6 +672,8 @@ export class GymFormationScene<
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
     this.shieldBubbleDrawn = false;
+    this.forceFieldBubble = this.add.graphics();
+    this.forceFieldBubble.setDepth(51);
 
     // ── Controls (bottom-right HUD, minimal) ───────────────────────
     // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
@@ -757,6 +762,7 @@ export class GymFormationScene<
     this.hud = null;
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
+    this.forceFieldBubble = null;
     this.minerals = [];
     this.mineralsSeeded = 0;
     this.mineralHoldModel.reset();
@@ -807,6 +813,8 @@ export class GymFormationScene<
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
+    this.forceFieldBubble?.destroy();
+    this.forceFieldBubble = null;
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
@@ -1113,6 +1121,11 @@ export class GymFormationScene<
   private _updateEffectVisuals(): void {
     this.shieldBubbleDrawn = drawShieldBubble(
       this.shieldBubble,
+      this.player,
+      this.effectsRegistry,
+    );
+    drawForceFieldBubble(
+      this.forceFieldBubble,
       this.player,
       this.effectsRegistry,
     );

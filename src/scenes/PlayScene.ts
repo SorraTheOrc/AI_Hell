@@ -208,6 +208,7 @@ import {
 } from './core/mineralLayer';
 import {
   applyPhaseGhost,
+  drawForceFieldBubble,
   drawShieldBubble,
 } from './core/CombatEffectVisuals';
 import {
@@ -488,6 +489,8 @@ export class PlayScene extends CombatScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
+  /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
+  private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
 
   private driftX = 0;
   private driftDir = 1;
@@ -741,6 +744,9 @@ export class PlayScene extends CombatScene<
     // Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
+    // Force Field reflect bubble — above the shield bubble (below the HUD).
+    this.forceFieldBubble = this.add.graphics();
+    this.forceFieldBubble.setDepth(51);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, {
@@ -940,6 +946,8 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
+    this.forceFieldBubble?.destroy();
+    this.forceFieldBubble = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -2842,6 +2850,15 @@ export class PlayScene extends CombatScene<
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
         this.shieldBubble,
+        this.player,
+        this.effectsRegistry,
+      );
+    }
+    // Force Field bubble: drawn while the reflect field is active (shared
+    // helper — hexagon boundary matches the gameplay reflect radius).
+    if (this.forceFieldBubble) {
+      drawForceFieldBubble(
+        this.forceFieldBubble,
         this.player,
         this.effectsRegistry,
       );

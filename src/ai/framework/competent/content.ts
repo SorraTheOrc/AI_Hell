@@ -76,6 +76,9 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     // it highly so the bot prioritises it over ordinary drops
     // (AH-0MV1BIWP9003EHRQ).
     { id: 'smart_bomb', value: 1.4 },
+    // The Force Field turns incoming fire into offence and protects the ship:
+    // value it just below the smart bomb (AH-0MV1BIX1W006XF95).
+    { id: 'force_field', value: 1.3 },
     { id: 'teleport', value: 0.9 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.

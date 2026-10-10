@@ -69,6 +69,7 @@ import { advanceWrappingBullets } from '../core/bulletLifecycle';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import {
   applyPhaseGhost,
+  drawForceFieldBubble,
   drawShieldBubble,
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
@@ -164,6 +165,8 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
+  private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
@@ -201,6 +204,8 @@ export class GymPowerUpsCombat extends CombatScene<
 
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
+    this.forceFieldBubble = this.add.graphics();
+    this.forceFieldBubble.setDepth(51);
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
@@ -255,6 +260,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.formationBaseY = COMBAT_START_Y;
     this.shootEnabled = true;
     this.shieldBubble = null;
+    this.forceFieldBubble = null;
     this.shootButton = null;
     this.helpHandle = null;
   }
@@ -277,6 +283,8 @@ export class GymPowerUpsCombat extends CombatScene<
     this.hud = null;
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
+    this.forceFieldBubble?.destroy();
+    this.forceFieldBubble = null;
     this.shootButton?.destroy();
     this.shootButton = null;
     this.helpHandle = null;
@@ -435,6 +443,15 @@ export class GymPowerUpsCombat extends CombatScene<
     // including the continuous rim pulse and ending fade).
     if (this.shieldBubble) {
       drawShieldBubble(this.shieldBubble, this.player, this.effectsRegistry);
+    }
+    // Force Field bubble: drawn while the reflect field is active (shared
+    // helper — hexagonal boundary matches the gameplay reflect radius).
+    if (this.forceFieldBubble) {
+      drawForceFieldBubble(
+        this.forceFieldBubble,
+        this.player,
+        this.effectsRegistry,
+      );
     }
     // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the
     // blink alpha when invulnerable) — shared helper.

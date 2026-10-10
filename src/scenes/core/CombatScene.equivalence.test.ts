@@ -2657,6 +2657,92 @@ describe('CombatScene — ricochet bounce parity (AH-0MV1BIV5L005NJAI)', () => {
   });
 });
 
+// ── Force Field reflect parity (AH-0MV1BIX1W006XF95) ──────────────────
+
+describe('CombatScene — Force Field reflect parity (AH-0MV1BIX1W006XF95)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and a gym share the single _reflectEnemyBullet seam', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['EquivGymScene', EquivGymScene.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, '_reflectEnemyBullet'),
+        `${name}.prototype must not define _reflectEnemyBullet`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)._reflectEnemyBullet,
+        `${name}.prototype._reflectEnemyBullet must be the shared core method`,
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)
+          ._reflectEnemyBullet,
+      );
+    }
+  });
+
+  it('reflects an enemy bullet identically in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'forcefield-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'forcefield-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+    const owners: EnemyBulletOwner[] = [playScene, gymScene];
+
+    for (const owner of owners) {
+      owner.getPlayer()!.setPosition(200, 270);
+      // Clear any auto-fired bullets so only the reflected shot remains.
+      (
+        owner as unknown as { playerBullets: unknown[] }
+      ).playerBullets.length = 0;
+      owner.getEffectsRegistry().applyCollect('force_field');
+      pushEnemyBullet(owner, {
+        x: 230,
+        y: 270,
+        vx: -120,
+        vy: 40,
+        lifetime: 5,
+      });
+      (
+        owner as unknown as { _handleCollisions(): void }
+      )._handleCollisions();
+    }
+
+    // The enemy bullet is consumed in both scenes.
+    expect(enemyBulletGraphics(playScene)).toHaveLength(0);
+    expect(enemyBulletGraphics(gymScene)).toHaveLength(0);
+
+    // Each scene owns exactly one reflected player bullet with the same
+    // reversed velocity at the same position — the shared seam does the work.
+    const playBullets = (
+      playScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets;
+    const gymBullets = (
+      gymScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets;
+    expect(playBullets).toHaveLength(1);
+    expect(gymBullets).toHaveLength(1);
+    const gameBullet = playBullets[0];
+    const gymBullet = gymBullets[0];
+    expect(gameBullet.vx).toBeCloseTo(120, 5);
+    expect(gymBullet.vx).toBeCloseTo(120, 5);
+    expect(gameBullet.vy).toBeCloseTo(-40, 5);
+    expect(gymBullet.vy).toBeCloseTo(-40, 5);
+    expect(gameBullet.x).toBeCloseTo(gymBullet.x, 5);
+    expect(gameBullet.y).toBeCloseTo(gymBullet.y, 5);
+    expect(playScene.getEffectsRegistry().forceFieldRemaining()).toBe(
+      gymScene.getEffectsRegistry().forceFieldRemaining(),
+    );
+  });
+});
+
 // ── Missile Command cluster split parity (AH-0MV1BIVIJ007KYXU) ────────
 
 describe('CombatScene — cluster-missile split parity (AH-0MV1BIVIJ007KYXU)', () => {

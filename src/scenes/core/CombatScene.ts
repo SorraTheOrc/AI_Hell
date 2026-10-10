@@ -27,6 +27,8 @@
 import Phaser from 'phaser';
 
 import {
+  FORCE_FIELD_COLOR,
+  FORCE_FIELD_REFLECT_LIFETIME,
   GAME_HEIGHT,
   GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
@@ -1058,14 +1060,38 @@ export abstract class CombatScene<
     const player = this.getPlayer();
     if (!player || this.isPlayerPhased()) return;
 
-    // 3. Enemy bullets vs player.
+    // 3. Enemy bullets vs player — the Force Field reflect branch runs first:
+    //    while the bubble is active and a bullet meets it, the bullet is
+    //    consumed and re-spawned as a player-owned bullet travelling back
+    //    along its incoming direction (Gradius homage, AH-0MV1BIX1W006XF95).
+    //    A bullet the field cannot reflect (inactive or budget spent) falls
+    //    through to the normal player-hit check below.
     const keptEnemy2: TBullet[] = [];
+    const effects = this.getEffectsRegistry();
     for (const eb of this.getEnemyBullets()) {
+      const bulletX = eb.graphics.x;
+      const bulletY = eb.graphics.y;
+      if (
+        effects.isForceFieldActive() &&
+        this._overlaps(
+          bulletX,
+          bulletY,
+          bulletRadius,
+          player.x,
+          player.y,
+          effects.forceFieldRadius(),
+        ) &&
+        effects.tryConsumeForceFieldReflect()
+      ) {
+        this._reflectEnemyBullet(eb);
+        eb.graphics.destroy();
+        continue;
+      }
       if (
         this.invulnerable <= 0 &&
         this._overlaps(
-          eb.graphics.x,
-          eb.graphics.y,
+          bulletX,
+          bulletY,
           bulletRadius,
           player.x,
           player.y,
@@ -1113,6 +1139,34 @@ export abstract class CombatScene<
         this._hitPlayer();
       }
     }
+  }
+
+  /**
+   * Reflects one enemy bullet back along its incoming direction as a
+   * player-owned bullet (Gradius Force Field homage, AH-0MV1BIX1W006XF95).
+   *
+   * The reflected shot is spawned through the shared
+   * {@link CombatCoreScene.spawnPlayerBullet} path, so it is an ordinary
+   * player bullet that damages enemies through the same collision pass as the
+   * cannon — the game and every gym reflect identically. The bullet is placed
+   * at the enemy bullet's position with its velocity reversed ("back toward
+   * its source") and given the shared Force Field lifetime.
+   *
+   * The caller owns the lifecycle: it destroys the enemy bullet's graphics
+   * and drops it from the enemy-bullet list after this returns.
+   *
+   * @param enemyBullet - The enemy bullet meeting the field.
+   * @returns The new player-owned reflected bullet.
+   */
+  protected _reflectEnemyBullet(enemyBullet: TBullet): PlayerBullet {
+    return this.spawnPlayerBullet(
+      enemyBullet.graphics.x,
+      enemyBullet.graphics.y,
+      -enemyBullet.vx,
+      -enemyBullet.vy,
+      FORCE_FIELD_COLOR,
+      FORCE_FIELD_REFLECT_LIFETIME,
+    );
   }
 
   /** Circle-vs-circle overlap test. */

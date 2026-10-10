@@ -165,6 +165,7 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'mineral_scoop',
   'power_pellet',
   'smart_bomb',
+  'force_field',
 ];
 
 /**

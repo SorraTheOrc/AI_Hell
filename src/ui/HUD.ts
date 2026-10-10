@@ -445,6 +445,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // A permanent (hold-full) Smart Bomb is a run-scoped active effect; a
         // field pickup is a one-shot and leaves no row (AH-0MV1BIWP9003EHRQ).
         return reg.isSmartBombPermanent();
+      case 'force_field':
+        // Show the row while the reflect bubble is active (field pickup or
+        // permanent reward) so the remaining reflect budget is visible
+        // (AH-0MV1BIX1W006XF95).
+        return reg.isForceFieldActive();
       default:
         return false;
     }
@@ -463,6 +468,8 @@ export class HUD extends Phaser.GameObjects.Container {
         return reg.isPhasePermanent() ? undefined : reg.phaseCharges() || undefined;
       case 'teleport':
         return reg.teleportStacks() || undefined;
+      case 'force_field':
+        return reg.forceFieldRemaining() || undefined;
       default:
         return undefined;
     }

@@ -49,6 +49,7 @@ export const CHOICE_POOL: readonly DropId[] = [
   'mineral_scoop',
   'power_pellet',
   'smart_bomb',
+  'force_field',
   'spread',
   'dual',
   'rapid',

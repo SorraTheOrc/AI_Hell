@@ -23,6 +23,11 @@
  *   pickup fires one screen-clearing blast (damages every enemy once and
  *   clears every enemy bullet); a hold-full reward makes the pulse repeat on
  *   a level-resolved interval (stored → permanent)
+ * - **Force Field** — Gradius-inspired timed reflector (AH-0MV1BIX1W006XF95):
+ *   while active an enemy bullet that meets the bubble is bounced back along
+ *   its incoming direction as a player-owned bullet that damages enemies.
+ *   A level-resolved reflect budget caps how many bullets one field returns
+ *   before it stops reflecting; the bubble expires after its timed window.
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -39,7 +44,8 @@ export type PowerUpId =
   | 'magnet'
   | 'mineral_scoop'
   | 'power_pellet'
-  | 'smart_bomb';
+  | 'smart_bomb'
+  | 'force_field';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -165,10 +171,18 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     description:
       'Fires a screen-wide pulse that damages every enemy once and clears every enemy bullet; a field pickup fires once, a hold-full reward pulses.',
   },
+  force_field: {
+    id: 'force_field',
+    name: 'Force Field',
+    description:
+      'Reflects enemy bullets back at their source for 8 s; the field returns a limited number of shots before it stops reflecting.',
+    // Base bubble window (s); the level curve extends it (cap 18 s).
+    duration: 8,
+  },
 };
 
 /** Power-up IDs cycled by the combat gym round-robin spawner. */
-export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport', 'power_pellet', 'smart_bomb'] as const;
+export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport', 'power_pellet', 'smart_bomb', 'force_field'] as const;
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

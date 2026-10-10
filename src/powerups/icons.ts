@@ -11,6 +11,7 @@ import Phaser from 'phaser';
 import { PowerUpId } from './types';
 import { WeaponId } from '../utils/weapons';
 import {
+  FORCE_FIELD_COLOR,
   POWER_UP_BUBBLE_GLOW_ALPHA,
   POWER_UP_BUBBLE_RADIUS_FACTOR,
   POWER_UP_BUBBLE_STROKE_WIDTH,
@@ -28,6 +29,7 @@ const ICON_COLORS: Record<PowerUpId, number> = {
   mineral_scoop: 0x33ff99, // neon green — mineral scoop
   power_pellet: 0xfff45e, // bright amber — Pac-Man power pellet
   smart_bomb: 0xcc66ff, // electric violet — Defender smart-bomb starburst
+  force_field: FORCE_FIELD_COLOR, // aquamarine — Gradius reflect bubble
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -135,6 +137,9 @@ function _drawPowerUpIcon(
       break;
     case 'smart_bomb':
       drawSmartBomb(graphics, x, y, size);
+      break;
+    case 'force_field':
+      drawForceField(graphics, x, y, size);
       break;
   }
 }
@@ -402,6 +407,50 @@ function drawSmartBomb(
   // Bright core.
   g.fillStyle(ICON_COLORS.smart_bomb, 1);
   g.fillCircle(x, y, s * 0.22);
+}
+
+/**
+ * Force Field — a hexagonal neon bubble with inward "reflect" arrow motifs
+ * (Gradius homage, AH-0MV1BIX1W006XF95). The hexagon echoes the protective
+ * bubble, the chevrons the bullets it bounces back at their source.
+ */
+function drawForceField(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Hexagonal bubble outline (flat-top hexagon).
+  g.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;
+    const px = x + Math.cos(angle) * s * 0.9;
+    const py = y + Math.sin(angle) * s * 0.9;
+    if (i === 0) g.moveTo(px, py);
+    else g.lineTo(px, py);
+  }
+  g.closePath();
+  g.strokePath();
+
+  // Three inward chevrons radiating from the centre, reading as reflection.
+  for (let i = 0; i < 3; i++) {
+    const angle = (Math.PI / 3) * (2 * i) - Math.PI / 2;
+    const tipX = x + Math.cos(angle) * s * 0.55;
+    const tipY = y + Math.sin(angle) * s * 0.55;
+    const backX = x + Math.cos(angle) * s * 0.15;
+    const backY = y + Math.sin(angle) * s * 0.15;
+    const perpX = Math.cos(angle + Math.PI / 2) * s * 0.22;
+    const perpY = Math.sin(angle + Math.PI / 2) * s * 0.22;
+    g.beginPath();
+    g.moveTo(backX - perpX, backY - perpY);
+    g.lineTo(tipX, tipY);
+    g.lineTo(backX + perpX, backY + perpY);
+    g.strokePath();
+  }
+
+  // Small bright core so the bubble reads as a charged field.
+  g.fillStyle(ICON_COLORS.force_field, 1);
+  g.fillCircle(x, y, s * 0.14);
 }
 
 // ── Weapon power-up icons ──────────────────────────────────────────

@@ -109,6 +109,10 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].cap).toBe(3); // pulse damage cap
     expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].base).toBe(0.2); // pulse rate (/s)
     expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].cap).toBe(0.5); // pulse rate cap (/s)
+    expect(POWER_UP_LEVEL_SPECS.force_field[0].base).toBe(8); // field time (s)
+    expect(POWER_UP_LEVEL_SPECS.force_field[0].cap).toBe(18); // field time cap (s)
+    expect(POWER_UP_LEVEL_SPECS.force_field[1].base).toBe(3); // reflect budget
+    expect(POWER_UP_LEVEL_SPECS.force_field[1].cap).toBe(10); // reflect budget cap
   });
 
   it('Power Pellet fright variables resolve monotonically within their caps (AC7)', () => {
@@ -164,6 +168,33 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
         previous = value;
       }
       expect(previous).toBeGreaterThan(spec.base);
+    }
+  });
+
+  it('Force Field duration/reflects resolve monotonically within their caps (AH-0MV1BIX1W006XF95)', () => {
+    const variables = ['forceFieldDuration', 'forceFieldReflects'] as const;
+    for (const variable of variables) {
+      const spec = POWER_UP_LEVEL_SPECS.force_field.find(
+        (s) => s.variable === variable,
+      )!;
+      let previous = -Infinity;
+      for (let level = 0; level <= 50; level++) {
+        const value = resolvePowerUpAtLevel('force_field', level)[variable]!;
+        expect(value).toBeGreaterThanOrEqual(previous);
+        expect(value).toBeLessThanOrEqual(spec.cap);
+        expect(value).toBeGreaterThanOrEqual(spec.base);
+        previous = value;
+      }
+      // The axis strictly grows past its base (a meaningful axis).
+      expect(previous).toBeGreaterThan(spec.base);
+    }
+    // The reflect budget is a discrete whole number.
+    for (let level = 0; level <= 12; level++) {
+      expect(
+        Number.isInteger(
+          resolvePowerUpAtLevel('force_field', level).forceFieldReflects!,
+        ),
+      ).toBe(true);
     }
   });
 });

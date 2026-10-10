@@ -735,6 +735,99 @@ describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1B
   });
 });
 
+// ── Force Field reflector (AH-0MV1BIX1W006XF95) ────────────────────
+
+describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
+  it('a field pickup opens the reflect window with the level-resolved budget', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('force_field');
+
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.forceFieldRemaining()).toBe(
+      resolvePowerUpAtLevel('force_field', 0).forceFieldReflects,
+    );
+    expect(reg.remaining('force_field')).toBe(
+      resolvePowerUpAtLevel('force_field', 0).forceFieldDuration,
+    );
+    // The HUD row carries the remaining reflect budget.
+    const entry = reg.activeEffects().find((e) => e.id === 'force_field');
+    expect(entry?.stacks).toBe(reg.forceFieldRemaining());
+  });
+
+  it('returns at most its reflect budget and then stops reflecting', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+    const budget = reg.forceFieldRemaining();
+    expect(budget).toBeGreaterThan(0);
+
+    for (let i = 0; i < budget; i++) {
+      expect(reg.tryConsumeForceFieldReflect()).toBe(true);
+    }
+    // Budget spent: the bubble is still up but no longer reflects.
+    expect(reg.forceFieldRemaining()).toBe(0);
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+
+  it('never reflects when no field is active', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.isForceFieldActive()).toBe(false);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+
+  it('re-collecting refreshes the window and budget to the level-resolved values', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+    const baseBudget = reg.forceFieldRemaining();
+    // Spend one, then collect again — refreshes to the new level's budget.
+    expect(reg.tryConsumeForceFieldReflect()).toBe(true);
+    reg.applyCollect('force_field');
+    expect(reg.forceFieldRemaining()).toBeGreaterThanOrEqual(baseBudget);
+    expect(reg.isForceFieldActive()).toBe(true);
+  });
+
+  it('expiry ends reflection and clears the budget', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+
+    reg.tick((reg.remaining('force_field') ?? 0) + 0.1);
+
+    expect(reg.isForceFieldActive()).toBe(false);
+    expect(reg.forceFieldRemaining()).toBe(0);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+
+  it('a permanent reward keeps the bubble up and reflecting for the run', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field', true);
+    expect(reg.isForceFieldActive()).toBe(true);
+
+    // A permanent bubble has no temporary window, so ticking never expires it.
+    reg.tick(1000);
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.forceFieldRemaining()).toBe(
+      resolvePowerUpAtLevel('force_field', 0).forceFieldReflects,
+    );
+  });
+
+  it('exposes the shared reflect radius used by the bubble visual', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.forceFieldRadius()).toBeGreaterThan(SHIP_SIZE);
+  });
+
+  it('reset() clears the reflect window and budget', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+
+    reg.reset();
+
+    expect(reg.isForceFieldActive()).toBe(false);
+    expect(reg.forceFieldRemaining()).toBe(0);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+});
+
 // ── Phase Shift ───────────────────────────────────────────────────
 
 describe('P6 Phase Shift: charge-based auto-trigger', () => {
