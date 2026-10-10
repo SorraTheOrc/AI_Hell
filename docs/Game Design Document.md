@@ -1437,6 +1437,20 @@ considered but **not** selected this round — **Joust**, **Dig Dug**, **Q*bert*
 and **Star Castle** — remain future scope and are recorded with a deferral
 reason each in the research document's "considered but not selected" section.
 
+The classic-arcade power-up and weapon roster selected by research epic
+**AH-0MV14SO0G0095IJ4** is now implemented (see §4.4 and
+[`CLASSIC_POWERUP_WEAPON_RESEARCH.md`](./CLASSIC_POWERUP_WEAPON_RESEARCH.md)):
+four weapons (**R-Type** wave laser, **Centipede** ricochet shot, **Missile
+Command** cluster/MIRV missile, **Gradius** Options orbiting satellites) and
+four power-ups (**Pac-Man** power pellet, **Defender** smart bomb, **Gradius**
+force field, **Space Invaders** mystery UFO). The candidates considered but
+**not** selected this round — the **Galaga Dual Fighter**, the Defender /
+Robotron **smart bomb weapon form**, the **Tempest Superzapper**, the
+**Sinistar Sinibomb**, the **Galaga Repulsor**, the **Frogger Super Leap**, the
+**Asteroids Decoy** and the **Gauntlet Potion** — remain future scope and are
+recorded with a deferral reason each in the research document's "considered but
+not selected" section.
+
 ---
 
 ## 9. Appendix: Clarifying Questions & Answers

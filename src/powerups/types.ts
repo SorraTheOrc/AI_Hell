@@ -1,6 +1,12 @@
 /**
  * Power-up type definitions (GDD §4.4).
  *
+ * The classic-arcade power-ups (`power_pellet`, `smart_bomb`, `force_field`,
+ * `mystery_ufo`) are the implemented power-up picks from the research
+ * catalogue `docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md` (epic
+ * AH-0MV14SO0G0095IJ4), which records each concept's source game, adaptation,
+ * catalogue seam and gym.
+ *
  * - **Speed Boost** — +50% movement speed and +50% rate of fire for 10 s (timed)
  * - **Extra Life** — +1 life immediately (start 3, cap 5)
  * - **Magnet** — attracts nearby drops toward the ship; a 15 s

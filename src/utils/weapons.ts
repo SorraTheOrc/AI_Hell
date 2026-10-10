@@ -1,6 +1,11 @@
 /**
  * Weapon catalogue + heading-relative angle math (GDD §2.3, §4.4).
  *
+ * The classic-arcade weapons (`wave_laser`, `ricochet`, `cluster`, `options`)
+ * are the implemented weapon picks from the research catalogue
+ * `docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md` (epic AH-0MV14SO0G0095IJ4), which
+ * records each concept's source game, adaptation, catalogue seam and gym.
+ *
  * Provides pure, unit-testable weapon definitions — each with a pattern
  * (relative angle offsets), fire rate, bullet colour, and bullet shape —
  * plus utilities to convert a heading into absolute bullet angles and
