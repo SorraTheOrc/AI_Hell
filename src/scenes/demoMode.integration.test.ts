@@ -535,7 +535,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       expect(play.getPlayer()!.getScheme()).toBe('asteroids');
     });
 
-    it('emits asteroid input (W/A/D) — never a reverse/S key', async () => {
+    it('emits asteroid input (W/A/D + reverse) — never four-directional fields', async () => {
       const menu = await bootMenu();
       menu.startDemo();
       await wait(150);
@@ -543,15 +543,15 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
       const input = botInputOf(play);
       expect(input).not.toBeNull();
-      // The asteroid input carries exactly W/A/D plus an explicit
-      // reverse:false — no four-directional and therefore no down/S field.
+      // The asteroid input carries exactly W/A/D plus an opt-in `reverse`
+      // field (AH-0MV1J0OHP0072XA5 · AC6) — no four-directional/S fields.
       expect(Object.keys(input!).sort()).toEqual([
         'forward',
         'reverse',
         'turnLeft',
         'turnRight',
       ]);
-      expect((input as { reverse?: boolean }).reverse).toBe(false);
+      expect(typeof (input as { reverse?: boolean }).reverse).toBe('boolean');
       expect('down' in input!).toBe(false);
       expect('up' in input!).toBe(false);
     });

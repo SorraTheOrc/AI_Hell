@@ -104,6 +104,11 @@ export interface BotWorld {
   readonly nearestEnemyDistance: number;
   /** Timed-wave pressure in `[0, 1]` (`0` when no timed wave is running). */
   readonly wavePressure: number;
+  /**
+   * Whether the ship's reverse thruster is enabled (AH-0MV1J0OHP0072XA5).
+   * Behaviours use it to gate reverse-thrust intents (AC4).
+   */
+  readonly reverseEnabled: boolean;
 }
 
 /**
@@ -189,6 +194,7 @@ export function buildBotWorld(
         )
       : Number.POSITIVE_INFINITY,
     wavePressure: computeWavePressure(snapshot),
+    reverseEnabled: snapshot.reverseEnabled ?? false,
   };
 }
 

@@ -44,7 +44,7 @@ import {
   nearestTarget,
   type ContentTarget,
 } from './goals';
-import { idleIntent, mayThrust, planSteering } from './steering';
+import { idleIntent, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
@@ -97,14 +97,23 @@ function collectBehaviour(
         x: best.point.x - player.x,
         y: best.point.y - player.y,
       };
+      const thrust = mayThrust(
+        view.snapshot,
+        t,
+        distance,
+        t.collectArrivalRadius,
+      );
+      // Brake-assist (AC1): when forward thrust would overshoot, request
+      // reverse to decelerate toward the pickup (gated on the ship's
+      // reverse enable flag and the brake tunable).
+      const reverse =
+        !thrust &&
+        view.world.reverseEnabled &&
+        mayReverse(view.snapshot, t, distance, t.collectArrivalRadius);
       return planSteering(objective, view.world, t, {
-        thrust: mayThrust(
-          view.snapshot,
-          t,
-          distance,
-          t.collectArrivalRadius,
-        ),
+        thrust,
         longTravel: distance >= t.longTravelDistance,
+        reverse,
       });
     },
   };
@@ -141,16 +150,32 @@ function engageBehaviour(
       };
       const inRange = distance <= engagementRange;
       const holdAim = profile.aim !== 'none';
+      // Kiting (AC3): inside the standoff and needing more separation, hold
+      // reverse while keeping the nose on the aim target (the objective still
+      // points at the target, so the actuator backs away). Gated on the
+      // reverse enable flag.
+      const kite =
+        holdAim &&
+        view.world.reverseEnabled &&
+        distance <= t.reverseRetreatRange;
+      const thrust =
+        inRange && holdAim
+          ? false
+          : mayThrust(view.snapshot, t, distance, engagementRange);
+      // Brake-assist (AC1) while closing when forward thrust would overshoot.
+      const brake =
+        !thrust &&
+        !kite &&
+        view.world.reverseEnabled &&
+        mayReverse(view.snapshot, t, distance, engagementRange);
       return planSteering(objective, view.world, t, {
         // Inside the standoff, keep the hull aimed at the target and coast so
         // the forward-firing weapon stays on it (AC3). Outside, close while
         // the forward model allows. An archetype with `aim: 'none'` never
         // holds the axis.
-        thrust:
-          inRange && holdAim
-            ? false
-            : mayThrust(view.snapshot, t, distance, engagementRange),
+        thrust,
         longTravel: distance >= t.longTravelDistance,
+        reverse: kite || brake,
       });
     },
   };

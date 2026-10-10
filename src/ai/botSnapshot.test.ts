@@ -59,6 +59,29 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
     expect(buildBotSnapshot(makeScene()).player).toBeNull();
   });
 
+  it('carries the ship reverse-thruster enable flag (AH-0MV1J0OHP0072XA5)', () => {
+    const enabled = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        isReverseEnabled: () => true,
+      }),
+    });
+    const disabled = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        isReverseEnabled: () => false,
+      }),
+    });
+    expect(buildBotSnapshot(enabled).reverseEnabled).toBe(true);
+    expect(buildBotSnapshot(disabled).reverseEnabled).toBe(false);
+    // A source without the accessor defaults to disabled (opt-in).
+    expect(buildBotSnapshot(makeScene()).reverseEnabled).toBe(false);
+  });
+
   it('maps each enemy position, alive flag and archetype', () => {
     const scene = makeScene({
       getEnemies: () => [

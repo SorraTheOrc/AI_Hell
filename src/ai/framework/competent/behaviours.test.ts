@@ -209,3 +209,73 @@ describe('survival is a hard steering constraint (AC4)', () => {
     ).toBe(true);
   });
 });
+
+// ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────────
+
+describe('collect behaviour — reverse brake-assist (AC1)', () => {
+  it('requests reverse instead of only coasting when forward would overshoot', () => {
+    // Closing on a mineral at 80 px with v=175 px/s: stopping distance
+    // (~153 px) exceeds the gap, so the bot brakes with reverse.
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+      minerals: [mineral(560, 270)],
+      reverseEnabled: true,
+    });
+    const intent = collect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.thrust).toBe(false);
+    expect(intent!.reverse).toBe(true);
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+  });
+
+  it('does not brake with reverse when the thruster is disabled (AC4)', () => {
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+      minerals: [mineral(560, 270)],
+      reverseEnabled: false,
+    });
+    const intent = collect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent!.reverse).toBe(false);
+  });
+});
+
+describe('engage behaviour — aim-preserving retreat / kiting (AC3)', () => {
+  it('retreats with reverse while keeping the nose on a too-close target', () => {
+    // 80 px away: inside the 90 px retreat band, outside the 70 px danger margin.
+    const intent = engage.run(
+      context(
+        makeSnapshot({
+          player: PLAYER,
+          enemies: [enemy(560, 270, 'scout')],
+          reverseEnabled: true,
+        }),
+        COMPETENT_GOAL_IDS.engageEnemy,
+      ),
+    );
+    expect(intent).not.toBeNull();
+    // Nose still points at the enemy (positive X) — the retreat is reversed
+    // thrust, not a turn-away.
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+    expect(intent!.dirY).toBeCloseTo(0, 3);
+    expect(intent!.reverse).toBe(true);
+    expect(intent!.thrust).toBe(false);
+  });
+
+  it('does not kite with reverse when the thruster is disabled (AC4)', () => {
+    const intent = engage.run(
+      context(
+        makeSnapshot({
+          player: PLAYER,
+          enemies: [enemy(560, 270, 'scout')],
+          reverseEnabled: false,
+        }),
+        COMPETENT_GOAL_IDS.engageEnemy,
+      ),
+    );
+    expect(intent!.reverse).toBe(false);
+  });
+});

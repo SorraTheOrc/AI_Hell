@@ -38,6 +38,8 @@ export function makeSnapshot(
     runSeed: overrides.runSeed ?? 0,
     lives: overrides.lives ?? 3,
     livesCap: overrides.livesCap ?? 5,
+    // Reverse is opt-in: production sources default it off when absent.
+    reverseEnabled: overrides.reverseEnabled ?? false,
   };
 }
 

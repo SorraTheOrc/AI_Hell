@@ -92,6 +92,28 @@ export interface CompetentBotTunables {
   /** Time window (seconds) within which a threatening shot is "urgent". */
   survivalUrgencyHorizon: number;
 
+  // ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────
+  /** Whether the bot may use reverse thrust to brake (AC1). */
+  reverseBrakeEnabled: boolean;
+  /**
+   * Heading-error threshold (radians) beyond which the bot reverses toward
+   * its travel bearing (nose opposite the travel) instead of turning 180°
+   * (AC2). Entry threshold; see {@link reverseHeadingHysteresisRad}.
+   */
+  reverseHeadingThresholdRad: number;
+  /**
+   * Hysteresis band (radians) subtracted from the entry threshold to decide
+   * when to leave reverse mode, so a bearing near the boundary does not
+   * oscillate across ticks (AC2).
+   */
+  reverseHeadingHysteresisRad: number;
+  /**
+   * Standoff distance (px) inside which an engaged target is too close and
+   * the bot retreats under reverse thrust while keeping its nose on the aim
+   * target (kiting; AC3).
+   */
+  reverseRetreatRange: number;
+
   // ── Steering scoring ────────────────────────────────────────────
   /**
    * Candidate bearings (degrees offset from the objective bearing) the
@@ -150,6 +172,11 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   assumedBulletSpeed: 200,
   frictionDeceleration: 100,
   survivalUrgencyHorizon: 0.5,
+
+  reverseBrakeEnabled: true,
+  reverseHeadingThresholdRad: 2.35,
+  reverseHeadingHysteresisRad: 0.35,
+  reverseRetreatRange: 90,
 
   fanDegrees: Object.freeze([
     0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180,

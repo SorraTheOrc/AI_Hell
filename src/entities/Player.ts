@@ -635,6 +635,15 @@ export class Player extends Phaser.GameObjects.Graphics {
     return { thrust, maxSpeed, friction };
   }
 
+  /**
+   * Whether the ship's reverse (retro) thruster is enabled
+   * (AH-0MV1J0OHP0072XA5 · AC4).  Read by the demo-bot snapshot so the bot
+   * respects the player's thruster configuration.
+   */
+  isReverseEnabled(): boolean {
+    return this._config.reverseEnabled;
+  }
+
   private _applySpeedMultiplier(): void {
     this._config = {
       thrust: this._baseConfig.thrust * this._speedMultiplier,

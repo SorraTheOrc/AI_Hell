@@ -298,12 +298,14 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
 ### 9.2 Behaviours
 
 - **`collect`** (mineral/power-up/secure-life): approach and scoop, braking
-  via the forward model so the ship arrives rather than barrelling through.
+  via the forward model so the ship arrives rather than barrelling through,
+  and using reverse retro-thrust when forward thrust would overshoot (AC1).
   The `secure-life` goal restricts this behaviour to live Extra Life drops.
 - **`engage`** (enemy/asteroid): line the target up inside `engagementRange`,
   then hold the **aim axis** and coast so the forward-firing weapon stays on
   target (aim/fire reasoning, AC3) instead of aiming only by accident of
-  travel.
+  travel. Inside `reverseRetreatRange` it retreats under reverse thrust while
+  keeping its nose on the target (kiting).
 - **`evade`**: head away from the weighted centroid of the shots that
   threaten the ship (predictive path-around, AC2), not merely direction
   rejection.
@@ -327,7 +329,8 @@ safety margins, steering-fan/scoring weights, playfield size and the
 commitment/world-model overrides. The human-like input cadence itself is the
 governor's `reactionTimeMs` ([section 5](#5-brain--policy)); the competent
 tunables set a compatible `minCommitSeconds` so a goal cannot be re-picked
-faster than a human can change input.
+faster than a human can change input. Reverse-thrust gating and timing live in
+the same two sources — see [section 9.7](#97-reverse-thrust-ah-0mv1j0ohp0072xa5).
 
 ### 9.5 Module layout
 
@@ -346,6 +349,45 @@ dt)` into the human-like governor (instead of the legacy `decideBotIntent`),
 and resets the brain on run (re)start. The competent brain keeps the legacy
 adapter as its default fallback, so the demo still behaves sensibly if a
 behaviour declines.
+
+### 9.7 Reverse thrust (AH-0MV1J0OHP0072XA5)
+
+The demo bot treats forward and reverse as a **first-class thrust direction**
+rather than only ever thrusting forward (AC1–AC5):
+
+- **Brake assist (AC1).** While closing on a collection target or combat
+target and continuing to thrust would overshoot it (the forward model's
+`mayThrust` is `false`), the `collect`/`engage` behaviours request reverse
+instead of only coasting on friction; `mayReverse` exposes the predicate and
+never fires when the ship is stopped or reverse braking is disabled. Reverse
+braking never increases overshoot versus the friction-only model.
+- **Heading-aware thrust (AC2).** When the committed travel bearing is behind
+the nose by more than `reverseHeadingThresholdRad`, the human-like governor
+latches **reverse mode** (with a `reverseHeadingHysteresisRad` dead-band) and
+the actuator turns the nose opposite the bearing and reverses toward it
+instead of spinning 180°. The hysteresis keeps the choice stable across
+ticks.
+- **Aim-preserving retreat / kiting (AC3).** Inside `reverseRetreatRange` of
+an engaged target the `engage` behaviour holds reverse, keeping its nose on
+the aim axis, so it backs away without the previous turn-away.
+- **Config-respecting enable flag (AC4).** `Player.isReverseEnabled()`
+is carried through `buildBotSnapshot()` → `BotSnapshot.reverseEnabled` →
+`BotWorld.reverseEnabled` and into the governor's `BotControlContext`. Every
+reverse intent is gated on it (intent **and** flag, defence in depth), so a
+player who switched the retro-thruster off sees `reverse: false` on every
+bot input and today's behaviour unchanged.
+- **Human-like reverse cadence (AC5).** The governor holds each reverse press
+for a duration drawn from `[reversePressMinMs, reversePressMaxMs]` (reduced
+by a per-press gentle factor), using separate seeded RNG streams so the
+forward press sequence is unchanged. The bot never toggles reverse every
+frame.
+
+The relevant tunables are single-sourced in `COMPETENT_BOT_TUNABLES`
+(`reverseBrakeEnabled`, `reverseHeadingThresholdRad`,
+`reverseHeadingHysteresisRad`, `reverseRetreatRange`) and
+`BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
+`reversePressGentleMinPct`, `reversePressGentleMaxPct`,
+`reverseHeadingThresholdRad`, `reverseHeadingHysteresisRad`).
 
 ## 10. Testing
 

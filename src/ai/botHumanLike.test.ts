@@ -198,7 +198,7 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
     );
   });
 
-  it('never turns while thrusting and never emits a reverse control', () => {
+  it('never turns while thrusting and treats reverse as opt-in', () => {
     for (const facing of [-3, -1.5, 0, 1.5, 3]) {
       for (const intent of [
         input('up'),
@@ -207,8 +207,8 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
         input('right'),
       ]) {
         const out = toAsteroidsInput(intent, facing);
-        // The asteroid input carries exactly W/A/D plus an explicit
-        // reverse:false — the bot never emits a reverse control (AC6).
+        // The asteroid input carries exactly W/A/D plus a `reverse` field —
+        // opt-in: without a reverse request it is always false (AC4/AC6).
         expect(Object.keys(out).sort()).toEqual([
           'forward',
           'reverse',
@@ -730,5 +730,208 @@ describe('gentler thrust presses (AH-0MUYRJQE50021T4A)', () => {
   it('AC4 — the gentle bounds are documented tunables with 1 %/5 % defaults', () => {
     expect(BOT_HUMAN_INPUT_TUNABLES.thrustPressGentleMinPct).toBe(0.01);
     expect(BOT_HUMAN_INPUT_TUNABLES.thrustPressGentleMaxPct).toBe(0.05);
+  });
+});
+
+// ── Reverse thrust (AH-0MV1J0OHP0072XA5) ────────────────────────────
+//
+// The bot treats forward/reverse as a first-class thrust direction: the
+// committed intent may request reverse (brake-assist, heading-aware thrust,
+// kiting), the actuator emits it only when the ship's reverse thruster is
+// enabled, and the governor holds reverse in human-like presses.
+
+describe('reverse thrust (AH-0MV1J0OHP0072XA5)', () => {
+  const DT = 1 / 60;
+  const DT_MS = DT * 1000;
+
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight' | 'reverse')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+      reverse: controls.includes('reverse'),
+    };
+  }
+
+  /** A precise intent aimed at `bearing` that requests reverse. */
+  function reverseIntent(bearing: number, thrust = false) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust,
+      reverse: true,
+    };
+  }
+
+  describe('toAsteroidsInput — enable-flag gating (AC4/AC6)', () => {
+    it('emits reverse when the intent requests it and reverse is enabled', () => {
+      // Nose already on the travel bearing (facing 0 = right) → brake.
+      expect(toAsteroidsInput(reverseIntent(0), 0)).toEqual(asteroid('reverse'));
+    });
+
+    it('emits reverse:false on every input when reverse is disabled', () => {
+      for (const facing of [-3, -1.5, 0, 1.5, 3, Math.PI]) {
+        const out = toAsteroidsInput(reverseIntent(0), facing, 0.15, false);
+        expect(out.reverse).toBe(false);
+      }
+    });
+
+    it('brakes when the nose is aligned and backs toward a bearing behind (AC1/AC2)', () => {
+      // Aligned: brake straight up, no turn.
+      expect(toAsteroidsInput(reverseIntent(0), 0)).toEqual(asteroid('reverse'));
+      // Directly behind: no 180° turn — reverse instead.
+      expect(toAsteroidsInput(reverseIntent(Math.PI), 0)).toEqual(
+        asteroid('reverse'),
+      );
+    });
+
+    it('turns to align the nose before reversing when only partly behind', () => {
+      // Travel bearing 2.0 rad: the nose must turn to face π away (error−π).
+      const out = toAsteroidsInput(reverseIntent(2.0), 0) as AsteroidsInput;
+      expect(out.reverse).toBe(false);
+      expect(out.turnLeft).toBe(true);
+      expect(out.turnRight).toBe(false);
+    });
+  });
+
+  describe('BotInputGovernor — heading-aware reverse (AC2)', () => {
+    const H = { reactionTimeMs: 0, reversePressMinMs: 0, reversePressMaxMs: 0 };
+
+    /** A precise intent aimed at `bearing` that does NOT itself request reverse. */
+    function travelIntent(bearing: number) {
+      return {
+        ...input(),
+        dirX: Math.cos(bearing),
+        dirY: Math.sin(bearing),
+        thrust: true,
+        reverse: false,
+      };
+    }
+
+    it('chooses reverse when the travel bearing is behind the nose', () => {
+      const governor = new BotInputGovernor(H);
+      // Facing right, intent directly left (π behind) → reverse, no turn.
+      const out = governor.update(travelIntent(Math.PI), DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      }) as AsteroidsInput;
+      expect(out).toEqual(asteroid('reverse'));
+    });
+
+    it('does not oscillate across ticks around the threshold (hysteresis)', () => {
+      const governor = new BotInputGovernor(H);
+      // Entry threshold 2.35 rad, exit band 0.35 → exit at 2.0. Assert the
+      // latched reverse *intent* (the actuator still has to align the nose
+      // before it emits reverse thrust).
+      // 1: beyond entry → reverse requested.
+      governor.update(travelIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: -2.4,
+        reverseEnabled: true,
+      });
+      expect(governor.currentIntent().reverse).toBe(true);
+      // 2: back inside entry but above exit → still reverse (latched).
+      governor.update(travelIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: -2.2,
+        reverseEnabled: true,
+      });
+      expect(governor.currentIntent().reverse).toBe(true);
+      // 3: below exit → forward/turn again.
+      governor.update(travelIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: -1.9,
+        reverseEnabled: true,
+      });
+      expect(governor.currentIntent().reverse).toBe(false);
+    });
+
+    it('treats reverse as disabled for the whole run when the flag is off', () => {
+      const governor = new BotInputGovernor(H);
+      for (let i = 0; i < 5; i += 1) {
+        const out = governor.update(travelIntent(Math.PI), DT, {
+          scheme: 'asteroids',
+          facing: 0,
+          reverseEnabled: false,
+        }) as AsteroidsInput;
+        expect(out.reverse).toBe(false);
+      }
+    });
+  });
+
+  describe('BotInputGovernor — human-like reverse presses (AC5)', () => {
+    const T = {
+      reactionTimeMs: 0,
+      reversePressMinMs: 200,
+      reversePressMaxMs: 260,
+      reversePressGentleMinPct: 0,
+      reversePressGentleMaxPct: 0,
+    };
+    const forwardIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true, reverse: false };
+
+    /** Measures the on-run (ms) of a reverse press started by a rising edge. */
+    function measureReverseMs(governor: BotInputGovernor): number {
+      governor.update(reverseIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      });
+      let ticks = 1;
+      for (let i = 0; i < 60; i += 1) {
+        const out = governor.update(forwardIntent, DT, {
+          scheme: 'asteroids',
+          facing: 0,
+          reverseEnabled: true,
+        }) as AsteroidsInput;
+        if (!out.reverse) break;
+        ticks += 1;
+      }
+      return ticks * DT_MS;
+    }
+
+    it('extends a one-tick reverse request into a full press', () => {
+      const ms = measureReverseMs(new BotInputGovernor(T, 1));
+      expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+      expect(ms).toBeLessThanOrEqual(260 + 2 * DT_MS);
+      // Many ticks, not a per-frame toggle.
+      expect(ms / DT_MS).toBeGreaterThan(8);
+    });
+
+    it('randomises each press within the band and is deterministic per seed', () => {
+      const governor = new BotInputGovernor(T, 7);
+      const durations = [0, 1, 2, 3, 4].map(() => measureReverseMs(governor));
+      for (const ms of durations) {
+        expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+        expect(ms).toBeLessThanOrEqual(260 + 2 * DT_MS);
+      }
+      expect(new Set(durations.map((d) => Math.round(d))).size).toBeGreaterThan(1);
+
+      const first = new BotInputGovernor(T, 42);
+      const second = new BotInputGovernor(T, 42);
+      expect([0, 1, 2].map(() => Math.round(measureReverseMs(first)))).toEqual(
+        [0, 1, 2].map(() => Math.round(measureReverseMs(second))),
+      );
+    });
+
+    it('reset clears the reverse press and the heading-aware latch', () => {
+      const governor = new BotInputGovernor(T, 3);
+      governor.update(reverseIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      });
+      governor.reset();
+      // After reset, a forward intent emits no reverse.
+      const out = governor.update(forwardIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      }) as AsteroidsInput;
+      expect(out.reverse).toBe(false);
+    });
   });
 });

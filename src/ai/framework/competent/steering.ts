@@ -66,6 +66,7 @@ export function idleIntent(): BotSteeringIntent {
     dirY: 0,
     thrust: false,
     longTravel: false,
+    reverse: false,
   };
 }
 
@@ -271,12 +272,44 @@ export function mayThrust(
   return stoppingDistance <= gap;
 }
 
+/**
+ * Reverse-brake decision (AC1/AC3): whether to request **reverse** thrust to
+ * decelerate toward `distance` instead of only coasting on friction.
+ *
+ * Reverse braking is warranted when the forward model would overshoot
+ * ({@link mayThrust} is `false`), the ship still has speed to shed, there is
+ * still a gap to the target, and the reverse thruster is enabled. It never
+ * fires when reverse braking is disabled or the ship is already stopped, so
+ * it can be composed alongside {@link mayThrust} without changing the
+ * friction-only coast baseline.
+ */
+export function mayReverse(
+  snapshot: BotSnapshot,
+  t: CompetentBotTunables,
+  distance: number,
+  arrivalRadius: number,
+): boolean {
+  if (!t.reverseBrakeEnabled) return false;
+  const player = snapshot.player;
+  if (!player) return false;
+  const speed = Math.hypot(player.vx, player.vy);
+  if (speed <= EPS) return false;
+  const gap = Math.max(0, distance - arrivalRadius);
+  if (gap <= EPS) return false;
+  return !mayThrust(snapshot, t, distance, arrivalRadius);
+}
+
 /** Options for {@link planSteering}. */
 export interface SteerPlanOptions {
   /** Whether to thrust when aligned with the objective. */
   readonly thrust: boolean;
   /** Whether the objective is a long-travel leg. */
   readonly longTravel: boolean;
+  /**
+   * Whether to travel the objective with **reverse** thrust (kiting / brake
+   * assist; AH-0MV1J0OHP0072XA5). Defaults to `false`.
+   */
+  readonly reverse?: boolean;
 }
 
 /**
@@ -304,6 +337,7 @@ export function planSteering(
     chosen.y,
     options.thrust || !aligned,
     options.longTravel,
+    options.reverse === true,
   );
 }
 
@@ -317,6 +351,7 @@ export function buildIntent(
   dirY: number,
   thrust = true,
   longTravel = false,
+  reverse = false,
 ): BotSteeringIntent {
   const unit = normalise(dirX, dirY);
   const cardinal =
@@ -327,5 +362,5 @@ export function buildIntent(
       : unit.y >= 0
         ? { up: false, down: true, left: false, right: false }
         : { up: true, down: false, left: false, right: false };
-  return { ...cardinal, dirX: unit.x, dirY: unit.y, thrust, longTravel };
+  return { ...cardinal, dirX: unit.x, dirY: unit.y, thrust, longTravel, reverse };
 }

@@ -12,8 +12,10 @@ import { describe, expect, it } from 'vitest';
 import { buildBotWorld } from '../worldModel';
 import { bullet, enemy, makeSnapshot } from '../testFixtures';
 import {
+  buildIntent,
   chooseSteeringDirection,
   evaluateDirection,
+  mayReverse,
   mayThrust,
   normalise,
   planSteering,
@@ -199,5 +201,62 @@ describe('sampled safety property (AC4)', () => {
       });
       expect(anySafe).toBe(false);
     }
+  });
+});
+
+// ── Reverse-thrust primitives (AH-0MV1J0OHP0072XA5) ─────────────────
+
+describe('buildIntent — reverse flag (AC4/AC6)', () => {
+  it('defaults reverse to false and carries an explicit true', () => {
+    expect(buildIntent(1, 0).reverse).toBe(false);
+    expect(buildIntent(1, 0, false, false, true).reverse).toBe(true);
+  });
+});
+
+describe('planSteering — reverse passthrough (AC1/AC3)', () => {
+  it('requests reverse only when the options ask for it', () => {
+    const snapshot = makeSnapshot({ player: PLAYER });
+    const world = buildBotWorld(snapshot);
+    expect(
+      planSteering({ x: 1, y: 0 }, world, T, {
+        thrust: false,
+        longTravel: false,
+        reverse: true,
+      }).reverse,
+    ).toBe(true);
+    expect(
+      planSteering({ x: 1, y: 0 }, world, T, {
+        thrust: false,
+        longTravel: false,
+      }).reverse,
+    ).toBe(false);
+  });
+});
+
+describe('mayReverse — reverse-brake predicate (AC1/AC3)', () => {
+  it('fires when forward thrust would overshoot and the ship is still moving', () => {
+    const moving = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    // v=175, a=100 → stopping distance ~153 px > gap 82 px.
+    expect(mayReverse(moving, T, 100, 18)).toBe(true);
+  });
+
+  it('never fires when the ship is stopped or the gap is huge', () => {
+    const stopped = makeSnapshot({ player: PLAYER });
+    expect(mayReverse(stopped, T, 100, 18)).toBe(false);
+    const moving = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    expect(mayReverse(moving, T, 900, 18)).toBe(false);
+  });
+
+  it('never fires when reverse braking is disabled', () => {
+    const moving = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    expect(mayReverse(moving, { ...T, reverseBrakeEnabled: false }, 100, 18)).toBe(
+      false,
+    );
   });
 });

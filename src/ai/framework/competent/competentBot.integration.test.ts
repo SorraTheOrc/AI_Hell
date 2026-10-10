@@ -285,3 +285,74 @@ describe('survival hard constraint over a seeded run (AC4)', () => {
     ).toBeGreaterThan(20);
   });
 });
+
+// ── Reverse to a target behind the nose (AH-0MV1J0OHP0072XA5 · AC2/AC7) ──
+
+describe('competent bot reverses to a target behind it (AC2/AC7)', () => {
+  it('reverses and reaches the target with no 180-degree turn-around', () => {
+    const governor = new BotInputGovernor();
+    governor.seed(RUN_SEED);
+    const brain = createCompetentBotBrain({ fallback: null });
+    // Start facing right with a mineral directly behind (to the left).
+    let state = {
+      x: 700,
+      y: 270,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+      angularVelocity: 0,
+    };
+    const target = { x: 200, y: 270 };
+    let taken = false;
+    let reverseTicks = 0;
+    let turnTicks = 0;
+
+    const snapshotOf = (): BotSnapshot => ({
+      player: { x: state.x, y: state.y, vx: state.vx, vy: state.vy },
+      enemies: [],
+      enemyBullets: [],
+      playerBullets: [],
+      drops: [],
+      minerals: taken ? [] : [{ x: target.x, y: target.y, type: 'mineral' }],
+      boss: null,
+      aliveCount: 0,
+      wave: null,
+      runSeed: RUN_SEED,
+      lives: 3,
+      livesCap: 5,
+      reverseEnabled: true,
+    });
+
+    for (let i = 0; i < 900 && !taken; i += 1) {
+      const intent = brain.decide(snapshotOf(), DT);
+      const committed = governor.update(intent, DT, {
+        scheme: 'asteroids',
+        facing: state.facing,
+        reverseEnabled: true,
+      }) as AsteroidsInput;
+      if (committed.reverse) reverseTicks += 1;
+      if (committed.turnLeft || committed.turnRight) turnTicks += 1;
+      state = model.tick(
+        state,
+        committed,
+        DT,
+        WIDTH,
+        HEIGHT,
+        SHIP_CONFIG,
+      ) as typeof state;
+      if (
+        Math.hypot(target.x - state.x, target.y - state.y) <=
+        COMPETENT_BOT_TUNABLES.collectArrivalRadius
+      ) {
+        taken = true;
+      }
+    }
+
+    expect(taken).toBe(true);
+    // The bot used retro-thrust...
+    expect(reverseTicks).toBeGreaterThan(0);
+    // ...and did not perform a 180-degree spin to face the target (a full
+    // turn at 3 rad/s would be ~60 ticks; reverse keeps it well under).
+    expect(turnTicks).toBeLessThan(30);
+  });
+});

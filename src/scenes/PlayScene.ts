@@ -2469,6 +2469,10 @@ export class PlayScene extends CombatScene<
       {
         scheme: player?.getScheme() ?? 'asteroids',
         facing: player?.getMovementState().facing ?? 0,
+        // Respect the player's reverse-thruster configuration: when the
+        // player switched it off, the demo bot emits `reverse: false` on
+        // every input (AH-0MV1J0OHP0072XA5 · AC4).
+        reverseEnabled: player?.isReverseEnabled() ?? true,
       },
     );
   }
