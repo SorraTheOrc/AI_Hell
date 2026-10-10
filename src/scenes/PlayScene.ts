@@ -1947,6 +1947,16 @@ export class PlayScene extends CombatScene<
         s.spacingX,
         s.spacingY,
       );
+      // Power Pellet fright (AH-0MV1BIW95004POSX): offset the enemy away
+      // from the ship with the same shared pure flee maths every gym uses,
+      // so the retreat is game↔gym identical. Self-advancing hazards and
+      // seekers are excluded (they integrate their own motion and would
+      // double-count an additive offset).
+      const flee = this._frightenedFleeOffset(s.entity.x, s.entity.y);
+      if (flee.x !== 0 || flee.y !== 0) {
+        s.entity.x += flee.x;
+        s.entity.y += flee.y;
+      }
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease all living
@@ -2528,8 +2538,15 @@ export class PlayScene extends CombatScene<
       }
       // Shared archetype→tryFire dispatch, driven by the scene clock
       // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
+      // The Power Pellet fright window suppresses all enemy fire through the
+      // same shared dispatcher (AH-0MV1BIW95004POSX).
       this.enemyBullets.push(
-        ...fireForEnemy<PlayEnemyBullet>(s.entity, s.enemyKey, this.time.now),
+        ...fireForEnemy<PlayEnemyBullet>(
+          s.entity,
+          s.enemyKey,
+          this.time.now,
+          this.isEnemyFrightened(),
+        ),
       );
     }
   }
@@ -3069,6 +3086,12 @@ export class PlayScene extends CombatScene<
           )
         ) {
           this.onPlayerRamsEnemy(s.entity);
+          // Power Pellet fright (AH-0MV1BIW95004POSX): a frightened enemy is
+          // destroyed by the ram without damaging the ship (parity with the
+          // shared `CombatScene._handleCollisions` path).
+          if (this.isEnemyFrightened()) {
+            continue;
+          }
           this._hitPlayer();
           break;
         }

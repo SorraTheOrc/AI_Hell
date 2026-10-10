@@ -4,6 +4,7 @@ import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
   DEFAULT_BEAT_BPM,
   DEFAULT_EXTRA_LIFE_WEIGHT,
+  DEFAULT_POWER_PELLET_WEIGHT,
   DEFAULT_MINERAL_COLLECT_AMOUNT,
   DEFAULT_MINERAL_HOLD_CAPACITY,
   DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
@@ -44,10 +45,10 @@ describe('game rules configuration module', () => {
       );
     });
 
-    it('gives standard IDs equal weight and makes P8 Extra Life rarer', () => {
+    it('gives standard IDs equal weight and makes P8 Extra Life and the Power Pellet rarer', () => {
       const weights = DEFAULT_RULES.powerUpWeights;
       for (const id of POWER_UP_WEIGHT_IDS) {
-        if (id === 'extra_life') continue;
+        if (id === 'extra_life' || id === 'power_pellet') continue;
         expect(weights[id]).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       }
       // AH-0MUNS3VAQ0023L1J: Extra Life raised from 1 to 3 (≈3× by weight) so Extra
@@ -56,6 +57,12 @@ describe('game rules configuration module', () => {
       expect(weights.extra_life).toBe(3);
       expect(defaultPowerUpWeights().extra_life).toBe(3);
       expect(weights.extra_life).toBeLessThan(weights.shield);
+      // AH-0MV1BIW95004POSX: the Power Pellet is rarer than a standard drop (3
+      // vs 4) because the fright window is a strong defensive tool.
+      expect(DEFAULT_POWER_PELLET_WEIGHT).toBe(3);
+      expect(weights.power_pellet).toBe(3);
+      expect(defaultPowerUpWeights().power_pellet).toBe(3);
+      expect(weights.power_pellet).toBeLessThan(weights.shield);
       // The standard and weapon weights are untouched by the Extra Life change.
       expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
       expect(DEFAULT_WEAPON_WEIGHT).toBe(2);
@@ -91,7 +98,7 @@ describe('game rules configuration module', () => {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
         weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
-        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5 },
+        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, power_pellet: 5 },
         weaponWeights: {
           spread: 3,
           dual: 4,

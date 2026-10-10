@@ -356,6 +356,84 @@ describe('P10 Mineral Scoop hybrid (AC3)', () => {
   });
 });
 
+describe('Power Pellet fright window (AH-0MV1BIW95004POSX)', () => {
+  it('a field pickup opens the timed fright window and levels the power-up', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(reg.isFrightened()).toBe(false);
+
+    reg.applyCollect('power_pellet');
+
+    expect(reg.isFrightened()).toBe(true);
+    expect(reg.remaining('power_pellet')).toBeCloseTo(6, 5);
+    expect(reg.frightenElapsed()).toBeCloseTo(0, 5);
+    expect(store.getLevel('power_pellet')).toBe(1);
+    expect(store.getTempStacks('power_pellet')).toBe(1);
+  });
+
+  it('the fright window expires and reverts the temporary level', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('power_pellet');
+
+    reg.tick(6.01);
+
+    expect(reg.isFrightened()).toBe(false);
+    expect(reg.remaining('power_pellet')).toBeUndefined();
+    expect(store.getLevel('power_pellet')).toBe(0);
+    expect(reg.activeEffects().some((e) => e.id === 'power_pellet')).toBe(false);
+  });
+
+  it('re-collecting refreshes the window and advances the level', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('power_pellet');
+    reg.tick(4);
+    const before = reg.remaining('power_pellet')!;
+
+    reg.applyCollect('power_pellet');
+
+    expect(reg.remaining('power_pellet')!).toBeGreaterThan(before);
+    expect(store.getLevel('power_pellet')).toBe(2);
+  });
+
+  it('a hold-full reward makes the fright window permanent (never expires)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('power_pellet', true);
+
+    expect(reg.isFrightened()).toBe(true);
+    reg.tick(1000);
+    expect(reg.isFrightened()).toBe(true);
+    expect(store.getPermanentLevel('power_pellet')).toBe(1);
+  });
+
+  it('frightenElapsed() grows with the window and frightenSpeedMultiplier() resolves from the level curve', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    // Level 0 (first collection) → base 1× flee multiplier.
+    reg.applyCollect('power_pellet');
+    expect(reg.frightenSpeedMultiplier()).toBe(1);
+    reg.tick(3);
+    expect(reg.frightenElapsed()).toBeCloseTo(3, 5);
+
+    // Levelling the power-up raises the resolved flee multiplier above base.
+    reg.applyCollect('power_pellet');
+    expect(reg.frightenSpeedMultiplier()).toBeGreaterThan(1);
+    expect(reg.frightenSpeedMultiplier()).toBeCloseTo(
+      resolvePowerUpAtLevel('power_pellet', 1).frightenSpeedMultiplier!,
+      10,
+    );
+  });
+
+  it('reset() clears the fright window', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('power_pellet');
+    reg.reset();
+    expect(reg.isFrightened()).toBe(false);
+  });
+});
+
 // ── AC6 — timing / reset semantics ───────────────────────────────────
 
 describe('timing and reset semantics (AC6)', () => {

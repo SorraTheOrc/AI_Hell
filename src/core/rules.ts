@@ -60,7 +60,7 @@ export interface GameRules {
    */
   weaponSubdivisions: WeaponSubdivisions;
   /**
-   * Relative weight per power-up ID (Shield–Mineral Scoop). Higher weight ⇒ more
+   * Relative weight per power-up ID (Shield–Power Pellet). Higher weight ⇒ more
    * likely. These are relative, not percentages — the spawner normalises
    * them internally.
    */
@@ -134,10 +134,18 @@ export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
  */
 export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
 
+/**
+ * Default relative weight for the Power Pellet (AH-0MV1BIW95004POSX). Rarer
+ * than a standard drop (3 vs 4) because the fright window is a strong
+ * defensive tool, without being as rare as Extra Life (which is also 3 but
+ * competes with the standard pool at the same weight).
+ */
+export const DEFAULT_POWER_PELLET_WEIGHT = 3;
+
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
-/** Every power-up ID covered by the default weight table (Shield–Mineral Scoop). */
+/** Every power-up ID covered by the default weight table (Shield–Power Pellet). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'shield',
   'bomb',
@@ -147,6 +155,7 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
+  'power_pellet',
 ];
 
 /**
@@ -221,8 +230,13 @@ export const DEFAULT_SEQUENCED_WAVES_ENABLED = true;
 export function defaultPowerUpWeights(): PowerUpWeights {
   const weights = {} as PowerUpWeights;
   for (const id of POWER_UP_WEIGHT_IDS) {
-    weights[id] =
-      id === 'extra_life' ? DEFAULT_EXTRA_LIFE_WEIGHT : DEFAULT_STANDARD_POWER_UP_WEIGHT;
+    if (id === 'extra_life') {
+      weights[id] = DEFAULT_EXTRA_LIFE_WEIGHT;
+    } else if (id === 'power_pellet') {
+      weights[id] = DEFAULT_POWER_PELLET_WEIGHT;
+    } else {
+      weights[id] = DEFAULT_STANDARD_POWER_UP_WEIGHT;
+    }
   }
   return weights;
 }

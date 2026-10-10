@@ -122,6 +122,7 @@ import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { setExplosionBeatClock } from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
+import { frightenedFleeOffset } from './frightenedState';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
 export const BOMB_PULSE_COLOR = 0xff5577;
@@ -1185,6 +1186,45 @@ export class CombatCoreScene<
       registry: this.bombPulseEffects,
       color: BOMB_PULSE_COLOR,
     });
+  }
+
+  // ── Frightened enemy status (Power Pellet, AH-0MV1BIW95004POSX) ────
+
+  /**
+   * Whether the Power Pellet fright window is currently active. Consumed by
+   * the shared collision path (ramming a frightened enemy destroys it and
+   * not the ship) and the enemy-fire dispatchers (fire is suppressed).
+   */
+  protected isEnemyFrightened(): boolean {
+    return this.getEffectsRegistry().isFrightened();
+  }
+
+  /**
+   * The accumulated flee displacement (px) an enemy at its un-frightened
+   * `(baseX, baseY)` formation slot should be offset by while the fright
+   * window is active. Returns `{0, 0}` when the window is inactive or no
+   * player is present.
+   *
+   * The maths is the pure {@link frightenedFleeOffset}, driven by the window's
+   * elapsed time and the level-resolved flee-speed multiplier, so the game
+   * and every gym retreat enemies identically (gym↔game parity).
+   */
+  protected _frightenedFleeOffset(
+    baseX: number,
+    baseY: number,
+  ): { x: number; y: number } {
+    const registry = this.getEffectsRegistry();
+    if (!registry.isFrightened()) return { x: 0, y: 0 };
+    const player = this.getPlayer();
+    if (!player) return { x: 0, y: 0 };
+    return frightenedFleeOffset(
+      baseX,
+      baseY,
+      player.x,
+      player.y,
+      registry.frightenElapsed(),
+      registry.frightenSpeedMultiplier(),
+    );
   }
 
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────

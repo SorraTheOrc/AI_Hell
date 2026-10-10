@@ -8,6 +8,7 @@ import { Player } from '../../entities/Player';
 import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
+import { FRIGHTEN_DEFAULT_DURATION } from './frightenedState';
 import {
   CombatDrop,
   CombatEnemyBullet,
@@ -824,6 +825,42 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(enemy.destroyed).toBe(true);
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.hooks).toContain('onPlayerHit');
+  });
+
+  it('AH-0MV1BIW95004POSX — ramming a frightened enemy destroys it without hitting the player', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 80, y: 80 });
+    const enemy = new StubEnemy(scene, player.x, player.y);
+    scene.entities.push(enemy);
+    // Collect the Power Pellet to open the shared fright window.
+    scene.effects.applyCollect('power_pellet');
+    expect(scene.effects.isFrightened()).toBe(true);
+
+    scene.runCollisions();
+
+    // The frightened enemy is destroyed (the "eat the ghost" beat) and the
+    // ship is unharmed.
+    expect(scene.hooks).toContain('onPlayerRamsEnemy');
+    expect(enemy.destroyed).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.hooks).not.toContain('onPlayerHit');
+  });
+
+  it('AH-0MV1BIW95004POSX — the fright window expires and normal steering/contact resumes', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 80, y: 80 });
+    scene.effects.applyCollect('power_pellet');
+    // Advance past the base 6 s window; the status must clear.
+    scene.effects.tick(FRIGHTEN_DEFAULT_DURATION + 0.01);
+    expect(scene.effects.isFrightened()).toBe(false);
+
+    const enemy = new StubEnemy(scene, player.x, player.y);
+    scene.entities.push(enemy);
+    scene.runCollisions();
+
+    // No longer frightened: body contact destroys the enemy AND hits the ship.
+    expect(enemy.destroyed).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(1);
   });
 
   it('AC4 — a phased player skips the enemy-bullet/ram collision passes', async () => {

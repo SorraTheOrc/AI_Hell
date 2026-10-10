@@ -437,6 +437,10 @@ export class HUD extends Phaser.GameObjects.Container {
         return reg.isMagnetActive();
       case 'mineral_scoop':
         return reg.isScoopActive() || reg.scoopStacks() > 0;
+      case 'power_pellet':
+        // The fright window is a global enemy debuff; show its row while the
+        // window (temporary or permanent) is active (AH-0MV1BIW95004POSX).
+        return reg.isActive('power_pellet');
       default:
         return false;
     }

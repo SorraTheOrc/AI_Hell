@@ -16,6 +16,9 @@
  *   danger feed triggers a 1.5 s pass-through when 3+ hostile bodies/bullets
  *   close within 40 px; the hold-full reward makes activations unlimited.
  * - **Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s Phase Shift on arrival
+ * - **Power Pellet** — Pac-Man-inspired timed fright window: every live
+ *   enemy flees the ship and suppresses fire; ramming a frightened enemy
+ *   destroys it without damaging the ship (timed)
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -30,7 +33,8 @@ export type PowerUpId =
   | 'teleport'
   | 'extra_life'
   | 'magnet'
-  | 'mineral_scoop';
+  | 'mineral_scoop'
+  | 'power_pellet';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -142,10 +146,18 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     duration: 15,
     maxStacks: 5,
   },
+  power_pellet: {
+    id: 'power_pellet',
+    name: 'Power Pellet',
+    description:
+      'Frightens every enemy for a timed window: they flee the ship and stop firing, and ramming one destroys it.',
+    // Base fright window (s); the level curve extends it (cap 14 s).
+    duration: 6,
+  },
 };
 
 /** Power-up IDs cycled by the combat gym round-robin spawner. */
-export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport'] as const;
+export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport', 'power_pellet'] as const;
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

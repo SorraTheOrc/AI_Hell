@@ -277,14 +277,16 @@ translation) stop attacking, while the player can destroy them.
 **AI_Hell adaptation:** A timed field power-up that puts every live enemy into a
 **frightened state for a short window**: enemies flee the player instead of
 approaching and **stop firing** (their weapon fire is suppressed for the
-window). Frightened enemies are still lethal on body contact (the "enemies are
-the bullets" rule is unchanged — the player must still dodge), so the power-up
-is a breathing-space and repositioning tool rather than an instant board clear.
+window). Ramming a frightened enemy **destroys it without damaging the ship**
+(the "eat the ghost" beat), while enemy bullets are **not** cleared — so the
+power-up is a breathing-space and repositioning tool rather than an instant
+board clear.
 
-**Divergence from original:** No maze, no ghost house, no "eat the ghost for
-points" mechanic and no per-ghost personality — the state is a uniform timed
-debuff on all live enemies. Enemy–enemy collisions remain disabled (GDD §2.6);
-fleeing enemies pass through one another.
+**Divergence from original:** No maze, no ghost house and no per-ghost
+personality — the state is a uniform timed debuff on all live enemies. Unlike
+the original the destroyed frightened enemy awards no bonus score (ramming
+always awarded none in AI_Hell). Enemy–enemy collisions remain disabled
+(GDD §2.6); fleeing enemies pass through one another.
 
 **Type:** power-up.
 

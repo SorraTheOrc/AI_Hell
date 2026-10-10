@@ -489,6 +489,13 @@ export class GymPowerUpsCombat extends CombatScene<
         COMBAT_SPACING_X,
         COMBAT_SPACING_Y,
       );
+      // Power Pellet fright (AH-0MV1BIW95004POSX): retreat from the ship
+      // using the shared pure flee maths (gym↔game identical).
+      const flee = this._frightenedFleeOffset(scout.x, scout.y);
+      if (flee.x !== 0 || flee.y !== 0) {
+        scout.x += flee.x;
+        scout.y += flee.y;
+      }
       if (this.player) {
         scout.setAimTarget(this.player.x, this.player.y);
       }
@@ -497,13 +504,21 @@ export class GymPowerUpsCombat extends CombatScene<
 
   private _tickScouts(): void {
     if (!this.shootEnabled) return;
+    // Power Pellet fright suppresses all enemy fire for the window
+    // (AH-0MV1BIW95004POSX).
+    if (this.isEnemyFrightened()) return;
     // Real scene clock — the same time base the game and the other gyms
     // use (AH-0MUII3BBW000XZ46, AC2). No frame-count accumulator.
     const now = this.time.now;
     for (const scout of this.scouts) {
       if (!scout.alive) continue;
       this.scoutBullets.push(
-        ...fireForEnemy<ScoutBullet>(scout, 'scout', now),
+        ...fireForEnemy<ScoutBullet>(
+          scout,
+          'scout',
+          now,
+          this.isEnemyFrightened(),
+        ),
       );
     }
   }

@@ -87,6 +87,7 @@ import {
   PowerUpLevelStore,
   type PowerUpLevelStats,
 } from './powerUpLevels';
+import { FRIGHTEN_DEFAULT_DURATION } from '../scenes/core/frightenedState';
 import type { WeaponId } from '../utils/weapons';
 
 // Re-export the magnet tuning values for convenience.
@@ -464,6 +465,18 @@ export class EffectsRegistry {
         if (!permanent) {
           this._startOrRefreshTimed(id, id, P10_SCOOP_DURATION, false);
         }
+        break;
+      case 'power_pellet':
+        // Power Pellet: a timed window the shared combat core reads to make
+        // enemies flee and suppress fire (Pac-Man adaptation). The window is
+        // the item's timed window, so a field pickup opens a temporary one
+        // and the hold-full reward makes the state permanent.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.frightenDuration ?? FRIGHTEN_DEFAULT_DURATION,
+          permanent,
+        );
         break;
       case 'bomb':
         // bomb: a field pickup queues one ranged explosion; the hold-full
@@ -883,6 +896,40 @@ export class EffectsRegistry {
     const stacks = this._levelStore.scoopStacks();
     if (stacks > 0) return stacks;
     return this._timed.has('mineral_scoop') ? 1 : 0;
+  }
+
+  // ── Frightened enemy status (Power Pellet, AH-0MV1BIW95004POSX) ─────
+
+  /**
+   * Whether the Power Pellet fright window is active — every live enemy
+   * flees the ship and suppresses fire while true. A permanent (hold-full)
+   * reward keeps the state active for the rest of the run.
+   */
+  isFrightened(): boolean {
+    const effect = this._timed.get('power_pellet');
+    if (!effect) return false;
+    if (effect.permanent && !effect.tempWindow) return true;
+    return effect.remaining > 0;
+  }
+
+  /**
+   * Seconds the fright window has been active (0 when inactive). The shared
+   * flee-offset maths uses this to retreat enemies further the longer the
+   * window has been open; a permanent window saturates at the default
+   * duration (the offset is capped regardless).
+   */
+  frightenElapsed(): number {
+    const effect = this._timed.get('power_pellet');
+    if (!effect) return 0;
+    if (effect.permanent && !effect.tempWindow) {
+      return FRIGHTEN_DEFAULT_DURATION;
+    }
+    return Math.max(0, effect.duration - effect.remaining);
+  }
+
+  /** The level-resolved flee-speed multiplier for the active Power Pellet. */
+  frightenSpeedMultiplier(): number {
+    return this._levelStore.stats('power_pellet').frightenSpeedMultiplier ?? 1;
   }
 
   // ── Weapon accessors ──────────────────────────────────────────────

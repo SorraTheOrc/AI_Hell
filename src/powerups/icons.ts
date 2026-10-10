@@ -26,6 +26,7 @@ const ICON_COLORS: Record<PowerUpId, number> = {
   extra_life: 0xff6ec7, // pink — life
   magnet: 0xb57bff, // purple — magnet
   mineral_scoop: 0x33ff99, // neon green — mineral scoop
+  power_pellet: 0xfff45e, // bright amber — Pac-Man power pellet
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -127,6 +128,9 @@ function _drawPowerUpIcon(
       break;
     case 'mineral_scoop':
       drawMineralScoop(graphics, x, y, size);
+      break;
+    case 'power_pellet':
+      drawPowerPellet(graphics, x, y, size);
       break;
   }
 }
@@ -343,6 +347,26 @@ function drawMineralScoop(
     g.arc(x + s * dotX, y + s * 0.32, s * 0.08, 0, Math.PI * 2);
     g.strokePath();
   }
+}
+
+/**
+ * Power pellet — a bright filled core inside a glowing outer ring, the
+ * Pac-Man power pellet that frightens enemies.
+ */
+function drawPowerPellet(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Glowing outer ring.
+  g.lineStyle(2, ICON_COLORS.power_pellet, 1);
+  g.beginPath();
+  g.arc(x, y, s * 0.85, 0, Math.PI * 2);
+  g.strokePath();
+  // Filled pellet core (the bright power pellet itself).
+  g.fillStyle(ICON_COLORS.power_pellet, 1);
+  g.fillCircle(x, y, s * 0.42);
 }
 
 // ── Weapon power-up icons ──────────────────────────────────────────

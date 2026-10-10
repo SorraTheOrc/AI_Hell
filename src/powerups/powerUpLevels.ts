@@ -108,7 +108,11 @@ export type PowerUpLevelVariable =
   /** Magnet — permanent stack cap (and attraction-radius growth). */
   | 'magnetStacks'
   /** Mineral Scoop — permanent stack cap (radius growth). */
-  | 'scoopStacks';
+  | 'scoopStacks'
+  /** Power Pellet — frightened-enemy window duration in seconds. */
+  | 'frightenDuration'
+  /** Power Pellet — flee-speed multiplier applied while frightened. */
+  | 'frightenSpeedMultiplier';
 
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
@@ -126,6 +130,8 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'livesCap',
   'magnetStacks',
   'scoopStacks',
+  'frightenDuration',
+  'frightenSpeedMultiplier',
 ];
 
 /**
@@ -432,6 +438,44 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'the level-derived cap reaches it sooner.',
     },
   ],
+
+  // Power Pellet — timed fright window (Pac-Man adaptation).
+  power_pellet: [
+    {
+      variable: 'frightenDuration',
+      powerUpId: 'power_pellet',
+      label: 'Frighten time',
+      unit: 's',
+      description: 'How long enemies flee and stop firing.',
+      curve: 'exponential-saturation',
+      base: 6,
+      cap: 14,
+      k: 0.2,
+      discrete: false,
+      rationale:
+        'A 14 s ceiling keeps the fright a breathing-space tool rather than a ' +
+        'near-permanent board freeze; k=0.2 adds ~1 s at the first upgrade so ' +
+        'early levels feel responsive before diminishing. Body contact stays ' +
+        'lethal to non-frightened enemies and does not clear bullets, so the ' +
+        'window cannot trivialise a wave.',
+    },
+    {
+      variable: 'frightenSpeedMultiplier',
+      powerUpId: 'power_pellet',
+      label: 'Frighten flee',
+      unit: '×',
+      description: 'Flee-speed multiplier while frightened.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 1.8,
+      k: 0.2,
+      discrete: false,
+      rationale:
+        'A 1.8× ceiling keeps a fleeing formation readable and dodgeable ' +
+        'while letting early levels visibly widen the retreat; k=0.2 matches ' +
+        'the duration axis so the two grow together.',
+    },
+  ],
 };
 
 /**
@@ -447,6 +491,7 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
+  'power_pellet',
 ];
 
 // ── Resolved stats ──────────────────────────────────────────────────
@@ -492,6 +537,10 @@ export interface PowerUpLevelStats {
   magnetStacks?: number;
   /** Mineral Scoop — permanent stack cap (attraction radius driver). */
   scoopStacks?: number;
+  /** Power Pellet — frightened-enemy window duration in seconds. */
+  frightenDuration?: number;
+  /** Power Pellet — flee-speed multiplier while frightened. */
+  frightenSpeedMultiplier?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────

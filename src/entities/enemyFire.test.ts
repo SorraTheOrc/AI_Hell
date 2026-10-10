@@ -275,4 +275,15 @@ describe('shared enemy-fire dispatcher — real entity integration (AC4)', () =>
     };
     expect(fireForEnemy(spawning, 'scout', 1_000)).toEqual([]);
   });
+
+  it('suppresses fire for every archetype while frightened and resumes after (AH-0MV1BIW95004POSX)', () => {
+    const spy = makeFireSpy();
+    // Fright window active → the dispatcher returns no bullets and never
+    // calls the entity's fire method.
+    expect(fireForEnemy(spy, 'scout', 1_000, true)).toEqual([]);
+    expect(spy.calls).toEqual([]);
+    // Window expired → normal fire resumes through the same dispatcher.
+    expect(fireForEnemy(spy, 'scout', 2_000, false)).toHaveLength(1);
+    expect(spy.calls).toEqual(['aimed:2000']);
+  });
 });

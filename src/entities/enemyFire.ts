@@ -105,6 +105,9 @@ export function enemyFireMethod(enemyKey: string): EnemyFireMethod {
  * @param enemyKey — the archetype key (e.g. `scout`, `diver`); unknown keys
  *   fall back to the aimed shot.
  * @param now — the caller's scene clock in milliseconds.
+ * @param suppressed — when true, weapon fire is suppressed (the Power Pellet
+ *   fright window, `frightenedSuppressesFire`); returns `[]` without calling
+ *   the entity. Defaults to false so existing callers are unchanged.
  * @returns the bullets fired this call, always as an array (the mapping's
  *   methods return either a single bullet or an array).
  */
@@ -112,8 +115,12 @@ export function fireForEnemy<TBullet>(
   entity: unknown,
   enemyKey: string,
   now: number,
+  suppressed = false,
 ): TBullet[] {
-  if (entity === null || entity === undefined) return [];
+  // The frightened-enemy status is the one seam that cancels fire for every
+  // archetype, so it is checked before the archetype dispatch (and before
+  // the spawning guard) — a frightened enemy never fires.
+  if (suppressed || entity === null || entity === undefined) return [];
   // Spawning enemies are still growing — they cannot fire yet.
   if ((entity as { isSpawning?: boolean }).isSpawning) return [];
   const method = enemyFireMethod(enemyKey);

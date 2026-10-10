@@ -76,12 +76,17 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
     expect(spawner.next()).toBe('shield');
   });
 
-  it('gives P8 Extra Life a ≈ 3/31 share of power-up draws (≈2.4× its former 1/25)', () => {
+  it('gives P8 Extra Life a ≈ 3/34 share of power-up draws (≈2.2× its former 1/25)', () => {
     // Deterministic sweep RNG: sample evenly across [0, 1) so each id's count
     // is exactly proportional to its weight — no statistical noise and no seed
     // dependence. The sample count is a multiple of the combined pool weight
-    // (31 power-up + 14 weapon = 45), so every band boundary lands exactly.
-    const SAMPLE_COUNT = 45_000;
+    // (34 power-up + 14 weapon = 48), so every band boundary lands exactly.
+    const weightTotal = Object.values(DEFAULT_RULES.powerUpWeights).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    expect(weightTotal).toBe(34);
+    const SAMPLE_COUNT = 48_000;
     let cursor = 0;
     const sweepRng = () => cursor++ / SAMPLE_COUNT;
     const spawner = buildDefaultDropSpawner(
@@ -99,18 +104,15 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       if (id === 'extra_life') extraLives += 1;
     }
 
-    // Extra Life weight 3 of the 31 total power-up weight → exactly 3/31.
+    // Extra Life weight 3 of the 34 total power-up weight → exactly 3/34.
     const p8Share = extraLives / powerUps;
-    expect(p8Share).toBeCloseTo(3 / 31, 3);
+    expect(p8Share).toBeCloseTo(3 / 34, 3);
     // Tied to the shipped weight table (not a hard-coded expectation).
-    const weightTotal = Object.values(DEFAULT_RULES.powerUpWeights).reduce(
-      (a, b) => a + b,
-      0,
-    );
     expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.extra_life / weightTotal, 3);
-    // Relative weight tripled (1 → 3): ≈ 2.4× the former 1/25 normalised share
-    // (the Mineral Scoop addition widens the denominator from 27 to 31).
-    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 31) / (1 / 25), 2);
+    // Relative weight tripled (1 → 3): ≈ 2.2× the former 1/25 normalised share
+    // (the Mineral Scoop and Power Pellet additions widen the denominator
+    // from 27 to 34).
+    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 34) / (1 / 25), 2);
   });
 });
 

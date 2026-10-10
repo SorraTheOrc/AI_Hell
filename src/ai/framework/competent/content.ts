@@ -71,6 +71,7 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'phase_shift', value: 1 },
     { id: 'magnet', value: 1 },
     { id: 'mineral_scoop', value: 1 },
+    { id: 'power_pellet', value: 1.3 },
     { id: 'teleport', value: 0.9 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.

@@ -273,6 +273,7 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
       'extra_life',
       'magnet',
       'mineral_scoop',
+      'power_pellet',
     ] as const) {
       const icon = scene.add.graphics();
       drawPowerUpIcon(icon, type, 0, 0, 32);

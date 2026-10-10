@@ -1491,8 +1491,20 @@ export class GymFormationScene<
         entity.setAimTarget?.(this.player.x, this.player.y);
       }
 
+      // Power Pellet fright (AH-0MV1BIW95004POSX): offset the enemy away
+      // from the ship using the shared pure flee maths, then suppress its
+      // fire while the window is active. The game applies the identical
+      // shared helper, so the flee is gym↔game identical.
+      const flee = this._frightenedFleeOffset(entity.x, entity.y);
+      if (flee.x !== 0 || flee.y !== 0) {
+        entity.x += flee.x;
+        entity.y += flee.y;
+      }
+
       // Collect any bullets the entity fired this frame (uses the fresh aim).
-      this.bullets.push(...config.collectBullets(entity, this.time.now));
+      if (!this.isEnemyFrightened()) {
+        this.bullets.push(...config.collectBullets(entity, this.time.now));
+      }
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease every entity
