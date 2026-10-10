@@ -79,6 +79,9 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     // The Force Field turns incoming fire into offence and protects the ship:
     // value it just below the smart bomb (AH-0MV1BIX1W006XF95).
     { id: 'force_field', value: 1.3 },
+    // The Mystery UFO is a rare, purely economic bonus (minerals + score), so
+    // value it modestly above the neutral default (AH-0MV1BIXFO006Z1I7).
+    { id: 'mystery_ufo', value: 1.2 },
     { id: 'teleport', value: 0.9 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.

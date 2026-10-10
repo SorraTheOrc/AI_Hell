@@ -701,7 +701,13 @@ describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isPaused('GymPowerUpsUtility')).toBe(true);
     const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
-    expect(help.getEntries().map((e) => e.id)).toEqual(['speed_boost', 'extra_life', 'magnet', 'mineral_scoop']);
+    expect(help.getEntries().map((e) => e.id)).toEqual([
+      'speed_boost',
+      'extra_life',
+      'magnet',
+      'mineral_scoop',
+      'mystery_ufo',
+    ]);
   });
 
   it('AC4 — ? closes help and resumes the gym where it paused', async () => {
@@ -862,6 +868,35 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     registry.applyCollect('mineral_scoop', true);
     expect(registry.scoopStacks()).toBe(2);
     expect(registry.scoopEffectStacks()).toBe(2);
+  });
+
+  it('a Mystery UFO field pickup grants the mineral burst into the shared hold (AH-0MV1BIXFO006Z1I7)', async () => {
+    const scene = await bootPowerUps();
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Base burst = 2 minerals, 250 score (level 0).
+    expect(scene.getMineralHold().store).toBe(0);
+    scene.spawnDrop('mystery_ufo', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+
+    // The bounty is granted immediately into the gym's hold; the power-up
+    // levels up (permanent path) and leaves no timed or consumable state.
+    expect(scene.getMineralHold().store).toBe(2);
+    expect(player.getPowerUpLevelStore().getEffectiveLevel('mystery_ufo')).toBe(1);
+    expect(registry.isActive('mystery_ufo')).toBe(false);
+    expect(registry.remaining('mystery_ufo')).toBeUndefined();
+    expect(registry.activeEffects().some((e) => e.id === 'mystery_ufo')).toBe(false);
+    // A second drain is a no-op: the bounty is granted exactly once.
+    expect(registry.consumeMysteryBonus()).toBeNull();
+
+    // A second pickup grants the escalated (level-1) burst: +3 minerals.
+    scene.spawnDrop('mystery_ufo', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    expect(scene.getMineralHold().store).toBe(5);
   });
 
   it('a same-instance stop/restart clears the P10 scoop state and the field', async () => {

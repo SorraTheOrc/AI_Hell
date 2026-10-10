@@ -828,6 +828,76 @@ describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
   });
 });
 
+// ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+
+describe('Mystery UFO: instant mineral + score bounty (AH-0MV1BIXFO006Z1I7)', () => {
+  it('queues the base burst on collection and leaves no timed or stored state', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    reg.applyCollect('mystery_ufo');
+
+    // Base bounty (level 0): 2 minerals / 250 score.
+    expect(reg.consumeMysteryBonus()).toEqual({ minerals: 2, score: 250 });
+    // The pickup advances the run-scoped level (permanent reward path).
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
+    // No timed window and no consumable state.
+    expect(reg.isActive('mystery_ufo')).toBe(false);
+    expect(reg.remaining('mystery_ufo')).toBeUndefined();
+    expect(reg.activeEffects().some((e) => e.id === 'mystery_ufo')).toBe(false);
+    // Drained once — a second consume finds nothing.
+    expect(reg.consumeMysteryBonus()).toBeNull();
+  });
+
+  it('escalates the burst as the power-up levels up', () => {
+    const reg = new EffectsRegistry();
+
+    reg.applyCollect('mystery_ufo');
+    const first = reg.consumeMysteryBonus()!;
+    reg.applyCollect('mystery_ufo');
+    const second = reg.consumeMysteryBonus()!;
+
+    expect(second.minerals).toBeGreaterThan(first.minerals);
+    expect(second.score).toBeGreaterThan(first.score);
+    // The escalation tracks the shared level curve exactly.
+    expect(second.minerals).toBe(
+      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoMinerals!),
+    );
+    expect(second.score).toBe(
+      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoScore!),
+    );
+  });
+
+  it('accumulates repeated pickups before a drain and grants a permanent reward too', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+    reg.applyCollect('mystery_ufo');
+    const two = reg.consumeMysteryBonus()!;
+    expect(two.minerals).toBeGreaterThan(2);
+    expect(two.score).toBeGreaterThan(250);
+
+    // A hold-full reward also grants the bounty and becomes permanent.
+    reg.applyCollect('mystery_ufo', true);
+    expect(reg.consumeMysteryBonus()).not.toBeNull();
+  });
+
+  it('exposes the level-resolved next bounty and reset() clears the pending burst', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.mysteryUfoMinerals()).toBe(2);
+    expect(reg.mysteryUfoScore()).toBe(250);
+
+    reg.applyCollect('mystery_ufo');
+    expect(reg.mysteryUfoMinerals()).toBe(
+      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoMinerals!),
+    );
+
+    reg.reset();
+    expect(reg.consumeMysteryBonus()).toBeNull();
+    expect(reg.mysteryUfoMinerals()).toBe(2);
+    expect(reg.mysteryUfoScore()).toBe(250);
+  });
+});
+
 // ── Phase Shift ───────────────────────────────────────────────────
 
 describe('P6 Phase Shift: charge-based auto-trigger', () => {

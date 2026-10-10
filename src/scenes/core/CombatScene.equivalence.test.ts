@@ -2929,3 +2929,92 @@ describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', (
     }
   });
 });
+
+// ── Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7) ───────────
+
+describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('shares the single _applyPendingMysteryBonus drain across the game and the gym', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymPowerUpsUtility', GymPowerUpsUtility.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          prototype,
+          '_applyPendingMysteryBonus',
+        ),
+        `${name} must not define its own mystery-bonus drain`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)
+          ._applyPendingMysteryBonus,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)
+          ._applyPendingMysteryBonus,
+      );
+    }
+  });
+
+  it('grants the same instant mineral bounty in the game and the utility gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'mystery-play-host',
+    );
+    const gym = await bootScene([GymPowerUpsUtility], 'mystery-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymPowerUpsUtility;
+
+    // Clear the gym's random mineral field so only the mystery burst lands.
+    const gymMinerals = (gymScene as unknown as { minerals: Mineral[] })
+      .minerals;
+    for (const mineral of gymMinerals) mineral.destroy();
+    gymMinerals.length = 0;
+
+    const playBefore = playScene.getGameState().minerals;
+    const gymBefore = gymScene.getMineralHold().store;
+
+    const playDrop = playScene.spawnPowerUpDrop('mystery_ufo', 480, 270)!;
+    for (let i = 0; i < 40; i++) playDrop.powerUp.advance(0.05);
+    // Park the ship on the (possibly nudged) drop so the overlap is exact. The
+    // shared player step reads `_movementState` (not the display position), so
+    // both must agree, as the teleport parity tests above do.
+    const playPlayer = playScene.getPlayer()!;
+    playPlayer.setPosition(playDrop.x, playDrop.y);
+    const playState = playPlayer.getMovementState();
+    (
+      playPlayer as unknown as { _movementState: Record<string, unknown> }
+    )._movementState = {
+      ...playState,
+      x: playDrop.x,
+      y: playDrop.y,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+    playScene.tick(0.016);
+
+    gymScene.spawnDrop('mystery_ufo', 480, 270);
+    gymScene.advanceDrops(0.5);
+    gymScene.getPlayer()!.setPosition(480, 270);
+    gymScene.tick(1 / 60);
+
+    // Both grant the same base bounty (+2 minerals) and level up once.
+    expect(playScene.getGameState().minerals).toBe(playBefore + 2);
+    expect(gymScene.getMineralHold().store).toBe(gymBefore + 2);
+    expect(playScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
+    expect(gymScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
+    expect(playScene.getEffectsRegistry().mysteryUfoMinerals()).toBe(
+      gymScene.getEffectsRegistry().mysteryUfoMinerals(),
+    );
+    expect(playScene.getEffectsRegistry().mysteryUfoScore()).toBe(
+      gymScene.getEffectsRegistry().mysteryUfoScore(),
+    );
+  });
+});

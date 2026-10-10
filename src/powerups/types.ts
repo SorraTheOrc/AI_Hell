@@ -28,6 +28,11 @@
  *   its incoming direction as a player-owned bullet that damages enemies.
  *   A level-resolved reflect budget caps how many bullets one field returns
  *   before it stops reflecting; the bubble expires after its timed window.
+ * - **Mystery UFO** — Space Invaders-inspired instant bounty
+ *   (AH-0MV1BIXFO006Z1I7): collecting it immediately grants a level-resolved
+ *   burst of minerals (into the ship's hold) and score, and levels the
+ *   power-up so later pickups pay more. It has no timed window and stores no
+ *   consumable state; deliberately rare (weight 3, rarer than the standard 4).
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -45,7 +50,8 @@ export type PowerUpId =
   | 'mineral_scoop'
   | 'power_pellet'
   | 'smart_bomb'
-  | 'force_field';
+  | 'force_field'
+  | 'mystery_ufo';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -178,6 +184,14 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
       'Reflects enemy bullets back at their source for 8 s; the field returns a limited number of shots before it stops reflecting.',
     // Base bubble window (s); the level curve extends it (cap 18 s).
     duration: 8,
+  },
+  mystery_ufo: {
+    id: 'mystery_ufo',
+    name: 'Mystery UFO',
+    description:
+      'A rare Space Invaders-inspired bonus: instantly grants a burst of minerals and score. Each pickup levels it up so the next bounty is larger.',
+    // Instant, non-timed: no duration and no stored state; the reward is
+    // granted on collection and the level advances (AH-0MV1BIXFO006Z1I7).
   },
 };
 

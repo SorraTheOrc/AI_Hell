@@ -76,17 +76,17 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
     expect(spawner.next()).toBe('shield');
   });
 
-  it('gives P8 Extra Life a ≈ 3/40 share of power-up draws (≈1.9× its former 1/25)', () => {
+  it('gives P8 Extra Life a ≈ 3/43 share of power-up draws (≈1.7× its former 1/25)', () => {
     // Deterministic sweep RNG: sample evenly across [0, 1) so each id's count
     // is exactly proportional to its weight — no statistical noise and no seed
     // dependence. The sample count is a multiple of the combined pool weight
-    // (40 power-up + 22 weapon = 62), so every band boundary lands exactly.
+    // (43 power-up + 22 weapon = 65), so every band boundary lands exactly.
     const weightTotal = Object.values(DEFAULT_RULES.powerUpWeights).reduce(
       (a, b) => a + b,
       0,
     );
-    expect(weightTotal).toBe(40);
-    const SAMPLE_COUNT = 62_000;
+    expect(weightTotal).toBe(43);
+    const SAMPLE_COUNT = 65_000;
     let cursor = 0;
     const sweepRng = () => cursor++ / SAMPLE_COUNT;
     const spawner = buildDefaultDropSpawner(
@@ -104,15 +104,15 @@ describe('dropLayer — buildDefaultDropSpawner (AC1)', () => {
       if (id === 'extra_life') extraLives += 1;
     }
 
-    // Extra Life weight 3 of the 40 total power-up weight → exactly 3/40.
+    // Extra Life weight 3 of the 43 total power-up weight → exactly 3/43.
     const p8Share = extraLives / powerUps;
-    expect(p8Share).toBeCloseTo(3 / 40, 3);
+    expect(p8Share).toBeCloseTo(3 / 43, 3);
     // Tied to the shipped weight table (not a hard-coded expectation).
     expect(p8Share).toBeCloseTo(DEFAULT_RULES.powerUpWeights.extra_life / weightTotal, 3);
-    // Relative weight tripled (1 → 3): ≈ 1.9× the former 1/25 normalised share
-    // (the Mineral Scoop, Power Pellet, Smart Bomb and Force Field additions
-    // widen the denominator from 27 to 40).
-    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 40) / (1 / 25), 2);
+    // Relative weight tripled (1 → 3): ≈ 1.7× the former 1/25 normalised share
+    // (the Mineral Scoop, Power Pellet, Smart Bomb, Force Field and Mystery UFO
+    // additions widen the denominator from 27 to 43).
+    expect(p8Share / (1 / 25)).toBeCloseTo((3 / 43) / (1 / 25), 2);
   });
 });
 

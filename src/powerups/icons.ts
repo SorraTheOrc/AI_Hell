@@ -30,6 +30,7 @@ const ICON_COLORS: Record<PowerUpId, number> = {
   power_pellet: 0xfff45e, // bright amber — Pac-Man power pellet
   smart_bomb: 0xcc66ff, // electric violet — Defender smart-bomb starburst
   force_field: FORCE_FIELD_COLOR, // aquamarine — Gradius reflect bubble
+  mystery_ufo: 0xff2fd0, // neon magenta — Space Invaders mystery flying saucer
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -140,6 +141,9 @@ function _drawPowerUpIcon(
       break;
     case 'force_field':
       drawForceField(graphics, x, y, size);
+      break;
+    case 'mystery_ufo':
+      drawMysteryUfo(graphics, x, y, size);
       break;
   }
 }
@@ -451,6 +455,32 @@ function drawForceField(
   // Small bright core so the bubble reads as a charged field.
   g.fillStyle(ICON_COLORS.force_field, 1);
   g.fillCircle(x, y, s * 0.14);
+}
+
+/**
+ * Mystery UFO — a classic neon flying saucer (Space Invaders homage,
+ * AH-0MV1BIXFO006Z1I7): a wide saucer body with a domed cockpit and a
+ * row of under-lights, hinting at the rare high-value bonus it drops.
+ */
+function drawMysteryUfo(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Domed cockpit on top of the saucer body.
+  g.beginPath();
+  g.arc(x, y - s * 0.18, s * 0.38, Math.PI, 0, false);
+  g.strokePath();
+  // Wide saucer body: a filled ellipse with a stroked rim.
+  g.fillStyle(ICON_COLORS.mystery_ufo, 0.18);
+  g.fillEllipse(x, y + s * 0.15, s * 1.7, s * 0.5);
+  g.strokeEllipse(x, y + s * 0.15, s * 1.7, s * 0.5);
+  // A row of under-lights along the saucer rim.
+  g.fillStyle(ICON_COLORS.mystery_ufo, 1);
+  for (const lightX of [-0.5, -0.15, 0.15, 0.5]) {
+    g.fillCircle(x + s * lightX, y + s * 0.15, s * 0.06);
+  }
 }
 
 // ── Weapon power-up icons ──────────────────────────────────────────

@@ -4,6 +4,7 @@ import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
   DEFAULT_BEAT_BPM,
   DEFAULT_EXTRA_LIFE_WEIGHT,
+  DEFAULT_MYSTERY_UFO_WEIGHT,
   DEFAULT_POWER_PELLET_WEIGHT,
   DEFAULT_SMART_BOMB_WEIGHT,
   DEFAULT_MINERAL_COLLECT_AMOUNT,
@@ -49,7 +50,7 @@ describe('game rules configuration module', () => {
     it('gives standard IDs equal weight and makes P8 Extra Life, the Power Pellet and the Smart Bomb rarer', () => {
       const weights = DEFAULT_RULES.powerUpWeights;
       for (const id of POWER_UP_WEIGHT_IDS) {
-        if (id === 'extra_life' || id === 'power_pellet' || id === 'smart_bomb') continue;
+        if (id === 'extra_life' || id === 'power_pellet' || id === 'smart_bomb' || id === 'mystery_ufo') continue;
         expect(weights[id]).toBe(DEFAULT_STANDARD_POWER_UP_WEIGHT);
       }
       // AH-0MUNS3VAQ0023L1J: Extra Life raised from 1 to 3 (≈3× by weight) so Extra
@@ -71,6 +72,13 @@ describe('game rules configuration module', () => {
       expect(defaultPowerUpWeights().smart_bomb).toBe(2);
       expect(weights.smart_bomb).toBeLessThan(weights.shield);
       expect(weights.smart_bomb).toBeLessThan(weights.power_pellet);
+      // AH-0MV1BIXFO006Z1I7: the Mystery UFO is a rare economic bonus (3 vs 4),
+      // rarer than standard drops but not as rare as the Smart Bomb (2).
+      expect(DEFAULT_MYSTERY_UFO_WEIGHT).toBe(3);
+      expect(weights.mystery_ufo).toBe(3);
+      expect(defaultPowerUpWeights().mystery_ufo).toBe(3);
+      expect(weights.mystery_ufo).toBeLessThan(weights.shield);
+      expect(weights.mystery_ufo).toBeGreaterThan(weights.smart_bomb);
       // The standard and weapon weights are untouched by the Extra Life change.
       expect(DEFAULT_STANDARD_POWER_UP_WEIGHT).toBe(4);
       expect(DEFAULT_WEAPON_WEIGHT).toBe(2);
@@ -106,7 +114,7 @@ describe('game rules configuration module', () => {
         powerUpSpawnInterval: 5,
         beatBpm: 120,
         weaponSubdivisions: { cannon: 4, spread: 2, dual: 2, rapid: 8, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
-        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, power_pellet: 5, smart_bomb: 2, force_field: 4 },
+        powerUpWeights: { shield: 10, bomb: 9, speed_boost: 8, phase_shift: 7, teleport: 6, extra_life: 1, magnet: 5, mineral_scoop: 5, power_pellet: 5, smart_bomb: 2, force_field: 4, mystery_ufo: 3 },
         weaponWeights: {
           spread: 3,
           dual: 4,

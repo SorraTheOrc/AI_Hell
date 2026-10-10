@@ -87,6 +87,7 @@ import {
 import {
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
+  resolvePowerUpAtLevel,
   type PowerUpLevelStats,
 } from './powerUpLevels';
 import { FRIGHTEN_DEFAULT_DURATION } from '../scenes/core/frightenedState';
@@ -366,6 +367,16 @@ export class EffectsRegistry {
    */
   private _forceFieldRemaining = 0;
 
+  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ───────────────
+  /**
+   * Pending Mystery UFO instant bounty: accumulated when a `mystery_ufo` drop
+   * is collected and drained by the scene via {@link consumeMysteryBonus}
+   * (minerals into the ship's hold, score into the run total). `null` when no
+   * pickup is pending; cleared by {@link reset}. Repeated collections before a
+   * drain accumulate, so no pickup is lost.
+   */
+  private _mysteryBonus: { minerals: number; score: number } | null = null;
+
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
   private _store: PowerUpLevelStore;
@@ -541,11 +552,35 @@ export class EffectsRegistry {
           Math.floor(stats.forceFieldReflects ?? 3),
         );
         break;
+      case 'mystery_ufo':
+        // mystery_ufo: an instant mineral + score bounty (Space Invaders
+        // homage, AH-0MV1BIXFO006Z1I7). There is no timed window and no
+        // consumable state — the level-resolved burst is queued for the scene
+        // to grant immediately (minerals into the hold, score into the run
+        // total) via consumeMysteryBonus().
+        this._queueMysteryBonus(stats);
+        break;
       default:
         // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
         // the level store owns charges/stacks/lives.
         break;
     }
+  }
+
+  /**
+   * Accumulates the level-resolved Mystery UFO instant bounty (minerals +
+   * score) for the scene to drain via {@link consumeMysteryBonus}. Both
+   * components are rounded to whole numbers and clamped non-negative, so the
+   * hold and the score total only ever receive whole values.
+   */
+  private _queueMysteryBonus(stats: PowerUpLevelStats): void {
+    const minerals = Math.max(0, Math.round(stats.mysteryUfoMinerals ?? 0));
+    const score = Math.max(0, Math.round(stats.mysteryUfoScore ?? 0));
+    if (minerals === 0 && score === 0) return;
+    this._mysteryBonus = {
+      minerals: (this._mysteryBonus?.minerals ?? 0) + minerals,
+      score: (this._mysteryBonus?.score ?? 0) + score,
+    };
   }
 
   /** Starts a timed effect or refreshes it to the (possibly new) duration. */
@@ -730,6 +765,52 @@ export class EffectsRegistry {
    */
   forceFieldRadius(): number {
     return SHIP_SIZE * FORCE_FIELD_RADIUS_FACTOR;
+  }
+
+  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+
+  /**
+   * Drains and returns the accumulated Mystery UFO instant bounty
+   * (`{ minerals, score }`), or `null` when no pickup is pending.
+   *
+   * The scene applies the minerals to its hold and the score to its run total;
+   * the registry itself owns no hold or score, so the same code serves the
+   * game and every gym. The bounty is drained (not merely read) so a pickup is
+   * granted exactly once.
+   */
+  consumeMysteryBonus(): { minerals: number; score: number } | null {
+    const bonus = this._mysteryBonus;
+    this._mysteryBonus = null;
+    return bonus;
+  }
+
+  /**
+   * The level-resolved mineral bounty the next Mystery UFO pickup grants
+   * (whole minerals, non-negative). Surfaced for help/tests.
+   */
+  mysteryUfoMinerals(): number {
+    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
+    return Math.max(
+      0,
+      Math.round(
+        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoMinerals ??
+          0,
+      ),
+    );
+  }
+
+  /**
+   * The level-resolved score bounty the next Mystery UFO pickup grants
+   * (whole points, non-negative). Surfaced for help/tests.
+   */
+  mysteryUfoScore(): number {
+    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
+    return Math.max(
+      0,
+      Math.round(
+        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoScore ?? 0,
+      ),
+    );
   }
 
   /**
@@ -1315,6 +1396,7 @@ export class EffectsRegistry {
     this._smartBombPulseTimer = 0;
     this._smartBombPulsePending = false;
     this._forceFieldRemaining = 0;
+    this._mysteryBonus = null;
     this._levelStore.reset();
   }
 }

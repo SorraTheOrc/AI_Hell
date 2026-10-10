@@ -450,6 +450,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // permanent reward) so the remaining reflect budget is visible
         // (AH-0MV1BIX1W006XF95).
         return reg.isForceFieldActive();
+      case 'mystery_ufo':
+        // The Mystery UFO has no timed window, so show its row for as long as
+        // the player owns it (any collection advanced its level); the row
+        // renders the effective level and ∞ (AH-0MV1BIXFO006Z1I7).
+        return reg.powerUpLevel('mystery_ufo') > 0;
       default:
         return false;
     }

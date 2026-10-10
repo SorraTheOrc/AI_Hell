@@ -150,6 +150,14 @@ export const DEFAULT_POWER_PELLET_WEIGHT = 3;
  */
 export const DEFAULT_SMART_BOMB_WEIGHT = 2;
 
+/**
+ * Default relative weight for the Mystery UFO (AH-0MV1BIXFO006Z1I7). Rarer
+ * than a standard drop (3 vs 4): it is a high-value mineral/score bonus, not a
+ * combat tool, so it stays a special find without being as rare as the Smart
+ * Bomb (2).
+ */
+export const DEFAULT_MYSTERY_UFO_WEIGHT = 3;
+
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
@@ -166,6 +174,7 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'power_pellet',
   'smart_bomb',
   'force_field',
+  'mystery_ufo',
 ];
 
 /**
@@ -246,6 +255,8 @@ export function defaultPowerUpWeights(): PowerUpWeights {
       weights[id] = DEFAULT_POWER_PELLET_WEIGHT;
     } else if (id === 'smart_bomb') {
       weights[id] = DEFAULT_SMART_BOMB_WEIGHT;
+    } else if (id === 'mystery_ufo') {
+      weights[id] = DEFAULT_MYSTERY_UFO_WEIGHT;
     } else {
       weights[id] = DEFAULT_STANDARD_POWER_UP_WEIGHT;
     }

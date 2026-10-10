@@ -122,7 +122,11 @@ export type PowerUpLevelVariable =
   /** Force Field — bubble duration in seconds. */
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
-  | 'forceFieldReflects';
+  | 'forceFieldReflects'
+  /** Mystery UFO — minerals granted instantly by one pickup. */
+  | 'mysteryUfoMinerals'
+  /** Mystery UFO — score granted instantly by one pickup. */
+  | 'mysteryUfoScore';
 
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
@@ -147,6 +151,8 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'smartBombFrequency',
   'forceFieldDuration',
   'forceFieldReflects',
+  'mysteryUfoMinerals',
+  'mysteryUfoScore',
 ];
 
 /**
@@ -552,6 +558,46 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
+  // Mystery UFO — Space Invaders-inspired instant mineral/score bounty
+  // (AH-0MV1BIXFO006Z1I7). No timed window: the burst is granted on
+  // collection and the level scales the next bounty.
+  mystery_ufo: [
+    {
+      variable: 'mysteryUfoMinerals',
+      powerUpId: 'mystery_ufo',
+      label: 'Bonus minerals',
+      unit: '',
+      description: 'Minerals granted instantly by one Mystery UFO pickup.',
+      curve: 'exponential-saturation',
+      base: 2,
+      cap: 6,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'A small, capped mineral burst (2 → 6) accelerates the ship\'s hold ' +
+        'without flooding it; k=0.3 grants a third mineral at the first ' +
+        'upgrade, so early pickups feel rewarding before the curve flattens. ' +
+        'Discrete so the hold only ever receives whole minerals.',
+    },
+    {
+      variable: 'mysteryUfoScore',
+      powerUpId: 'mystery_ufo',
+      label: 'Bonus score',
+      unit: '',
+      description: 'Points granted instantly by one Mystery UFO pickup.',
+      curve: 'exponential-saturation',
+      base: 250,
+      cap: 1500,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'A 250-point base echoes the classic Space Invaders mystery-ship ' +
+        'bounty band; the 1500-point cap keeps a levelled bonus meaningful ' +
+        'but finite, and k=0.3 front-loads the first upgrade (~350 points). ' +
+        'Discrete so the run total stays whole.',
+    },
+  ],
+
   // Force Field — Gradius-inspired timed bullet reflector (AH-0MV1BIX1W006XF95).
   force_field: [
     {
@@ -609,6 +655,7 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'power_pellet',
   'smart_bomb',
   'force_field',
+  'mystery_ufo',
 ];
 
 // ── Resolved stats ──────────────────────────────────────────────────
@@ -668,6 +715,10 @@ export interface PowerUpLevelStats {
   forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
+  /** Mystery UFO — minerals granted instantly by one pickup. */
+  mysteryUfoMinerals?: number;
+  /** Mystery UFO — score granted instantly by one pickup. */
+  mysteryUfoScore?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────

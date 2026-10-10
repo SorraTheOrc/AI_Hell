@@ -481,6 +481,27 @@ export class CombatCoreScene<
    */
   protected onWeaponCollected(_drop: TDrop): void {}
 
+  /**
+   * Drains and applies any pending Mystery UFO instant bounty
+   * (AH-0MV1BIXFO006Z1I7) from the shared effects registry through the
+   * supplied scene sinks: minerals into the ship's hold, score into the run
+   * total. Defined once here so the game and every gym grant the bounty
+   * through the same code; a scene with no score system may omit `addScore`.
+   *
+   * @param sinks — the scene's hold/score mutators.
+   * @returns true when a bounty was pending and applied.
+   */
+  protected _applyPendingMysteryBonus(sinks: {
+    addMinerals: (amount: number) => void;
+    addScore?: (amount: number) => void;
+  }): boolean {
+    const bonus = this.getEffectsRegistry().consumeMysteryBonus();
+    if (!bonus) return false;
+    if (bonus.minerals > 0) sinks.addMinerals(bonus.minerals);
+    if (bonus.score > 0) sinks.addScore?.(bonus.score);
+    return true;
+  }
+
   // ── Shared template methods ───────────────────────────────────────
 
   /**

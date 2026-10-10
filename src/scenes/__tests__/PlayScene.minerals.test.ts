@@ -62,6 +62,41 @@ describe('PlayScene mineral wiring', () => {
     expect(scene.getGameState().minerals).toBe(before + 1);
   });
 
+  it('a Mystery UFO pickup grants an instant mineral + score bounty (AH-0MV1BIXFO006Z1I7)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const gs = scene.getGameState();
+    const mineralsBefore = gs.minerals;
+    const scoreBefore = gs.score;
+
+    const drop = scene.spawnPowerUpDrop('mystery_ufo', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+
+    // Base bounty (level 0): +2 minerals into the hold, +250 score; the
+    // power-up levels up and leaves no timed/consumable state behind.
+    expect(gs.minerals).toBe(mineralsBefore + 2);
+    expect(gs.score).toBe(scoreBefore + 250);
+    expect(player.getPowerUpLevel('mystery_ufo')).toBe(1);
+    expect(scene.getEffectsRegistry().isActive('mystery_ufo')).toBe(false);
+  });
+
+  it('a Mystery UFO burst that fills the hold opens the hold-full choice (AH-0MV1BIXFO006Z1I7)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const gs = scene.getGameState();
+    gs.mineralCapacity = 2; // the base 2-mineral burst fills the hold exactly
+
+    const drop = scene.spawnPowerUpDrop('mystery_ufo', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+
+    expect(gs.minerals).toBe(2);
+    expect(gs.isHoldFull()).toBe(true);
+  });
+
   it('AC5 — the shared P10 scoop pulls an in-range mineral toward the ship', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;

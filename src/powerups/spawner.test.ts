@@ -138,7 +138,7 @@ describe('WeightedRandomSpawner: runtime weight mutation', () => {
     s.setWeight('magnet', 0.2);
 
     const N = 10_000;
-    const counts: Record<PowerUpId, number> = { shield: 0, bomb: 0, speed_boost: 0, phase_shift: 0, teleport: 0, extra_life: 0, magnet: 0, mineral_scoop: 0, power_pellet: 0, smart_bomb: 0, force_field: 0 };
+    const counts: Record<PowerUpId, number> = { shield: 0, bomb: 0, speed_boost: 0, phase_shift: 0, teleport: 0, extra_life: 0, magnet: 0, mineral_scoop: 0, power_pellet: 0, smart_bomb: 0, force_field: 0, mystery_ufo: 0 };
     for (let i = 0; i < N; i++) {
       counts[s.next()] += 1;
     }

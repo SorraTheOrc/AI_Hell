@@ -38,6 +38,7 @@ describe('power-up choice strategy', () => {
         'power_pellet',
         'smart_bomb',
         'force_field',
+        'mystery_ufo',
         'dual',
         'rapid',
         'spread',
@@ -68,6 +69,10 @@ describe('power-up choice strategy', () => {
 
   it('includes the Force Field in the hold-full choice pool (AH-0MV1BIX1W006XF95)', () => {
     expect(CHOICE_POOL).toContain('force_field');
+  });
+
+  it('includes the Mystery UFO in the hold-full choice pool (AH-0MV1BIXFO006Z1I7)', () => {
+    expect(CHOICE_POOL).toContain('mystery_ufo');
   });
 
   it('the default strategy offers three distinct options from the pool', () => {
