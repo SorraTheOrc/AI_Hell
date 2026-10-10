@@ -351,18 +351,24 @@ model.
   collected as a field drop; a hold-full reward raises the permanent level and
   the pulse repeats on a levelled interval (permanent), mirroring the Bomb's
   single-explosion vs periodic-pulse design.
-- `powerUpLevels.ts` variables: **Pulse damage** (`smartBombDamage`, base 1 →
-  cap 3, k=0.3) and **Pulse rate** (`smartBombFrequency`, base 0.2/s → cap
-  0.5/s, k=0.3, used only when permanent) — a new `PowerUpLevelVariable` pair.
+- `powerUpLevels.ts` variables: **Pulse radius** (`aoeRadius`, base 1200 px →
+  cap 2400 px, k=0.3 — the base already covers the 960×540 field diagonal
+  ≈ 1102 px, so the pulse is screen-wide while remaining finite), **Pulse
+  damage** (`smartBombDamage`, base 1 → cap 3, k=0.3) and **Pulse rate**
+  (`smartBombFrequency`, base 0.2/s → cap 0.5/s, k=0.3, used only when
+  permanent) — a new `PowerUpLevelVariable` trio.
 - Code-drawn icon: a neon starburst inside a ring (added to
   `src/powerups/icons.ts`).
 - `powerUpWeights` drop weight: **2** (rare — the strongest defensive pickup)
   in `src/core/rules.ts`.
-- Seam: **new shared combat-core dispatch seam** — a screen-wide once-per-
-  activation pulse (clear all enemy bullets + one hit to every enemy) hoisted
-  into the shared core so the game and every gym resolve it identically; the
-  AOE `AoEDescriptor` is radius-bound and is not reused for a screen-wide
-  effect.
+- Seam: **reuses the existing `AoEDescriptor`/`AoETrigger` area seam** — the
+  pulse is a screen-wide `AoEDescriptor` (`trigger: 'screenPulse'`,
+  `damagesEnemies: true`, `clearsEnemyBullets: true`, `damage`), resolved by
+  the shared `CombatScene.applyAoEDescriptor` used by Nova/Mortar/Arc. The
+  finite screen-covering radius (1200 px base) expresses "screen-wide" through
+  the same radius-bound geometry the AOE weapons use, so there is no parallel
+  area-effect implementation. A `'screenPulse'` `AoETrigger` value records the
+  non-weapon, once-per-activation timing.
 
 **Balance / coverage:** Does not destroy multi-hit enemies, keeps the Bomb
 distinct (Bomb = bullets only, Smart Bomb = bullets + one hit) and is the
@@ -502,7 +508,7 @@ one-line deferral reason so the pool can be revisited.
 | Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
 | Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
 | Pac-Man power pellet | power-up | `PowerUpId: 'power_pellet'` / `POWER_UP_CATALOGUE` | — | New shared enemy-status (frightened) seam | `frightenDuration`, `frightenSpeedMultiplier` | `GymPowerUpsCombat` |
-| Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | New shared screen-wide pulse seam | `smartBombDamage`, `smartBombFrequency` | `GymPowerUpsCombat` |
+| Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | Existing `AoEDescriptor`/`AoETrigger` seam (`screenPulse`) | `aoeRadius`, `smartBombDamage`, `smartBombFrequency` | `GymPowerUpsCombat` |
 | Gradius force field | power-up | `PowerUpId: 'force_field'` / `POWER_UP_CATALOGUE` | — | New shared bullet-reflection seam | `forceFieldDuration`, `forceFieldReflects` | `GymPowerUpsCombat` |
 | Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | None — catalogue entry + `EffectsRegistry` | `mysteryUfoMinerals`, `mysteryUfoScore` | `GymPowerUpsUtility` |
 

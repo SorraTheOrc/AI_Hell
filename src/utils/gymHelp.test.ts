@@ -73,7 +73,7 @@ describe('gymHelp — catalogue descriptions are the single source of truth (AC3
 
 describe('gymHelp — id → { name, description, drawIcon } lookup', () => {
   it('resolves power-up rows from POWER_UP_CATALOGUE', () => {
-    const ids: PowerUpId[] = ['shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet', 'mineral_scoop', 'power_pellet'];
+    const ids: PowerUpId[] = ['shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet', 'mineral_scoop', 'power_pellet', 'smart_bomb'];
     for (const id of ids) {
       const help = getHelpEntry(id);
       expect(help.id).toBe(id);
@@ -127,7 +127,7 @@ describe('gymHelp — every resolved entry draws a code-drawn icon', () => {
     booted = await bootScene([BareScene]);
     const graphics = (booted.scene as Phaser.Scene).add.graphics();
     const drops: HelpDropId[] = [
-      'shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet', 'mineral_scoop', 'power_pellet',
+      'shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'extra_life', 'magnet', 'mineral_scoop', 'power_pellet', 'smart_bomb',
       'cannon', 'spread', 'dual', 'rapid', 'reset',
     ];
     for (const id of drops) {

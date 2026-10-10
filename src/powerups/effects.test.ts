@@ -658,6 +658,83 @@ describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y
   });
 });
 
+// ── Smart Bomb (AH-0MV1BIWP9003EHRQ) ──────────────────────────────
+
+describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)', () => {
+  it('a field pickup queues exactly one pulse and leaves no permanent state', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('smart_bomb');
+
+    expect(reg.isSmartBombPermanent()).toBe(false);
+    expect(reg.activeEffects()).toHaveLength(0);
+    expect(store.getLevel('smart_bomb')).toBe(1);
+
+    // The queued pulse fires once, then never again.
+    expect(reg.updateSmartBomb(0.016)).toBe(true);
+    expect(reg.updateSmartBomb(10)).toBe(false);
+    expect(reg.updateSmartBomb(10)).toBe(false);
+  });
+
+  it('a hold-full reward is permanent: immediate pulse then the resolved interval', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb', true);
+    expect(reg.isSmartBombPermanent()).toBe(true);
+    expect(
+      reg.activeEffects().some((e) => e.id === 'smart_bomb' && e.permanent),
+    ).toBe(true);
+
+    const interval = reg.smartBombInterval();
+    expect(interval).toBeCloseTo(
+      1 / resolvePowerUpAtLevel('smart_bomb', 0).smartBombFrequency!,
+      10,
+    );
+
+    expect(reg.updateSmartBomb(0.016)).toBe(true); // immediate
+    expect(reg.updateSmartBomb(interval - 0.1)).toBe(false);
+    expect(reg.updateSmartBomb(0.2)).toBe(true); // interval elapsed
+  });
+
+  it('resolves aoeRadius/smartBombDamage/smartBombFrequency live so a level-up strengthens later pulses', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb');
+    const base = reg.smartBombAoe();
+    const baseInterval = reg.smartBombInterval();
+
+    reg.applyCollect('smart_bomb');
+
+    const levelled = reg.smartBombAoe();
+    expect(levelled.radius).toBeGreaterThan(base.radius);
+    expect(levelled.damage).toBeGreaterThanOrEqual(base.damage!);
+    expect(reg.smartBombInterval()).toBeLessThan(baseInterval);
+  });
+
+  it('smartBombAoe() exposes the shared AoEDescriptor shape (damage + clear flags)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb');
+
+    const aoe = reg.smartBombAoe();
+    expect(aoe.trigger).toBe('screenPulse');
+    expect(aoe.damagesEnemies).toBe(true);
+    expect(aoe.clearsEnemyBullets).toBe(true);
+    expect(aoe.damage).toBe(1);
+    expect(aoe.radius).toBe(
+      resolvePowerUpAtLevel('smart_bomb', 0).aoeRadius,
+    );
+  });
+
+  it('reset() clears the permanent flag and any pending pulse', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb', true);
+
+    reg.reset();
+
+    expect(reg.isSmartBombPermanent()).toBe(false);
+    expect(reg.activeEffects().some((e) => e.id === 'smart_bomb')).toBe(false);
+    expect(reg.updateSmartBomb(1)).toBe(false);
+  });
+});
+
 // ── Phase Shift ───────────────────────────────────────────────────
 
 describe('P6 Phase Shift: charge-based auto-trigger', () => {

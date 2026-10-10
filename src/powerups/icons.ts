@@ -27,6 +27,7 @@ const ICON_COLORS: Record<PowerUpId, number> = {
   magnet: 0xb57bff, // purple — magnet
   mineral_scoop: 0x33ff99, // neon green — mineral scoop
   power_pellet: 0xfff45e, // bright amber — Pac-Man power pellet
+  smart_bomb: 0xcc66ff, // electric violet — Defender smart-bomb starburst
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -131,6 +132,9 @@ function _drawPowerUpIcon(
       break;
     case 'power_pellet':
       drawPowerPellet(graphics, x, y, size);
+      break;
+    case 'smart_bomb':
+      drawSmartBomb(graphics, x, y, size);
       break;
   }
 }
@@ -367,6 +371,37 @@ function drawPowerPellet(
   // Filled pellet core (the bright power pellet itself).
   g.fillStyle(ICON_COLORS.power_pellet, 1);
   g.fillCircle(x, y, s * 0.42);
+}
+
+/**
+ * Smart Bomb — a neon starburst inside a ring: the screen-wide pulse
+ * (Defender adaptation, AH-0MV1BIWP9003EHRQ). The ring echoes the pulse
+ * wavefront, the radiating spokes the screen-clearing burst.
+ */
+function drawSmartBomb(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Outer pulse ring.
+  g.beginPath();
+  g.arc(x, y, s * 0.85, 0, Math.PI * 2);
+  g.strokePath();
+  // Eight radiating spokes (a starburst); alternating long/short so the
+  // silhouette reads as a burst rather than a plain asterisk.
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const inner = s * 0.3;
+    const outer = s * (i % 2 === 0 ? 0.72 : 0.55);
+    g.beginPath();
+    g.moveTo(x + Math.cos(angle) * inner, y + Math.sin(angle) * inner);
+    g.lineTo(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer);
+    g.strokePath();
+  }
+  // Bright core.
+  g.fillStyle(ICON_COLORS.smart_bomb, 1);
+  g.fillCircle(x, y, s * 0.22);
 }
 
 // ── Weapon power-up icons ──────────────────────────────────────────

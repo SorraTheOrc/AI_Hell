@@ -24,7 +24,7 @@ import { advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { isOnGrid } from '../../utils/beat';
-import { WEAPON_CATALOGUE, type WeaponDefinition } from '../../utils/weapons';
+import { WEAPON_CATALOGUE, type AoEDescriptor, type WeaponDefinition } from '../../utils/weapons';
 import {
   CombatScene,
   type CombatDrop,
@@ -64,7 +64,7 @@ class StubEnemy extends Phaser.GameObjects.Container implements CombatEnemyEntit
 
 /** Multi-hit enemy mirroring the Harvester (E7) takeDamage seam. */
 class ToughEnemy extends StubEnemy {
-  private health: number;
+  health: number;
   damageCalls = 0;
   destructionAudioCalls = 0;
 
@@ -195,6 +195,9 @@ class AoeStubScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   }
   runApplyAoe(def: WeaponDefinition, x: number, y: number): void {
     this.applyAoeEffect(def, x, y);
+  }
+  runApplyAoeDescriptor(aoe: AoEDescriptor, x: number, y: number): void {
+    this.applyAoEDescriptor(aoe, x, y);
   }
   runOnAoeProjectileSpawned(bullet: PlayerBullet, def: WeaponDefinition): void {
     this.onAoeProjectileSpawned(bullet, def);
@@ -778,5 +781,91 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     // The chain is empty → no damage and no chain VFX to draw.
     expect(scene.getAoeEffects()).toHaveLength(0);
     expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
+  });
+});
+
+// ── Smart Bomb screen-pulse descriptor seam (AH-0MV1BIWP9003EHRQ) ─────
+//
+// The Defender Smart Bomb resolves its screen-wide pulse through the SAME
+// `AoEDescriptor` / `applyAoEDescriptor` seam as the AOE weapons, so these
+// tests pin that shared path: one descriptor application damages every enemy
+// in range for `damage` HP, clears every bullet in range, and reports the
+// origin/radius to the boss hook.
+
+describe('Smart Bomb screen pulse reuses the AOE descriptor seam (AH-0MV1BIWP9003EHRQ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<AoeStubScene> {
+    booted = await bootScene([AoeStubScene]);
+    return booted.scene as AoeStubScene;
+  }
+
+  /** The screen-wide descriptor shape the Smart Bomb resolves. */
+  const screenPulse = (
+    radius: number,
+    damage = 1,
+  ): AoEDescriptor => ({
+    trigger: 'screenPulse',
+    radius,
+    damagesEnemies: true,
+    clearsEnemyBullets: true,
+    damage,
+  });
+
+  it('damages every on-screen enemy exactly once and leaves an off-screen enemy untouched', async () => {
+    const scene = await boot();
+    const onScreenA = new ToughEnemy(scene, 300, 200, 3);
+    const onScreenB = new ToughEnemy(scene, 700, 350, 3);
+    const offScreen = new ToughEnemy(scene, 5000, 5000, 3);
+    scene.entities.push(onScreenA, onScreenB, offScreen);
+
+    // 1200 px base pulse radius covers the whole 960×540 field but not (5000,5000).
+    scene.runApplyAoeDescriptor(screenPulse(1200), 480, 270);
+
+    expect(onScreenA.damageCalls).toBe(1); // exactly one damage instance
+    expect(onScreenB.damageCalls).toBe(1);
+    expect(offScreen.damageCalls).toBe(0);
+  });
+
+  it('applies the descriptor damage count per enemy (multi-hit chip)', async () => {
+    const scene = await boot();
+    const tough = new ToughEnemy(scene, 480, 270, 5);
+    scene.entities.push(tough);
+
+    scene.runApplyAoeDescriptor(screenPulse(1200, 2), 480, 270);
+
+    expect(tough.damageCalls).toBe(2);
+    expect(tough.health).toBe(3);
+  });
+
+  it('clears every enemy bullet in range and keeps an out-of-range bullet', async () => {
+    const scene = await boot();
+    const inside = new StubBullet(scene, 480, 270);
+    const farInside = new StubBullet(scene, 900, 500);
+    const outside = new StubBullet(scene, 5000, 5000);
+    scene.bullets.push(inside, farInside, outside);
+
+    scene.runApplyAoeDescriptor(screenPulse(1200), 480, 270);
+
+    expect(scene.bullets).toEqual([outside]);
+    expect(inside.graphics.active).toBe(false);
+    expect(farInside.graphics.active).toBe(false);
+    expect(outside.graphics.active).toBe(true);
+  });
+
+  it('reports the pulse origin and radius to the shared boss hook', async () => {
+    const scene = await boot();
+    scene.bossPresent = true;
+
+    scene.runApplyAoeDescriptor(screenPulse(1200), 480, 270);
+
+    expect(scene.hooks).toContain('onAoeHitsBoss:480,270,1200');
+    expect(scene.bossHitCount).toBe(1);
   });
 });

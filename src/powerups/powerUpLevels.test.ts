@@ -103,6 +103,12 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.power_pellet[0].cap).toBe(14); // fright window cap (s)
     expect(POWER_UP_LEVEL_SPECS.power_pellet[1].base).toBe(1); // flee multiplier
     expect(POWER_UP_LEVEL_SPECS.power_pellet[1].cap).toBe(1.8); // flee multiplier cap
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].base).toBe(1200); // pulse radius (px)
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].cap).toBe(2400); // pulse radius cap (px)
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].base).toBe(1); // pulse damage
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].cap).toBe(3); // pulse damage cap
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].base).toBe(0.2); // pulse rate (/s)
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].cap).toBe(0.5); // pulse rate cap (/s)
   });
 
   it('Power Pellet fright variables resolve monotonically within their caps (AC7)', () => {
@@ -114,6 +120,44 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
       let previous = -Infinity;
       for (let level = 0; level <= 50; level++) {
         const value = resolvePowerUpAtLevel('power_pellet', level)[variable]!;
+        expect(value).toBeGreaterThanOrEqual(previous);
+        expect(value).toBeLessThanOrEqual(spec.cap);
+        expect(value).toBeGreaterThanOrEqual(spec.base);
+        previous = value;
+      }
+      expect(previous).toBeGreaterThan(spec.base);
+    }
+  });
+
+  it('Smart Bomb aoeRadius resolves monotonically within its cap (AH-0MV1BIWP9003EHRQ AC6)', () => {
+    const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+      (s) => s.variable === 'aoeRadius',
+    )!;
+    let previous = -Infinity;
+    for (let level = 0; level <= 50; level++) {
+      const value = resolvePowerUpAtLevel('smart_bomb', level).aoeRadius!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(spec.cap);
+      expect(value).toBeGreaterThanOrEqual(spec.base);
+      previous = value;
+    }
+    // The pulse strictly grows past its base (a meaningful axis).
+    expect(previous).toBeGreaterThan(spec.base);
+    // The base radius already covers the 960×540 field (diagonal ≈ 1102 px),
+    // so the pulse is screen-wide from the first pickup while remaining finite
+    // (off-screen targets beyond the cap are unaffected).
+    expect(spec.base).toBeGreaterThan(Math.hypot(960, 540));
+  });
+
+  it('Smart Bomb damage and frequency resolve monotonically within their caps (AH-0MV1BIWP9003EHRQ)', () => {
+    const variables = ['smartBombDamage', 'smartBombFrequency'] as const;
+    for (const variable of variables) {
+      const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+        (s) => s.variable === variable,
+      )!;
+      let previous = -Infinity;
+      for (let level = 0; level <= 50; level++) {
+        const value = resolvePowerUpAtLevel('smart_bomb', level)[variable]!;
         expect(value).toBeGreaterThanOrEqual(previous);
         expect(value).toBeLessThanOrEqual(spec.cap);
         expect(value).toBeGreaterThanOrEqual(spec.base);

@@ -88,7 +88,7 @@ import {
   type PowerUpLevelStats,
 } from './powerUpLevels';
 import { FRIGHTEN_DEFAULT_DURATION } from '../scenes/core/frightenedState';
-import type { WeaponId } from '../utils/weapons';
+import type { AoEDescriptor, WeaponId } from '../utils/weapons';
 
 // Re-export the magnet tuning values for convenience.
 export {
@@ -339,6 +339,22 @@ export class EffectsRegistry {
    */
   private _bombPulsePending = false;
 
+  // ── Smart Bomb screen-pulse state (AH-0MV1BIWP9003EHRQ) ──────────────
+  /**
+   * True when a hold-full Smart Bomb granted a permanent pulse for the run:
+   * it never expires and pulses every {@link smartBombInterval} seconds.
+   * Cleared only by `reset()`.
+   */
+  private _smartBombPermanent = false;
+  /** Seconds until the next permanent smart-bomb pulse (unused when not permanent). */
+  private _smartBombPulseTimer = 0;
+  /**
+   * One-shot pulse request queued by a field pickup: the next
+   * {@link updateSmartBomb} fires exactly once and clears it. A field pickup
+   * stores no other persistent state (mirrors the Bomb).
+   */
+  private _smartBombPulsePending = false;
+
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
   private _store: PowerUpLevelStore;
@@ -486,6 +502,16 @@ export class EffectsRegistry {
         if (permanent) {
           this._bombPermanent = true;
           this._bombPulseTimer = this.bombInterval();
+        }
+        break;
+      case 'smart_bomb':
+        // smart_bomb: a field pickup queues one screen-wide pulse; the
+        // hold-full reward additionally makes it permanent and pulses
+        // immediately (mirrors the Bomb; AH-0MV1BIWP9003EHRQ).
+        this._smartBombPulsePending = true;
+        if (permanent) {
+          this._smartBombPermanent = true;
+          this._smartBombPulseTimer = this.smartBombInterval();
         }
         break;
       default:
@@ -696,6 +722,85 @@ export class EffectsRegistry {
     this._bombPulseTimer -= dt;
     if (this._bombPulseTimer <= 0) {
       this._bombPulseTimer = this.bombInterval();
+      return true;
+    }
+    return false;
+  }
+
+  // ── Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ) ────────────────────
+
+  /** Whether a permanent (hold-full) Smart Bomb is active for the run. */
+  isSmartBombPermanent(): boolean {
+    return this._smartBombPermanent;
+  }
+
+  /**
+   * The resolved Smart Bomb pulse rate in pulses per second at the current
+   * level. Resolved live, so a level-up mid-run quickens every subsequent
+   * pulse.
+   */
+  smartBombFrequency(): number {
+    return this._levelStore.stats('smart_bomb').smartBombFrequency ?? 0.2;
+  }
+
+  /**
+   * The resolved Smart Bomb pulse interval in seconds (`1 / frequency`). The
+   * model stores a monotonic pulses/second rate; the effect inverts it.
+   */
+  smartBombInterval(): number {
+    const frequency = this.smartBombFrequency();
+    return frequency > 0 ? 1 / frequency : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * The shared {@link AoEDescriptor} describing one Smart Bomb pulse: a
+   * screen-wide (`aoeRadius`) area that damages every enemy once for the
+   * level-resolved `smartBombDamage` and clears every enemy bullet.
+   *
+   * Building the descriptor here (rather than hand-rolling an area effect in
+   * the scene) means the pulse resolves through the **same** AOE seam as the
+   * Nova/Mortar/Arc weapons — one target-selection and damage implementation,
+   * shared by the game and every gym (AC5). The `'screenPulse'` trigger marks
+   * it as a non-weapon, once-per-activation resolution.
+   */
+  smartBombAoe(): AoEDescriptor {
+    const stats = this._levelStore.stats('smart_bomb');
+    return {
+      trigger: 'screenPulse',
+      radius: stats.aoeRadius ?? 1200,
+      damagesEnemies: true,
+      clearsEnemyBullets: true,
+      damage: Math.max(1, Math.floor(stats.smartBombDamage ?? 1)),
+    };
+  }
+
+  /**
+   * Advances the Smart Bomb pulse state by `dt` and reports whether a pulse
+   * is due this frame.
+   *
+   * - A field-pickup request fires exactly once and is then gone.
+   * - A permanent smart bomb fires immediately on grant and then once per
+   *   {@link smartBombInterval} seconds for the rest of the run.
+   *
+   * The registry owns the decision; the shared combat core performs the
+   * screen-wide clear/damage through {@link smartBombAoe} so the game and
+   * every gym run the same code.
+   *
+   * @param dt - Frame delta in seconds.
+   * @returns True when a pulse should be applied this frame.
+   */
+  updateSmartBomb(dt: number): boolean {
+    if (this._smartBombPulsePending) {
+      this._smartBombPulsePending = false;
+      if (this._smartBombPermanent) {
+        this._smartBombPulseTimer = this.smartBombInterval();
+      }
+      return true;
+    }
+    if (!this._smartBombPermanent) return false;
+    this._smartBombPulseTimer -= dt;
+    if (this._smartBombPulseTimer <= 0) {
+      this._smartBombPulseTimer = this.smartBombInterval();
       return true;
     }
     return false;
@@ -1075,6 +1180,15 @@ export class EffectsRegistry {
         permanent: true,
       });
     }
+    // A permanent Smart Bomb likewise renders one run-scoped row; a field
+    // pickup leaves no row (AH-0MV1BIWP9003EHRQ).
+    if (this._smartBombPermanent) {
+      result.push({
+        id: 'smart_bomb' as PowerUpId,
+        type: 'smart_bomb',
+        permanent: true,
+      });
+    }
     const teleportStacks = this._levelStore.teleportStacks();
     if (teleportStacks > 0) {
       result.push({
@@ -1119,6 +1233,9 @@ export class EffectsRegistry {
     this._bombPermanent = false;
     this._bombPulseTimer = 0;
     this._bombPulsePending = false;
+    this._smartBombPermanent = false;
+    this._smartBombPulseTimer = 0;
+    this._smartBombPulsePending = false;
     this._levelStore.reset();
   }
 }

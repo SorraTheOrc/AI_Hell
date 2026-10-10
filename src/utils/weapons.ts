@@ -84,8 +84,12 @@ export type WeaponId =
  * - `'onRandom'` — the area resolves immediately at one or more points
  *   sampled uniformly at random within the weapon's effective range, centred
  *   on the ship (no travelling shot, no forward bias; e.g. the Mortar).
+ * - `'screenPulse'` — a non-weapon, once-per-activation screen-wide pulse
+ *   (the Defender Smart Bomb power-up, AH-0MV1BIWP9003EHRQ). It is resolved
+ *   by the shared power-up pulse path via {@link AoEDescriptor}, reusing the
+ *   same target-selection and effect-application seam as the AOE weapons.
  */
-export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom';
+export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom' | 'screenPulse';
 
 /**
  * Declarative orbit-emitter descriptor attached to the Gradius Options weapon
@@ -119,6 +123,13 @@ export interface AoEDescriptor {
   damagesEnemies: boolean;
   /** Whether the effect clears enemy bullets inside the radius. */
   clearsEnemyBullets: boolean;
+  /**
+   * Hit points each affected enemy takes per resolution (default 1). The
+   * AOE weapons omit this (one hit per blast); the Defender Smart Bomb
+   * resolves a level-derived value so a single screen pulse can chip a
+   * multi-hit enemy harder (AH-0MV1BIWP9003EHRQ).
+   */
+  damage?: number;
   /**
    * Maximum number of additional targets an `'onFire'` effect may chain to
    * after the primary target (0/undefined = no chaining). Reserved for the

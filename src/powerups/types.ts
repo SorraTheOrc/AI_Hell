@@ -19,6 +19,10 @@
  * - **Power Pellet** — Pac-Man-inspired timed fright window: every live
  *   enemy flees the ship and suppresses fire; ramming a frightened enemy
  *   destroys it without damaging the ship (timed)
+ * - **Smart Bomb** — Defender-inspired stored screen-wide pulse: a field
+ *   pickup fires one screen-clearing blast (damages every enemy once and
+ *   clears every enemy bullet); a hold-full reward makes the pulse repeat on
+ *   a level-resolved interval (stored → permanent)
  *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
@@ -34,7 +38,8 @@ export type PowerUpId =
   | 'extra_life'
   | 'magnet'
   | 'mineral_scoop'
-  | 'power_pellet';
+  | 'power_pellet'
+  | 'smart_bomb';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -154,10 +159,16 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Base fright window (s); the level curve extends it (cap 14 s).
     duration: 6,
   },
+  smart_bomb: {
+    id: 'smart_bomb',
+    name: 'Smart Bomb',
+    description:
+      'Fires a screen-wide pulse that damages every enemy once and clears every enemy bullet; a field pickup fires once, a hold-full reward pulses.',
+  },
 };
 
 /** Power-up IDs cycled by the combat gym round-robin spawner. */
-export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport', 'power_pellet'] as const;
+export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport', 'power_pellet', 'smart_bomb'] as const;
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

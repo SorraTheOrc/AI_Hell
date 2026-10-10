@@ -72,6 +72,10 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'magnet', value: 1 },
     { id: 'mineral_scoop', value: 1 },
     { id: 'power_pellet', value: 1.3 },
+    // The Smart Bomb is a rare but potent screen-clearing panic button: value
+    // it highly so the bot prioritises it over ordinary drops
+    // (AH-0MV1BIWP9003EHRQ).
+    { id: 'smart_bomb', value: 1.4 },
     { id: 'teleport', value: 0.9 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.

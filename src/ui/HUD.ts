@@ -441,6 +441,10 @@ export class HUD extends Phaser.GameObjects.Container {
         // The fright window is a global enemy debuff; show its row while the
         // window (temporary or permanent) is active (AH-0MV1BIW95004POSX).
         return reg.isActive('power_pellet');
+      case 'smart_bomb':
+        // A permanent (hold-full) Smart Bomb is a run-scoped active effect; a
+        // field pickup is a one-shot and leaves no row (AH-0MV1BIWP9003EHRQ).
+        return reg.isSmartBombPermanent();
       default:
         return false;
     }

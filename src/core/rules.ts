@@ -60,7 +60,7 @@ export interface GameRules {
    */
   weaponSubdivisions: WeaponSubdivisions;
   /**
-   * Relative weight per power-up ID (Shield–Power Pellet). Higher weight ⇒ more
+   * Relative weight per power-up ID (Shield–Smart Bomb). Higher weight ⇒ more
    * likely. These are relative, not percentages — the spawner normalises
    * them internally.
    */
@@ -142,10 +142,18 @@ export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
  */
 export const DEFAULT_POWER_PELLET_WEIGHT = 3;
 
+/**
+ * Default relative weight for the Smart Bomb (AH-0MV1BIWP9003EHRQ). The
+ * rarest defensive pickup (2): its screen-wide once-per-activation pulse is
+ * the strongest panic button in the catalogue, so it drops half as often as
+ * a standard power-up and rarer than the Power Pellet.
+ */
+export const DEFAULT_SMART_BOMB_WEIGHT = 2;
+
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
-/** Every power-up ID covered by the default weight table (Shield–Power Pellet). */
+/** Every power-up ID covered by the default weight table (Shield–Smart Bomb). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'shield',
   'bomb',
@@ -156,6 +164,7 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'magnet',
   'mineral_scoop',
   'power_pellet',
+  'smart_bomb',
 ];
 
 /**
@@ -234,6 +243,8 @@ export function defaultPowerUpWeights(): PowerUpWeights {
       weights[id] = DEFAULT_EXTRA_LIFE_WEIGHT;
     } else if (id === 'power_pellet') {
       weights[id] = DEFAULT_POWER_PELLET_WEIGHT;
+    } else if (id === 'smart_bomb') {
+      weights[id] = DEFAULT_SMART_BOMB_WEIGHT;
     } else {
       weights[id] = DEFAULT_STANDARD_POWER_UP_WEIGHT;
     }

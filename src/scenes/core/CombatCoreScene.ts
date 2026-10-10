@@ -72,6 +72,7 @@ import {
   angleToVelocity,
   bulletVelocity,
   createBulletsFromHeading,
+  type AoEDescriptor,
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
@@ -126,6 +127,9 @@ import { frightenedFleeOffset } from './frightenedState';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
 export const BOMB_PULSE_COLOR = 0xff5577;
+
+/** Ring colour for the Smart Bomb screen pulse VFX (electric violet-white). */
+export const SMART_BOMB_PULSE_COLOR = 0xcc66ff;
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -596,6 +600,10 @@ export class CombatCoreScene<
     // current position, and from this single shared step so the game and
     // every gym cannot diverge (AH-0MUVM9RAO004Y3LB).
     this._updateP4Bomb(dt);
+    // Smart Bomb: advance the shared screen-pulse state and resolve the
+    // screen-wide area effect when one is due (AH-0MV1BIWP9003EHRQ). The
+    // pulse resolves through the scene's AOE seam via `onSmartBombPulse`.
+    this._updateSmartBomb(dt);
   }
 
   /**
@@ -1187,6 +1195,45 @@ export class CombatCoreScene<
       color: BOMB_PULSE_COLOR,
     });
   }
+
+  /**
+   * Advances the shared Smart Bomb screen pulse and, when the registry
+   * reports a pulse is due, resolves the level-resolved {@link AoEDescriptor}
+   * through {@link onSmartBombPulse}
+   * (AH-0MV1BIWP9003EHRQ).
+   *
+   * Called from {@link CombatCoreScene._tickPlayer} so the game and every gym
+   * drive the pulse from exactly one implementation; a scene with no player
+   * is a no-op.
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateSmartBomb(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    if (!registry.updateSmartBomb(dt)) return;
+    const player = this.getPlayer();
+    if (!player) return;
+    this.onSmartBombPulse(registry.smartBombAoe(), player.x, player.y);
+  }
+
+  /**
+   * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect
+   * seam. Default no-op (the effect application lives in
+   * {@link CombatScene}, which owns the enemy-damage seam); the concrete
+   * combat scene overrides it to apply the descriptor and spawn the pulse
+   * VFX. Keeping the detection in this shared step and the application behind
+   * one hook means gyms cannot fork the screen-pulse behaviour
+   * (AH-0MV1BIWP9003EHRQ).
+   *
+   * @param _aoe - The level-resolved pulse descriptor.
+   * @param _x - Pulse origin x (the ship).
+   * @param _y - Pulse origin y (the ship).
+   */
+  protected onSmartBombPulse(
+    _aoe: AoEDescriptor,
+    _x: number,
+    _y: number,
+  ): void {}
 
   // ── Frightened enemy status (Power Pellet, AH-0MV1BIW95004POSX) ────
 

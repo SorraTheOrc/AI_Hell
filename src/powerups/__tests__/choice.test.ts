@@ -36,6 +36,7 @@ describe('power-up choice strategy', () => {
         'magnet',
         'mineral_scoop',
         'power_pellet',
+        'smart_bomb',
         'dual',
         'rapid',
         'spread',
@@ -58,6 +59,10 @@ describe('power-up choice strategy', () => {
 
   it('includes the Power Pellet in the hold-full choice pool (AH-0MV1BIW95004POSX)', () => {
     expect(CHOICE_POOL).toContain('power_pellet');
+  });
+
+  it('includes the Smart Bomb in the hold-full choice pool (AH-0MV1BIWP9003EHRQ)', () => {
+    expect(CHOICE_POOL).toContain('smart_bomb');
   });
 
   it('the default strategy offers three distinct options from the pool', () => {

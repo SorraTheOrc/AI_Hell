@@ -56,7 +56,7 @@ async function bootCombat(): Promise<GymPowerUpsCombat> {
  */
 function collectCombatDrop(
   scene: GymPowerUpsCombat,
-  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport',
+  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport' | 'smart_bomb',
 ): void {
   const player = scene.getPlayer()!;
   player.setPosition(480, 270);
@@ -277,6 +277,14 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     expect(drops).toHaveLength(1);
     // Fifth in cycle: the Pac-Man Power Pellet (AH-0MV1BIW95004POSX).
     expect(drops[0].powerUp.id).toBe('power_pellet');
+
+    for (let i = 0; i < 750; i++) {
+      scene.tick(1 / 60);
+    }
+    drops = scene.getDrops();
+    expect(drops).toHaveLength(1);
+    // Sixth in cycle: the Defender Smart Bomb (AH-0MV1BIWP9003EHRQ).
+    expect(drops[0].powerUp.id).toBe('smart_bomb');
   });
 
   it('drops spawn at the configured size (16 px)', () => {
@@ -310,6 +318,73 @@ describe('GymPowerUpsCombat — Power Pellet fright (AH-0MV1BIW95004POSX)', () =
     // scout starts above the ship, so fleeing moves it further up.
     for (let i = 0; i < 30; i++) scene.tick(1 / 60);
     expect(scout.y).toBeLessThan(startY);
+  });
+});
+
+// ── Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ) ─────────────────────
+
+describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('collecting the Smart Bomb destroys every on-screen scout and spares an off-screen scout', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const scouts = scene.getScouts();
+    expect(scouts).toHaveLength(3);
+
+    scene.spawnDrop('smart_bomb', 480, 270);
+    scene.advanceDrops(0.5); // grow to full size (collectible)
+    scene.tick(1 / 60); // collection queues the pulse
+
+    // Move one scout far off-screen after the collection tick; the pulse
+    // resolves on the next frame's shared player step — before the formation
+    // step — so this scout is provably beyond the 1200 px base radius.
+    scouts[2].setPosition(5000, 5000);
+    scene.tick(1 / 60); // the shared smart-bomb step resolves the pulse
+
+    expect(scouts[0].alive).toBe(false);
+    expect(scouts[1].alive).toBe(false);
+    expect(scouts[2].alive).toBe(true);
+  });
+
+  it('collecting the Smart Bomb clears every on-screen enemy bullet', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnEnemyBullet(530, 270, 0, 0);
+    scene.spawnEnemyBullet(120, 400, 0, 0);
+    expect(scene.getEnemyBullets().length).toBeGreaterThanOrEqual(2);
+
+    scene.spawnDrop('smart_bomb', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60); // collection queues the pulse
+    scene.tick(1 / 60); // the shared smart-bomb step resolves it
+
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+
+  it('a Smart Bomb field pickup is a one-shot and leaves no permanent HUD row', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnDrop('smart_bomb', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    scene.tick(1 / 60);
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.isSmartBombPermanent()).toBe(false);
+    expect(
+      registry.activeEffects().some((e) => e.id === 'smart_bomb'),
+    ).toBe(false);
   });
 });
 
@@ -718,6 +793,7 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'phase_shift',
       'teleport',
       'power_pellet',
+      'smart_bomb',
     ]);
   });
 

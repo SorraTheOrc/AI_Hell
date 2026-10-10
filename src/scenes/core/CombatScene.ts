@@ -41,7 +41,7 @@ import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
-import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
+import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
@@ -51,6 +51,7 @@ import {
 } from '../../powerups/teleport';
 import {
   CombatCoreScene,
+  SMART_BOMB_PULSE_COLOR,
   type CombatDrop,
   type CombatEnemyBullet,
   type CombatEnemyEntity,
@@ -447,7 +448,25 @@ export abstract class CombatScene<
   protected applyAoeEffect(def: WeaponDefinition, x: number, y: number): void {
     const aoe = def.aoe;
     if (!aoe) return;
+    this.applyAoEDescriptor(aoe, x, y);
+  }
 
+  /**
+   * Shared area-effect application from a bare {@link AoEDescriptor} — the
+   * seam the AOE **weapons** and the Smart Bomb **power-up** share
+   * (AH-0MV1BIWP9003EHRQ). Resolves one area effect at (x, y):
+   *
+   * 1. damages every live enemy inside the radius for `aoe.damage` hit points
+   *    (default 1) through the same `takeDamage()` / `destroySelf()` +
+   *    `finaliseEnemyKill` seam a player bullet uses,
+   * 2. destroys every enemy bullet inside the radius with the shared impact
+   *    feedback,
+   * 3. damages the boss through {@link CombatScene.onAoeHitsBoss}.
+   *
+   * Keeping this the single implementation means the Smart Bomb cannot fork
+   * the area-effect behaviour away from Nova/Mortar/Arc (AC5).
+   */
+  protected applyAoEDescriptor(aoe: AoEDescriptor, x: number, y: number): void {
     if (aoe.damagesEnemies) {
       // Pure target selection (utils/aoe) keeps the game and gyms identical.
       const targets = selectAoETargets(
@@ -456,7 +475,8 @@ export abstract class CombatScene<
         aoe.radius,
         this.getEnemyEntities(),
       );
-      for (const enemy of targets) this.damageEnemyViaAoe(enemy);
+      const damage = Math.max(1, Math.floor(aoe.damage ?? 1));
+      for (const enemy of targets) this.damageEnemyViaAoe(enemy, damage);
     }
 
     if (aoe.clearsEnemyBullets) {
@@ -482,18 +502,41 @@ export abstract class CombatScene<
 
   /**
    * Applies one AOE damage instance to an enemy through the shared kill
-   * seam: multi-hit entities take `takeDamage()` (and finalise on the lethal
-   * blow); single-hit entities are destroyed and finalised outright.
+   * seam: multi-hit entities take `damage` hits (and finalise on the lethal
+   * blow); single-hit entities are destroyed and finalised outright. AOE
+   * weapons pass the default of one hit; the Smart Bomb passes its
+   * level-resolved damage (AH-0MV1BIWP9003EHRQ).
    */
-  private damageEnemyViaAoe(enemy: TEnemy): void {
+  private damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
     if (!enemy.alive) return;
     if (enemy.takeDamage) {
-      enemy.takeDamage();
+      const hits = Math.max(1, Math.floor(damage));
+      for (let i = 0; i < hits && enemy.alive; i++) enemy.takeDamage();
       if (!enemy.alive) this.finaliseEnemyKill(enemy);
     } else {
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Resolves one Smart Bomb pulse (AH-0MV1BIWP9003EHRQ): applies the
+   * level-resolved {@link AoEDescriptor} through the shared AOE seam and
+   * spawns the expanding-ring VFX. Defined on the concrete combat scene
+   * because the enemy-damage seam ({@link CombatScene.damageEnemyViaAoe})
+   * lives here; the shared {@link CombatCoreScene._updateSmartBomb} owns the
+   * pulse detection so gyms cannot fork the behaviour.
+   */
+  protected override onSmartBombPulse(
+    aoe: AoEDescriptor,
+    x: number,
+    y: number,
+  ): void {
+    this.applyAoEDescriptor(aoe, x, y);
+    spawnNovaRing(this, x, y, aoe.radius, {
+      registry: this.aoeEffects,
+      color: SMART_BOMB_PULSE_COLOR,
+    });
   }
 
   /**

@@ -112,7 +112,13 @@ export type PowerUpLevelVariable =
   /** Power Pellet — frightened-enemy window duration in seconds. */
   | 'frightenDuration'
   /** Power Pellet — flee-speed multiplier applied while frightened. */
-  | 'frightenSpeedMultiplier';
+  | 'frightenSpeedMultiplier'
+  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  | 'aoeRadius'
+  /** Smart Bomb — hit points each enemy takes per pulse. */
+  | 'smartBombDamage'
+  /** Smart Bomb — permanent pulse rate in pulses per second. */
+  | 'smartBombFrequency';
 
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
@@ -132,6 +138,9 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'scoopStacks',
   'frightenDuration',
   'frightenSpeedMultiplier',
+  'aoeRadius',
+  'smartBombDamage',
+  'smartBombFrequency',
 ];
 
 /**
@@ -476,6 +485,66 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'the duration axis so the two grow together.',
     },
   ],
+
+  // Smart Bomb — Defender-inspired stored screen-wide pulse.
+  smart_bomb: [
+    {
+      variable: 'aoeRadius',
+      powerUpId: 'smart_bomb',
+      label: 'Pulse radius',
+      unit: 'px',
+      description: 'Radius of the screen-wide smart-bomb pulse, centred on the ship.',
+      curve: 'exponential-saturation',
+      // Base already covers the 960×540 field (diagonal ≈ 1102 px); the cap
+      // keeps the value finite and monotonic so off-screen targets beyond it
+      // are provably unaffected.
+      base: 1200,
+      cap: 2400,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'A 1200 px base radius already reaches every corner of the 960×540 ' +
+        'play area (diagonal ≈ 1102 px), so the smart bomb is screen-wide ' +
+        'from the first pickup; the 2400 px cap keeps the axis finite and ' +
+        'monotonic, and k=0.3 adds ~310 px at the first upgrade. Keeping the ' +
+        'radius finite (rather than Infinity) preserves the off-screen ' +
+        'boundary AC and the shared AoE geometry helpers.',
+    },
+    {
+      variable: 'smartBombDamage',
+      powerUpId: 'smart_bomb',
+      label: 'Pulse damage',
+      unit: '',
+      description: 'Hit points each enemy takes from one pulse.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 3,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'The pulse always deals at least one hit so 1 HP regulars die; the ' +
+        'cap of 3 lets later levels chip the Harvester (5 HP) and the boss ' +
+        'harder without out-and-out deleting multi-hit enemies. k=0.3 grants ' +
+        'the second point at the first upgrade (readable payoff) then flattens.',
+    },
+    {
+      variable: 'smartBombFrequency',
+      powerUpId: 'smart_bomb',
+      label: 'Pulse rate',
+      unit: '/s',
+      description: 'Pulses per second for a permanent smart bomb.',
+      curve: 'exponential-saturation',
+      base: 0.2,
+      cap: 0.5,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'Stored as pulses/second so the axis stays monotonic non-decreasing ' +
+        '(the effect computes 1/frequency). A 0.5/s cap keeps a permanent ' +
+        'smart bomb a rare, weighty clear rather than a continuous screen ' +
+        'wipe; k=0.3 front-loads the first upgrade (~0.26/s, ≈3.8 s period).',
+    },
+  ],
 };
 
 /**
@@ -492,6 +561,7 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'magnet',
   'mineral_scoop',
   'power_pellet',
+  'smart_bomb',
 ];
 
 // ── Resolved stats ──────────────────────────────────────────────────
@@ -541,6 +611,12 @@ export interface PowerUpLevelStats {
   frightenDuration?: number;
   /** Power Pellet — flee-speed multiplier while frightened. */
   frightenSpeedMultiplier?: number;
+  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  aoeRadius?: number;
+  /** Smart Bomb — hit points each enemy takes per pulse. */
+  smartBombDamage?: number;
+  /** Smart Bomb — permanent pulse rate in pulses per second. */
+  smartBombFrequency?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────
