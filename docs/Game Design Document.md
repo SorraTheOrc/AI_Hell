@@ -344,7 +344,13 @@ The following rules govern how enemy entities interact with each other and with 
 > shipped default campaign mixes all three modes: the first four campaign waves
 > (L1W1, L1W2, L2W1, L2W2) are `dynamic` and open on a curated, varied,
 > non-firing mix; the remaining levels 1–3 waves are `fixed`; levels 4–5 are
-> `curve` with a final `dynamic` wave (AH-0MUOCJM0N000RW2B). The static skeleton
+> `curve` with a final `dynamic` wave (AH-0MUOCJM0N000RW2B). A **per-level
+> archetype variety cap** (`MAX_ARCHETYPE_PER_LEVEL`, default **1** in
+> `src/core/difficultySequencer.ts`) keeps any single archetype — in particular
+> the orbital Phaser — to at most one wave per level, so the generated campaign
+> escalates through varied movement styles instead of repeating one formation
+> once the target passes ~30 (AH-0MV2SGIX5005PFJT); authored `fixed` waves and
+> the gyms are not constrained. The static skeleton
 > (levels 1–5) is always present; the static campaign is the fallback, and the
 > boss still triggers after the final level.
 

@@ -626,6 +626,16 @@ instead.
   bit; the **±2** early-wave jitter keeps the opening non-degenerate, while the
   level-5 dynamic wave keeps the global ±20 jitter. Levels 1–3 remain
   non-firing.
+- **Per-level archetype variety cap (AH-0MV2SGIX5005PFJT):** the sequencer
+  caps how often one archetype may appear within a level, so the generated
+  campaign cannot collapse onto a single movement style. The cap
+  `MAX_ARCHETYPE_PER_LEVEL` (`src/core/difficultySequencer.ts`, default **1**)
+  is shared across a level's per-wave calls by `buildSequencedLevels()`, so —
+  once a wave's target passes ~30 — the orbital Phaser (or any other archetype)
+  appears in at most one wave per level. Without it every later wave selected
+  the orbital Phaser, so the late game read as "all orbiting enemies". Authored
+  `fixed` waves and the gyms bypass the sequencer and are unaffected; raise the
+  constant (or pass `maxArchetypePerLevel: Infinity`) to relax/disable it.
 - **Toggle:** `sequencedWavesEnabled` in the `ai-hell-game-rules` localStorage
   record, default **true** (AH-0MUJSUTLA006Q8E1). Opt out in a dev run from the
   browser console:

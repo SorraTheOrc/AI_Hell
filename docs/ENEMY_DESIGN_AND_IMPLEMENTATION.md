@@ -1565,6 +1565,28 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   Excluding it keeps every sequenced group wave-accounted and preserves the
   "asteroids are not wave-accounted" contract for the random spawner and split
   children.
+- **Per-level archetype variety cap (AH-0MV2SGIX5005PFJT):** the sequencer
+  selects a wave's composition purely by minimising the error against its
+  `targetDifficulty`, so without a composition constraint the highest-rated
+  archetype — the Phaser's `orbital` formation (ordinal 5 in the
+  `formationKind` scale) — became the best fit for **every** wave once the
+  target crossed ~30. The late game then collapsed onto one movement style
+  ("once an orbital formation appeared, all subsequent waves were orbital").
+  `MAX_ARCHETYPE_PER_LEVEL` (`src/core/difficultySequencer.ts`, default **1**)
+  caps the number of waves within one level in which a single archetype may
+  appear. `buildSequencedLevels()` creates one `archetypeUsage` map per level
+  and shares it across the level's per-wave `sequencer()` calls, so the cap
+  spans the whole level; `sequencer()` records each wave's archetypes and
+  excludes at-cap archetypes from both the primary selection and multi-group
+  composition. It falls back to the full pool when every archetype is already
+  at the cap, so a wave can never be starved into an empty/soft-locking
+  composition. The cap applies **only to generated (`curve`/`dynamic`) waves**:
+  an authored `fixed` wave is never passed to the sequencer and may still use
+  any archetype, so the orbital Phaser remains an authorable set-piece and is
+  still exercised by the gyms (gym↔game parity, §5.1). Raise the constant or
+  pass `maxArchetypePerLevel` to relax the rule; `Infinity` disables it. The
+  shipped level 5 therefore keeps the orbital Phaser in one wave (W1) and
+  composes W2 from non-orbital archetypes.
 - **Per-wave generation modes (AH-0MUJSUQD8003FSUT):** `generation` is a
   **per-wave** selector and the three modes may be mixed freely within a level:
   `curve` builds the wave from its target once (fixed for the run); `fixed`
