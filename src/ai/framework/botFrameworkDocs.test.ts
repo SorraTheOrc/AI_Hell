@@ -72,6 +72,18 @@ describe('Bot framework is documented (AH-0MUY08WKB002N1N6)', () => {
     expect(doc).toContain(EPIC_ID);
   });
 
+  it('documents the bot-tuning gym (AH-0MV4D7LAD009XYR0)', () => {
+    expect(doc).toContain('## 12. Tuning the bot live (the bot-tuning gym)');
+    for (const symbol of [
+      'GymBotTuning',
+      'src/ai/tuningFields.ts',
+      'src/core/botTuningStore.ts',
+      'src/utils/randomLevel.ts',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+  });
+
   it('is cross-linked from the README', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     expect(readme).toContain('docs/BOT_FRAMEWORK.md');

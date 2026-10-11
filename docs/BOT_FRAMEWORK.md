@@ -521,6 +521,42 @@ The shipped profiles are in `src/ai/framework/competent/content.ts`
 and every id in `POWER_UP_CATALOGUE` / `WEAPON_DROP_IDS` has an entry. A guard
 test fails if a new game id is added without a profile.
 
+## 12. Tuning the bot live (the bot-tuning gym)
+
+The **Bot Tuning** gym (`src/scenes/gym/GymBotTuning.ts`, listed as
+`BotTuning` on the gym index) is the hands-on companion to the headless
+evaluation arena. It lets a designer watch the structured competent bot play
+and adjust its parameters in real time.
+
+- **Random, reproducible levels.** `src/utils/randomLevel.ts` wraps the
+  runtime auto-sequencer (`src/core/difficultySequencer.ts`) to generate a
+  `LevelDefinition` from a seed. The same seed produces the same level, so a
+  before/after tuning comparison is apples to apples. When a level is cleared
+  the gym generates a fresh one (or press **New Random Level**).
+- **Shared bot behaviour.** The gym drives the player through the shared
+  `CombatCoreScene.getBotInput()` seam with the same
+  `createCompetentBotBrain()` policy and `BotInputGovernor` that `PlayScene`
+  uses — no divergent copy. The only gym-specific state is the scenario
+  (random waves, no boss/minerals/power-ups).
+- **Live sliders.** The collapsible panel exposes one slider per entry in
+  `BOT_TUNING_NUMERIC_FIELDS` (`src/ai/tuningFields.ts`) plus boolean toggles:
+  the utility bands, seek ranges, standoff/danger/wall margins, prediction
+  horizons and speeds, steering weights, commitment hysteresis, the world
+  model and the human-input reaction/press cadence. Moving a slider rebuilds
+  the live brain and governor immediately.
+- **Named configurations.** **Save** overwrites the current configuration,
+  **Save As…** creates a named one, and the selector loads any saved
+  configuration. Presets are persisted by `src/core/botTuningStore.ts` as a
+  versioned, corrupt-safe JSON blob in `localStorage` (the same
+  browser-native pattern as `src/core/rules.ts`); a missing or malformed blob
+  falls back to the built-in `Default`.
+
+The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
+`BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested
+`commitment.*` and `world.*` overrides the brain expects. Tests live in
+`src/ai/tuningFields.test.ts`, `src/core/botTuningStore.test.ts`,
+`src/utils/randomLevel.test.ts` and `src/scenes/gym/GymBotTuning.test.ts`.
+
 ## References
 
 - `src/ai/botSnapshot.ts` — the read-only snapshot contract.

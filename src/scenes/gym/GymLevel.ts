@@ -214,8 +214,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Drift direction (+1 right, −1 left). */
   private driftDir = 1;
 
-  constructor() {
-    super({ key: GYM_LEVEL_SCENE_KEY });
+  constructor(key: string = GYM_LEVEL_SCENE_KEY) {
+    super({ key });
   }
 
   // ── Initialisation ───────────────────────────────────────────────
@@ -325,6 +325,28 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.levelComplete = true;
     cleanupWave(this.spawned, this.enemyBullets);
     this.statusText?.setText(`${this.label} — COMPLETE`);
+  }
+
+  /**
+   * Loads and starts a fresh level, replacing whatever is on the field
+   * (AH-0MV4D7LAD009XYR0). A subclass can call it to continue with a new
+   * generated level without restarting the scene — the `GymBotTuning` gym
+   * uses it to keep the bot playing random levels. Does not touch the player
+   * ship, weapons, effects or HUD; only the wave queue and spawned enemies are
+   * reset.
+   */
+  protected loadLevel(level: LevelDefinition): void {
+    this.currentWaveIndex = 0;
+    this.levelComplete = false;
+    this.driftX = 0;
+    this.driftDir = 1;
+    cleanupWave(this.spawned, this.enemyBullets);
+    this.spawned = [];
+    this.enemyBullets = [];
+    this.wavesToPlay = level.waves;
+    this.label = level.name || GYM_LEVEL_DEFAULT_LABEL;
+    this.statusText?.setText(this.label);
+    this._spawnCurrentWave();
   }
 
   // ── Enemy movement (parity with `PlayScene._moveEnemies`) ────────
