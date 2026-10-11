@@ -747,6 +747,13 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     // compositions instead of the degenerate single-enemy waves
     // (AH-0MUWZ5GST003NMFQ). Each wave still meets its target within the
     // sequencer's ±1.0 acceptance band.
+    //
+    // L5 W2 re-recorded for AH-0MV2SGIX5005PFJT: the per-level archetype cap
+    // (MAX_ARCHETYPE_PER_LEVEL = 1) now stops the orbital Phaser appearing in
+    // both L5 waves, so W2 is composed from non-orbital archetypes
+    // (`tank`/`diver`) instead of `phaserx12+phaserx12+bossx1`. The wave still
+    // tracks its seed-jittered target within the sequencer's tolerance, and
+    // the level's aggregate difficulty keeps rising.
     const composition = (levelNumber: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
@@ -763,7 +770,7 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     ]);
     expect(composition(5)).toEqual([
       'phaserx12+scoutx18',
-      'phaserx12+phaserx12+bossx1',
+      'tankx18+tankx18+diverx18',
     ]);
   });
 

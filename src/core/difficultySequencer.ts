@@ -137,6 +137,23 @@ export interface SequencerOptions {
    * @default 5
    */
   maxGroupsPerWave?: number;
+  /**
+   * Maximum number of waves within a single level in which one archetype may
+   * appear (the per-level archetype repetition cap).
+   *
+   * Defaults to {@link MAX_ARCHETYPE_PER_LEVEL}. Pass `Infinity` to disable
+   * the cap.
+   */
+  maxArchetypePerLevel?: number;
+  /**
+   * Optional cross-call archetype-usage tracker.
+   *
+   * The campaign builder shares one map across a level's per-wave
+   * `sequencer()` calls so the per-level cap spans the whole level. The
+   * sequencer reads and updates the map in place. When absent, a fresh map is
+   * created per call, so the cap applies across the supplied curve.
+   */
+  archetypeUsage?: Map<string, number>;
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────
@@ -146,6 +163,26 @@ const DEFAULT_MAX_ITERATIONS = 50;
 const DEFAULT_MAX_GROUPS_PER_WAVE = 5;
 /** Ignore floating-point noise when comparing candidate errors. */
 const COMPOSE_EPSILON = 1e-9;
+
+/**
+ * Maximum number of waves within a single level in which any one enemy
+ * archetype may appear (the per-level archetype repetition cap).
+ *
+ * The sequencer minimises error against the difficulty target with no notion
+ * of composition, so before this cap the highest-rated archetype (the Phaser's
+ * `orbital` formation, ordinal 5 in `enemyDifficulty`'s `formationKind`)
+ * was selected for **every** wave once the target crossed ~30 — collapsing the
+ * late game onto a single movement style (AH-0MV2SGIX5005PFJT). A cap of `1`
+ * keeps each archetype to at most one wave per level; raise it to relax the
+ * rule, or pass `Infinity` to disable it.
+ *
+ * The cap is applied across a whole level by the campaign builder
+ * (`src/waves/sequencedLevels.ts`), which shares one {@link
+ * SequencerOptions.archetypeUsage} map across the level's per-wave calls. It
+ * only constrains `curve`/`dynamic` (generated) waves — an authored `fixed`
+ * wave is never sequenced and may still use any archetype.
+ */
+export const MAX_ARCHETYPE_PER_LEVEL = 1;
 
 /**
  * The default candidate pool — one entry per seed archetype the sequencer may
@@ -394,11 +431,21 @@ function composeWaveGroups(
   maxIterations: number,
   maxGroups: number,
   suppressFiring = false,
+  isAllowed: (enemyKey: string) => boolean = () => true,
 ): { groups: AdjustedGroup[]; total: number } {
   const groups: AdjustedGroup[] = [initial];
   let total = initial.score;
   let error = Math.abs(total - target);
   const used = new Map<string, number>([[initial.enemyKey, 1]]);
+
+  // Respect the per-level archetype cap when adding groups. If every
+  // candidate is already at the cap, fall back to the full pool so the wave
+  // can never be starved into an empty composition.
+  const allowedCandidates = candidates.filter((candidate) =>
+    isAllowed(candidate.enemyKey),
+  );
+  const compositionPool =
+    allowedCandidates.length > 0 ? allowedCandidates : candidates;
 
   while (error > tolerance && groups.length < maxGroups) {
     const residual = target - total;
@@ -408,7 +455,7 @@ function composeWaveGroups(
       used: number;
     } | null = null;
 
-    for (const candidate of candidates) {
+    for (const candidate of compositionPool) {
       const baseConfig = resolveBaseConfig(candidate);
       const adjusted = adjustGroupForTarget(
         candidate,
@@ -476,6 +523,14 @@ export function sequencer(
   // non-firing wave (AH-0MUOCJM0N000RW2B). When the caller does not declare
   // the fire rule, keep the archetype-level default (no forced suppression).
   const suppressFiring = options.defaultShootEnabled === false;
+  // Per-level archetype repetition cap (AH-0MV2SGIX5005PFJT). `usage` counts
+  // the waves each archetype has already appeared in; a shared map lets the
+  // campaign builder carry the count across a level's per-wave calls.
+  const maxArchetypePerLevel =
+    options.maxArchetypePerLevel ?? MAX_ARCHETYPE_PER_LEVEL;
+  const usage = options.archetypeUsage ?? new Map<string, number>();
+  const isAllowed = (enemyKey: string): boolean =>
+    (usage.get(enemyKey) ?? 0) < maxArchetypePerLevel;
 
   // Validate candidates.
   for (const c of candidates) {
@@ -493,7 +548,15 @@ export function sequencer(
     const target = curve[wi];
     let bestResult: { adjusted: AdjustedGroup; error: number } | null = null;
 
-    for (const candidate of candidates) {
+    // Exclude archetypes already at the per-level cap. If every candidate is
+    // at the cap, fall back to the full pool so the wave cannot be empty.
+    const allowedCandidates = candidates.filter((candidate) =>
+      isAllowed(candidate.enemyKey),
+    );
+    const selectionPool =
+      allowedCandidates.length > 0 ? allowedCandidates : candidates;
+
+    for (const candidate of selectionPool) {
       const result = evaluateCandidate(
         candidate,
         target,
@@ -532,11 +595,20 @@ export function sequencer(
             maxIterations,
             options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE,
             suppressFiring,
+            isAllowed,
           );
 
     const shootEnabled =
       options.defaultShootEnabled ??
       composed.groups.some((group) => groupFires(group.enemyKey, group.count));
+
+    // Record this wave against every archetype it used, so later waves in the
+    // same level respect the cap.
+    for (const enemyKey of new Set(
+      composed.groups.map((group) => group.enemyKey),
+    )) {
+      usage.set(enemyKey, (usage.get(enemyKey) ?? 0) + 1);
+    }
 
     waves.push({
       groups: composed.groups,
