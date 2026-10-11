@@ -25,6 +25,16 @@
  * item's timed window, the temporary/permanent level split); this module owns
  * only the pure decision maths so it can be unit-tested in isolation.
  *
+ * **Flee heading is captured at activation (AH-0MV4BXUWT005MWAJ).** The
+ * direction an enemy flees is a function of its heading at the instant the
+ * window opens, not of the (per-frame re-anchored) formation slot. Re-aiming
+ * every frame from the formation slot made the displacement radial relative
+ * to the ship, so a moving ship dragged enemies around it in an arc; a fixed
+ * heading instead makes them retreat in a straight line and keeps their
+ * position stable when the ship teleports. Scenes own the captured heading
+ * (a per-enemy map) and consume {@link frightenedFleeOffsetFromDirection};
+ * this module stays pure.
+ *
  * @module scenes/core/frightenedState
  */
 
@@ -111,14 +121,65 @@ export function frightenedFleeDirection(
 }
 
 /**
+ * The accumulated flee displacement (px) along a **captured** flee heading,
+ * given how long the window has been active.
+ *
+ * This is the stateless half of the frightened retreat: the caller captures a
+ * heading once (see {@link frightenedFleeDirection}) and passes it in, so the
+ * displacement stays on that fixed bearing as the ship moves instead of
+ * re-aiming radially each frame and orbiting the ship
+ * (AH-0MV4BXUWT005MWAJ).
+ *
+ * The magnitude is `FRIGHTEN_FLEE_SPEED × speedMultiplier × elapsedSeconds`,
+ * clamped to `maxDistance`, so it grows from 0 to the cap and snaps back to 0
+ * when the window closes. The heading is normalised, so any non-unit vector
+ * yields the same displacement; a degenerate heading yields no displacement.
+ *
+ * @param direction — the captured flee heading (need not be unit length).
+ * @param elapsedSeconds — seconds the frightened window has been active.
+ * @param speedMultiplier — level-resolved flee-speed multiplier (default 1).
+ * @param maxDistance — displacement cap in px.
+ */
+export function frightenedFleeOffsetFromDirection(
+  direction: FrightenedVector,
+  elapsedSeconds: number,
+  speedMultiplier = 1,
+  maxDistance: number = FRIGHTEN_FLEE_MAX_DISTANCE,
+): FrightenedVector {
+  if (!Number.isFinite(direction.x) || !Number.isFinite(direction.y)) {
+    return { x: 0, y: 0 };
+  }
+  const length = Math.hypot(direction.x, direction.y);
+  if (!(length > 1e-9)) return { x: 0, y: 0 };
+  const elapsed =
+    Number.isFinite(elapsedSeconds) && elapsedSeconds > 0 ? elapsedSeconds : 0;
+  const multiplier =
+    Number.isFinite(speedMultiplier) && speedMultiplier > 0
+      ? speedMultiplier
+      : 1;
+  const cap = Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance : 0;
+  const distance = Math.min(cap, FRIGHTEN_FLEE_SPEED * multiplier * elapsed);
+  return {
+    x: (direction.x / length) * distance,
+    y: (direction.y / length) * distance,
+  };
+}
+
+/**
  * The accumulated flee displacement (px) an enemy at `(enemyX, enemyY)`
  * should be offset by, given how long the window has been active.
  *
  * The displacement is `fleeDirection × FRIGHTEN_FLEE_SPEED ×
  * speedMultiplier × elapsedSeconds`, clamped to `maxDistance`. It is a pure
- * function of the window's elapsed time, so a scene can add it on top of a
- * per-frame formation position **without any per-enemy state** — the enemy
- * visibly retreats as the window ages and snaps back when it expires.
+ * function of the window's elapsed time.
+ *
+ * **Note (AH-0MV4BXUWT005MWAJ):** re-evaluating the direction from a
+ * per-frame re-anchored formation slot makes the displacement radial relative
+ * to a moving ship and produces an orbit. Scenes should therefore capture the
+ * direction once at activation and use
+ * {@link frightenedFleeOffsetFromDirection}; this wrapper remains the
+ * self-contained "enemy versus current ship" maths for callers/tests that
+ * genuinely want the instantaneous radial push.
  *
  * @param enemyX — enemy position x (px).
  * @param enemyY — enemy position y (px).
@@ -137,16 +198,13 @@ export function frightenedFleeOffset(
   speedMultiplier = 1,
   maxDistance: number = FRIGHTEN_FLEE_MAX_DISTANCE,
 ): FrightenedVector {
-  const elapsed =
-    Number.isFinite(elapsedSeconds) && elapsedSeconds > 0 ? elapsedSeconds : 0;
-  const multiplier =
-    Number.isFinite(speedMultiplier) && speedMultiplier > 0
-      ? speedMultiplier
-      : 1;
-  const cap = Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance : 0;
-  const distance = Math.min(cap, FRIGHTEN_FLEE_SPEED * multiplier * elapsed);
   const direction = frightenedFleeDirection(enemyX, enemyY, playerX, playerY);
-  return { x: direction.x * distance, y: direction.y * distance };
+  return frightenedFleeOffsetFromDirection(
+    direction,
+    elapsedSeconds,
+    speedMultiplier,
+    maxDistance,
+  );
 }
 
 /**

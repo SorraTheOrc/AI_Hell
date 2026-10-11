@@ -235,6 +235,45 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
     expect(definers).toEqual([]);
   });
 
+  it('AH-0MV4BXUWT005MWAJ — the frightened flee helper is defined once and inherited by every consumer (AC3)', () => {
+    // The captured-heading flee maths (and the per-enemy heading cache it
+    // consumes) must live in the shared core so the game and the gyms cannot
+    // diverge — the fix for the "enemies arc around the moving player" bug.
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(
+          fs.readFileSync(file, 'utf8'),
+          '_frightenedFleeOffset',
+        ),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+
+    const helper = (
+      CombatCoreScene.prototype as unknown as Record<string, unknown>
+    )['_frightenedFleeOffset'];
+    expect(typeof helper).toBe('function');
+    for (const prototype of [
+      PlayScene.prototype,
+      GymFormationScene.prototype,
+      GymPowerUpsCombat.prototype,
+    ]) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          prototype,
+          '_frightenedFleeOffset',
+        ),
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)[
+          '_frightenedFleeOffset'
+        ],
+      ).toBe(helper);
+    }
+  });
+
   it('P3/P6 gating resolves to the same shared hooks on all three scenes (no own overrides)', () => {
     for (const [name, prototype] of GATING_SCENE_PROTOTYPES) {
       for (const method of SHARED_GATING_METHODS) {

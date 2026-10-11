@@ -18,6 +18,7 @@ import {
   FRIGHTEN_FLEE_SPEED,
   frightenedFleeDirection,
   frightenedFleeOffset,
+  frightenedFleeOffsetFromDirection,
   frightenedFleeTarget,
   frightenedSuppressesFire,
   isFrightened,
@@ -98,6 +99,61 @@ describe('frightenedFleeOffset (AC — flee direction is a pure shared function)
     const invalid = frightenedFleeOffset(0, 0, 100, 0, 1, Number.NaN);
     const one = frightenedFleeOffset(0, 0, 100, 0, 1, 1);
     expect(invalid).toEqual(one);
+  });
+});
+
+describe('frightenedFleeOffsetFromDirection (AC1 — captured heading retreat)', () => {
+  it('grows linearly with elapsed time along the captured heading', () => {
+    const offset = frightenedFleeOffsetFromDirection({ x: 0, y: -1 }, 1);
+    expect(offset.x).toBeCloseTo(0, 10);
+    expect(offset.y).toBeCloseTo(-FRIGHTEN_FLEE_SPEED, 10);
+  });
+
+  it('normalises a non-unit heading so only its bearing matters', () => {
+    const unit = frightenedFleeOffsetFromDirection({ x: 0, y: -1 }, 1);
+    const scaled = frightenedFleeOffsetFromDirection({ x: 0, y: -7 }, 1);
+    expect(scaled.x).toBeCloseTo(unit.x, 10);
+    expect(scaled.y).toBeCloseTo(unit.y, 10);
+  });
+
+  it('clamps the displacement to the maximum distance', () => {
+    const offset = frightenedFleeOffsetFromDirection({ x: 1, y: 0 }, 10_000);
+    expect(Math.hypot(offset.x, offset.y)).toBeCloseTo(
+      FRIGHTEN_FLEE_MAX_DISTANCE,
+      10,
+    );
+  });
+
+  it('applies the level-resolved flee multiplier', () => {
+    const base = frightenedFleeOffsetFromDirection({ x: 1, y: 0 }, 1, 1);
+    const levelled = frightenedFleeOffsetFromDirection({ x: 1, y: 0 }, 1, 1.8);
+    expect(levelled.x).toBeCloseTo(base.x * 1.8, 10);
+  });
+
+  it('returns no displacement for a degenerate or non-finite heading', () => {
+    for (const direction of [
+      { x: 0, y: 0 },
+      { x: Number.NaN, y: 1 },
+      { x: Number.POSITIVE_INFINITY, y: 0 },
+    ]) {
+      const offset = frightenedFleeOffsetFromDirection(direction, 1);
+      expect(Math.hypot(offset.x, offset.y)).toBe(0);
+    }
+  });
+
+  it('treats a non-positive/invalid elapsed time as no displacement', () => {
+    for (const elapsed of [0, -5, Number.NaN]) {
+      const offset = frightenedFleeOffsetFromDirection({ x: 1, y: 0 }, elapsed);
+      expect(Math.hypot(offset.x, offset.y)).toBe(0);
+    }
+  });
+
+  it('matches the radial helper when handed the radial direction', () => {
+    const radial = frightenedFleeDirection(0, 0, 100, 0);
+    const viaHeading = frightenedFleeOffsetFromDirection(radial, 1, 1.5);
+    const viaHelper = frightenedFleeOffset(0, 0, 100, 0, 1, 1.5);
+    expect(viaHeading.x).toBeCloseTo(viaHelper.x, 10);
+    expect(viaHeading.y).toBeCloseTo(viaHelper.y, 10);
   });
 });
 

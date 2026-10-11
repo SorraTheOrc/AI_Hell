@@ -123,7 +123,11 @@ import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import { setExplosionBeatClock } from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
-import { frightenedFleeOffset } from './frightenedState';
+import {
+  frightenedFleeDirection,
+  frightenedFleeOffsetFromDirection,
+  type FrightenedVector,
+} from './frightenedState';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
 export const BOMB_PULSE_COLOR = 0xff5577;
@@ -285,6 +289,20 @@ export class CombatCoreScene<
    * the player's auto-fire is suppressed.
    */
   private _captureDisabledMs = 0;
+  /**
+   * Per-enemy flee heading captured at the instant the Power Pellet fright
+   * window opens (AH-0MV4BXUWT005MWAJ). Recomputing the heading from each
+   * enemy's (per-frame re-anchored) formation slot made the retreat radial
+   * relative to the ship, so a moving ship dragged enemies around it in an
+   * arc. Freezing each enemy's "away from the ship" heading at activation
+   * gives a straight retreat and keeps positions stable across a ship
+   * teleport; a later pellet re-captures fresh headings because the map is
+   * cleared when the window closes and on run reset.
+   */
+  private readonly _frightenedFleeHeadings = new Map<
+    object,
+    FrightenedVector
+  >();
   /** Lazily-created Phase Shift treatment controller. */
   private phaseShiftJuice: PhaseShiftJuice | null = null;
 
@@ -1269,27 +1287,41 @@ export class CombatCoreScene<
 
   /**
    * The accumulated flee displacement (px) an enemy at its un-frightened
-   * `(baseX, baseY)` formation slot should be offset by while the fright
-   * window is active. Returns `{0, 0}` when the window is inactive or no
-   * player is present.
+   * formation slot should be offset by while the fright window is active.
+   * Returns `{0, 0}` when the window is inactive or no player is present.
    *
-   * The maths is the pure {@link frightenedFleeOffset}, driven by the window's
-   * elapsed time and the level-resolved flee-speed multiplier, so the game
-   * and every gym retreat enemies identically (gym↔game parity).
+   * The enemy's heading is captured once, on the first frame it is offset
+   * during the window, from its current (formation-slot) position to the
+   * ship. The displacement then grows along that fixed heading with the
+   * window's elapsed time and the level-resolved flee-speed multiplier
+   * (AH-0MV4BXUWT005MWAJ), so the enemy retreats in a straight line rather
+   * than orbiting a moving ship. The heading is keyed by entity identity and
+   * the whole cache is cleared when the window closes (or on run reset), so a
+   * later pellet re-captures fresh headings.
+   *
+   * Putting this in the shared core means the game and every gym retreat
+   * enemies identically (gym↔game parity).
    */
-  protected _frightenedFleeOffset(
-    baseX: number,
-    baseY: number,
-  ): { x: number; y: number } {
+  protected _frightenedFleeOffset(enemy: {
+    x: number;
+    y: number;
+  }): { x: number; y: number } {
     const registry = this.getEffectsRegistry();
-    if (!registry.isFrightened()) return { x: 0, y: 0 };
+    if (!registry.isFrightened()) {
+      if (this._frightenedFleeHeadings.size > 0) {
+        this._frightenedFleeHeadings.clear();
+      }
+      return { x: 0, y: 0 };
+    }
     const player = this.getPlayer();
     if (!player) return { x: 0, y: 0 };
-    return frightenedFleeOffset(
-      baseX,
-      baseY,
-      player.x,
-      player.y,
+    let heading = this._frightenedFleeHeadings.get(enemy);
+    if (!heading) {
+      heading = frightenedFleeDirection(enemy.x, enemy.y, player.x, player.y);
+      this._frightenedFleeHeadings.set(enemy, heading);
+    }
+    return frightenedFleeOffsetFromDirection(
+      heading,
       registry.frightenElapsed(),
       registry.frightenSpeedMultiplier(),
     );
@@ -1357,6 +1389,9 @@ export class CombatCoreScene<
     // clean (Galaga capturer, AH-0MV01EFII008298D).
     this._captureHoldMs = 0;
     this._captureDisabledMs = 0;
+    // Drop captured flee headings so a restarted run re-captures from its
+    // own activation (AH-0MV4BXUWT005MWAJ).
+    this._frightenedFleeHeadings.clear();
   }
 
   /**
@@ -1388,6 +1423,7 @@ export class CombatCoreScene<
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
+    this._frightenedFleeHeadings.clear();
     // Detach the beat-synced explosion schedule so a stopped scene cannot
     // leak its clock into the next one (AH-0MV01HNLU008S5E3).
     setExplosionBeatClock(null);

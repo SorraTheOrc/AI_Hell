@@ -508,7 +508,7 @@ export class GymPowerUpsCombat extends CombatScene<
       );
       // Power Pellet fright (AH-0MV1BIW95004POSX): retreat from the ship
       // using the shared pure flee maths (gym↔game identical).
-      const flee = this._frightenedFleeOffset(scout.x, scout.y);
+      const flee = this._frightenedFleeOffset(scout);
       if (flee.x !== 0 || flee.y !== 0) {
         scout.x += flee.x;
         scout.y += flee.y;

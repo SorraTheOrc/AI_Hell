@@ -1960,7 +1960,7 @@ export class PlayScene extends CombatScene<
       // so the retreat is game↔gym identical. Self-advancing hazards and
       // seekers are excluded (they integrate their own motion and would
       // double-count an additive offset).
-      const flee = this._frightenedFleeOffset(s.entity.x, s.entity.y);
+      const flee = this._frightenedFleeOffset(s.entity);
       if (flee.x !== 0 || flee.y !== 0) {
         s.entity.x += flee.x;
         s.entity.y += flee.y;

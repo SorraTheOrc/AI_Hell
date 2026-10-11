@@ -1508,7 +1508,7 @@ export class GymFormationScene<
       // from the ship using the shared pure flee maths, then suppress its
       // fire while the window is active. The game applies the identical
       // shared helper, so the flee is gym↔game identical.
-      const flee = this._frightenedFleeOffset(entity.x, entity.y);
+      const flee = this._frightenedFleeOffset(entity);
       if (flee.x !== 0 || flee.y !== 0) {
         entity.x += flee.x;
         entity.y += flee.y;
