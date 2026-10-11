@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import { LEVELS } from './Formations';
 import { levelDifficulty } from '../core/enemyDifficulty';
+import { buildSequencedLevels } from './sequencedLevels';
 
 /** Score the full level (all waves). */
 function scoreLevel(levelIndex: number): number {
@@ -73,5 +74,49 @@ describe('Campaign calibration — non-decreasing difficulty', () => {
       'Firestorm',
       'Predictable Death',
     ]);
+  });
+});
+
+// ── Sequenced campaign calibration after the variety cap ────────────
+
+/**
+ * The shipped campaign is auto-sequenced: levels 4–5 are built from the
+ * difficulty curve and the level-5 wave 2 is `dynamic`. The per-level
+ * archetype cap (AH-0MV2SGIX5005PFJT) changes those compositions, so the
+ * merged campaign — not just the static `LEVELS` — must still be calibrated:
+ * level difficulty non-decreasing, and every wave a non-empty, playable
+ * composition (AH-0MV2XDDVM008I1Q7).
+ */
+describe('Sequenced campaign calibration after the variety cap (AH-0MV2XDDVM008I1Q7)', () => {
+  /** The merged shipped campaign (default curve and candidate pool). */
+  function campaign() {
+    return buildSequencedLevels();
+  }
+
+  it('keeps level difficulty non-decreasing across the merged campaign', () => {
+    const scores = campaign().map(
+      (level) => levelDifficulty(level.waves).score,
+    );
+    for (let i = 1; i < scores.length; i++) {
+      expect(scores[i], `level ${i + 1}`).toBeGreaterThanOrEqual(
+        scores[i - 1],
+      );
+    }
+  });
+
+  it('gives every wave a non-empty, non-zero playable composition', () => {
+    for (const level of campaign()) {
+      for (let wi = 0; wi < level.waves.length; wi++) {
+        const wave = level.waves[wi];
+        const label = `L${level.level}W${wi + 1}`;
+        expect(wave.groups.length, label).toBeGreaterThan(0);
+        const total = wave.groups.reduce((sum, group) => sum + group.count, 0);
+        expect(total, label).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('is deterministic: the same merged campaign on every build', () => {
+    expect(campaign()).toEqual(campaign());
   });
 });
