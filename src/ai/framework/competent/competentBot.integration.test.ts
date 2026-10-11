@@ -61,6 +61,8 @@ interface SimScenario {
   targets: SimTarget[];
   bullets?: SimBullet[];
   ticks: number;
+  /** Whether the ship's reverse thruster is enabled (AC4). Default false. */
+  reverseEnabled?: boolean;
 }
 
 interface SimResult {
@@ -73,6 +75,10 @@ interface SimResult {
   ticksSurvived: number;
   minBulletDistance: number;
   final: { x: number; y: number; facing: number };
+  /** Number of reverse presses (false→true rising edges) over the run (AC5). */
+  reversePresses: number;
+  /** Number of ticks the reverse key was held (AC5). */
+  reverseTicks: number;
 }
 
 /** Priority-weighted objective score honouring the operator's order (AC1). */
@@ -101,6 +107,7 @@ function scoreOf(
 function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
   const governor = new BotInputGovernor();
   governor.seed(RUN_SEED);
+  const reverseEnabled = scenario.reverseEnabled === true;
   let state = {
     x: scenario.start.x,
     y: scenario.start.y,
@@ -116,6 +123,9 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
   let collisions = 0;
   let minBulletDistance = Number.POSITIVE_INFINITY;
   let ticksSurvived = 0;
+  let reversePresses = 0;
+  let reverseTicks = 0;
+  let prevReverse = false;
 
   const snapshotOf = (): BotSnapshot => ({
     player: { x: state.x, y: state.y, vx: state.vx, vy: state.vy },
@@ -141,6 +151,7 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     runSeed: RUN_SEED,
     lives: 3,
     livesCap: 5,
+    reverseEnabled,
   });
 
   const goalTicks: Record<string, number> = {};
@@ -152,7 +163,13 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     const committed = governor.update(intent, DT, {
       scheme: 'asteroids',
       facing: state.facing,
+      reverseEnabled,
     }) as AsteroidsInput;
+    if (committed.reverse) {
+      reverseTicks += 1;
+      if (!prevReverse) reversePresses += 1;
+    }
+    prevReverse = committed.reverse === true;
     state = model.tick(
       state,
       committed,
@@ -200,6 +217,8 @@ function simulate(policy: BotPolicy, scenario: SimScenario): SimResult {
     ticksSurvived,
     minBulletDistance,
     final: { x: state.x, y: state.y, facing: state.facing },
+    reversePresses,
+    reverseTicks,
   } as Omit<SimResult, 'score'>;
   // eslint-disable-next-line no-console
   if ((policy as unknown as { committedGoalId?: string }).committedGoalId !== undefined) console.log('GOALTICKS', JSON.stringify({ goalTicks, collected, collisions, dbg }));
@@ -286,10 +305,10 @@ describe('survival hard constraint over a seeded run (AC4)', () => {
   });
 });
 
-// ── Reverse to a target behind the nose (AH-0MV1J0OHP0072XA5 · AC2/AC7) ──
+// ── Target behind the nose: turn to face it (AH-0MV2WJSY70070HK2 · AC1) ──
 
-describe('competent bot reverses to a target behind it (AC2/AC7)', () => {
-  it('reverses and reaches the target with no 180-degree turn-around', () => {
+describe('competent bot turns 180° to a target behind it (AC1)', () => {
+  it('reaches the target by turning, not by reversing', () => {
     const governor = new BotInputGovernor();
     governor.seed(RUN_SEED);
     const brain = createCompetentBotBrain({ fallback: null });
@@ -304,7 +323,6 @@ describe('competent bot reverses to a target behind it (AC2/AC7)', () => {
     };
     const target = { x: 200, y: 270 };
     let taken = false;
-    let reverseTicks = 0;
     let turnTicks = 0;
 
     const snapshotOf = (): BotSnapshot => ({
@@ -330,7 +348,6 @@ describe('competent bot reverses to a target behind it (AC2/AC7)', () => {
         facing: state.facing,
         reverseEnabled: true,
       }) as AsteroidsInput;
-      if (committed.reverse) reverseTicks += 1;
       if (committed.turnLeft || committed.turnRight) turnTicks += 1;
       state = model.tick(
         state,
@@ -349,10 +366,150 @@ describe('competent bot reverses to a target behind it (AC2/AC7)', () => {
     }
 
     expect(taken).toBe(true);
-    // The bot used retro-thrust...
-    expect(reverseTicks).toBeGreaterThan(0);
-    // ...and did not perform a 180-degree spin to face the target (a full
-    // turn at 3 rad/s would be ~60 ticks; reverse keeps it well under).
-    expect(turnTicks).toBeLessThan(30);
+    // Heading-aware reverse was removed: the bot turns to face the target.
+    expect(turnTicks).toBeGreaterThan(0);
+  });
+});
+
+// ── Reverse reserved for trouble (AH-0MV2WJSY70070HK2 · AC4/AC5) ──
+
+describe('reverse is reserved for trouble/correction (AC4)', () => {
+  it('only brakes reverse within the imminent-overshoot threshold during a calm approach (AC2/AC4)', () => {
+    const governor = new BotInputGovernor();
+    governor.seed(RUN_SEED);
+    const brain = createCompetentBotBrain({ fallback: null });
+    let state = {
+      x: 480,
+      y: 270,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+      angularVelocity: 0,
+    };
+    const target = { x: 100, y: 270 };
+    const threshold = COMPETENT_BOT_TUNABLES.reverseImminentOvershootGap;
+    let reverseAboveThreshold = 0;
+    let taken = false;
+
+    const snapshotOf = (): BotSnapshot => ({
+      player: { x: state.x, y: state.y, vx: state.vx, vy: state.vy },
+      enemies: [],
+      enemyBullets: [],
+      playerBullets: [],
+      drops: [],
+      minerals: taken ? [] : [{ x: target.x, y: target.y, type: 'mineral' }],
+      boss: null,
+      aliveCount: 0,
+      wave: null,
+      runSeed: RUN_SEED,
+      lives: 3,
+      livesCap: 5,
+      reverseEnabled: true,
+    });
+
+    for (let i = 0; i < 600 && !taken; i += 1) {
+      const intent = brain.decide(snapshotOf(), DT);
+      const committed = governor.update(intent, DT, {
+        scheme: 'asteroids',
+        facing: state.facing,
+        reverseEnabled: true,
+      }) as AsteroidsInput;
+      const distance = Math.hypot(target.x - state.x, target.y - state.y);
+      const gap = Math.max(
+        0,
+        distance - COMPETENT_BOT_TUNABLES.collectArrivalRadius,
+      );
+      if (committed.reverse) {
+        // A calm approach has no threats, so reverse may only correct an
+        // imminent overshoot: any press with a gap above the threshold is a
+        // routine-positioning violation.
+        if (gap > threshold) reverseAboveThreshold += 1;
+      }
+      state = model.tick(
+        state,
+        committed,
+        DT,
+        WIDTH,
+        HEIGHT,
+        SHIP_CONFIG,
+      ) as typeof state;
+      if (distance <= COMPETENT_BOT_TUNABLES.collectArrivalRadius) {
+        taken = true;
+      }
+    }
+
+    expect(reverseAboveThreshold).toBe(0);
+  });
+
+  it('never holds reverse during calm close combat with no threats (AC3/AC4)', () => {
+    const governor = new BotInputGovernor();
+    governor.seed(RUN_SEED);
+    const brain = createCompetentBotBrain({ fallback: null });
+    // Start already at the engagement standoff, at rest, with no threats.
+    let state = {
+      x: 480,
+      y: 270,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+      angularVelocity: 0,
+    };
+    let reverseTicks = 0;
+
+    const snapshotOf = (): BotSnapshot => ({
+      player: { x: state.x, y: state.y, vx: state.vx, vy: state.vy },
+      enemies: [{ x: 600, y: 270, alive: true, archetype: 'scout' }],
+      enemyBullets: [],
+      playerBullets: [],
+      drops: [],
+      minerals: [],
+      boss: null,
+      aliveCount: 1,
+      wave: null,
+      runSeed: RUN_SEED,
+      lives: 3,
+      livesCap: 5,
+      reverseEnabled: true,
+    });
+
+    for (let i = 0; i < 300; i += 1) {
+      const intent = brain.decide(snapshotOf(), DT);
+      const committed = governor.update(intent, DT, {
+        scheme: 'asteroids',
+        facing: state.facing,
+        reverseEnabled: true,
+      }) as AsteroidsInput;
+      if (committed.reverse) reverseTicks += 1;
+      state = model.tick(
+        state,
+        committed,
+        DT,
+        WIDTH,
+        HEIGHT,
+        SHIP_CONFIG,
+      ) as typeof state;
+    }
+
+    expect(reverseTicks).toBe(0);
+  });
+});
+
+describe('reverse overuse regression bound (AC5)', () => {
+  it('keeps reverse presses within a reduced bound over a deterministic demo window', () => {
+    const result = simulate(createCompetentBotBrain({ fallback: null }), {
+      ...REPRESENTATIVE,
+      reverseEnabled: true,
+    });
+    // Measured on the pre-change code (heading-aware reverse +
+    // deceleration-phase brake + proximity kiting): 38 reverse presses and
+    // 528 reverse ticks over this deterministic window.  The restricted
+    // model reserves reverse for imminent overshoot and threat escape,
+    // reducing that to 9 presses and 138 ticks.  The bound is set with
+    // headroom above the observed run to pin the regression without being
+    // brittle to the seed.
+    expect(result.reversePresses).toBeLessThanOrEqual(15);
+    // Sanity: reverse is not silently disabled — the threatening scenario
+    // still uses it for recovery.
+    expect(result.reverseTicks).toBeGreaterThan(0);
   });
 });

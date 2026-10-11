@@ -273,15 +273,16 @@ export function mayThrust(
 }
 
 /**
- * Reverse-brake decision (AC1/AC3): whether to request **reverse** thrust to
+ * Reverse-brake decision (AC1/AC2): whether to request **reverse** thrust to
  * decelerate toward `distance` instead of only coasting on friction.
  *
- * Reverse braking is warranted when the forward model would overshoot
- * ({@link mayThrust} is `false`), the ship still has speed to shed, there is
- * still a gap to the target, and the reverse thruster is enabled. It never
- * fires when reverse braking is disabled or the ship is already stopped, so
- * it can be composed alongside {@link mayThrust} without changing the
- * friction-only coast baseline.
+ * Reverse braking is reserved for **imminent overshoot**: it only fires when
+ * the remaining gap to the target falls within the imminent-overshoot
+ * threshold (`reverseImminentOvershootGap`), the forward model would already
+ * overshoot ({@link mayThrust} is `false`), the ship still has speed to
+ * shed, and the reverse thruster is enabled.  During a normal approach the
+ * ship coasts on friction; reverse is a trouble-correcting action, not a
+ * positioning tool.
  */
 export function mayReverse(
   snapshot: BotSnapshot,
@@ -295,6 +296,8 @@ export function mayReverse(
   const speed = Math.hypot(player.vx, player.vy);
   if (speed <= EPS) return false;
   const gap = Math.max(0, distance - arrivalRadius);
+  // Imminent-overshoot gate: only brake within the threshold.
+  if (gap > t.reverseImminentOvershootGap) return false;
   if (gap <= EPS) return false;
   return !mayThrust(snapshot, t, distance, arrivalRadius);
 }

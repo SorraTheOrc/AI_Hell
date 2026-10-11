@@ -159,16 +159,6 @@ export interface BotHumanInputTunables {
    * reverse-thrust press duration, mirroring the forward gentle reduction.
    */
   reversePressGentleMaxPct: number;
-  /**
-   * Travel-bearing error (radians) beyond which the governor reverses toward
-   * the bearing (nose opposite the travel) instead of turning 180° (AC2).
-   */
-  reverseHeadingThresholdRad: number;
-  /**
-   * Hysteresis band (radians) subtracted from the entry threshold to leave
-   * reverse mode, so a bearing at the boundary does not oscillate (AC2).
-   */
-  reverseHeadingHysteresisRad: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -185,8 +175,6 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reversePressMaxMs: 260,
   reversePressGentleMinPct: 0.02,
   reversePressGentleMaxPct: 0.06,
-  reverseHeadingThresholdRad: 2.35,
-  reverseHeadingHysteresisRad: 0.35,
 };
 
 /** Default seed for the governor's press-duration RNG (deterministic). */
@@ -253,18 +241,6 @@ export interface BotControlContext {
    * on it (intent AND flag, defence in depth).
    */
   reverseEnabled?: boolean;
-  /**
-   * Heading-error threshold (radians) beyond which the governor chooses
-   * reverse thrust and aims the nose opposite the travel bearing instead of
-   * turning 180° (AC2).  Defaults to the tunable.
-   */
-  reverseHeadingThresholdRad?: number;
-  /**
-   * Hysteresis band (radians) subtracted from the entry threshold to leave
-   * reverse mode, so a bearing at the boundary does not oscillate (AC2).
-   * Defaults to the tunable.
-   */
-  reverseHeadingHysteresisRad?: number;
 }
 
 /**
@@ -416,13 +392,6 @@ export class BotInputGovernor {
   /** Milliseconds left in the current reverse-thrust press (0 = none). */
   private reversePressRemainingMs = 0;
 
-  /**
-   * Whether the governor is currently in heading-aware reverse mode
-   * (AH-0MV1J0OHP0072XA5 · AC2). Latched with hysteresis so a travel bearing
-   * near the threshold does not oscillate.
-   */
-  private reverseMode = false;
-
   private readonly tunables: BotHumanInputTunables;
 
   constructor(
@@ -461,7 +430,6 @@ export class BotInputGovernor {
     this.sinceCommitMs = Number.POSITIVE_INFINITY;
     this.thrustPressRemainingMs = 0;
     this.reversePressRemainingMs = 0;
-    this.reverseMode = false;
   }
 
   /**
@@ -517,39 +485,12 @@ export class BotInputGovernor {
       ),
     };
 
-    // Heading-aware reverse selection (AC2): when the committed travel
-    // bearing is behind the nose, latch reverse mode (with hysteresis) so
-    // the actuator backs toward the bearing instead of turning 180°. The
-    // latch is cleared when the bearing comes back within the exit band.
-    const bearing = preciseDirection(this.committed);
-    if (context.reverseEnabled === true && bearing) {
-      const desired = Math.atan2(bearing.dy, bearing.dx);
-      const error = Math.abs(
-        Math.atan2(
-          Math.sin(desired - context.facing),
-          Math.cos(desired - context.facing),
-        ),
-      );
-      const enter =
-        context.reverseHeadingThresholdRad ??
-        this.tunables.reverseHeadingThresholdRad;
-      const exit =
-        enter -
-        (context.reverseHeadingHysteresisRad ??
-          this.tunables.reverseHeadingHysteresisRad);
-      if (!this.reverseMode && error >= enter) this.reverseMode = true;
-      else if (this.reverseMode && error <= exit) this.reverseMode = false;
-    } else {
-      this.reverseMode = false;
-    }
-
     // Human-like reverse presses (AC5): hold each reverse press for its
     // drawn duration so the retro-thruster cannot toggle every frame. Gated
     // on the ship's enable flag so a disabled thruster never even latches a
     // press.
     const desiredReverse =
-      context.reverseEnabled === true &&
-      (this.committed.reverse === true || this.reverseMode);
+      context.reverseEnabled === true && this.committed.reverse === true;
     this.committed = {
       ...this.committed,
       reverse: this.resolveReversePress(desiredReverse, dtMs),

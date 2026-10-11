@@ -96,21 +96,17 @@ export interface CompetentBotTunables {
   /** Whether the bot may use reverse thrust to brake (AC1). */
   reverseBrakeEnabled: boolean;
   /**
-   * Heading-error threshold (radians) beyond which the bot reverses toward
-   * its travel bearing (nose opposite the travel) instead of turning 180°
-   * (AC2). Entry threshold; see {@link reverseHeadingHysteresisRad}.
+   * Gap (px) within which reverse braking fires — the "imminent overshoot"
+   * threshold.  During a normal approach the ship coasts on friction until
+   * the remaining gap falls below this value, at which point reverse is
+   * requested to shed the remaining speed (AC2).
    */
-  reverseHeadingThresholdRad: number;
-  /**
-   * Hysteresis band (radians) subtracted from the entry threshold to decide
-   * when to leave reverse mode, so a bearing near the boundary does not
-   * oscillate across ticks (AC2).
-   */
-  reverseHeadingHysteresisRad: number;
+  reverseImminentOvershootGap: number;
   /**
    * Standoff distance (px) inside which an engaged target is too close and
    * the bot retreats under reverse thrust while keeping its nose on the aim
-   * target (kiting; AC3).
+   * target (kiting; AC3).  Kiting only fires when a genuine threat is present
+   * (incoming threatening shot or imminent collision), not merely by proximity.
    */
   reverseRetreatRange: number;
 
@@ -174,8 +170,7 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   survivalUrgencyHorizon: 0.5,
 
   reverseBrakeEnabled: true,
-  reverseHeadingThresholdRad: 2.35,
-  reverseHeadingHysteresisRad: 0.35,
+  reverseImminentOvershootGap: 36, // 2 × collectArrivalRadius (18)
   reverseRetreatRange: 90,
 
   fanDegrees: Object.freeze([

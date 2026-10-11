@@ -299,13 +299,16 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
 
 - **`collect`** (mineral/power-up/secure-life): approach and scoop, braking
   via the forward model so the ship arrives rather than barrelling through,
-  and using reverse retro-thrust when forward thrust would overshoot (AC1).
+  and using reverse retro-thrust only to correct an **imminent overshoot**
+  (AH-0MV2WJSY70070HK2 · AC2).
   The `secure-life` goal restricts this behaviour to live Extra Life drops.
 - **`engage`** (enemy/asteroid): line the target up inside `engagementRange`,
   then hold the **aim axis** and coast so the forward-firing weapon stays on
   target (aim/fire reasoning, AC3) instead of aiming only by accident of
   travel. Inside `reverseRetreatRange` it retreats under reverse thrust while
-  keeping its nose on the target (kiting).
+  keeping its nose on the target (kiting) **only when a genuine threat is
+  present** — an incoming threatening shot or an imminent hazard collision —
+  never merely because the target is close (AH-0MV2WJSY70070HK2 · AC3).
 - **`evade`**: head away from the weighted centroid of the shots that
   threaten the ship (predictive path-around, AC2), not merely direction
   rejection.
@@ -350,44 +353,52 @@ and resets the brain on run (re)start. The competent brain keeps the legacy
 adapter as its default fallback, so the demo still behaves sensibly if a
 behaviour declines.
 
-### 9.7 Reverse thrust (AH-0MV1J0OHP0072XA5)
+### 9.7 Reverse thrust (AH-0MV2WJSY70070HK2)
 
-The demo bot treats forward and reverse as a **first-class thrust direction**
-rather than only ever thrusting forward (AC1–AC5):
+The demo bot reserves reverse thrust for **trouble and correction** — an
+imminent overshoot or a genuine threat — never for routine positioning
+(AC1–AC5). This tightens the earlier first-class reverse-thrust feature
+(AH-0MV1J0OHP0072XA5), which the producer rejected for using reverse far too
+often:
 
-- **Brake assist (AC1).** While closing on a collection target or combat
-target and continuing to thrust would overshoot it (the forward model's
-`mayThrust` is `false`), the `collect`/`engage` behaviours request reverse
-instead of only coasting on friction; `mayReverse` exposes the predicate and
-never fires when the ship is stopped or reverse braking is disabled. Reverse
-braking never increases overshoot versus the friction-only model.
-- **Heading-aware thrust (AC2).** When the committed travel bearing is behind
-the nose by more than `reverseHeadingThresholdRad`, the human-like governor
-latches **reverse mode** (with a `reverseHeadingHysteresisRad` dead-band) and
-the actuator turns the nose opposite the bearing and reverses toward it
-instead of spinning 180°. The hysteresis keeps the choice stable across
-ticks.
-- **Aim-preserving retreat / kiting (AC3).** Inside `reverseRetreatRange` of
-an engaged target the `engage` behaviour holds reverse, keeping its nose on
-the aim axis, so it backs away without the previous turn-away.
+- **Brake assist restricted to imminent overshoot (AC2).** While closing on
+  a collection or combat target, the `collect`/`engage` behaviours request
+  reverse only when the remaining gap to the target falls within the
+  imminent-overshoot threshold (`reverseImminentOvershootGap`, default
+  `2 × collectArrivalRadius`) **and** the forward model would overshoot
+  (`mayThrust` is `false`).  During a normal approach the ship coasts on
+  friction; `mayReverse` exposes the predicate and never fires when the ship
+  is stopped, the gap is above the threshold, or reverse braking is disabled.
+- **Heading-aware reverse removed entirely (AC1).** The governor no longer
+  latches a reverse mode when the travel bearing is behind the nose.  The
+  ship always **turns to face** its travel bearing (including 180° turns),
+  so no reverse press is emitted from this path.  The
+  `reverseHeadingThresholdRad` / `reverseHeadingHysteresisRad` tunables and
+  their latch are gone.
+- **Kiting restricted to genuine trouble (AC3).** The `engage` behaviour
+  retreats under reverse inside `reverseRetreatRange` only when there is an
+  actual threat — an incoming shot flagged as threatening, or a hazard within
+  `dangerMargin` (imminent collision).  Calm close combat no longer holds
+  reverse.
 - **Config-respecting enable flag (AC4).** `Player.isReverseEnabled()`
-is carried through `buildBotSnapshot()` → `BotSnapshot.reverseEnabled` →
-`BotWorld.reverseEnabled` and into the governor's `BotControlContext`. Every
-reverse intent is gated on it (intent **and** flag, defence in depth), so a
-player who switched the retro-thruster off sees `reverse: false` on every
-bot input and today's behaviour unchanged.
-- **Human-like reverse cadence (AC5).** The governor holds each reverse press
-for a duration drawn from `[reversePressMinMs, reversePressMaxMs]` (reduced
-by a per-press gentle factor), using separate seeded RNG streams so the
-forward press sequence is unchanged. The bot never toggles reverse every
-frame.
+  is carried through `buildBotSnapshot()` → `BotSnapshot.reverseEnabled` →
+  `BotWorld.reverseEnabled` and into the governor's `BotControlContext`. Every
+  reverse intent is gated on it (intent **and** flag, defence in depth), so a
+  player who switched the retro-thruster off sees `reverse: false` on every
+  bot input and today's behaviour unchanged.
+- **Human-like reverse cadence (AC5).** When reverse is legitimately
+  requested, the governor holds each press for a duration drawn from
+  `[reversePressMinMs, reversePressMaxMs]` (reduced by a per-press gentle
+  factor), using separate seeded RNG streams so the forward press sequence is
+  unchanged. The bot never toggles reverse every frame.
 
 The relevant tunables are single-sourced in `COMPETENT_BOT_TUNABLES`
-(`reverseBrakeEnabled`, `reverseHeadingThresholdRad`,
-`reverseHeadingHysteresisRad`, `reverseRetreatRange`) and
-`BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
-`reversePressGentleMinPct`, `reversePressGentleMaxPct`,
-`reverseHeadingThresholdRad`, `reverseHeadingHysteresisRad`).
+(`reverseBrakeEnabled`, `reverseImminentOvershootGap`, `reverseRetreatRange`)
+and `BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
+`reversePressGentleMinPct`, `reversePressGentleMaxPct`).  A deterministic
+seeded run pins the regression: the restricted model cuts reverse presses over
+an integration demo window from 38 to 9 (528 → 138 reverse ticks) versus the
+pre-change baseline.
 
 ## 10. Testing
 

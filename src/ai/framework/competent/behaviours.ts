@@ -152,12 +152,27 @@ function engageBehaviour(
       const holdAim = profile.aim !== 'none';
       // Kiting (AC3): inside the standoff and needing more separation, hold
       // reverse while keeping the nose on the aim target (the objective still
-      // points at the target, so the actuator backs away). Gated on the
-      // reverse enable flag.
+      // points at the target, so the actuator backs away).  Only fires on a
+      // genuine threat — an incoming threatening shot or an imminent hazard
+      // collision — not merely because the bot is close to a target.
+      const hasThreateningShot = view.world.incomingFire.some(
+        (shot) => shot.threatens,
+      );
+      // A genuine imminent collision is a hazard **other than the engagement
+      // target** inside the danger margin.  The target's own proximity is the
+      // kiting condition, not a threat, so calm close combat never triggers
+      // reverse on its own (AC3).
+      const hasImminentHazard = view.world.hazards.some(
+        (hazard) =>
+          (hazard.x !== best.point.x || hazard.y !== best.point.y) &&
+          Math.hypot(hazard.x - player.x, hazard.y - player.y) <
+            t.dangerMargin,
+      );
       const kite =
         holdAim &&
         view.world.reverseEnabled &&
-        distance <= t.reverseRetreatRange;
+        distance <= t.reverseRetreatRange &&
+        (hasThreateningShot || hasImminentHazard);
       const thrust =
         inRange && holdAim
           ? false

@@ -213,12 +213,13 @@ describe('survival is a hard steering constraint (AC4)', () => {
 // ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────────
 
 describe('collect behaviour — reverse brake-assist (AC1)', () => {
-  it('requests reverse instead of only coasting when forward would overshoot', () => {
-    // Closing on a mineral at 80 px with v=175 px/s: stopping distance
-    // (~153 px) exceeds the gap, so the bot brakes with reverse.
+  it('requests reverse instead of only coasting when the gap is within the imminent-overshoot threshold', () => {
+    // Closing on a mineral at 50 px with v=175 px/s: gap=32, threshold=36
+    // (2× collectArrivalRadius). Stopping distance (~153 px) exceeds gap, so
+    // the bot brakes with reverse.
     const snapshot = makeSnapshot({
       player: { x: 480, y: 270, vx: 175, vy: 0 },
-      minerals: [mineral(560, 270)],
+      minerals: [mineral(530, 270)],
       reverseEnabled: true,
     });
     const intent = collect.run(
@@ -228,6 +229,20 @@ describe('collect behaviour — reverse brake-assist (AC1)', () => {
     expect(intent!.thrust).toBe(false);
     expect(intent!.reverse).toBe(true);
     expect(intent!.dirX).toBeCloseTo(1, 3);
+  });
+
+  it('does not brake with reverse during normal deceleration when gap is above the threshold', () => {
+    // Closing on a mineral at 100 px: gap=82 > 36 threshold. Ship coasts.
+    const snapshot = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+      minerals: [mineral(580, 270)],
+      reverseEnabled: true,
+    });
+    const intent = collect.run(
+      context(snapshot, COMPETENT_GOAL_IDS.collectMineral),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.reverse).toBe(false);
   });
 
   it('does not brake with reverse when the thruster is disabled (AC4)', () => {
@@ -244,13 +259,17 @@ describe('collect behaviour — reverse brake-assist (AC1)', () => {
 });
 
 describe('engage behaviour — aim-preserving retreat / kiting (AC3)', () => {
-  it('retreats with reverse while keeping the nose on a too-close target', () => {
-    // 80 px away: inside the 90 px retreat band, outside the 70 px danger margin.
+  it('retreats with reverse while keeping the nose on a too-close target (threat present)', () => {
+    // 80 px away: inside the 90 px retreat band. An incoming threatening shot
+    // triggers the threat gate, so kiting fires.  Bullet comes from above,
+    // not on the direct bearing to the enemy, so the safety filter still
+    // accepts the direct (positive-X) bearing.
     const intent = engage.run(
       context(
         makeSnapshot({
           player: PLAYER,
           enemies: [enemy(560, 270, 'scout')],
+          enemyBullets: [bullet(480, 150, 0, 100)],
           reverseEnabled: true,
         }),
         COMPETENT_GOAL_IDS.engageEnemy,
@@ -263,6 +282,45 @@ describe('engage behaviour — aim-preserving retreat / kiting (AC3)', () => {
     expect(intent!.dirY).toBeCloseTo(0, 3);
     expect(intent!.reverse).toBe(true);
     expect(intent!.thrust).toBe(false);
+  });
+
+  it('does not kite with reverse during calm close combat (no threat)', () => {
+    // 50 px away: inside both the 90 px retreat band and the 70 px danger
+    // margin. The target's own proximity must not trigger kiting — no
+    // incoming shots, no other hazards.
+    const intent = engage.run(
+      context(
+        makeSnapshot({
+          player: PLAYER,
+          enemies: [enemy(530, 270, 'scout')],
+          reverseEnabled: true,
+        }),
+        COMPETENT_GOAL_IDS.engageEnemy,
+      ),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.reverse).toBe(false);
+  });
+
+  it('kites with reverse when a genuine imminent collision is present', () => {
+    // 80 px from the enemy (inside the retreat band) and an unrelated hazard
+    // well inside the danger margin: the collision threat triggers kiting.
+    const intent = engage.run(
+      context(
+        makeSnapshot({
+          player: PLAYER,
+          enemies: [
+            enemy(560, 270, 'scout'),
+            // An asteroid off the direct bearing, 60 px away (< 70 margin).
+            enemy(480, 210, 'asteroid'),
+          ],
+          reverseEnabled: true,
+        }),
+        COMPETENT_GOAL_IDS.engageEnemy,
+      ),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.reverse).toBe(true);
   });
 
   it('does not kite with reverse when the thruster is disabled (AC4)', () => {

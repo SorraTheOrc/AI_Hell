@@ -233,13 +233,23 @@ describe('planSteering — reverse passthrough (AC1/AC3)', () => {
   });
 });
 
-describe('mayReverse — reverse-brake predicate (AC1/AC3)', () => {
-  it('fires when forward thrust would overshoot and the ship is still moving', () => {
+describe('mayReverse — reverse-brake predicate (AC1/AC2)', () => {
+  it('fires when forward thrust would overshoot and the gap is within the imminent-overshoot threshold', () => {
     const moving = makeSnapshot({
       player: { x: 480, y: 270, vx: 175, vy: 0 },
     });
-    // v=175, a=100 → stopping distance ~153 px > gap 82 px.
-    expect(mayReverse(moving, T, 100, 18)).toBe(true);
+    // distance=50, arrivalRadius=18 → gap=32.  Default threshold is 36 (2×
+    // collectArrivalRadius).  v=175, a=100 → stopping distance ~153 px > 32.
+    expect(mayReverse(moving, T, 50, 18)).toBe(true);
+  });
+
+  it('does not fire during the normal deceleration phase when gap is above the threshold', () => {
+    const moving = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    // distance=100, arrivalRadius=18 → gap=82 > 36 threshold.  Ship coasts
+    // on friction; reverse must not fire.
+    expect(mayReverse(moving, T, 100, 18)).toBe(false);
   });
 
   it('never fires when the ship is stopped or the gap is huge', () => {
