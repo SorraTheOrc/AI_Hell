@@ -506,3 +506,23 @@ describe('AdjustedGroup', () => {
     expect(adjusted.score).toBeLessThanOrEqual(100);
   });
 });
+
+// ── Gym parity: single-wave calls stay unconstrained ────────────────
+
+/**
+ * The curve-editor gym (`GymCurveSequencer.sequenceVariedWaves`) calls
+ * `sequencer([target], pool)` once per wave with a fresh, un-shared usage
+ * map. The per-level archetype cap (AH-0MV2SGIX5005PFJT) therefore cannot
+ * starve those calls, so the orbital Phaser stays selectable as a gym
+ * set-piece — the variety rule only constrains a whole level's wave sequence.
+ */
+describe('per-level cap does not constrain single-wave (gym) calls (AH-0MV2SGIX5005PFJT)', () => {
+  it('still selects the orbital Phaser for a high single-wave target', () => {
+    const wave = sequencer([30], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    }).waves[0];
+    expect(
+      wave.groups.some((group) => group.formation === 'orbital'),
+    ).toBe(true);
+  });
+});

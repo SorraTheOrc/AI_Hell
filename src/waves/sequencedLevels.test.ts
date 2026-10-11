@@ -414,6 +414,29 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
     expect(spy.mock.calls[0][0]).toEqual([18]);
   });
 
+  it('preserves an authored fixed wave containing the orbital Phaser verbatim', () => {
+    // Static level 5 is two orbital Phaser waves. A `fixed` selection must
+    // return the static level byte-for-byte — the per-level archetype cap
+    // only constrains generated (curve/dynamic) waves, so the orbital Phaser
+    // stays authorable (AH-0MV2SGIX5005PFJT).
+    const spy = vi.fn(sequencer);
+    const rows = modeRows(5, 'Predictable Death', [
+      { target: 43.5, generation: 'fixed' },
+      { target: 62, generation: 'fixed' },
+    ]);
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
+    const level5 = levelOf(levels, 5);
+
+    expect(level5).toBe(LEVELS[4]);
+    expect(
+      level5.waves.every((wave) =>
+        wave.groups.some((group) => group.formation === 'orbital'),
+      ),
+    ).toBe(true);
+    // Fixed waves are never passed to the sequencer.
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it('mixes all three modes within one level', () => {
     const spy = vi.fn(sequencer);
     const rows = modeRows(1, 'Entry', [
