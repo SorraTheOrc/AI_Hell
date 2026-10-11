@@ -1053,3 +1053,43 @@ describe('Dynamic varied opening (AH-0MUOCJM0N000RW2B)', () => {
     ).toEqual([11.4, 11.85, 12.3]);
   });
 });
+
+// ── Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT) ────────
+
+/**
+ * The merged shipped campaign must not collapse onto one archetype. The
+ * per-level archetype cap (`MAX_ARCHETYPE_PER_LEVEL`) keeps the orbital Phaser
+ * to at most one wave per level and stops any level being composed entirely of
+ * one archetype (AH-0MV2SGIX5005PFJT). Every assertion is made through the
+ * public `buildSequencedLevels()` API over the real default curve/pool.
+ */
+describe('Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT)', () => {
+  /** The shipped campaign (default curve and candidate pool). */
+  function campaign() {
+    return buildSequencedLevels();
+  }
+
+  it('does not compose any level entirely of one archetype', () => {
+    for (const level of campaign()) {
+      const archetypes = new Set(
+        level.waves.flatMap((wave) => wave.groups.map((group) => group.enemyKey)),
+      );
+      expect(archetypes.size, `level ${level.level}`).toBeGreaterThan(1);
+    }
+  });
+
+  it('uses the orbital/Phaser archetype in at most one wave per level', () => {
+    for (const level of campaign()) {
+      const orbitalWaves = level.waves.filter((wave) =>
+        wave.groups.some((group) => group.formation === 'orbital'),
+      );
+      expect(orbitalWaves.length, `level ${level.level}`).toBeLessThanOrEqual(
+        1,
+      );
+    }
+  });
+
+  it('is deterministic: the same campaign for every build', () => {
+    expect(campaign()).toEqual(campaign());
+  });
+});
