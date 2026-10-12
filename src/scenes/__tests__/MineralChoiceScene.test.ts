@@ -189,6 +189,78 @@ describe('MineralChoiceScene', () => {
     });
   });
 
+  describe('option descriptions (AH-0MV2N2591007UGPD)', () => {
+    it('AC2 — renders a description line as part of a three-line block', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'spread',
+            name: 'Spread Shot Lv.3',
+            kind: 'weapon-level',
+            level: 3,
+            description:
+              'Adds a 3-bullet fan (\u221230\u00b0/0\u00b0/+30\u00b0).',
+            changeSummary: '+1 Projectiles',
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      // Name label unchanged; description and detail are separate lines with
+      // the existing change-summary contract intact.
+      expect(scene.getOptionLabels()[0]).toContain('Spread Shot Lv.3');
+      expect(scene.getDescriptionLines()).toEqual([
+        'Adds a 3-bullet fan (\u221230\u00b0/0\u00b0/+30\u00b0).',
+      ]);
+      expect(scene.getDetailLines()).toEqual(['+1 Projectiles']);
+    });
+
+    it('AC2 — shows a New option\u2019s description above its \u2605 New badge', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'nova',
+            name: 'Nova',
+            kind: 'weapon',
+            isNew: true,
+            description:
+              'AOE: an expanding ring around the ship damages every enemy and clears bullets within its radius.',
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      expect(scene.getDescriptionLines()).toHaveLength(1);
+      expect(scene.getDescriptionLines()[0]).toContain('expanding ring');
+      expect(scene.getDetailLines()).toEqual(['\u2605 New']);
+    });
+
+    it('AC6 — omits the description line when an option has none (no empty line)', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      expect(scene.getDescriptionLines()).toEqual([]);
+      expect(scene.getDetailLines()).toEqual([]);
+      expect(scene.getOptionLabels()).toHaveLength(1);
+    });
+  });
+
   describe('demo auto-select (AH-0MUXXQ1MN002RXGB)', () => {
     it('AC4 — auto-selects the first option after the delay', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);

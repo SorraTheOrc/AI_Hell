@@ -662,7 +662,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   spread: {
     id: 'spread',
     name: 'Spread',
-    description: 'Adds a 3-bullet fan (−30°/0°/+30°) for 10 s.',
+    description: 'Adds a 3-bullet fan (−30°/0°/+30°).',
     offsets: [(-30 * Math.PI) / 180, 0, (30 * Math.PI) / 180],
     fireRateMs: WEAPON_SPREAD_FIRE_RATE,
     bulletColor: BULLET_COLORS.spread,
@@ -673,7 +673,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   dual: {
     id: 'dual',
     name: 'Dual',
-    description: 'Adds two side-by-side bullets for 10 s.',
+    description: 'Adds two side-by-side bullets.',
     // Two parallel bullets, side-by-side across the direction of travel:
     // both fly at heading + 0° but are launched offset perpendicular to
     // the heading by ±DUAL_SIDE_OFFSET px.
@@ -688,7 +688,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   rapid: {
     id: 'rapid',
     name: 'Rapid',
-    description: 'Adds single bullets at a much higher fire rate for 10 s.',
+    description: 'Adds single bullets at a much higher fire rate.',
     offsets: [0],
     fireRateMs: WEAPON_RAPID_FIRE_RATE,
     bulletColor: BULLET_COLORS.rapid,
@@ -700,7 +700,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'wave_laser',
     name: 'Wave Laser',
     description:
-      'Adds a slow, long-range piercing beam that passes through several enemies for 10 s.',
+      'Adds a slow, long-range piercing beam that passes through several enemies.',
     // A single aimed beam along the ship's heading.
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
@@ -719,7 +719,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'ricochet',
     name: 'Ricochet',
     description:
-      'Adds edge-bouncing shots that ricochet off the arena walls for 10 s.',
+      'Adds edge-bouncing shots that ricochet off the arena walls.',
     // A single aimed pellet along the ship's heading; it reflects at the edges.
     offsets: [0],
     fireRateMs: WEAPON_RICOCHET_FIRE_RATE,
@@ -736,7 +736,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'cluster',
     name: 'Cluster Missile',
     description:
-      'Adds a missile that splits into a radial cluster of warheads for 10 s.',
+      'Adds a missile that splits into a radial cluster of warheads.',
     // A single aimed missile along the ship's heading; it splits once.
     offsets: [0],
     fireRateMs: WEAPON_CLUSTER_FIRE_RATE,
@@ -753,7 +753,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'options',
     name: 'Options',
     description:
-      'Adds orbiting satellite pods that each fire along your heading for 10 s.',
+      'Adds orbiting satellite pods that each fire along your heading.',
     // The orbit descriptor drives pod firing; the single `[0]` offset is a
     // harmless fallback (the shared core never reads the pattern for an
     // orbit weapon).

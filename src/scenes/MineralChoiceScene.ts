@@ -10,6 +10,11 @@
  * permanently for the run, resumes play, and resets the hold with any
  * overflow) and closes the overlay.
  *
+ * Each option renders as a three-line block: the option name, a one-line
+ * description of what the item does (from `ChoiceOption.description`, resolved
+ * from the shared catalogues) and then the existing change summary / `★ New`
+ * line, so an unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD).
+ *
  * The overlay deliberately knows nothing about its launcher (`PlayScene`,
  * `GymFormationScene`, …): the only selection contract is the `onSelect`
  * callback, so the game and every gym drive it identically.
@@ -32,16 +37,32 @@ const CHOICE_HEADING_COLOR = '#ffdd44';
 const CHOICE_OPTION_COLOR = '#00ffff';
 /** Secondary / muted colour for change summaries. */
 const CHOICE_DETAIL_COLOR = '#aaaaaa';
+/** Muted colour for the one-line item description. */
+const CHOICE_DESCRIPTION_COLOR = '#cccccc';
 /** Accent colour for the "New" badge. */
 const CHOICE_NEW_COLOR = '#ff8800';
 /** Fully opaque backdrop, blanking the screen behind the choice dialog. */
 const CHOICE_BACKDROP_ALPHA = 1.0;
+/** Vertical centre (px) of the first option row. */
+const CHOICE_FIRST_ROW_Y = 200;
+/**
+ * Vertical pitch (px) between option rows. Widened from the two-line 64 px so
+ * the three-line block (name → description → detail) never collides with the
+ * next option (AH-0MV2N2591007UGPD · AC2).
+ */
+const CHOICE_ROW_PITCH = 84;
+/** Y offset (px) of the description line beneath an option name. */
+const CHOICE_DESCRIPTION_OFFSET = 28;
+/** Y offset (px) of the change-summary / `★ New` line beneath the description. */
+const CHOICE_DETAIL_OFFSET = 48;
 
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
   private controls: Phaser.GameObjects.Text[] = [];
   /** Detail-line text objects (one per option). */
   private details: Phaser.GameObjects.Text[] = [];
+  /** Description-line text objects (one per option that carries a description). */
+  private descriptions: Phaser.GameObjects.Text[] = [];
   /** Optional generic selection handler supplied by the launcher. */
   private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
   /**
@@ -108,8 +129,9 @@ export class MineralChoiceScene extends Phaser.Scene {
 
     this.controls = [];
     this.details = [];
+    this.descriptions = [];
     this.options.forEach((option, index) => {
-      const y = 210 + index * 64;
+      const y = CHOICE_FIRST_ROW_Y + index * CHOICE_ROW_PITCH;
 
       // Primary label: "1.  Spread Shot Lv.3"
       const label = this.add
@@ -125,8 +147,25 @@ export class MineralChoiceScene extends Phaser.Scene {
       label.on('pointerdown', () => this.select(index));
       this.controls.push(label);
 
-      // Detail line: change summary or "New" badge.
-      const detailY = y + 28;
+      // Description line: what the item actually does, resolved from the
+      // shared catalogue. Rendered as its own line beneath the name so a new
+      // or unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD · AC2).
+      // Omitted entirely when an option carries no description — never an
+      // empty text object.
+      const description = option.description?.trim();
+      if (description) {
+        const descriptionLine = this.add
+          .text(GAME_WIDTH / 2, y + CHOICE_DESCRIPTION_OFFSET, description, {
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            color: CHOICE_DESCRIPTION_COLOR,
+          })
+          .setOrigin(0.5);
+        this.descriptions.push(descriptionLine);
+      }
+
+      // Detail line: change summary or "New" badge, beneath the description.
+      const detailY = y + CHOICE_DETAIL_OFFSET;
       let detailText = '';
       if (option.isNew) {
         detailText = '★ New';
@@ -177,10 +216,23 @@ export class MineralChoiceScene extends Phaser.Scene {
   /**
    * The rendered detail lines beneath each option (e.g.
    * `["+1 Projectiles", "★ New", ...]`).  Returns an empty array when no
-   * detail lines are present.
+   * detail lines are present. The change-summary / `★ New` contract is
+   * unchanged; the description is a separate line (see
+   * {@link getDescriptionLines}).
    */
   getDetailLines(): string[] {
     return this.details.map((d) => d.text);
+  }
+
+  /**
+   * The rendered description lines beneath each option name (e.g.
+   * `["Adds a 3-bullet fan (−30°/0°/+30°).", ...]`). One entry per option
+   * that carries a non-empty `description`; empty when none do. Exposed so
+   * tests can assert the overlay shows the shared catalogue copy
+   * (AH-0MV2N2591007UGPD · AC2/AC6).
+   */
+  getDescriptionLines(): string[] {
+    return this.descriptions.map((d) => d.text);
   }
 
   /**

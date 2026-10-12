@@ -118,7 +118,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   shield: {
     id: 'shield',
     name: 'Shield',
-    description: 'Absorbs one hit; a bubble protects the ship for 15 s.',
+    description: 'Absorbs one hit behind a protective bubble around the ship.',
     duration: 15,
   },
   bomb: {
@@ -130,7 +130,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   speed_boost: {
     id: 'speed_boost',
     name: 'Speed Boost',
-    description: '+50% movement speed and rate of fire for 10 s.',
+    description: '+50% movement speed and rate of fire.',
     duration: 10,
   },
   phase_shift: {
@@ -187,7 +187,7 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'force_field',
     name: 'Force Field',
     description:
-      'Reflects enemy bullets back at their source for 8 s; the field returns a limited number of shots before it stops reflecting.',
+      'Reflects enemy bullets back at their source; the field returns a limited number of shots before it stops reflecting.',
     // Base bubble window (s); the level curve extends it (cap 18 s).
     duration: 8,
   },
