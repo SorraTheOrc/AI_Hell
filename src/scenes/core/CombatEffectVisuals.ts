@@ -23,7 +23,7 @@
 
 import type Phaser from 'phaser';
 
-import { SHIP_SIZE } from '../../core/constants';
+import { SHIP_SIZE, FORCE_FIELD_COLOR } from '../../core/constants';
 import type { EffectsRegistry } from '../../powerups/effects';
 
 /** Shield-bubble colour (Shield). */
@@ -155,6 +155,89 @@ export function drawShieldBubble(
   graphics.strokeCircle(player.x, player.y, fullRadius);
   graphics.fillStyle(SHIELD_BUBBLE_COLOR, fillAlpha);
   graphics.fillCircle(player.x, player.y, fillRadius);
+  return true;
+}
+
+// ── Force Field reflect bubble (Gradius homage, AH-0MV1BIX1W006XF95) ──
+
+/** Force-bubble stroke line width (px). */
+export const FORCE_FIELD_LINE_WIDTH = 2;
+/** Force-bubble fill alpha. */
+export const FORCE_FIELD_FILL_ALPHA = 0.14;
+/** Force-bubble stroke alpha. */
+export const FORCE_FIELD_STROKE_ALPHA = 0.9;
+
+/**
+ * Clears *graphics* and draws the shared Force Field reflect bubble around
+ * *player* while the registry says the field is active.
+ *
+ * The bubble is a pulsing hexagonal boundary (the same radius the shared
+ * combat core uses for reflection) with inward chevron "reflect" motifs, so
+ * the player can read exactly which incoming shots will bounce. Its rim
+ * pulses continuously and the fill brightens in the final second before it
+ * expires, mirroring the shared Shield bubble treatment.
+ *
+ * Cleared (never drawn) when there is no graphics, no player, or the field is
+ * inactive, so an expired field always removes the bubble.
+ *
+ * @param graphics — the scene-owned force-field graphics (may be null).
+ * @param player — the ship position (may be null).
+ * @param registry — the shared active-effect registry.
+ * @returns true when a bubble was drawn.
+ */
+export function drawForceFieldBubble(
+  graphics: Phaser.GameObjects.Graphics | null,
+  player: EffectVisualTarget | null,
+  registry: EffectsRegistry,
+): boolean {
+  if (!graphics) return false;
+  graphics.clear();
+  if (!player || !registry.isForceFieldActive()) return false;
+
+  const remaining = registry.remaining('force_field');
+  if (remaining === undefined || remaining <= 0) return false;
+
+  const radius = registry.forceFieldRadius();
+  const centerX = player.x;
+  const centerY = player.y;
+
+  // Continuous rim pulse (never a steady ring).
+  const pulse = 0.5 + 0.5 * Math.cos(remaining * 12);
+  const strokeAlpha =
+    FORCE_FIELD_STROKE_ALPHA * (0.4 + 0.6 * pulse);
+  const fillAlpha =
+    remaining <= 1 ? FORCE_FIELD_FILL_ALPHA + (0.5 - FORCE_FIELD_FILL_ALPHA) * (1 - remaining) : FORCE_FIELD_FILL_ALPHA;
+
+  graphics.lineStyle(FORCE_FIELD_LINE_WIDTH, FORCE_FIELD_COLOR, strokeAlpha);
+  // Hexagonal boundary (flat-top) — echoes the code-drawn drop icon.
+  graphics.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;
+    const px = centerX + Math.cos(angle) * radius;
+    const py = centerY + Math.sin(angle) * radius;
+    if (i === 0) graphics.moveTo(px, py);
+    else graphics.lineTo(px, py);
+  }
+  graphics.closePath();
+  graphics.strokePath();
+  graphics.fillStyle(FORCE_FIELD_COLOR, fillAlpha);
+  graphics.fillCircle(centerX, centerY, radius * 0.85);
+
+  // Three inward chevrons reading as "bullets bounce back".
+  for (let i = 0; i < 3; i++) {
+    const angle = (Math.PI / 3) * (2 * i) - Math.PI / 2;
+    const tipX = centerX + Math.cos(angle) * radius * 0.55;
+    const tipY = centerY + Math.sin(angle) * radius * 0.55;
+    const backX = centerX + Math.cos(angle) * radius * 0.18;
+    const backY = centerY + Math.sin(angle) * radius * 0.18;
+    const perpX = Math.cos(angle + Math.PI / 2) * radius * 0.22;
+    const perpY = Math.sin(angle + Math.PI / 2) * radius * 0.22;
+    graphics.beginPath();
+    graphics.moveTo(backX - perpX, backY - perpY);
+    graphics.lineTo(tipX, tipY);
+    graphics.lineTo(backX + perpX, backY + perpY);
+    graphics.strokePath();
+  }
   return true;
 }
 

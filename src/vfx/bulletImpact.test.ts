@@ -68,4 +68,17 @@ describe('bulletImpact — shared bullet-vs-bullet impact VFX (AC5)', () => {
     expect(cue).toHaveBeenCalledTimes(1);
     expect(registry).toHaveLength(1);
   });
+
+  it('honours a custom flash colour (boss hits use a hot impact colour)', async () => {
+    const scene = await boot();
+    const fillStyleSpy = vi.spyOn(
+      Phaser.GameObjects.Graphics.prototype,
+      'fillStyle',
+    );
+
+    spawnBulletImpact(scene, 1, 2, { color: 0xffee44 });
+
+    expect(fillStyleSpy).toHaveBeenCalledWith(0xffee44, 0.9);
+    fillStyleSpy.mockRestore();
+  });
 });

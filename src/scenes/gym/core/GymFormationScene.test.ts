@@ -2499,7 +2499,7 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 
 /**
  * Regression for the parent bug AH-0MUHM66ES0027QQV: the enemy gym
- * (`GymFormationScene`, base of `GymEnemies`/`GymBoss`/`GymMinerals`)
+ * (`GymFormationScene`, base of `GymFodderEnemies`/`GymBoss`/`GymMinerals`)
  * recorded Shield/Phase Shift in the shared `EffectsRegistry` but never consulted it in
  * the shared hit path, so the player still took hits. These tests pin the
  * expected enemy-gym behaviour and are the red-to-green proof for the
@@ -2588,7 +2588,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
     const player = scene.getPlayer()!;
 
     collectOnShip(scene, 'phase_shift');
-    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe('phase_shift');
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
     expect(scene.getPlayerHitCount()).toBe(0);
 
@@ -2611,7 +2611,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
   it('AC1 — P6 phase shift also blocks enemy body contact in the gym', async () => {
     const { scene } = await bootGated('phase_shift');
     collectOnShip(scene, 'phase_shift');
-    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe(true);
+    expect(scene.getEffectsRegistry().updateDanger(true, 0.05)).toBe('phase_shift');
     expect(scene.getEffectsRegistry().isPhased).toBe(true);
 
     const target = scene.formationEntities[0];

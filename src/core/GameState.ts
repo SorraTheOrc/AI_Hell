@@ -16,6 +16,7 @@
  */
 
 import { MineralHold } from './mineralHold';
+import { POWER_UP_CATALOGUE } from '../powerups/types';
 
 // ── Game state enum ───────────────────────────────────────────────────
 
@@ -32,8 +33,14 @@ export type GameSessionState = 'menu' | 'playing' | 'gameover';
 /** Default number of lives the player starts with. */
 export const DEFAULT_LIVES = 3;
 
-/** Maximum number of lives (capped by Extra Life stacking). */
-export const MAX_LIVES = 5;
+/**
+ * Maximum number of lives (capped by Extra Life stacking). Single-sourced from
+ * the Extra Life catalogue entry (`POWER_UP_CATALOGUE.extra_life.livesMax`, GDD
+ * §4.5) so the run-state cap and the power-up can never drift
+ * (AH-0MV03GXZQ00801T4 · AC3). Falls back to {@link DEFAULT_LIVES} only if the
+ * catalogue ever omits the cap (a safe "no extra lives" default).
+ */
+export const MAX_LIVES = POWER_UP_CATALOGUE.extra_life.livesMax ?? DEFAULT_LIVES;
 
 /** Minimum level number. */
 export const MIN_LEVEL = 1;

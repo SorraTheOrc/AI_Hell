@@ -11,8 +11,8 @@
  * - **executes the decision under the ship's own control scheme** — the
  *   shipped `asteroids` controls by default (W = forward thrust, A/Left and
  *   D/Right = turn), or four-directional when the player configured it —
- *   while restricting the bot to the keys a human uses (never a reverse/S
- *   key).
+ *   while restricting the bot to the controls a human uses (W/A/D, plus
+ *   **S** retro-thrust when the ship's reverse thruster is enabled).
  *
  * The governor advances by the caller-supplied `dt`, never the wall clock,
  * so demo behaviour stays deterministic and unit-testable.
@@ -32,8 +32,9 @@
  *   The precise bearing is used when present, so the ship points straight at
  *   its target instead of snapping between the four cardinals; the cardinal
  *   booleans remain the fallback for callers without a precise bearing.  The
- *   emitted `AsteroidsInput` has no reverse key at all, so W/A/D is a
- *   structural guarantee rather than a clamp.
+ *   emitted `AsteroidsInput` carries `reverse: true` only when the committed
+ *   intent requests it **and** the ship's reverse thruster is enabled, so a
+ *   player who disabled the thruster never sees the demo use it (AC4/AC6).
  *
  * The governor holds the committed *intent* for the human reaction window but
  * re-resolves it against the ship's **current** facing every tick, so the
@@ -51,6 +52,11 @@
  * press from the run-seeded RNG.  This lengthens the "on" runs without
  * changing the chosen target/heading; the ship may overshoot its standoff a
  * little more, which is the deliberate human-feel trade-off.
+ *
+ * Each press is then gently shortened by a per-press random factor drawn
+ * uniformly from `[thrustPressGentleMinPct, thrustPressGentleMaxPct]`
+ * (default 1–5 %), making the bot slightly less aggressive on the thrusters
+ * (AH-0MUYRJQE50021T4A).
  *
  * `PlayScene` never forces a scheme: the demo drives whichever scheme the
  * ship is configured with, so the demo ship looks and handles like the
@@ -80,6 +86,7 @@ const IDLE_ASTEROIDS_INPUT: AsteroidsInput = Object.freeze({
   forward: false,
   turnLeft: false,
   turnRight: false,
+  reverse: false,
 });
 
 // ── Tunables (single source) ─────────────────────────────────────────
@@ -95,8 +102,9 @@ export interface BotHumanInputTunables {
   /**
    * Whether the bot may use the **down** (S) direction in four-directional
    * mode. Humans drive with W/A/D only, so this defaults to false. In
-   * `asteroids` mode the input shape has no down field at all, so the bot
-   * never reverses regardless of this flag.
+   * `asteroids` mode the reverse (S) control is driven by the committed
+   * intent and gated on the ship's reverse-thruster enable flag (AC4/AC6),
+   * independent of this flag.
    */
   allowDown: boolean;
   /**
@@ -120,6 +128,37 @@ export interface BotHumanInputTunables {
    * `longTravelDistance` — so long legs get longer bursts (AC16).
    */
   thrustPressMaxMsLong: number;
+  /**
+   * Minimum fractional reduction (default 0.01 = 1 %) applied to each
+   * forward-thrust press duration to make the demo bot a little gentler
+   * on the thrusters (AH-0MUYRJQE50021T4A).
+   */
+  thrustPressGentleMinPct: number;
+  /**
+   * Maximum fractional reduction (default 0.05 = 5 %) applied to each
+   * forward-thrust press duration to make the demo bot a little gentler
+   * on the thrusters (AH-0MUYRJQE50021T4A).
+   */
+  thrustPressGentleMaxPct: number;
+  /**
+   * Minimum duration (ms) of a **reverse**-thrust press
+   * (AH-0MV1J0OHP0072XA5 · AC5).  Mirroring the forward cadence, each
+   * reverse press is drawn from `[reversePressMinMs, reversePressMaxMs]` so
+   * the bot never toggles the retro-thruster every frame.
+   */
+  reversePressMinMs: number;
+  /** Maximum duration (ms) of a reverse-thrust press (AC5). */
+  reversePressMaxMs: number;
+  /**
+   * Minimum fractional reduction (default 0.02 = 2 %) applied to each
+   * reverse-thrust press duration, mirroring the forward gentle reduction.
+   */
+  reversePressGentleMinPct: number;
+  /**
+   * Maximum fractional reduction (default 0.06 = 6 %) applied to each
+   * reverse-thrust press duration, mirroring the forward gentle reduction.
+   */
+  reversePressGentleMaxPct: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -130,6 +169,12 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   thrustPressMinMs: 200,
   thrustPressMaxMs: 225,
   thrustPressMaxMsLong: 400,
+  thrustPressGentleMinPct: 0.01,
+  thrustPressGentleMaxPct: 0.05,
+  reversePressMinMs: 200,
+  reversePressMaxMs: 260,
+  reversePressGentleMinPct: 0.02,
+  reversePressGentleMaxPct: 0.06,
 };
 
 /** Default seed for the governor's press-duration RNG (deterministic). */
@@ -173,6 +218,13 @@ export interface SteeredIntent extends FourDirectionalInput {
    * legs may use the extended thrust-press cap (AC16).
    */
   readonly longTravel?: boolean;
+  /**
+   * Whether to travel `(dirX, dirY)` using **reverse** thrust
+   * (AH-0MV1J0OHP0072XA5 · AC4/AC6).  The actuator only emits
+   * `reverse: true` when this is set **and** the ship's reverse thruster is
+   * enabled.
+   */
+  readonly reverse?: boolean;
 }
 
 /** The ship context the governor needs to execute a steering intent. */
@@ -181,6 +233,14 @@ export interface BotControlContext {
   scheme: ControlSchemeType;
   /** The ship's current facing angle in radians (0 = right, positive = clockwise). */
   facing: number;
+  /**
+   * Whether the ship's reverse thruster is enabled
+   * (AH-0MV1J0OHP0072XA5 · AC4).  Defaults to `false` (opt-in) so callers
+   * that predate the reverse thruster are unaffected; the demo passes the
+   * ship's live `ShipConfig` flag.  The governor gates every emitted `reverse`
+   * on it (intent AND flag, defence in depth).
+   */
+  reverseEnabled?: boolean;
 }
 
 /**
@@ -188,18 +248,25 @@ export interface BotControlContext {
  * ship's `AsteroidsInput` (W/A/D): rotate toward the desired direction until
  * the ship is within `toleranceRad` of it, then thrust forward.
  *
- * The result never contains a reverse key — `AsteroidsInput` has none — and
- * an idle intent (all four directions false) yields an all-false input.
+ * When the intent requests **reverse** and reverse is allowed, the ship
+ * reverses toward the desired bearing instead: if the nose is already aligned
+ * with the bearing it brakes / backs straight up (`reverse: true`, no turn),
+ * otherwise it turns so the nose points opposite the bearing and then
+ * reverses toward it.  `reverse: true` is emitted only when the intent asks
+ * for it and `reverseAllowed` is true (the ship's enable flag, AC4/AC6);
+ * otherwise the result carries `reverse: false`.
  *
  * @param intent — the bot's four-directional steering intent.
  * @param facing — the ship's current facing angle in radians.
  * @param toleranceRad — heading error within which forward thrust begins.
+ * @param reverseAllowed — the ship's reverse-thruster enable flag (AC4).
  * @returns the `AsteroidsInput` for the current tick.
  */
 export function toAsteroidsInput(
   intent: SteeredIntent,
   facing: number,
   toleranceRad: number = BOT_HUMAN_INPUT_TUNABLES.alignmentToleranceRad,
+  reverseAllowed = true,
 ): AsteroidsInput {
   const precise = preciseDirection(intent);
   const dx = precise ? precise.dx : (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
@@ -214,15 +281,55 @@ export function toAsteroidsInput(
     Math.sin(desired - facing),
     Math.cos(desired - facing),
   );
+
+  if (intent.reverse === true && reverseAllowed) {
+    if (Math.abs(error) <= toleranceRad) {
+      // Nose already on the travel bearing: reverse decelerates / backs the
+      // ship straight up (brake-assist / kiting).
+      return {
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: true,
+      };
+    }
+    // Travel bearing is behind the nose: align the nose opposite the bearing
+    // (so reverse drives the ship toward it) before reversing (AC2).
+    const reverseError = Math.atan2(
+      Math.sin(error - Math.PI),
+      Math.cos(error - Math.PI),
+    );
+    if (Math.abs(reverseError) <= toleranceRad) {
+      return {
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: true,
+      };
+    }
+    return {
+      forward: false,
+      turnLeft: reverseError < 0,
+      turnRight: reverseError > 0,
+      reverse: false,
+    };
+  }
+
   if (Math.abs(error) <= toleranceRad) {
     // Aimed at the target: thrust unless the forward model says coasting
     // (braking) is required to avoid overshooting.
-    return { forward: intent.thrust !== false, turnLeft: false, turnRight: false };
+    return {
+      forward: intent.thrust !== false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: false,
+    };
   }
   return {
     forward: false,
     turnLeft: error < 0,
     turnRight: error > 0,
+    reverse: false,
   };
 }
 
@@ -270,9 +377,20 @@ export class BotInputGovernor {
 
   /** Per-press duration jitter RNG (seeded for per-run reproducibility). */
   private random: () => number;
+  /** Per-press gentle-reduction RNG — separate stream so the base
+   *  duration sequence is unchanged by the extra draw.
+   */
+  private gentleRandom: () => number;
+  /** Separate RNG stream for reverse press durations (AC5). */
+  private reverseRandom: () => number;
+  /** Separate RNG stream for the reverse gentle reduction (AC5). */
+  private reverseGentleRandom: () => number;
 
   /** Milliseconds left in the current forward-thrust press (0 = none). */
   private thrustPressRemainingMs = 0;
+
+  /** Milliseconds left in the current reverse-thrust press (0 = none). */
+  private reversePressRemainingMs = 0;
 
   private readonly tunables: BotHumanInputTunables;
 
@@ -282,15 +400,24 @@ export class BotInputGovernor {
   ) {
     this.tunables = { ...BOT_HUMAN_INPUT_TUNABLES, ...tunables };
     this.random = mulberry32(seed);
+    // Separate RNG streams so the forward press sequence is unchanged by the
+    // reverse draws (preserves downstream determinism).
+    this.gentleRandom = mulberry32(seed + 1);
+    this.reverseRandom = mulberry32(seed + 2);
+    this.reverseGentleRandom = mulberry32(seed + 3);
   }
 
   /**
    * Re-seeds the per-press duration RNG so a run's press lengths are
    * reproducible (AH-0MUY08V6W001SJJN).  Called by `PlayScene` with the run
-   * seed when the demo starts.
+   * seed when the demo starts.  Also re-seeds the gentle-reduction RNG
+   * (AH-0MUYRJQE50021T4A).
    */
   seed(value: number): void {
     this.random = mulberry32(value);
+    this.gentleRandom = mulberry32(value + 1);
+    this.reverseRandom = mulberry32(value + 2);
+    this.reverseGentleRandom = mulberry32(value + 3);
   }
 
   /**
@@ -302,6 +429,7 @@ export class BotInputGovernor {
     this.resolved = IDLE_INPUT;
     this.sinceCommitMs = Number.POSITIVE_INFINITY;
     this.thrustPressRemainingMs = 0;
+    this.reversePressRemainingMs = 0;
   }
 
   /**
@@ -336,6 +464,12 @@ export class BotInputGovernor {
       // reaction window.  This is what lets the forward model brake on time
       // instead of overshooting inside a held 250 ms thrust pulse (AC10).
       this.committed = { ...this.committed, thrust: decision.thrust };
+      // Reverse braking is the same fast reflex: re-evaluate the reverse
+      // request every tick (the human-like press hold below still keeps the
+      // key down for a perceptible burst; AC5).
+      if (typeof decision.reverse === 'boolean') {
+        this.committed = { ...this.committed, reverse: decision.reverse };
+      }
     }
 
     // Human-like thrust presses (AC15/AC16): hold each press for its
@@ -351,6 +485,17 @@ export class BotInputGovernor {
       ),
     };
 
+    // Human-like reverse presses (AC5): hold each reverse press for its
+    // drawn duration so the retro-thruster cannot toggle every frame. Gated
+    // on the ship's enable flag so a disabled thruster never even latches a
+    // press.
+    const desiredReverse =
+      context.reverseEnabled === true && this.committed.reverse === true;
+    this.committed = {
+      ...this.committed,
+      reverse: this.resolveReversePress(desiredReverse, dtMs),
+    };
+
     this.resolved = this.resolve(this.committed, context);
     return this.current();
   }
@@ -359,8 +504,11 @@ export class BotInputGovernor {
    * Applies the human-like thrust-press hold (AC15/AC16): once thrust is on
    * it stays on for a duration drawn from
    * `[thrustPressMinMs, thrustPressMaxMs]`, or up to `thrustPressMaxMsLong`
-   * on a long-travel leg, then it follows the live request.  Returns the
-   * effective thrust for this tick.
+   * on a long-travel leg, then it follows the live request.  Each press is
+   * then reduced by a per-press random factor drawn uniformly from
+   * `[thrustPressGentleMinPct, thrustPressGentleMaxPct]` (default 1–5 %)
+   * so the demo bot is slightly gentler on the thrusters (AH-0MUYRJQE50021T4A).
+   * Returns the effective thrust for this tick.
    */
   private resolveThrustPress(
     desiredThrust: boolean,
@@ -375,11 +523,53 @@ export class BotInputGovernor {
       return true;
     }
     if (!desiredThrust) return false;
-    const { thrustPressMinMs, thrustPressMaxMs, thrustPressMaxMsLong } =
-      this.tunables;
+    const {
+      thrustPressMinMs,
+      thrustPressMaxMs,
+      thrustPressMaxMsLong,
+      thrustPressGentleMinPct,
+      thrustPressGentleMaxPct,
+    } = this.tunables;
     const maxMs = longTravel ? thrustPressMaxMsLong : thrustPressMaxMs;
     const span = Math.max(0, maxMs - thrustPressMinMs);
-    this.thrustPressRemainingMs = thrustPressMinMs + this.random() * span;
+    const baseMs = thrustPressMinMs + this.random() * span;
+    const reduction =
+      thrustPressGentleMinPct +
+      this.gentleRandom() * (thrustPressGentleMaxPct - thrustPressGentleMinPct);
+    this.thrustPressRemainingMs = baseMs * (1 - reduction);
+    return true;
+  }
+
+  /**
+   * Applies the human-like **reverse**-press hold (AC5): once reverse is on
+   * it stays on for a duration drawn from
+   * `[reversePressMinMs, reversePressMaxMs]`, reduced by a per-press random
+   * factor, then it follows the live request. Mirrors
+   * {@link resolveThrustPress} with its own RNG streams so the forward press
+   * sequence is unchanged. Returns the effective reverse flag for this tick.
+   */
+  private resolveReversePress(desiredReverse: boolean, dtMs: number): boolean {
+    if (this.reversePressRemainingMs > 0) {
+      this.reversePressRemainingMs = Math.max(
+        0,
+        this.reversePressRemainingMs - dtMs,
+      );
+      return true;
+    }
+    if (!desiredReverse) return false;
+    const {
+      reversePressMinMs,
+      reversePressMaxMs,
+      reversePressGentleMinPct,
+      reversePressGentleMaxPct,
+    } = this.tunables;
+    const span = Math.max(0, reversePressMaxMs - reversePressMinMs);
+    const baseMs = reversePressMinMs + this.reverseRandom() * span;
+    const reduction =
+      reversePressGentleMinPct +
+      this.reverseGentleRandom() *
+        (reversePressGentleMaxPct - reversePressGentleMinPct);
+    this.reversePressRemainingMs = baseMs * (1 - reduction);
     return true;
   }
 
@@ -411,6 +601,7 @@ export class BotInputGovernor {
         decision,
         context.facing,
         this.tunables.alignmentToleranceRad,
+        context.reverseEnabled ?? false,
       );
     }
     if (decision.thrust === false) return { ...IDLE_INPUT };

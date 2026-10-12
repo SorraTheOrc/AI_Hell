@@ -99,6 +99,124 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.extra_life[1].cap).toBe(5); // lives cap
     expect(POWER_UP_LEVEL_SPECS.magnet[0].cap).toBe(5); // magnet stack cap
     expect(POWER_UP_LEVEL_SPECS.mineral_scoop[0].cap).toBe(5); // scoop stack cap
+    expect(POWER_UP_LEVEL_SPECS.power_pellet[0].base).toBe(6); // fright window (s)
+    expect(POWER_UP_LEVEL_SPECS.power_pellet[0].cap).toBe(14); // fright window cap (s)
+    expect(POWER_UP_LEVEL_SPECS.power_pellet[1].base).toBe(1); // flee multiplier
+    expect(POWER_UP_LEVEL_SPECS.power_pellet[1].cap).toBe(1.8); // flee multiplier cap
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].base).toBe(1200); // pulse radius (px)
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].cap).toBe(2400); // pulse radius cap (px)
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].base).toBe(1); // pulse damage
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].cap).toBe(3); // pulse damage cap
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].base).toBe(0.2); // pulse rate (/s)
+    expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].cap).toBe(0.5); // pulse rate cap (/s)
+    expect(POWER_UP_LEVEL_SPECS.force_field[0].base).toBe(8); // field time (s)
+    expect(POWER_UP_LEVEL_SPECS.force_field[0].cap).toBe(18); // field time cap (s)
+    expect(POWER_UP_LEVEL_SPECS.force_field[1].base).toBe(3); // reflect budget
+    expect(POWER_UP_LEVEL_SPECS.force_field[1].cap).toBe(10); // reflect budget cap
+    expect(POWER_UP_LEVEL_SPECS.mystery_ufo[0].base).toBe(2); // bonus minerals
+    expect(POWER_UP_LEVEL_SPECS.mystery_ufo[0].cap).toBe(6); // bonus minerals cap
+    expect(POWER_UP_LEVEL_SPECS.mystery_ufo[1].base).toBe(250); // bonus score
+    expect(POWER_UP_LEVEL_SPECS.mystery_ufo[1].cap).toBe(1500); // bonus score cap
+  });
+
+  it('Mystery UFO bonus variables resolve monotonically within their caps (AH-0MV1BIXFO006Z1I7)', () => {
+    const variables = ['mysteryUfoMinerals', 'mysteryUfoScore'] as const;
+    for (const variable of variables) {
+      let previous = statAt('mystery_ufo', variable, 0);
+      for (let level = 1; level <= 200; level++) {
+        const value = statAt('mystery_ufo', variable, level);
+        expect(value).toBeGreaterThanOrEqual(previous);
+        const cap = POWER_UP_LEVEL_SPECS.mystery_ufo.find(
+          (spec) => spec.variable === variable,
+        )!.cap;
+        expect(value).toBeLessThanOrEqual(cap);
+        previous = value;
+      }
+      expect(previous).toBeGreaterThan(statAt('mystery_ufo', variable, 0));
+    }
+  });
+
+  it('Power Pellet fright variables resolve monotonically within their caps (AC7)', () => {
+    const variables = ['frightenDuration', 'frightenSpeedMultiplier'] as const;
+    for (const variable of variables) {
+      const spec = POWER_UP_LEVEL_SPECS.power_pellet.find(
+        (s) => s.variable === variable,
+      )!;
+      let previous = -Infinity;
+      for (let level = 0; level <= 50; level++) {
+        const value = resolvePowerUpAtLevel('power_pellet', level)[variable]!;
+        expect(value).toBeGreaterThanOrEqual(previous);
+        expect(value).toBeLessThanOrEqual(spec.cap);
+        expect(value).toBeGreaterThanOrEqual(spec.base);
+        previous = value;
+      }
+      expect(previous).toBeGreaterThan(spec.base);
+    }
+  });
+
+  it('Smart Bomb aoeRadius resolves monotonically within its cap (AH-0MV1BIWP9003EHRQ AC6)', () => {
+    const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+      (s) => s.variable === 'aoeRadius',
+    )!;
+    let previous = -Infinity;
+    for (let level = 0; level <= 50; level++) {
+      const value = resolvePowerUpAtLevel('smart_bomb', level).aoeRadius!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(spec.cap);
+      expect(value).toBeGreaterThanOrEqual(spec.base);
+      previous = value;
+    }
+    // The pulse strictly grows past its base (a meaningful axis).
+    expect(previous).toBeGreaterThan(spec.base);
+    // The base radius already covers the 960×540 field (diagonal ≈ 1102 px),
+    // so the pulse is screen-wide from the first pickup while remaining finite
+    // (off-screen targets beyond the cap are unaffected).
+    expect(spec.base).toBeGreaterThan(Math.hypot(960, 540));
+  });
+
+  it('Smart Bomb damage and frequency resolve monotonically within their caps (AH-0MV1BIWP9003EHRQ)', () => {
+    const variables = ['smartBombDamage', 'smartBombFrequency'] as const;
+    for (const variable of variables) {
+      const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+        (s) => s.variable === variable,
+      )!;
+      let previous = -Infinity;
+      for (let level = 0; level <= 50; level++) {
+        const value = resolvePowerUpAtLevel('smart_bomb', level)[variable]!;
+        expect(value).toBeGreaterThanOrEqual(previous);
+        expect(value).toBeLessThanOrEqual(spec.cap);
+        expect(value).toBeGreaterThanOrEqual(spec.base);
+        previous = value;
+      }
+      expect(previous).toBeGreaterThan(spec.base);
+    }
+  });
+
+  it('Force Field duration/reflects resolve monotonically within their caps (AH-0MV1BIX1W006XF95)', () => {
+    const variables = ['forceFieldDuration', 'forceFieldReflects'] as const;
+    for (const variable of variables) {
+      const spec = POWER_UP_LEVEL_SPECS.force_field.find(
+        (s) => s.variable === variable,
+      )!;
+      let previous = -Infinity;
+      for (let level = 0; level <= 50; level++) {
+        const value = resolvePowerUpAtLevel('force_field', level)[variable]!;
+        expect(value).toBeGreaterThanOrEqual(previous);
+        expect(value).toBeLessThanOrEqual(spec.cap);
+        expect(value).toBeGreaterThanOrEqual(spec.base);
+        previous = value;
+      }
+      // The axis strictly grows past its base (a meaningful axis).
+      expect(previous).toBeGreaterThan(spec.base);
+    }
+    // The reflect budget is a discrete whole number.
+    for (let level = 0; level <= 12; level++) {
+      expect(
+        Number.isInteger(
+          resolvePowerUpAtLevel('force_field', level).forceFieldReflects!,
+        ),
+      ).toBe(true);
+    }
   });
 });
 

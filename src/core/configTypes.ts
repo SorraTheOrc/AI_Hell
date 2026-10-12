@@ -19,7 +19,14 @@ export type EnemyShotPattern =
 // Single source of truth for formation kinds lives in `src/utils/formations.ts`
 // (`EnemyFormationKind`). Re-exported here so callers can import from either
 // place without creating a circular dep (both are leaf modules).
-export type EnemyFormationKind = 'v' | 'diver' | 'rect' | 'swarm' | 'orbital' | 'single';
+export type EnemyFormationKind =
+  | 'v'
+  | 'diver'
+  | 'rect'
+  | 'swarm'
+  | 'orbital'
+  | 'single'
+  | 'march';
 
 /**
  * JSON-serializable enemy archetype. Only persisted fields are present
@@ -43,6 +50,72 @@ export interface EnemyConfig {
   spacingY: number;
   /** Rightward drift speed of the formation (px/s). */
   driftSpeed: number;
+  /**
+   * Horizontal step distance (px) for the `march` formation (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). Neutral for other formations; absent
+   * values fall back to `DEFAULT_MARCH_STEP` at the movement site.
+   */
+  marchStep?: number;
+  /**
+   * Vertical drop (px) applied on every arena-edge reversal of the `march`
+   * formation (Space Invaders archetype, AH-0MV01EDZS0005R20). Neutral for
+   * other formations; absent values fall back to `DEFAULT_MARCH_DROP`.
+   */
+  marchDrop?: number;
+  /**
+   * Tractor-beam lifetime (ms) for the Galaga capturer archetype
+   * (AH-0MV01EFII008298D). Neutral for other archetypes; absent values fall
+   * back to `DEFAULT_BEAM_DURATION_MS` at the beam site.
+   */
+  beamDuration?: number;
+  /**
+   * Bounded tractor-beam pull speed (px/s) for the Galaga capturer archetype
+   * (AH-0MV01EFII008298D). The pull is bounded so the player can always
+   * out-thrust it and escape; neutral for other archetypes.
+   */
+  pullStrength?: number;
+  /**
+   * Number of grunts released per spawn group by the Robotron homing-horde
+   * spawner (AH-0MV01EKTL001NRE6). Neutral for other archetypes; absent
+   * values fall back to `HORDE_DEFAULT_GROUP_SIZE` at the spawner site. The
+   * horde's total size is the archetype's existing `count`, and its homing
+   * speed is the existing `driftSpeed` (see `docs/CLASSIC_ENEMY_RESEARCH.md`
+   * §5 difficulty inputs).
+   */
+  hordeGroupSize?: number;
+  /**
+   * Seconds between homing-horde spawn groups (AH-0MV01EKTL001NRE6). Neutral
+   * for other archetypes; absent values fall back to
+   * `HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS` at the spawner site.
+   */
+  hordeSpawnInterval?: number;
+  /**
+   * Committed attack-run speed (px/s) for the Defender raider archetype
+   * (AH-0MV01EM7U0033W7L). Neutral for other archetypes; absent values fall
+   * back to `RAIDER_ATTACK_SPEED` at the movement site. The raider's patrol
+   * speed uses the existing `driftSpeed` field.
+   */
+  attackSpeed?: number;
+  /**
+   * Distance (px) within which the Defender raider commits to an attack run
+   * (AH-0MV01EM7U0033W7L). Neutral for other archetypes; absent values fall
+   * back to `RAIDER_COMMIT_RANGE` at the movement site.
+   */
+  commitRange?: number;
+  /**
+   * Number of horizontal traffic lanes for the Frogger `lane-traffic`
+   * archetype (AH-0MV01EPM40008N8T). Neutral for other archetypes; absent
+   * values fall back to `LANE_TRAFFIC_DEFAULT_LANE_COUNT` at the spawner site.
+   */
+  laneCount?: number;
+  /**
+   * Vertical gap (px) between traffic lanes for the Frogger `lane-traffic`
+   * archetype (AH-0MV01EPM40008N8T). Neutral for other archetypes; absent
+   * values fall back to `LANE_TRAFFIC_DEFAULT_LANE_SPACING` at the spawner
+   * site. The within-lane gap uses the existing `spacingX` field and the lane
+   * speed uses the existing `driftSpeed` field.
+   */
+  laneSpacing?: number;
   /** Initial base position (px). */
   startX: number;
   startY: number;
@@ -251,4 +324,23 @@ export interface ShipConfig {
    * Default 60 rad/s².
    */
   asteroidsRotationDeceleration: number;
+  /**
+   * Master on/off switch for the Asteroids-scheme reverse thruster
+   * (AH-0MV13LXOR001X15X). When `false`, S / ↓ apply no reverse acceleration
+   * and render no reverse flame; forward thrust and turning are unaffected.
+   * Default `true`.
+   */
+  asteroidsReverseEnabled: boolean;
+  /**
+   * Reverse-thrust acceleration (px/s²) applied opposite the ship's facing
+   * while a reverse key is held under the Asteroids scheme
+   * (AH-0MV13LXOR001X15X). Independent of the forward `thrustAcceleration`.
+   * Default 200 px/s².
+   */
+  asteroidsReverseThrustAcceleration: number;
+  /**
+   * Speed cap (px/s) reachable under reverse thrust (AH-0MV13LXOR001X15X),
+   * independent of the forward `maxSpeed`. Default 120 px/s.
+   */
+  asteroidsReverseMaxSpeed: number;
 }

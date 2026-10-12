@@ -337,6 +337,13 @@ describe('defaultCandidatePool', () => {
     const keys = defaultCandidatePool().map((c) => c.enemyKey);
     expect(keys).not.toContain('harvester');
   });
+
+  it('AH-0MV01EKTL001NRE6 — excludes the Robotron homing horde from the default pool', () => {
+    // The grunt horde is a timed edge-spawning pack delivered by the dedicated
+    // HordeSpawner behind a per-wave `horde: true` opt-in, not a static group.
+    const keys = defaultCandidatePool().map((c) => c.enemyKey);
+    expect(keys).not.toContain('grunt');
+  });
 });
 
 // ── Wave-accounting safety (AH-0MUR1HZLQ001ELX9) ───────────────────────
@@ -497,5 +504,25 @@ describe('AdjustedGroup', () => {
     expect(typeof adjusted.score).toBe('number');
     expect(adjusted.score).toBeGreaterThanOrEqual(0);
     expect(adjusted.score).toBeLessThanOrEqual(100);
+  });
+});
+
+// ── Gym parity: single-wave calls stay unconstrained ────────────────
+
+/**
+ * The curve-editor gym (`GymCurveSequencer.sequenceVariedWaves`) calls
+ * `sequencer([target], pool)` once per wave with a fresh, un-shared usage
+ * map. The per-level archetype cap (AH-0MV2SGIX5005PFJT) therefore cannot
+ * starve those calls, so the orbital Phaser stays selectable as a gym
+ * set-piece — the variety rule only constrains a whole level's wave sequence.
+ */
+describe('per-level cap does not constrain single-wave (gym) calls (AH-0MV2SGIX5005PFJT)', () => {
+  it('still selects the orbital Phaser for a high single-wave target', () => {
+    const wave = sequencer([30], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    }).waves[0];
+    expect(
+      wave.groups.some((group) => group.formation === 'orbital'),
+    ).toBe(true);
   });
 });

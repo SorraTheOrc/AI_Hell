@@ -2,16 +2,23 @@
  * Config-aware enemy factory.
  *
  * Maps an `EnemyConfig` to an entity constructor so the single
- * `GymEnemies` scene can spawn any archetype without branching on type.
+ * `GymFodderEnemies` scene can spawn any archetype without branching on type.
  * Kept thin — only a seam for tests and the gym scene; not a full ECS.
  */
 
 import Phaser from 'phaser';
 
 import { Asteroid } from './Asteroid';
+import { Capturer } from './Capturer';
+import { Centipede } from './Centipede';
+import { Ghost, personalityFromKey } from './Ghost';
+import { Grunt } from './Grunt';
 import { Harvester } from './Harvester';
+import { LaneTraffic } from './LaneTraffic';
 import { Diver } from './Diver';
+import { OrbitalStrike } from './OrbitalStrike';
 import { PhaserEntity } from './Phaser';
+import { Raider } from './Raider';
 import { Scout } from './Scout';
 import { Swarm } from './Swarm';
 import { Tank } from './Tank';
@@ -56,10 +63,14 @@ interface SeekSeam {
   updatePosition?(dt: number): void;
 }
 
-export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester) &
+export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroid | Harvester | Capturer | Ghost | Centipede | Grunt | Raider | OrbitalStrike | LaneTraffic) &
   DestructionAudioSeam &
   FormationReanchorSeam &
-  SeekSeam;
+  SeekSeam & {
+    /** Tractor-beam seam (Galaga capturer, AH-0MV01EFII008298D). */
+    getCaptureBeam?(): import('../scenes/core/captureBeam').CaptureBeamState | null;
+    notifyPlayerCaptured?(): void;
+  };
 
 /**
  * Build one entity of the right type from the config key / formationKind.
@@ -92,8 +103,80 @@ export function createEnemyFromConfig(
     health: config.health,
     rng,
   };
+  // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
+  const beamOpts = {
+    beamDuration: config.beamDuration,
+    pullStrength: config.pullStrength,
+  };
 
   switch (config.key) {
+    // Frogger lane-traffic hazard (classic-arcade archetype,
+    // AH-0MV01EPM40008N8T): a fast, non-firing "vehicle" that crosses the
+    // arena in a horizontal lane and wraps at the edges. The lane speed is the
+    // config's `driftSpeed`; the GymFodderEnemies spawn uses the default +x
+    // direction (the game's spawner supplies the exact `vx` per lane).
+    case 'lane-traffic':
+      return new LaneTraffic(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        speed: config.driftSpeed,
+      });
+    // Defender patrol-and-attack raider (AH-0MV01EM7U0033W7L): a fast single
+    // actor with a patrol/attack state machine. Patrol speed is the config's
+    // `driftSpeed`; the committed attack speed and commit range come from the
+    // raider-specific columns. The aimed shot reuses the Scout fire seam.
+    case 'orbital-strike':
+      return new OrbitalStrike(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+      });
+    case 'raider':
+      return new Raider(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        patrolSpeed: config.driftSpeed,
+        attackSpeed: config.attackSpeed,
+        commitRange: config.commitRange,
+      });
+    // Robotron homing horde (AH-0MV01EKTL001NRE6): a fast non-firing grunt
+    // that homes on the live player with bounded steering. The homing speed is
+    // the config's `driftSpeed` (the archetype's difficulty movement input);
+    // the shared `Grunt` entity applies the steering law in the game and gyms.
+    case 'grunt':
+      return new Grunt(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        speed: config.driftSpeed,
+      });
+    // Pac-Man personality pursuers (AH-0MV01EH2U008XT3Q): one key per
+    // personality, each mapped to the shared `Ghost` steering entity.
+    case 'ghost-chase':
+    case 'ghost-ambush':
+    case 'ghost-flank':
+    case 'ghost-wander':
+      return new Ghost(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        personality: personalityFromKey(config.key),
+        ...opts,
+      });
+    case 'capturer':
+      return new Capturer(scene, {
+        x,
+        y,
+        formationOffset: offset,
+        ...opts,
+        ...beamOpts,
+      });
     case 'asteroid':
       return new Asteroid(scene, { x, y, formationOffset: offset, ...opts });
     case 'harvester':
@@ -112,6 +195,10 @@ export function createEnemyFromConfig(
       return new Swarm(scene, { x, y, formationOffset: offset, ...opts }, clusterIndex);
     }
     case 'scout':
+    // Space Invaders marching block (AH-0MV01EDZS0005R20) reuses the Scout
+    // body; its distinct behaviour is the shared `march` movement policy, not
+    // a new entity class.
+    case 'march':
     default: {
       // Unknown keys fall back to Scout — deterministic behaviour for
       // Save As custom enemies without a dedicated entity class.

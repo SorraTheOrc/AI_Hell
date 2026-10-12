@@ -4,7 +4,7 @@
  *
  * Destroying a `large` asteroid spawns two `medium` children; destroying a
  * `medium` spawns two `small` children; a `small` asteroid destroys cleanly.
- * The shipped `PlayScene` and both asteroid-bearing gyms (`GymEnemies` and
+ * The shipped `PlayScene` and both asteroid-bearing gyms (`GymFodderEnemies` and
  * `GymMinerals`) historically each carried their own copy of this spawn
  * closure, so a split-physics change had to be made in three places. This
  * module owns the spawn loop once: the parent computes the child
@@ -46,7 +46,7 @@ export interface AsteroidSplitOptions {
  * `register` so the caller can track it.
  *
  * This is the single shared implementation consumed by
- * `PlayScene._splitAsteroid` and the `GymEnemies`/`GymMinerals` destruction
+ * `PlayScene._splitAsteroid` and the `GymFodderEnemies`/`GymMinerals` destruction
  * seams, so the split physics cannot drift between the game and the gyms.
  *
  * @returns the two spawned children, or `null` for a `small` asteroid (which

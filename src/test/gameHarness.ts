@@ -156,3 +156,40 @@ async function bootDeterministic(game: Phaser.Game): Promise<void> {
   // deterministic.
   game.loop.start(game.step.bind(game));
 }
+
+/**
+ * Stops Phaser's live `requestAnimationFrame` loop and advances the stopped
+ * game's clock with fixed-delta `game.step` calls until `predicate` holds,
+ * throwing a descriptive error if it never does.
+ *
+ * `game.step` drives the whole game — including every active scene's Phaser
+ * `Clock` — so a production `this.time.delayedCall(...)` transition (for
+ * example PlayScene's `VICTORY_TRANSITION_HOLD_MS` victory hold before
+ * `GameOverScene`) is reached deterministically. `scene.tick(dt)` only runs
+ * PlayScene's own simulation and does **not** advance the `Clock`, which
+ * leaves a wall-clock `setTimeout` as the only alternative — and that can be
+ * missed under full-suite parallel load (AH-0MUYALJ9S0002XXZ).
+ *
+ * @param game — The booted game whose live loop is stopped before stepping.
+ * @param label — Condition name used in the failure message.
+ * @param predicate — Condition to reach; polled before each step.
+ * @param maxSteps — Step budget before failing loudly (default 600 ≈ 10 s).
+ */
+export function stepGameUntil(
+  game: Phaser.Game,
+  label: string,
+  predicate: () => boolean,
+  maxSteps = 600,
+): void {
+  game.loop.stop();
+  let time = 0;
+  for (let i = 0; i < maxSteps; i += 1) {
+    if (predicate()) return;
+    time += DETERMINISTIC_STEP_MS;
+    game.step(time, DETERMINISTIC_STEP_MS);
+  }
+  throw new Error(
+    `stepGameUntil(${label}): condition not met after ${maxSteps} steps ` +
+      `(~${((maxSteps * DETERMINISTIC_STEP_MS) / 1000).toFixed(1)}s simulated)`,
+  );
+}

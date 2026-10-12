@@ -11,7 +11,7 @@
  *   and, later, `RandomAvoidingPlacement`);
  * - a stub enemy/player position provider plus an independent overlap
  *   oracle for placement assertions;
- * - helpers that boot each combat gym (`GymEnemies`, `GymBoss`) through
+ * - helpers that boot each combat gym (`GymFodderEnemies`, `GymBoss`) through
  *   `src/test/gameHarness.ts`.
  *
  * @module test/powerUpTestFixtures
@@ -23,7 +23,7 @@ import { bootScene } from './gameHarness';
 import { createSeededRng } from '../core/rng';
 import { WeightedRandomSpawner } from '../powerups/spawner';
 import type { PowerUpId } from '../powerups/types';
-import { GymEnemies, GYM_ENEMIES_DEFAULT_KEY } from '../scenes/gym/GymEnemies';
+import { GymFodderEnemies, GYM_FODDER_ENEMIES_DEFAULT_KEY } from '../scenes/gym/GymFodderEnemies';
 import { GymBoss } from '../scenes/gym/GymBoss';
 
 // ── Seeded / scripted RNG ───────────────────────────────────────────
@@ -170,31 +170,31 @@ export interface BootedGym<TScene> {
 }
 
 /**
- * Boots `GymEnemies` through the shared game harness for *enemyKey*.
+ * Boots `GymFodderEnemies` through the shared game harness for *enemyKey*.
  *
  * A one-off wrapper subclass injects `init({ enemyKey })` before
  * `create()`, because the harness starts the scene without init data
- * (mirrors the existing `GymEnemies.test.ts` per-seed boot idiom).
+ * (mirrors the existing `GymFodderEnemies.test.ts` per-seed boot idiom).
  *
  * @param enemyKey - The enemy config key to load; defaults to `scout`.
- * @returns The booted game and its `GymEnemies` scene.
+ * @returns The booted game and its `GymFodderEnemies` scene.
  */
-export async function bootCombatGymEnemies(
-  enemyKey: string = GYM_ENEMIES_DEFAULT_KEY,
-): Promise<BootedGym<GymEnemies>> {
-  class GymEnemiesByKey extends GymEnemies {
+export async function bootCombatGymFodderEnemies(
+  enemyKey: string = GYM_FODDER_ENEMIES_DEFAULT_KEY,
+): Promise<BootedGym<GymFodderEnemies>> {
+  class GymFodderEnemiesByKey extends GymFodderEnemies {
     override init(): void {
       super.init({ enemyKey });
     }
   }
   // Unique class name avoids Phaser collisions across repeated boots.
-  Object.defineProperty(GymEnemiesByKey, 'name', {
-    value: `GymEnemiesByKey_${enemyKey}`,
+  Object.defineProperty(GymFodderEnemiesByKey, 'name', {
+    value: `GymFodderEnemiesByKey_${enemyKey}`,
   });
   const booted = await bootScene([
-    GymEnemiesByKey as unknown as typeof Phaser.Scene,
+    GymFodderEnemiesByKey as unknown as typeof Phaser.Scene,
   ]);
-  return { game: booted.game, scene: booted.scene as unknown as GymEnemies };
+  return { game: booted.game, scene: booted.scene as unknown as GymFodderEnemies };
 }
 
 /**

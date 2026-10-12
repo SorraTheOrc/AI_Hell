@@ -108,7 +108,25 @@ export type PowerUpLevelVariable =
   /** Magnet — permanent stack cap (and attraction-radius growth). */
   | 'magnetStacks'
   /** Mineral Scoop — permanent stack cap (radius growth). */
-  | 'scoopStacks';
+  | 'scoopStacks'
+  /** Power Pellet — frightened-enemy window duration in seconds. */
+  | 'frightenDuration'
+  /** Power Pellet — flee-speed multiplier applied while frightened. */
+  | 'frightenSpeedMultiplier'
+  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  | 'aoeRadius'
+  /** Smart Bomb — hit points each enemy takes per pulse. */
+  | 'smartBombDamage'
+  /** Smart Bomb — permanent pulse rate in pulses per second. */
+  | 'smartBombFrequency'
+  /** Force Field — bubble duration in seconds. */
+  | 'forceFieldDuration'
+  /** Force Field — bullets the field reflects before it stops. */
+  | 'forceFieldReflects'
+  /** Mystery UFO — minerals granted instantly by one pickup. */
+  | 'mysteryUfoMinerals'
+  /** Mystery UFO — score granted instantly by one pickup. */
+  | 'mysteryUfoScore';
 
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
@@ -126,6 +144,15 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'livesCap',
   'magnetStacks',
   'scoopStacks',
+  'frightenDuration',
+  'frightenSpeedMultiplier',
+  'aoeRadius',
+  'smartBombDamage',
+  'smartBombFrequency',
+  'forceFieldDuration',
+  'forceFieldReflects',
+  'mysteryUfoMinerals',
+  'mysteryUfoScore',
 ];
 
 /**
@@ -432,6 +459,184 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'the level-derived cap reaches it sooner.',
     },
   ],
+
+  // Power Pellet — timed fright window (Pac-Man adaptation).
+  power_pellet: [
+    {
+      variable: 'frightenDuration',
+      powerUpId: 'power_pellet',
+      label: 'Frighten time',
+      unit: 's',
+      description: 'How long enemies flee and stop firing.',
+      curve: 'exponential-saturation',
+      base: 6,
+      cap: 14,
+      k: 0.2,
+      discrete: false,
+      rationale:
+        'A 14 s ceiling keeps the fright a breathing-space tool rather than a ' +
+        'near-permanent board freeze; k=0.2 adds ~1 s at the first upgrade so ' +
+        'early levels feel responsive before diminishing. Body contact stays ' +
+        'lethal to non-frightened enemies and does not clear bullets, so the ' +
+        'window cannot trivialise a wave.',
+    },
+    {
+      variable: 'frightenSpeedMultiplier',
+      powerUpId: 'power_pellet',
+      label: 'Frighten flee',
+      unit: '×',
+      description: 'Flee-speed multiplier while frightened.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 1.8,
+      k: 0.2,
+      discrete: false,
+      rationale:
+        'A 1.8× ceiling keeps a fleeing formation readable and dodgeable ' +
+        'while letting early levels visibly widen the retreat; k=0.2 matches ' +
+        'the duration axis so the two grow together.',
+    },
+  ],
+
+  // Smart Bomb — Defender-inspired stored screen-wide pulse.
+  smart_bomb: [
+    {
+      variable: 'aoeRadius',
+      powerUpId: 'smart_bomb',
+      label: 'Pulse radius',
+      unit: 'px',
+      description: 'Radius of the screen-wide smart-bomb pulse, centred on the ship.',
+      curve: 'exponential-saturation',
+      // Base already covers the 960×540 field (diagonal ≈ 1102 px); the cap
+      // keeps the value finite and monotonic so off-screen targets beyond it
+      // are provably unaffected.
+      base: 1200,
+      cap: 2400,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'A 1200 px base radius already reaches every corner of the 960×540 ' +
+        'play area (diagonal ≈ 1102 px), so the smart bomb is screen-wide ' +
+        'from the first pickup; the 2400 px cap keeps the axis finite and ' +
+        'monotonic, and k=0.3 adds ~310 px at the first upgrade. Keeping the ' +
+        'radius finite (rather than Infinity) preserves the off-screen ' +
+        'boundary AC and the shared AoE geometry helpers.',
+    },
+    {
+      variable: 'smartBombDamage',
+      powerUpId: 'smart_bomb',
+      label: 'Pulse damage',
+      unit: '',
+      description: 'Hit points each enemy takes from one pulse.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 3,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'The pulse always deals at least one hit so 1 HP regulars die; the ' +
+        'cap of 3 lets later levels chip the Harvester (5 HP) and the boss ' +
+        'harder without out-and-out deleting multi-hit enemies. k=0.3 grants ' +
+        'the second point at the first upgrade (readable payoff) then flattens.',
+    },
+    {
+      variable: 'smartBombFrequency',
+      powerUpId: 'smart_bomb',
+      label: 'Pulse rate',
+      unit: '/s',
+      description: 'Pulses per second for a permanent smart bomb.',
+      curve: 'exponential-saturation',
+      base: 0.2,
+      cap: 0.5,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'Stored as pulses/second so the axis stays monotonic non-decreasing ' +
+        '(the effect computes 1/frequency). A 0.5/s cap keeps a permanent ' +
+        'smart bomb a rare, weighty clear rather than a continuous screen ' +
+        'wipe; k=0.3 front-loads the first upgrade (~0.26/s, ≈3.8 s period).',
+    },
+  ],
+
+  // Mystery UFO — Space Invaders-inspired instant mineral/score bounty
+  // (AH-0MV1BIXFO006Z1I7). No timed window: the burst is granted on
+  // collection and the level scales the next bounty.
+  mystery_ufo: [
+    {
+      variable: 'mysteryUfoMinerals',
+      powerUpId: 'mystery_ufo',
+      label: 'Bonus minerals',
+      unit: '',
+      description: 'Minerals granted instantly by one Mystery UFO pickup.',
+      curve: 'exponential-saturation',
+      base: 2,
+      cap: 6,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'A small, capped mineral burst (2 → 6) accelerates the ship\'s hold ' +
+        'without flooding it; k=0.3 grants a third mineral at the first ' +
+        'upgrade, so early pickups feel rewarding before the curve flattens. ' +
+        'Discrete so the hold only ever receives whole minerals.',
+    },
+    {
+      variable: 'mysteryUfoScore',
+      powerUpId: 'mystery_ufo',
+      label: 'Bonus score',
+      unit: '',
+      description: 'Points granted instantly by one Mystery UFO pickup.',
+      curve: 'exponential-saturation',
+      base: 250,
+      cap: 1500,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'A 250-point base echoes the classic Space Invaders mystery-ship ' +
+        'bounty band; the 1500-point cap keeps a levelled bonus meaningful ' +
+        'but finite, and k=0.3 front-loads the first upgrade (~350 points). ' +
+        'Discrete so the run total stays whole.',
+    },
+  ],
+
+  // Force Field — Gradius-inspired timed bullet reflector (AH-0MV1BIX1W006XF95).
+  force_field: [
+    {
+      variable: 'forceFieldDuration',
+      powerUpId: 'force_field',
+      label: 'Field time',
+      unit: 's',
+      description: 'How long the reflect bubble lasts.',
+      curve: 'exponential-saturation',
+      base: 8,
+      cap: 18,
+      k: 0.15,
+      discrete: false,
+      rationale:
+        'An 18 s ceiling keeps the bubble a strong but finite defence rather ' +
+        'than perpetual cover; k=0.15 adds ~1.4 s at the first upgrade, so ' +
+        'early levels feel responsive before diminishing. The window is ' +
+        'cleared on expiry, at which point enemy bullets damage the ship ' +
+        'again.',
+    },
+    {
+      variable: 'forceFieldReflects',
+      powerUpId: 'force_field',
+      label: 'Field reflects',
+      unit: '',
+      description: 'Enemy bullets the field returns before it stops reflecting.',
+      curve: 'exponential-saturation',
+      base: 3,
+      cap: 10,
+      k: 0.25,
+      discrete: true,
+      rationale:
+        'Reflection turns incoming fire into offence, so the base budget is ' +
+        'small (3) and the cap modest (10); k=0.25 grants a fourth ' +
+        'reflection at the first upgrade. Once the budget is spent the bubble ' +
+        'keeps counting down but no longer reflects, so it can never become ' +
+        'infinite offence.',
+    },
+  ],
 };
 
 /**
@@ -447,6 +652,10 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
+  'power_pellet',
+  'smart_bomb',
+  'force_field',
+  'mystery_ufo',
 ];
 
 // ── Resolved stats ──────────────────────────────────────────────────
@@ -492,6 +701,24 @@ export interface PowerUpLevelStats {
   magnetStacks?: number;
   /** Mineral Scoop — permanent stack cap (attraction radius driver). */
   scoopStacks?: number;
+  /** Power Pellet — frightened-enemy window duration in seconds. */
+  frightenDuration?: number;
+  /** Power Pellet — flee-speed multiplier while frightened. */
+  frightenSpeedMultiplier?: number;
+  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  aoeRadius?: number;
+  /** Smart Bomb — hit points each enemy takes per pulse. */
+  smartBombDamage?: number;
+  /** Smart Bomb — permanent pulse rate in pulses per second. */
+  smartBombFrequency?: number;
+  /** Force Field — bubble duration in seconds. */
+  forceFieldDuration?: number;
+  /** Force Field — bullets the field reflects before it stops. */
+  forceFieldReflects?: number;
+  /** Mystery UFO — minerals granted instantly by one pickup. */
+  mysteryUfoMinerals?: number;
+  /** Mystery UFO — score granted instantly by one pickup. */
+  mysteryUfoScore?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────

@@ -63,11 +63,24 @@ import {
 import { Player } from '../../entities/Player';
 import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
 import {
+  CLUSTER_SPLIT_BURST_RADIUS,
+  CLUSTER_WARHEAD_LIFETIME,
+  CLUSTER_WARHEAD_RADIUS_SCALE,
+  OPTIONS_ORBIT_RADIUS,
+  OPTIONS_POD_BULLET_SPEED,
+  OPTIONS_POD_RADIUS,
   angleToVelocity,
+  bulletVelocity,
   createBulletsFromHeading,
+  type AoEDescriptor,
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
+import {
+  advanceOrbitPhase,
+  optionsPodFireDirections,
+  optionsPodPositions,
+} from './optionsEscort';
 import {
   mapControlInput,
   type ControlInput,
@@ -95,15 +108,32 @@ import {
   playDropPickupCue,
 } from './dropLayer';
 import {
+  computeCapturePull,
+  isCaptureComplete,
+  DEFAULT_CAPTURE_HOLD_MS,
+  DEFAULT_CAPTURE_DISABLE_MS,
+  type CaptureBeamState,
+} from './captureBeam';
+import {
   applyMineralScoop,
   type MovableMineral,
 } from '../../powerups/mineralScoop';
 import { spawnNovaRing } from '../../vfx/aoeEffect';
+import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
+import { setExplosionBeatClock } from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
+import {
+  frightenedFleeDirection,
+  frightenedFleeOffsetFromDirection,
+  type FrightenedVector,
+} from './frightenedState';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
 export const BOMB_PULSE_COLOR = 0xff5577;
+
+/** Ring colour for the Smart Bomb screen pulse VFX (electric violet-white). */
+export const SMART_BOMB_PULSE_COLOR = 0xcc66ff;
 
 /**
  * Structural contract an enemy entity must satisfy for a combat scene to
@@ -135,6 +165,19 @@ export interface CombatEnemyEntity extends Phaser.GameObjects.GameObject {
    * (AH-0MUII2FJ5007MDDA gym-parity epic).
    */
   setSeekTargets?(minerals: readonly import('../../entities/Mineral').Mineral[]): void;
+  /**
+   * Optional tractor-beam seam (Galaga capturer, AH-0MV01EFII008298D): returns
+   * the entity's live beam, or null when it is not beaming. The shared
+   * {@link CombatCoreScene._updateCaptureBeams} step consumes it so the beam's
+   * bounded pull and temporary capture effect run once for the game and every
+   * player-bearing gym. Entities that do not beam omit it.
+   */
+  getCaptureBeam?(): CaptureBeamState | null;
+  /**
+   * Called by the shared capture step when this entity's beam completed a
+   * capture, so the entity can withdraw and re-form (Galaga capturer).
+   */
+  notifyPlayerCaptured?(): void;
 }
 
 /** Structural contract an enemy bullet must satisfy. */
@@ -207,6 +250,59 @@ export class CombatCoreScene<
    * so an in-flight pulse leaks nothing.
    */
   protected bombPulseEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Live cluster split-burst VFX (AH-0MV1BIVIJ007KYXU). Each burst removes
+   * itself on completion; the registry is also cleared on restart/shutdown
+   * so an in-flight burst leaks nothing.
+   */
+  protected splitBurstEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Warheads queued by {@link CombatCoreScene.splitProjectile}, flushed into
+   * {@link CombatCoreScene.playerBullets} at the start of the next shared
+   * player tick. Queuing (rather than pushing directly) keeps the bullet
+   * array stable while it is being iterated by the collision/advance passes,
+   * so a mid-pass split can never be dropped or mutate the live iteration
+   * (AH-0MV1BIVIJ007KYXU).
+   */
+  private readonly _pendingSplitWarheads: PlayerBullet[] = [];
+  /**
+   * Orbit phase (radians) of the Gradius Options escort pods
+   * (AH-0MV1BIVVK0043TEM). Advanced once per shared player tick so the pods
+   * orbit deterministically, independent of the weapon's fire cadence.
+   */
+  private _optionsOrbitPhase = 0;
+  /**
+   * Persistent shared Graphics that draws the orbiting Options pods. Created
+   * lazily while the weapon is active and destroyed when it expires or the run
+   * resets, so the game and every gym render identical pods.
+   */
+  protected optionsPodGraphics: Phaser.GameObjects.Graphics | null = null;
+  /**
+   * Continuous time (ms) the player has spent inside an active tractor beam
+   * (Galaga capturer, AH-0MV01EFII008298D). Reset whenever the player leaves
+   * the beam, so the escape condition is "move out of the beam before the
+   * hold fills".
+   */
+  private _captureHoldMs = 0;
+  /**
+   * Remaining temporary, non-fatal capture effect time (ms) — while positive
+   * the player's auto-fire is suppressed.
+   */
+  private _captureDisabledMs = 0;
+  /**
+   * Per-enemy flee heading captured at the instant the Power Pellet fright
+   * window opens (AH-0MV4BXUWT005MWAJ). Recomputing the heading from each
+   * enemy's (per-frame re-anchored) formation slot made the retreat radial
+   * relative to the ship, so a moving ship dragged enemies around it in an
+   * arc. Freezing each enemy's "away from the ship" heading at activation
+   * gives a straight retreat and keeps positions stable across a ship
+   * teleport; a later pellet re-captures fresh headings because the map is
+   * cleared when the window closes and on run reset.
+   */
+  private readonly _frightenedFleeHeadings = new Map<
+    object,
+    FrightenedVector
+  >();
   /** Lazily-created Phase Shift treatment controller. */
   private phaseShiftJuice: PhaseShiftJuice | null = null;
 
@@ -403,6 +499,27 @@ export class CombatCoreScene<
    */
   protected onWeaponCollected(_drop: TDrop): void {}
 
+  /**
+   * Drains and applies any pending Mystery UFO instant bounty
+   * (AH-0MV1BIXFO006Z1I7) from the shared effects registry through the
+   * supplied scene sinks: minerals into the ship's hold, score into the run
+   * total. Defined once here so the game and every gym grant the bounty
+   * through the same code; a scene with no score system may omit `addScore`.
+   *
+   * @param sinks — the scene's hold/score mutators.
+   * @returns true when a bounty was pending and applied.
+   */
+  protected _applyPendingMysteryBonus(sinks: {
+    addMinerals: (amount: number) => void;
+    addScore?: (amount: number) => void;
+  }): boolean {
+    const bonus = this.getEffectsRegistry().consumeMysteryBonus();
+    if (!bonus) return false;
+    if (bonus.minerals > 0) sinks.addMinerals(bonus.minerals);
+    if (bonus.score > 0) sinks.addScore?.(bonus.score);
+    return true;
+  }
+
   // ── Shared template methods ───────────────────────────────────────
 
   /**
@@ -493,6 +610,14 @@ export class CombatCoreScene<
   protected _tickPlayer(dt: number): void {
     const player = this.getPlayer();
     if (!player) return;
+    // Flush any cluster warheads queued by a split on the previous frame so
+    // they take part in this frame's advance/collision passes
+    // (AH-0MV1BIVIJ007KYXU).
+    this.flushPendingSplitWarheads();
+    // Advance and redraw the Gradius Options escort pods before auto-fire so a
+    // pod fired this frame leaves from its current orbit position
+    // (AH-0MV1BIVVK0043TEM).
+    this._updateOptionsEscort(dt);
     // Advance timed-weapon countdowns before auto-fire so an expired
     // weapon stops firing this frame.
     player.tickWeaponTimers(dt * 1000);
@@ -503,12 +628,21 @@ export class CombatCoreScene<
     const input = this._readPlayerInput();
     if (input) player.setInput(input);
     player.physicsTick(dt, this.scale.width, this.scale.height);
-    if (this.autoFireEnabled()) this._autoFire(dt);
+    // Tractor-beam step (Galaga capturer, AH-0MV01EFII008298D): apply the
+    // bounded pull and resolve the temporary capture before auto-fire, so a
+    // capture on this frame suppresses fire on this frame. Runs after physics
+    // so the drag is applied to the ship's current position.
+    this._updateCaptureBeams(dt);
+    if (this.autoFireEnabled() && !this.isCaptureDisabled()) this._autoFire(dt);
     // Bomb bomb: advance the shared pulse state and fire a ranged clear when
     // one is due. Runs after physics so the pulse is centred on the player's
     // current position, and from this single shared step so the game and
     // every gym cannot diverge (AH-0MUVM9RAO004Y3LB).
     this._updateP4Bomb(dt);
+    // Smart Bomb: advance the shared screen-pulse state and resolve the
+    // screen-wide area effect when one is due (AH-0MV1BIWP9003EHRQ). The
+    // pulse resolves through the scene's AOE seam via `onSmartBombPulse`.
+    this._updateSmartBomb(dt);
   }
 
   /**
@@ -545,6 +679,14 @@ export class CombatCoreScene<
           continue;
         }
       }
+      // Orbit weapons (the Gradius Options escort) fire one bullet per pod
+      // from each pod's current world position, along the ship's heading. The
+      // pod geometry lives once in the shared `optionsEscort` helper, so the
+      // game and every gym fire identical pods (AH-0MV1BIVVK0043TEM).
+      if (def.orbit) {
+        this.fireOptionsPods(def, player);
+        continue;
+      }
       for (const bd of createBulletsFromHeading(
         def,
         headingDeg,
@@ -566,6 +708,13 @@ export class CombatCoreScene<
           // Weapon leveling grows the bullet: `levelBulletSize` is 1/absent on
           // a base definition, so the base radius is unchanged (AC8).
           PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1),
+          // Pass-through budget (0 for ordinary bullets) — the shared
+          // collision path consumes it one enemy at a time (AH-0MV1BIUSJ0090W92).
+          def.piercing ?? 0,
+          // Wall-bounce budget (`undefined` for ordinary wrapping bullets) —
+          // the shared player-bullet step reflects it at the edges
+          // (AH-0MV1BIV5L005NJAI).
+          def.bounce,
         );
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
@@ -573,6 +722,13 @@ export class CombatCoreScene<
           // detonation callback through the shared hook.
           bullet.aoeWeapon = def;
           this.onAoeProjectileSpawned(bullet, def);
+        } else if (def.splits !== undefined) {
+          // Tag the projectile so the shared combat core splits it exactly
+          // once on the first impact or on expiry (Missile Command cluster
+          // missile, AH-0MV1BIVIJ007KYXU). The split seam lives in this
+          // shared core, so the game and every gym split identically.
+          bullet.splitWeapon = def;
+          bullet.onExpire = () => this.splitProjectile(bullet);
         }
       }
     }
@@ -587,6 +743,14 @@ export class CombatCoreScene<
    * AH-0MUU131PU006O7ZD); `radius` defaults to the shared
    * {@link PLAYER_BULLET_RADIUS}. The shared auto-fire path passes a
    * level-scaled radius when a weapon has bullet-size upgrades.
+   *
+   * `piercing` is the bullet's pass-through budget (extra enemies it survives
+   * before being consumed; 0 for an ordinary bullet). The shared collision
+   * path reads it (AH-0MV1BIUSJ0090W92).
+   *
+   * `bounces` is the bullet's wall-bounce budget (edge reflections before it
+   * expires; `undefined` for an ordinary wrapping bullet). The shared
+   * player-bullet step reads it (AH-0MV1BIV5L005NJAI).
    */
   spawnPlayerBullet(
     x: number,
@@ -596,6 +760,8 @@ export class CombatCoreScene<
     color = 0x00ffff,
     lifetime = 0.75,
     radius = PLAYER_BULLET_RADIUS,
+    piercing = 0,
+    bounces?: number,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -607,8 +773,168 @@ export class CombatCoreScene<
       vy,
       lifetime,
     );
+    bullet.piercing = piercing;
+    bullet.bounces = bounces;
     this.playerBullets.push(bullet);
     return bullet;
+  }
+
+  /**
+   * Shared **split seam** (Missile Command cluster/MIRV homage,
+   * AH-0MV1BIVIJ007KYXU). Splits a tagged projectile exactly once into
+   * `def.splits` radial warheads and spawns the split-burst VFX.
+   *
+   * Idempotent per projectile: `PlayerBullet.splitSpawned` makes the split
+   * resolve at most once even when both the impact and expiry paths observe
+   * the same projectile. The warheads are **queued** rather than pushed
+   * directly so a split during a collision pass cannot mutate the bullet
+   * array being iterated; {@link CombatCoreScene.flushPendingSplitWarheads}
+   * admits them at the start of the next shared player tick.
+   *
+   * Defined once here so the game and every gym run the same split code. The
+   * split is a projectile seam, not an area effect: each warhead is an
+   * ordinary player bullet that damages enemies on contact through the
+   * shared collision path.
+   *
+   * @param bullet - The tagged projectile to split.
+   */
+  protected splitProjectile(bullet: PlayerBullet): void {
+    const def = bullet.splitWeapon;
+    if (!def || bullet.splitSpawned) return;
+    bullet.splitSpawned = true;
+    const count = Math.max(0, Math.round(def.splits ?? 0));
+    if (count <= 0) return;
+    const speed = Math.hypot(bullet.vx, bullet.vy) || PLAYER_BULLET_SPEED;
+    const baseHeading = Math.atan2(bullet.vy, bullet.vx);
+    const radius =
+      PLAYER_BULLET_RADIUS *
+      (def.levelBulletSize ?? 1) *
+      CLUSTER_WARHEAD_RADIUS_SCALE;
+    for (let i = 0; i < count; i++) {
+      // Even radial fan, phase-locked to the missile's own heading so the
+      // split reads as a predictable burst rather than a random spray.
+      const angle = baseHeading + (2 * Math.PI * i) / count;
+      this._pendingSplitWarheads.push(
+        createPlayerBullet(
+          this,
+          bullet.x,
+          bullet.y,
+          bullet.color,
+          radius,
+          Math.cos(angle) * speed,
+          Math.sin(angle) * speed,
+          CLUSTER_WARHEAD_LIFETIME,
+        ),
+      );
+    }
+    this.spawnSplitBurst(bullet.x, bullet.y, count);
+  }
+
+  /**
+   * Admits every warhead queued by {@link CombatCoreScene.splitProjectile}
+   * into the live player-bullet list. Called at the start of the shared
+   * player tick so split warheads take part in the same frame's
+   * advance/collision passes (AH-0MV1BIVIJ007KYXU).
+   */
+  protected flushPendingSplitWarheads(): void {
+    if (this._pendingSplitWarheads.length === 0) return;
+    this.playerBullets.push(...this._pendingSplitWarheads);
+    this._pendingSplitWarheads.length = 0;
+  }
+
+  /**
+   * Spawns the shared cluster split-burst VFX at the split point. Owned by
+   * the shared core so the game and every gym render the identical feedback.
+   */
+  protected spawnSplitBurst(x: number, y: number, warheads: number): void {
+    spawnSplitBurst(this, x, y, CLUSTER_SPLIT_BURST_RADIUS, warheads, {
+      registry: this.splitBurstEffects,
+    });
+  }
+
+  /**
+   * Advances and redraws the Gradius Options escort pods
+   * (AH-0MV1BIVVK0043TEM). One shared implementation consumes the pure
+   * `optionsEscort` geometry so the game and every gym orbit identical pods.
+   *
+   * When the Options weapon is not active the persistent Graphics (if any) is
+   * destroyed and the orbit phase reset, leaving no residual pod on screen.
+   * Otherwise the phase advances by `dt` and the pods are redrawn at their
+   * current positions.
+   *
+   * @param dt - Delta time in seconds.
+   */
+  protected _updateOptionsEscort(dt: number): void {
+    const player = this.getPlayer();
+    if (!player || !player.hasWeapon('options')) {
+      if (this.optionsPodGraphics) {
+        this.optionsPodGraphics.destroy();
+        this.optionsPodGraphics = null;
+      }
+      this._optionsOrbitPhase = 0;
+      return;
+    }
+    this._optionsOrbitPhase = advanceOrbitPhase(
+      this._optionsOrbitPhase,
+      dt * 1000,
+    );
+    const def = player.getWeaponDef('options');
+    const count = def.orbit?.pods ?? 0;
+    const radius = def.orbit?.radius ?? OPTIONS_ORBIT_RADIUS;
+    const graphics = (this.optionsPodGraphics ??= this.add.graphics());
+    graphics.clear();
+    // Faint orbit ring so the escort reads as an intentional formation.
+    graphics.lineStyle(1, def.bulletColor, 0.2);
+    graphics.strokeCircle(player.x, player.y, radius);
+    // Neon pods, drawn at the shared helper's deterministic positions.
+    graphics.fillStyle(def.bulletColor, 1);
+    for (const pod of optionsPodPositions(
+      player.x,
+      player.y,
+      this._optionsOrbitPhase,
+      count,
+      radius,
+    )) {
+      graphics.fillCircle(pod.x, pod.y, OPTIONS_POD_RADIUS);
+    }
+  }
+
+  /**
+   * Fires one bullet from every Options pod along the ship's heading
+   * (AH-0MV1BIVVK0043TEM). Each pod's world position comes from the shared
+   * `optionsEscort` helper; the bullets travel through the ordinary
+   * `PlayerBullet` path so they damage enemies exactly like the main gun.
+   *
+   * @param def - The level-resolved Options definition (carries `orbit`).
+   * @param player - The firing player (position + heading + bullet scale).
+   */
+  protected fireOptionsPods(def: WeaponDefinition, player: Player): void {
+    const orbit = def.orbit;
+    if (!orbit) return;
+    const count = Math.max(0, Math.round(orbit.pods));
+    if (count === 0) return;
+    const heading = player.getHeading();
+    const radius = PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1);
+    const positions = optionsPodPositions(
+      player.x,
+      player.y,
+      this._optionsOrbitPhase,
+      count,
+      orbit.radius,
+    );
+    const directions = optionsPodFireDirections(heading, count);
+    for (let i = 0; i < positions.length; i++) {
+      const vel = bulletVelocity(directions[i], OPTIONS_POD_BULLET_SPEED);
+      this.spawnPlayerBullet(
+        positions[i].x,
+        positions[i].y,
+        vel.vx,
+        vel.vy,
+        def.bulletColor,
+        def.bulletLifetime,
+        radius,
+      );
+    }
   }
 
   /** Spawns the player-death particle burst at (x, y). */
@@ -616,6 +942,7 @@ export class CombatCoreScene<
     spawnExplosionParticles(this, x, y, SHIP_COLOR, SHIP_SIZE, {
       patterns: resolvePatterns('player'),
       registry: this.playerExplosions,
+      kind: 'player',
     });
   }
 
@@ -805,6 +1132,77 @@ export class CombatCoreScene<
   }
 
   /**
+   * Shared tractor-beam step (Galaga capturer, AH-0MV01EFII008298D).
+   *
+   * Walks the scene's enemy entities for live, active beams, applies the
+   * **bounded** pull of the strongest overlapping beam to the player through
+   * {@link Player.applyExternalDrag}, and — after a continuous hold of
+   * {@link DEFAULT_CAPTURE_HOLD_MS} — triggers the temporary, non-fatal capture
+   * effect (fire suppressed for {@link DEFAULT_CAPTURE_DISABLE_MS}) and tells
+   * the capturing entity to withdraw.
+   *
+   * Defined once here and driven from {@link CombatCoreScene._tickPlayer}, so
+   * the game and every player-bearing gym run the same capture implementation
+   * (gym↔game parity). Leaving the beam resets the hold; a scene with no
+   * player, or no beams, is a no-op.
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateCaptureBeams(dt: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    const dtMs = dt * 1000;
+
+    if (this._captureDisabledMs > 0) {
+      this._captureDisabledMs = Math.max(0, this._captureDisabledMs - dtMs);
+    }
+
+    let insideBeam = false;
+    let pullVx = 0;
+    let pullVy = 0;
+    let maxPull = 0;
+    let captor: CombatEnemyEntity | null = null;
+    for (const entity of this.getEnemyEntities()) {
+      const beam = entity.getCaptureBeam?.();
+      if (!beam || !beam.active) continue;
+      const pull = computeCapturePull(beam, player.x, player.y);
+      const magnitude = Math.hypot(pull.vx, pull.vy);
+      if (magnitude === 0) continue;
+      insideBeam = true;
+      // The strongest single beam wins, so multiple overlapping beams can
+      // never exceed a single beam's bounded pull.
+      if (magnitude > maxPull) {
+        maxPull = magnitude;
+        pullVx = pull.vx;
+        pullVy = pull.vy;
+        captor = entity;
+      }
+    }
+
+    if (!insideBeam) {
+      this._captureHoldMs = 0;
+      return;
+    }
+
+    player.applyExternalDrag(pullVx, pullVy, dt);
+    this._captureHoldMs += dtMs;
+    if (isCaptureComplete(this._captureHoldMs, DEFAULT_CAPTURE_HOLD_MS)) {
+      this._captureHoldMs = 0;
+      this._captureDisabledMs = DEFAULT_CAPTURE_DISABLE_MS;
+      captor?.notifyPlayerCaptured?.();
+    }
+  }
+
+  /**
+   * Whether the player is currently serving the temporary, non-fatal capture
+   * penalty (auto-fire suppressed). Observable so tests and HUDs can verify
+   * the capture effect without inferring it from fire timing.
+   */
+  isCaptureDisabled(): boolean {
+    return this._captureDisabledMs > 0;
+  }
+
+  /**
    * Advances the shared Bomb bomb pulse and, when the registry reports a pulse
    * is due, clears enemy bullets within the resolved range around the player
    * and spawns the expanding-ring VFX (AH-0MUVM9RAO004Y3LB).
@@ -837,6 +1235,98 @@ export class CombatCoreScene<
     });
   }
 
+  /**
+   * Advances the shared Smart Bomb screen pulse and, when the registry
+   * reports a pulse is due, resolves the level-resolved {@link AoEDescriptor}
+   * through {@link onSmartBombPulse}
+   * (AH-0MV1BIWP9003EHRQ).
+   *
+   * Called from {@link CombatCoreScene._tickPlayer} so the game and every gym
+   * drive the pulse from exactly one implementation; a scene with no player
+   * is a no-op.
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateSmartBomb(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    if (!registry.updateSmartBomb(dt)) return;
+    const player = this.getPlayer();
+    if (!player) return;
+    this.onSmartBombPulse(registry.smartBombAoe(), player.x, player.y);
+  }
+
+  /**
+   * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect
+   * seam. Default no-op (the effect application lives in
+   * {@link CombatScene}, which owns the enemy-damage seam); the concrete
+   * combat scene overrides it to apply the descriptor and spawn the pulse
+   * VFX. Keeping the detection in this shared step and the application behind
+   * one hook means gyms cannot fork the screen-pulse behaviour
+   * (AH-0MV1BIWP9003EHRQ).
+   *
+   * @param _aoe - The level-resolved pulse descriptor.
+   * @param _x - Pulse origin x (the ship).
+   * @param _y - Pulse origin y (the ship).
+   */
+  protected onSmartBombPulse(
+    _aoe: AoEDescriptor,
+    _x: number,
+    _y: number,
+  ): void {}
+
+  // ── Frightened enemy status (Power Pellet, AH-0MV1BIW95004POSX) ────
+
+  /**
+   * Whether the Power Pellet fright window is currently active. Consumed by
+   * the shared collision path (ramming a frightened enemy destroys it and
+   * not the ship) and the enemy-fire dispatchers (fire is suppressed).
+   */
+  protected isEnemyFrightened(): boolean {
+    return this.getEffectsRegistry().isFrightened();
+  }
+
+  /**
+   * The accumulated flee displacement (px) an enemy at its un-frightened
+   * formation slot should be offset by while the fright window is active.
+   * Returns `{0, 0}` when the window is inactive or no player is present.
+   *
+   * The enemy's heading is captured once, on the first frame it is offset
+   * during the window, from its current (formation-slot) position to the
+   * ship. The displacement then grows along that fixed heading with the
+   * window's elapsed time and the level-resolved flee-speed multiplier
+   * (AH-0MV4BXUWT005MWAJ), so the enemy retreats in a straight line rather
+   * than orbiting a moving ship. The heading is keyed by entity identity and
+   * the whole cache is cleared when the window closes (or on run reset), so a
+   * later pellet re-captures fresh headings.
+   *
+   * Putting this in the shared core means the game and every gym retreat
+   * enemies identically (gym↔game parity).
+   */
+  protected _frightenedFleeOffset(enemy: {
+    x: number;
+    y: number;
+  }): { x: number; y: number } {
+    const registry = this.getEffectsRegistry();
+    if (!registry.isFrightened()) {
+      if (this._frightenedFleeHeadings.size > 0) {
+        this._frightenedFleeHeadings.clear();
+      }
+      return { x: 0, y: 0 };
+    }
+    const player = this.getPlayer();
+    if (!player) return { x: 0, y: 0 };
+    let heading = this._frightenedFleeHeadings.get(enemy);
+    if (!heading) {
+      heading = frightenedFleeDirection(enemy.x, enemy.y, player.x, player.y);
+      this._frightenedFleeHeadings.set(enemy, heading);
+    }
+    return frightenedFleeOffsetFromDirection(
+      heading,
+      registry.frightenElapsed(),
+      registry.frightenSpeedMultiplier(),
+    );
+  }
+
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
 
   /**
@@ -858,6 +1348,11 @@ export class CombatCoreScene<
     // so without this a restarted run inherits the previous run's beat
     // phase and is not reproducible from its seed.
     this.beatClock.reset();
+    // Route the non-weapon destruction booms onto this shared beat grid
+    // (AH-0MV01HNLU008S5E3): the audio seam schedules them to the next 16th
+    // note of this clock, identically in the game and every gym. A reset
+    // also opens a fresh accent window for the new run.
+    setExplosionBeatClock(this.beatClock);
     // Bind the registry to this scene's live player store, then reset both
     // the timing state and the level store together (AC6). The dynamic
     // resolver means a player created later in `create()` is picked up with
@@ -879,6 +1374,24 @@ export class CombatCoreScene<
     // In-flight Bomb pulse rings are likewise owned by their registry.
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    // In-flight cluster split bursts and any un-flushed split warheads are
+    // cleared so a restarted run starts clean (AH-0MV1BIVIJ007KYXU).
+    for (const effect of this.splitBurstEffects) effect.destroy();
+    this.splitBurstEffects = [];
+    for (const warhead of this._pendingSplitWarheads) warhead.destroy();
+    this._pendingSplitWarheads.length = 0;
+    // Clear the Options escort pods and orbit phase so a restarted run starts
+    // clean (AH-0MV1BIVVK0043TEM).
+    this.optionsPodGraphics?.destroy();
+    this.optionsPodGraphics = null;
+    this._optionsOrbitPhase = 0;
+    // Clear any in-flight capture hold/penalty so a restarted run starts
+    // clean (Galaga capturer, AH-0MV01EFII008298D).
+    this._captureHoldMs = 0;
+    this._captureDisabledMs = 0;
+    // Drop captured flee headings so a restarted run re-captures from its
+    // own activation (AH-0MV4BXUWT005MWAJ).
+    this._frightenedFleeHeadings.clear();
   }
 
   /**
@@ -901,8 +1414,18 @@ export class CombatCoreScene<
     this.collectAnimations = [];
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    for (const effect of this.splitBurstEffects) effect.destroy();
+    this.splitBurstEffects = [];
+    for (const warhead of this._pendingSplitWarheads) warhead.destroy();
+    this._pendingSplitWarheads.length = 0;
+    this.optionsPodGraphics?.destroy();
+    this.optionsPodGraphics = null;
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
+    this._frightenedFleeHeadings.clear();
+    // Detach the beat-synced explosion schedule so a stopped scene cannot
+    // leak its clock into the next one (AH-0MV01HNLU008S5E3).
+    setExplosionBeatClock(null);
   }
 }

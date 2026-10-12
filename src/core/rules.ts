@@ -60,7 +60,7 @@ export interface GameRules {
    */
   weaponSubdivisions: WeaponSubdivisions;
   /**
-   * Relative weight per power-up ID (Shield–Mineral Scoop). Higher weight ⇒ more
+   * Relative weight per power-up ID (Shield–Smart Bomb). Higher weight ⇒ more
    * likely. These are relative, not percentages — the spawner normalises
    * them internally.
    */
@@ -134,10 +134,34 @@ export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
  */
 export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
 
+/**
+ * Default relative weight for the Power Pellet (AH-0MV1BIW95004POSX). Rarer
+ * than a standard drop (3 vs 4) because the fright window is a strong
+ * defensive tool, without being as rare as Extra Life (which is also 3 but
+ * competes with the standard pool at the same weight).
+ */
+export const DEFAULT_POWER_PELLET_WEIGHT = 3;
+
+/**
+ * Default relative weight for the Smart Bomb (AH-0MV1BIWP9003EHRQ). The
+ * rarest defensive pickup (2): its screen-wide once-per-activation pulse is
+ * the strongest panic button in the catalogue, so it drops half as often as
+ * a standard power-up and rarer than the Power Pellet.
+ */
+export const DEFAULT_SMART_BOMB_WEIGHT = 2;
+
+/**
+ * Default relative weight for the Mystery UFO (AH-0MV1BIXFO006Z1I7). Rarer
+ * than a standard drop (3 vs 4): it is a high-value mineral/score bonus, not a
+ * combat tool, so it stays a special find without being as rare as the Smart
+ * Bomb (2).
+ */
+export const DEFAULT_MYSTERY_UFO_WEIGHT = 3;
+
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
-/** Every power-up ID covered by the default weight table (Shield–Mineral Scoop). */
+/** Every power-up ID covered by the default weight table (Shield–Smart Bomb). */
 export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'shield',
   'bomb',
@@ -147,6 +171,10 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
+  'power_pellet',
+  'smart_bomb',
+  'force_field',
+  'mystery_ufo',
 ];
 
 /**
@@ -173,6 +201,10 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'spread',
   'dual',
   'rapid',
+  'wave_laser',
+  'ricochet',
+  'cluster',
+  'options',
   'nova',
   'mortar',
   'arc',
@@ -217,8 +249,17 @@ export const DEFAULT_SEQUENCED_WAVES_ENABLED = true;
 export function defaultPowerUpWeights(): PowerUpWeights {
   const weights = {} as PowerUpWeights;
   for (const id of POWER_UP_WEIGHT_IDS) {
-    weights[id] =
-      id === 'extra_life' ? DEFAULT_EXTRA_LIFE_WEIGHT : DEFAULT_STANDARD_POWER_UP_WEIGHT;
+    if (id === 'extra_life') {
+      weights[id] = DEFAULT_EXTRA_LIFE_WEIGHT;
+    } else if (id === 'power_pellet') {
+      weights[id] = DEFAULT_POWER_PELLET_WEIGHT;
+    } else if (id === 'smart_bomb') {
+      weights[id] = DEFAULT_SMART_BOMB_WEIGHT;
+    } else if (id === 'mystery_ufo') {
+      weights[id] = DEFAULT_MYSTERY_UFO_WEIGHT;
+    } else {
+      weights[id] = DEFAULT_STANDARD_POWER_UP_WEIGHT;
+    }
   }
   return weights;
 }

@@ -12,6 +12,7 @@ import {
   allSfxAssetUrls,
   assetUrlFor,
   cueAssetUrl,
+  getCueAsset,
 } from './cueManifest';
 
 describe('cueManifest — asset resolution', () => {
@@ -34,6 +35,17 @@ describe('cueManifest — asset resolution', () => {
       'audio/sfx/aihell-enemy-spawn.32101.wav',
     );
     expect(cueAssetUrl('updateThrusterSound')).toBeUndefined();
+  });
+
+  it('maps the dedicated boss-hit cue to the baked aihell-boss-hit recipe', () => {
+    const entry = getCueAsset('playBossHitSound');
+    expect(entry).toBeDefined();
+    expect(entry!.recipe).toBe('aihell-boss-hit');
+    expect(entry!.delivery).toBe('baked');
+    expect(entry!.seeds).toEqual([32208]);
+    expect(cueAssetUrl('playBossHitSound')).toBe(
+      'audio/sfx/aihell-boss-hit.32208.wav',
+    );
   });
 
   it('the preload set is de-duplicated and excludes runtime-shim assets', () => {

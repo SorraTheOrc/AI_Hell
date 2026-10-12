@@ -36,6 +36,8 @@ import {
   combinePatterns,
   spawnExplosionParticles,
   EXPLOSION_IMPLOSION_MS,
+  getExplosionVfxCounts,
+  resetExplosionVfxCounts,
 } from './explosionParticles';
 
 // ── Seeded RNG for deterministic tests ─────────────────────────────
@@ -1029,5 +1031,59 @@ describe('resolvePatterns (AC5)', () => {
         expect(['radial', 'ring', 'implosion']).toContain(p);
       }
     }
+  });
+});
+
+describe('shared explosion-VFX registry (AH-0MUZQGRQR0086NP6, AC7)', () => {
+  type SpawnScene = Parameters<typeof spawnExplosionParticles>[0];
+
+  it('counts live bursts per kind and releases them when they finish', () => {
+    resetExplosionVfxCounts();
+    const scene = makeStubScene();
+    const handle = spawnExplosionParticles(
+      scene as unknown as SpawnScene,
+      0, 0, 0xff0000, 20,
+      { seed: 1, patterns: ['radial'], kind: 'enemy' },
+    );
+
+    // Exactly one enemy burst is live (the shared registry is the only
+    // counter, so the category cannot be double-counted).
+    expect(getExplosionVfxCounts()).toEqual({ enemy: 1, boss: 0, player: 0 });
+
+    // Completing/destroying the burst releases the count exactly once.
+    const cfg = scene.tweenCfgs[0] as { onComplete?: () => void };
+    cfg.onComplete?.();
+    cfg.onComplete?.(); // idempotent — never goes negative
+    handle?.destroy();
+    expect(getExplosionVfxCounts()).toEqual({ enemy: 0, boss: 0, player: 0 });
+  });
+
+  it('counts each kind independently and ignores untagged bursts', () => {
+    resetExplosionVfxCounts();
+    const spawn = (kind?: 'enemy' | 'boss' | 'player') =>
+      spawnExplosionParticles(
+        makeStubScene() as unknown as SpawnScene,
+        0, 0, 0xff0000, 20,
+        { seed: 1, patterns: ['radial'], kind },
+      );
+
+    spawn('boss');
+    spawn('player');
+    spawn('player');
+    spawn(); // untagged (e.g. fireworks) is not action VFX
+
+    expect(getExplosionVfxCounts()).toEqual({ enemy: 0, boss: 1, player: 2 });
+    resetExplosionVfxCounts();
+  });
+
+  it('does not count a burst when the scene is missing', () => {
+    resetExplosionVfxCounts();
+    const handle = spawnExplosionParticles(
+      null,
+      0, 0, 0xff0000, 20,
+      { seed: 1, patterns: ['radial'], kind: 'enemy' },
+    );
+    expect(handle).toBeNull();
+    expect(getExplosionVfxCounts()).toEqual({ enemy: 0, boss: 0, player: 0 });
   });
 });

@@ -43,7 +43,7 @@ import {
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../core/constants';
-import { GameState } from '../core/GameState';
+import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import {
@@ -66,6 +66,15 @@ import {
   type FormationReanchorRequest,
 } from '../utils/formations';
 import { FormationGlide } from './core/formationGlide';
+import {
+  advanceMarch,
+  computeMarchBounds,
+  createMarchState,
+  DEFAULT_MARCH_DROP,
+  DEFAULT_MARCH_STEP,
+  type MarchOptions,
+  type MarchState,
+} from './core/marchFormation';
 import { fireForEnemy } from '../entities/enemyFire';
 import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
@@ -79,6 +88,7 @@ import {
   type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import { getExplosionVfxCounts } from '../vfx/explosionParticles';
 import {
   ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
   spawnVictoryFireworks,
@@ -91,7 +101,7 @@ import {
   type ChoiceStrategy,
 } from '../powerups/choice';
 import { PowerUp } from '../powerups/PowerUp';
-import { getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
+import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
 import { nudgeAwayFromDrops } from '../powerups/placement';
 import {
@@ -102,7 +112,7 @@ import { HUD } from '../ui/HUD';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
-import { decideBotIntent } from '../ai/botDecision';
+import { createCompetentBotBrain } from '../ai/framework';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BOT_MINERAL_CHOICE_DELAY_MS,
@@ -111,10 +121,23 @@ import {
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
+  createTelemetryRecorder,
+  resolveBuildInfo,
+  resolveEffectiveTelemetryConfig,
+  type TelemetryRecorder,
+} from '../telemetry';
+import {
+  buildRunTelemetryState,
+  RunTelemetry,
+  serialiseTelemetryInput,
+  type RunTelemetryExtras,
+} from './core/runTelemetry';
+import {
   clearDevScenarioHandle,
   installDevScenarioHandle,
   isDevScenarioEnabled,
   resolveDevScenario,
+  resolveDevSeed,
   type DevScenario,
 } from '../core/devScenario';
 import {
@@ -124,15 +147,50 @@ import {
   resolveBindings,
   type ActionName,
 } from '../core/settingsStore';
+import { loadTelemetryConsent } from '../core/telemetryConsentStore';
 import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
 import {
+  computeSpawns as computeStrikeSpawns,
+  type SpawnEvent as StrikeSpawnEvent,
+} from '../waves/StrikeSpawner';
+import { OrbitalStrike } from '../entities/OrbitalStrike';
+import {
   computeHarvesterSpawns,
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
+import {
+  computeGhostSpawns,
+  type GhostSpawnEvent,
+} from '../waves/GhostSpawner';
+import {
+  CENTIPEDE_DESCENT_SPEED,
+  CENTIPEDE_ENEMY_KEY,
+  CENTIPEDE_LATERAL_SPEED,
+  CENTIPEDE_SEGMENT_SPACING,
+  centipedeArena,
+  computeCentipedeSpawn,
+  type CentipedeSpawnEvent,
+} from '../waves/CentipedeSpawner';
+import { Centipede } from '../entities/Centipede';
+import { CentipedeChain } from './core/centipedeChain';
+import {
+  HORDE_DEFAULT_GROUP_SIZE,
+  HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
+  GRUNT_ENEMY_KEY,
+  computeHordeSpawns,
+  type HordeSpawnEvent,
+} from '../waves/HordeSpawner';
+import {
+  LANE_TRAFFIC_DEFAULT_LANE_COUNT,
+  LANE_TRAFFIC_DEFAULT_LANE_SPACING,
+  computeLaneTrafficSpawns,
+  type LaneTrafficSpawnEvent,
+} from '../waves/LaneTrafficSpawner';
+import { LaneTraffic } from '../entities/LaneTraffic';
 import { Boss, BossPhase } from '../entities/Boss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
@@ -150,6 +208,7 @@ import {
 } from './core/mineralLayer';
 import {
   applyPhaseGhost,
+  drawForceFieldBubble,
   drawShieldBubble,
 } from './core/CombatEffectVisuals';
 import {
@@ -182,10 +241,32 @@ export const SCORE_VALUES: Record<string, number> = {
   asteroid: 50,
   // Harvester: a durable five-hit mineral-denial threat (GDD §4.5, E7).
   harvester: 400,
+  // Centipede: a linked chain of weaving segments (classic-arcade archetype,
+  // AH-0MV01EJ92008ZZ86). Each destroyed segment scores.
+  centipede: 120,
+  // Robotron homing horde: a small, fast non-firing grunt (classic-arcade
+  // archetype, AH-0MV01EKTL001NRE6). Each grunt scores.
+  grunt: 150,
+  // Defender raider: a patrol-then-attack state machine (classic-arcade
+  // archetype, AH-0MV01EM7U0033W7L). Each raider scores.
+  raider: 175,
+  // Frogger lane traffic: a fast, non-firing moving hazard (classic-arcade
+  // archetype, AH-0MV01EPM40008N8T). Each lane member scores.
+  'lane-traffic': 150,
 };
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
 export const DEFAULT_SCORE_VALUE = 100;
+
+/**
+ * True for non-blocking world hazards — archetypes that are never registered
+ * with the `WaveManager`, never gate wave completion, and are never adopted as
+ * survivors between waves (Asteroid accounting, AH-0MUJM746P000QAEO). The
+ * Frogger lane traffic is the second such hazard (AH-0MV01EPM40008N8T).
+ */
+function isNonBlockingHazard(enemyKey: string): boolean {
+  return enemyKey === 'asteroid' || enemyKey === 'lane-traffic';
+}
 
 /** Points awarded per destroyed boss phase (GDD §4.5). */
 export const BOSS_PHASE_SCORES: Record<number, number> = {
@@ -288,6 +369,12 @@ interface SpawnedEnemy {
   startY: number;
   spacingX: number;
   spacingY: number;
+  /**
+   * True when this enemy belongs to a `march` formation block (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). Such enemies are positioned from the
+   * shared march state instead of the global continuous drift.
+   */
+  march?: boolean;
 }
 
 /** A live enemy bullet (matches the entity fire-method return shape). */
@@ -363,6 +450,8 @@ export class PlayScene extends CombatScene<
    * ship's own control scheme (W/A/D — never a reverse key).
    */
   private botGovernor = new BotInputGovernor();
+  /** The structured competent bot's committed policy (AC1–AC4). */
+  private botBrain = createCompetentBotBrain();
 
   /** Session state (lives, score, level). */
   private gameState: GameState;
@@ -400,9 +489,20 @@ export class PlayScene extends CombatScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the bubble was actually drawn in the last visual update. */
   private shieldBubbleDrawn = false;
+  /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
+  private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
 
   private driftX = 0;
   private driftDir = 1;
+  /**
+   * Shared march-formation state for the current wave (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). Non-null only when the wave contains a
+   * `march` block; those enemies are positioned from this state rather than
+   * the global drift, so the game runs the same policy as the gym.
+   */
+  private marchState: MarchState | null = null;
+  /** Resolved march tuning for the current wave (null when no march block). */
+  private marchOptions: MarchOptions | null = null;
   /**
    * Diver-group re-anchor offset (px), added only to Diver spawns' origin on
    * top of the drift. A Diver's attack re-anchors the Diver group by adding
@@ -483,6 +583,22 @@ export class PlayScene extends CombatScene<
   private rngInjected = false;
 
   /**
+   * Test/headless seam: a recorder injected via {@link setTelemetryRecorder}.
+   * When null, `create()` builds one from the environment config (disabled by
+   * default). The recorder is reused across restarts so a test can observe a
+   * full run (AH-0MUY08VVQ007HSSH).
+   */
+  private injectedTelemetryRecorder: TelemetryRecorder | null = null;
+
+  /**
+   * Live run instrumentation (AH-0MUY08VVQ007HSSH). A strict no-op until
+   * `_initTelemetry()` installs the configured/injected recorder, and while
+   * telemetry is disabled. Never null, so tick/event call sites need no null
+   * guard.
+   */
+  private runTelemetry: RunTelemetry = RunTelemetry.noop();
+
+  /**
    * Asteroid spawn events planned for the active wave (empty outside a
    * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
    * scene rng stream is only advanced at wave boundaries.
@@ -499,9 +615,66 @@ export class PlayScene extends CombatScene<
   /** Number of planned Harvester spawns already released this wave. */
   private harvestersSpawnedThisWave = 0;
 
+  /**
+   * Whether the Pac-Man ghost-pursuer group is planned for a wave
+   * (classic-arcade archetype, AH-0MV01EH2U008XT3Q). Ghosts additionally
+   * require the wave's `ghosts: true` opt-in, so the shipped campaign is
+   * unchanged until a wave enables them. Tuning/test seam.
+   */
+  private ghostSpawnerEnabled = true;
+  /** Planned ghost spawns for the active regular wave (empty unless opted in). */
+  private pendingGhostSpawns: GhostSpawnEvent[] = [];
+  /** Number of planned ghost spawns already released this wave. */
+  private ghostsSpawnedThisWave = 0;
+
+  /**
+   * Whether the Centipede chain is planned for a wave (classic-arcade
+   * archetype, AH-0MV01EJ92008ZZ86). The chain additionally requires the
+   * wave's `centipede: true` opt-in, so the shipped campaign is unchanged
+   * until a wave enables it. Tuning/test seam.
+   */
+  private centipedeSpawnerEnabled = true;
+  /** The planned Centipede chain for the active wave (`null` unless opted in). */
+  private pendingCentipedeSpawn: CentipedeSpawnEvent | null = null;
+  /** Whether the planned Centipede chain has been released this wave. */
+  private centipedeSpawnedThisWave = false;
+
+  /**
+   * Whether the Robotron homing horde is planned for a wave (classic-arcade
+   * archetype, AH-0MV01EKTL001NRE6). The horde additionally requires the
+   * wave's `horde: true` opt-in, so the shipped campaign is unchanged.
+   */
+  private hordeSpawnerEnabled = true;
+  /** Planned horde spawns for the active regular wave (empty unless opted in). */
+  private pendingHordeSpawns: HordeSpawnEvent[] = [];
+  /** Number of planned horde spawns already released this wave. */
+  private hordeSpawnedThisWave = 0;
+
   /** How many of the planned asteroid spawns have been released this wave. */
   private asteroidsSpawnedThisWave = 0;
 
+  /**
+   * Whether telegraphed orbital-strike spawning is active (Missile Command
+   * archetype, AH-0MV01ENX00055CG1). Enabled for the campaign; switchable so
+   * tests can isolate the hazard. The strike is a non-blocking world hazard
+   * (like asteroids) — it never gates wave completion.
+   */
+  private orbitalStrikeSpawnerEnabled = true;
+  /** Planned orbital-strike spawns for the active regular wave. */
+  private pendingStrikeSpawns: StrikeSpawnEvent[] = [];
+  /** Number of planned orbital-strike spawns already released this wave. */
+  private strikesSpawnedThisWave = 0;
+
+  /**
+   * Whether the Frogger lane-traffic plan is active (classic-arcade archetype,
+   * AH-0MV01EPM40008N8T). Lane traffic is a non-blocking world hazard, so it
+   * is spawned directly rather than through the WaveManager. Tuning/test seam.
+   */
+  private laneTrafficSpawnerEnabled = true;
+  /** Planned lane-traffic spawns for the active regular wave. */
+  private pendingLaneTrafficSpawns: LaneTrafficSpawnEvent[] = [];
+  /** Number of planned lane-traffic spawns already released this wave. */
+  private laneTrafficSpawnedThisWave = 0;
   constructor() {
     super('PlayScene');
     this.gameState = new GameState({ gameState: 'playing' });
@@ -537,6 +710,8 @@ export class PlayScene extends CombatScene<
     this.resetRunState();
     // Fresh human-like bot input state for this run.
     this.botGovernor.reset();
+    // Fresh competent-bot commitment/scratch for this run (AC1).
+    this.botBrain.reset();
     // Resolve and seed the per-run RNG before anything draws from it
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
@@ -544,6 +719,10 @@ export class PlayScene extends CombatScene<
     // Seed the bot's per-press jitter from the run seed so demo press
     // lengths are reproducible per run (AC15).
     this.botGovernor.seed(this.getRunSeed());
+    // Install the telemetry instrumentation for this run (AH-0MUY08VVQ007HSSH):
+    // the environment-configured recorder (disabled by default) unless a test
+    // injected one. Records the run header + `run_start` event.
+    this._initTelemetry();
 
     this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
@@ -559,15 +738,15 @@ export class PlayScene extends CombatScene<
     // handles like the player's ship rather than a four-directional impostor
     // (AH-0MUX2NENC008AHOQ producer review).
     this.cursors = this.input.keyboard?.createCursorKeys();
-    // Movement / layer-drop / pause keys come from `ai_hell_settings`
+    // Movement / pause keys come from `ai_hell_settings`
     // (parent AH-0MU9LPZ0G0015292); arrow keys remain built-in defaults.
     this._applyBindings();
-    // Teleport keeps its ↓ fallback key (JustDown semantics, mirrors the gyms).
-    this.downKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
     // Shield bubble — rendered above gameplay (below the HUD).
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
+    // Force Field reflect bubble — above the shield bubble (below the HUD).
+    this.forceFieldBubble = this.add.graphics();
+    this.forceFieldBubble.setDepth(51);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, {
@@ -645,9 +824,11 @@ export class PlayScene extends CombatScene<
 
   /**
    * Reads the persisted `ai_hell_settings` bindings and creates the Phaser
-   * keys for movement, layer-drop/teleport and the pause toggle. Arrow keys
-   * remain always-available movement defaults. Called on create and again
-   * on RESUME so a rebind takes effect immediately on return to the game.
+   * keys for movement and the pause toggle. Arrow keys remain
+   * always-available movement defaults. Called on create and again on RESUME
+   * so a rebind takes effect immediately on return to the game. Teleport is
+   * automatic (AH-0MUZE4AIP009HZWC), so no layer-drop action exists and
+   * S / ↓ are free for reverse thrust.
    */
   private _applyBindings(): void {
     const bindings = resolveBindings(loadSettings().bindings);
@@ -656,7 +837,6 @@ export class PlayScene extends CombatScene<
     const kb = this.input.keyboard;
     if (!kb) {
       this.wasd = undefined;
-      this.teleportKey = null;
       return;
     }
     const keyForAction = (action: ActionName) =>
@@ -667,7 +847,6 @@ export class PlayScene extends CombatScene<
       S: keyForAction('moveDown'),
       D: keyForAction('moveRight'),
     } as WasdKeysLike;
-    this.teleportKey = keyForAction('layerDrop');
 
     // The demo take-over keys must be the *same* source as normal-play
     // movement: the resolved `moveUp`/`moveDown`/`moveLeft`/`moveRight`
@@ -707,8 +886,18 @@ export class PlayScene extends CombatScene<
     this.waveTimerActive = false;
     this.pendingAsteroidSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
+    this.pendingLaneTrafficSpawns = [];
+    this.laneTrafficSpawnedThisWave = 0;
     this.pendingHarvesterSpawns = [];
     this.harvestersSpawnedThisWave = 0;
+    this.pendingGhostSpawns = [];
+    this.ghostsSpawnedThisWave = 0;
+    this.pendingCentipedeSpawn = null;
+    this.centipedeSpawnedThisWave = false;
+    this.pendingHordeSpawns = [];
+    this.hordeSpawnedThisWave = 0;
+    this.pendingStrikeSpawns = [];
+    this.strikesSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
     this._spawnWormhole = null;
     this.paused = false;
@@ -757,6 +946,8 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
+    this.forceFieldBubble?.destroy();
+    this.forceFieldBubble = null;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -774,6 +965,10 @@ export class PlayScene extends CombatScene<
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
+
+    // Flush any buffered records so the run tail (run_end) reaches the sink
+    // before the scene is torn down (AH-0MUY08VVQ007HSSH).
+    void this.runTelemetry.flush();
   }
 
   // ── Frame loop ──────────────────────────────────────────────────
@@ -839,9 +1034,6 @@ export class PlayScene extends CombatScene<
     // Player input, thrust and auto-fire run in every phase, including the
     // wave/level transition pause.
     //
-    // Teleport (S/↓ JustDown) runs first so the warp position is
-    // consumed by this frame's physics.
-    this._handleTeleport();
     // Human-like demo bot: sample the decision at a human reaction cadence
     // before the shared player step reads the input seam
     // (AH-0MUXXQ1MN002RXGB).
@@ -852,9 +1044,10 @@ export class PlayScene extends CombatScene<
 
     this._advanceBullets(dt);
     if (!transitioning) {
-      // Automatic Phase Shift: feed live danger before collision gating
-      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
-      this._updatePhaseShiftAutoTrigger(dt);
+      // Automatic defence (Phase Shift / Teleport): feed live danger before
+      // collision gating so a trigger this frame protects this frame
+      // (parent AH-0MUIYX1EE008FVS8; AH-0MUZE4AIP009HZWC).
+      this._updateAutoDefence(dt);
       // Advance the wormhole spawn animation first so an enemy that finishes
       // growing this frame is collidable on the same frame it becomes whole.
       this._updateSpawnAnimations(dt);
@@ -870,6 +1063,26 @@ export class PlayScene extends CombatScene<
       // has passed; each is registered with the WaveManager so wave-clear
       // accounting stays correct (F6).
       this._releaseDueHarvesterSpawns();
+      // Release any planned ghost-pursuer spawns whose time has passed
+      // (AH-0MV01EH2U008XT3Q); each is registered with the WaveManager so the
+      // wave neither clears early nor stalls.
+      this._releaseDueGhostSpawns();
+      // Release the planned Centipede chain whose time has passed
+      // (AH-0MV01EJ92008ZZ86); every segment is registered with the
+      // WaveManager so the wave neither clears early nor stalls.
+      this._releaseDueCentipedeSpawn();
+      // Release any planned Robotron homing-horde grunts whose time has passed
+      // (AH-0MV01EKTL001NRE6); each is registered with the WaveManager so the
+      // wave neither clears early nor stalls.
+      this._releaseDueHordeSpawns();
+      // Release any planned telegraphed orbital strikes whose time has passed
+      // (AH-0MV01ENX00055CG1); non-blocking world hazards (never registered
+      // with the WaveManager), like asteroids.
+      this._releaseDueStrikeSpawns();
+      // Release any planned Frogger lane-traffic hazards whose time has passed
+      // (AH-0MV01EPM40008N8T); these are NOT registered with the WaveManager
+      // (non-blocking world hazard, the Asteroid accounting).
+      this._releaseDueLaneTrafficSpawns();
       this._advanceWaveTimer(dt);
     }
     this._updateInvulnerability(dt);
@@ -878,6 +1091,9 @@ export class PlayScene extends CombatScene<
     this._updateDrops(dt);
     this._refreshHudText();
     this._drawWaveTimer();
+    // Per-tick telemetry last, so the recorded state matches the frame the
+    // player actually saw (AH-0MUY08VVQ007HSSH). No-op when off.
+    this._recordTelemetryTick();
   }
 
   /**
@@ -933,6 +1149,21 @@ export class PlayScene extends CombatScene<
     this.planAsteroidSpawns();
     // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
     this.planHarvesterSpawns();
+    // Plan the Pac-Man ghost-pursuer group for waves that opted in
+    // (AH-0MV01EH2U008XT3Q); empty for every other wave.
+    this.planGhostSpawns();
+    // Plan the Centipede chain for waves that opted in
+    // (AH-0MV01EJ92008ZZ86); empty for every other wave.
+    this.planCentipedeSpawn();
+    // Plan the Robotron homing horde for waves that opted in
+    // (AH-0MV01EKTL001NRE6); empty for every other wave.
+    this.planHordeSpawns();
+    // Plan the telegraphed orbital strikes for this wave (Missile Command
+    // archetype, AH-0MV01ENX00055CG1); empty before wave 3.
+    this.planStrikeSpawns();
+    // Plan the Frogger lane traffic for this wave (AH-0MV01EPM40008N8T); it is
+    // a non-blocking world hazard (the Asteroid accounting).
+    this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
       // Spawn one wormhole at the first enemy's position.
@@ -946,7 +1177,13 @@ export class PlayScene extends CombatScene<
     this.driftDir = 1;
     this.diverAnchorX = 0;
     this.diverAnchorY = 0;
+    this._resetMarchFormation(spawns);
     this._startWaveTimer();
+    this.runTelemetry.waveStart(
+      this.waveManager.level,
+      this.waveManager.waveNumber,
+      this.waveManager.waveCount,
+    );
   }
 
   /** Instantiates one enemy from its spawn descriptor. */
@@ -977,7 +1214,46 @@ export class PlayScene extends CombatScene<
       startY: spawn.startY,
       spacingX: spawn.spacingX,
       spacingY: spawn.spacingY,
+      march: cfg.formationKind === 'march',
     });
+  }
+
+  /**
+   * Initialises (or clears) the shared march-formation state for a wave
+   * (Space Invaders archetype, AH-0MV01EDZS0005R20).
+   *
+   * A wave may contain at most one march block — the block is a single rigid
+   * body, so it marches as one unit. The block's arena-edge bounds are derived
+   * from its widest column and the group spacing, matching the gym's
+   * `_marchBounds` calculation so the game and gym cannot diverge. A wave with
+   * no march spawns clears the state and keeps the legacy continuous drift.
+   */
+  private _resetMarchFormation(spawns: EnemySpawn[]): void {
+    const marchSpawns = spawns.filter(
+      (spawn) => loadEnemyConfig(spawn.enemyKey).formationKind === 'march',
+    );
+    if (marchSpawns.length === 0) {
+      this.marchState = null;
+      this.marchOptions = null;
+      return;
+    }
+
+    const first = marchSpawns[0];
+    const cfg = loadEnemyConfig(first.enemyKey);
+    const maxAbsCol = marchSpawns.reduce(
+      (max, spawn) => Math.max(max, Math.abs(spawn.offset.col)),
+      0,
+    );
+    const bounds = computeMarchBounds(maxAbsCol * first.spacingX, GAME_WIDTH);
+    this.marchState = createMarchState(first.startX, first.startY, 1);
+    this.marchOptions = {
+      step: cfg.marchStep ?? DEFAULT_MARCH_STEP,
+      drop: cfg.marchDrop ?? DEFAULT_MARCH_DROP,
+      referenceSpeed: cfg.driftSpeed,
+      minX: bounds.minX,
+      maxX: bounds.maxX,
+      initialCount: marchSpawns.length,
+    };
   }
 
   /**
@@ -1059,6 +1335,91 @@ export class PlayScene extends CombatScene<
       enemyKey: 'asteroid',
       startX: 0,
       startY: 0,
+      spacingX: 0,
+      spacingY: 0,
+    });
+  }
+
+  /**
+   * Plans the telegraphed orbital strikes for the active regular wave
+   * (Missile Command archetype, AH-0MV01ENX00055CG1). Called once per wave
+   * from `spawnWave()` so the scene rng stream advances only at wave
+   * boundaries. Outside a regular wave — before `beginGame()`, during or
+   * after the boss encounter — the plan is cleared and no strikes spawn.
+   */
+  planStrikeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.orbitalStrikeSpawnerEnabled ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingStrikeSpawns = [];
+      this.strikesSpawnedThisWave = 0;
+      return;
+    }
+    const player = this.getPlayer();
+    this.pendingStrikeSpawns = computeStrikeSpawns(
+      wm.globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      player?.x ?? GAME_WIDTH / 2,
+      player?.y ?? GAME_HEIGHT / 2,
+      this.rng,
+    );
+    this.strikesSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned orbital strike whose scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition,
+   * pause or boss encounter) and stops at the first not-yet-due event — the
+   * plan is time-ordered.
+   */
+  private _releaseDueStrikeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.strikesSpawnedThisWave < this.pendingStrikeSpawns.length) {
+      const event = this.pendingStrikeSpawns[this.strikesSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledStrike(event);
+      this.strikesSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned orbital strike at its impact point. Like asteroids,
+   * strikes are NOT registered with the WaveManager (AH-0MV01ENX00055CG1):
+   * they are non-blocking world hazards and never gate wave completion.
+   * Their radial detonation burst is routed through the shared enemy-bullet
+   * path so it can damage the player, but it never touches other enemies.
+   */
+  private _spawnScheduledStrike(event: StrikeSpawnEvent): void {
+    const entity = new OrbitalStrike(this, {
+      x: event.x,
+      y: event.y,
+      formationOffset: { row: 0, col: 0 },
+      rng: this.rng,
+    });
+    this.add.existing(entity);
+    entity.initStrike(event.x, event.y, event.burstCount, this.rng);
+    this.spawned.push({
+      entity,
+      enemyKey: 'orbital-strike',
+      startX: event.x,
+      startY: event.y,
       spacingX: 0,
       spacingY: 0,
     });
@@ -1148,6 +1509,368 @@ export class PlayScene extends CombatScene<
     this.waveManager.registerDynamicSpawn(1);
   }
 
+  /**
+   * Plans the Pac-Man ghost-pursuer group for the active regular wave
+   * (classic-arcade archetype, AH-0MV01EH2U008XT3Q). Only waves that opt in
+   * with `ghosts: true` produce a plan; Levels/campaign data that do not
+   * opt in are unchanged. Called once per wave from `spawnWave()` so the
+   * scene rng stream advances only at wave boundaries.
+   */
+  planGhostSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.ghostSpawnerEnabled ||
+      wm.currentWave()?.ghosts !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingGhostSpawns = [];
+      this.ghostsSpawnedThisWave = 0;
+      return;
+    }
+    this.pendingGhostSpawns = computeGhostSpawns(
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.ghostsSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned ghost spawn whose scheduled time has passed. Runs
+   * only during the regular wave phase (never during a transition, pause or
+   * boss encounter) and stops at the first not-yet-due event — the plan is
+   * time-ordered.
+   */
+  private _releaseDueGhostSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.ghostsSpawnedThisWave < this.pendingGhostSpawns.length) {
+      const event = this.pendingGhostSpawns[this.ghostsSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledGhost(event);
+      this.ghostsSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned ghost at its position and registers it with the
+   * WaveManager so the wave's alive count tracks it. Ghosts are placed
+   * on-screen by the planner, so they are always reachable and never stall
+   * wave completion.
+   */
+  private _spawnScheduledGhost(event: GhostSpawnEvent): void {
+    const cfg = loadEnemyConfig(event.enemyKey);
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      event.x,
+      event.y,
+      { row: 0, col: 0 },
+      this.rng,
+    );
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: event.enemyKey,
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
+  /**
+   * Plans the Centipede chain for the active regular wave (classic-arcade
+   * archetype, AH-0MV01EJ92008ZZ86). Only waves that opt in with
+   * `centipede: true` produce a plan; every other wave is unchanged. Called
+   * once per wave from `spawnWave()` so the scene rng stream advances only at
+   * wave boundaries.
+   */
+  planCentipedeSpawn(): void {
+    const wm = this.waveManager;
+    if (
+      !this.centipedeSpawnerEnabled ||
+      wm.currentWave()?.centipede !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingCentipedeSpawn = null;
+      this.centipedeSpawnedThisWave = false;
+      return;
+    }
+    this.pendingCentipedeSpawn = computeCentipedeSpawn(
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.rng,
+    );
+    this.centipedeSpawnedThisWave = false;
+  }
+
+  /**
+   * Releases the planned Centipede chain once its scheduled time has passed.
+   * Runs only during the regular wave phase (never during a transition, pause
+   * or boss encounter).
+   */
+  private _releaseDueCentipedeSpawn(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated ||
+      this.centipedeSpawnedThisWave ||
+      !this.pendingCentipedeSpawn
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    if (elapsed + 1e-9 < this.pendingCentipedeSpawn.timeSeconds) return;
+    this._spawnScheduledCentipede(this.pendingCentipedeSpawn);
+    this.centipedeSpawnedThisWave = true;
+  }
+
+  /**
+   * Spawns the planned Centipede chain: one shared `CentipedeChain` and one
+   * `Centipede` entity per segment. Every segment is registered with the
+   * `WaveManager` so the wave neither clears early nor stalls while any
+   * segment is alive (the Harvester/Ghost invariant; unlike Asteroids).
+   */
+  private _spawnScheduledCentipede(event: CentipedeSpawnEvent): void {
+    const arena = centipedeArena(GAME_WIDTH, GAME_HEIGHT);
+    const chain = new CentipedeChain({
+      startX: event.x,
+      startY: event.y,
+      arena,
+      segmentCount: event.segmentCount,
+      spacing: CENTIPEDE_SEGMENT_SPACING,
+      lateralSpeed: CENTIPEDE_LATERAL_SPEED,
+      descentSpeed: CENTIPEDE_DESCENT_SPEED,
+      initialDir: event.dir,
+    });
+    for (let id = 0; id < event.segmentCount; id++) {
+      const segment = chain.segment(id);
+      const entity = new Centipede(this, {
+        x: segment?.x ?? event.x,
+        y: segment?.y ?? event.y,
+        formationOffset: { row: 0, col: id },
+        chain,
+        segmentId: id,
+        rng: this.rng,
+      });
+      this.add.existing(entity);
+      this.spawned.push({
+        entity,
+        enemyKey: CENTIPEDE_ENEMY_KEY,
+        startX: event.x,
+        startY: event.y,
+        spacingX: 0,
+        spacingY: 0,
+      });
+      this.waveManager.registerDynamicSpawn(1);
+    }
+  }
+
+  /**
+   * Plans the Robotron homing horde for the active regular wave
+   * (classic-arcade archetype, AH-0MV01EKTL001NRE6). Only waves that opt in
+   * with `horde: true` produce a plan; every other wave is unchanged. The
+   * horde size, group size, spawn cadence and homing speed are all
+   * data-driven (the `grunt` CSV row). Called once per wave from `spawnWave()`
+   * so the scene rng stream advances only at wave boundaries.
+   */
+  planHordeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.hordeSpawnerEnabled ||
+      wm.currentWave()?.horde !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingHordeSpawns = [];
+      this.hordeSpawnedThisWave = 0;
+      return;
+    }
+    const cfg = loadEnemyConfig(GRUNT_ENEMY_KEY);
+    this.pendingHordeSpawns = computeHordeSpawns({
+      gameWidth: GAME_WIDTH,
+      gameHeight: GAME_HEIGHT,
+      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
+      count: cfg.count,
+      groupSize: cfg.hordeGroupSize ?? HORDE_DEFAULT_GROUP_SIZE,
+      spawnIntervalSeconds:
+        cfg.hordeSpawnInterval ?? HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
+      rng: this.rng,
+    });
+    this.hordeSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned horde grunt whose scheduled time has passed. Runs
+   * only during the regular wave phase (never during a transition, pause or
+   * boss encounter) and stops at the first not-yet-due event — the plan is
+   * time-ordered.
+   */
+  private _releaseDueHordeSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.hordeSpawnedThisWave < this.pendingHordeSpawns.length) {
+      const event = this.pendingHordeSpawns[this.hordeSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledHorde(event);
+      this.hordeSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned grunt on its arena edge and registers it with the
+   * `WaveManager` so the wave neither clears early nor stalls while the horde
+   * is alive. Grunts are placed inside the play area by the planner, so they
+   * are always reachable.
+   */
+  private _spawnScheduledHorde(event: HordeSpawnEvent): void {
+    const cfg = loadEnemyConfig(event.enemyKey);
+    const entity = createEnemyFromConfig(
+      this,
+      cfg,
+      event.x,
+      event.y,
+      { row: 0, col: 0 },
+      this.rng,
+    );
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: event.enemyKey,
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+    this.waveManager.registerDynamicSpawn(1);
+  }
+
+  /**
+   * Plans the Frogger lane-traffic hazards for the active regular wave
+   * (classic-arcade archetype, AH-0MV01EPM40008N8T). Only waves that opt in
+   * with `laneTraffic: true` produce a plan; every other wave is unchanged, so
+   * the shipped campaign is untouched. The lane count, per-lane count, speed
+   * and spacing are all data-driven (the `lane-traffic` CSV row). Called once
+   * per wave from `spawnWave()` so the scene rng stream advances only at wave
+   * boundaries.
+   *
+   * Lane traffic is a non-blocking world hazard (Asteroid accounting), so the
+   * plan is spawned directly and never registered with the `WaveManager`.
+   */
+  planLaneTrafficSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.laneTrafficSpawnerEnabled ||
+      wm.currentWave()?.laneTraffic !== true ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      this.pendingLaneTrafficSpawns = [];
+      this.laneTrafficSpawnedThisWave = 0;
+      return;
+    }
+    const cfg = loadEnemyConfig('lane-traffic');
+    this.pendingLaneTrafficSpawns = computeLaneTrafficSpawns({
+      gameWidth: GAME_WIDTH,
+      gameHeight: GAME_HEIGHT,
+      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
+      laneCount: cfg.laneCount ?? LANE_TRAFFIC_DEFAULT_LANE_COUNT,
+      perLaneCount: cfg.count,
+      spacing: cfg.spacingX,
+      laneSpacing: cfg.laneSpacing ?? LANE_TRAFFIC_DEFAULT_LANE_SPACING,
+      speed: cfg.driftSpeed,
+      rng: this.rng,
+    });
+    this.laneTrafficSpawnedThisWave = 0;
+  }
+
+  /**
+   * Releases every planned lane-traffic hazard whose scheduled time has
+   * passed. Runs only during the regular wave phase (never during a
+   * transition, pause or boss encounter) and stops at the first not-yet-due
+   * event — the plan is time-ordered.
+   */
+  private _releaseDueLaneTrafficSpawns(): void {
+    const wm = this.waveManager;
+    if (
+      !this.waveTimerActive ||
+      !wm.currentWave() ||
+      wm.bossTriggered ||
+      wm.bossActive ||
+      wm.bossDefeated
+    ) {
+      return;
+    }
+    const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
+    while (this.laneTrafficSpawnedThisWave < this.pendingLaneTrafficSpawns.length) {
+      const event =
+        this.pendingLaneTrafficSpawns[this.laneTrafficSpawnedThisWave];
+      if (elapsed + 1e-9 < event.timeSeconds) break;
+      this._spawnScheduledLaneTraffic(event);
+      this.laneTrafficSpawnedThisWave += 1;
+    }
+  }
+
+  /**
+   * Spawns one planned lane-traffic hazard at its lane position and velocity.
+   * Lane traffic is NOT registered with the WaveManager
+   * (AH-0MV01EPM40008N8T): it is a non-blocking world hazard (the Asteroid
+   * accounting), so it can never stall or prematurely clear a wave.
+   */
+  private _spawnScheduledLaneTraffic(event: LaneTrafficSpawnEvent): void {
+    const cfg = loadEnemyConfig(event.enemyKey);
+    const entity = new LaneTraffic(this, {
+      x: event.x,
+      y: event.y,
+      formationOffset: { row: 0, col: 0 },
+      vx: event.vx,
+      size: cfg.size,
+      color: cfg.color,
+      health: cfg.health,
+      rng: this.rng,
+    });
+    this.add.existing(entity);
+    this.spawned.push({
+      entity,
+      enemyKey: event.enemyKey,
+      startX: event.x,
+      startY: event.y,
+      spacingX: 0,
+      spacingY: 0,
+    });
+  }
+
   /** Advances formation drift and repositions every live enemy. */
   private _moveEnemies(dt: number): void {
     // Formation drift advances unconditionally — no entity can freeze it (the
@@ -1161,6 +1884,22 @@ export class PlayScene extends CombatScene<
       this.driftDir = 1;
     }
 
+    // Advance the shared march block for this wave (Space Invaders archetype,
+    // AH-0MV01EDZS0005R20): the same pure step/reverse/drop/speed-up policy the
+    // gym runs. The block's cadence scales with its live alive count.
+    if (this.marchState && this.marchOptions) {
+      const alive = this.spawned.reduce(
+        (count, spawn) => count + (spawn.march && spawn.entity.alive ? 1 : 0),
+        0,
+      );
+      this.marchState = advanceMarch(
+        this.marchState,
+        dt,
+        alive,
+        this.marchOptions,
+      );
+    }
+
     // Diver re-anchor (GDD §4.1 — E2): if a Diver's attack finished, re-base
     // the whole unit so its slot lands on the attack end. Applied after the
     // drift and before positioning so every enemy uses the new origin in the
@@ -1169,10 +1908,27 @@ export class PlayScene extends CombatScene<
 
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
-      // Asteroids roam independently: constant-velocity straight-line
-      // motion with four-edge wrap (never formation drift).
-      if (s.enemyKey === 'asteroid') {
-        (s.entity as Asteroid).updatePosition(dt);
+      // Non-blocking world hazards (Asteroid, Frogger lane traffic) advance
+      // their own constant-velocity motion with four-edge wrap (never
+      // formation drift).
+      if (isNonBlockingHazard(s.enemyKey)) {
+        s.entity.updatePosition?.(dt);
+        continue;
+      }
+      // Orbital strikes run their own telegraph → fall → detonate lifecycle
+      // (Missile Command archetype, AH-0MV01ENX00055CG1); they are not
+      // formation-positioned. Their radial detonation burst is hoisted into
+      // the shared enemy-bullet path here — at detonation time, before the
+      // destroyed entity is skipped — so it can damage the player while never
+      // touching other enemies.
+      if (s.enemyKey === 'orbital-strike') {
+        const strike = s.entity as OrbitalStrike;
+        strike.update(dt);
+        const burst = strike.getBurstBullets();
+        if (burst.length > 0) {
+          this.enemyBullets.push(...burst);
+          strike.clearBurstBullets();
+        }
         continue;
       }
       // Live mineral-seek: push the scene's live mineral field so roaming
@@ -1187,13 +1943,28 @@ export class PlayScene extends CombatScene<
       // the drift alone and therefore stays where it is when a Diver
       // re-anchors (AC5, AH-0MUL15N63003PUDB).
       const isDiver = s.entity.consumeFormationReanchor != null;
+      // March-block enemies are positioned from the shared march state (which
+      // already carries the drop); every other enemy keeps the global drift.
+      const baseX =
+        s.march && this.marchState ? this.marchState.x : s.startX + this.driftX;
+      const baseY = s.march && this.marchState ? this.marchState.y : s.startY;
       s.entity.applyFormationPosition(
-        s.startX + this.driftX + (isDiver ? this.diverAnchorX : 0),
-        s.startY + (isDiver ? this.diverAnchorY : 0),
+        baseX + (isDiver ? this.diverAnchorX : 0),
+        baseY + (isDiver ? this.diverAnchorY : 0),
         dt,
         s.spacingX,
         s.spacingY,
       );
+      // Power Pellet fright (AH-0MV1BIW95004POSX): offset the enemy away
+      // from the ship with the same shared pure flee maths every gym uses,
+      // so the retreat is game↔gym identical. Self-advancing hazards and
+      // seekers are excluded (they integrate their own motion and would
+      // double-count an additive offset).
+      const flee = this._frightenedFleeOffset(s.entity);
+      if (flee.x !== 0 || flee.y !== 0) {
+        s.entity.x += flee.x;
+        s.entity.y += flee.y;
+      }
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease all living
@@ -1257,13 +2028,19 @@ export class PlayScene extends CombatScene<
       case 'continue':
         return;
       case 'waveCleared':
+        this.runTelemetry.waveCleared(
+          this.waveManager.level,
+          this.waveManager.waveNumber,
+        );
         this._startTransition();
         return;
       case 'levelCleared':
+        this.runTelemetry.levelCleared(this.waveManager.level);
         this._announceLevel();
         this._startTransition();
         return;
       case 'bossTriggered':
+        this.runTelemetry.bossTriggered();
         this.onBossTriggered();
         return;
       case 'gameComplete':
@@ -1350,6 +2127,14 @@ export class PlayScene extends CombatScene<
     // so no spawn can leak in after the transition (AH-0MUGCNZNE002D7QJ).
     this.pendingAsteroidSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
+    this.pendingGhostSpawns = [];
+    this.ghostsSpawnedThisWave = 0;
+    this.pendingCentipedeSpawn = null;
+    this.centipedeSpawnedThisWave = false;
+    this.pendingHordeSpawns = [];
+    this.hordeSpawnedThisWave = 0;
+    this.pendingStrikeSpawns = [];
+    this.strikesSpawnedThisWave = 0;
     this.waveManager.beginBoss();
     this._startTransition();
   }
@@ -1413,6 +2198,7 @@ export class PlayScene extends CombatScene<
       initialPhase: options.initialPhase,
     });
     this.add.existing(this.boss);
+    this.runTelemetry.bossSpawn();
     if (options.spawnMinions !== false) this._spawnMinions(1);
     // No per-wave time limit applies to the boss encounter.
     this._hideWaveTimer();
@@ -1467,6 +2253,44 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Drops the run straight into a deterministic **defeat** (the dev-gated
+   * recorder scenario for the defeat path, AH-0MUX2K8U7000GFNU producer-audit
+   * follow-up).
+   *
+   * The current wave is cleared and the run is frozen so the recorder can
+   * start before the (instant) end. Releasing the page-side handle drains the
+   * ship's remaining lives, ending the run in defeat through the normal
+   * `_loseLife` → `_finishRun(false)` path — so `npm run capture -- --scenario
+   * defeat` exercises the defeat end-of-run signal and the recorder's tail
+   * exactly as a natural loss would.
+   *
+   * Public so tests and the capture tool can drive it directly; the URL query
+   * path in `create()` calls this only when the dev flag is on.
+   */
+  startDevDefeatScenario(): void {
+    this._clearWaveForScenario();
+    this._refreshHudText();
+    this.setPaused(true);
+    // Reuse the shared release handle: `hitsRemaining: 0` marks the run as
+    // already over and the recorder only needs `resume()`.
+    installDevScenarioHandle({
+      hitsRemaining: 0,
+      resume: () => this._forceDevDefeat(),
+    });
+  }
+
+  /**
+   * Ends a released defeat scenario through the normal fatal-loss path: with
+   * one life left, a fatal `_loseLife` reaches zero and `_finishRun(false)`
+   * emits the defeat end-of-run signal before the game-over transition.
+   */
+  private _forceDevDefeat(): void {
+    this.setPaused(false);
+    this.gameState.lives = 1;
+    this._loseLife(true);
+  }
+
+  /**
    * Clears the active regular wave for the dev boss scenario without scoring
    * or advancing the campaign: destroys the spawned enemies, drops their
    * bullets, cancels planned asteroid/Harvester releases, closes any open
@@ -1487,6 +2311,14 @@ export class PlayScene extends CombatScene<
     this.pendingHarvesterSpawns = [];
     this.asteroidsSpawnedThisWave = 0;
     this.harvestersSpawnedThisWave = 0;
+    this.pendingGhostSpawns = [];
+    this.ghostsSpawnedThisWave = 0;
+    this.pendingCentipedeSpawn = null;
+    this.centipedeSpawnedThisWave = false;
+    this.pendingHordeSpawns = [];
+    this.hordeSpawnedThisWave = 0;
+    this.pendingStrikeSpawns = [];
+    this.strikesSpawnedThisWave = 0;
     this._hideWaveTimer();
   }
 
@@ -1521,6 +2353,8 @@ export class PlayScene extends CombatScene<
     if (!scenario) return;
     if (scenario.kind === 'boss') {
       this.startDevBossScenario(scenario.bossHitsRemaining);
+    } else if (scenario.kind === 'defeat') {
+      this.startDevDefeatScenario();
     }
   }
 
@@ -1536,13 +2370,17 @@ export class PlayScene extends CombatScene<
    * only a depleting hit awards the phase score and summons the next
    * phase's minions. The run is completed as a victory when the boss dies
    * (GDD §4.5).
+   *
+   * @param hitX — optional world-space X of the hit, forwarded to
+   *   `Boss.takeDamage()` so the per-hit impact VFX appears at the hit point.
+   * @param hitY — optional world-space Y of the hit.
    */
-  private _damageBoss(): void {
+  private _damageBoss(hitX?: number, hitY?: number): void {
     const boss = this.boss;
     if (!boss || !boss.alive) return;
 
     const previousPhase = boss.getPhaseNumber();
-    const result = boss.takeDamage();
+    const result = boss.takeDamage(hitX, hitY);
     if (result.destroyed) {
       // Capture the boss's death position before anything else can move or
       // destroy it — the celebration is anchored here (AC3).
@@ -1551,6 +2389,7 @@ export class PlayScene extends CombatScene<
       // Boss destroyed — award the final phase's points, then win.
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
+      this.runTelemetry.bossDefeated();
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -1560,6 +2399,7 @@ export class PlayScene extends CombatScene<
     // summon the next phase's minions. Partial-phase hits do neither.
     if (result.phaseAdvanced) {
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
+      this.runTelemetry.bossPhase(boss.getPhaseNumber());
       this._spawnMinions(boss.getPhaseNumber());
     }
   }
@@ -1624,11 +2464,15 @@ export class PlayScene extends CombatScene<
     if (!this.demoMode) return;
     const player = this.getPlayer();
     this.botGovernor.update(
-      decideBotIntent(buildBotSnapshot(this)),
+      this.botBrain.decide(buildBotSnapshot(this), dt),
       dt,
       {
         scheme: player?.getScheme() ?? 'asteroids',
         facing: player?.getMovementState().facing ?? 0,
+        // Respect the player's reverse-thruster configuration: when the
+        // player switched it off, the demo bot emits `reverse: false` on
+        // every input (AH-0MV1J0OHP0072XA5 · AC4).
+        reverseEnabled: player?.isReverseEnabled() ?? true,
       },
     );
   }
@@ -1706,8 +2550,15 @@ export class PlayScene extends CombatScene<
       }
       // Shared archetype→tryFire dispatch, driven by the scene clock
       // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
+      // The Power Pellet fright window suppresses all enemy fire through the
+      // same shared dispatcher (AH-0MV1BIW95004POSX).
       this.enemyBullets.push(
-        ...fireForEnemy<PlayEnemyBullet>(s.entity, s.enemyKey, this.time.now),
+        ...fireForEnemy<PlayEnemyBullet>(
+          s.entity,
+          s.enemyKey,
+          this.time.now,
+          this.isEnemyFrightened(),
+        ),
       );
     }
   }
@@ -1773,7 +2624,7 @@ export class PlayScene extends CombatScene<
         // phase hit; the blast damages the boss through `onAoeHitsBoss`.
         this.detonateAoeProjectile(pb);
       } else {
-        this._damageBoss();
+        this._damageBoss(pb.x, pb.y);
       }
       pb.destroy();
       return true;
@@ -1798,7 +2649,7 @@ export class PlayScene extends CombatScene<
         this.boss.x, this.boss.y, this.boss.getHitRadius(),
       )
     ) {
-      this._damageBoss();
+      this._damageBoss(x, y);
       return true;
     }
     return false;
@@ -1835,9 +2686,10 @@ export class PlayScene extends CombatScene<
    */
   private _handleMinerals(transitioning = false): void {
     if (!this.player) return;
-    // Non-asteroid enemies absorb minerals; asteroids are inert (GDD §4.5).
+    // Non-blocking hazards absorb no minerals (GDD §4.5): asteroids and lane
+    // traffic are inert, so they are excluded from the absorber list.
     const absorbers = this.spawned
-      .filter((s) => s.enemyKey !== 'asteroid')
+      .filter((s) => !isNonBlockingHazard(s.enemyKey))
       .map((s) => s.entity);
     // Shared collection/absorption routine — the same code the gyms run
     // (AH-0MUII3DHM008L7JF, gap 5). While phased the player collects nothing
@@ -1873,6 +2725,7 @@ export class PlayScene extends CombatScene<
     } else if (awardScore) {
       this.gameState.addScore(SCORE_VALUES[s.enemyKey] ?? DEFAULT_SCORE_VALUE);
     }
+    this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
     // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
     // asteroid leaves one mineral at the site, large/medium asteroids do not
@@ -1881,10 +2734,11 @@ export class PlayScene extends CombatScene<
     this.minerals.push(
       ...resolveMineralKillDrops(this, s.entity, this.rng),
     );
-    // Asteroids are not wave-accounted (AH-0MUJM746P000QAEO): destroying one
-    // must not advance the wave. Only non-asteroid enemy ships drive
-    // wave/level/boss progression.
-    if (s.enemyKey !== 'asteroid') this._advanceAfterKill();
+    // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
+    // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T): destroying one must not
+    // advance the wave. Only non-hazard enemy ships drive wave/level/boss
+    // progression.
+    if (!isNonBlockingHazard(s.enemyKey)) this._advanceAfterKill();
   }
 
   /**
@@ -1921,6 +2775,7 @@ export class PlayScene extends CombatScene<
    * destruction sound. The hit is absorbed — no life lost.
    */
   protected override onShieldAbsorbed(): void {
+    this.runTelemetry.playerHitAbsorbed();
     playDestructionSound();
   }
 
@@ -1948,6 +2803,7 @@ export class PlayScene extends CombatScene<
 
     this.playerHitCount += 1;
     this.gameState.loseLife();
+    this.runTelemetry.playerHit(this.gameState.lives);
     // Push the authoritative run-state lives into the HUD's registry so the
     // lives counter updates immediately (GDD §4.5 display).
     this.effectsRegistry.setLives(this.gameState.lives);
@@ -1967,6 +2823,7 @@ export class PlayScene extends CombatScene<
     }
 
     if (this.gameState.lives <= 0) {
+      this.runTelemetry.playerDeath();
       this._finishRun(false);
       return;
     }
@@ -1997,6 +2854,15 @@ export class PlayScene extends CombatScene<
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
         this.shieldBubble,
+        this.player,
+        this.effectsRegistry,
+      );
+    }
+    // Force Field bubble: drawn while the reflect field is active (shared
+    // helper — hexagon boundary matches the gameplay reflect radius).
+    if (this.forceFieldBubble) {
+      drawForceFieldBubble(
+        this.forceFieldBubble,
         this.player,
         this.effectsRegistry,
       );
@@ -2073,10 +2939,32 @@ export class PlayScene extends CombatScene<
    */
   protected override onPowerUpCollected(drop: PlayDrop): void {
     super.onPowerUpCollected(drop);
+    this.runTelemetry.pickup('powerUp', drop.dropId);
     if (drop.dropId === 'extra_life') {
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
+    if (drop.dropId === 'mystery_ufo') {
+      // Instant mineral + score bounty (Space Invaders homage,
+      // AH-0MV1BIXFO006Z1I7): grant it through the shared registry drain so
+      // the game and every gym apply the same burst, then sync the hold HUD
+      // and open the hold-full choice if the burst filled the hold.
+      this._applyPendingMysteryBonus({
+        addMinerals: (amount) => {
+          this.gameState.addMinerals(amount);
+        },
+        addScore: (amount) => {
+          this.gameState.addScore(amount);
+        },
+      });
+      this._syncMineralHud();
+      if (this.gameState.isHoldFull()) this.openMineralChoice();
+    }
+  }
+
+  /** Weapon pickup hook: records the discrete pickup event (AC3). */
+  protected override onWeaponCollected(drop: PlayDrop): void {
+    this.runTelemetry.pickup('weapon', drop.weaponDropId ?? drop.dropId);
   }
 
   // ── Wave time limit (AH-0MU7JTG9R002ZWA6) ────────────────────────
@@ -2135,9 +3023,10 @@ export class PlayScene extends CombatScene<
       return;
     }
 
-    // Asteroids carry over independently and are never wave-accounted; only
-    // non-asteroid survivors gate the next wave (AH-0MUJM746P000QAEO).
-    const carried = survivors.filter((s) => s.enemyKey !== 'asteroid');
+    // Non-blocking hazards carry over independently and are never
+    // wave-accounted; only non-hazard survivors gate the next wave
+    // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T).
+    const carried = survivors.filter((s) => !isNonBlockingHazard(s.enemyKey));
 
     // No detonation, no life loss: advance the wave/level, then adopt the
     // surviving non-asteroid enemies so they count toward the next wave's
@@ -2161,13 +3050,16 @@ export class PlayScene extends CombatScene<
       case 'continue':
         return;
       case 'waveCleared':
+        this.runTelemetry.waveCleared(wm.level, wm.waveNumber);
         this._startTransition();
         return;
       case 'levelCleared':
+        this.runTelemetry.levelCleared(wm.level);
         this._announceLevel();
         this._startTransition();
         return;
       case 'bossTriggered':
+        this.runTelemetry.bossTriggered();
         this.onBossTriggered();
         return;
       case 'gameComplete':
@@ -2231,6 +3123,12 @@ export class PlayScene extends CombatScene<
           )
         ) {
           this.onPlayerRamsEnemy(s.entity);
+          // Power Pellet fright (AH-0MV1BIW95004POSX): a frightened enemy is
+          // destroyed by the ram without damaging the ship (parity with the
+          // shared `CombatScene._handleCollisions` path).
+          if (this.isEnemyFrightened()) {
+            continue;
+          }
           this._hitPlayer();
           break;
         }
@@ -2269,6 +3167,8 @@ export class PlayScene extends CombatScene<
 
   /** Transitions to GameOverScene with the final score. */
   private _finishRun(won: boolean): void {
+    // Run end (win/lose) is a discrete telemetry event (AH-0MUY08VVQ007HSSH).
+    this.runTelemetry.runEnd(won, this.gameState.score);
     // Dev-gated end-of-run signal (AH-0MUXZ4BXK001QCEK), emitted *before* the
     // scene transition so a demo run that returns to the menu still signals.
     // `window` receives the `aihell:run-ended` CustomEvent and the
@@ -2612,6 +3512,7 @@ export class PlayScene extends CombatScene<
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
+    this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));
     this.setPaused(true);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.pause();
@@ -2625,9 +3526,14 @@ export class PlayScene extends CombatScene<
         options: [...this.mineralChoiceOptions],
         // Demo mode auto-selects after a human-like delay so the bot never
         // stalls on the overlay; normal play waits for a real selection
-        // (AH-0MUXXQ1MN002RXGB · AC4/AC5).
+        // (AH-0MUXXQ1MN002RXGB · AC4/AC5). Below the life cap the bot takes
+        // the offered Extra Life instead of the first option
+        // (AH-0MV03GXZQ00801T4 · AC1).
         ...(this.demoMode
-          ? { autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS }
+          ? {
+              autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
+              autoSelectIndex: this._preferredDemoChoiceIndex(),
+            }
           : {}),
         // Single overlay contract (AH-0MUII3DHM008L7JF · AC3): the launcher
         // supplies the selection callback; the overlay never reaches back
@@ -2639,6 +3545,20 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * The demo bot's preferred hold-full option index: the offered Extra Life
+   * while below the run's life cap, otherwise the first option (the previous
+   * behaviour). Only used by the demo auto-select, so normal play is
+   * unaffected (AH-0MV03GXZQ00801T4 · AC1).
+   */
+  private _preferredDemoChoiceIndex(): number {
+    if (this.gameState.lives >= MAX_LIVES) return 0;
+    const index = this.mineralChoiceOptions.findIndex(
+      (option) => option.id === EXTRA_LIFE_DROP_ID,
+    );
+    return index >= 0 ? index : 0;
+  }
+
+  /**
    * Resolves the hold-full choice: applies the chosen option to the player
    * permanently for the run, resumes play, and resets the hold to 0 carrying
    * any overflow (store = collected − capacity). Returns the chosen option,
@@ -2647,6 +3567,7 @@ export class PlayScene extends CombatScene<
   selectMineralChoice(index: number): ChoiceOption | null {
     const option = this.mineralChoiceOptions[index];
     if (!option) return null;
+    this.runTelemetry.choiceSelected(index, option.id);
     this._applyChoicePermanently(option);
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
@@ -2670,6 +3591,7 @@ export class PlayScene extends CombatScene<
   /** Collects a mineral: adds it to the hold and opens the choice when full. */
   private _collectMineral(): void {
     this.gameState.addMinerals(loadRules().mineralCollectAmount);
+    this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();
     if (this.gameState.isHoldFull()) this.openMineralChoice();
   }
@@ -2789,6 +3711,88 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * The ship's current life count (satisfied for the bot snapshot builder,
+   * AH-0MV03GXZQ00801T4).
+   */
+  getLives(): number {
+    return this.gameState.lives;
+  }
+
+  /**
+   * The run's life cap (from the existing run state, AH-0MV03GXZQ00801T4 ·
+   * AC3). The bot reads this rather than hard-coding a cap of its own.
+   */
+  getLivesCap(): number {
+    return MAX_LIVES;
+  }
+
+  /**
+   * Injects a telemetry recorder (test/headless seam,
+   * AH-0MUY08VVQ007HSSH). The next `create()` uses it in place of the
+   * environment-configured recorder, letting a test capture a run's records
+   * without enabling telemetry for the whole suite.
+   */
+  setTelemetryRecorder(recorder: TelemetryRecorder): void {
+    this.injectedTelemetryRecorder = recorder;
+  }
+
+  /** Whether live run recording is enabled (test/inspection seam). */
+  isTelemetryEnabled(): boolean {
+    return this.runTelemetry.enabled;
+  }
+
+  /**
+   * Installs the instrumentation for this run: the injected recorder when one
+   * was supplied via {@link setTelemetryRecorder}, else one built from the
+   * environment config (disabled by default). Writes the run header (seed +
+   * build) and the `run_start` event.
+   */
+  private _initTelemetry(): void {
+    const recorder =
+      this.injectedTelemetryRecorder ??
+      createTelemetryRecorder(
+        resolveEffectiveTelemetryConfig(import.meta.env, loadTelemetryConsent()),
+        { build: resolveBuildInfo() },
+      );
+    this.runTelemetry = new RunTelemetry(recorder);
+    this.runTelemetry.startRun(this.getRunSeed());
+  }
+
+  /**
+   * Records the per-tick state vector + the input actually applied
+   * (AH-0MUY08VVQ007HSSH, AC1/AC2/AC4). When telemetry is disabled this is a
+   * single boolean check — no snapshot is built and nothing is serialised
+   * (AC5). `player.getInput()` is the input the shared player step applied, so
+   * bot and human alike are captured through one seam (AC4).
+   */
+  private _recordTelemetryTick(): void {
+    if (!this.runTelemetry.enabled) return;
+    const player = this.player;
+    this.runTelemetry.recordTick(
+      buildRunTelemetryState(buildBotSnapshot(this), this._telemetryExtras()),
+      serialiseTelemetryInput(player?.getInput() ?? null),
+    );
+  }
+
+  /** The non-snapshot run state the tick vector carries (AC1). */
+  private _telemetryExtras(): RunTelemetryExtras {
+    const player = this.player;
+    const explosions = getExplosionVfxCounts();
+    return {
+      heading: player?.getHeading() ?? 0,
+      lives: this.gameState.lives,
+      invulnerable: this.invulnerable > 0,
+      minerals: this.gameState.minerals,
+      mineralCapacity: this.gameState.mineralCapacity,
+      weaponLevels: player?.getWeaponLevels() ?? [],
+      powerUpLevels: player?.getPowerUpLevels() ?? [],
+      enemyExplosions: explosions.enemy,
+      bossExplosions: explosions.boss,
+      playerExplosions: explosions.player,
+    };
+  }
+
+  /**
    * Resolves and installs the run's RNG stream. Called once at the top of
    * `create()` before any gameplay draw:
    *
@@ -2800,13 +3804,24 @@ export class PlayScene extends CombatScene<
    * 3. mirror the seed onto `GameState` for telemetry.
    */
   private _initRunSeed(): void {
-    const seed = this.injectedRunSeed ?? randomSeed();
+    const seed = this.injectedRunSeed ?? this._devRunSeed() ?? randomSeed();
     this.runSeed = seed;
     if (!this.rngInjected) {
       this.rng = createSeededRng(seed);
       this.sceneRng = this.rng;
     }
     this.gameState.runSeed = seed;
+  }
+
+  /**
+   * The deterministic run seed a dev build requested through the `seed` URL
+   * query parameter, or `null` (AH-0MUY08W7Y004GATZ). Dev-gated so a
+   * production build ignores the parameter entirely and always draws a fresh
+   * random seed.
+   */
+  private _devRunSeed(): number | null {
+    if (!isDevScenarioEnabled() || typeof window === 'undefined') return null;
+    return resolveDevSeed(window.location?.search ?? '');
   }
 
   /**
@@ -2820,6 +3835,80 @@ export class PlayScene extends CombatScene<
     if (!enabled) {
       this.pendingAsteroidSpawns = [];
       this.asteroidsSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the ghost-pursuer plan independently of the wave
+   * `ghosts: true` opt-in (classic-arcade archetype, AH-0MV01EH2U008XT3Q).
+   * Disabling immediately drops any pending plan and clears the released
+   * counter; re-enabling takes effect from the next `spawnWave()`. Tuning and
+   * test seam mirroring `setAsteroidSpawnerEnabled`.
+   */
+  setGhostSpawnerEnabled(enabled: boolean): void {
+    this.ghostSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingGhostSpawns = [];
+      this.ghostsSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the Centipede plan independently of the wave
+   * `centipede: true` opt-in (classic-arcade archetype, AH-0MV01EJ92008ZZ86).
+   * Disabling immediately drops any pending plan; re-enabling takes effect
+   * from the next `spawnWave()`. Tuning and test seam mirroring
+   * `setGhostSpawnerEnabled`.
+   */
+  setCentipedeSpawnerEnabled(enabled: boolean): void {
+    this.centipedeSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingCentipedeSpawn = null;
+      this.centipedeSpawnedThisWave = false;
+    }
+  }
+
+  /**
+   * Enables/disables the Robotron homing-horde plan independently of the wave
+   * `horde: true` opt-in (classic-arcade archetype, AH-0MV01EKTL001NRE6).
+   * Disabling immediately drops any pending plan and clears the released
+   * counter; re-enabling takes effect from the next `spawnWave()`. Tuning and
+   * test seam mirroring `setCentipedeSpawnerEnabled`.
+   */
+  setHordeSpawnerEnabled(enabled: boolean): void {
+    this.hordeSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingHordeSpawns = [];
+      this.hordeSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the telegraphed orbital-strike plan (Missile Command
+   * archetype, AH-0MV01ENX00055CG1). Disabling immediately drops any pending
+   * plan and clears the released counter; re-enabling takes effect from the
+   * next `spawnWave()`. Tuning and test seam mirroring
+   * `setHordeSpawnerEnabled`.
+   */
+  setOrbitalStrikeSpawnerEnabled(enabled: boolean): void {
+    this.orbitalStrikeSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingStrikeSpawns = [];
+      this.strikesSpawnedThisWave = 0;
+    }
+  }
+
+  /**
+   * Enables/disables the Frogger lane-traffic plan (classic-arcade archetype,
+   * AH-0MV01EPM40008N8T). Disabling immediately drops any pending plan and
+   * clears the released counter; re-enabling takes effect from the next
+   * `spawnWave()`. Tuning and test seam mirroring `setHordeSpawnerEnabled`.
+   */
+  setLaneTrafficSpawnerEnabled(enabled: boolean): void {
+    this.laneTrafficSpawnerEnabled = enabled;
+    if (!enabled) {
+      this.pendingLaneTrafficSpawns = [];
+      this.laneTrafficSpawnedThisWave = 0;
     }
   }
 }

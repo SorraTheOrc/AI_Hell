@@ -11,6 +11,7 @@ import Phaser from 'phaser';
 import { PowerUpId } from './types';
 import { WeaponId } from '../utils/weapons';
 import {
+  FORCE_FIELD_COLOR,
   POWER_UP_BUBBLE_GLOW_ALPHA,
   POWER_UP_BUBBLE_RADIUS_FACTOR,
   POWER_UP_BUBBLE_STROKE_WIDTH,
@@ -26,6 +27,10 @@ const ICON_COLORS: Record<PowerUpId, number> = {
   extra_life: 0xff6ec7, // pink — life
   magnet: 0xb57bff, // purple — magnet
   mineral_scoop: 0x33ff99, // neon green — mineral scoop
+  power_pellet: 0xfff45e, // bright amber — Pac-Man power pellet
+  smart_bomb: 0xcc66ff, // electric violet — Defender smart-bomb starburst
+  force_field: FORCE_FIELD_COLOR, // aquamarine — Gradius reflect bubble
+  mystery_ufo: 0xff2fd0, // neon magenta — Space Invaders mystery flying saucer
 };
 
 /** Icon stroke colours per weapon type (matching bullet colours). */
@@ -34,6 +39,10 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   spread: 0xffaa00, // neon orange — fan arc
   dual: 0xff00ff, // neon magenta — parallel bars
   rapid: 0xffff00, // neon yellow — stacked dots
+  wave_laser: 0x3366ff, // neon blue — piercing beam
+  ricochet: 0x33ff66, // neon green — edge-bouncing pellet
+  cluster: 0xff3366, // neon hot pink — splitting warhead cluster
+  options: 0x00ffcc, // neon aquamarine — orbiting satellite pods
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
@@ -123,6 +132,18 @@ function _drawPowerUpIcon(
       break;
     case 'mineral_scoop':
       drawMineralScoop(graphics, x, y, size);
+      break;
+    case 'power_pellet':
+      drawPowerPellet(graphics, x, y, size);
+      break;
+    case 'smart_bomb':
+      drawSmartBomb(graphics, x, y, size);
+      break;
+    case 'force_field':
+      drawForceField(graphics, x, y, size);
+      break;
+    case 'mystery_ufo':
+      drawMysteryUfo(graphics, x, y, size);
       break;
   }
 }
@@ -341,6 +362,127 @@ function drawMineralScoop(
   }
 }
 
+/**
+ * Power pellet — a bright filled core inside a glowing outer ring, the
+ * Pac-Man power pellet that frightens enemies.
+ */
+function drawPowerPellet(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Glowing outer ring.
+  g.lineStyle(2, ICON_COLORS.power_pellet, 1);
+  g.beginPath();
+  g.arc(x, y, s * 0.85, 0, Math.PI * 2);
+  g.strokePath();
+  // Filled pellet core (the bright power pellet itself).
+  g.fillStyle(ICON_COLORS.power_pellet, 1);
+  g.fillCircle(x, y, s * 0.42);
+}
+
+/**
+ * Smart Bomb — a neon starburst inside a ring: the screen-wide pulse
+ * (Defender adaptation, AH-0MV1BIWP9003EHRQ). The ring echoes the pulse
+ * wavefront, the radiating spokes the screen-clearing burst.
+ */
+function drawSmartBomb(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Outer pulse ring.
+  g.beginPath();
+  g.arc(x, y, s * 0.85, 0, Math.PI * 2);
+  g.strokePath();
+  // Eight radiating spokes (a starburst); alternating long/short so the
+  // silhouette reads as a burst rather than a plain asterisk.
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const inner = s * 0.3;
+    const outer = s * (i % 2 === 0 ? 0.72 : 0.55);
+    g.beginPath();
+    g.moveTo(x + Math.cos(angle) * inner, y + Math.sin(angle) * inner);
+    g.lineTo(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer);
+    g.strokePath();
+  }
+  // Bright core.
+  g.fillStyle(ICON_COLORS.smart_bomb, 1);
+  g.fillCircle(x, y, s * 0.22);
+}
+
+/**
+ * Force Field — a hexagonal neon bubble with inward "reflect" arrow motifs
+ * (Gradius homage, AH-0MV1BIX1W006XF95). The hexagon echoes the protective
+ * bubble, the chevrons the bullets it bounces back at their source.
+ */
+function drawForceField(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Hexagonal bubble outline (flat-top hexagon).
+  g.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;
+    const px = x + Math.cos(angle) * s * 0.9;
+    const py = y + Math.sin(angle) * s * 0.9;
+    if (i === 0) g.moveTo(px, py);
+    else g.lineTo(px, py);
+  }
+  g.closePath();
+  g.strokePath();
+
+  // Three inward chevrons radiating from the centre, reading as reflection.
+  for (let i = 0; i < 3; i++) {
+    const angle = (Math.PI / 3) * (2 * i) - Math.PI / 2;
+    const tipX = x + Math.cos(angle) * s * 0.55;
+    const tipY = y + Math.sin(angle) * s * 0.55;
+    const backX = x + Math.cos(angle) * s * 0.15;
+    const backY = y + Math.sin(angle) * s * 0.15;
+    const perpX = Math.cos(angle + Math.PI / 2) * s * 0.22;
+    const perpY = Math.sin(angle + Math.PI / 2) * s * 0.22;
+    g.beginPath();
+    g.moveTo(backX - perpX, backY - perpY);
+    g.lineTo(tipX, tipY);
+    g.lineTo(backX + perpX, backY + perpY);
+    g.strokePath();
+  }
+
+  // Small bright core so the bubble reads as a charged field.
+  g.fillStyle(ICON_COLORS.force_field, 1);
+  g.fillCircle(x, y, s * 0.14);
+}
+
+/**
+ * Mystery UFO — a classic neon flying saucer (Space Invaders homage,
+ * AH-0MV1BIXFO006Z1I7): a wide saucer body with a domed cockpit and a
+ * row of under-lights, hinting at the rare high-value bonus it drops.
+ */
+function drawMysteryUfo(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Domed cockpit on top of the saucer body.
+  g.beginPath();
+  g.arc(x, y - s * 0.18, s * 0.38, Math.PI, 0, false);
+  g.strokePath();
+  // Wide saucer body: a filled ellipse with a stroked rim.
+  g.fillStyle(ICON_COLORS.mystery_ufo, 0.18);
+  g.fillEllipse(x, y + s * 0.15, s * 1.7, s * 0.5);
+  g.strokeEllipse(x, y + s * 0.15, s * 1.7, s * 0.5);
+  // A row of under-lights along the saucer rim.
+  g.fillStyle(ICON_COLORS.mystery_ufo, 1);
+  for (const lightX of [-0.5, -0.15, 0.15, 0.5]) {
+    g.fillCircle(x + s * lightX, y + s * 0.15, s * 0.06);
+  }
+}
+
 // ── Weapon power-up icons ──────────────────────────────────────────
 
 /**
@@ -401,6 +543,18 @@ function _drawWeaponIcon(
       break;
     case 'rapid':
       drawRapidIcon(graphics, x, y, size);
+      break;
+    case 'wave_laser':
+      drawWaveLaserIcon(graphics, x, y, size);
+      break;
+    case 'ricochet':
+      drawRicochetIcon(graphics, x, y, size);
+      break;
+    case 'cluster':
+      drawClusterIcon(graphics, x, y, size);
+      break;
+    case 'options':
+      drawOptionsIcon(graphics, x, y, size);
       break;
     case 'nova':
       drawNovaIcon(graphics, x, y, size);
@@ -532,6 +686,118 @@ function drawRapidIcon(
     g.arc(x, startY + i * spacing, dotRadius, 0, Math.PI * 2);
     g.strokePath();
   }
+}
+
+/**
+ * Wave laser icon — a long horizontal beam with pass-through chevrons,
+ * hinting at the R-Type piercing shot that survives the enemies it hits.
+ */
+function drawWaveLaserIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Long horizontal beam.
+  g.beginPath();
+  g.moveTo(x - s * 0.9, y);
+  g.lineTo(x + s * 0.9, y);
+  g.strokePath();
+  // Two pass-through chevrons along the beam ("pierces onward").
+  for (const cx of [-0.35, 0.25]) {
+    g.beginPath();
+    g.moveTo(x + s * cx, y - s * 0.5);
+    g.lineTo(x + s * (cx + 0.25), y);
+    g.lineTo(x + s * cx, y + s * 0.5);
+    g.strokePath();
+  }
+}
+
+/**
+ * Cluster missile icon — a central warhead with four fragment dots radiating
+ * outward along short spokes, hinting at the Missile Command MIRV split.
+ */
+function drawClusterIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Central missile body (stroked, matching the other weapon icon style).
+  g.beginPath();
+  g.arc(x, y, s * 0.28, 0, Math.PI * 2);
+  g.strokePath();
+  // Four fragment warheads radiating along short spokes.
+  for (let i = 0; i < 4; i++) {
+    const angle = (Math.PI / 2) * i + Math.PI / 4;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    g.beginPath();
+    g.moveTo(x + dx * s * 0.4, y + dy * s * 0.4);
+    g.lineTo(x + dx * s * 0.72, y + dy * s * 0.72);
+    g.strokePath();
+    g.beginPath();
+    g.arc(x + dx * s * 0.88, y + dy * s * 0.88, s * 0.14, 0, Math.PI * 2);
+    g.strokePath();
+  }
+}
+
+/**
+ * Options icon — a central ship dot ringed by orbiting satellite pods, hinting
+ * at the Gradius Options escort that trails the ship and fires alongside it.
+ */
+function drawOptionsIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Central ship.
+  g.beginPath();
+  g.arc(x, y, s * 0.22, 0, Math.PI * 2);
+  g.strokePath();
+  // Orbit ring.
+  g.beginPath();
+  g.arc(x, y, s * 0.72, 0, Math.PI * 2);
+  g.strokePath();
+  // Two satellite pods on the orbit (base escort).
+  for (let i = 0; i < 2; i++) {
+    const angle = Math.PI * i + Math.PI / 6;
+    g.beginPath();
+    g.arc(
+      x + Math.cos(angle) * s * 0.72,
+      y + Math.sin(angle) * s * 0.72,
+      s * 0.16,
+      0,
+      Math.PI * 2,
+    );
+    g.strokePath();
+  }
+}
+
+/**
+ * Ricochet icon — a zig-zag "bank shot" path bouncing between two walls,
+ * hinting at the Centipede edge-reflecting pellet.
+ */
+function drawRicochetIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  // Two vertical walls the pellet banks between.
+  for (const wx of [-0.7, 0.7]) {
+    g.beginPath();
+    g.moveTo(x + s * wx, y - s * 0.8);
+    g.lineTo(x + s * wx, y + s * 0.8);
+    g.strokePath();
+  }
+  // Zig-zag trajectory reflecting off each wall.
+  g.beginPath();
+  g.moveTo(x - s * 0.7, y - s * 0.5);
+  g.lineTo(x + s * 0.7, y + s * 0.1);
+  g.lineTo(x - s * 0.7, y + s * 0.6);
+  g.strokePath();
 }
 
 /**

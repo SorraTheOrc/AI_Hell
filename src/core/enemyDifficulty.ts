@@ -76,7 +76,7 @@ const WEIGHT_SUM = Object.values(FACTOR_WEIGHTS).reduce((s, w) => s + w, 0);
  *   normalised(value) = clamp01((value - min) / (max - min)) × 100
  *
  * Ranges cover the full span of values across all seed archetypes plus the
- * slider ranges defined in the gym editor (`GymEnemies.ENEMY_SLIDER_RANGES`).
+ * slider ranges defined in the gym editor (`GymFodderEnemies.ENEMY_SLIDER_RANGES`).
  */
 export const FACTOR_RANGES: Record<string, { min: number; max: number }> = {
   count: { min: 1, max: 200 },
@@ -119,6 +119,9 @@ const FORMATION_KIND_ORDINAL: Record<string, number> = {
   v: 1,
   diver: 2,
   rect: 3,
+  // The Space Invaders marching block is also a rigid rectangle, so it shares
+  // the `rect` positional-threat ordinal (AH-0MV01EDZS0005R20).
+  march: 3,
   swarm: 4,
   orbital: 5,
 };

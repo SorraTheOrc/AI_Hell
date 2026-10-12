@@ -57,7 +57,6 @@ describe('settingsStore', () => {
       expect(DEFAULT_BINDINGS.moveDown).toBe('s');
       expect(DEFAULT_BINDINGS.moveLeft).toBe('a');
       expect(DEFAULT_BINDINGS.moveRight).toBe('d');
-      expect(DEFAULT_BINDINGS.layerDrop).toBe('s');
       expect(DEFAULT_BINDINGS.pauseToggle).toBe('Escape');
     });
 
@@ -156,7 +155,6 @@ describe('settingsStore', () => {
         moveDown: 'K',
         moveLeft: 'J',
         moveRight: 'L',
-        layerDrop: ';',
         pauseToggle: 'Enter',
       };
       const custom: SettingsRecord = {
@@ -230,30 +228,17 @@ describe('settingsStore', () => {
         moveRight: 'd',
         moveDown: 's',
         moveUp: 'w',
-        layerDrop: 's',
         pauseToggle: 'Escape',
       };
       // Rebinding moveUp onto 's' (moveDown) is a real conflict.
       expect(findConflict(bindings, 'moveUp', 's')).toBe('moveDown');
     });
 
-    it('does not treat the default S overlap (moveDown ↔ layerDrop) as a conflict', () => {
+    it('treats the shipped defaults as conflict-free', () => {
       const bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
-      expect(findConflict(bindings, 'moveDown', 's')).toBeNull();
-      expect(findConflict(bindings, 'layerDrop', 's')).toBeNull();
-    });
-
-    it('reports a NON-default pair sharing a key even when one is identity', () => {
-      const bindings: Record<ActionName, string> = {
-        ...DEFAULT_BINDINGS,
-        moveDown: 's',
-        layerDrop: 'x', // moved away from the default overlap
-      };
-      // Rebinding layerDrop back onto 's' now collides with moveDown only
-      // if the pair were intentional; it is not (one side moved), so…
-      // moveDown/layerDrop remain an intentional pair per the shipped
-      // defaults, so the overlap stays permitted:
-      expect(findConflict(bindings, 'layerDrop', 's')).toBeNull();
+      for (const action of ACTION_NAMES) {
+        expect(findConflict(bindings, action, bindings[action])).toBeNull();
+      }
     });
 
     it('reports a swap conflict between two non-default-pair actions', () => {

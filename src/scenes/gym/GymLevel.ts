@@ -160,11 +160,14 @@ export function spawnWave(
 export function fireLiveEnemies(
   spawned: readonly LevelSpawn[],
   now: number,
+  suppressed = false,
 ): GymLevelBullet[] {
   const bullets: GymLevelBullet[] = [];
   for (const spawn of spawned) {
     if (!spawn.entity.alive) continue;
-    bullets.push(...fireForEnemy<GymLevelBullet>(spawn.entity, spawn.key, now));
+    bullets.push(
+      ...fireForEnemy<GymLevelBullet>(spawn.entity, spawn.key, now, suppressed),
+    );
   }
   return bullets;
 }
@@ -211,8 +214,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Drift direction (+1 right, −1 left). */
   private driftDir = 1;
 
-  constructor() {
-    super({ key: GYM_LEVEL_SCENE_KEY });
+  constructor(key: string = GYM_LEVEL_SCENE_KEY) {
+    super({ key });
   }
 
   // ── Initialisation ───────────────────────────────────────────────
@@ -324,6 +327,28 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.statusText?.setText(`${this.label} — COMPLETE`);
   }
 
+  /**
+   * Loads and starts a fresh level, replacing whatever is on the field
+   * (AH-0MV4D7LAD009XYR0). A subclass can call it to continue with a new
+   * generated level without restarting the scene — the `GymBotTuning` gym
+   * uses it to keep the bot playing random levels. Does not touch the player
+   * ship, weapons, effects or HUD; only the wave queue and spawned enemies are
+   * reset.
+   */
+  protected loadLevel(level: LevelDefinition): void {
+    this.currentWaveIndex = 0;
+    this.levelComplete = false;
+    this.driftX = 0;
+    this.driftDir = 1;
+    cleanupWave(this.spawned, this.enemyBullets);
+    this.spawned = [];
+    this.enemyBullets = [];
+    this.wavesToPlay = level.waves;
+    this.label = level.name || GYM_LEVEL_DEFAULT_LABEL;
+    this.statusText?.setText(this.label);
+    this._spawnCurrentWave();
+  }
+
   // ── Enemy movement (parity with `PlayScene._moveEnemies`) ────────
 
   /** Advances formation drift and repositions every live enemy. */
@@ -403,7 +428,9 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     advanceWrappingBullets(this.enemyBullets, dt, GAME_WIDTH, GAME_HEIGHT);
 
     // Live enemies fire through the shared dispatcher (firing waves only).
-    this.enemyBullets.push(...fireLiveEnemies(this.spawned, this.time.now));
+    this.enemyBullets.push(
+      ...fireLiveEnemies(this.spawned, this.time.now, this.isEnemyFrightened()),
+    );
 
     // Shared input → timers → multipliers → physics → auto-fire step.
     this._tickPlayer(dt);
@@ -411,8 +438,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     // Player bullets: advance + wrap + lifetime expiry (shared helper).
     this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
 
-    // Automatic Phase Shift danger feed (shared), before collision gating.
-    this._updatePhaseShiftAutoTrigger(dt);
+    // Automatic defence danger feed (shared), before collision gating.
+    this._updateAutoDefence(dt);
 
     // Shared collision pass.
     this._handleCollisions();

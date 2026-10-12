@@ -60,6 +60,11 @@ describe('GymPlayer ship config panel', () => {
       `input[data-config="${name}"]`,
     ) as HTMLInputElement;
 
+  const checkbox = (name: string) =>
+    panel()!.querySelector(
+      `input[type="checkbox"][data-config="${name}"]`,
+    ) as HTMLInputElement;
+
   async function bootPlayer(): Promise<Phaser.Scene> {
     booted = await bootScene([GymPlayer]);
     return booted!.scene;
@@ -76,6 +81,12 @@ describe('GymPlayer ship config panel', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
+  const setCheckbox = (name: string, checked: boolean) => {
+    const input = checkbox(name);
+    input.checked = checked;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
   // ── Rendering ────────────────────────────────────────────────────
 
   it('renders a slider per numeric config value, colour inputs, and a Save button', async () => {
@@ -86,8 +97,8 @@ describe('GymPlayer ship config panel', () => {
     expect(p).not.toBeNull();
 
     const sliders = p!.querySelectorAll('input[type="range"][data-config]');
-    expect(sliders.length).toBe(8);
-    for (const name of ['thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength', 'frictionDeceleration', 'asteroidsRotationSpeed', 'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration']) {
+    expect(sliders.length).toBe(10);
+    for (const name of ['thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength', 'frictionDeceleration', 'asteroidsRotationSpeed', 'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration', 'asteroidsReverseThrustAcceleration', 'asteroidsReverseMaxSpeed']) {
       expect(p!.querySelector(`input[data-config="${name}"]`)).not.toBeNull();
     }
 
@@ -383,6 +394,125 @@ describe('GymPlayer ship config panel', () => {
     expect(toggle.dataset['scheme']).toBe('asteroids');
   });
 
+  // ── Reverse-thruster controls (AC5) ─────────────────────────────
+
+  it('exposes the reverse-thruster checkbox and sliders (AC5)', async () => {
+    await bootPlayer();
+
+    // Master on/off checkbox, enabled by default.
+    const toggle = checkbox('asteroidsReverseEnabled');
+    expect(toggle).not.toBeNull();
+    expect(toggle.checked).toBe(true);
+
+    // Reverse-acceleration slider: 0–1200 px/s² (default 200), matching the
+    // forward thrust slider's scale but independent of it.
+    const accel = control('asteroidsReverseThrustAcceleration');
+    expect(accel.type).toBe('range');
+    expect(accel.min).toBe('0');
+    expect(accel.max).toBe('1200');
+    expect(accel.step).toBe('10');
+    expect(accel.value).toBe('200');
+
+    // Reverse max-speed slider: 0–500 px/s (default 120), independent of the
+    // forward max speed.
+    const maxSpeed = control('asteroidsReverseMaxSpeed');
+    expect(maxSpeed.type).toBe('range');
+    expect(maxSpeed.min).toBe('0');
+    expect(maxSpeed.max).toBe('500');
+    expect(maxSpeed.step).toBe('5');
+    expect(maxSpeed.value).toBe('120');
+  });
+
+  it('applies the reverse-thruster toggle live to the running ship (AC5)', async () => {
+    const scene = await bootPlayer();
+    const player = playerOf(scene)!;
+
+    // Facing +x at spawn: holding reverse accelerates along -x.
+    player.setInput({
+      forward: false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: true,
+    });
+    player.physicsTick(0.5, 960, 540);
+    expect(player.getMovementState().vx).toBeLessThan(-1);
+
+    // Switch the toggle off live, respawn and hold reverse again — the
+    // input is a no-op.
+    setCheckbox('asteroidsReverseEnabled', false);
+    player.respawn(480, 270);
+    player.setInput({
+      forward: false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: true,
+    });
+    player.physicsTick(0.5, 960, 540);
+    expect(player.getMovementState().vx).toBeCloseTo(0, 5);
+  });
+
+  it('applies the reverse slider values live to the running ship (AC5)', async () => {
+    const scene = await bootPlayer();
+    const player = playerOf(scene)!;
+
+    // Lower the reverse acceleration to 100 px/s²: a 0.2 s burst reaches
+    // just 20 px/s (well under the reverse cap).
+    setControl('asteroidsReverseThrustAcceleration', '100');
+    player.setInput({
+      forward: false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: true,
+    });
+    player.physicsTick(0.2, 960, 540);
+    expect(player.getMovementState().vx).toBeCloseTo(-20, 4);
+
+    // Reverse max speed clamps a longer burst: respawn, cap at 40 px/s, then
+    // hold reverse for 1 s (accel 100 → 100 px/s, capped to 40).
+    setControl('asteroidsReverseMaxSpeed', '40');
+    player.respawn(480, 270);
+    player.setInput({
+      forward: false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: true,
+    });
+    player.physicsTick(1, 960, 540);
+    expect(player.getMovementState().vx).toBeCloseTo(-40, 4);
+  });
+
+  it('persists the reverse toggle and sliders on Save (AC5)', async () => {
+    await bootPlayer();
+
+    setCheckbox('asteroidsReverseEnabled', false);
+    setControl('asteroidsReverseThrustAcceleration', '400');
+    setControl('asteroidsReverseMaxSpeed', '260');
+
+    (panel()!.querySelector('#gym-save-config') as HTMLButtonElement).click();
+
+    await vi.waitFor(() =>
+      expect(loadShipConfig().asteroidsReverseEnabled).toBe(false),
+    );
+    const persisted = loadShipConfig();
+    expect(persisted.asteroidsReverseThrustAcceleration).toBe(400);
+    expect(persisted.asteroidsReverseMaxSpeed).toBe(260);
+  });
+
+  it('restores the persisted reverse toggle and sliders on boot (AC5)', async () => {
+    seedConfigStore([], {
+      ...DEFAULT_CONFIG,
+      asteroidsReverseEnabled: false,
+      asteroidsReverseThrustAcceleration: 300,
+      asteroidsReverseMaxSpeed: 250,
+    });
+
+    await bootPlayer();
+
+    expect(checkbox('asteroidsReverseEnabled').checked).toBe(false);
+    expect(control('asteroidsReverseThrustAcceleration').value).toBe('300');
+    expect(control('asteroidsReverseMaxSpeed').value).toBe('250');
+  });
+
   // ── Panel anchoring (AH-0MUAYB7O4009LWBF) ───────────────────────
 
   it('panel has the shared .gym-panel class for bottom-left anchoring (AH-0MUAYB7O4009LWBF)', async () => {
@@ -592,7 +722,7 @@ describe('GymPlayer — obstacles & shooting (AH-0MUAYB2XR007N10W)', () => {
     expect(panel!.querySelector(`#${SAVE_BUTTON_ID}`)).not.toBeNull();
     expect(
       panel!.querySelectorAll('input[type="range"][data-config]').length,
-    ).toBe(8);
+    ).toBe(10);
 
     // Shooting still works alongside the panel and obstacles.
     for (let i = 0; i < 4; i++) scene.tick(0.5);

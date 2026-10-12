@@ -68,6 +68,41 @@ export interface WaveDefinition {
    * (GDD §2.5).
    */
   shootEnabled: boolean;
+  /**
+   * Opt-in flag for the Pac-Man ghost-pursuer group (classic-arcade
+   * archetype, AH-0MV01EH2U008XT3Q). When `true`, the wave schedules the
+   * four personality pursuers through the shared `GhostSpawner`; they are
+   * registered with the `WaveManager` so they gate wave completion. Absent
+   * (the default) leaves the wave exactly as it was — no behaviour change
+   * for existing campaign data.
+   */
+  ghosts?: boolean;
+  /**
+   * Opt-in flag for the Centipede chain (classic-arcade archetype,
+   * AH-0MV01EJ92008ZZ86). When `true`, the wave schedules one linked
+   * Centipede chain through the shared `CentipedeSpawner`; every segment is
+   * registered with the `WaveManager` so it gates wave completion. Absent
+   * (the default) leaves the wave exactly as it was.
+   */
+  centipede?: boolean;
+  /**
+   * Opt-in flag for the Robotron homing-horde (classic-arcade archetype,
+   * AH-0MV01EKTL001NRE6). When `true`, the wave schedules a timed horde of
+   * grunts from the arena edges through the shared `HordeSpawner`; every
+   * grunt is registered with the `WaveManager` so it gates wave completion.
+   * Absent (the default) leaves the wave exactly as it was.
+   */
+  horde?: boolean;
+  /**
+   * Opt-in flag for the Frogger lane-traffic hazard (classic-arcade
+   * archetype, AH-0MV01EPM40008N8T). When `true`, the wave schedules one to
+   * three horizontal lanes of non-firing traffic through the shared
+   * `LaneTrafficSpawner`. Traffic is a **non-blocking** world hazard (the
+   * Asteroid accounting): it is never registered with the `WaveManager`, so
+   * it neither gates nor stalls wave completion. Absent (the default) leaves
+   * the wave exactly as it was.
+   */
+  laneTraffic?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */

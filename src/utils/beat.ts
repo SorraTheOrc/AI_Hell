@@ -32,6 +32,13 @@ export const MS_PER_MINUTE = 60_000;
 export const DEFAULT_BPM = 80;
 
 /**
+ * Subdivisions per beat for a **16th note** (4 per beat). At the default
+ * 80 BPM a 16th note is `750 / 4 = 187.5 ms`. The explosion-accent grid
+ * (AH-0MV01HNLU008S5E3) snaps kill cues to this subdivision.
+ */
+export const SIXTEENTH_NOTE_SUBDIVISIONS = 4;
+
+/**
  * Tolerance (ms) used by {@link isOnGrid} to absorb floating-point drift
  * accumulated across frames. Grid ticks are computed from game time, which
  * is a sum of potentially non-integer frame deltas, so an exact `=== 0`
@@ -169,6 +176,63 @@ export function shotTimeFor(
   return anchorMs + Math.floor(offset) * intervalMs;
 }
 
+// ── Accent scheduling (next subdivision) ────────────────────────────
+
+/**
+ * Milliseconds from `currentTimeMs` to the **next** subdivision tick — the
+ * scheduling primitive for quantising a fire-and-forget cue (e.g. an
+ * explosion) onto a musical grid without moving its visual.
+ *
+ * It is the non-negative game-time distance to the next tick:
+ * `nextTick(currentTimeMs, beatSubdivisionMs(subdivisions, bpm)) -
+ * currentTimeMs`. Because the caller schedules against **game time**, the
+ * delay is bounded by one subdivision period and never runs backwards.
+ *
+ * Edge cases:
+ * - A request already exactly on a tick returns `0` (fire immediately).
+ * - A non-finite/zero/negative `subdivisions` falls back to one per beat,
+ *   and a non-finite/zero/negative `bpm` falls back to {@link DEFAULT_BPM},
+ *   so the result is always finite and never negative.
+ *
+ * @param currentTimeMs - Current game time in ms.
+ * @param subdivisions - Grid subdivisions per beat (e.g. 4 = 16th note).
+ * @param bpm - Tempo in beats per minute (default 80).
+ * @param anchorMs - Grid origin in ms (default 0 = scene/player start).
+ * @returns Milliseconds to the next subdivision tick (`>= 0`).
+ */
+export function nextSubdivisionDelayMs(
+  currentTimeMs: number,
+  subdivisions: number,
+  bpm: number = DEFAULT_BPM,
+  anchorMs = 0,
+): number {
+  const intervalMs = beatSubdivisionMs(subdivisions, bpm);
+  return Math.max(0, nextTick(currentTimeMs, intervalMs, anchorMs) - currentTimeMs);
+}
+
+/**
+ * Milliseconds from `currentTimeMs` to the next **16th note** of the current
+ * tempo — {@link nextSubdivisionDelayMs} with
+ * {@link SIXTEENTH_NOTE_SUBDIVISIONS}. `0` when already on a 16th-note tick.
+ *
+ * @param currentTimeMs - Current game time in ms.
+ * @param bpm - Tempo in beats per minute (default 80).
+ * @param anchorMs - Grid origin in ms (default 0 = scene/player start).
+ * @returns Milliseconds to the next 16th-note tick (`>= 0`).
+ */
+export function nextSixteenthDelayMs(
+  currentTimeMs: number,
+  bpm: number = DEFAULT_BPM,
+  anchorMs = 0,
+): number {
+  return nextSubdivisionDelayMs(
+    currentTimeMs,
+    SIXTEENTH_NOTE_SUBDIVISIONS,
+    bpm,
+    anchorMs,
+  );
+}
+
 /**
  * Returns true when `timeMs` lies on the grid for `intervalMs` (relative to
  * `anchorMs`), within {@link GRID_EPSILON} of a tick. Used by tests to
@@ -239,6 +303,10 @@ export interface BeatClock {
   shotTimeFor(intervalMs: number): number;
   /** True when `timeMs` is an exact grid tick for `intervalMs`. */
   isOnGrid(timeMs: number, intervalMs: number): boolean;
+  /** Milliseconds from the current time to the next `subdivisions` tick. */
+  nextSubdivisionDelayMs(subdivisions: number): number;
+  /** Milliseconds from the current time to the next 16th-note tick. */
+  nextSixteenthDelayMs(): number;
 }
 
 /**
@@ -275,5 +343,9 @@ export function createBeatClock(config: BeatClockConfig = {}): BeatClock {
       shotTimeFor(elapsedMs, intervalMs, anchorMs),
     isOnGrid: (timeMs: number, intervalMs: number) =>
       isOnGrid(timeMs, intervalMs, anchorMs),
+    nextSubdivisionDelayMs: (subdivisions: number) =>
+      nextSubdivisionDelayMs(elapsedMs, subdivisions, bpm, anchorMs),
+    nextSixteenthDelayMs: () =>
+      nextSixteenthDelayMs(elapsedMs, bpm, anchorMs),
   };
 }

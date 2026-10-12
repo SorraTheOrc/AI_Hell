@@ -437,6 +437,26 @@ describe('HUD AC5: reacts to registry changes', () => {
     destroy(game);
   });
 });
+describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
+  it('renders the catalogue row with the effective level once owned, independent of timed state', async () => {
+    const reg = new EffectsRegistry();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'mystery_ufo')).toBe(false);
+
+    reg.applyCollect('mystery_ufo');
+    hud.refresh();
+    const row = hud.getRows().find((r) => r.id === 'mystery_ufo')!;
+    expect(row).toBeDefined();
+    expect(row.name).toBe('Mystery UFO');
+    expect(row.label).toBe('Mystery UFO Lvl 1');
+    // No timed window → the row shows the infinity glyph, not a countdown.
+    expect(row.value).toBe(PERMANENT_VALUE);
+    expect(row.temporary).toBe(false);
+    destroy(game);
+  });
+});
+
 describe('HUD lives list layout (AH-0MU7JTFY1006QA8I)', () => {
   /** Rendered HUD texts, in container iteration order. */
   function hudTextObjects(hud: HUD): Phaser.GameObjects.Text[] {
@@ -515,6 +535,26 @@ describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
     expect(names).toContain('Weapon: spread Lvl 0');
     expect(names).toContain('Weapon: dual Lvl 0');
     expect(names).toContain('Weapon: rapid Lvl 0');
+    destroy(game);
+  });
+
+  it('renders the Cluster Missile weapon row from the catalogue (AH-0MV1BIVIJ007KYXU)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('cluster');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    expect(hudTexts(hud)).toContain('Weapon: cluster Lvl 0');
+    destroy(game);
+  });
+
+  it('renders the Options weapon row from the catalogue (AH-0MV1BIVVK0043TEM)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('options');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    expect(hudTexts(hud)).toContain('Weapon: options Lvl 0');
     destroy(game);
   });
 

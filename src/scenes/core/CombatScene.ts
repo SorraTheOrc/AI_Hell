@@ -11,7 +11,7 @@
  *
  * - {@link CombatScene._spawnPlayerExplosion} (inherited from the base)
  * - {@link CombatScene._clearEnemyBullets} (inherited from the base)
- * - {@link CombatScene._handleTeleport} / {@link CombatScene.triggerTeleport}
+ * - {@link CombatScene._updateAutoDefence} / {@link CombatScene.triggerTeleport}
  * - {@link CombatScene._hitPlayer}
  * - {@link CombatScene._handleCollisions}
  *
@@ -27,6 +27,8 @@
 import Phaser from 'phaser';
 
 import {
+  FORCE_FIELD_COLOR,
+  FORCE_FIELD_REFLECT_LIFETIME,
   GAME_HEIGHT,
   GAME_WIDTH,
   PLAYER_BULLET_RADIUS,
@@ -41,7 +43,7 @@ import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
-import type { WeaponDefinition, WeaponId } from '../../utils/weapons';
+import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
@@ -51,6 +53,7 @@ import {
 } from '../../powerups/teleport';
 import {
   CombatCoreScene,
+  SMART_BOMB_PULSE_COLOR,
   type CombatDrop,
   type CombatEnemyBullet,
   type CombatEnemyEntity,
@@ -143,10 +146,6 @@ export abstract class CombatScene<
   /** Centred countdown overlay (created lazily; hidden when idle). */
   protected countdownText: Phaser.GameObjects.Text | null = null;
 
-  /** Teleport teleport activation keys: S / ↓ (JustDown semantics). */
-  protected teleportKey: Phaser.Input.Keyboard.Key | null = null;
-  protected downKey: Phaser.Input.Keyboard.Key | null = null;
-
   // ── Participant contract (subclass accessors) ────────────────────
 
   /** The keyboard-controlled player ship (null when the scene has none). */
@@ -162,23 +161,27 @@ export abstract class CombatScene<
 
   // ── Overridable hooks (default = generic gym behaviour) ───────────
 
-  // ── Automatic Phase Shift danger feed ──────────────────────
+  // ── Automatic defence danger feed ──────────────────────────
 
   /**
-   * Shared per-frame danger feed for the automatic Phase Shift (parent
-   * AH-0MUIYX1EE008FVS8, Q1/Q2/Q3).
+   * Shared per-frame danger feed for the automatic defences (Phase Shift,
+   * parent AH-0MUIYX1EE008FVS8; Teleport, AH-0MUZE4AIP009HZWC).
    *
    * Counts the live hostile bodies and enemy bullets whose centre lies
    * within `DANGER_RADIUS` of the ship (via the pure `isInDanger` helper)
-   * and hands the result to the effects registry, which auto-activates
-   * Phase Shift when a charge is available and the re-arm conditions are
-   * met. Every combat scene calls this once per frame immediately before
-   * `_handleCollisions`, so the game and the gyms share one implementation
-   * and one ordering and cannot diverge.
+   * and hands the result to the effects registry. Under one shared re-arm
+   * governor the registry selects — at most once per danger episode — which
+   * defence to spend by comparing the available counts ({@link
+   * selectAutoDefence}). When it reports Phase Shift it has already
+   * activated the pass-through; when it selects Teleport the scene performs
+   * the warp through {@link CombatScene.triggerTeleport} (consuming one FIFO
+   * stack and granting Phase Shift on arrival). Every combat scene calls this
+   * once per frame immediately before `_handleCollisions`, so the game and
+   * the gyms share one implementation and one ordering and cannot diverge.
    *
-   * @param dt — frame delta (seconds); advances the Phase Shift re-arm cooldown.
+   * @param dt — frame delta (seconds); advances the shared re-arm cooldown.
    */
-  protected _updatePhaseShiftAutoTrigger(dt: number): void {
+  protected _updateAutoDefence(dt: number): void {
     const registry = this.getEffectsRegistry();
     const player = this.getPlayer();
     if (!player) {
@@ -193,9 +196,18 @@ export abstract class CombatScene<
       x: bullet.graphics.x,
       y: bullet.graphics.y,
     }));
-    const fired = registry.updateDanger(isInDanger(player, bodies, bullets), dt);
-    // Dedicated activation cue on every auto-trigger (parent AH-0MUIYX1EE008FVS8).
-    if (fired) playPhaseShiftSound();
+    const decision = registry.updateDanger(
+      isInDanger(player, bodies, bullets),
+      dt,
+    );
+    // Dedicated activation cue on every automatic Phase Shift trigger
+    // (parent AH-0MUIYX1EE008FVS8). The Teleport path plays the same cue
+    // inside `triggerTeleport` once the warp lands.
+    if (decision === 'phase_shift') {
+      playPhaseShiftSound();
+    } else if (decision === 'teleport') {
+      this.triggerTeleport();
+    }
   }
 
   // ── Shared effect gating (Shield shield / Phase Shift phase) ─────────────────
@@ -204,7 +216,7 @@ export abstract class CombatScene<
    * Whether the player is Phase Shift phase-shifted and therefore immune to enemy
    * bullets and enemy body contact. Backed by the shared effects registry,
    * so every `CombatScene` subclass (including `GymFormationScene` and its
-   * `GymEnemies`/`GymBoss`/`GymMinerals` subclasses) inherits the same
+   * `GymFodderEnemies`/`GymBoss`/`GymMinerals` subclasses) inherits the same
    * gating exactly once and cannot diverge.
    */
   protected override isPlayerPhased(): boolean {
@@ -324,6 +336,12 @@ export abstract class CombatScene<
    * same shared path runs in the game and the gyms, so the feedback cannot
    * diverge (parent AH-0MUI820PM0038HS2 — producer review).
    *
+   * A **piercing** bullet (`bullet.piercing > 0`, R-Type wave laser) damages
+   * the enemy but survives, decrementing its budget and remembering the enemy
+   * so it is never damaged twice; returning `false` lets the shared loop keep
+   * scanning. Once the budget is exhausted the next new enemy consumes the
+   * bullet (AH-0MV1BIUSJ0090W92).
+   *
    * @returns whether the bullet was consumed (stops the scan).
    */
   protected onPlayerBulletHitsEnemy(
@@ -342,12 +360,48 @@ export abstract class CombatScene<
       bullet.destroy();
       return true;
     }
+    // A splitting projectile (cluster missile) does not deal a direct hit: it
+    // bursts into radial warheads at the impact point, which damage enemies
+    // on contact through the ordinary bullet path. The split resolves exactly
+    // once and the parent shell is consumed (AH-0MV1BIVIJ007KYXU).
+    if (bullet.splitWeapon) {
+      this.splitProjectile(bullet);
+      bullet.destroy();
+      return true;
+    }
+    // Already passed through this enemy on an earlier frame — never re-damage.
+    if (bullet.piercedEnemies.has(enemy)) {
+      return false;
+    }
+    // Damage the enemy identically for the piercing and consuming paths.
+    this.damageEnemyWithBullet(enemy, bullet);
+    // A piercing bullet survives the hit while it still has budget; remember
+    // the enemy and continue to the next one. Budget 0 falls through and
+    // consumes the bullet.
+    if (bullet.piercing > 0) {
+      bullet.piercedEnemies.add(enemy);
+      bullet.piercing -= 1;
+      return false;
+    }
+    bullet.destroy();
+    return true;
+  }
+
+  /**
+   * Applies one player-bullet damage instance to `enemy` through the shared
+   * kill seam **without** consuming the bullet: a multi-hit entity takes
+   * `takeDamage()` (finalised on the lethal blow, with the shared impact flash
+   * on a non-lethal hit); a single-hit entity is destroyed and finalised.
+   * Shared by the ordinary (consuming) and piercing bullet paths so both
+   * damage identically in the game and every gym (AH-0MV1BIUSJ0090W92).
+   */
+  private damageEnemyWithBullet(enemy: TEnemy, bullet: PlayerBullet): void {
     if (enemy.takeDamage) {
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
-      // cleared `alive`). A non-lethal hit consumes the bullet but flashes at
-      // the impact point so the player can read that the hit registered.
+      // cleared `alive`). A non-lethal hit flashes at the impact point so the
+      // player can read that the hit registered.
       if (!enemy.alive) {
         this.finaliseEnemyKill(enemy);
       } else {
@@ -359,8 +413,6 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
-    bullet.destroy();
-    return true;
   }
 
   /**
@@ -398,7 +450,25 @@ export abstract class CombatScene<
   protected applyAoeEffect(def: WeaponDefinition, x: number, y: number): void {
     const aoe = def.aoe;
     if (!aoe) return;
+    this.applyAoEDescriptor(aoe, x, y);
+  }
 
+  /**
+   * Shared area-effect application from a bare {@link AoEDescriptor} — the
+   * seam the AOE **weapons** and the Smart Bomb **power-up** share
+   * (AH-0MV1BIWP9003EHRQ). Resolves one area effect at (x, y):
+   *
+   * 1. damages every live enemy inside the radius for `aoe.damage` hit points
+   *    (default 1) through the same `takeDamage()` / `destroySelf()` +
+   *    `finaliseEnemyKill` seam a player bullet uses,
+   * 2. destroys every enemy bullet inside the radius with the shared impact
+   *    feedback,
+   * 3. damages the boss through {@link CombatScene.onAoeHitsBoss}.
+   *
+   * Keeping this the single implementation means the Smart Bomb cannot fork
+   * the area-effect behaviour away from Nova/Mortar/Arc (AC5).
+   */
+  protected applyAoEDescriptor(aoe: AoEDescriptor, x: number, y: number): void {
     if (aoe.damagesEnemies) {
       // Pure target selection (utils/aoe) keeps the game and gyms identical.
       const targets = selectAoETargets(
@@ -407,7 +477,8 @@ export abstract class CombatScene<
         aoe.radius,
         this.getEnemyEntities(),
       );
-      for (const enemy of targets) this.damageEnemyViaAoe(enemy);
+      const damage = Math.max(1, Math.floor(aoe.damage ?? 1));
+      for (const enemy of targets) this.damageEnemyViaAoe(enemy, damage);
     }
 
     if (aoe.clearsEnemyBullets) {
@@ -433,18 +504,41 @@ export abstract class CombatScene<
 
   /**
    * Applies one AOE damage instance to an enemy through the shared kill
-   * seam: multi-hit entities take `takeDamage()` (and finalise on the lethal
-   * blow); single-hit entities are destroyed and finalised outright.
+   * seam: multi-hit entities take `damage` hits (and finalise on the lethal
+   * blow); single-hit entities are destroyed and finalised outright. AOE
+   * weapons pass the default of one hit; the Smart Bomb passes its
+   * level-resolved damage (AH-0MV1BIWP9003EHRQ).
    */
-  private damageEnemyViaAoe(enemy: TEnemy): void {
+  private damageEnemyViaAoe(enemy: TEnemy, damage = 1): void {
     if (!enemy.alive) return;
     if (enemy.takeDamage) {
-      enemy.takeDamage();
+      const hits = Math.max(1, Math.floor(damage));
+      for (let i = 0; i < hits && enemy.alive; i++) enemy.takeDamage();
       if (!enemy.alive) this.finaliseEnemyKill(enemy);
     } else {
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Resolves one Smart Bomb pulse (AH-0MV1BIWP9003EHRQ): applies the
+   * level-resolved {@link AoEDescriptor} through the shared AOE seam and
+   * spawns the expanding-ring VFX. Defined on the concrete combat scene
+   * because the enemy-damage seam ({@link CombatScene.damageEnemyViaAoe})
+   * lives here; the shared {@link CombatCoreScene._updateSmartBomb} owns the
+   * pulse detection so gyms cannot fork the behaviour.
+   */
+  protected override onSmartBombPulse(
+    aoe: AoEDescriptor,
+    x: number,
+    y: number,
+  ): void {
+    this.applyAoEDescriptor(aoe, x, y);
+    spawnNovaRing(this, x, y, aoe.radius, {
+      registry: this.aoeEffects,
+      color: SMART_BOMB_PULSE_COLOR,
+    });
   }
 
   /**
@@ -757,28 +851,6 @@ export abstract class CombatScene<
   // ── Teleport ─────────────────────────────────────────────────────
 
   /**
-   * Handles the S / ↓ key press for a Teleport teleport (JustDown semantics).
-   */
-  protected _handleTeleport(): void {
-    const player = this.getPlayer();
-    if (!player || !this.teleportKey) return;
-    const JustDown = (
-      Phaser.Input.Keyboard as unknown as {
-        JustDown?: (key: Phaser.Input.Keyboard.Key) => boolean;
-      }
-    ).JustDown;
-    const sDown = JustDown
-      ? JustDown(this.teleportKey)
-      : this.teleportKey.isDown;
-    const downDown = this.downKey
-      ? JustDown
-        ? JustDown(this.downKey)
-        : this.downKey.isDown
-      : false;
-    if (sDown || downDown) this.triggerTeleport();
-  }
-
-  /**
    * Consumes one Teleport teleport stack and warps the player to the nearest
    * safe spot along the heading (granting Phase Shift on arrival via the
    * registry). Public so tests can trigger it deterministically.
@@ -897,18 +969,16 @@ export abstract class CombatScene<
   // ── Collisions ───────────────────────────────────────────────────
 
   /**
-   * Resolves the shared collision passes:
-   *
-   * 1. player bullets vs enemies (and the boss, via hook)
-   * 2. player bullets vs enemy bullets (AC5 impact feedback)
-   * 2b. scene-specific stage (`onAfterBulletVsBullet`, e.g. minerals)
-   * 3. enemy bullets vs player
-   * 4. player body vs enemy body (and the boss, via hook)
+   * Resolves the shared player-bullets-vs-enemies pass (plus the boss via the
+   * {@link CombatScene.onPlayerBulletHitsBoss} hook). Each live enemy is
+   * scanned until the bullet is consumed; a piercing bullet survives the hit
+   * and continues scanning (see
+   * {@link CombatScene.onPlayerBulletHitsEnemy}). The game and every gym run
+   * this one implementation, and `GymWeapons` calls it directly so its inert
+   * practice targets demonstrate weapon piercing through the same code
+   * (AH-0MV1BIUSJ0090W92).
    */
-  protected _handleCollisions(): void {
-    const playerHull = SHIP_SIZE / 2;
-
-    // 1. Player bullets vs enemies (and the boss).
+  protected _resolvePlayerBulletsVsEnemies(): void {
     const keptBullets: PlayerBullet[] = [];
     for (const pb of this.playerBullets) {
       let spent = false;
@@ -932,6 +1002,22 @@ export abstract class CombatScene<
       if (!spent) keptBullets.push(pb);
     }
     this.playerBullets = keptBullets;
+  }
+
+  /**
+   * Resolves the shared collision passes:
+   *
+   * 1. player bullets vs enemies (and the boss, via hook)
+   * 2. player bullets vs enemy bullets (AC5 impact feedback)
+   * 2b. scene-specific stage (`onAfterBulletVsBullet`, e.g. minerals)
+   * 3. enemy bullets vs player
+   * 4. player body vs enemy body (and the boss, via hook)
+   */
+  protected _handleCollisions(): void {
+    const playerHull = SHIP_SIZE / 2;
+
+    // 1. Player bullets vs enemies (and the boss) — shared pass.
+    this._resolvePlayerBulletsVsEnemies();
 
     // 2. Player bullets vs enemy bullets — both destroyed (shared AC5 path).
     const bulletRadius = this.getEnemyBulletRadius();
@@ -955,6 +1041,9 @@ export abstract class CombatScene<
           this.onBulletVsBulletImpact(eb, pb);
           // An AOE projectile detonates at the interception point.
           if (pb.aoeWeapon) this.detonateAoeProjectile(pb);
+          // A splitting projectile bursts into warheads at the interception
+          // point (AH-0MV1BIVIJ007KYXU).
+          if (pb.splitWeapon) this.splitProjectile(pb);
           pb.destroy();
           this.playerBullets.splice(i, 1);
           eb.graphics.destroy();
@@ -971,14 +1060,38 @@ export abstract class CombatScene<
     const player = this.getPlayer();
     if (!player || this.isPlayerPhased()) return;
 
-    // 3. Enemy bullets vs player.
+    // 3. Enemy bullets vs player — the Force Field reflect branch runs first:
+    //    while the bubble is active and a bullet meets it, the bullet is
+    //    consumed and re-spawned as a player-owned bullet travelling back
+    //    along its incoming direction (Gradius homage, AH-0MV1BIX1W006XF95).
+    //    A bullet the field cannot reflect (inactive or budget spent) falls
+    //    through to the normal player-hit check below.
     const keptEnemy2: TBullet[] = [];
+    const effects = this.getEffectsRegistry();
     for (const eb of this.getEnemyBullets()) {
+      const bulletX = eb.graphics.x;
+      const bulletY = eb.graphics.y;
+      if (
+        effects.isForceFieldActive() &&
+        this._overlaps(
+          bulletX,
+          bulletY,
+          bulletRadius,
+          player.x,
+          player.y,
+          effects.forceFieldRadius(),
+        ) &&
+        effects.tryConsumeForceFieldReflect()
+      ) {
+        this._reflectEnemyBullet(eb);
+        eb.graphics.destroy();
+        continue;
+      }
       if (
         this.invulnerable <= 0 &&
         this._overlaps(
-          eb.graphics.x,
-          eb.graphics.y,
+          bulletX,
+          bulletY,
           bulletRadius,
           player.x,
           player.y,
@@ -993,7 +1106,11 @@ export abstract class CombatScene<
     }
     this.setEnemyBullets(keptEnemy2);
 
-    // 4. Player body vs enemy body — both are hit.
+    // 4. Player body vs enemy body — both are hit, except a frightened
+    // enemy (Power Pellet, AH-0MV1BIW95004POSX): ramming it destroys the
+    // enemy and leaves the ship unharmed (the Pac-Man "eat the ghost"
+    // adaptation). Frightened enemies never damage the ship on contact, so
+    // the scan continues in case a non-frightened body also overlaps.
     if (this.invulnerable <= 0) {
       for (const enemy of this.getEnemyEntities()) {
         if (!enemy.alive) continue;
@@ -1010,6 +1127,10 @@ export abstract class CombatScene<
           )
         ) {
           this.onPlayerRamsEnemy(enemy);
+          if (this.isEnemyFrightened()) {
+            // Destroyed the frightened enemy; the ship takes no damage.
+            continue;
+          }
           this._hitPlayer();
           break;
         }
@@ -1018,6 +1139,34 @@ export abstract class CombatScene<
         this._hitPlayer();
       }
     }
+  }
+
+  /**
+   * Reflects one enemy bullet back along its incoming direction as a
+   * player-owned bullet (Gradius Force Field homage, AH-0MV1BIX1W006XF95).
+   *
+   * The reflected shot is spawned through the shared
+   * {@link CombatCoreScene.spawnPlayerBullet} path, so it is an ordinary
+   * player bullet that damages enemies through the same collision pass as the
+   * cannon — the game and every gym reflect identically. The bullet is placed
+   * at the enemy bullet's position with its velocity reversed ("back toward
+   * its source") and given the shared Force Field lifetime.
+   *
+   * The caller owns the lifecycle: it destroys the enemy bullet's graphics
+   * and drops it from the enemy-bullet list after this returns.
+   *
+   * @param enemyBullet - The enemy bullet meeting the field.
+   * @returns The new player-owned reflected bullet.
+   */
+  protected _reflectEnemyBullet(enemyBullet: TBullet): PlayerBullet {
+    return this.spawnPlayerBullet(
+      enemyBullet.graphics.x,
+      enemyBullet.graphics.y,
+      -enemyBullet.vx,
+      -enemyBullet.vy,
+      FORCE_FIELD_COLOR,
+      FORCE_FIELD_REFLECT_LIFETIME,
+    );
   }
 
   /** Circle-vs-circle overlap test. */
@@ -1307,8 +1456,6 @@ export abstract class CombatScene<
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
-    this.teleportKey = null;
-    this.downKey = null;
     this.waveTimeoutTimer = 0;
     this.waveTimeoutActive = false;
     this.waveTimeoutDuration = 0;
@@ -1333,8 +1480,6 @@ export abstract class CombatScene<
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
-    this.teleportKey = null;
-    this.downKey = null;
     this.waveTimeoutBar?.destroy();
     this.waveTimeoutBar = null;
     this.waveTimeoutActive = false;

@@ -241,3 +241,115 @@ describe('PlayerBullet — reduced fallback lifetime (AH-0MUU131PU006O7ZD AC4)',
     expect(bullet.isExpired()).toBe(true);
   });
 });
+
+// ── Centipede ricochet wall-bounce (AH-0MV1BIV5L005NJAI) ────────────
+
+describe('PlayerBullet — wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
+  it('an ordinary bullet leaves the bounce budget unset and wraps', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 1, GAME_HEIGHT / 2, -350, 0, 3.0);
+
+    expect(bullet.bounces).toBeUndefined();
+    advanceAndCull(bullet, 0.01); // 1 - 3.5 = -2.5 → wraps to +957.5
+
+    expect(bullet.x).toBeCloseTo(GAME_WIDTH - 2.5, 5);
+    expect(bullet.bounces).toBeUndefined();
+    expect(bullet.isExpired()).toBe(false);
+  });
+
+  it('reflects off the left edge, reversing vx and spending one bounce', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 2, GAME_HEIGHT / 2, -350, 0, 3.0);
+    bullet.bounces = 2;
+
+    advanceAndCull(bullet, 0.01); // 2 - 3.5 = -1.5 → mirrors to +1.5
+
+    expect(bullet.x).toBeCloseTo(1.5, 5);
+    expect(bullet.vx).toBeCloseTo(350, 5);
+    expect(bullet.bounces).toBe(1);
+    expect(bullet.isExpired()).toBe(false);
+  });
+
+  it('reflects off the right edge, reversing vx', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, GAME_WIDTH - 2, GAME_HEIGHT / 2, 350, 0, 3.0);
+    bullet.bounces = 2;
+
+    advanceAndCull(bullet, 0.01); // 958 + 3.5 = 961.5 → mirrors to +958.5
+
+    expect(bullet.x).toBeCloseTo(GAME_WIDTH - 1.5, 5);
+    expect(bullet.vx).toBeCloseTo(-350, 5);
+    expect(bullet.bounces).toBe(1);
+    expect(bullet.isExpired()).toBe(false);
+  });
+
+  it('reflects off the top and bottom edges, reversing vy', async () => {
+    const scene = await makeScene();
+    const top = makeBullet(scene, GAME_WIDTH / 2, 2, 0, -350, 3.0);
+    top.bounces = 2;
+    advanceAndCull(top, 0.01);
+    expect(top.y).toBeCloseTo(1.5, 5);
+    expect(top.vy).toBeCloseTo(350, 5);
+    expect(top.bounces).toBe(1);
+
+    const bottom = makeBullet(scene, GAME_WIDTH / 2, GAME_HEIGHT - 2, 0, 350, 3.0);
+    bottom.bounces = 2;
+    advanceAndCull(bottom, 0.01);
+    expect(bottom.y).toBeCloseTo(GAME_HEIGHT - 1.5, 5);
+    expect(bottom.vy).toBeCloseTo(-350, 5);
+    expect(bottom.bounces).toBe(1);
+  });
+
+  it('a corner contact reflects both components but spends only one bounce', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 1, 1, -350, -350, 3.0);
+    bullet.bounces = 2;
+
+    advanceAndCull(bullet, 0.01); // both x and y cross → mirror on both axes
+
+    expect(bullet.x).toBeCloseTo(2.5, 5);
+    expect(bullet.y).toBeCloseTo(2.5, 5);
+    expect(bullet.vx).toBeCloseTo(350, 5);
+    expect(bullet.vy).toBeCloseTo(350, 5);
+    expect(bullet.bounces).toBe(1);
+  });
+
+  it('reflects while the budget remains, then expires on the next wall contact', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 2, GAME_HEIGHT / 2, -350, 0, 3.0);
+    bullet.bounces = 1;
+
+    // First contact: one reflection, budget now 0, still alive.
+    expect(advanceAndCull(bullet, 0.01)).toBe(true);
+    expect(bullet.bounces).toBe(0);
+    expect(bullet.isExpired()).toBe(false);
+
+    // Second contact with no budget left: the bullet expires instead of wrapping.
+    bullet.x = 2;
+    bullet.vx = -350;
+    expect(advanceAndCull(bullet, 0.01)).toBe(false);
+    expect(bullet.isExpired()).toBe(true);
+  });
+
+  it('a budget of 0 expires on the very first wall contact', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 2, GAME_HEIGHT / 2, -350, 0, 3.0);
+    bullet.bounces = 0;
+
+    expect(advanceAndCull(bullet, 0.01)).toBe(false);
+    expect(bullet.isExpired()).toBe(true);
+  });
+
+  it('keeps travelling in the reflected direction on the next frame', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 2, GAME_HEIGHT / 2, -350, 0, 3.0);
+    bullet.bounces = 2;
+
+    advanceAndCull(bullet, 0.01); // reflect: x ≈ 1.5, vx = +350
+    const reflectedX = bullet.x;
+    advanceAndCull(bullet, 0.01); // move right by 3.5
+
+    expect(bullet.x).toBeGreaterThan(reflectedX);
+    expect(bullet.x).toBeCloseTo(reflectedX + 3.5, 5);
+  });
+});

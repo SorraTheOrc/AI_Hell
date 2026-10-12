@@ -255,6 +255,81 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
   });
 
+  it('AC1 — the demo bot takes an offered Extra Life below the cap', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
+    // Offer the Extra Life at index 2 so a first-option fallback would pick
+    // the shield instead.
+    play.setMineralChoiceStrategy({
+      choose: () => [
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
+        { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+        { id: 'extra_life', name: 'Extra Life', kind: 'powerup' },
+      ],
+    });
+    play.getGameState().lives = 2;
+
+    const selected = vi.spyOn(play, 'selectMineralChoice');
+    play.openMineralChoice();
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+
+    // The bot took the Extra Life (index 2) rather than the first option.
+    expect(selected).toHaveBeenCalledWith(2);
+    expect(play.isMineralChoiceOpen()).toBe(false);
+  });
+
+  it('AC1 — the demo bot falls back to the first option at the life cap', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    play.setMineralChoiceStrategy({
+      choose: () => [
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
+        { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+        { id: 'extra_life', name: 'Extra Life', kind: 'powerup' },
+      ],
+    });
+    // At the cap the Extra Life is wasted, so the first option is taken.
+    play.getGameState().lives = 5;
+
+    const selected = vi.spyOn(play, 'selectMineralChoice');
+    play.openMineralChoice();
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+
+    expect(selected).toHaveBeenCalledWith(0);
+    expect(play.isMineralChoiceOpen()).toBe(false);
+  });
+
+  it('AC1 — the demo bot takes the first option when no Extra Life is offered', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    play.setMineralChoiceStrategy({
+      choose: () => [
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
+        { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+        { id: 'bomb', name: 'Bomb', kind: 'powerup' },
+      ],
+    });
+    play.getGameState().lives = 2;
+
+    const selected = vi.spyOn(play, 'selectMineralChoice');
+    play.openMineralChoice();
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+
+    expect(selected).toHaveBeenCalledWith(0);
+    expect(play.isMineralChoiceOpen()).toBe(false);
+  });
+
   it('AC2 — normal play is unaffected: the keyboard drives and the bot seam stays off', async () => {
     const menu = await bootMenu();
     // Enter activates the focused Play Game control (normal run).
@@ -460,7 +535,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       expect(play.getPlayer()!.getScheme()).toBe('asteroids');
     });
 
-    it('emits asteroid input (W/A/D) — never a reverse/S key', async () => {
+    it('emits asteroid input (W/A/D + reverse) — never four-directional fields', async () => {
       const menu = await bootMenu();
       menu.startDemo();
       await wait(150);
@@ -468,13 +543,15 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
       const input = botInputOf(play);
       expect(input).not.toBeNull();
-      // The asteroid input shape is exactly W/A/D — no four-directional and
-      // therefore no down/S field at all.
+      // The asteroid input carries exactly W/A/D plus an opt-in `reverse`
+      // field (AH-0MV1J0OHP0072XA5 · AC6) — no four-directional/S fields.
       expect(Object.keys(input!).sort()).toEqual([
         'forward',
+        'reverse',
         'turnLeft',
         'turnRight',
       ]);
+      expect(typeof (input as { reverse?: boolean }).reverse).toBe('boolean');
       expect('down' in input!).toBe(false);
       expect('up' in input!).toBe(false);
     });
@@ -518,6 +595,8 @@ function makeScene(
     getAliveCount: () => 0,
     getWaveState: () => ({ active: false, timeRemaining: 0, timeLimit: 30 }),
     getRunSeed: () => 0,
+    getLives: () => 3,
+    getLivesCap: () => 5,
     ...overrides,
   };
 }

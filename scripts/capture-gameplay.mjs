@@ -46,7 +46,7 @@
 
 import { createServer } from 'vite';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -64,6 +64,7 @@ import {
 import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
+  buildCaptureStartedMarker,
   summariseCaptureRun,
   waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
@@ -211,6 +212,38 @@ function asSetupError(error) {
   return error;
 }
 
+/**
+ * Number of clips a single capture invocation records when `--count` is not
+ * supplied. `1` preserves the historical single-clip behaviour exactly
+ * (AH-0MUYTK941005E2M4).
+ */
+export const DEFAULT_CAPTURE_COUNT = 1;
+
+/**
+ * Validates a `--count`/`-n` value into a positive integer.
+ *
+ * Rejects non-numeric, non-integer, zero and negative values with a clear,
+ * actionable message so `main()` can fail fast with a non-zero exit code
+ * (AH-0MUYTK941005E2M4, AC4).
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function parseCaptureCount(value) {
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && value >= 1) return value;
+  } else if (value !== undefined && value !== null) {
+    const text = String(value).trim();
+    if (/^\d+$/.test(text)) {
+      const parsed = Number(text);
+      if (parsed >= 1) return parsed;
+    }
+  }
+  throw new Error(
+    `Invalid --count value: ${JSON.stringify(value)} (expected a positive integer)`,
+  );
+}
+
 /** Parses `process.argv`-style flags into an options object. */
 export function parseCaptureArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -222,6 +255,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     maxDurationMs: DEFAULT_MAX_CAPTURE_DURATION_MS,
     warmupMs: DEFAULT_WARMUP_MS,
     output: null,
+    count: DEFAULT_CAPTURE_COUNT,
     port: 0,
     headed: false,
     keepServer: false,
@@ -255,6 +289,12 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         break;
       case '--output':
         options.output = next();
+        break;
+      case '--count':
+      case '-n':
+        // Positive integer only: a non-positive / non-numeric value fails
+        // fast with a clear message (AH-0MUYTK941005E2M4, AC4).
+        options.count = parseCaptureCount(next());
         break;
       case '--port':
         options.port = Number(next());
@@ -464,6 +504,60 @@ function resolveOutputPath(requested) {
 }
 
 /**
+ * Inserts an iteration-index suffix before a path's extension
+ * (`demo.webm` → `demo-1.webm`; a path with no extension → `demo-1`).
+ *
+ * @param {string} filePath
+ * @param {number} index — 1-based iteration index.
+ * @returns {string}
+ */
+function withIndexSuffix(filePath, index) {
+  const extension = extname(filePath);
+  const stem = extension ? filePath.slice(0, -extension.length) : filePath;
+  return `${stem}-${index}${extension}`;
+}
+
+/**
+ * Resolves the N output paths a `--count` batch writes to
+ * (AH-0MUYTK941005E2M4).
+ *
+ * `count === 1` is exactly the historical single-clip resolution — no index
+ * suffix — so omitting `--count` cannot regress (AC3). When `count > 1` every
+ * path carries a 1-based iteration index so a tight loop cannot collide, even
+ * at the same millisecond. An explicit `--output` gains an indexed suffix
+ * before its extension (`demo.webm` → `demo-1.webm`); with no `--output` the
+ * default name appends the index to one batch timestamp
+ * (`gameplay-<ts>-1.webm`).
+ *
+ * @param {string | null | undefined} requested — the `--output` value.
+ * @param {number} [count]
+ * @returns {string[]} — one absolute path per iteration, in order.
+ */
+export function resolveOutputPaths(requested, count = DEFAULT_CAPTURE_COUNT) {
+  const total = parseCaptureCount(count);
+  if (total === 1) return [resolveOutputPath(requested)];
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const base = requested
+    ? isAbsolute(requested)
+      ? requested
+      : resolve(process.cwd(), requested)
+    : null;
+
+  return Array.from({ length: total }, (_, index) => {
+    const iteration = index + 1;
+    if (!base) {
+      return resolve(
+        REPO_ROOT,
+        'capture-output',
+        `gameplay-${stamp}-${iteration}.webm`,
+      );
+    }
+    return withIndexSuffix(base, iteration);
+  });
+}
+
+/**
  * Waits (bounded) for the game's shared `AudioContext` to be resumed by the
  * Enter gesture and for the page-side tap to have seen the master gain, then
  * returns how many audio tracks the tap currently exposes.
@@ -552,11 +646,63 @@ async function resolvePageCaptureMimeType(page, hasAudio) {
  * Runs the whole capture. Exported so an integration harness (or a future
  * CLI wrapper) can drive it without spawning a process.
  */
-export async function runCapture(
-  options = parseCaptureArgs(),
-  reporter = createReporter(),
-) {
-  const outputPath = resolveOutputPath(options.output);
+/**
+ * Flattens one clip result into a compact per-iteration record for batch
+ * reporting (AH-0MUYTK941005E2M4, AC7). `ok` is false for a clip whose own
+ * exit code is non-zero (a trivial clip, or a capped run without a signal), so
+ * a batch summary never hides a bad iteration.
+ *
+ * @param {number} index — 1-based iteration index.
+ * @param {object} clip — a single-clip result from `captureClip`.
+ * @returns {object}
+ */
+export function buildIterationRecord(index, clip) {
+  const exitCode = captureExitCode(clip);
+  return {
+    index,
+    output: clip.output,
+    ok: exitCode === 0,
+    exitCode,
+    bytes: clip.bytes,
+    durationMs: clip.durationMs,
+    nonTrivial: clip.nonTrivial !== false,
+    capHit: clip.capHit === true,
+    complete: clip.complete ?? null,
+    runOutcome: clip.runOutcome ?? null,
+    reasons: clip.reasons ?? [],
+    pageErrors: clip.pageErrors ?? [],
+  };
+}
+
+/**
+ * Tallies a batch of per-iteration records into the aggregate shape `--json`
+ * reports (AH-0MUYTK941005E2M4, AC7): `count`, `succeeded`, `failed` and the
+ * ordered `iterations`.
+ *
+ * @param {object[]} [iterations]
+ * @returns {{ count: number, succeeded: number, failed: number, iterations: object[] }}
+ */
+export function summariseCaptureBatch(iterations = []) {
+  const records = Array.isArray(iterations) ? iterations : [];
+  const succeeded = records.filter((it) => it && it.ok === true).length;
+  return {
+    count: records.length,
+    succeeded,
+    failed: records.length - succeeded,
+    iterations: records,
+  };
+}
+
+/**
+ * Captures exactly one clip on a **fresh page** from an already-running
+ * browser/server pair (AH-0MUYTK941005E2M4). A fresh page per iteration means
+ * the audio tap and run-end listener are re-installed before each run and no
+ * game state leaks between iterations.
+ *
+ * @param {{ browser: import('playwright').Browser, url: string, outputPath: string, options: object, reporter: object }} params
+ * @returns {Promise<object>}
+ */
+async function captureClip({ browser, url, outputPath, options, reporter }) {
   const mode = resolveCaptureMode(options);
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
@@ -573,49 +719,9 @@ export async function runCapture(
       ? planDurationMs(plan) + plan.length * INTER_STEP_MS
       : options.durationMs;
 
-  let server;
-  let browser;
+  const page = await browser.newPage({ viewport: VIEWPORT });
 
   try {
-    reporter.step('Starting Vite dev server…');
-    server = await createServer({
-      root: REPO_ROOT,
-      logLevel: 'warn',
-      server: { port: options.port, strictPort: false, open: false },
-    });
-    await server.listen();
-    const address = server.httpServer?.address();
-    const port =
-      address && typeof address === 'object' ? address.port : options.port;
-    const baseUrl = `http://127.0.0.1:${port}/`;
-    const url = captureUrl(baseUrl, options);
-
-    reporter.step('Launching headless Chromium…');
-    const chromium = await loadChromium();
-    try {
-      browser = await chromium.launch({
-        headless: !options.headed,
-        args: [
-          '--no-sandbox',
-          // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
-          // the software (SwiftShader) WebGL backend.
-          '--enable-unsafe-swiftshader',
-          // The demo path sends no input during recording, so without these
-          // Chromium throttles the requestAnimationFrame loop for a
-          // backgrounded/occluded page — the canvas stops redrawing and the
-          // recorded clip comes out static. Keep the loop running at full
-          // rate so the in-game demo is recorded faithfully.
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-        ],
-      });
-    } catch (error) {
-      throw asSetupError(error);
-    }
-
-    const page = await browser.newPage({ viewport: VIEWPORT });
-
     // Install the page-side Web Audio tap *before* any game script runs, so
     // the wrapper is in place when the game first connects its master gain to
     // the shared context.destination (AH-0MUWYQQYU001G6OG).
@@ -690,7 +796,11 @@ export async function runCapture(
           ? `Recording ${formatDuration(recordingMs)} of scripted gameplay…`
           : `Recording ${formatDuration(recordingMs)} of in-game demo…`,
     );
-    await startRecording(page, mimeType);
+    const captureStartedAtEpochMs = await startRecording(page, mimeType);
+    // Dev-gated recording-start anchor for the action-intensity video join
+    // (AH-0MUZQG13S006KL8K, epic AH-0MUZMTTYH008KVS2): the marker lets a
+    // consumer map the series' `t` (ms since run start) to the WebM timeline.
+    const captureStarted = buildCaptureStartedMarker(captureStartedAtEpochMs);
 
     // A dev scenario freezes the run at setup so recording can start before
     // the (deliberately short) fight destroys the boss. Release it through the
@@ -793,6 +903,7 @@ export async function runCapture(
       output: outputPath,
       bytes: video.length,
       durationMs: recordingMs,
+      captureStarted,
       ...runSummary,
       renderer: probe.renderer,
       ...probe,
@@ -800,6 +911,134 @@ export async function runCapture(
       ...verdict,
       pageErrors,
     };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+/**
+ * Runs the capture over `outputPaths`, one fresh page per iteration, keeping
+ * the caller's browser/server alive across iterations and **continuing after a
+ * failed iteration** (producer decision, AH-0MUYTK941005E2M4). `captureOne` is
+ * injected so the loop is hermetic and testable with a fake clip function; a
+ * thrown error becomes an `{ ok: false, error }` iteration record rather than
+ * aborting the batch, so partial results are still captured and attributable.
+ *
+ * @param {{ outputPaths: string[], captureOne: (args: { index: number, outputPath: string }) => Promise<object>, reporter?: object, onIteration?: (record: object) => void }} params
+ * @returns {Promise<{ count: number, succeeded: number, failed: number, iterations: object[] }>}
+ */
+export async function runCaptureIterations({
+  outputPaths,
+  captureOne,
+  reporter,
+  onIteration,
+}) {
+  const iterations = [];
+  for (let index = 0; index < outputPaths.length; index += 1) {
+    const iteration = index + 1;
+    if (reporter && typeof reporter.step === 'function') {
+      reporter.step(
+        `Capturing clip ${iteration}/${outputPaths.length} → ${outputPaths[index]}…`,
+      );
+    }
+    let record;
+    try {
+      const clip = await captureOne({
+        index: iteration,
+        outputPath: outputPaths[index],
+      });
+      record = buildIterationRecord(iteration, clip);
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      if (reporter && typeof reporter.step === 'function') {
+        reporter.step(
+          `Clip ${iteration}/${outputPaths.length} failed: ${message}`,
+        );
+      }
+      record = {
+        index: iteration,
+        output: outputPaths[index],
+        ok: false,
+        error: message,
+      };
+    }
+    iterations.push(record);
+    if (typeof onIteration === 'function') onIteration(record);
+  }
+  return summariseCaptureBatch(iterations);
+}
+
+/**
+ * Resolves the whole capture: boot **one** Vite dev server and **one** browser,
+ * then record `--count` clips through {@link captureClip} (a single clip when
+ * `--count` is omitted), and tear the server/browser down once. Reusing one
+ * server/browser is what makes batch capture fast (AH-0MUYTK941005E2M4, AC5).
+ */
+export async function runCapture(
+  options = parseCaptureArgs(),
+  reporter = createReporter(),
+) {
+  const outputPaths = resolveOutputPaths(options.output, options.count);
+
+  let server;
+  let browser;
+
+  try {
+    reporter.step('Starting Vite dev server…');
+    server = await createServer({
+      root: REPO_ROOT,
+      logLevel: 'warn',
+      server: { port: options.port, strictPort: false, open: false },
+    });
+    await server.listen();
+    const address = server.httpServer?.address();
+    const port =
+      address && typeof address === 'object' ? address.port : options.port;
+    const baseUrl = `http://127.0.0.1:${port}/`;
+    const url = captureUrl(baseUrl, options);
+
+    reporter.step('Launching headless Chromium…');
+    const chromium = await loadChromium();
+    try {
+      browser = await chromium.launch({
+        headless: !options.headed,
+        args: [
+          '--no-sandbox',
+          // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
+          // the software (SwiftShader) WebGL backend.
+          '--enable-unsafe-swiftshader',
+          // The demo path sends no input during recording, so without these
+          // Chromium throttles the requestAnimationFrame loop for a
+          // backgrounded/occluded page — the canvas stops redrawing and the
+          // recorded clip comes out static. Keep the loop running at full
+          // rate so the in-game demo is recorded faithfully.
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+        ],
+      });
+    } catch (error) {
+      throw asSetupError(error);
+    }
+
+    // `--count 1` (the default) returns the exact single-clip result object so
+    // the existing `--json` shape cannot regress (AC3).
+    if (outputPaths.length === 1) {
+      return await captureClip({
+        browser,
+        url,
+        outputPath: outputPaths[0],
+        options,
+        reporter,
+      });
+    }
+
+    return await runCaptureIterations({
+      outputPaths,
+      reporter,
+      captureOne: ({ outputPath }) =>
+        captureClip({ browser, url, outputPath, options, reporter }),
+    });
   } finally {
     reporter.done();
     if (browser && !options.keepServer) await browser.close().catch(() => {});
@@ -820,7 +1059,7 @@ export async function runCapture(
  * @param {string} mimeType
  */
 async function startRecording(page, mimeType) {
-  await page.evaluate((resolvedMimeType) => {
+  return page.evaluate((resolvedMimeType) => {
     // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
     const captureChunk = window.__aiHellCaptureChunk;
     const canvas = document.querySelector('#game-container canvas');
@@ -857,13 +1096,16 @@ async function startRecording(page, mimeType) {
       await captureChunk(btoa(binary));
     };
 
+    const captureStartedAtEpochMs = Date.now();
     window.__aiHellCapture = {
       recorder,
       chunks,
       mimeType: resolvedMimeType,
       audioTrackCount: audioTracks.length,
+      captureStartedAtEpochMs,
     };
     recorder.start(1000);
+    return captureStartedAtEpochMs;
   }, mimeType);
 }
 
@@ -1105,16 +1347,49 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
  * so the integration tests can assert the cap path's exit code without a
  * browser.
  *
- * @param {{ fullRun?: boolean, capHit?: boolean, nonTrivial?: boolean }} [result]
+ * @param {{ fullRun?: boolean, capHit?: boolean, nonTrivial?: boolean, iterations?: object[] }} [result]
  * @returns {number}
  */
 export function captureExitCode(result = {}) {
+  // Batch aggregate: fail when any iteration failed (AH-0MUYTK941005E2M4, AC7).
+  if (Array.isArray(result.iterations)) {
+    return result.iterations.some((it) => !it || it.ok !== true) ? 1 : 0;
+  }
   if (result.fullRun === true && result.capHit === true) return 1;
   if (result.nonTrivial === false) return 1;
   return 0;
 }
 
+/** Renders the human-readable summary for a multi-clip batch. */
+function formatBatchReport(batch) {
+  const lines = [
+    'AI_Hell automated gameplay capture — batch',
+    '=========================================',
+    `Clips:      ${batch.count} (${batch.succeeded} succeeded, ${batch.failed} failed)`,
+  ];
+
+  for (const iteration of batch.iterations) {
+    if (iteration.ok) {
+      lines.push(
+        `  #${iteration.index} ok   ${iteration.output}  ` +
+          `${((iteration.bytes ?? 0) / 1024).toFixed(1)} KiB  ` +
+          `${formatDuration(iteration.durationMs ?? 0)}`,
+      );
+    } else {
+      const detail =
+        iteration.error ??
+        `failed verdict (${(iteration.reasons ?? []).join('; ')})`;
+      lines.push(`  #${iteration.index} FAIL ${iteration.output}  ${detail}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 function formatReport(result) {
+  // A multi-clip batch reports a per-iteration summary instead of one clip.
+  if (Array.isArray(result.iterations)) return formatBatchReport(result);
+
   const lines = [
     'AI_Hell automated gameplay capture',
     '=================================',
@@ -1152,38 +1427,63 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
     );
     console.log(
-      'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only).',
+      'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only).',
+    );
+    console.log(
+      'Count: --count n (alias -n) records n clips in one process, reusing a single dev server and browser session. Each clip gets a 1-based index; `--output demo.webm` with --count 3 writes demo-1.webm, demo-2.webm, demo-3.webm.',
     );
     return;
   }
 
   const result = await runCapture(options);
+  const isBatch = Array.isArray(result.iterations);
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(formatReport(result));
-    if (result.pageErrors.length > 0) {
+    if (isBatch) {
+      const failures = result.iterations.filter((it) => !it.ok);
+      if (failures.length > 0) {
+        console.error(
+          `Capture iterations failed (${failures.length}/${result.count}):`,
+        );
+        for (const failure of failures) {
+          const detail =
+            failure.error ??
+            `failed verdict (${(failure.reasons ?? []).join('; ')})`;
+          console.error(`  - #${failure.index} ${failure.output}: ${detail}`);
+        }
+      }
+    } else if (result.pageErrors.length > 0) {
       console.warn(`Page errors (${result.pageErrors.length}):`);
       for (const error of result.pageErrors) console.warn(`  - ${error}`);
     }
     console.log(JSON.stringify(result, null, 2));
   }
 
-  if (result.fullRun && result.capHit) {
-    console.error(
-      'Capture hit the --max-duration safety cap without a run-end signal; ' +
-        'the clip is an incomplete run.',
-    );
-  }
+  if (isBatch) {
+    if (result.failed > 0) {
+      console.error(
+        `${result.failed} of ${result.count} capture iteration(s) failed; exiting non-zero.`,
+      );
+    }
+  } else {
+    if (result.fullRun && result.capHit) {
+      console.error(
+        'Capture hit the --max-duration safety cap without a run-end signal; ' +
+          'the clip is an incomplete run.',
+      );
+    }
 
-  if (!result.nonTrivial) {
-    console.error('Capture produced a trivial clip; see reasons above.');
+    if (!result.nonTrivial) {
+      console.error('Capture produced a trivial clip; see reasons above.');
+    }
   }
 
   const exitCode = captureExitCode(result);

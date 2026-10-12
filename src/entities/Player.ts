@@ -151,10 +151,12 @@ const FOUR_DIR_ENGINES: ReadonlyArray<EnginePortDef> = [
 ];
 
 /**
- * Asteroids scheme: three engines in the ship's local frame (nose = +x,
+ * Asteroids scheme: four engines in the ship's local frame (nose = +x,
  * which rotates to the facing angle via the Graphics rotation). One main
- * rear thruster opposite the direction of travel, plus two smaller (70%)
- * forward-side thrusters further forward on the hull (AC2).
+ * rear thruster opposite the direction of travel, two smaller (70%)
+ * forward-side thrusters further forward on the hull (AC2), plus a
+ * full-size nose retro-thruster at the hull front that fires while
+ * reversing (AC4, AH-0MV13LYCL006LB6J).
  */
 const ASTEROIDS_ENGINES: ReadonlyArray<EnginePortDef> = [
   // main rear thruster — opposite the nose (+x); flame shoots backward
@@ -162,6 +164,11 @@ const ASTEROIDS_ENGINES: ReadonlyArray<EnginePortDef> = [
   // forward-side thrusters — further forward on the hull, 70% size
   { port: 'leftSide', dx: 0.35, dy: -0.8, nx: -0.7071, ny: -0.7071, arcStart: -Math.PI, arcEnd: -Math.PI * 0.5, size: 0.7 },
   { port: 'rightSide', dx: 0.35, dy: 0.8, nx: -0.7071, ny: 0.7071, arcStart: Math.PI * 0.5, arcEnd: Math.PI, size: 0.7 },
+  // nose retro-thruster — at the hull front (nose, +x) with a +x outward
+  // normal, so its flame shoots forward while reversing (AC4). It is not
+  // drawn unless a reverse key fires it (AC3), and the model suppresses
+  // it entirely when `asteroidsReverseEnabled` is false.
+  { port: 'nose', dx: 1, dy: 0, nx: 1, ny: 0, arcStart: -Math.PI * 0.25, arcEnd: Math.PI * 0.25, size: 1 },
 ];
 
 /** Effective movement config: shared physics + scheme-specific rotation. */
@@ -169,6 +176,12 @@ type PlayerMovementConfig = MovementConfig & {
   rotationSpeed: number;
   rotationAcceleration: number;
   rotationDeceleration: number;
+  /** Asteroids reverse-thruster master toggle (AH-0MV13LY0R006ZO6D). */
+  reverseEnabled: boolean;
+  /** Reverse-thrust acceleration (px/s²), independent of forward thrust. */
+  reverseAcceleration: number;
+  /** Speed cap (px/s) reachable under reverse thrust. */
+  reverseMaxSpeed: number;
 };
 
 /**
@@ -284,6 +297,9 @@ export class Player extends Phaser.GameObjects.Graphics {
       rotationSpeed: ship.asteroidsRotationSpeed,
       rotationAcceleration: ship.asteroidsRotationAcceleration,
       rotationDeceleration: ship.asteroidsRotationDeceleration,
+      reverseEnabled: ship.asteroidsReverseEnabled,
+      reverseAcceleration: ship.asteroidsReverseThrustAcceleration,
+      reverseMaxSpeed: ship.asteroidsReverseMaxSpeed,
     };
     this._config = { ...this._baseConfig };
 
@@ -440,6 +456,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       this._movementState,
       input,
       null,
+      this._config,
     ).length > 0) {
       for (const port of this._engines()) this._flameLens[port.port] = 0;
     }
@@ -542,6 +559,9 @@ export class Player extends Phaser.GameObjects.Graphics {
       rotationSpeed: config.asteroidsRotationSpeed,
       rotationAcceleration: config.asteroidsRotationAcceleration,
       rotationDeceleration: config.asteroidsRotationDeceleration,
+      reverseEnabled: config.asteroidsReverseEnabled,
+      reverseAcceleration: config.asteroidsReverseThrustAcceleration,
+      reverseMaxSpeed: config.asteroidsReverseMaxSpeed,
     };
     this._applySpeedMultiplier();
     // Loading a saved config restores its control scheme (AC4). If the
@@ -615,6 +635,15 @@ export class Player extends Phaser.GameObjects.Graphics {
     return { thrust, maxSpeed, friction };
   }
 
+  /**
+   * Whether the ship's reverse (retro) thruster is enabled
+   * (AH-0MV1J0OHP0072XA5 · AC4).  Read by the demo-bot snapshot so the bot
+   * respects the player's thruster configuration.
+   */
+  isReverseEnabled(): boolean {
+    return this._config.reverseEnabled;
+  }
+
   private _applySpeedMultiplier(): void {
     this._config = {
       thrust: this._baseConfig.thrust * this._speedMultiplier,
@@ -623,6 +652,11 @@ export class Player extends Phaser.GameObjects.Graphics {
       rotationSpeed: this._baseConfig.rotationSpeed,
       rotationAcceleration: this._baseConfig.rotationAcceleration,
       rotationDeceleration: this._baseConfig.rotationDeceleration,
+      // Reverse tunables are carried through unscaled: they are the
+      // player's independent reverse settings (AH-0MV13LY0R006ZO6D).
+      reverseEnabled: this._baseConfig.reverseEnabled,
+      reverseAcceleration: this._baseConfig.reverseAcceleration,
+      reverseMaxSpeed: this._baseConfig.reverseMaxSpeed,
     };
   }
 
@@ -1062,8 +1096,9 @@ export class Player extends Phaser.GameObjects.Graphics {
    * its component-scaled max length (`shipSize × thrustFlameLength ×
    * scale`, AC5); an engine that stops firing decays at 4× the growth
    * rate, so turning leaves no flame behind at the old port. In the
-   * Asteroids scheme the three engines (main + two 70% forward-side)
-   * fire at full scale while forward thrust is held (AC2).
+   * Asteroids scheme the forward engines (main + two 70% forward-side)
+   * fire at full scale while forward thrust is held (AC2), and the nose
+   * retro-thruster fires while reversing (AC4).
    *
    * Also drives the thruster hum (AH-0MTFOSOHN001Q620) via
    * `getEngineSoundLevel(state, input, thrustAcceleration)` →
@@ -1080,6 +1115,7 @@ export class Player extends Phaser.GameObjects.Graphics {
       this._movementState,
       this._input,
       this._componentThrust,
+      this._config,
     );
     const scales: Record<string, number> = {};
     for (const port of this._engines()) scales[port.port] = 0;
@@ -1164,6 +1200,30 @@ export class Player extends Phaser.GameObjects.Graphics {
     // angle. 4-directional scheme returns null → rotation 0.
     const facing = this._model.getFacing(this._movementState);
     this.setRotation(facing ?? 0);
+    this.setPosition(this._movementState.x, this._movementState.y);
+  }
+
+  /**
+   * Applies a bounded external drag (px/s) for one frame — the Galaga
+   * tractor-beam pull (AH-0MV01EFII008298D). The ship is displaced by
+   * `(vx, vy) * dt` on top of its own motion and the transform is updated,
+   * so a beam can drag the ship off course without altering its
+   * thrust/friction physics. The caller bounds the magnitude (see
+   * `src/scenes/core/captureBeam.ts`); because the default `MAX_SPEED`
+   * (175 px/s) exceeds the default bounded pull speed (90 px/s), a thrusting
+   * player can always escape.
+   *
+   * @param vx - External drag velocity x (px/s), bounded by the caller.
+   * @param vy - External drag velocity y (px/s), bounded by the caller.
+   * @param dt - Frame delta in seconds.
+   */
+  applyExternalDrag(vx: number, vy: number, dt: number): void {
+    if ((vx === 0 && vy === 0) || dt === 0) return;
+    this._movementState = {
+      ...this._movementState,
+      x: this._movementState.x + vx * dt,
+      y: this._movementState.y + vy * dt,
+    };
     this.setPosition(this._movementState.x, this._movementState.y);
   }
 

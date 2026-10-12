@@ -239,16 +239,25 @@ function openingCandidates(
 /**
  * Build a single curve/dynamic wave with the sequencer, or `null` when the
  * curve is degenerate (non-finite target) or the sequencer throws.
+ *
+ * `archetypeUsage` is the level's shared per-level archetype-usage map
+ * (AH-0MV2SGIX5005PFJT): the sequencer reads and updates it in place so the
+ * {@link MAX_ARCHETYPE_PER_LEVEL} cap spans the whole level rather than a
+ * single wave.
  */
 function buildSequencedWave(
   seq: SequencerFn,
   target: number,
   shootEnabled: boolean,
   candidates: CandidateGroup[],
+  archetypeUsage: Map<string, number>,
 ): WaveDefinition | null {
   if (!Number.isFinite(target)) return null;
   try {
-    const result = seq([target], candidates, { defaultShootEnabled: shootEnabled });
+    const result = seq([target], candidates, {
+      defaultShootEnabled: shootEnabled,
+      archetypeUsage,
+    });
     const wave = result.waves[0];
     if (!wave || wave.groups.length === 0) return null;
     return { groups: wave.groups.map(toWaveGroup), shootEnabled };
@@ -279,6 +288,10 @@ function buildConfiguredLevel(
   const shootEnabled = levelNumber >= FIRST_FIRING_LEVEL;
   const waves: WaveDefinition[] = [];
   let allFixedResolved = true;
+  // Per-level archetype usage, shared across the level's sequenced waves so
+  // no archetype fills every wave (AH-0MV2SGIX5005PFJT). `fixed` waves bypass
+  // the sequencer and therefore do not consume the cap.
+  const archetypeUsage = new Map<string, number>();
 
   for (const row of levelRows) {
     const mode = generationOf(row);
@@ -313,7 +326,13 @@ function buildConfiguredLevel(
     const waveCandidates = curation
       ? openingCandidates(curation, candidates, seed)
       : candidates;
-    const wave = buildSequencedWave(seq, target, shootEnabled, waveCandidates);
+    const wave = buildSequencedWave(
+      seq,
+      target,
+      shootEnabled,
+      waveCandidates,
+      archetypeUsage,
+    );
     if (!wave) return null;
     waves.push(wave);
   }

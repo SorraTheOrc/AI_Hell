@@ -15,6 +15,8 @@ export interface CaptureOptions {
   maxDurationMs: number;
   warmupMs: number;
   output: string | null;
+  /** Number of clips to record (default `DEFAULT_CAPTURE_COUNT`). */
+  count: number;
   port: number;
   headed: boolean;
   keepServer: boolean;
@@ -36,6 +38,9 @@ export interface CaptureStartStep {
 
 export const START_KEY_GAP_MS: number;
 
+/** Clips per invocation when `--count` is omitted (1 = single-clip default). */
+export const DEFAULT_CAPTURE_COUNT: number;
+
 /** Page-side event the game dispatches when a run ends. */
 export const RUN_ENDED_EVENT: string;
 /** Read-only `window` flag the game mirrors the run outcome onto. */
@@ -56,6 +61,13 @@ export interface RunEndedListenerStore {
 }
 
 export function parseCaptureArgs(argv?: string[]): CaptureOptions;
+/** Validates a `--count` value into a positive integer, or throws. */
+export function parseCaptureCount(value: unknown): number;
+/** Resolves the N output paths for a `--count` batch (indexed when > 1). */
+export function resolveOutputPaths(
+  requested: string | null | undefined,
+  count?: number,
+): string[];
 export function resolveCaptureMode(options?: {
   scripted?: boolean;
   scenario?: string | null;
@@ -78,8 +90,50 @@ export function readRunEndedSignal(
   plan?: RunEndedListenerPlan,
   scope?: object,
 ): unknown;
+/** A superficial per-iteration record in a batch summary. */
+export interface CaptureIterationRecord {
+  index: number;
+  output: string;
+  ok: boolean;
+  exitCode?: number;
+  bytes?: number;
+  durationMs?: number;
+  nonTrivial?: boolean;
+  capHit?: boolean;
+  complete?: boolean | null;
+  runOutcome?: { won: boolean; score: number } | null;
+  reasons?: string[];
+  pageErrors?: string[];
+  error?: string;
+}
+
+/** The aggregate shape a multi-clip `--count` run returns. */
+export interface CaptureBatchSummary {
+  count: number;
+  succeeded: number;
+  failed: number;
+  iterations: CaptureIterationRecord[];
+}
+
 export function captureExitCode(result?: {
   fullRun?: boolean;
   capHit?: boolean;
   nonTrivial?: boolean;
+  iterations?: Array<{ ok?: boolean }>;
 }): number;
+export function buildIterationRecord(
+  index: number,
+  clip: Record<string, unknown>,
+): CaptureIterationRecord;
+export function summariseCaptureBatch(
+  iterations?: CaptureIterationRecord[],
+): CaptureBatchSummary;
+export function runCaptureIterations(params: {
+  outputPaths: string[];
+  captureOne: (args: {
+    index: number;
+    outputPath: string;
+  }) => Promise<Record<string, unknown>>;
+  reporter?: object;
+  onIteration?: (record: CaptureIterationRecord) => void;
+}): Promise<CaptureBatchSummary>;

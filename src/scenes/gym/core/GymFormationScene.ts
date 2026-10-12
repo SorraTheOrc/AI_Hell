@@ -56,6 +56,7 @@ import {
 } from '../../../scenes/core/formationGlide';
 import {
   applyPhaseGhost,
+  drawForceFieldBubble,
   drawShieldBubble,
 } from '../../core/CombatEffectVisuals';
 import {
@@ -80,7 +81,20 @@ import {
   WasdKeysLike,
 } from '../../../utils/input';
 import { loadRules } from '../../../core/rules';
-import { pickInRange, resolveSpawnRange } from '../../../core/configTypes';
+import {
+  pickInRange,
+  resolveSpawnRange,
+  type EnemyFormationKind,
+} from '../../../core/configTypes';
+import {
+  advanceMarch,
+  computeMarchBounds,
+  createMarchState,
+  DEFAULT_MARCH_DROP,
+  DEFAULT_MARCH_STEP,
+  type MarchOptions,
+  type MarchState,
+} from '../../../scenes/core/marchFormation';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
@@ -331,6 +345,16 @@ export interface EnemyFormationConfig<
   spacingY: number;
   /** Forward (rightward) drift speed of the whole formation (px/s). */
   driftSpeed: number;
+  /**
+   * Formation kind. `march` selects the shared marching policy
+   * (Space Invaders archetype, AH-0MV01EDZS0005R20) instead of continuous
+   * drift; every other kind (or an absent value) keeps the drift behaviour.
+   */
+  formationKind?: EnemyFormationKind;
+  /** Horizontal step (px) for the `march` formation; see {@link marchStep}. */
+  marchStep?: number;
+  /** Vertical drop per reversal (px) for the `march` formation. */
+  marchDrop?: number;
   /** Initial formation base x. */
   startX: number;
   /** Initial formation base y. */
@@ -450,6 +474,17 @@ export class GymFormationScene<
   protected formationBaseY!: number;
   private shootEnabled = false;
 
+  /**
+   * Live marching-formation state (Space Invaders archetype,
+   * AH-0MV01EDZS0005R20). Non-null only when `config.formationKind` is
+   * `march`; drives the shared step/reverse/drop/speed-up policy.
+   */
+  private marchState: MarchState | null = null;
+  /** Full-strength member count for the march speed-up ratio. */
+  private marchInitialCount = 0;
+  /** Resolved march bounds (px) for the current formation. */
+  private marchBounds: { minX: number; maxX: number } = { minX: 0, maxX: 0 };
+
   /** Live wormhole handle for the current formation spawn, or null. */
   private _spawnWormhole: WormholeHandle | null = null;
 
@@ -479,6 +514,8 @@ export class GymFormationScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Whether the shield bubble was drawn in the last visual update. */
   private shieldBubbleDrawn = false;
+  /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
+  private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
 
   // ── Formation glide (AH-0MUL15N63003PUDB)
 
@@ -545,6 +582,39 @@ export class GymFormationScene<
     // offset, so the Diver group is back on the shared formation base.
     this.diverAnchorX = 0;
     this.diverAnchorY = 0;
+
+    // A marching block (Space Invaders archetype) starts fresh at the
+    // resolved base heading right; non-march formations leave the state null
+    // and keep the continuous-drift path.
+    if (this.config.formationKind === 'march') {
+      this.marchInitialCount = this.config.count;
+      this.marchBounds = this._marchBounds();
+      this.marchState = createMarchState(this.formationBaseX, this.formationBaseY, 1);
+    } else {
+      this.marchState = null;
+    }
+  }
+
+  /** Base-position bounds (px) keeping the whole marching block on screen. */
+  private _marchBounds(): { minX: number; maxX: number } {
+    const offsets = this.config.buildOffsets(this.config.count);
+    const maxAbsCol = offsets.reduce(
+      (max, offset) => Math.max(max, Math.abs(offset.col)),
+      0,
+    );
+    return computeMarchBounds(maxAbsCol * this.config.spacingX, GAME_WIDTH);
+  }
+
+  /** Resolved march tuning for the current config (shared policy options). */
+  private _marchOptions(): MarchOptions {
+    return {
+      step: this.config.marchStep ?? DEFAULT_MARCH_STEP,
+      drop: this.config.marchDrop ?? DEFAULT_MARCH_DROP,
+      referenceSpeed: this.config.driftSpeed,
+      minX: this.marchBounds.minX,
+      maxX: this.marchBounds.maxX,
+      initialCount: this.marchInitialCount,
+    };
   }
 
   create(): void {
@@ -602,6 +672,8 @@ export class GymFormationScene<
     this.shieldBubble = this.add.graphics();
     this.shieldBubble.setDepth(50);
     this.shieldBubbleDrawn = false;
+    this.forceFieldBubble = this.add.graphics();
+    this.forceFieldBubble.setDepth(51);
 
     // ── Controls (bottom-right HUD, minimal) ───────────────────────
     // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
@@ -649,12 +721,6 @@ export class GymFormationScene<
     // ── Optional power-up layer (opt-in via config.powerUps) ────────
     this._initPowerUpLayer();
 
-    // ── Teleport teleport keys (S/↓) — bound whenever a player exists ─────
-    // Independent of the opt-in power-up drop layer: the minerals gym
-    // grants Teleport through the hold-full choice, not field drops, so teleport
-    // must be usable there too (AH-0MUHMXWGC0058BO4 · AC2).
-    this._bindTeleportKeys();
-
     // ── Mineral layer: seed 100 random minerals + HUD hold bar ─────
     this._initMineralLayer();
 
@@ -696,6 +762,7 @@ export class GymFormationScene<
     this.hud = null;
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
+    this.forceFieldBubble = null;
     this.minerals = [];
     this.mineralsSeeded = 0;
     this.mineralHoldModel.reset();
@@ -746,6 +813,8 @@ export class GymFormationScene<
     this.shieldBubble?.destroy();
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
+    this.forceFieldBubble?.destroy();
+    this.forceFieldBubble = null;
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
@@ -834,19 +903,6 @@ export class GymFormationScene<
 
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
-  }
-
-  /**
-   * Binds the S / ↓ teleport keys whenever a player exists, independent of
-   * the opt-in power-up drop layer. `addKey` is idempotent for the same
-   * key code, so this is safe to call from `create()` on every restart.
-   */
-  private _bindTeleportKeys(): void {
-    if (!this.player) return;
-    this.teleportKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.S) ?? null;
-    this.downKey =
-      this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN) ?? null;
   }
 
   /** Snapshot of the live bodies a drop must avoid (enemies + player). */
@@ -1065,6 +1121,11 @@ export class GymFormationScene<
   private _updateEffectVisuals(): void {
     this.shieldBubbleDrawn = drawShieldBubble(
       this.shieldBubble,
+      this.player,
+      this.effectsRegistry,
+    );
+    drawForceFieldBubble(
+      this.forceFieldBubble,
       this.player,
       this.effectsRegistry,
     );
@@ -1379,13 +1440,30 @@ export class GymFormationScene<
   tick(dt: number): void {
     const { config } = this;
 
-    // Advance the formation base unconditionally; when the whole formation
-    // has crossed the right edge, respawn it off the left edge so it flies
-    // again. No entity can freeze the drift (the obsolete formation-hold seam
-    // was removed in AH-0MUAYB957002EMYV).
-    this.formationBaseX += config.driftSpeed * dt;
-    if (this.formationBaseX > GAME_WIDTH + 60) {
-      this.formationBaseX = this._respawnX();
+    // Advance the formation base unconditionally. A `march` block (Space
+    // Invaders archetype, AH-0MV01EDZS0005R20) steps, reverses at the arena
+    // edge and drops a row via the shared pure policy; every other formation
+    // keeps the continuous rightward drift, respawning off the left edge once
+    // it has fully crossed (the obsolete formation-hold seam was removed in
+    // AH-0MUAYB957002EMYV). No entity can freeze the movement.
+    if (this.marchState) {
+      const alive = this.entities.reduce(
+        (count, entity) => count + (entity.alive ? 1 : 0),
+        0,
+      );
+      this.marchState = advanceMarch(
+        this.marchState,
+        dt,
+        alive,
+        this._marchOptions(),
+      );
+      this.formationBaseX = this.marchState.x;
+      this.formationBaseY = this.marchState.y;
+    } else {
+      this.formationBaseX += config.driftSpeed * dt;
+      if (this.formationBaseX > GAME_WIDTH + 60) {
+        this.formationBaseX = this._respawnX();
+      }
     }
 
     // Diver re-anchor (GDD §4.1 — E2, AH-0MUAYB957002EMYV): if a Diver's
@@ -1426,8 +1504,20 @@ export class GymFormationScene<
         entity.setAimTarget?.(this.player.x, this.player.y);
       }
 
+      // Power Pellet fright (AH-0MV1BIW95004POSX): offset the enemy away
+      // from the ship using the shared pure flee maths, then suppress its
+      // fire while the window is active. The game applies the identical
+      // shared helper, so the flee is gym↔game identical.
+      const flee = this._frightenedFleeOffset(entity);
+      if (flee.x !== 0 || flee.y !== 0) {
+        entity.x += flee.x;
+        entity.y += flee.y;
+      }
+
       // Collect any bullets the entity fired this frame (uses the fresh aim).
-      this.bullets.push(...config.collectBullets(entity, this.time.now));
+      if (!this.isEnemyFrightened()) {
+        this.bullets.push(...config.collectBullets(entity, this.time.now));
+      }
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease every entity
@@ -1461,9 +1551,10 @@ export class GymFormationScene<
       this._tickPlayer(dt);
       this._advancePlayerBullets(dt);
 
-      // Automatic Phase Shift: feed live danger before collision gating
-      // so a trigger this frame protects this frame (parent AH-0MUIYX1EE008FVS8).
-      this._updatePhaseShiftAutoTrigger(dt);
+      // Automatic defence (Phase Shift / Teleport): feed live danger before
+      // collision gating so a trigger this frame protects this frame
+      // (parent AH-0MUIYX1EE008FVS8; AH-0MUZE4AIP009HZWC).
+      this._updateAutoDefence(dt);
 
       // Collisions + post-hit invulnerability blink (player component only).
       this._handleCollisions();
@@ -1475,12 +1566,6 @@ export class GymFormationScene<
 
     // ── Optional power-up layer: cadence + drop lifecycles ───────────
     this._updatePowerUpLayer(dt);
-
-    // ── Teleport teleport (S/↓) — independent of the opt-in drop layer ─────
-    // The minerals gym grants Teleport through the hold-full choice, so the
-    // handler must run even when field drops are disabled
-    // (AH-0MUHMXWGC0058BO4 · AC2).
-    this._handleTeleport();
 
     // ── Effect timers + HUD — independent of the opt-in drop layer ───
     // Timed effects (e.g. Phase Shift granted on teleport arrival) and the HUD must
@@ -1771,7 +1856,7 @@ export class GymFormationScene<
    * the wipe→countdown path calls it too.
    *
    * Player bullets are intentionally kept — a subclass that wants a clean
-   * slate clears them before calling this (see `GymEnemies._onRespawn`).
+   * slate clears them before calling this (see `GymFodderEnemies._onRespawn`).
    */
   protected respawnFormation(): void {
     // Clear enemy bullets so a stale shot does not instantly hit the player

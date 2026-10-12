@@ -206,6 +206,24 @@ describe('MineralChoiceScene', () => {
       expect(calls).toEqual([0]);
     });
 
+    it('auto-selects a preferred option index when one is supplied (AH-0MV03GXZQ00801T4)', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      const calls: number[] = [];
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'shield', name: 'Shield', kind: 'powerup' },
+          { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+          { id: 'extra_life', name: 'Extra Life', kind: 'powerup' },
+        ],
+        autoSelectMs: 40,
+        autoSelectIndex: 2,
+        onSelect: (index: number) => calls.push(index),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      expect(calls).toEqual([2]);
+    });
+
     it('AC5 — waits for a real selection when no delay is supplied', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       const calls: number[] = [];

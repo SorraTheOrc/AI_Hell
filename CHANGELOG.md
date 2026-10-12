@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.1.11 (2026-10-12)
+> **Release focus:** This release focuses on making combat and demo mode feel more rhythmic and human-like, with explosions landing on the beat, a smarter demo bot, and a shorter, more intense Central AI boss fight. It also adds classic arcade-inspired weapons, enemies, and power-ups, alongside quality-of-life improvements like automatic teleporting, reverse thrust, and full playthrough recording.
+### Features
+- Test any enemy type from one gym scene using a new dropdown. (AH-0MV13G5EV008D41E)
+- Explosions now land on the beat, making kills feel more rhythmic and musical. (AH-0MV01HNLU008S5E3)
+- Teleport now fires automatically when you're in danger, freeing S/↓ for reverse thrust. (AH-0MUZE4AIP009HZWC)
+- Demo mode now plays like a skilled human instead of random flailing. (AH-0MUY089KR003F8S4)
+- Brake or reverse without turning around using S or Down. (AH-0MUZCSB4B00107RG)
+- The demo bot now grabs extra lives when it can, making attract mode look smarter. (AH-0MV03GXZQ00801T4)
+- Track on-screen action intensity to find highlights and improve pacing. (AH-0MUZMTTYH008KVS2)
+- Collect new weapons and power-ups inspired by classic arcade games. (AH-0MV14SO0G0095IJ4)
+- Researching a way to measure on-screen action so future updates can pace gameplay better. (AH-0MUZCSJXQ004TREN)
+- The Central AI boss fight is now shorter, faster and more intense, with a clear health bar and satisfying hit feedback. (AH-0MUY3X4NS007JR8X)
+- Classic arcade enemies are coming — get ready for new foes inspired by the games you grew up with. (AH-0MUYAQ6YH0010G52)
+- The demo bot now uses slightly shorter thrust bursts, making it feel more human. (AH-0MUYRJQE50021T4A)
+- Upgrades you already own now appear more often in hold-full choices. (AH-0MUY47W62005FF74)
+- You can now open the game's GitHub page from the main menu to report bugs or contribute. (AH-0MUZI83EO003WVTG)
+- Record multiple gameplay clips in one go instead of one at a time. (AH-0MUYTK941005E2M4)
+- Record and share complete playthrough videos, from start to victory or defeat. (AH-0MUX2K8U7000GFNU)
+### Bug Fixes
+- Automatic defence now correctly warps you to safety when in danger. (AH-0MV04TSMZ0083WJ1)
+- Victory and game-over tests are now reliable, so updates ship without random test failures. (AH-0MUYALJ9S0002XXZ)
+- Audio builds now work correctly in all development environments, so new sound content ships without delay. (AH-0MUZJDT88002L536)
+- The session recording tool now works correctly when launched from the command line. (AH-0MV2RY8XT007I91E)
+- The demo bot now uses reverse thrusters only in emergencies, making it fly more like a real pilot. (AH-0MV2WJSY70070HK2)
+- Enemies now flee away from you during Power Pellets instead of orbiting. (AH-0MV4BXUWT005MWAJ)
+### Other
+- We confirmed the current audio approach is the best fit, so no changes are needed. (AH-0MUZ9PCTV0050UMD)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.10 (2026-10-08)
 > **Release focus:** This release focuses on making the game's demo and capture systems reliable and human-like, with smarter bot behaviour, automatic video and audio recording, and live progress feedback. It also rebalances core combat and progression, including a tougher final boss, slower enemy bullets, multi-hit shields, and clearer upgrade and pickup rules.
 ### Features

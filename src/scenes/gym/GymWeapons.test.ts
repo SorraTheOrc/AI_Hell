@@ -34,7 +34,7 @@ import {
   type WeaponId,
 } from '../../utils/weapons';
 import { HelpScene } from '../HelpScene';
-import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
+import { HELP_BUTTON_LABEL, getHelpEntry } from '../../utils/gymHelp';
 
 describe('GymWeapons AC1/AC3: gym index discovery', () => {
   let booted: BootedGame | null = null;
@@ -184,6 +184,10 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       spread: [],
       dual: [],
       rapid: [],
+      wave_laser: [],
+      ricochet: [],
+      cluster: [],
+      options: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -393,14 +397,14 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → nova → mortar → arc → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → wave laser → ricochet → cluster → options → nova → mortar → arc → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle through the rest of the order (conventional, AOE, then Reset).
-    for (const expected of ['dual', 'rapid', 'nova', 'mortar', 'arc', 'reset']) {
+    // Cycle through the rest of the order (conventional, wave laser, ricochet, cluster, options, AOE, then Reset).
+    for (const expected of ['dual', 'rapid', 'wave_laser', 'ricochet', 'cluster', 'options', 'nova', 'mortar', 'arc', 'reset']) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
@@ -932,6 +936,10 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'spread',
       'dual',
       'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
       'nova',
       'mortar',
       'arc',
@@ -1170,5 +1178,230 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
         (CombatScene.prototype as unknown as Record<string, unknown>)[method],
       );
     }
+  });
+});
+
+describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootAoe(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('a wave-laser beam passes through two aligned practice targets', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    // Park the ship away from the target line so its auto-fire is inert.
+    player.setPosition(50, 50);
+    scene.advanceBullets(2); // clear the boot volley
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const targets = scene.getTargets();
+    // targets[1] (455,205) and targets[2] (505,205) are horizontally aligned.
+    const bullet = scene.spawnPlayerBullet(
+      445,
+      205,
+      100,
+      0,
+      WEAPON_CATALOGUE.wave_laser.bulletColor,
+      3,
+      3,
+      WEAPON_CATALOGUE.wave_laser.piercing,
+    );
+
+    for (let i = 0; i < 8; i++) scene.tick(0.1);
+
+    // The beam damaged both aligned targets and survived each of them.
+    expect(targets[1].alive).toBe(false);
+    expect(targets[2].alive).toBe(false);
+    expect(bullet.piercing).toBeGreaterThan(0);
+  });
+
+  it('an ordinary (non-piercing) bullet stops at the first target', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const targets = scene.getTargets();
+    const bullet = scene.spawnPlayerBullet(445, 205, 100, 0, 0x00ffff, 3, 3, 0);
+
+    for (let i = 0; i < 8; i++) scene.tick(0.1);
+
+    // Only the first target is destroyed; the bullet is consumed.
+    expect(targets[1].alive).toBe(false);
+    expect(targets[2].alive).toBe(true);
+    expect(scene.getBullets()).not.toContain(bullet);
+  });
+});
+
+describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('a ricochet bullet reflects off the arena wall and keeps travelling', async () => {
+    const scene = await bootWeapons();
+    scene.getPlayer()!.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const bullet = scene.spawnPlayerBullet(
+      100,
+      400,
+      -350,
+      0,
+      WEAPON_CATALOGUE.ricochet.bulletColor,
+      5,
+      3,
+      0,
+      WEAPON_CATALOGUE.ricochet.bounce,
+    );
+
+    scene.tick(0.3); // 100 - 105 = -5 → reflects to +5
+
+    expect(scene.getBullets()).toContain(bullet);
+    expect(bullet.vx).toBeCloseTo(350, 5);
+    expect(bullet.bounces).toBe(WEAPON_CATALOGUE.ricochet.bounce! - 1);
+  });
+
+  it('a ricochet bullet with no budget left expires at the wall instead of wrapping', async () => {
+    const scene = await bootWeapons();
+    scene.getPlayer()!.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    const bullet = scene.spawnPlayerBullet(
+      100,
+      400,
+      -350,
+      0,
+      WEAPON_CATALOGUE.ricochet.bulletColor,
+      5,
+      3,
+      0,
+      0,
+    );
+
+    scene.tick(0.3);
+
+    expect(scene.getBullets()).not.toContain(bullet);
+  });
+});
+
+describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYXU)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('renders the Cluster Missile row from the shared catalogue (help entry)', () => {
+    const entry = getHelpEntry('cluster');
+    expect(entry.name).toBe('Cluster Missile');
+    expect(entry.description).toBe(WEAPON_CATALOGUE.cluster.description);
+  });
+
+  it('a cluster missile fired in the gym splits into warheads via the shared seam', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    scene.advanceBullets(2);
+    expect(scene.getBullets()).toHaveLength(0);
+
+    // Aim a cluster missile at a practice target: the shared bullet-vs-enemy
+    // pass splits it on impact (the same code the game runs).
+    const target = scene.getTargets()[0];
+    const missile = scene.spawnPlayerBullet(
+      target.x,
+      target.y,
+      0,
+      0,
+      WEAPON_CATALOGUE.cluster.bulletColor,
+      2,
+      3,
+    );
+    missile.splitWeapon = WEAPON_CATALOGUE.cluster;
+
+    // First tick: the missile impacts the target and queues its warheads.
+    scene.tick(0.01);
+    expect(missile.splitSpawned).toBe(true);
+
+    // Second tick: the shared player step flushes the warheads into the live
+    // bullet list, so the gym demonstrates the same split the game does.
+    scene.tick(0.01);
+    const warheads = scene
+      .getBullets()
+      .filter(
+        (b) =>
+          b.color === WEAPON_CATALOGUE.cluster.bulletColor &&
+          b.splitWeapon === undefined,
+      );
+    expect(warheads.length).toBeGreaterThan(0);
+  });
+});
+
+describe('GymWeapons — Gradius Options escort demonstration (AH-0MV1BIVVK0043TEM)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWeapons(): Promise<GymWeapons> {
+    booted = await bootScene([GymWeapons]);
+    return booted!.scene as GymWeapons;
+  }
+
+  it('renders the Options row from the shared catalogue (help entry)', () => {
+    const entry = getHelpEntry('options');
+    expect(entry.name).toBe('Options');
+    expect(entry.description).toBe(WEAPON_CATALOGUE.options.description);
+  });
+
+  it('fires orbiting pod bullets through the shared core auto-fire', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(100, 100);
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    // Drive the inherited shared auto-fire directly so the fired pods are
+    // observable before the gym's bullet-advance culls short-lived bullets.
+    (
+      scene as unknown as { _autoFire(dt: number): void }
+    )._autoFire(0.8);
+
+    const pods = scene
+      .getBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.options.bulletColor);
+    expect(pods.length).toBe(
+      player.getWeaponDef('options').orbit?.pods ?? 0,
+    );
   });
 });
