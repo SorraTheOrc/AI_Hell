@@ -87,14 +87,19 @@ import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 type DropType = WeaponId | 'reset';
 
 /**
- * Round-robin spawn order (AC3, parent AH-0MQUYHY0000MZ2F): the three
- * conventional weapons, the three AOE weapons, then Reset. Interleaving the
- * AOE family means the weapon gym demonstrates every fire mode.
+ * Round-robin spawn order (AC3, parent AH-0MQUYHY0000MZ2F): the
+ * conventional weapons, the ricochet, the three AOE weapons, then Reset.
+ * Interleaving the AOE family means the weapon gym demonstrates every fire
+ * mode.
  */
 const ROUND_ROBIN_ORDER: readonly DropType[] = [
   'spread',
   'dual',
   'rapid',
+  'wave_laser',
+  'ricochet',
+  'cluster',
+  'options',
   'nova',
   'mortar',
   'arc',
@@ -305,6 +310,14 @@ export class GymWeapons extends CombatScene<
 
     // ── Bullet lifecycle: advance + wrap + lifetime expiry ─────
     this._advanceBullets(dt);
+
+    // ── Player bullets vs the inert practice targets ───────────
+    // Run the shared player-bullets-vs-enemies pass so every weapon —
+    // including the piercing wave laser — damages the practice targets
+    // through exactly the code the game's collision pass uses. Only this
+    // pass runs (no enemy bullets, no ram): the gym stays threat-free
+    // (AH-0MV1BIUSJ0090W92).
+    this._resolvePlayerBulletsVsEnemies();
 
     // ── Drop lifecycles (grow/hold/shrink) ─────────────────────
     this._applyDropMagnet(this.drops, dt);

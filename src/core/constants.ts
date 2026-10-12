@@ -116,6 +116,14 @@ export const MAGNET_ATTRACTION_SPEED = 120;
 /** Render depth of the standalone HUD — above gameplay objects. */
 export const HUD_DEPTH = 1000;
 
+/**
+ * Canonical URL of the project's public GitHub repository
+ * (AH-0MUZI83EO003WVTG). Single source of truth for the main-menu GitHub
+ * link's click target; the displayed label is `🐙  GitHub`. Fork
+ * maintainers point this at their own repository.
+ */
+export const GITHUB_REPO_URL = 'https://github.com/SorraTheOrc/AI_Hell';
+
 // ── Entity collision hit radii (GDD §2.6) ──────────────────────────
 
 /**
@@ -176,6 +184,30 @@ export const PLAYER_SPAWN = { x: 480, y: 270 } as const;
 
 /** Shield base duration in seconds (15 s; absorptions level separately). */
 export const COMBAT_SHIELD_DURATION = 15;
+
+// ── Force Field (Gradius homage, AH-0MV1BIX1W006XF95) ────────────────
+
+/**
+ * Force Field active-bubble radius as a multiple of `SHIP_SIZE` (1.8×).
+ * The bubble is the reflection boundary: an enemy bullet that enters it is
+ * bounced back as a player-owned bullet, so the radius is shared by the
+ * gameplay test and the code-drawn bubble visual (AH-0MV1BIX1W006XF95).
+ */
+export const FORCE_FIELD_RADIUS_FACTOR = 1.8;
+
+/**
+ * Neon aquamarine colour shared by the Force Field bubble, its reflected
+ * bullets and its code-drawn drop icon (Gradius homage,
+ * AH-0MV1BIX1W006XF95).
+ */
+export const FORCE_FIELD_COLOR = 0x33ffcc;
+
+/**
+ * Lifetime in seconds of a bullet reflected by the Force Field. Long enough
+ * for the bounced shot to cross the arena back toward its source, finite so
+ * reflected bullets never accumulate forever.
+ */
+export const FORCE_FIELD_REFLECT_LIFETIME = 1.5;
 
 /**
  * Phase Shift duration in seconds (1.5 s, pass-through). Applied

@@ -5,9 +5,10 @@ import * as effectsModule from '../../audio/effects';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
 import { Player } from '../../entities/Player';
-import type { PlayerBullet } from '../../entities/PlayerBullet';
+import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
+import { FRIGHTEN_DEFAULT_DURATION } from './frightenedState';
 import {
   CombatDrop,
   CombatEnemyBullet,
@@ -18,7 +19,11 @@ import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
 import {
+  WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
+  OPTIONS_MAX_PODS,
+  OPTIONS_ORBIT_RADIUS,
+  OPTIONS_POD_BULLET_SPEED,
   type WeaponId,
 } from '../../utils/weapons';
 
@@ -257,14 +262,20 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   runUpdateP4Bomb(dt: number) {
     this._updateP4Bomb(dt);
   }
-  runHandleTeleport() {
-    this._handleTeleport();
+  runUpdateAutoDefence(dt: number) {
+    this._updateAutoDefence(dt);
   }
   runHitPlayer() {
     this._hitPlayer();
   }
   runCollisions() {
     this._handleCollisions();
+  }
+  runFlushSplits() {
+    this.flushPendingSplitWarheads();
+  }
+  runSplitProjectile(bullet: PlayerBullet) {
+    this.splitProjectile(bullet);
   }
   runApplyPlayerHit(player: Player) {
     this.applyPlayerHit(player);
@@ -295,9 +306,6 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
     this.add.existing(player);
     this.playerRef = player;
     return player;
-  }
-  setTeleportKey(key: Phaser.Input.Keyboard.Key | null) {
-    this.teleportKey = key;
   }
   addDrop(id: 'speed_boost' | 'bomb', weaponDropId?: string): StubDrop {
     const g = this.add.graphics();
@@ -331,7 +339,7 @@ describe('CombatScene — shared combat core hook contract', () => {
       '_collectDrop',
       '_spawnPlayerExplosion',
       '_clearEnemyBullets',
-      '_handleTeleport',
+      '_updateAutoDefence',
       '_readPlayerInput',
     ]) {
       expect(typeof (proto as unknown as Record<string, unknown>)[method]).toBe(
@@ -558,17 +566,49 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.effects.hasTeleport()).toBe(true);
   });
 
-  it('AC3 — _handleTeleport triggers on a held teleport key', async () => {
+  it('AC1/AC3 — automatic defence warps on danger with no key press when Teleport is chosen', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('teleport');
+    // Three hostile bodies within DANGER_RADIUS (40 px) → in danger.
+    for (let i = 0; i < 3; i += 1) {
+      scene.entities.push(new StubEnemy(scene, 110 + i * 5, 100));
+    }
+
+    scene.runUpdateAutoDefence(0.016);
+
+    expect(scene.effects.hasTeleport()).toBe(false);
+    expect(scene.effects.isPhased).toBe(true);
+    expect(Math.hypot(player.x - 100, player.y - 100)).toBeGreaterThan(0);
+  });
+
+  it('AC1 — automatic defence does nothing below the danger threshold', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });
     scene.effects.applyCollect('teleport');
-    const key = scene.input.keyboard!.addKey('S');
-    (key as unknown as { _justDown: boolean })._justDown = true;
-    scene.setTeleportKey(key);
+    // Only two threats → below DANGER_THREAT_THRESHOLD (3).
+    for (let i = 0; i < 2; i += 1) {
+      scene.entities.push(new StubEnemy(scene, 110 + i * 5, 100));
+    }
 
-    scene.runHandleTeleport();
+    scene.runUpdateAutoDefence(0.016);
 
-    expect(scene.effects.hasTeleport()).toBe(false);
+    expect(scene.effects.hasTeleport()).toBe(true);
+    expect(scene.effects.isPhased).toBe(false);
+  });
+
+  it('AC1 — automatic defence auto-triggers Phase Shift when only phase charges are held', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    scene.effects.applyCollect('phase_shift');
+    for (let i = 0; i < 3; i += 1) {
+      scene.entities.push(new StubEnemy(scene, 110 + i * 5, 100));
+    }
+
+    scene.runUpdateAutoDefence(0.016);
+
+    expect(scene.effects.isPhased).toBe(true);
+    expect(scene.effects.phaseCharges()).toBe(0);
   });
 
   // ── AC5 — shared bullet-vs-bullet impact path ────────────────────
@@ -787,6 +827,42 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.hooks).toContain('onPlayerHit');
   });
 
+  it('AH-0MV1BIW95004POSX — ramming a frightened enemy destroys it without hitting the player', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 80, y: 80 });
+    const enemy = new StubEnemy(scene, player.x, player.y);
+    scene.entities.push(enemy);
+    // Collect the Power Pellet to open the shared fright window.
+    scene.effects.applyCollect('power_pellet');
+    expect(scene.effects.isFrightened()).toBe(true);
+
+    scene.runCollisions();
+
+    // The frightened enemy is destroyed (the "eat the ghost" beat) and the
+    // ship is unharmed.
+    expect(scene.hooks).toContain('onPlayerRamsEnemy');
+    expect(enemy.destroyed).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.hooks).not.toContain('onPlayerHit');
+  });
+
+  it('AH-0MV1BIW95004POSX — the fright window expires and normal steering/contact resumes', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 80, y: 80 });
+    scene.effects.applyCollect('power_pellet');
+    // Advance past the base 6 s window; the status must clear.
+    scene.effects.tick(FRIGHTEN_DEFAULT_DURATION + 0.01);
+    expect(scene.effects.isFrightened()).toBe(false);
+
+    const enemy = new StubEnemy(scene, player.x, player.y);
+    scene.entities.push(enemy);
+    scene.runCollisions();
+
+    // No longer frightened: body contact destroys the enemy AND hits the ship.
+    expect(enemy.destroyed).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(1);
+  });
+
   it('AC4 — a phased player skips the enemy-bullet/ram collision passes', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 90, y: 90 });
@@ -858,6 +934,10 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       spread: [],
       dual: [],
       rapid: [],
+      wave_laser: [],
+      ricochet: [],
+      cluster: [],
+      options: [],
       nova: [],
       mortar: [],
       arc: [],
@@ -912,5 +992,425 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
       expect(at10ms[weapon].length).toBeGreaterThan(0);
       expect(at10ms[weapon]).toEqual(at25ms[weapon]);
     }
+  });
+});
+
+// ── R-Type wave-laser piercing budget (AH-0MV1BIUSJ0090W92) ──────────
+
+describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Adds a single-hit stub enemy at (x, y) and returns it. */
+  function addEnemy(scene: StubCombatScene, x: number, y: number): StubEnemy {
+    const enemy = new StubEnemy(scene, x, y);
+    scene.add.existing(enemy);
+    scene.entities.push(enemy);
+    return enemy;
+  }
+
+  it('an ordinary bullet (piercing 0) damages one enemy and is consumed', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 240, 200);
+
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 0);
+    scene.runCollisions();
+
+    expect(first.destroyed).toBe(true);
+    expect(second.destroyed).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+  });
+
+  it('a piercing bullet damages its budget of enemies and survives each of them', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+    const third = addEnemy(scene, 320, 200);
+
+    // Budget 2: survive the first two, consume on the third.
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 2);
+
+    scene.runCollisions(); // first
+    expect(first.destroyed).toBe(true);
+    expect(bullet.piercing).toBe(1);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+
+    bullet.setPosition(260, 200);
+    scene.runCollisions(); // second
+    expect(second.destroyed).toBe(true);
+    expect(bullet.piercing).toBe(0);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+
+    bullet.setPosition(320, 200);
+    scene.runCollisions(); // third — budget exhausted, bullet consumed
+    expect(third.destroyed).toBe(true);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+  });
+
+  it('an enemy already passed through is never damaged twice', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const tough = new ToughStubEnemy(scene, 200, 200, 10, 5);
+    scene.add.existing(tough);
+    scene.entities.push(tough);
+
+    scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 3);
+    scene.runCollisions();
+    scene.runCollisions();
+    scene.runCollisions();
+
+    expect(tough.damageCalls).toBe(1);
+    expect(tough.alive).toBe(true);
+  });
+
+  it('the budget boundary: a bullet with piercing 1 stops on its second enemy', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const first = addEnemy(scene, 200, 200);
+    const second = addEnemy(scene, 260, 200);
+    const third = addEnemy(scene, 320, 200);
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 1);
+
+    scene.runCollisions();
+    expect(first.destroyed).toBe(true);
+    expect(bullet.piercing).toBe(0);
+    expect(scene.getPlayerBullets()).toContain(bullet); // survived the first
+
+    bullet.setPosition(260, 200);
+    scene.runCollisions();
+    expect(second.destroyed).toBe(true);
+    expect(third.destroyed).toBe(false);
+    expect(scene.getPlayerBullets()).not.toContain(bullet); // consumed on the second
+  });
+
+  it('auto-fire propagates the weapon piercing budget onto spawned bullets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Equip the wave laser permanently so it fires this frame.
+    player.equipWeapon('wave_laser', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    // Establish a heading (right) without moving the ship far.
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const waveBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor);
+    expect(waveBullets.length).toBeGreaterThan(0);
+    for (const bullet of waveBullets) {
+      expect(bullet.piercing).toBe(WEAPON_CATALOGUE.wave_laser.piercing);
+    }
+  });
+});
+
+// ── Centipede ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI) ──────
+
+describe('ricochet player bullets — wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  it('auto-fire propagates the weapon bounce budget onto spawned bullets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Equip the ricochet permanently so it fires this frame.
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const ricochetBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(ricochetBullets.length).toBeGreaterThan(0);
+    for (const bullet of ricochetBullets) {
+      expect(bullet.bounces).toBe(WEAPON_CATALOGUE.ricochet.bounce);
+    }
+  });
+
+  it('an ordinary weapon leaves the bounce budget undefined on spawned bullets', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    for (const bullet of scene.getPlayerBullets()) {
+      expect(bullet.bounces).toBeUndefined();
+    }
+  });
+});
+
+// ── Missile Command cluster/MIRV split seam (AH-0MV1BIVIJ007KYXU) ────
+
+describe('cluster-missile split seam (AH-0MV1BIVIJ007KYXU)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  function addEnemy(scene: StubCombatScene, x: number, y: number): StubEnemy {
+    const enemy = new StubEnemy(scene, x, y);
+    scene.add.existing(enemy);
+    scene.entities.push(enemy);
+    return enemy;
+  }
+
+  /** Spawns a base cluster missile (tagged but not yet split). */
+  function spawnCluster(scene: StubCombatScene, x: number, y: number): PlayerBullet {
+    const bullet = scene.spawnPlayerBullet(
+      x,
+      y,
+      PLAYER_BULLET_SPEED,
+      0,
+      WEAPON_CATALOGUE.cluster.bulletColor,
+      1,
+      3,
+    );
+    bullet.splitWeapon = WEAPON_CATALOGUE.cluster;
+    return bullet;
+  }
+
+  it('auto-fire tags a cluster missile with its split definition and leaves ordinary weapons untagged', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+    const clusterBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+    expect(clusterBullets.length).toBeGreaterThan(0);
+    for (const bullet of clusterBullets) {
+      expect(bullet.splitWeapon?.id).toBe('cluster');
+      expect(bullet.splitSpawned).toBe(false);
+    }
+    for (const bullet of scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.cannon.bulletColor)) {
+      expect(bullet.splitWeapon).toBeUndefined();
+    }
+  });
+
+  it('splits into exactly its configured warhead count once on impact', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    addEnemy(scene, 200, 200);
+    const bullet = spawnCluster(scene, 200, 200);
+
+    scene.runCollisions();
+    expect(bullet.splitSpawned).toBe(true);
+    // The parent shell is consumed; the warheads are queued, not yet live.
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+    scene.runFlushSplits();
+    expect(scene.getPlayerBullets()).toHaveLength(
+      WEAPON_CATALOGUE.cluster.splits!,
+    );
+
+    // Splitting again is a no-op — the split resolves exactly once.
+    scene.runSplitProjectile(bullet);
+    expect(scene.getPlayerBullets()).toHaveLength(
+      WEAPON_CATALOGUE.cluster.splits!,
+    );
+  });
+
+  it('each split warhead damages enemies on contact through the shared collision path', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const victim = addEnemy(scene, 200, 200);
+    spawnCluster(scene, 200, 200);
+
+    scene.runCollisions(); // splits; the parent shell deals no direct hit
+    expect(victim.destroyed).toBe(false);
+    scene.runFlushSplits();
+    scene.runCollisions(); // a warhead damages the enemy on contact
+    expect(victim.destroyed).toBe(true);
+  });
+
+  it('splits on lifetime expiry through the shared advance/cull path', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const missile = scene
+      .getPlayerBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+    expect(missile).toBeDefined();
+    const expected = player.getWeaponDef('cluster').splits ?? 0;
+    expect(expected).toBeGreaterThan(0);
+
+    expect(
+      advanceAndCull(missile!, WEAPON_BULLET_LIFETIME.cluster + 0.01),
+    ).toBe(false);
+    expect(missile!.splitSpawned).toBe(true);
+
+    scene.runFlushSplits();
+    const warheads = scene
+      .getPlayerBullets()
+      .filter(
+        (b) =>
+          b.color === WEAPON_CATALOGUE.cluster.bulletColor &&
+          b.splitWeapon === undefined,
+      );
+    expect(warheads).toHaveLength(expected);
+  });
+
+  it('an ordinary weapon never splits and damages its target directly', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const enemy = addEnemy(scene, 200, 200);
+    const bullet = scene.spawnPlayerBullet(
+      200,
+      200,
+      PLAYER_BULLET_SPEED,
+      0,
+      WEAPON_CATALOGUE.cannon.bulletColor,
+      1,
+      3,
+    );
+    expect(bullet.splitWeapon).toBeUndefined();
+
+    scene.runCollisions();
+    expect(enemy.destroyed).toBe(true);
+    scene.runFlushSplits();
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+  });
+});
+
+// ── Gradius Options orbit-emitter seam (AH-0MV1BIVVK0043TEM) ─────────
+
+describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Equips Options and fires one volley, returning only the pod bullets. */
+  function fireOptionsPods(scene: StubCombatScene): PlayerBullet[] {
+    scene.runAutoFire(1);
+    return scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.options.bulletColor);
+  }
+
+  it('auto-fire spawns one pod bullet per orbiting pod, each along the heading', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    const bullets = fireOptionsPods(scene);
+    const expected = player.getWeaponDef('options').orbit?.pods ?? 0;
+    expect(expected).toBe(2);
+    expect(bullets).toHaveLength(expected);
+
+    const heading = player.getHeading();
+    for (const bullet of bullets) {
+      // Each pod fires along the ship's heading at the pod bullet speed.
+      expect(Math.atan2(bullet.vy, bullet.vx)).toBeCloseTo(heading, 5);
+      expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
+        OPTIONS_POD_BULLET_SPEED,
+        5,
+      );
+      // Each pod launches from its own position on the orbit (not the ship
+      // centre), so the escort reads as separate emitters.
+      expect(Math.hypot(bullet.x - player.x, bullet.y - player.y)).toBeCloseTo(
+        OPTIONS_ORBIT_RADIUS,
+        3,
+      );
+    }
+    // Distinct pod launch positions — one per pod.
+    const positions = new Set(
+      bullets.map((b) => `${b.x.toFixed(3)},${b.y.toFixed(3)}`),
+    );
+    expect(positions.size).toBe(expected);
+  });
+
+  it('the pod count is capped at OPTIONS_MAX_PODS at high levels', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Each permanent grant raises the weapon level; the resolved pod count
+    // must saturate at the legibility cap rather than growing without bound.
+    for (let i = 0; i < 30; i++) player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    expect(player.getWeaponDef('options').orbit?.pods).toBe(OPTIONS_MAX_PODS);
+    const bullets = fireOptionsPods(scene);
+    expect(bullets).toHaveLength(OPTIONS_MAX_PODS);
+  });
+
+  it('advances the orbit phase between frames so pods do not fire from a frozen point', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    const first = fireOptionsPods(scene)[0];
+    // Advance the shared player step (which advances the orbit phase) without
+    // firing again, then fire the next volley.
+    (scene as unknown as { _updateOptionsEscort(dt: number): void })
+      ._updateOptionsEscort(0.25);
+    scene.getPlayerBullets().length = 0;
+    const second = fireOptionsPods(scene)[0];
+    expect(second.x).not.toBeCloseTo(first.x, 3);
   });
 });

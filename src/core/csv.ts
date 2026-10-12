@@ -27,7 +27,7 @@ import { DEFAULT_ENEMY_CONFIGS } from './configDefaults';
 // ── Valid enum values ───────────────────────────────────────────────
 
 const VALID_FORMATION_KINDS: EnemyFormationKind[] = [
-  'v', 'diver', 'rect', 'swarm', 'orbital', 'single',
+  'v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march',
 ];
 
 const VALID_SHOT_PATTERNS: EnemyShotPattern[] = [
@@ -68,6 +68,16 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'startYMax', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
   'bulletLifetime', 'burstCount', 'shotProbability', 'health',
+  'marchStep', 'marchDrop', 'beamDuration', 'pullStrength',
+  // Robotron homing-horde tuning (AH-0MV01EKTL001NRE6): group size and
+  // spawn cadence; neutral for other archetypes.
+  'hordeGroupSize', 'hordeSpawnInterval',
+  // Defender raider tuning (AH-0MV01EM7U0033W7L): committed attack-run speed
+  // and commit range; neutral for other archetypes.
+  'attackSpeed', 'commitRange',
+  // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): number of lanes and the
+  // vertical gap between them; neutral for other archetypes.
+  'laneCount', 'laneSpacing',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -81,6 +91,10 @@ export const SHIP_COLUMN_ORDER: (keyof ShipConfig)[] = [
   'shipColor', 'thrustFlameColor', 'thrustFlameInnerColor',
   'frictionDeceleration', 'controlScheme', 'asteroidsRotationSpeed',
   'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
+  // Asteroids reverse thruster (AH-0MV13LXOR001X15X): master toggle plus the
+  // two reverse-only tunables, independent of the forward values.
+  'asteroidsReverseEnabled', 'asteroidsReverseThrustAcceleration',
+  'asteroidsReverseMaxSpeed',
 ];
 
 // ── Helper: hex colour coercion ─────────────────────────────────────
@@ -100,6 +114,33 @@ function coerceNumber(value: string | undefined, fallback: number): number {
   if (value == null || value.trim() === '') return fallback;
   const n = Number(value);
   return Number.isNaN(n) ? 0 : n;
+}
+
+/**
+ * Coerce a numeric string to a number, falling back to `fallback` both when
+ * the value is missing/blank *and* when it is malformed. Used for the
+ * reverse-thruster tunables (AH-0MV13LXOR001X15X), where a bad value should
+ * keep the documented default rather than silently collapse to 0 (which
+ * would disable reverse thrust while the toggle still reads as enabled).
+ */
+function coerceNumberDefault(value: string | undefined, fallback: number): number {
+  if (value == null || value.trim() === '') return fallback;
+  const n = Number(value);
+  return Number.isNaN(n) ? fallback : n;
+}
+
+/**
+ * Coerce a boolean-ish CSV string to a boolean (AH-0MV13LXOR001X15X). Accepts
+ * `true`/`false` (case-insensitive) and `1`/`0`; a missing/blank value falls
+ * back to `fallback`, and any other malformed value also falls back so the
+ * read path always yields a valid boolean.
+ */
+function coerceBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value == null || value.trim() === '') return fallback;
+  const normalised = value.trim().toLowerCase();
+  if (normalised === 'true' || normalised === '1') return true;
+  if (normalised === 'false' || normalised === '0') return false;
+  return fallback;
 }
 
 // ── Helper: enum coercion with validation ───────────────────────────
@@ -284,6 +325,21 @@ export function validateEnemyConfig(
     'startXMin', 'startXMax', 'startYMin', 'startYMax',
     'size', 'bulletSize', 'fireInterval', 'bulletSpeed', 'bulletLifetime',
     'burstCount', 'shotProbability',
+    // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20):
+    // optional, but a present value must be numeric.
+    'marchStep', 'marchDrop',
+    // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D):
+    // optional and neutral for other archetypes.
+    'beamDuration', 'pullStrength',
+    // Homing-horde tuning (Robotron archetype, AH-0MV01EKTL001NRE6): optional
+    // and neutral for other archetypes.
+    'hordeGroupSize', 'hordeSpawnInterval',
+    // Defender raider tuning (AH-0MV01EM7U0033W7L): optional and neutral for
+    // other archetypes.
+    'attackSpeed', 'commitRange',
+    // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): optional and neutral
+    // for other archetypes.
+    'laneCount', 'laneSpacing',
   ];
   for (const field of numericFields) {
     const val = row[field];
@@ -344,12 +400,30 @@ export function validateShipConfig(
     'thrustAcceleration', 'maxSpeed', 'shipSize', 'thrustFlameLength',
     'frictionDeceleration', 'asteroidsRotationSpeed',
     'asteroidsRotationAcceleration', 'asteroidsRotationDeceleration',
+    // Reverse-thruster tunables (AH-0MV13LXOR001X15X): optional for legacy
+    // files, but a present value must be numeric.
+    'asteroidsReverseThrustAcceleration', 'asteroidsReverseMaxSpeed',
   ];
   for (const field of numericFields) {
     const val = row[field];
     if (val != null && val.trim() !== '' && Number.isNaN(Number(val))) {
       errors.push(`Malformed number for ${String(field)}: "${val}"`);
     }
+  }
+
+  // Validate the reverse-thruster master toggle when present: legacy files
+  // predate the column, so an absent/blank value is valid (and defaults on
+  // read), but a present value must be a recognised boolean
+  // (AH-0MV13LXOR001X15X).
+  const reverseEnabled = row.asteroidsReverseEnabled;
+  if (
+    reverseEnabled != null &&
+    reverseEnabled.trim() !== '' &&
+    !/^(true|false|1|0)$/i.test(reverseEnabled.trim())
+  ) {
+    errors.push(
+      `Invalid boolean for asteroidsReverseEnabled: "${reverseEnabled}" — expected true, false, 1 or 0`,
+    );
   }
 
   // Validate hex colours.
@@ -417,6 +491,52 @@ export function coerceEnemyConfig(
   merged.burstCount = coerceNumber(row.burstCount, merged.burstCount);
   merged.shotProbability = coerceNumber(row.shotProbability, merged.shotProbability);
   merged.health = coerceHealth(row.health, merged.health ?? DEFAULT_ENEMY_HEALTH);
+  // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20).
+  // Optional and neutral for other formations: only override when the CSV row
+  // actually carries a value, so non-march rows keep their seed/default shape.
+  if (row.marchStep != null && row.marchStep.trim() !== '') {
+    merged.marchStep = coerceNumber(row.marchStep, merged.marchStep ?? 0);
+  }
+  if (row.marchDrop != null && row.marchDrop.trim() !== '') {
+    merged.marchDrop = coerceNumber(row.marchDrop, merged.marchDrop ?? 0);
+  }
+  // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
+  // Optional and neutral for other archetypes: only override when the CSV row
+  // actually carries a value.
+  if (row.beamDuration != null && row.beamDuration.trim() !== '') {
+    merged.beamDuration = coerceNumber(row.beamDuration, merged.beamDuration ?? 0);
+  }
+  if (row.pullStrength != null && row.pullStrength.trim() !== '') {
+    merged.pullStrength = coerceNumber(row.pullStrength, merged.pullStrength ?? 0);
+  }
+  // Homing-horde tuning (Robotron archetype, AH-0MV01EKTL001NRE6). Optional
+  // and neutral for other archetypes: only override when the CSV row carries
+  // a value.
+  if (row.hordeGroupSize != null && row.hordeGroupSize.trim() !== '') {
+    merged.hordeGroupSize = coerceNumber(row.hordeGroupSize, merged.hordeGroupSize ?? 0);
+  }
+  if (row.hordeSpawnInterval != null && row.hordeSpawnInterval.trim() !== '') {
+    merged.hordeSpawnInterval = coerceNumber(
+      row.hordeSpawnInterval,
+      merged.hordeSpawnInterval ?? 0,
+    );
+  }
+  // Defender raider tuning (AH-0MV01EM7U0033W7L). Optional and neutral for
+  // other archetypes: only override when the CSV row carries a value.
+  if (row.attackSpeed != null && row.attackSpeed.trim() !== '') {
+    merged.attackSpeed = coerceNumber(row.attackSpeed, merged.attackSpeed ?? 0);
+  }
+  if (row.commitRange != null && row.commitRange.trim() !== '') {
+    merged.commitRange = coerceNumber(row.commitRange, merged.commitRange ?? 0);
+  }
+  // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T). Optional and neutral
+  // for other archetypes: only override when the CSV row carries a value.
+  if (row.laneCount != null && row.laneCount.trim() !== '') {
+    merged.laneCount = coerceNumber(row.laneCount, merged.laneCount ?? 0);
+  }
+  if (row.laneSpacing != null && row.laneSpacing.trim() !== '') {
+    merged.laneSpacing = coerceNumber(row.laneSpacing, merged.laneSpacing ?? 0);
+  }
 
   return merged;
 }
@@ -449,6 +569,21 @@ export function coerceShipConfig(
   result.asteroidsRotationDeceleration = coerceNumber(
     row.asteroidsRotationDeceleration,
     result.asteroidsRotationDeceleration,
+  );
+  // Asteroids reverse thruster (AH-0MV13LXOR001X15X): legacy/blank cells fall
+  // back to the defaults; malformed numeric cells also keep the default rather
+  // than collapsing to 0.
+  result.asteroidsReverseEnabled = coerceBoolean(
+    row.asteroidsReverseEnabled,
+    result.asteroidsReverseEnabled,
+  );
+  result.asteroidsReverseThrustAcceleration = coerceNumberDefault(
+    row.asteroidsReverseThrustAcceleration,
+    result.asteroidsReverseThrustAcceleration,
+  );
+  result.asteroidsReverseMaxSpeed = coerceNumberDefault(
+    row.asteroidsReverseMaxSpeed,
+    result.asteroidsReverseMaxSpeed,
   );
 
   return result;

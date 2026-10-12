@@ -3,7 +3,7 @@
  * (AH-0MUWZ5HCV0034H44 producer-audit follow-up).
  *
  * The victory-fireworks display is anchored to the Central AI boss, but a
- * real run requires 400 hits (4 phases × 100) to reach it, so the recorder
+ * real run requires 200 hits (4 phases × 50) to reach it, so the recorder
  * (`npm run capture`) — and a human reviewer — cannot practically observe the
  * celebration. A **dev scenario** is a small, additive, dev-only shortcut that
  * drops the run straight into the boss encounter with a chosen number of hits
@@ -23,6 +23,8 @@
  *   {@link DEV_BOSS_DEFAULT_HITS} hits remaining (the recorded demo).
  * - `boss` — the same jump, with the hit count tunable via the
  *   `bossHits` parameter (e.g. `?scenario=boss&bossHits=12`).
+ * - `defeat` — clear the wave and end the run in defeat on release (the
+ *   recorded defeat-path demo for full-run capture verification).
  *
  * Any other value resolves to `null` (no scenario), so a typo can never
  * silently change a normal run.
@@ -37,13 +39,24 @@ export const DEV_SCENARIO_BOSS = 'boss';
 /** Value of the `scenario` parameter for the recorded four-hit boss demo. */
 export const DEV_SCENARIO_BOSS_FOUR_HITS = 'boss-four-hits';
 
+/** Value of the `scenario` parameter for the recorded defeat-path demo. */
+export const DEV_SCENARIO_DEFEAT = 'defeat';
+
 /** Query parameter that tunes the boss scenario's remaining hits. */
 export const DEV_BOSS_HITS_PARAM = 'bossHits';
+
+/**
+ * URL query parameter that forces a deterministic run seed in a dev build
+ * (AH-0MUY08W7Y004GATZ). It lets the dev recorder record a human run and a
+ * bot run on the **same** seed for the replay/ghost comparison, without
+ * reaching into Phaser internals.
+ */
+export const DEV_SEED_PARAM = 'seed';
 
 /** Hits remaining in the recorded `boss-four-hits` scenario. */
 export const DEV_BOSS_DEFAULT_HITS = 4;
 
-/** A resolved dev scenario. Currently only the boss shortcut exists. */
+/** A resolved dev scenario. */
 export interface DevBossScenario {
   /** Discriminant so future scenarios can extend the union. */
   readonly kind: 'boss';
@@ -51,8 +64,19 @@ export interface DevBossScenario {
   readonly bossHitsRemaining: number;
 }
 
-/** The resolved dev-scenario union (one member today). */
-export type DevScenario = DevBossScenario;
+/**
+ * A resolved defeat dev scenario (AH-0MUX2K8U7000GFNU producer-audit
+ * follow-up): the run is cleared and frozen, then ends in defeat when the
+ * recorder releases it, so the defeat end-of-run signal is verifiable in a
+ * real browser.
+ */
+export interface DevDefeatScenario {
+  /** Discriminant so future scenarios can extend the union. */
+  readonly kind: 'defeat';
+}
+
+/** The resolved dev-scenario union. */
+export type DevScenario = DevBossScenario | DevDefeatScenario;
 
 /** True when dev scenarios should be honoured (dev builds only). */
 export function isDevScenarioEnabled(): boolean {
@@ -136,5 +160,28 @@ export function resolveDevScenario(search: string): DevScenario | null {
       bossHitsRemaining: resolveBossHits(params.get(DEV_BOSS_HITS_PARAM)),
     };
   }
+  if (normalised === DEV_SCENARIO_DEFEAT) {
+    return { kind: 'defeat' };
+  }
   return null;
+}
+
+/**
+ * Resolves the deterministic dev seed encoded in a URL search string, if any
+ * (AH-0MUY08W7Y004GATZ). Pure and total: an absent, blank or non-finite seed
+ * returns `null`, and a valid seed is normalised to a 32-bit unsigned integer
+ * (matching the run-seed contract).
+ *
+ * @param search — a `location.search` string or bare query string.
+ * @returns the normalised seed, or `null` when none is requested.
+ */
+export function resolveDevSeed(search: string): number | null {
+  const params = new URLSearchParams(
+    search.startsWith('?') ? search.slice(1) : search,
+  );
+  const raw = params.get(DEV_SEED_PARAM);
+  if (raw === null || raw.trim() === '') return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return value >>> 0;
 }

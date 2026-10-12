@@ -32,10 +32,13 @@ describe('BossMinions — phase mechanic (GDD §4.3)', () => {
     expect(minionCountForPhase(5)).toBe(0);
   });
 
-  it('Phase 1 (Scan) spawns formation enemies on both sides', () => {
+  it('Phase 1 (Scan) spawns 12 scouts as two groups of 6 on both sides', () => {
     const wave = BOSS_MINION_WAVES[1];
     expect(wave.groups).toHaveLength(2);
     expect(wave.groups.every((g) => g.enemyKey === 'scout')).toBe(true);
+    // Two symmetric groups of 6 — 12 scouts in total.
+    expect(wave.groups.map((g) => g.count)).toEqual([6, 6]);
+    expect(minionCountForPhase(1)).toBe(12);
     const starts = wave.groups.map((g) => g.startX).sort((a, b) => a - b);
     // One group hugs the left side, one the right.
     expect(starts[0]).toBeLessThan(GAME_WIDTH * 0.2);
@@ -43,17 +46,29 @@ describe('BossMinions — phase mechanic (GDD §4.3)', () => {
     expect(wave.shootEnabled).toBe(true);
   });
 
-  it('Phase 2 (Firestorm) spawns divers from the top', () => {
+  it('Phase 2 (Firestorm) spawns 12 divers as two groups of 6 from the top', () => {
     const wave = BOSS_MINION_WAVES[2];
-    expect(wave.groups.length).toBeGreaterThan(0);
+    expect(wave.groups).toHaveLength(2);
     expect(wave.groups.every((g) => g.enemyKey === 'diver')).toBe(true);
+    expect(wave.groups.map((g) => g.count)).toEqual([6, 6]);
+    expect(minionCountForPhase(2)).toBe(12);
     expect(wave.groups.every((g) => g.startY < GAME_HEIGHT * 0.2)).toBe(true);
     expect(wave.shootEnabled).toBe(true);
   });
 
-  it('Phase 4 (Desperation) reinforces with a swarm', () => {
+  it('Phase 3 (Pulse) summons no minions and cannot fire', () => {
+    const wave = BOSS_MINION_WAVES[3];
+    expect(wave.groups).toEqual([]);
+    expect(minionCountForPhase(3)).toBe(0);
+    expect(wave.shootEnabled).toBe(false);
+  });
+
+  it('Phase 4 (Desperation) reinforces with a single 15-strong swarm', () => {
     const wave = BOSS_MINION_WAVES[4];
-    expect(wave.groups.some((g) => g.enemyKey === 'swarm')).toBe(true);
+    expect(wave.groups).toHaveLength(1);
+    expect(wave.groups[0].enemyKey).toBe('swarm');
+    expect(wave.groups[0].count).toBe(15);
+    expect(minionCountForPhase(4)).toBe(15);
     expect(wave.shootEnabled).toBe(true);
   });
 
@@ -86,8 +101,10 @@ describe('BossMinions — phase mechanic (GDD §4.3)', () => {
     }
   });
 
-  it('minionCountForPhase matches the planned spawn count', () => {
+  it('minionCountForPhase matches the planned spawn count for every phase', () => {
+    const expectedCounts: Record<number, number> = { 1: 12, 2: 12, 3: 0, 4: 15 };
     for (const phase of [1, 2, 3, 4]) {
+      expect(minionCountForPhase(phase)).toBe(expectedCounts[phase]);
       expect(planMinionSpawns(phase)).toHaveLength(minionCountForPhase(phase));
     }
   });

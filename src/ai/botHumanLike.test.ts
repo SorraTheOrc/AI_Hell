@@ -142,7 +142,7 @@ describe('BotInputGovernor — human key set (AC2)', () => {
 });
 
 describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
-  /** Builds an asteroid input with only the named controls set. */
+  /** Builds an asteroid input with only the named controls set (reverse always false). */
   function asteroid(
     ...controls: ('forward' | 'turnLeft' | 'turnRight')[]
   ): AsteroidsInput {
@@ -150,6 +150,7 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -197,7 +198,7 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
     );
   });
 
-  it('never turns while thrusting and never emits a reverse control', () => {
+  it('never turns while thrusting and treats reverse as opt-in', () => {
     for (const facing of [-3, -1.5, 0, 1.5, 3]) {
       for (const intent of [
         input('up'),
@@ -206,12 +207,15 @@ describe('toAsteroidsInput — steering-intent → W/A/D execution', () => {
         input('right'),
       ]) {
         const out = toAsteroidsInput(intent, facing);
-        // The asteroid input shape has exactly W/A/D — no reverse field.
+        // The asteroid input carries exactly W/A/D plus a `reverse` field —
+        // opt-in: without a reverse request it is always false (AC4/AC6).
         expect(Object.keys(out).sort()).toEqual([
           'forward',
+          'reverse',
           'turnLeft',
           'turnRight',
         ]);
+        expect(out.reverse).toBe(false);
         // A turning command is never paired with forward thrust.
         if (out.turnLeft || out.turnRight) expect(out.forward).toBe(false);
       }
@@ -230,6 +234,7 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
       forward: true,
       turnLeft: false,
       turnRight: false,
+      reverse: false,
     });
     // The asteroid input has no four-directional fields at all.
     expect('up' in committed).toBe(false);
@@ -255,7 +260,12 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
         scheme: 'asteroids',
         facing: 0,
       }),
-    ).toEqual({ forward: false, turnLeft: false, turnRight: true });
+    ).toEqual({
+      forward: false,
+      turnLeft: false,
+      turnRight: true,
+      reverse: false,
+    });
   });
 
   it('holds the committed asteroid input until the reaction window elapses', () => {
@@ -269,19 +279,34 @@ describe('BotInputGovernor — scheme execution (AC2/AC7)', () => {
     // First call commits immediately: idle steering → no thrust.
     expect(
       governor.update(input(), dt, { scheme: 'asteroids', facing: 0 }),
-    ).toEqual({ forward: false, turnLeft: false, turnRight: false });
+    ).toEqual({
+      forward: false,
+      turnLeft: false,
+      turnRight: false,
+      reverse: false,
+    });
 
     // Inside the reaction window a new "go right" intent is ignored.
     for (let i = 0; i < 4; i += 1) {
       expect(
         governor.update(input('right'), dt, { scheme: 'asteroids', facing: 0 }),
-      ).toEqual({ forward: false, turnLeft: false, turnRight: false });
+      ).toEqual({
+        forward: false,
+        turnLeft: false,
+        turnRight: false,
+        reverse: false,
+      });
     }
 
     // At 100 ms the latest intent commits as forward thrust.
     expect(
       governor.update(input('right'), dt, { scheme: 'asteroids', facing: 0 }),
-    ).toEqual({ forward: true, turnLeft: false, turnRight: false });
+    ).toEqual({
+      forward: true,
+      turnLeft: false,
+      turnRight: false,
+      reverse: false,
+    });
   });
 });
 
@@ -301,6 +326,7 @@ describe('toAsteroidsInput — precise bearing (rejection)', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -355,6 +381,7 @@ describe('BotInputGovernor — closed-loop aiming (rejection)', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -412,6 +439,7 @@ describe('forward-model throttle (AC10)', () => {
       forward: controls.includes('forward'),
       turnLeft: controls.includes('turnLeft'),
       turnRight: controls.includes('turnRight'),
+      reverse: false,
     };
   }
 
@@ -487,6 +515,10 @@ describe('human-like thrust presses (AC15/AC16)', () => {
     thrustPressMaxMs: 225,
     thrustPressMaxMsLong: 400,
     reactionTimeMs: 1000,
+    // Disable the gentle reduction so the existing AC15/AC16 duration bands
+    // (200–225 / 400 ms) remain unchanged for these tests.
+    thrustPressGentleMinPct: 0,
+    thrustPressGentleMaxPct: 0,
   };
   const thrustIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
   const longThrustIntent = { ...thrustIntent, longTravel: true };
@@ -565,5 +597,314 @@ describe('human-like thrust presses (AC15/AC16)', () => {
       }) as AsteroidsInput;
       expect(out.forward).toBe(true);
     }
+  });
+});
+
+// ── Gentler thrust presses (AH-0MUYRJQE50021T4A) ────────────────────
+//
+// Each forward-thrust press is reduced by a random 1–5 % of its drawn
+// duration, making the demo bot slightly less aggressive on the thrusters.
+
+describe('gentler thrust presses (AH-0MUYRJQE50021T4A)', () => {
+  // 1 ms ticks so a 1–5 % reduction (2–11 ms on a normal press) is
+  // measurable; a 60 fps tick (16.7 ms) is coarser than the effect.
+  const DT_MS = 1;
+  const DT = DT_MS / 1000;
+  const T_GENTLE = {
+    thrustPressMinMs: 200,
+    thrustPressMaxMs: 225,
+    thrustPressMaxMsLong: 400,
+    reactionTimeMs: 100000,
+    thrustPressGentleMinPct: 0.01,
+    thrustPressGentleMaxPct: 0.05,
+  };
+  const T_ZERO = {
+    ...T_GENTLE,
+    thrustPressGentleMinPct: 0,
+    thrustPressGentleMaxPct: 0,
+  };
+  const thrustIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true };
+  const longThrustIntent = { ...thrustIntent, longTravel: true };
+  const coastIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: false };
+
+  /** Measures the on-run (ms) of the press started by a rising thrust edge. */
+  function measurePressMs(
+    governor: BotInputGovernor,
+    intent: FourDirectionalInput & {
+      dirX: number;
+      dirY: number;
+      thrust: boolean;
+      longTravel?: boolean;
+    },
+  ): number {
+    governor.update(intent, DT, { scheme: 'asteroids', facing: 0 });
+    let ticks = 1;
+    for (let i = 0; i < 5000; i += 1) {
+      const out = governor.update(coastIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+      }) as AsteroidsInput;
+      if (!out.forward) break;
+      ticks += 1;
+    }
+    return ticks * DT_MS;
+  }
+
+  it('AC1 — reduces a normal press by a random 1–5 %', () => {
+    // Same seed → identical base draw, so the ratio isolates the reduction.
+    const zero = measurePressMs(new BotInputGovernor(T_ZERO, 7), thrustIntent);
+    const gentle = measurePressMs(
+      new BotInputGovernor(T_GENTLE, 7),
+      thrustIntent,
+    );
+    expect(zero).toBeGreaterThanOrEqual(200);
+    expect(zero).toBeLessThanOrEqual(225);
+    expect(gentle).toBeLessThan(zero);
+    // ±0.008 absorbs the ≤1 ms integer-tick rounding on each measurement.
+    const reduction = (zero - gentle) / zero;
+    expect(reduction).toBeGreaterThanOrEqual(0.01 - 0.008);
+    expect(reduction).toBeLessThanOrEqual(0.05 + 0.008);
+  });
+
+  it('AC1 — reduces a long-travel press by the same 1–5 % band', () => {
+    const zero = measurePressMs(
+      new BotInputGovernor(T_ZERO, 11),
+      longThrustIntent,
+    );
+    const gentle = measurePressMs(
+      new BotInputGovernor(T_GENTLE, 11),
+      longThrustIntent,
+    );
+    expect(zero).toBeGreaterThanOrEqual(200);
+    expect(zero).toBeLessThanOrEqual(400);
+    expect(gentle).toBeLessThan(zero);
+    const reduction = (zero - gentle) / zero;
+    expect(reduction).toBeGreaterThanOrEqual(0.01 - 0.008);
+    expect(reduction).toBeLessThanOrEqual(0.05 + 0.008);
+  });
+
+  it('AC2 — the reduction sequence is identical for two same-seed governors', () => {
+    const first = new BotInputGovernor(T_GENTLE, 42);
+    const second = new BotInputGovernor(T_GENTLE, 42);
+    const seqFirst = [0, 1, 2, 3, 4].map(() =>
+      measurePressMs(first, thrustIntent),
+    );
+    const seqSecond = [0, 1, 2, 3, 4].map(() =>
+      measurePressMs(second, thrustIntent),
+    );
+    expect(seqFirst).toEqual(seqSecond);
+  });
+
+  it('AC2 — the reduction is drawn per press, not a fixed value', () => {
+    // A fixed base (min = max = long cap) makes the drawn reduction visible.
+    const fixedBase = {
+      ...T_GENTLE,
+      thrustPressMinMs: 200,
+      thrustPressMaxMs: 200,
+      thrustPressMaxMsLong: 200,
+    };
+    const governor = new BotInputGovernor(fixedBase, 7);
+    const durations = [0, 1, 2, 3, 4, 5, 6, 7].map(() =>
+      measurePressMs(governor, thrustIntent),
+    );
+    // Every press sits inside the 1–5 % band of the fixed 200 ms base...
+    for (const ms of durations) {
+      expect(ms).toBeGreaterThanOrEqual(200 * 0.95 - DT_MS);
+      expect(ms).toBeLessThanOrEqual(200 * 0.99 + DT_MS);
+    }
+    // ...and the reduction is redrawn each press, so they are not all equal.
+    expect(new Set(durations).size).toBeGreaterThan(1);
+  });
+
+  it('AC3 — continuous thrust has no off-gaps', () => {
+    const governor = new BotInputGovernor(T_GENTLE, 3);
+    for (let i = 0; i < 500; i += 1) {
+      const out = governor.update(thrustIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+      }) as AsteroidsInput;
+      expect(out.forward).toBe(true);
+    }
+  });
+
+  it('AC4 — the gentle bounds are documented tunables with 1 %/5 % defaults', () => {
+    expect(BOT_HUMAN_INPUT_TUNABLES.thrustPressGentleMinPct).toBe(0.01);
+    expect(BOT_HUMAN_INPUT_TUNABLES.thrustPressGentleMaxPct).toBe(0.05);
+  });
+});
+
+// ── Reverse thrust (AH-0MV2WJSY70070HK2) ───────────────────────────
+//
+// Reverse is reserved for trouble/correction: the committed intent may
+// request it for an imminent overshoot or a threat escape (kiting), the
+// actuator emits it only when the ship's reverse thruster is enabled, and the
+// governor holds reverse in human-like presses. Heading-aware reverse was
+// removed — the ship always turns to face its travel bearing.
+
+describe('reverse thrust (AH-0MV2WJSY70070HK2)', () => {
+  const DT = 1 / 60;
+  const DT_MS = DT * 1000;
+
+  function asteroid(
+    ...controls: ('forward' | 'turnLeft' | 'turnRight' | 'reverse')[]
+  ): AsteroidsInput {
+    return {
+      forward: controls.includes('forward'),
+      turnLeft: controls.includes('turnLeft'),
+      turnRight: controls.includes('turnRight'),
+      reverse: controls.includes('reverse'),
+    };
+  }
+
+  /** A precise intent aimed at `bearing` that requests reverse. */
+  function reverseIntent(bearing: number, thrust = false) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust,
+      reverse: true,
+    };
+  }
+
+  describe('toAsteroidsInput — enable-flag gating (AC4/AC6)', () => {
+    it('emits reverse when the intent requests it and reverse is enabled', () => {
+      // Nose already on the travel bearing (facing 0 = right) → brake.
+      expect(toAsteroidsInput(reverseIntent(0), 0)).toEqual(asteroid('reverse'));
+    });
+
+    it('emits reverse:false on every input when reverse is disabled', () => {
+      for (const facing of [-3, -1.5, 0, 1.5, 3, Math.PI]) {
+        const out = toAsteroidsInput(reverseIntent(0), facing, 0.15, false);
+        expect(out.reverse).toBe(false);
+      }
+    });
+
+    it('brakes when the nose is aligned and backs toward a bearing behind (AC1/AC2)', () => {
+      // Aligned: brake straight up, no turn.
+      expect(toAsteroidsInput(reverseIntent(0), 0)).toEqual(asteroid('reverse'));
+      // Directly behind: no 180° turn — reverse instead.
+      expect(toAsteroidsInput(reverseIntent(Math.PI), 0)).toEqual(
+        asteroid('reverse'),
+      );
+    });
+
+    it('turns to align the nose before reversing when only partly behind', () => {
+      // Travel bearing 2.0 rad: the nose must turn to face π away (error−π).
+      const out = toAsteroidsInput(reverseIntent(2.0), 0) as AsteroidsInput;
+      expect(out.reverse).toBe(false);
+      expect(out.turnLeft).toBe(true);
+      expect(out.turnRight).toBe(false);
+    });
+  });
+
+  describe('BotInputGovernor — no heading-aware reverse (AC1)', () => {
+    const H = { reactionTimeMs: 0, reversePressMinMs: 0, reversePressMaxMs: 0 };
+    /** A precise intent with NO reverse request. */
+    const forwardIntentAt = (dx: number, dy: number) => ({
+      ...input(),
+      dirX: dx,
+      dirY: dy,
+      thrust: true,
+      reverse: false,
+    });
+
+    it('turns to face a travel bearing directly behind the nose instead of reversing', () => {
+      const governor = new BotInputGovernor(H);
+      // Facing right, intent directly left (π behind), no reverse request.
+      for (let i = 0; i < 10; i += 1) {
+        const out = governor.update(
+          forwardIntentAt(-1, 0),
+          DT,
+          { scheme: 'asteroids', facing: 0, reverseEnabled: true },
+        ) as AsteroidsInput;
+        expect(out.reverse).toBe(false);
+      }
+    });
+
+    it('never emits reverse for any heading when the intent does not request it', () => {
+      const governor = new BotInputGovernor(H);
+      for (let step = 0; step <= 24; step += 1) {
+        const facing = -Math.PI + (2 * Math.PI * step) / 24;
+        const out = governor.update(
+          forwardIntentAt(1, 0),
+          DT,
+          { scheme: 'asteroids', facing, reverseEnabled: true },
+        ) as AsteroidsInput;
+        expect(out.reverse).toBe(false);
+      }
+    });
+  });
+
+  describe('BotInputGovernor — human-like reverse presses (AC5)', () => {
+    const T = {
+      reactionTimeMs: 0,
+      reversePressMinMs: 200,
+      reversePressMaxMs: 260,
+      reversePressGentleMinPct: 0,
+      reversePressGentleMaxPct: 0,
+    };
+    const forwardIntent = { ...input('right'), dirX: 1, dirY: 0, thrust: true, reverse: false };
+
+    /** Measures the on-run (ms) of a reverse press started by a rising edge. */
+    function measureReverseMs(governor: BotInputGovernor): number {
+      governor.update(reverseIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      });
+      let ticks = 1;
+      for (let i = 0; i < 60; i += 1) {
+        const out = governor.update(forwardIntent, DT, {
+          scheme: 'asteroids',
+          facing: 0,
+          reverseEnabled: true,
+        }) as AsteroidsInput;
+        if (!out.reverse) break;
+        ticks += 1;
+      }
+      return ticks * DT_MS;
+    }
+
+    it('extends a one-tick reverse request into a full press', () => {
+      const ms = measureReverseMs(new BotInputGovernor(T, 1));
+      expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+      expect(ms).toBeLessThanOrEqual(260 + 2 * DT_MS);
+      // Many ticks, not a per-frame toggle.
+      expect(ms / DT_MS).toBeGreaterThan(8);
+    });
+
+    it('randomises each press within the band and is deterministic per seed', () => {
+      const governor = new BotInputGovernor(T, 7);
+      const durations = [0, 1, 2, 3, 4].map(() => measureReverseMs(governor));
+      for (const ms of durations) {
+        expect(ms).toBeGreaterThanOrEqual(200 - DT_MS);
+        expect(ms).toBeLessThanOrEqual(260 + 2 * DT_MS);
+      }
+      expect(new Set(durations.map((d) => Math.round(d))).size).toBeGreaterThan(1);
+
+      const first = new BotInputGovernor(T, 42);
+      const second = new BotInputGovernor(T, 42);
+      expect([0, 1, 2].map(() => Math.round(measureReverseMs(first)))).toEqual(
+        [0, 1, 2].map(() => Math.round(measureReverseMs(second))),
+      );
+    });
+
+    it('reset clears the reverse press', () => {
+      const governor = new BotInputGovernor(T, 3);
+      governor.update(reverseIntent(0), DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      });
+      governor.reset();
+      // After reset, a forward intent emits no reverse.
+      const out = governor.update(forwardIntent, DT, {
+        scheme: 'asteroids',
+        facing: 0,
+        reverseEnabled: true,
+      }) as AsteroidsInput;
+      expect(out.reverse).toBe(false);
+    });
   });
 });

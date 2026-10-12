@@ -22,14 +22,139 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
 | E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | E7 | Harvester | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
-| Boss | The Central AI | §4.3 | 4 attack phases, 100 hits per phase (400 total; 4-phase bar) | Large neon geometric structure with core | complex patterns per phase |
+| Boss | The Central AI | §4.3 | 4 attack phases, 50 hits per phase (200 total; 4-phase screen-fixed bar), figure-of-eight movement, per-hit SFX/VFX | Large neon geometric structure with core | complex patterns per phase |
 
 Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
 E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
-Boss is multi-hit via its 4-phase bar — **100 hits per phase (400 total)**. All enemies **never collide with each
+Boss is multi-hit via its 4-phase bar — **50 hits per phase (200 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
-### 1.1 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
+### 1.1 Classic arcade research (AH-0MUYAQ6YH0010G52)
+
+The current roster (E1–E7 + Boss) is a self-contained set of seven archetypes.
+A research epic (AH-0MUYAQ6YH0010G52) selected eight classic arcade enemy
+archetypes for future implementation: Space Invaders, Galaga, Pac-Man Ghosts,
+Centipede, Robotron 2084 Horde, Defender Raider, Missile Command Strike, and
+Frogger Lane Traffic. Each selected archetype has its own child work item that
+implements the full lifecycle (code + tests + gym parity + docs). All eight are
+now implemented:
+
+| Archetype | Source game | Config key | Formation / seam | Fires |
+|-----------|-------------|------------|------------------|-------|
+| Space Invaders | Space Invaders (1978) | `march` | `march` formation (`Scout` body) | aimed (L4+) |
+| Galaga capturer | Galaga (1981) | `capturer` | `Capturer` + capture beam | never |
+| Pac-Man ghosts | Pac-Man (1980) | `ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander` | `Ghost` + ghost steering | never |
+| Centipede | Centipede (1981) | `centipede` | `Centipede` + chain model | never |
+| Robotron horde | Robotron 2084 (1982) | `grunt` | `Grunt` + grunt steering | never |
+| Defender raider | Defender (1981) | `raider` | `Raider` + patrol state machine | aimed (L4+, attack run) |
+| Missile Command strike | Missile Command (1980) | `orbital-strike` | `OrbitalStrike` + strike spawner (non-blocking hazard) | never |
+| Frogger lane traffic | Frogger (1981) | `lane-traffic` | `LaneTraffic` + lane-traffic spawner (non-blocking hazard) | never |
+
+The full research catalogue — source game, original behaviour, AI_Hell
+adaptation, pipeline fit, difficulty scoring inputs, and gym scenes — is in
+[`CLASSIC_ENEMY_RESEARCH.md`](CLASSIC_ENEMY_RESEARCH.md). The "considered but
+not selected" section (Joust, Dig Dug, Q*bert, Star Castle) is also recorded
+there for future roster expansion.
+
+The **Pac-Man ghost personality pursuers** (AH-0MV01EH2U008XT3Q) are the first
+of these to be implemented as a full vertical slice. Four non-firing CSV rows
+(`ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`) share the pure
+`src/scenes/core/ghostSteering.ts` targeting policy and the
+`src/entities/Ghost.ts` entity; `src/waves/GhostSpawner.ts` plans the
+four-personality group and `PlayScene` registers every released ghost with the
+`WaveManager`, gated behind a per-wave `ghosts: true` opt-in (so existing wave
+data is unchanged). The entity never fires — body contact is the threat — and
+its `tryFireNone` dispatch entry keeps it out of the aimed-shot fallback.
+
+The **Centipede linked chain** (AH-0MV01EJ92008ZZ86) is the second delivered
+classic archetype and the first that is **not** expressible as a CSV
+formation: a coordinated chain of segments is delivered by a dedicated
+`src/entities/Centipede.ts` entity (one segment) plus the pure shared model
+`src/scenes/core/centipedeChain.ts` and the `src/waves/CentipedeSpawner.ts`
+planner. The lead weaves laterally (reversing at the left/right bounds) while
+descending, wrapping at the bottom edge; every following segment trails at a
+fixed arc-length. Destroying a **middle** segment splits the chain into two
+independent sub-chains (lead/tail deaths simply shorten it), and the chain
+speeds up monotonically as segments die. Segments **never fire** — body
+contact is the threat — its `tryFireNone` dispatch entry keeps it out of the
+aimed-shot fallback, and every spawned segment is registered with the
+`WaveManager`, gated behind a per-wave `centipede: true` opt-in. The dedicated
+`GymCentipede` scene runs the same shared entity/chain code, so the game and
+the gym cannot diverge.
+
+The **Robotron 2084 homing horde** (AH-0MV01EKTL001NRE6) is the third
+delivered classic archetype and is **partly** a CSV row and partly a new
+entity: the horde size, group size, spawn cadence and homing speed are
+data-driven (`count`, `hordeGroupSize`, `hordeSpawnInterval`, `driftSpeed` on
+the `grunt` row), while the movement lives in the pure shared policy
+`src/scenes/core/gruntSteering.ts` and the `src/entities/Grunt.ts` entity. The
+pure `src/waves/HordeSpawner.ts` planner releases small groups from the four
+arena edges over time and **bounded steering** turns each grunt toward the
+live player at a capped turn rate, so it homes in an arc rather than
+snap-reversing. Grunts **never fire** — the swarm of bodies, resolved by the
+existing enemy-body contact rule, is the whole threat — and the explicit
+`tryFireNone` dispatch entry keeps them out of the aimed-shot fallback. Every
+spawned grunt is registered with the `WaveManager`, gated behind a per-wave
+`horde: true` opt-in, and the existing `GymFodderEnemies` scene runs the same shared
+entity/steering code with a live player for gym↔game parity.
+
+The **Defender patrol-and-attack raider** (AH-0MV01EM7U0033W7L) is the fourth
+delivered classic archetype. It is a single, fast CSV row (`raider`,
+`formationKind: single`) backed by a dedicated `src/entities/Raider.ts` entity
+and the pure shared state machine `src/scenes/core/raiderPatrol.ts`: the raider
+sweeps the arena in a horizontal patrol (wrapping at the side edges), then
+commits to a straight high-speed attack run toward the player position
+snapshotted at the commit moment, overshoots, wraps at the first edge and
+re-enters patrol, so it can commit repeatedly. The `driftSpeed` column is the
+patrol speed; the raider-specific `attackSpeed` and `commitRange` columns tune
+the attack run and the commit proximity. The entity reuses the Scout's
+aimed-shot tell but fires only during a committed attack and only when the
+level's fire rule enables firing, so it never fires in Levels 1–3; it passes
+through every other enemy (GDD §2.6 — no enemy–enemy collision). The existing
+`GymFodderEnemies` scene runs the same shared entity/state-machine code with a live
+player for gym↔game parity.
+
+The **Missile Command telegraphed orbital strike** (AH-0MV01ENX00055CG1) is the
+fifth delivered classic archetype and is a **non-blocking world hazard**
+rather than a wave-gating ship. It is a single CSV row (`orbital-strike`,
+`formationKind: single`, `shotPattern: none`) backed by a dedicated
+`src/entities/OrbitalStrike.ts` entity and the pure planner
+`src/waves/StrikeSpawner.ts` (modelled on `AsteroidSpawner`). The entity
+lifecycle is a three-phase state machine — **telegraph → fall → detonate**:
+a visible marker pulses at the predicted impact point for a configurable tell
+of at least 500 ms (`TELEGRAPH_DURATION`, reusing the Scout advance cue), then
+a fast projectile falls from off-screen to that exact point and detonates in a
+`burstCount`-shrapnel radial burst. The strike never fires on the fire cycle
+(`tryFireNone`), so its only threat is the telegraphed projectile and the
+detonation burst; it never collides with or damages other enemies (GDD §2.6),
+and — matching the asteroid accounting (AH-0MUJM746P000QAEO) — it is **not
+registered with the `WaveManager`**, so a wave can neither stall nor clear
+early on it. The radial detonation burst is hoisted into the shared
+enemy-bullet path (so it can damage the player) while the strike entity itself
+is skipped once destroyed. Because the tell is driven by the simulation `dt`
+accumulated in `update(dt)`, the game and every gym run the identical
+lifecycle. The existing `GymFodderEnemies` scene runs the same shared entity code
+with a live player for gym↔game parity.
+
+The **Frogger lane-traffic hazard** (AH-0MV01EPM40008N8T) is the sixth
+delivered classic archetype. It is a CSV row (`lane-traffic`) backed by the
+`src/entities/LaneTraffic.ts` entity and the pure
+`src/waves/LaneTrafficSpawner.ts` planner. Each wave plans one to three
+horizontal lanes of fast-moving, non-firing hazards that cross the arena at a
+constant speed (`driftSpeed`) and wrap at the edges; `count` is the members per
+lane, `spacingX` the within-lane gap and the neutral `laneCount`/`laneSpacing`
+columns the lane count and vertical gap. Lane traffic is a **non-blocking
+world hazard** (the Asteroid accounting): the `LaneTrafficSpawner` events are
+spawned directly and never registered with the `WaveManager`, so traffic can
+never stall or prematurely clear a wave, and destroying one never advances the
+wave. It **never fires** (an explicit `tryFireNone` dispatch entry keeps it out
+of the aimed-shot fallback), is single-hit destructible, passes through every
+other enemy (GDD §2.6 — no enemy–enemy collision) and is mineral-inert. The
+`formationKind` is `rect` so the existing `GymFodderEnemies` scene displays the lane
+as a row of members and runs the same shared `updatePosition` seam with a live
+player for gym↔game parity.
+
+### 1.2 Data-driven enemy pipeline (AH-0MTFP7EIC004F1MN, CSV AH-0MTZWZ9TE009CVUA)
 
 Enemy tuning is data, not code. Each archetype is a row in the committed
 `src/data/enemy-configs.csv`; at boot the config store parses/validates it into
@@ -38,7 +163,7 @@ loaders. Retuning an enemy — or adding a new one — is a CSV edit (or a gym
 **Save** / **Save As…**), with no TypeScript change required. See §8 for the
 full schema, codec, config-store and Vite-plugin reference.
 
-### 1.2 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
+### 1.3 E6 Asteroid — the roaming, self-splitting rock (AH-0MU8BZ2ZM004J47F)
 
 The Asteroid is the first **non-formation** enemy: it does not use the
 formation-drift model at all. It drifts in a straight line at constant
@@ -62,7 +187,7 @@ position + velocity + rotation); the two children always move in directions
 **different from the parent and from each other** (≥ π/3 separation). The spawn
 loop lives **once** in the shared helper `src/scenes/core/asteroidSplit.ts`
 (`splitAsteroid({ scene, parent, register })`), consumed by
-`PlayScene._splitAsteroid` and the `GymEnemies`/`GymMinerals` destruction seams,
+`PlayScene._splitAsteroid` and the `GymFodderEnemies`/`GymMinerals` destruction seams,
 so a split-physics change is made in one place.
 
 **Wave-aware splitting**: split children are **not** registered with the
@@ -117,7 +242,7 @@ the wipe→respawn cycle runs only once the whole chain is cleared. Split
 children are registered through the base's `registerDynamicEntity(child)` seam
 (no casting into `entities`), and the base also exposes the protected
 `respawnFormation()` and `setPlayerEnabled(enabled)` seams
-(AH-0MUII3F7Q002O7WX, gap 9) so `GymEnemies._onRespawn`/`_onTogglePlayer`
+(AH-0MUII3F7Q002O7WX, gap 9) so `GymFodderEnemies._onRespawn`/`_onTogglePlayer`
 consume the shared respawn and player lifecycle instead of re-implementing
 them.
 
@@ -146,22 +271,25 @@ becomes discoverable without code changes.
 > config values. The old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config`
 > entries are ignored (leaderboard and settings still use `localStorage`).
 
-**Gym surface.** `GymEnemies` (`src/scenes/gym/GymEnemies.ts`,
-key `GymEnemies`) is the **single reusable gym scene**. It is parameterized
-by `{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
-formation/bullet behaviour from the loaded config. The gym index (`GymIndex`)
-enumerates enemy configs — one clickable row per config (label
-`displayName`) that boots `GymEnemies` with that `enemyKey` — rather than
-hard-coded per-enemy scenes. The index renders three columns — plain scenes,
-**ENEMIES** (non-boss configs) and **Bosses** — and both boss rows live in
-the right-hand **Bosses** column: the `boss` config row labelled
-**"Boss Swarm"** (it is a plain single-enemy archetype, not the multi-phase
-Central AI) routed to `GymEnemies`, and the dedicated `GymBoss` scene
-labelled **"Boss"** that boots `GymBoss` directly. `GymBoss` is excluded
+**Gym surface.** `GymFodderEnemies` (`src/scenes/gym/GymFodderEnemies.ts`,
+key `GymFodderEnemies`; renamed from `GymEnemies`, AH-0MV13G5EV008D41E) is the
+**single reusable *fodder* enemy gym scene**. It is parameterized by
+`{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
+formation/bullet behaviour from the loaded config; the key is also the
+optional deep-link default for the **in-panel enemy selector** (an `<select>`
+listing every non-boss config — see §8.5). The gym index (`GymIndex`) no
+longer enumerates one row per config: its **ENEMIES** column has a single
+**"Fodder Enemies"** row that boots `GymFodderEnemies` bare (the dropdown
+picks the archetype, default `scout`) plus the dedicated `GymBoss` scene
+labelled **"Boss"** that boots `GymBoss` directly. The index renders three
+columns — plain scenes, **ENEMIES** and **Dev Utilities** — so the Bosses
+column, the redundant `boss` "Boss Swarm" config row and the per-config rows
+were retired (AH-0MV13G5EV008D41E; formerly
+AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X). `GymBoss` is excluded
 from the plain scene list (left column) so the real boss is not duplicated
-as a bare scene (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Legacy
+as a bare scene. Legacy
 `GymScout`/`GymDiver`/… scenes have been
-retired; their formation/bullet assertions now live in `GymEnemies.test.ts`
+retired; their formation/bullet assertions now live in `GymFodderEnemies.test.ts`
 keyed by `enemyKey`.
 
 ---
@@ -180,7 +308,7 @@ the first three enemy gym scenes duplicated:
   `CombatCoreScene` (AH-0MUD8E015004C4JO; standalone-gym consolidation
   AH-0MUDCT7EU0061OSZ). The eight combat/lifecycle template methods
   (`_handleCollisions`, `_hitPlayer`, `_autoFire`, `_collectDrop`,
-  `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_handleTeleport`,
+  `_spawnPlayerExplosion`, `_clearEnemyBullets`, `_updateAutoDefence`,
   `_readPlayerInput`) are defined exactly once across all production scenes —
   the input/auto-fire/drop-collection group in `CombatCoreScene`, the
   combat-only collision/hit/teleport group in `CombatScene` — and dispatch to
@@ -204,7 +332,7 @@ the first three enemy gym scenes duplicated:
   its safe non-combat `false` defaults for threat-free direct subclasses
   (`GymWeapons`, `GymPowerUpsUtility`). Every `CombatScene` subclass
   inherits the gating exactly once — `PlayScene`, `GymPowerUpsCombat`, and
-  `GymFormationScene` (`GymEnemies`/`GymBoss`/`GymMinerals`) — so collecting
+  `GymFormationScene` (`GymFodderEnemies`/`GymBoss`/`GymMinerals`) — so collecting
   Shield or Phase Shift behaves identically in the shipped game and
   the enemy gym. **No scene should re-implement these hooks**; a scene may
   add a per-type cue only through the `onShieldAbsorbed()` seam. The Shield
@@ -214,11 +342,11 @@ the first three enemy gym scenes duplicated:
 
   **Hold-full rewards in the mineral gym (**AH-0MUHMXWGC0058BO4**).**
   `GymMinerals` has no field power-up drops, so its rewards come from the
-  hold-full choice overlay. Because the choice can grant Teleport, the
-  S / ↓ teleport keys are bound whenever a player exists and the shared
-  `_handleTeleport()` runs every tick — independent of `powerUpsEnabled` —
-  so a stored Teleport use is consumable; `canTeleport()` accepts a stored use in
-  addition to the opt-in drop layer. The effects registry ticks (and the
+  hold-full choice overlay. Because the choice can grant Teleport, the shared
+  automatic-defence feed (`_updateAutoDefence()`) runs every tick —
+  independent of `powerUpsEnabled` — so a stored Teleport use is spent
+  automatically when the ship is in danger; `canTeleport()` accepts a stored
+  use in addition to the opt-in drop layer. The effects registry ticks (and the
   HUD refreshes) every frame in all formation gyms, so a Phase Shift granted on
   teleport arrival expires normally. The overlay renders the caller's
   stored options, so the displayed label is the option applied.
@@ -248,7 +376,7 @@ the first three enemy gym scenes duplicated:
   archetype-key → `tryFire*` mapping lives once in
   `src/entities/enemyFire.ts`: `fireForEnemy(entity, enemyKey, now)` reads a
   single `ENEMY_FIRE_METHODS` table and normalises a `null`/single/array
-  result to a bullet array. `PlayScene`, `GymEnemies` and
+  result to a bullet array. `PlayScene`, `GymFodderEnemies` and
   `GymPowerUpsCombat` all route through it, so a new archetype is wired by
   one table entry and every scene fires it with the same cadence. The helper
   takes the scene clock as an explicit `now` argument — never a frame-count
@@ -282,7 +410,7 @@ the first three enemy gym scenes duplicated:
   `SHUTDOWN` so a restart never leaks. Test seams:
   `isRespawnCountdownActive()`, `getRespawnCountdownRemaining()`,
   `getRespawnCountdownText()`. Core-library owned — every formation gym
-  (`GymEnemies` for every `enemyKey`) inherits it with no per-scene code.
+  (`GymFodderEnemies` for every `enemyKey`) inherits it with no per-scene code.
 - **Shared restart/teardown lifecycle** (AH-0MUII3FYN0072QRT, gap 10) — the
   per-run reset/teardown lives once in `CombatCoreScene.resetRunState()` /
   `teardownRunState()`. `create()` calls `resetRunState()`, which clears the
@@ -323,7 +451,7 @@ functions (`FORMATION_BUILDERS` / `getFormationBuilder(kind)` with a safe
 `buildVFormationOffsets` fallback for unknown kinds), and shot patterns are
 validated by `src/utils/enemyShotPatterns.ts` (`VALID ShotPattern` set,
 `sanitizeShotPattern` → `'none'`). Together they keep `EnemyConfig` small
-and `GymEnemies` free of per-type branches.
+and `GymFodderEnemies` free of per-type branches.
 
 ### 2.2 Configuration contract
 
@@ -490,11 +618,11 @@ for reference implementations (the base class drives them).
   respawn, refreshes `statusText`, hides the countdown, and calls
   `playSpawnSound()`. Fully repeatable — the next wipe starts a fresh
   countdown. The shared seam is `GymFormationScene.respawnFormation()`
-  (protected); a subclass's manual respawn (e.g. `GymEnemies._onRespawn`)
+  (protected); a subclass's manual respawn (e.g. `GymFodderEnemies._onRespawn`)
   syncs its live config then calls it (and clears player bullets itself when
   it wants a clean slate) rather than re-implementing the rebuild.
 - **Scope:** core-library owned in `GymFormationScene`; inherited by
-  every formation gym (including `GymEnemies` for every `enemyKey`).
+  every formation gym (including `GymFodderEnemies` for every `enemyKey`).
   `GymBoss` (multi-phase) is out of scope.
 - **Tear-down:** `SHUTDOWN` cancels the countdown and hides the overlay
   so a scene restart never double-fires or leaks.
@@ -511,7 +639,7 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
   `CombatScene` core (`startWaveTimeout` / `_advanceWaveTimeout` /
   `_onWaveTimeout` / `_drawWaveTimeoutBar` and the shared respawn countdown),
   so every combat gym opts in through the same hooks — a single kind of
-  scene. `GymFormationScene` (and every `GymEnemies` / `GymBoss` /
+  scene. `GymFormationScene` (and every `GymFodderEnemies` / `GymBoss` /
   `GymMinerals` subclass) and `GymPowerUpsCombat` all consume it.
 - **Shared helper is a no-op.** `detonateWaveTimeoutSurvivors` in
   `src/scenes/core/waveTimeout.ts` is retained as a stable API but returns 0
@@ -521,10 +649,10 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
   diverge on the (now absent) penalty.
 - **Opt-in.** `GymFormationScene` subclasses enable it through
   `EnemyFormationConfig.timeoutDuration` (seconds); `GymPowerUpsCombat` opts in
-  by overriding `getWaveTimeoutDuration()`. `GymEnemies` sets it to
+  by overriding `getWaveTimeoutDuration()`. `GymFodderEnemies` sets it to
   `WAVE_TIME_LIMIT_SECONDS` for every non-boss `enemyKey`, `GymMinerals`
   enables it for its asteroids-only field, and `GymPowerUpsCombat` enables it
-  for its scout wave. The boss (`GymEnemies` with the `boss` config) and
+  for its scout wave. The boss (`GymFodderEnemies` with the `boss` config) and
   `GymBoss` leave it unset, as do the enemy-free `GymPlayer`, `GymWeapons`
   and `GymPowerUpsUtility`.
 - **Expiry flow.** On expiry survivors persist, the bar hides, and the shared
@@ -544,7 +672,7 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
 - **Tests.** `src/scenes/core/waveTimeout.test.ts` covers the no-op helper;
   `GymFormationScene.test.ts` covers the opt-in/expiry/carry-over-respawn
   behaviour (survivors + fresh formation must both be cleared),
-  `GymEnemies.test.ts` asserts every non-boss key enables it while the boss
+  `GymFodderEnemies.test.ts` asserts every non-boss key enables it while the boss
   does not, and `GymMinerals.test.ts` / `GymPowerUpsCombat.test.ts` cover the
   newly-enabled gyms.
 
@@ -591,7 +719,7 @@ enemy is protected (AC4):
   is collidable on the same frame; the wormhole closes once every wave enemy
   has finished.
 - `GymFormationScene.create` starts the animation for each formation entity
-  and `_updateSpawnAnimations` advances/closes it, so `GymEnemies` and the
+  and `_updateSpawnAnimations` advances/closes it, so `GymFodderEnemies` and the
   other formation gyms are in lock-step with the game.
 - Both scenes expose a `finishSpawnAnimations()` test seam that completes the
   animation without advancing wave timers/asteroid spawns, so collision tests
@@ -599,7 +727,7 @@ enemy is protected (AC4):
 
 **Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters and
   the dt-driven growth curve; `PlayScene.test.ts` (describe
-  “wormhole spawn animation”) and `GymEnemies.test.ts` (describe
+  “wormhole spawn animation”) and `GymFodderEnemies.test.ts` (describe
   “wormhole spawn animation parity”) cover the spawn-protection gates in both
   scenes.
 
@@ -709,6 +837,17 @@ same input and `dt`. See
 [AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
 for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
 
+The classic-arcade power-up and weapon roster
+([`CLASSIC_POWERUP_WEAPON_RESEARCH.md`](CLASSIC_POWERUP_WEAPON_RESEARCH.md),
+epic AH-0MV14SO0G0095IJ4) follows the same rule: every behaviour it adds runs
+in shared code — the shared piercing-collision, bullet-bounce and
+missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
+`src/scenes/core/optionsEscort.ts` orbit geometry, the pure
+`src/scenes/core/frightenedState.ts` flee policy, the screen-wide
+`AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
+Force Field seam — so the game and every gym (`GymWeapons`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.
+
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
 (`src/entities/Obstacle.ts`) that the shipped `PlayScene` does not yet have.
@@ -793,8 +932,8 @@ combat testbeds.
   > is complemented by the Enemy Config pipeline (AH-0MTFP7EIC004F1MN,
   > CSV AH-0MTZWZ9TE009CVUA): enemy tuning also lives in
   > `src/data/enemy-configs.csv` (`EnemyConfig`) and is exercised through
-  > the single `GymEnemies` scene (see §1.1 / §8). The per-scene `player`
-  > seam itself is unchanged — `GymEnemies` reuses it.
+  > the single `GymFodderEnemies` scene (see §1.2 / §8). The per-scene `player`
+  > seam itself is unchanged — `GymFodderEnemies` reuses it.
 - **Auto-fire:** while the SHOOT toggle is on, the ship auto-fires
   `PlayerBullet`s toward its current heading.
 
@@ -833,7 +972,7 @@ inherited from the shared `CombatScene`, not re-implemented in the gym:
   ship passes through bullets and bodies for the **1.5 s** effect window (no
   `getPlayerHitCount()` increment, no respawn). Since the automatic Phase
   Shift change (parent AH-0MUIYX1EE008FVS8) the phase is triggered by the
-  shared per-frame danger feed (`CombatScene._updatePhaseShiftAutoTrigger`,
+  shared per-frame danger feed (`CombatScene._updateAutoDefence`,
   called in `PlayScene`, `GymFormationScene` and `GymPowerUpsCombat`
   immediately before `_handleCollisions`): when **3 or more** hostile
   bodies/bullets are within **40 px** (`2 × SHIP_SIZE`) of the ship and a
@@ -1001,8 +1140,10 @@ animated by the shared `FormationGlide` helper
 | Field | Type | Purpose |
 |-------|------|---------|
 | `key` | `string` | Stable slug (lowercase/numbers/hyphens, ≤40 chars) and CSV row identity. Validated by `isValidEnemyKey` / `sanitizeEnemyKey`. |
-| `displayName` | `string` | Human label shown in the index and `GymEnemies` hint. |
-| `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single'` — selects the builder in `src/utils/formations.ts`. |
+| `displayName` | `string` | Human label shown in the index and `GymFodderEnemies` hint. |
+| `formationKind` | `EnemyFormationKind` | `'v' \| 'diver' \| 'rect' \| 'swarm' \| 'orbital' \| 'single' \| 'march'` — selects the builder in `src/utils/formations.ts`. `march` is the Space Invaders stepping block (AH-0MV01EDZS0005R20) and additionally reads `marchStep`/`marchDrop`. |
+| `marchStep` | `number?` | Horizontal step (px) for the `march` formation; neutral/absent otherwise. |
+| `marchDrop` | `number?` | Vertical drop per arena-edge reversal (px) for the `march` formation; neutral/absent otherwise. |
 | `count` | `number` | Formation size. Must be `1` for the `single` formation (one entity); `validateWaveGroups` reports violations. |
 | `spacingX` / `spacingY` | `number` | Slot spacing (px). |
 | `driftSpeed` | `number` | Rightward drift (px/s). |
@@ -1124,9 +1265,9 @@ skipped cycle never plays an advance cue with no shot; Diver/Tank/Swarm gate at
 their interval check; the Boss gates in `_shouldFire` *after* its telegraph
 guard (never while a telegraph is scheduled).
 
-### 8.5 Gym surface — GymEnemies + editor panel
+### 8.5 Gym surface — GymFodderEnemies + editor panel
 
-`GymEnemies` is the only enemy gym scene. `init({ enemyKey })` loads the
+`GymFodderEnemies` is the only enemy gym scene. `init({ enemyKey })` loads the
 config and calls `getFormationBuilder(cfg.formationKind)` to build
 `EnemyFormationConfig` via `enemyConfigToFormationConfig`. `collectBullets`
 delegates to the shared `fireForEnemy(entity, cfg.key, now)` dispatcher
@@ -1157,18 +1298,30 @@ collapsible by the shared `makeCollapsible({ panel, title })` helper in
 header/toggle stay visible, keeping the control discoverable and keyboard
 activatable. Panels start **expanded** (`data-collapsed="false"`); the state
 is per-scene and deliberately not persisted. Toggle titles are `Ship Config`
-(`GymPlayer`), `AI Config` (`GymEnemies`) and `Boss Config` (`GymBoss`). The
+(`GymPlayer`), `AI Config` (`GymFodderEnemies`) and `Boss Config` (`GymBoss`). The
 helper is unit-tested in `src/utils/gymPanel.test.ts`, the collapsed CSS
 contract in `src/style.test.ts`, and the per-scene toggle in each scene's test
 file.
 
-The **editor panel** (`src/scenes/gym/GymEnemies.ts`, plain-DOM under
+The **editor panel** (`src/scenes/gym/GymFodderEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
 `count/spacingX/spacingY/driftSpeed/startX/startY/startXMin/startXMax/startYMin/startYMax/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
 colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
 `listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).
+
+**In-panel enemy selector (AH-0MV13G5EV008D41E).** The panel also carries the
+**enemy selector** (id `enemy-gym-select`): a single `<select>` whose options
+are every non-boss `EnemyConfig` key discovered from the config store
+(`loadAllEnemyConfigs()`, so seed and `Save As…` entries both appear with no
+hard-coded key list), labelled by `displayName` and seeded from the scene's
+active key. Choosing a different enemy rebuilds the scene through the shared
+`respawnFormation()` clean-slate seam — it destroys every live formation
+entity and the player's in-flight bullets, loads the selected config, then
+reloads every other panel control from that config (discarding unsaved edits)
+— so the running scene always matches the selection. The `boss` archetype is
+deliberately excluded (it has its own gym entry).
 The four spawn-range sliders (`startXMin/startXMax/startYMin/startYMax`, bounds
 `0..GAME_WIDTH` / `0..GAME_HEIGHT`, step 1) are clamped to the canvas and
 auto-corrected so `min ≤ max` before the value is used or saved; editing the
@@ -1183,24 +1336,24 @@ and best-effort mutate entity `_*` fields (including `_bulletLifetime`, so the
 `bulletLifetime` 0.1–5.0 s TTL slider live-applies to already-spawned entities).
 Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
-Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-save`,
+Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-select`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
 `data-config` / `data-config-value` on controls. The panel also shows a
 **live difficulty readout** (id `enemy-gym-difficulty`) that recomputes the
 0–100 archetype score on every control change — see §9.
 
-The gym index discovers enemies via `src/utils/enemyGymDiscovery.ts`
-(`discoverEnemyGymEntries()` → `{ key: 'GymEnemies:<slug>', label,
- enemyKey }[]`, sorted by label) and routes each non-boss config row to
-`scene.start('GymEnemies', { enemyKey })`. The gym index lays out three
-columns: plain scenes (left), **ENEMIES** (non-boss configs) and **Bosses**
-(right). Both boss rows sit in the **Bosses** column — the plain `boss`
-config archetype labelled **"Boss Swarm"** (routed to `GymEnemies`) and the
-dedicated **"Boss"** row (scene key `GymBoss`) that boots the multi-phase
-`GymBoss` scene directly. Bare `GymEnemies` is excluded from the plain scene
+Archetype discovery now lives inside the scene: the enemy selector enumerates
+the config store (`loadAllEnemyConfigs()`), so a `Save As…` entry appears on
+the next boot with no code change (the retired `src/utils/enemyGymDiscovery.ts`
+used to build one index row per config). The gym index lays out three columns:
+plain scenes (left), **ENEMIES** (middle) and **Dev Utilities** (right). The
+**ENEMIES** column holds a single **"Fodder Enemies"** row that boots
+`GymFodderEnemies` bare plus the dedicated **"Boss"** row (scene key
+`GymBoss`) that boots the multi-phase `GymBoss` scene directly. Bare
+`GymFodderEnemies` is excluded from the plain scene
 list, and `GymBoss` is likewise excluded there so the real boss is not
-duplicated (AH-0MUAYB28C004KK7X, AH-0MTV8OV9V002D8B7). Save As
-enemies appear on next index load without code changes. Index rows are
+duplicated (AH-0MV13G5EV008D41E; formerly AH-0MUAYB28C004KK7X,
+AH-0MTV8OV9V002D8B7). Index rows are
 keyboard-operable through the shared `src/utils/focusManager.ts`
 (`FocusManager`): rows are focused in reading order with the first row
 focused by default, Tab/Shift+Tab and the arrow keys cycle with wrap-around,
@@ -1307,7 +1460,7 @@ constants live in `FACTOR_WEIGHTS` / `FACTOR_RANGES` in the module.
 | `bulletSpeed` | 5 | 40–600 px/s | Bullet velocity. |
 | `bulletLifetime` | 6 | 0.1–5.0 s | Bullet TTL — **not** inverted: a longer-lived bullet wraps the screen and stays lethal, so a higher value scores higher. Matches the gym slider range. |
 | `burstCount` | 12 | 1–24 | Bullets per volley / radial spokes. |
-| `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, swarm 4, orbital 5. |
+| `formationKind` | 8 | ordinal 0–5 | Positional threat: single 0, v 1, diver 2, rect 3, march 3 (rigid block, shares the rect ordinal), swarm 4, orbital 5. |
 | `asteroidSplit` | 10 | 1–7 | Split-chain entity count; one large Asteroid = 7 destroyed enemies (GDD §4.1 E6). |
 | `health` | 10 | 1–5 HP | Enemy durability; **not** inverted — a durable multi-hit archetype is harder to survive, so a higher value scores higher. Range covers the single-hit default (1) and the 5-HP Harvester (GDD §4.2). |
 
@@ -1376,7 +1529,7 @@ Asteroid's split-chain contribution).
 
 - **Enemy Gym editor panel:** the live `enemy-gym-difficulty` readout shows the
   edited archetype's score and updates on every slider/select/colour change
-  (`GymEnemies._updateDifficulty`).
+  (`GymFodderEnemies._updateDifficulty`).
 - **Library:** `enemyDifficulty` / `waveDifficulty` / `levelDifficulty` are
   importable for scripts, docs tables and future tooling.
 
@@ -1412,6 +1565,28 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   Excluding it keeps every sequenced group wave-accounted and preserves the
   "asteroids are not wave-accounted" contract for the random spawner and split
   children.
+- **Per-level archetype variety cap (AH-0MV2SGIX5005PFJT):** the sequencer
+  selects a wave's composition purely by minimising the error against its
+  `targetDifficulty`, so without a composition constraint the highest-rated
+  archetype — the Phaser's `orbital` formation (ordinal 5 in the
+  `formationKind` scale) — became the best fit for **every** wave once the
+  target crossed ~30. The late game then collapsed onto one movement style
+  ("once an orbital formation appeared, all subsequent waves were orbital").
+  `MAX_ARCHETYPE_PER_LEVEL` (`src/core/difficultySequencer.ts`, default **1**)
+  caps the number of waves within one level in which a single archetype may
+  appear. `buildSequencedLevels()` creates one `archetypeUsage` map per level
+  and shares it across the level's per-wave `sequencer()` calls, so the cap
+  spans the whole level; `sequencer()` records each wave's archetypes and
+  excludes at-cap archetypes from both the primary selection and multi-group
+  composition. It falls back to the full pool when every archetype is already
+  at the cap, so a wave can never be starved into an empty/soft-locking
+  composition. The cap applies **only to generated (`curve`/`dynamic`) waves**:
+  an authored `fixed` wave is never passed to the sequencer and may still use
+  any archetype, so the orbital Phaser remains an authorable set-piece and is
+  still exercised by the gyms (gym↔game parity, §5.1). Raise the constant or
+  pass `maxArchetypePerLevel` to relax the rule; `Infinity` disables it. The
+  shipped level 5 therefore keeps the orbital Phaser in one wave (W1) and
+  composes W2 from non-orbital archetypes.
 - **Per-wave generation modes (AH-0MUJSUQD8003FSUT):** `generation` is a
   **per-wave** selector and the three modes may be mixed freely within a level:
   `curve` builds the wave from its target once (fixed for the run); `fixed`

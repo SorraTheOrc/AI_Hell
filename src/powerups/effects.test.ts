@@ -7,6 +7,7 @@ import {
   P10_SCOOP_DURATION,
   applySpeedMultiplier,
   magnetRadius,
+  selectAutoDefence,
   MAGNET_ATTRACTION_SPEED,
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
@@ -355,6 +356,84 @@ describe('P10 Mineral Scoop hybrid (AC3)', () => {
   });
 });
 
+describe('Power Pellet fright window (AH-0MV1BIW95004POSX)', () => {
+  it('a field pickup opens the timed fright window and levels the power-up', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(reg.isFrightened()).toBe(false);
+
+    reg.applyCollect('power_pellet');
+
+    expect(reg.isFrightened()).toBe(true);
+    expect(reg.remaining('power_pellet')).toBeCloseTo(6, 5);
+    expect(reg.frightenElapsed()).toBeCloseTo(0, 5);
+    expect(store.getLevel('power_pellet')).toBe(1);
+    expect(store.getTempStacks('power_pellet')).toBe(1);
+  });
+
+  it('the fright window expires and reverts the temporary level', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('power_pellet');
+
+    reg.tick(6.01);
+
+    expect(reg.isFrightened()).toBe(false);
+    expect(reg.remaining('power_pellet')).toBeUndefined();
+    expect(store.getLevel('power_pellet')).toBe(0);
+    expect(reg.activeEffects().some((e) => e.id === 'power_pellet')).toBe(false);
+  });
+
+  it('re-collecting refreshes the window and advances the level', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('power_pellet');
+    reg.tick(4);
+    const before = reg.remaining('power_pellet')!;
+
+    reg.applyCollect('power_pellet');
+
+    expect(reg.remaining('power_pellet')!).toBeGreaterThan(before);
+    expect(store.getLevel('power_pellet')).toBe(2);
+  });
+
+  it('a hold-full reward makes the fright window permanent (never expires)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('power_pellet', true);
+
+    expect(reg.isFrightened()).toBe(true);
+    reg.tick(1000);
+    expect(reg.isFrightened()).toBe(true);
+    expect(store.getPermanentLevel('power_pellet')).toBe(1);
+  });
+
+  it('frightenElapsed() grows with the window and frightenSpeedMultiplier() resolves from the level curve', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    // Level 0 (first collection) → base 1× flee multiplier.
+    reg.applyCollect('power_pellet');
+    expect(reg.frightenSpeedMultiplier()).toBe(1);
+    reg.tick(3);
+    expect(reg.frightenElapsed()).toBeCloseTo(3, 5);
+
+    // Levelling the power-up raises the resolved flee multiplier above base.
+    reg.applyCollect('power_pellet');
+    expect(reg.frightenSpeedMultiplier()).toBeGreaterThan(1);
+    expect(reg.frightenSpeedMultiplier()).toBeCloseTo(
+      resolvePowerUpAtLevel('power_pellet', 1).frightenSpeedMultiplier!,
+      10,
+    );
+  });
+
+  it('reset() clears the fright window', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('power_pellet');
+    reg.reset();
+    expect(reg.isFrightened()).toBe(false);
+  });
+});
+
 // ── AC6 — timing / reset semantics ───────────────────────────────────
 
 describe('timing and reset semantics (AC6)', () => {
@@ -579,6 +658,246 @@ describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y
   });
 });
 
+// ── Smart Bomb (AH-0MV1BIWP9003EHRQ) ──────────────────────────────
+
+describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)', () => {
+  it('a field pickup queues exactly one pulse and leaves no permanent state', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('smart_bomb');
+
+    expect(reg.isSmartBombPermanent()).toBe(false);
+    expect(reg.activeEffects()).toHaveLength(0);
+    expect(store.getLevel('smart_bomb')).toBe(1);
+
+    // The queued pulse fires once, then never again.
+    expect(reg.updateSmartBomb(0.016)).toBe(true);
+    expect(reg.updateSmartBomb(10)).toBe(false);
+    expect(reg.updateSmartBomb(10)).toBe(false);
+  });
+
+  it('a hold-full reward is permanent: immediate pulse then the resolved interval', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb', true);
+    expect(reg.isSmartBombPermanent()).toBe(true);
+    expect(
+      reg.activeEffects().some((e) => e.id === 'smart_bomb' && e.permanent),
+    ).toBe(true);
+
+    const interval = reg.smartBombInterval();
+    expect(interval).toBeCloseTo(
+      1 / resolvePowerUpAtLevel('smart_bomb', 0).smartBombFrequency!,
+      10,
+    );
+
+    expect(reg.updateSmartBomb(0.016)).toBe(true); // immediate
+    expect(reg.updateSmartBomb(interval - 0.1)).toBe(false);
+    expect(reg.updateSmartBomb(0.2)).toBe(true); // interval elapsed
+  });
+
+  it('resolves aoeRadius/smartBombDamage/smartBombFrequency live so a level-up strengthens later pulses', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb');
+    const base = reg.smartBombAoe();
+    const baseInterval = reg.smartBombInterval();
+
+    reg.applyCollect('smart_bomb');
+
+    const levelled = reg.smartBombAoe();
+    expect(levelled.radius).toBeGreaterThan(base.radius);
+    expect(levelled.damage).toBeGreaterThanOrEqual(base.damage!);
+    expect(reg.smartBombInterval()).toBeLessThan(baseInterval);
+  });
+
+  it('smartBombAoe() exposes the shared AoEDescriptor shape (damage + clear flags)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb');
+
+    const aoe = reg.smartBombAoe();
+    expect(aoe.trigger).toBe('screenPulse');
+    expect(aoe.damagesEnemies).toBe(true);
+    expect(aoe.clearsEnemyBullets).toBe(true);
+    expect(aoe.damage).toBe(1);
+    expect(aoe.radius).toBe(
+      resolvePowerUpAtLevel('smart_bomb', 0).aoeRadius,
+    );
+  });
+
+  it('reset() clears the permanent flag and any pending pulse', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('smart_bomb', true);
+
+    reg.reset();
+
+    expect(reg.isSmartBombPermanent()).toBe(false);
+    expect(reg.activeEffects().some((e) => e.id === 'smart_bomb')).toBe(false);
+    expect(reg.updateSmartBomb(1)).toBe(false);
+  });
+});
+
+// ── Force Field reflector (AH-0MV1BIX1W006XF95) ────────────────────
+
+describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
+  it('a field pickup opens the reflect window with the level-resolved budget', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('force_field');
+
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.forceFieldRemaining()).toBe(
+      resolvePowerUpAtLevel('force_field', 0).forceFieldReflects,
+    );
+    expect(reg.remaining('force_field')).toBe(
+      resolvePowerUpAtLevel('force_field', 0).forceFieldDuration,
+    );
+    // The HUD row carries the remaining reflect budget.
+    const entry = reg.activeEffects().find((e) => e.id === 'force_field');
+    expect(entry?.stacks).toBe(reg.forceFieldRemaining());
+  });
+
+  it('returns at most its reflect budget and then stops reflecting', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+    const budget = reg.forceFieldRemaining();
+    expect(budget).toBeGreaterThan(0);
+
+    for (let i = 0; i < budget; i++) {
+      expect(reg.tryConsumeForceFieldReflect()).toBe(true);
+    }
+    // Budget spent: the bubble is still up but no longer reflects.
+    expect(reg.forceFieldRemaining()).toBe(0);
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+
+  it('never reflects when no field is active', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.isForceFieldActive()).toBe(false);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+
+  it('re-collecting refreshes the window and budget to the level-resolved values', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+    const baseBudget = reg.forceFieldRemaining();
+    // Spend one, then collect again — refreshes to the new level's budget.
+    expect(reg.tryConsumeForceFieldReflect()).toBe(true);
+    reg.applyCollect('force_field');
+    expect(reg.forceFieldRemaining()).toBeGreaterThanOrEqual(baseBudget);
+    expect(reg.isForceFieldActive()).toBe(true);
+  });
+
+  it('expiry ends reflection and clears the budget', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+
+    reg.tick((reg.remaining('force_field') ?? 0) + 0.1);
+
+    expect(reg.isForceFieldActive()).toBe(false);
+    expect(reg.forceFieldRemaining()).toBe(0);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+
+  it('a permanent reward keeps the bubble up and reflecting for the run', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field', true);
+    expect(reg.isForceFieldActive()).toBe(true);
+
+    // A permanent bubble has no temporary window, so ticking never expires it.
+    reg.tick(1000);
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.forceFieldRemaining()).toBe(
+      resolvePowerUpAtLevel('force_field', 0).forceFieldReflects,
+    );
+  });
+
+  it('exposes the shared reflect radius used by the bubble visual', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.forceFieldRadius()).toBeGreaterThan(SHIP_SIZE);
+  });
+
+  it('reset() clears the reflect window and budget', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('force_field');
+
+    reg.reset();
+
+    expect(reg.isForceFieldActive()).toBe(false);
+    expect(reg.forceFieldRemaining()).toBe(0);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+  });
+});
+
+// ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+
+describe('Mystery UFO: instant mineral + score bounty (AH-0MV1BIXFO006Z1I7)', () => {
+  it('queues the base burst on collection and leaves no timed or stored state', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    reg.applyCollect('mystery_ufo');
+
+    // Base bounty (level 0): 2 minerals / 250 score.
+    expect(reg.consumeMysteryBonus()).toEqual({ minerals: 2, score: 250 });
+    // The pickup advances the run-scoped level (permanent reward path).
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
+    // No timed window and no consumable state.
+    expect(reg.isActive('mystery_ufo')).toBe(false);
+    expect(reg.remaining('mystery_ufo')).toBeUndefined();
+    expect(reg.activeEffects().some((e) => e.id === 'mystery_ufo')).toBe(false);
+    // Drained once — a second consume finds nothing.
+    expect(reg.consumeMysteryBonus()).toBeNull();
+  });
+
+  it('escalates the burst as the power-up levels up', () => {
+    const reg = new EffectsRegistry();
+
+    reg.applyCollect('mystery_ufo');
+    const first = reg.consumeMysteryBonus()!;
+    reg.applyCollect('mystery_ufo');
+    const second = reg.consumeMysteryBonus()!;
+
+    expect(second.minerals).toBeGreaterThan(first.minerals);
+    expect(second.score).toBeGreaterThan(first.score);
+    // The escalation tracks the shared level curve exactly.
+    expect(second.minerals).toBe(
+      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoMinerals!),
+    );
+    expect(second.score).toBe(
+      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoScore!),
+    );
+  });
+
+  it('accumulates repeated pickups before a drain and grants a permanent reward too', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+    reg.applyCollect('mystery_ufo');
+    const two = reg.consumeMysteryBonus()!;
+    expect(two.minerals).toBeGreaterThan(2);
+    expect(two.score).toBeGreaterThan(250);
+
+    // A hold-full reward also grants the bounty and becomes permanent.
+    reg.applyCollect('mystery_ufo', true);
+    expect(reg.consumeMysteryBonus()).not.toBeNull();
+  });
+
+  it('exposes the level-resolved next bounty and reset() clears the pending burst', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.mysteryUfoMinerals()).toBe(2);
+    expect(reg.mysteryUfoScore()).toBe(250);
+
+    reg.applyCollect('mystery_ufo');
+    expect(reg.mysteryUfoMinerals()).toBe(
+      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoMinerals!),
+    );
+
+    reg.reset();
+    expect(reg.consumeMysteryBonus()).toBeNull();
+    expect(reg.mysteryUfoMinerals()).toBe(2);
+    expect(reg.mysteryUfoScore()).toBe(250);
+  });
+});
+
 // ── Phase Shift ───────────────────────────────────────────────────
 
 describe('P6 Phase Shift: charge-based auto-trigger', () => {
@@ -595,7 +914,7 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
 
-    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     expect(reg.isPhased).toBe(true);
     expect(reg.remaining('phase_shift')).toBeCloseTo(
       resolvePowerUpAtLevel('phase_shift', 0).phaseDuration!,
@@ -606,14 +925,14 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 
   it('does not trigger without a charge', () => {
     const reg = new EffectsRegistry();
-    expect(reg.updateDanger(true, 0.016)).toBe(false);
+    expect(reg.updateDanger(true, 0.016)).toBeNull();
     expect(reg.isPhased).toBe(false);
   });
 
   it('does not trigger when not in danger', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift');
-    expect(reg.updateDanger(false, 0.016)).toBe(false);
+    expect(reg.updateDanger(false, 0.016)).toBeNull();
     expect(reg.isPhased).toBe(false);
     expect(reg.phaseCharges()).toBe(1);
   });
@@ -633,12 +952,12 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     reg.applyCollect('phase_shift', true);
     expect(reg.isPhasePermanent()).toBe(true);
 
-    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     reg.tick(PHASE_DURATION + 0.01);
     expect(reg.isPhased).toBe(false);
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
 
-    expect(reg.updateDanger(true, 0.016)).toBe(true);
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     expect(reg.phaseCharges()).toBe(0); // permanent never consumes
   });
 
@@ -647,7 +966,7 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     reg.applyCollect('phase_shift', true);
     reg.updateDanger(true, 0.016);
     reg.tick(PHASE_DURATION + 0.01);
-    expect(reg.updateDanger(true, 5)).toBe(false);
+    expect(reg.updateDanger(true, 5)).toBeNull();
     expect(reg.isPhased).toBe(false);
   });
 
@@ -658,8 +977,8 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     reg.tick(PHASE_DURATION + 0.01);
 
     reg.updateDanger(false, 0.1);
-    expect(reg.updateDanger(true, 0)).toBe(false); // blocked by cooldown
-    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe(true);
+    expect(reg.updateDanger(true, 0)).toBeNull(); // blocked by cooldown
+    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('phase_shift');
   });
 
   it('applyPhaseShift refreshes an active phase to the full P7 duration', () => {
@@ -683,6 +1002,109 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     expect(reg.isPhasePermanent()).toBe(false);
     expect(reg.isPhased).toBe(false);
     expect(store.getLevel('phase_shift')).toBe(0);
+  });
+});
+
+// ── Automatic defence selection: Phase Shift vs Teleport ─────────────
+
+describe('selectAutoDefence: charge-count selection (AC2)', () => {
+  it('returns null when neither defence is available', () => {
+    expect(selectAutoDefence(0, false, 0)).toBeNull();
+  });
+
+  it('returns the only available defence', () => {
+    expect(selectAutoDefence(1, false, 0)).toBe('phase_shift');
+    expect(selectAutoDefence(0, false, 2)).toBe('teleport');
+  });
+
+  it('spends the ability with the greater available count', () => {
+    expect(selectAutoDefence(1, false, 3)).toBe('teleport');
+    expect(selectAutoDefence(3, false, 1)).toBe('phase_shift');
+  });
+
+  it('breaks an exact tie with the injected RNG (both outcomes reachable)', () => {
+    expect(selectAutoDefence(2, false, 2, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(2, false, 2, () => 0.49)).toBe('phase_shift');
+    expect(selectAutoDefence(2, false, 2, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(2, false, 2, () => 0.99)).toBe('teleport');
+  });
+
+  it('treats a permanent Phase Shift as unbounded and outranks Teleport', () => {
+    expect(selectAutoDefence(0, true, 5)).toBe('phase_shift');
+    expect(selectAutoDefence(0, true, 0)).toBe('phase_shift');
+  });
+});
+
+describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
+  it('selects Teleport without consuming the stack (the scene warps)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    // The registry does not own the warp, so it must not consume the stack.
+    expect(reg.teleportStacks()).toBe(1);
+    expect(reg.isPhased).toBe(false);
+  });
+
+  it('latches the danger episode so Teleport is not drained continuously', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+    reg.applyCollect('teleport'); // level 2 → 3 stacks
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    // Still in danger on the same episode → no second selection.
+    expect(reg.updateDanger(true, 5)).toBeNull();
+    expect(reg.teleportStacks()).toBe(3);
+  });
+
+  it('re-arms only after danger clears and the phase cooldown elapses', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport');
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    // The scene completes the warp: consume the stack + grant phase.
+    expect(reg.consumeTeleport()).toBe(true);
+    expect(reg.isPhased).toBe(true);
+    reg.tick(PHASE_DURATION + 0.01); // phase expires → cooldown starts
+
+    // Re-collect a Teleport stack for the next episode.
+    reg.applyCollect('teleport');
+
+    reg.updateDanger(false, 0.1); // danger clears, cooldown still running
+    expect(reg.updateDanger(true, 0)).toBeNull(); // blocked by cooldown
+    expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('teleport');
+  });
+
+  it('spends the more abundant stock when both are available', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift'); // 1 charge
+    reg.applyCollect('teleport'); // 1 stack
+    reg.applyCollect('teleport'); // level 2 → 3 stacks
+    expect(reg.phaseCharges()).toBe(1);
+    expect(reg.teleportStacks()).toBe(3);
+
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+  });
+
+  it('uses the seeded RNG for the exact-tie pick', () => {
+    const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
+    phaseFirst.applyCollect('phase_shift');
+    phaseFirst.applyCollect('teleport');
+    expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
+
+    const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
+    teleportFirst.applyCollect('phase_shift');
+    teleportFirst.applyCollect('teleport');
+    expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
+  });
+
+  it('permanent Phase Shift outranks stored Teleports, which are conserved', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift', true);
+    reg.applyCollect('teleport');
+
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(reg.teleportStacks()).toBe(1);
   });
 });
 

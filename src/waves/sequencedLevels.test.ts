@@ -414,6 +414,29 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
     expect(spy.mock.calls[0][0]).toEqual([18]);
   });
 
+  it('preserves an authored fixed wave containing the orbital Phaser verbatim', () => {
+    // Static level 5 is two orbital Phaser waves. A `fixed` selection must
+    // return the static level byte-for-byte — the per-level archetype cap
+    // only constrains generated (curve/dynamic) waves, so the orbital Phaser
+    // stays authorable (AH-0MV2SGIX5005PFJT).
+    const spy = vi.fn(sequencer);
+    const rows = modeRows(5, 'Predictable Death', [
+      { target: 43.5, generation: 'fixed' },
+      { target: 62, generation: 'fixed' },
+    ]);
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
+    const level5 = levelOf(levels, 5);
+
+    expect(level5).toBe(LEVELS[4]);
+    expect(
+      level5.waves.every((wave) =>
+        wave.groups.some((group) => group.formation === 'orbital'),
+      ),
+    ).toBe(true);
+    // Fixed waves are never passed to the sequencer.
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it('mixes all three modes within one level', () => {
     const spy = vi.fn(sequencer);
     const rows = modeRows(1, 'Entry', [
@@ -747,6 +770,13 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     // compositions instead of the degenerate single-enemy waves
     // (AH-0MUWZ5GST003NMFQ). Each wave still meets its target within the
     // sequencer's ±1.0 acceptance band.
+    //
+    // L5 W2 re-recorded for AH-0MV2SGIX5005PFJT: the per-level archetype cap
+    // (MAX_ARCHETYPE_PER_LEVEL = 1) now stops the orbital Phaser appearing in
+    // both L5 waves, so W2 is composed from non-orbital archetypes
+    // (`tank`/`diver`) instead of `phaserx12+phaserx12+bossx1`. The wave still
+    // tracks its seed-jittered target within the sequencer's tolerance, and
+    // the level's aggregate difficulty keeps rising.
     const composition = (levelNumber: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
@@ -763,7 +793,7 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     ]);
     expect(composition(5)).toEqual([
       'phaserx12+scoutx18',
-      'phaserx12+phaserx12+bossx1',
+      'tankx18+tankx18+diverx18',
     ]);
   });
 
@@ -1044,5 +1074,45 @@ describe('Dynamic varied opening (AH-0MUOCJM0N000RW2B)', () => {
         .filter((r) => r.level === 3)
         .map((r) => r.targetDifficulty),
     ).toEqual([11.4, 11.85, 12.3]);
+  });
+});
+
+// ── Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT) ────────
+
+/**
+ * The merged shipped campaign must not collapse onto one archetype. The
+ * per-level archetype cap (`MAX_ARCHETYPE_PER_LEVEL`) keeps the orbital Phaser
+ * to at most one wave per level and stops any level being composed entirely of
+ * one archetype (AH-0MV2SGIX5005PFJT). Every assertion is made through the
+ * public `buildSequencedLevels()` API over the real default curve/pool.
+ */
+describe('Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT)', () => {
+  /** The shipped campaign (default curve and candidate pool). */
+  function campaign() {
+    return buildSequencedLevels();
+  }
+
+  it('does not compose any level entirely of one archetype', () => {
+    for (const level of campaign()) {
+      const archetypes = new Set(
+        level.waves.flatMap((wave) => wave.groups.map((group) => group.enemyKey)),
+      );
+      expect(archetypes.size, `level ${level.level}`).toBeGreaterThan(1);
+    }
+  });
+
+  it('uses the orbital/Phaser archetype in at most one wave per level', () => {
+    for (const level of campaign()) {
+      const orbitalWaves = level.waves.filter((wave) =>
+        wave.groups.some((group) => group.formation === 'orbital'),
+      );
+      expect(orbitalWaves.length, `level ${level.level}`).toBeLessThanOrEqual(
+        1,
+      );
+    }
+  });
+
+  it('is deterministic: the same campaign for every build', () => {
+    expect(campaign()).toEqual(campaign());
   });
 });

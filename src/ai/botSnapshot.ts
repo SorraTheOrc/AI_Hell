@@ -133,6 +133,26 @@ export interface BotSnapshot {
    * bot layer can correlate observations with a reproducible run.
    */
   readonly runSeed: number;
+  /**
+   * The ship's current life count (AH-0MV03GXZQ00801T4). Read from the run
+   * state so the bot can prioritise an Extra Life while it is below the cap.
+   */
+  readonly lives: number;
+  /**
+   * The run's life cap (AH-0MV03GXZQ00801T4). The scene supplies it from the
+   * existing game data (`MAX_LIVES` / the Extra Life catalogue entry), so the
+   * bot never introduces its own cap constant (AC3).
+   */
+  readonly livesCap: number;
+  /**
+   * Whether the ship's reverse (retro) thruster is enabled
+   * (AH-0MV1J0OHP0072XA5 · AC4).  The decision layer gates every reverse
+   * intent on this so a player who disabled the thruster never sees the bot
+   * use it.  Defaults to `false` (opt-in) when the source does not expose the
+   * flag, so consumers that predate the reverse thruster behave exactly as
+   * before.
+   */
+  readonly reverseEnabled?: boolean;
 }
 
 // ── Structural scene seam (PlayScene satisfies this) ─────────────────
@@ -142,6 +162,13 @@ export interface BotPlayerSource {
   readonly x: number;
   readonly y: number;
   getMovementState(): { readonly x: number; readonly y: number; readonly vx: number; readonly vy: number };
+  /**
+   * Whether the ship's reverse thruster is enabled
+   * (AH-0MV1J0OHP0072XA5 · AC4).  Optional so older structural sources remain
+   * valid; an absent flag is treated as **disabled** (opt-in), preserving the
+   * pre-reverse behaviour for consumers that do not expose it.
+   */
+  isReverseEnabled?(): boolean;
 }
 
 /** Minimal enemy source (a `BaseEnemy`/`EnemyEntity` satisfies this). */
@@ -214,6 +241,10 @@ export interface BotSnapshotScene {
   getWaveState(): BotWaveSource;
   /** The current run's seed (satisfied by `PlayScene.getRunSeed`). */
   getRunSeed(): number;
+  /** The ship's current life count (satisfied by `PlayScene.getLives`). */
+  getLives(): number;
+  /** The run's life cap (satisfied by `PlayScene.getLivesCap`). */
+  getLivesCap(): number;
 }
 
 // ── Builder ──────────────────────────────────────────────────────────
@@ -279,7 +310,18 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
     aliveCount: scene.getAliveCount(),
     wave: copyWave(scene.getWaveState()),
     runSeed: scene.getRunSeed(),
+    lives: scene.getLives(),
+    livesCap: scene.getLivesCap(),
+    reverseEnabled: playerSource?.isReverseEnabled?.() ?? false,
   });
+}
+
+/**
+ * Whether the snapshot's ship is below the run's life cap. The competent bot
+ * uses this to gate its Extra Life preference (AH-0MV03GXZQ00801T4 · AC2/AC3).
+ */
+export function livesBelowCap(snapshot: BotSnapshot): boolean {
+  return snapshot.lives < snapshot.livesCap;
 }
 
 /** Copies the wave-timer state into a plain `BotWave` object. */

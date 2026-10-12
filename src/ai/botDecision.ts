@@ -239,6 +239,13 @@ export interface BotSteeringIntent extends FourDirectionalInput {
    * cap for long trips (AC16).
    */
   readonly longTravel: boolean;
+  /**
+   * Whether to travel toward `(dirX, dirY)` using **reverse** thrust
+   * (AH-0MV1J0OHP0072XA5). `false` (the default) travels with forward thrust;
+   * `true` backs toward the travel bearing (the actuator points the nose
+   * opposite the travel, or brakes when the nose is already aligned).
+   */
+  readonly reverse?: boolean;
 }
 
 // ── Direction primitives ────────────────────────────────────────────
@@ -816,6 +823,7 @@ export function decideBotInput(
     dirY: _dirY,
     thrust: _thrust,
     longTravel: _longTravel,
+    reverse: _reverse,
     ...cardinal
   } = decideBotIntent(snapshot, tunableOverrides);
   return cardinal;
@@ -856,13 +864,19 @@ function approachIntent(
     direction === 1
       ? mayThrust(snapshot, t, target.distance, arrivalRadius)
       : true;
+  // Brake-assist (AC1): when forward thrust would overshoot, request reverse
+  // thrust to decelerate rather than only coasting on friction. A retreat
+  // never brakes this way (it is escaping, not arriving).
+  const reverse = direction === 1 && !canThrust;
 
   if (evaluateVector(dirX, dirY, snapshot, t, px, py).safe) {
-    return buildIntent(dirX, dirY, canThrust, longTravel);
+    return buildIntent(dirX, dirY, canThrust, longTravel, reverse);
   }
 
   const safe = steerToward(target, safeDirections, px, py, direction);
-  return safe ? buildCardinalIntent(safe, canThrust, longTravel) : null;
+  return safe
+    ? buildCardinalIntent(safe, canThrust, longTravel, reverse)
+    : null;
 }
 
 /**
@@ -975,6 +989,7 @@ function buildIntent(
   dirY: number,
   thrust = true,
   longTravel = false,
+  reverse = false,
 ): BotSteeringIntent {
   const len = Math.hypot(dirX, dirY) || 1;
   const ux = dirX / len;
@@ -987,7 +1002,7 @@ function buildIntent(
       : uy >= 0
         ? { up: false, down: true, left: false, right: false }
         : { up: true, down: false, left: false, right: false };
-  return { ...cardinal, dirX: ux, dirY: uy, thrust, longTravel };
+  return { ...cardinal, dirX: ux, dirY: uy, thrust, longTravel, reverse };
 }
 
 /** Builds an intent along a cardinal direction. */
@@ -995,6 +1010,7 @@ function buildCardinalIntent(
   dir: BotDirection,
   thrust = true,
   longTravel = false,
+  reverse = false,
 ): BotSteeringIntent {
   const vec = DIR_VECTORS[dir];
   return {
@@ -1003,6 +1019,7 @@ function buildCardinalIntent(
     dirY: vec.dy,
     thrust,
     longTravel,
+    reverse,
   };
 }
 
@@ -1027,5 +1044,6 @@ function idleIntent(): BotSteeringIntent {
     dirY: 0,
     thrust: false,
     longTravel: false,
+    reverse: false,
   };
 }

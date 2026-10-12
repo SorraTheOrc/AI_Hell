@@ -207,8 +207,9 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
     expect(DEFAULT_SETTINGS.sfxVolume).toBe(1);
     expect(DEFAULT_SETTINGS.sfxMuted).toBe(false);
     expect(loadSettings().bindings).toEqual(DEFAULT_BINDINGS);
-    // The intentional S overlap is not flagged.
-    expect(findConflict(DEFAULT_BINDINGS, 'moveDown', 's')).toBeNull();
-    expect(findConflict(DEFAULT_BINDINGS, 'layerDrop', 's')).toBeNull();
+    // Every shipped default binding is conflict-free.
+    for (const action of Object.keys(DEFAULT_BINDINGS) as (keyof typeof DEFAULT_BINDINGS)[]) {
+      expect(findConflict(DEFAULT_BINDINGS, action, DEFAULT_BINDINGS[action])).toBeNull();
+    }
   });
 });

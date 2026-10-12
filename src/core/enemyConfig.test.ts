@@ -21,7 +21,7 @@ import {
 } from './enemyConfig';
 import { resetConfigStore, seedConfigStore } from './configStore';
 
-const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid', 'harvester'];
+const SEED_KEYS = ['scout', 'diver', 'tank', 'phaser', 'swarm', 'boss', 'asteroid', 'harvester', 'march', 'capturer', 'ghost-chase', 'ghost-ambush', 'ghost-flank', 'ghost-wander', 'grunt', 'raider', 'orbital-strike', 'lane-traffic'];
 
 describe('EnemyConfig schema', () => {
   it('DEFAULT_ENEMY_CONFIGS has one entry per seed archetype and the expected keys', () => {
@@ -33,7 +33,7 @@ describe('EnemyConfig schema', () => {
     for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
       expect(config.key).toBeTruthy();
       expect(config.displayName).toBeTruthy();
-      expect(['v', 'diver', 'rect', 'swarm', 'orbital', 'single']).toContain(config.formationKind);
+      expect(['v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march']).toContain(config.formationKind);
       expect(['none', 'aimed', 'spread', 'radial', 'orbital', 'coordinated']).toContain(config.shotPattern);
       expect(config.count).toBeGreaterThan(0);
       expect(config.size).toBeGreaterThan(0);
@@ -186,7 +186,10 @@ describe('Store-backed loaders', () => {
 describe('Data-driven enemy health (F1)', () => {
   it('every single-hit seed archetype carries health: 1', () => {
     for (const [key, config] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
-      if (key === 'harvester') continue; // the five-hit archetype (F5)
+      // Multi-hit archetypes: the Harvester (5 HP, F5), the Galaga capturer
+      // (2 HP, AH-0MV01EFII008298D) and the Defender raider (2 HP,
+      // AH-0MV01EM7U0033W7L).
+      if (key === 'harvester' || key === 'capturer' || key === 'raider') continue;
       expect(config.health, key).toBe(1);
     }
   });

@@ -56,7 +56,7 @@ async function bootCombat(): Promise<GymPowerUpsCombat> {
  */
 function collectCombatDrop(
   scene: GymPowerUpsCombat,
-  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport',
+  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport' | 'smart_bomb' | 'force_field',
 ): void {
   const player = scene.getPlayer()!;
   player.setPosition(480, 270);
@@ -238,7 +238,7 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     booted = null;
   });
 
-  it('spawns drops in P3 → P4 → P6 → P7 order, one every 12.5 s', async () => {
+  it('spawns drops in P3 → P4 → P6 → P7 → Power Pellet order, one every 12.5 s', async () => {
     const scene = await bootCombat();
 
     // First frame: a drop spawns immediately.
@@ -247,7 +247,7 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     expect(drops.length).toBeGreaterThanOrEqual(1);
     expect(drops[0].powerUp.id).toBe('shield'); // first in COMBAT_ORDER
 
-    // Advance through one full cycle (Shield despawn → Bomb spawn → Phase Shift → Teleport).
+    // Advance through one full cycle (Shield despawn → Bomb spawn → Phase Shift → Teleport → Power Pellet).
     // Each drop has POWER_UP_LIFETIME seconds of life.
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
@@ -269,10 +269,270 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
     expect(drops[0].powerUp.id).toBe('teleport'); // fourth
+
+    for (let i = 0; i < 750; i++) {
+      scene.tick(1 / 60);
+    }
+    drops = scene.getDrops();
+    expect(drops).toHaveLength(1);
+    // Fifth in cycle: the Pac-Man Power Pellet (AH-0MV1BIW95004POSX).
+    expect(drops[0].powerUp.id).toBe('power_pellet');
+
+    for (let i = 0; i < 750; i++) {
+      scene.tick(1 / 60);
+    }
+    drops = scene.getDrops();
+    expect(drops).toHaveLength(1);
+    // Sixth in cycle: the Defender Smart Bomb (AH-0MV1BIWP9003EHRQ).
+    expect(drops[0].powerUp.id).toBe('smart_bomb');
+
+    for (let i = 0; i < 750; i++) {
+      scene.tick(1 / 60);
+    }
+    drops = scene.getDrops();
+    expect(drops).toHaveLength(1);
+    // Seventh in cycle: the Gradius Force Field (AH-0MV1BIX1W006XF95).
+    expect(drops[0].powerUp.id).toBe('force_field');
   });
 
   it('drops spawn at the configured size (16 px)', () => {
     expect(POWER_UP_DROP_SIZE).toBe(16);
+  });
+});
+
+// ── Power Pellet fright (AH-0MV1BIW95004POSX) ─────────────────────────
+
+describe('GymPowerUpsCombat — Power Pellet fright (AH-0MV1BIW95004POSX)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('collecting the Power Pellet opens the fright window and retreats a scout from the ship', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const scout = scene.getScouts()[0];
+    const startY = scout.y;
+
+    scene.spawnDrop('power_pellet', 480, 270);
+    scene.advanceDrops(0.5); // grow to full size (collectible)
+    scene.tick(1 / 60); // one frame — overlap collection runs
+
+    expect(scene.getEffectsRegistry().isFrightened()).toBe(true);
+    // Advance ~0.5 s so the accumulated shared flee offset is visible. The
+    // scout starts above the ship, so fleeing moves it further up.
+    for (let i = 0; i < 30; i++) scene.tick(1 / 60);
+    expect(scout.y).toBeLessThan(startY);
+  });
+});
+
+// ── Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ) ─────────────────────
+
+describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('collecting the Smart Bomb destroys every on-screen scout and spares an off-screen scout', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const scouts = scene.getScouts();
+    expect(scouts).toHaveLength(3);
+
+    scene.spawnDrop('smart_bomb', 480, 270);
+    scene.advanceDrops(0.5); // grow to full size (collectible)
+    scene.tick(1 / 60); // collection queues the pulse
+
+    // Move one scout far off-screen after the collection tick; the pulse
+    // resolves on the next frame's shared player step — before the formation
+    // step — so this scout is provably beyond the 1200 px base radius.
+    scouts[2].setPosition(5000, 5000);
+    scene.tick(1 / 60); // the shared smart-bomb step resolves the pulse
+
+    expect(scouts[0].alive).toBe(false);
+    expect(scouts[1].alive).toBe(false);
+    expect(scouts[2].alive).toBe(true);
+  });
+
+  it('collecting the Smart Bomb clears every on-screen enemy bullet', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnEnemyBullet(530, 270, 0, 0);
+    scene.spawnEnemyBullet(120, 400, 0, 0);
+    expect(scene.getEnemyBullets().length).toBeGreaterThanOrEqual(2);
+
+    scene.spawnDrop('smart_bomb', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60); // collection queues the pulse
+    scene.tick(1 / 60); // the shared smart-bomb step resolves it
+
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+
+  it('a Smart Bomb field pickup is a one-shot and leaves no permanent HUD row', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    scene.spawnDrop('smart_bomb', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60);
+    scene.tick(1 / 60);
+
+    const registry = scene.getEffectsRegistry();
+    expect(registry.isSmartBombPermanent()).toBe(false);
+    expect(
+      registry.activeEffects().some((e) => e.id === 'smart_bomb'),
+    ).toBe(false);
+  });
+});
+
+// ── Force Field reflector (AH-0MV1BIX1W006XF95) ───────────────────────
+
+describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Runs the shared collision pass (protected) without a full tick. */
+  function resolveCollisions(scene: GymPowerUpsCombat): void {
+    (scene as unknown as { _handleCollisions(): void })._handleCollisions();
+  }
+
+  /** The scene's live player-owned bullets. */
+  function playerBullets(scene: GymPowerUpsCombat): Array<{
+    vx: number;
+    vy: number;
+    x: number;
+    y: number;
+    setPosition(x: number, y: number): unknown;
+  }> {
+    return (
+      scene as unknown as {
+        playerBullets: Array<{
+          vx: number;
+          vy: number;
+          x: number;
+          y: number;
+          setPosition(x: number, y: number): unknown;
+        }>;
+      }
+    ).playerBullets;
+  }
+
+  it('reflects an enemy bullet into a player-owned bullet travelling back along its incoming direction', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.getEffectsRegistry().applyCollect('force_field');
+    expect(scene.getEffectsRegistry().isForceFieldActive()).toBe(true);
+
+    const before = playerBullets(scene).length;
+    // 30 px right of the ship (inside the 36 px bubble), moving left at 100 px/s.
+    const enemyBullet = scene.spawnEnemyBullet(510, 270, -100, 0);
+
+    resolveCollisions(scene);
+
+    // The enemy bullet is consumed and replaced by a player-owned bullet.
+    expect(enemyBullet.graphics.active).toBe(false);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    const bullets = playerBullets(scene);
+    expect(bullets.length).toBe(before + 1);
+    const reflected = bullets[bullets.length - 1];
+    // Travels back along its incoming direction (velocity reversed).
+    expect(reflected.vx).toBeCloseTo(100, 6);
+    expect(reflected.vy).toBeCloseTo(0, 6);
+  });
+
+  it('returns at most its reflect budget, then stops reflecting', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('force_field');
+    const budget = registry.forceFieldRemaining();
+    expect(budget).toBeGreaterThan(0);
+
+    // Place budget + 2 bullets inside the bubble but outside the hull radius,
+    // spread around the ship so they are distinct.
+    const reflectCount = budget + 2;
+    for (let i = 0; i < reflectCount; i++) {
+      const angle = (Math.PI * 2 * i) / reflectCount;
+      scene.spawnEnemyBullet(
+        480 + Math.cos(angle) * 30,
+        270 + Math.sin(angle) * 30,
+        0,
+        0,
+      );
+    }
+
+    resolveCollisions(scene);
+
+    // Exactly the budget was reflected; the two excess bullets survive and
+    // the ship was never hit (they sit outside the hull).
+    expect(playerBullets(scene)).toHaveLength(budget);
+    expect(scene.getEnemyBullets()).toHaveLength(2);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(registry.forceFieldRemaining()).toBe(0);
+  });
+
+  it('only reflects while active: after the window the bullet damages the ship again', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('force_field');
+
+    // While active, a hull-overlapping bullet is reflected, not a hit.
+    scene.spawnEnemyBullet(480, 270, -100, 0);
+    resolveCollisions(scene);
+    expect(scene.getPlayerHitCount()).toBe(0);
+
+    // Let the timed window expire; the bubble ends and reflection stops.
+    registry.tick((registry.remaining('force_field') ?? 0) + 0.1);
+    expect(registry.isForceFieldActive()).toBe(false);
+
+    // Clear the reflected bullet from the earlier frame (in a real run it
+    // travels away) so it cannot intercept the post-expiry shot, then fire
+    // another enemy bullet into the unshielded ship.
+    playerBullets(scene).length = 0;
+    player.setPosition(480, 270);
+    scene.spawnEnemyBullet(480, 270, 0, 0);
+    resolveCollisions(scene);
+    expect(scene.getPlayerHitCount()).toBe(1);
+  });
+
+  it('the reflected bullet is a real player bullet that can damage enemies', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    scene.getEffectsRegistry().applyCollect('force_field');
+
+    const scout = scene.getScouts()[0];
+    scout.setPosition(600, 270);
+    // Enemy shot travelling right, away from the ship: reflected to the right.
+    scene.spawnEnemyBullet(510, 270, 100, 0);
+    resolveCollisions(scene);
+
+    const reflected = playerBullets(scene).at(-1)!;
+    expect(reflected.vx).toBeCloseTo(-100, 6);
+    // Move the reflected bullet onto the scout and resolve the shared
+    // player-bullet-vs-enemy pass. It must damage/destroy the enemy.
+    reflected.setPosition(600, 270);
+    resolveCollisions(scene);
+    expect(scout.alive).toBe(false);
   });
 });
 
@@ -467,7 +727,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
     collectCombatDrop(scene, 'phase_shift');
 
     // First danger episode consumes the stored charge.
-    expect(registry.updateDanger(true, 0.016)).toBe(true);
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
     registry.tick(1.4);
     expect(registry.isPhased).toBe(true);
     registry.tick(0.2);
@@ -477,7 +737,7 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
     // Danger clears, the cooldown elapses, then a second pickup re-arms.
     registry.updateDanger(false, 1);
     collectCombatDrop(scene, 'phase_shift');
-    expect(registry.updateDanger(true, 0.016)).toBe(true);
+    expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
   });
 });
 
@@ -675,7 +935,15 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
 
     expect(booted!.game.scene.isPaused('GymPowerUpsCombat')).toBe(true);
     const help = booted!.game.scene.getScene('HelpScene') as HelpScene;
-    expect(help.getEntries().map((e) => e.id)).toEqual(['shield', 'bomb', 'phase_shift', 'teleport']);
+    expect(help.getEntries().map((e) => e.id)).toEqual([
+      'shield',
+      'bomb',
+      'phase_shift',
+      'teleport',
+      'power_pellet',
+      'smart_bomb',
+      'force_field',
+    ]);
   });
 
   it('AC4 — ? closes help and resumes the gym where it paused', async () => {
@@ -704,7 +972,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     for (const method of [
       '_collectDrop',
       '_clearEnemyBullets',
-      '_handleTeleport',
+      '_updateAutoDefence',
       'triggerTeleport',
       '_hitPlayer',
       '_readPlayerInput',
@@ -789,36 +1057,25 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     booted.game.destroy(true);
   });
 
-  it('AC5 — the shared teleport activates on ↓ (adopted S+↓ fix)', async () => {
+  it('AC1/AC3 — the shared automatic defence warps on danger with no key input', async () => {
     const booted = await bootScene([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
-    scene.getEffectsRegistry().applyCollect('teleport');
-    expect(scene.getEffectsRegistry().hasTeleport()).toBe(true);
+    collectCombatDrop(scene, 'teleport');
+    const registry = scene.getEffectsRegistry();
+    expect(registry.hasTeleport()).toBe(true);
 
-    // Only the down-arrow is held/just-down; S is not. The inherited
-    // `_handleTeleport` must still consume the stack and grant Phase Shift — the
-    // deliberate S+↓ fix that replaces the gym's old S-only
-    // implementation (parent AC5b).
-    const sKey = scene.input.keyboard!.addKey('S');
-    const downKey = scene.input.keyboard!.addKey(
-      Phaser.Input.Keyboard.KeyCodes.DOWN,
-    );
-    (sKey as unknown as { _justDown: boolean })._justDown = false;
-    sKey.isDown = false;
-    (downKey as unknown as { _justDown: boolean })._justDown = true;
-    downKey.isDown = true;
-    (
-      scene as unknown as { teleportKey: Phaser.Input.Keyboard.Key | null }
-    ).teleportKey = sKey;
-    (
-      scene as unknown as { downKey: Phaser.Input.Keyboard.Key | null }
-    ).downKey = downKey;
+    // Park the ship at the centre of the V-formation so all 3 scouts are
+    // within DANGER_RADIUS (40 px) regardless of formation drift during boot.
+    // From (baseX, 124) the furthest scout is at offset (±32, 14), i.e.
+    // √(32²+14²) ≈ 35 px — comfortably inside the 40 px danger radius.
+    // `respawn` syncs the internal movement state so the tick keeps it here.
+    const player = scene.getPlayer()!;
+    player.respawn(scene.formationX, 124);
 
-    scene['_handleTeleport']();
+    scene.tick(0.016);
 
-    // The ↓ key (not S) consumed the Teleport stack and granted Phase Shift on arrival.
-    expect(scene.getEffectsRegistry().hasTeleport()).toBe(false);
-    expect(scene.getEffectsRegistry().isPhased).toBe(true);
+    expect(registry.hasTeleport()).toBe(false);
+    expect(registry.isPhased).toBe(true);
     booted.game.destroy(true);
   });
 });

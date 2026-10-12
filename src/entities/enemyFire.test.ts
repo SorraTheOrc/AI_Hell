@@ -2,7 +2,7 @@
  * Shared enemy-fire dispatcher — behaviour tests (AH-0MUII3BBW000XZ46).
  *
  * The dispatcher is the single archetype-key → `tryFire*` mapping used by
- * `PlayScene`, `GymEnemies` and `GymPowerUpsCombat`. Tests assert observable
+ * `PlayScene`, `GymFodderEnemies` and `GymPowerUpsCombat`. Tests assert observable
  * behaviour: which entity method fires for each archetype, how single/array
  * results are normalised, and the unknown-key fallback — never a copy of the
  * production mapping table.
@@ -95,19 +95,44 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
   it('covers every firing archetype with an explicit mapping entry', () => {
     // Guards against a silently-removed mapping: every firing archetype must
     // dispatch through the shared seam (the map is the one place a new
-    // archetype edits). The Harvester is non-firing and is asserted
-    // separately below.
+    // archetype edits). The Harvester, the Galaga capturer, the Pac-Man
+    // ghosts, the Centipede, the Robotron grunt and the Missile Command
+    // orbital strike are non-firing and are asserted separately below.
     const firingKeys = Object.keys(ENEMY_FIRE_METHODS).filter(
-      (key) => key !== 'harvester',
+      (key) =>
+        key !== 'harvester' &&
+        key !== 'capturer' &&
+        !key.startsWith('ghost-') &&
+        key !== 'centipede' &&
+        key !== 'grunt' &&
+        key !== 'orbital-strike' &&
+        key !== 'lane-traffic',
     );
+
     for (const key of firingKeys) {
       const entity = makeFireSpy();
       fireForEnemy(entity, key, 999);
       expect(entity.calls, `${key} must dispatch`).toHaveLength(1);
     }
-    expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual(
-      ['diver', 'harvester', 'phaser', 'scout', 'swarm', 'tank'],
-    );
+    expect(Object.keys(ENEMY_FIRE_METHODS).sort()).toEqual([
+      'capturer',
+      'centipede',
+      'diver',
+      'ghost-ambush',
+      'ghost-chase',
+      'ghost-flank',
+      'ghost-wander',
+      'grunt',
+      'harvester',
+      'lane-traffic',
+      'march',
+      'orbital-strike',
+      'phaser',
+      'raider',
+      'scout',
+      'swarm',
+      'tank',
+    ]);
   });
 
   it('resolves the Harvester to no fire (never the aimed-shot fallback)', () => {
@@ -115,6 +140,50 @@ describe('shared enemy-fire dispatcher — archetype mapping (AC1/AC3)', () => {
     expect(enemyFireMethod('harvester')).toBe('tryFireNone');
     expect(fireForEnemy(entity, 'harvester', 42)).toEqual([]);
     // The aimed fallback must not have run for the Harvester.
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Galaga capturer to no fire — its beam is the hazard', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('capturer')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'capturer', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves every Pac-Man ghost personality to no fire (body contact only)', () => {
+    const entity = makeFireSpy();
+    for (const key of ['ghost-chase', 'ghost-ambush', 'ghost-flank', 'ghost-wander']) {
+      expect(enemyFireMethod(key), key).toBe('tryFireNone');
+      expect(fireForEnemy(entity, key, 42), key).toEqual([]);
+    }
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Centipede to no fire (the weaving body is the threat)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('centipede')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'centipede', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Robotron grunt horde to no fire (the swarm of bodies is the threat)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('grunt')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'grunt', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Missile Command orbital strike to no fire (its burst is the hazard)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('orbital-strike')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'orbital-strike', 42)).toEqual([]);
+    expect(entity.calls).toEqual([]);
+  });
+
+  it('resolves the Frogger lane traffic to no fire (the moving lane is the threat)', () => {
+    const entity = makeFireSpy();
+    expect(enemyFireMethod('lane-traffic')).toBe('tryFireNone');
+    expect(fireForEnemy(entity, 'lane-traffic', 42)).toEqual([]);
     expect(entity.calls).toEqual([]);
   });
 });
@@ -174,6 +243,30 @@ describe('shared enemy-fire dispatcher — real entity integration (AC4)', () =>
     expect(Math.abs(bullets[0].vy)).toBeLessThan(Math.abs(bullets[0].vx));
   });
 
+  it('a marching block (Space Invaders) never fires in a non-firing level', async () => {
+    // L1–3 set `shootEnabled: false` on every spawn (GDD §2.4); the shared
+    // dispatcher must yield no bullets for the `march` archetype too.
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+
+    const march = createEnemyFromConfig(
+      scene,
+      { ...DEFAULT_ENEMY_CONFIGS.march, fireInterval: 1, shotProbability: 1 },
+      100,
+      100,
+      { row: 0, col: 0 },
+    ) as unknown as {
+      shootEnabled: boolean;
+      setAimTarget(x: number, y: number): void;
+    };
+    march.shootEnabled = false;
+    march.setAimTarget(400, 100);
+
+    for (let now = 1_000; now <= 10_000; now += 1_000) {
+      expect(fireForEnemy(march, 'march', now)).toEqual([]);
+    }
+  });
+
   it('suppresses fire while the enemy is spawning (AH-0MURBER4L00821RR AC4)', () => {
     // Spawning enemies cannot shoot, regardless of their fire method.
     const spawning = {
@@ -181,5 +274,16 @@ describe('shared enemy-fire dispatcher — real entity integration (AC4)', () =>
       tryFireAimedBullet: () => ({ vx: 1, vy: 0 }),
     };
     expect(fireForEnemy(spawning, 'scout', 1_000)).toEqual([]);
+  });
+
+  it('suppresses fire for every archetype while frightened and resumes after (AH-0MV1BIW95004POSX)', () => {
+    const spy = makeFireSpy();
+    // Fright window active → the dispatcher returns no bullets and never
+    // calls the entity's fire method.
+    expect(fireForEnemy(spy, 'scout', 1_000, true)).toEqual([]);
+    expect(spy.calls).toEqual([]);
+    // Window expired → normal fire resumes through the same dispatcher.
+    expect(fireForEnemy(spy, 'scout', 2_000, false)).toHaveLength(1);
+    expect(spy.calls).toEqual(['aimed:2000']);
   });
 });

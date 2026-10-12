@@ -2,7 +2,7 @@
  * Shared enemy-fire dispatcher (parent AH-0MUII2FJ5007MDDA, gap 2).
  *
  * The archetype-key → `tryFire*` mapping used to be duplicated in
- * `PlayScene._fireFor` and `GymEnemies.collectBullets`, with a third copy in
+ * `PlayScene._fireFor` and `GymFodderEnemies.collectBullets`, with a third copy in
  * `GymPowerUpsCombat._tickScouts` that also used a fake fixed 16 ms clock.
  * This module is the single seam: every scene resolves an enemy's fire method
  * here, so wiring a new archetype (e.g. the planned Harvester) is a one-line
@@ -21,6 +21,9 @@
  */
 export const ENEMY_FIRE_METHODS = {
   scout: 'tryFireAimedBullet',
+  // Space Invaders marching block (AH-0MV01EDZS0005R20): aimed shots, gated
+  // by the level's fire rule exactly like the Scout.
+  march: 'tryFireAimedBullet',
   diver: 'tryFireSpreadBurst',
   tank: 'tryFireRadialBurst',
   phaser: 'tryFireRadialBullets',
@@ -29,6 +32,40 @@ export const ENEMY_FIRE_METHODS = {
   // missing key) keeps it out of the aimed-shot fallback and documents the
   // intent next to the firing archetypes.
   harvester: 'tryFireNone',
+  // The Galaga capturer never fires a bullet — its beam is a distinct hazard
+  // resolved by the shared capture-beam step (AH-0MV01EFII008298D).
+  capturer: 'tryFireNone',
+  // Pac-Man personality pursuers (AH-0MV01EH2U008XT3Q) never fire at any
+  // level — their threat is body contact, resolved by the shared enemy-body
+  // collision rule. Explicit non-firing entries keep them out of the
+  // aimed-shot fallback.
+  'ghost-chase': 'tryFireNone',
+  'ghost-ambush': 'tryFireNone',
+  'ghost-flank': 'tryFireNone',
+  'ghost-wander': 'tryFireNone',
+  // Centipede segments (classic-arcade archetype, AH-0MV01EJ92008ZZ86) never
+  // fire at any level — the weaving linked body is the threat. An explicit
+  // non-firing entry keeps the key out of the aimed-shot fallback.
+  centipede: 'tryFireNone',
+  // Robotron homing-horde grunts (classic-arcade archetype,
+  // AH-0MV01EKTL001NRE6) never fire at any level — the swarm of bodies is the
+  // threat. An explicit non-firing entry keeps the key out of the aimed-shot
+  // fallback.
+  grunt: 'tryFireNone',
+  // Defender patrol-and-attack raider (classic-arcade archetype,
+  // AH-0MV01EM7U0033W7L) fires an aimed shot during its committed attack run;
+  // the level fire rule (shootEnabled, Levels 4+) and the attack-mode gate are
+  // enforced inside the entity's `tryFireAimedBullet`.
+  raider: 'tryFireAimedBullet',
+  // Missile Command orbital strike (AH-0MV01ENX00055CG1) never fires bullets
+  // — its threat is the telegraphed falling projectile that detonates in a
+  // radial burst. An explicit non-firing entry keeps it out of the aimed-shot
+  // fallback.
+  'orbital-strike': 'tryFireNone',
+  // Frogger lane traffic (classic-arcade archetype, AH-0MV01EPM40008N8T) never
+  // fires — the moving lane body is the threat. An explicit non-firing entry
+  // keeps the key out of the aimed-shot fallback.
+  'lane-traffic': 'tryFireNone',
 } as const;
 
 /** A method name that participates in the shared mapping. */
@@ -68,6 +105,9 @@ export function enemyFireMethod(enemyKey: string): EnemyFireMethod {
  * @param enemyKey — the archetype key (e.g. `scout`, `diver`); unknown keys
  *   fall back to the aimed shot.
  * @param now — the caller's scene clock in milliseconds.
+ * @param suppressed — when true, weapon fire is suppressed (the Power Pellet
+ *   fright window, `frightenedSuppressesFire`); returns `[]` without calling
+ *   the entity. Defaults to false so existing callers are unchanged.
  * @returns the bullets fired this call, always as an array (the mapping's
  *   methods return either a single bullet or an array).
  */
@@ -75,8 +115,12 @@ export function fireForEnemy<TBullet>(
   entity: unknown,
   enemyKey: string,
   now: number,
+  suppressed = false,
 ): TBullet[] {
-  if (entity === null || entity === undefined) return [];
+  // The frightened-enemy status is the one seam that cancels fire for every
+  // archetype, so it is checked before the archetype dispatch (and before
+  // the spawning guard) — a frightened enemy never fires.
+  if (suppressed || entity === null || entity === undefined) return [];
   // Spawning enemies are still growing — they cannot fire yet.
   if ((entity as { isSpawning?: boolean }).isSpawning) return [];
   const method = enemyFireMethod(enemyKey);

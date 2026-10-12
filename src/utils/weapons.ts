@@ -1,6 +1,11 @@
 /**
  * Weapon catalogue + heading-relative angle math (GDD §2.3, §4.4).
  *
+ * The classic-arcade weapons (`wave_laser`, `ricochet`, `cluster`, `options`)
+ * are the implemented weapon picks from the research catalogue
+ * `docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md` (epic AH-0MV14SO0G0095IJ4), which
+ * records each concept's source game, adaptation, catalogue seam and gym.
+ *
  * Provides pure, unit-testable weapon definitions — each with a pattern
  * (relative angle offsets), fire rate, bullet colour, and bullet shape —
  * plus utilities to convert a heading into absolute bullet angles and
@@ -14,11 +19,22 @@
  * expires; a **reset** power-up clears all timed weapons, leaving only the
  * cannon.
  *
- * Four weapons:
+ * Five conventional/beam weapons:
  * - **cannon** — single bullet straight ahead (permanent default starting weapon)
  * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
  * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
  * - **rapid**  — single bullets at a much higher fire rate (timed)
+ * - **wave_laser** — a single slow, wide beam that passes through a budget of
+ *   enemies (R-Type homage, timed; see {@link WeaponDefinition.piercing})
+ * - **ricochet** — a single shot that reflects off the arena edges up to a
+ *   budget of bounces (Centipede homage, timed; see
+ *   {@link WeaponDefinition.bounce})
+ * - **cluster** — a single missile that splits once, on impact or expiry,
+ *   into a radial cluster of warheads (Missile Command MIRV homage, timed;
+ *   see {@link WeaponDefinition.splits})
+ * - **options** — orbiting satellite pods that each fire along the ship's
+ *   heading (Gradius Options homage, timed; see
+ *   {@link WeaponDefinition.orbit})
  *
  * Distances use **radians** for math (Phaser convention, positive =
  * clockwise); the scene-facing helpers (`createBulletsFromHeading`,
@@ -52,6 +68,10 @@ export type WeaponId =
   | 'spread'
   | 'dual'
   | 'rapid'
+  | 'wave_laser'
+  | 'ricochet'
+  | 'cluster'
+  | 'options'
   | 'nova'
   | 'mortar'
   | 'arc';
@@ -69,8 +89,29 @@ export type WeaponId =
  * - `'onRandom'` — the area resolves immediately at one or more points
  *   sampled uniformly at random within the weapon's effective range, centred
  *   on the ship (no travelling shot, no forward bias; e.g. the Mortar).
+ * - `'screenPulse'` — a non-weapon, once-per-activation screen-wide pulse
+ *   (the Defender Smart Bomb power-up, AH-0MV1BIWP9003EHRQ). It is resolved
+ *   by the shared power-up pulse path via {@link AoEDescriptor}, reusing the
+ *   same target-selection and effect-application seam as the AOE weapons.
  */
-export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom';
+export type AoETrigger = 'onFire' | 'onImpact' | 'onRandom' | 'screenPulse';
+
+/**
+ * Declarative orbit-emitter descriptor attached to the Gradius Options weapon
+ * (AH-0MV1BIVVK0043TEM). The shared combat core reads it to spawn and drive
+ * the orbiting satellite pods identically in the game and every gym — the
+ * descriptor carries only data, never behaviour. The pure pod geometry lives
+ * in `scenes/core/optionsEscort.ts`.
+ */
+export interface OrbitDescriptor {
+  /**
+   * Level-resolved number of orbiting pods (base grown by the
+   * `projectileCount` upgrade, capped at {@link OPTIONS_MAX_PODS}).
+   */
+  pods: number;
+  /** Orbit radius (px) of the pods around the ship. */
+  radius: number;
+}
 
 /**
  * Declarative area-of-effect descriptor attached to an AOE weapon
@@ -87,6 +128,13 @@ export interface AoEDescriptor {
   damagesEnemies: boolean;
   /** Whether the effect clears enemy bullets inside the radius. */
   clearsEnemyBullets: boolean;
+  /**
+   * Hit points each affected enemy takes per resolution (default 1). The
+   * AOE weapons omit this (one hit per blast); the Defender Smart Bomb
+   * resolves a level-derived value so a single screen pulse can chip a
+   * multi-hit enemy harder (AH-0MV1BIWP9003EHRQ).
+   */
+  damage?: number;
   /**
    * Maximum number of additional targets an `'onFire'` effect may chain to
    * after the primary target (0/undefined = no chaining). Reserved for the
@@ -152,6 +200,10 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   spread: 1,
   dual: 1,
   rapid: 6,
+  wave_laser: 1,
+  ricochet: 1,
+  cluster: 0.5,
+  options: 1,
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
@@ -165,6 +217,24 @@ export const WEAPON_SPREAD_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.spread;
 export const WEAPON_DUAL_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.dual;
 /** Default rapid subdivision (6 shots per beat). */
 export const WEAPON_RAPID_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.rapid;
+/** Default wave-laser subdivision (1 shot per beat → 750 ms at 80 BPM). */
+export const WEAPON_WAVE_LASER_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.wave_laser;
+/** Default ricochet subdivision (1 shot per beat → 750 ms at 80 BPM). */
+export const WEAPON_RICOCHET_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.ricochet;
+/**
+ * Default cluster-missile subdivision (once every 2 beats → 1500 ms at
+ * 80 BPM). The slow cadence is what the split payload pays for.
+ */
+export const WEAPON_CLUSTER_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.cluster;
+/**
+ * Default Options subdivision (1 shot per beat → 750 ms at 80 BPM). The pods
+ * fire on the same whole-beat cadence as the spread/dual weapons.
+ */
+export const WEAPON_OPTIONS_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.options;
 /** Default Nova subdivision (once every 4 beats → 3000 ms at 80 BPM). */
 export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 /** Default Mortar subdivision (once every 2 beats → 1500 ms at 80 BPM). */
@@ -215,6 +285,41 @@ export const WEAPON_DUAL_FIRE_RATE = beatSubdivisionMs(WEAPON_DUAL_SUBDIVISION);
 export const WEAPON_RAPID_FIRE_RATE = beatSubdivisionMs(WEAPON_RAPID_SUBDIVISION);
 
 /**
+ * Fire rate interval for the R-Type wave laser (ms) — 1 shot per beat
+ * (750 ms at the default 80 BPM). Deliberately slow so the beam reads as a
+ * committed, aimed shot rather than a rapid stream.
+ */
+export const WEAPON_WAVE_LASER_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_WAVE_LASER_SUBDIVISION,
+);
+
+/**
+ * Fire rate interval for the Centipede ricochet (ms) — 1 shot per beat
+ * (750 ms at the default 80 BPM). A measured cadence so each bank shot is a
+ * deliberate aimed reflection rather than a spray.
+ */
+export const WEAPON_RICOCHET_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_RICOCHET_SUBDIVISION,
+);
+
+/**
+ * Fire rate interval for the Missile Command cluster missile (ms) — 1 shot
+ * every 2 beats (1500 ms at the default 80 BPM). Slow and committed: each
+ * shell is a deliberate split payload rather than a stream of fire.
+ */
+export const WEAPON_CLUSTER_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_CLUSTER_SUBDIVISION,
+);
+
+/**
+ * Fire rate interval for the Gradius Options escort (ms) — 1 shot per beat
+ * (750 ms at the default 80 BPM). Every pod fires on this cadence.
+ */
+export const WEAPON_OPTIONS_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_OPTIONS_SUBDIVISION,
+);
+
+/**
  * Fire rate interval for the Nova AOE weapon (ms) — 1 shot every 4 beats
  * (3000 ms at the default 80 BPM). Slow and defensive: a sparse pulse that
  * clears the ship's immediate surroundings.
@@ -259,6 +364,28 @@ export const WEAPON_BULLET_LIFETIME = {
   dual: 0.7,
   /** Rapid — short reach balanced by its high fire rate (~131 px). */
   rapid: 0.375,
+  /**
+   * Wave laser — long reach so the beam crosses the arena (~350 px); the
+   * slow cadence and the pass-through budget are its identity.
+   */
+  wave_laser: 1.0,
+  /**
+   * Ricochet — a long reach so the shot can reach a wall and bank back
+   * (~560 px); the bounce budget, not the lifetime, bounds the number of
+   * wall reflections.
+   */
+  ricochet: 1.6,
+  /**
+   * Cluster missile — a moderate reach (~315 px) so the shell can travel a
+   * little before its split; the warhead spread, not the range, is its
+   * identity.
+   */
+  cluster: 0.9,
+  /**
+   * Options pods — a modest reach (~245 px) matching the spread/dual; the pod
+   * count (not the range) is the weapon's identity.
+   */
+  options: 0.7,
   /** Nova — the ring resolves instantly; no travelling bullet. */
   nova: 0.25,
   /**
@@ -282,6 +409,17 @@ export const BULLET_COLORS = {
   dual: 0xff00ff,
   /** Rapid weapon bullet — electric yellow. */
   rapid: 0xffff00,
+  /** Wave laser beam — vivid neon blue, distinct from the cyan cannon. */
+  wave_laser: 0x3366ff,
+  /** Ricochet pellet — neon green, distinct from every other weapon. */
+  ricochet: 0x33ff66,
+  /** Cluster missile / warheads — neon hot pink, distinct from every weapon. */
+  cluster: 0xff3366,
+  /**
+   * Options pod bullets — neon aquamarine, distinct from the cannon's cyan
+   * and the ricochet's green.
+   */
+  options: 0x00ffcc,
   /** Nova ring / projectile — pale cyan. */
   nova: 0x66ffff,
   /** Mortar shell / blast — deep orange. */
@@ -316,6 +454,71 @@ export const AOE_PROJECTILE_SPEEDS = {
   /** Mortar — deliberate travel scale, and the random-detonation range basis. */
   mortar: 180,
 } as const;
+
+// ── Cluster/MIRV split tuning ───────────────────────────────────────
+
+/**
+ * Base number of warheads a cluster missile splits into before leveling — the
+ * un-upgraded cluster size. The `splitCount` weapon-level variable grows the
+ * effective count toward its finite spec cap (3). A cluster always spawns at
+ * least two warheads, so the base weapon already reads as a split payload.
+ */
+export const CLUSTER_BASE_WARHEADS = 2;
+
+/**
+ * Warhead lifetime (seconds) once a cluster missile splits. Short, so the
+ * radial spray covers a burst of nearby space and then expires rather than
+ * saturating the arena with long-lived bullets.
+ */
+export const CLUSTER_WARHEAD_LIFETIME = 0.4;
+
+/**
+ * Warhead radius as a fraction of the spawned projectile's radius. Smaller
+ * than the parent missile so the split reads as a cluster of fragments.
+ */
+export const CLUSTER_WARHEAD_RADIUS_SCALE = 0.7;
+
+/**
+ * Radius (px) of the code-drawn split-burst VFX spawned at the split point,
+ * scaled to the number of warheads by the shared VFX helper.
+ */
+export const CLUSTER_SPLIT_BURST_RADIUS = 24;
+
+// ── Gradius Options orbit tuning ────────────────────────────────────
+
+/**
+ * Base number of orbiting pods before leveling — the un-upgraded Options
+ * escort. The `projectileCount` weapon-level variable adds one pod per point,
+ * capped at {@link OPTIONS_MAX_PODS}.
+ */
+export const OPTIONS_BASE_PODS = 2;
+
+/**
+ * Hard cap on the number of orbiting pods. Keeps the orbit legible (and the
+ * per-frame spawn cost bounded) as `projectileCount` grows toward its spec cap.
+ */
+export const OPTIONS_MAX_PODS = 6;
+
+/**
+ * Orbit radius (px) of the pods around the ship. Shallow enough that the pods
+ * read as an escort rather than a separate formation.
+ */
+export const OPTIONS_ORBIT_RADIUS = 28;
+
+/**
+ * Time (ms) for one full pod orbit revolution. A slow, readable circle so the
+ * player can steer the escort.
+ */
+export const OPTIONS_ORBIT_PERIOD_MS = 2000;
+
+/** Radius (px) of a code-drawn pod. */
+export const OPTIONS_POD_RADIUS = 4;
+
+/**
+ * Pod bullet speed (px/s) — slower than the shared `BULLET_SPEED` so the pod
+ * shots read as a lighter escort than the main gun.
+ */
+export const OPTIONS_POD_BULLET_SPEED = 300;
 
 /**
  * Bullet shape type — determines how the bullet is drawn.
@@ -372,6 +575,60 @@ export interface WeaponDefinition {
    * `BULLET_SPEED × bulletLifetime` (AH-0MU960UTE001PTV0).
    */
   bulletLifetime: number;
+  /**
+   * Base **extra** enemies a fired bullet passes through before it is
+   * consumed — the R-Type wave-laser pass-through seam (AH-0MV1BIUSJ0090W92).
+   * `0`/absent means an ordinary single-hit bullet.
+   *
+   * A bullet's effective budget is this base value plus the weapon's
+   * level-resolved `piercing` upgrade (from `weaponLevels.ts`), clamped to
+   * that variable's spec cap; the shared combat core tracks already-hit
+   * enemies so each is damaged once (see `resolveWeaponDefinition`).
+   */
+  piercing?: number;
+  /**
+   * Base **wall-bounce budget** — how many times a fired bullet reflects off
+   * the arena edges before it expires instead of wrapping (Centipede ricochet
+   * homage, AH-0MV1BIV5L005NJAI). `undefined`/absent means an ordinary
+   * wrapping bullet (the default four-edge wrap). `0` is a degenerate value
+   * (expires on the first wall contact).
+   *
+   * A bullet's effective budget is this base value plus the weapon's
+   * level-resolved `bounce` upgrade (from `weaponLevels.ts`), clamped to that
+   * variable's spec cap; the shared player-bullet step reflects the velocity
+   * component at the edge, decrements the budget, and expires the bullet once
+   * the budget is spent (see `resolveWeaponDefinition` and
+   * `PlayerBullet.advance`).
+   */
+  bounce?: number;
+  /**
+   * Base **split warhead count** — how many radial warheads a fired
+   * projectile splits into exactly once, on the first enemy/bullet impact or
+   * on lifetime expiry (Missile Command cluster/MIRV homage,
+   * AH-0MV1BIVIJ007KYXU). `undefined`/absent means an ordinary bullet that
+   * never splits. `0` is a degenerate value (no warheads spawned).
+   *
+   * A projectile's effective warhead count is this base value grown by the
+   * weapon's level-resolved `splitCount` upgrade (from `weaponLevels.ts`),
+   * clamped to that variable's finite spec cap; the shared combat-core split
+   * seam reads the field and spawns the warheads identically in the game and
+   * every gym (see `resolveWeaponDefinition` and
+   * `CombatCoreScene.splitProjectile`).
+   */
+  splits?: number;
+  /**
+   * Orbit-emitter descriptor — the Gradius Options companion-entity seam
+   * (AH-0MV1BIVVK0043TEM). When present the weapon does **not** use its
+   * `offsets` pattern: the shared combat core spawns `orbit.pods` satellite
+   * pods that orbit the ship and each fires a bullet along the ship's heading
+   * through the ordinary `PlayerBullet` path. Absent on every conventional
+   * weapon.
+   *
+   * `pods` is the **level-resolved** pod count: {@link resolveWeaponDefinition}
+   * grows the base count with the `projectileCount` upgrade, clamped to
+   * `OPTIONS_MAX_PODS`, so the game and every gym read one count.
+   */
+  orbit?: OrbitDescriptor;
   /**
    * Area-of-effect descriptor (absent for conventional weapons). When
    * present the shared combat core dispatches the area effect through the
@@ -438,6 +695,82 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletShape: 'circle',
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
+  },
+  wave_laser: {
+    id: 'wave_laser',
+    name: 'Wave Laser',
+    description:
+      'Adds a slow, long-range piercing beam that passes through several enemies for 10 s.',
+    // A single aimed beam along the ship's heading.
+    offsets: [0],
+    fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
+    bulletColor: BULLET_COLORS.wave_laser,
+    // The beam is a wide neon bolt; `line` records the intended elongated
+    // look (the shared PlayerBullet visual is a scaled disc).
+    bulletShape: 'line',
+    bulletSize: 1.2,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
+    // Base pass-through budget: the beam survives the first three enemies
+    // (and damages them all) before it is consumed. The `piercing` level
+    // variable grows it toward the spec cap (5).
+    piercing: 3,
+  },
+  ricochet: {
+    id: 'ricochet',
+    name: 'Ricochet',
+    description:
+      'Adds edge-bouncing shots that ricochet off the arena walls for 10 s.',
+    // A single aimed pellet along the ship's heading; it reflects at the edges.
+    offsets: [0],
+    fireRateMs: WEAPON_RICOCHET_FIRE_RATE,
+    bulletColor: BULLET_COLORS.ricochet,
+    bulletShape: 'circle',
+    bulletSize: 0.8,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.ricochet,
+    // Base wall-bounce budget: the pellet reflects off two walls before it
+    // expires on the next contact. The `bounce` level variable grows it
+    // toward the spec cap (4).
+    bounce: 2,
+  },
+  cluster: {
+    id: 'cluster',
+    name: 'Cluster Missile',
+    description:
+      'Adds a missile that splits into a radial cluster of warheads for 10 s.',
+    // A single aimed missile along the ship's heading; it splits once.
+    offsets: [0],
+    fireRateMs: WEAPON_CLUSTER_FIRE_RATE,
+    bulletColor: BULLET_COLORS.cluster,
+    bulletShape: 'circle',
+    bulletSize: 0.9,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
+    // Base split payload: the missile bursts into two radial warheads on the
+    // first impact/expiry. The `splitCount` level variable grows the warhead
+    // count toward its spec cap (3).
+    splits: CLUSTER_BASE_WARHEADS,
+  },
+  options: {
+    id: 'options',
+    name: 'Options',
+    description:
+      'Adds orbiting satellite pods that each fire along your heading for 10 s.',
+    // The orbit descriptor drives pod firing; the single `[0]` offset is a
+    // harmless fallback (the shared core never reads the pattern for an
+    // orbit weapon).
+    offsets: [0],
+    fireRateMs: WEAPON_OPTIONS_FIRE_RATE,
+    bulletColor: BULLET_COLORS.options,
+    bulletShape: 'circle',
+    // Smaller than the cannon's bullet: the pods multiply firepower rather
+    // than matching the main gun.
+    bulletSize: 0.8,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.options,
+    // Two pods by default; the `projectileCount` level variable adds one pod
+    // each, clamped to OPTIONS_MAX_PODS by resolveWeaponDefinition.
+    orbit: {
+      pods: OPTIONS_BASE_PODS,
+      radius: OPTIONS_ORBIT_RADIUS,
+    },
   },
   nova: {
     id: 'nova',

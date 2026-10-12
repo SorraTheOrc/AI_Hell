@@ -437,6 +437,24 @@ export class HUD extends Phaser.GameObjects.Container {
         return reg.isMagnetActive();
       case 'mineral_scoop':
         return reg.isScoopActive() || reg.scoopStacks() > 0;
+      case 'power_pellet':
+        // The fright window is a global enemy debuff; show its row while the
+        // window (temporary or permanent) is active (AH-0MV1BIW95004POSX).
+        return reg.isActive('power_pellet');
+      case 'smart_bomb':
+        // A permanent (hold-full) Smart Bomb is a run-scoped active effect; a
+        // field pickup is a one-shot and leaves no row (AH-0MV1BIWP9003EHRQ).
+        return reg.isSmartBombPermanent();
+      case 'force_field':
+        // Show the row while the reflect bubble is active (field pickup or
+        // permanent reward) so the remaining reflect budget is visible
+        // (AH-0MV1BIX1W006XF95).
+        return reg.isForceFieldActive();
+      case 'mystery_ufo':
+        // The Mystery UFO has no timed window, so show its row for as long as
+        // the player owns it (any collection advanced its level); the row
+        // renders the effective level and ∞ (AH-0MV1BIXFO006Z1I7).
+        return reg.powerUpLevel('mystery_ufo') > 0;
       default:
         return false;
     }
@@ -455,6 +473,8 @@ export class HUD extends Phaser.GameObjects.Container {
         return reg.isPhasePermanent() ? undefined : reg.phaseCharges() || undefined;
       case 'teleport':
         return reg.teleportStacks() || undefined;
+      case 'force_field':
+        return reg.forceFieldRemaining() || undefined;
       default:
         return undefined;
     }

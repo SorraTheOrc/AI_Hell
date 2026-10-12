@@ -11,6 +11,8 @@ import {
   RotatingMovementState,
   DEFAULT_ROTATION_ACCELERATION,
   DEFAULT_ROTATION_DECELERATION,
+  DEFAULT_REVERSE_ACCELERATION,
+  DEFAULT_REVERSE_MAX_SPEED,
 } from './movementModel';
 
 const WIDTH = 960;
@@ -20,8 +22,9 @@ function asteroidsInput(
   forward = false,
   turnLeft = false,
   turnRight = false,
+  reverse = false,
 ): AsteroidsInput {
-  return { forward, turnLeft, turnRight };
+  return { forward, turnLeft, turnRight, reverse };
 }
 
 function fourDirectionalInput(
@@ -298,6 +301,161 @@ describe('AsteroidsModel turn ramp (AH-0MUNS42NA000N41U)', () => {
   });
 });
 
+// ── Asteroids reverse thruster (AH-0MV13LY0R006ZO6D) ─────────────
+
+describe('AsteroidsModel reverse thruster (AH-0MV13LY0R006ZO6D)', () => {
+  const model = new AsteroidsModel();
+  const cfg: AsteroidsConfig = {
+    thrust: 300,
+    maxSpeed: 175,
+    friction: 100,
+    rotationSpeed: 3,
+    reverseEnabled: true,
+    reverseAcceleration: 200,
+    reverseMaxSpeed: 120,
+  };
+  const idle = (overrides: Partial<RotatingMovementState> = {}): RotatingMovementState => ({
+    x: 480, y: 270, vx: 0, vy: 0, facing: 0, angularVelocity: 0, ...overrides,
+  });
+  const reverseInput = asteroidsInput(false, false, false, true);
+  const speedOf = (s: RotatingMovementState) => Math.sqrt(s.vx * s.vx + s.vy * s.vy);
+
+  /** Run `seconds` of `input` in fixed `dt` steps, returning the final state. */
+  function simulate(
+    input: AsteroidsInput,
+    dt: number,
+    seconds: number,
+    start?: RotatingMovementState,
+    config: AsteroidsConfig = cfg,
+  ): RotatingMovementState {
+    let s = start ?? idle();
+    const ticks = Math.max(1, Math.round(seconds / dt));
+    for (let i = 0; i < ticks; i++) {
+      s = model.tick(s, input, dt, WIDTH, HEIGHT, config) as unknown as RotatingMovementState;
+    }
+    return s;
+  }
+
+  it('AC1 — holding reverse accelerates opposite the facing direction', () => {
+    const r = simulate(reverseInput, 0.1, 0.1, idle({ facing: 0 }), { ...cfg, friction: 0 });
+    expect(r.vx).toBeCloseTo(-20, 6); // −cos(0) × 200 × 0.1
+    expect(r.vy).toBeCloseTo(0, 6);
+  });
+
+  it('AC1 — reverse thrust follows the ship facing', () => {
+    const r = simulate(reverseInput, 0.1, 0.1, idle({ facing: Math.PI / 2 }), { ...cfg, friction: 0 });
+    expect(r.vx).toBeCloseTo(0, 6);
+    expect(r.vy).toBeCloseTo(-20, 6); // −sin(π/2) × 200 × 0.1
+  });
+
+  it('AC1 — no reverse key behaves exactly as before (normal friction)', () => {
+    const coast = model.tick(idle({ vx: 100, vy: 50 }), asteroidsInput(), 1, WIDTH, HEIGHT, cfg) as unknown as RotatingMovementState;
+    const explicitFalse = model.tick(
+      idle({ vx: 100, vy: 50 }), asteroidsInput(false, false, false, false), 1, WIDTH, HEIGHT, cfg,
+    ) as unknown as RotatingMovementState;
+    expect(explicitFalse.vx).toBeCloseTo(coast.vx, 12);
+    expect(explicitFalse.vy).toBeCloseTo(coast.vy, 12);
+    expect(speedOf(coast)).toBeLessThan(Math.sqrt(100 * 100 + 50 * 50));
+  });
+
+  it('AC1 — releasing a reverse key restores normal friction', () => {
+    const held = simulate(reverseInput, 0.05, 0.2);
+    expect(speedOf(held)).toBeGreaterThan(0);
+    const released = simulate(asteroidsInput(), 0.05, 0.2, held);
+    expect(speedOf(released)).toBeLessThan(speedOf(held));
+  });
+
+  it('AC2/AC3 — disabled toggle: reverse input applies no acceleration', () => {
+    const disabled = { ...cfg, reverseEnabled: false, friction: 0 };
+    const r = simulate(reverseInput, 0.1, 0.3, idle(), disabled);
+    expect(r.vx).toBeCloseTo(0, 6);
+    expect(r.vy).toBeCloseTo(0, 6);
+  });
+
+  it('AC3 — disabled toggle: reverse input does not suppress friction (no side effect)', () => {
+    const disabled = { ...cfg, reverseEnabled: false };
+    const r = model.tick(
+      idle({ vx: 100 }), reverseInput, 1, WIDTH, HEIGHT, disabled,
+    ) as unknown as RotatingMovementState;
+    // Friction brings the ship to rest; the held (disabled) reverse key is inert.
+    expect(r.vx).toBeCloseTo(0, 6);
+  });
+
+  it('AC3 — disabled toggle: forward thrust and turning are unaffected', () => {
+    const disabled = { ...cfg, reverseEnabled: false, friction: 0 };
+    const forward = model.tick(idle(), asteroidsInput(true), 0.1, WIDTH, HEIGHT, disabled) as unknown as RotatingMovementState;
+    expect(forward.vx).toBeCloseTo(30, 6); // 300 × 0.1
+    const turned = model.tick(idle(), asteroidsInput(false, false, true), 0.1, WIDTH, HEIGHT, disabled) as unknown as RotatingMovementState;
+    expect(turned.angularVelocity).toBeGreaterThan(0);
+  });
+
+  it('AC1 — the speed reachable under reverse is clamped to reverseMaxSpeed', () => {
+    const r = simulate(reverseInput, 0.05, 5);
+    expect(speedOf(r)).toBeCloseTo(cfg.reverseMaxSpeed!, 6);
+  });
+
+  it('AC1 — clamp never abruptly brakes pre-existing faster forward momentum', () => {
+    // Forward at 300 (above reverseMaxSpeed 120): reverse decelerates by
+    // exactly reverseAcceleration × dt; it does not snap to the cap.
+    const r = model.tick(
+      idle({ vx: 300 }), reverseInput, 0.1, WIDTH, HEIGHT,
+      { ...cfg, maxSpeed: 1000, friction: 0 },
+    ) as unknown as RotatingMovementState;
+    expect(r.vx).toBeCloseTo(280, 6);
+  });
+
+  it('AC1 — clamp is max(speedBeforeReverse, reverseMaxSpeed) when reverse increases speed', () => {
+    // Already reversing at 300, reverse would increase speed to 320; the cap
+    // becomes max(300, 120) = 300, so the ship is held — not braked.
+    const r = model.tick(
+      idle({ vx: -300 }), reverseInput, 0.1, WIDTH, HEIGHT,
+      { ...cfg, maxSpeed: 1000, friction: 0 },
+    ) as unknown as RotatingMovementState;
+    expect(r.vx).toBeCloseTo(-300, 6);
+  });
+
+  it('AC1 — reverse below the cap is not clamped (one tick reaches exactly the cap)', () => {
+    const r = model.tick(
+      idle({ vx: -100 }), reverseInput, 0.1, WIDTH, HEIGHT,
+      { ...cfg, maxSpeed: 1000, friction: 0 },
+    ) as unknown as RotatingMovementState;
+    expect(r.vx).toBeCloseTo(-120, 6);
+  });
+
+  it('AC4 — falls back to the default reverse tunables when the config omits them', () => {
+    const bare: AsteroidsConfig = { thrust: 300, maxSpeed: 175, friction: 0, rotationSpeed: 3 };
+    const field = new AsteroidsModel();
+    const first = field.tick(idle(), reverseInput, 0.1, WIDTH, HEIGHT, bare) as unknown as RotatingMovementState;
+    expect(first.vx).toBeCloseTo(-DEFAULT_REVERSE_ACCELERATION * 0.1, 6);
+
+    let s = idle();
+    for (let i = 0; i < 40; i++) {
+      s = field.tick(s, reverseInput, 0.1, WIDTH, HEIGHT, bare) as unknown as RotatingMovementState;
+    }
+    expect(speedOf(s)).toBeCloseTo(DEFAULT_REVERSE_MAX_SPEED, 6);
+  });
+
+  it('VFX — selects the nose engine only while reverse is held and enabled', () => {
+    const disabled: AsteroidsConfig = { ...cfg, reverseEnabled: false };
+    expect(model.getEngineActivity(idle(), reverseInput, null, cfg))
+      .toEqual([{ engine: 'nose', scale: 1 }]);
+    expect(model.getEngineActivity(idle(), reverseInput, null, disabled))
+      .toEqual([]);
+    expect(model.getEngineActivity(idle(), asteroidsInput(), null, cfg))
+      .toEqual([]);
+  });
+
+  it('VFX — reverse unions with forward/turn engine selection', () => {
+    const activity = model.getEngineActivity(
+      idle(), asteroidsInput(true, false, true, true), null, cfg,
+    );
+    expect(activity).toEqual(expect.arrayContaining([
+      { engine: 'main', scale: 1 },
+      { engine: 'nose', scale: 1 },
+    ]));
+  });
+});
+
 // ── AsteroidsInputHandler ───────────────────────────────────────────
 
 describe('AsteroidsInputHandler', () => {
@@ -307,61 +465,68 @@ describe('AsteroidsInputHandler', () => {
     const input = handler.mapInput({
       wasd: { W: { isDown: true }, A: { isDown: false }, S: { isDown: false }, D: { isDown: false } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: true, turnLeft: false, turnRight: false });
+    expect(input).toEqual({ forward: true, turnLeft: false, turnRight: false, reverse: false });
   });
 
   it('maps Up arrow to forward', () => {
     const input = handler.mapInput({
       cursors: { up: { isDown: true }, down: { isDown: false }, left: { isDown: false }, right: { isDown: false } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: true, turnLeft: false, turnRight: false });
+    expect(input).toEqual({ forward: true, turnLeft: false, turnRight: false, reverse: false });
   });
 
   it('maps A key to turnLeft', () => {
     const input = handler.mapInput({
       wasd: { W: { isDown: false }, A: { isDown: true }, S: { isDown: false }, D: { isDown: false } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: false, turnLeft: true, turnRight: false });
+    expect(input).toEqual({ forward: false, turnLeft: true, turnRight: false, reverse: false });
   });
 
   it('maps Left arrow to turnLeft', () => {
     const input = handler.mapInput({
       cursors: { up: { isDown: false }, down: { isDown: false }, left: { isDown: true }, right: { isDown: false } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: false, turnLeft: true, turnRight: false });
+    expect(input).toEqual({ forward: false, turnLeft: true, turnRight: false, reverse: false });
   });
 
-  it('maps S key to nothing (Asteroids scheme; S is 4-dir only)', () => {
+  it('maps S key to reverse (Asteroids scheme; AH-0MV13LY0R006ZO6D)', () => {
     const input = handler.mapInput({
       wasd: { W: { isDown: false }, A: { isDown: false }, S: { isDown: true }, D: { isDown: false } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: false });
+    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: false, reverse: true });
+  });
+
+  it('maps Down arrow to reverse (Asteroids scheme; AH-0MV13LY0R006ZO6D)', () => {
+    const input = handler.mapInput({
+      cursors: { up: { isDown: false }, down: { isDown: true }, left: { isDown: false }, right: { isDown: false } },
+    } as unknown as unknown);
+    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: false, reverse: true });
   });
 
   it('maps D key to turnRight (AH-0MTFORPJ2003RWWQ)', () => {
     const input = handler.mapInput({
       wasd: { W: { isDown: false }, A: { isDown: false }, S: { isDown: false }, D: { isDown: true } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: true });
+    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: true, reverse: false });
   });
 
   it('maps Right arrow to turnRight', () => {
     const input = handler.mapInput({
       cursors: { up: { isDown: false }, down: { isDown: false }, left: { isDown: false }, right: { isDown: true } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: true });
+    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: true, reverse: false });
   });
 
   it('maps both W and A to forward + turnLeft', () => {
     const input = handler.mapInput({
       wasd: { W: { isDown: true }, A: { isDown: true }, S: { isDown: false }, D: { isDown: false } },
     } as unknown as unknown);
-    expect(input).toEqual({ forward: true, turnLeft: true, turnRight: false });
+    expect(input).toEqual({ forward: true, turnLeft: true, turnRight: false, reverse: false });
   });
 
   it('handles undefined cursors and wasd', () => {
     const input = handler.mapInput({} as unknown);
-    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: false });
+    expect(input).toEqual({ forward: false, turnLeft: false, turnRight: false, reverse: false });
   });
 });
 

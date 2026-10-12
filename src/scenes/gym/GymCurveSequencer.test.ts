@@ -608,6 +608,17 @@ describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => 
       expect(second).toEqual(first);
     });
 
+    it('still selects the orbital Phaser for a high target (gym parity, AH-0MV2SGIX5005PFJT)', () => {
+      // The gym sequences one wave at a time with a fresh usage map, so the
+      // per-level archetype cap (which spans a whole level) does not constrain
+      // the gym and the orbital Phaser stays selectable as a gym set-piece.
+      const waves = sequenceVariedWaves([30]);
+      expect(waves).toHaveLength(1);
+      expect(
+        waves[0].groups.some((group) => group.formation === 'orbital'),
+      ).toBe(true);
+    });
+
     it('a flat curve yields distinct waves in every launched level', async () => {
       booted = await bootScene([GymCurveSequencer]);
       const scene = booted.scene as GymCurveSequencer;

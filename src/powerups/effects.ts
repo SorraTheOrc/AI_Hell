@@ -61,11 +61,12 @@
  *   activates a `phaseDuration` pass-through the moment the player is in
  *   real danger and a charge is available. After expiry it re-arms only once
  *   danger has cleared and a short cooldown has elapsed (Q2/Q3).
- * - **Teleport** — stored FIFO stacks (no timer); Space consumes one use
- *   and grants Phase Shift for `teleportPhaseDuration` at the landing
- *   spot without consuming an auto-activation charge (Q6). Safe-spot
- *   resolution is the scene's responsibility; this module tracks only the
- *   stored count.
+ * - **Teleport** — stored FIFO stacks (no timer); the shared automatic
+ *   defence feed spends one FIFO use when Teleport is selected
+ *   (AH-0MUZE4AIP009HZWC) and grants Phase Shift for
+ *   `teleportPhaseDuration` at the landing spot without consuming an
+ *   auto-activation charge (Q6). Safe-spot resolution is the scene's
+ *   responsibility; this module tracks only the stored count.
  *
  * The registry is pure (no Phaser imports). The scene layers
  * movement/ship integration, bullet clearing, hit-response and teleport
@@ -80,13 +81,17 @@ import {
   MAGNET_RADIUS_BASE_MULTIPLIER,
   MAGNET_RADIUS_PER_STACK,
   PHASE_REARM_COOLDOWN,
+  FORCE_FIELD_RADIUS_FACTOR,
+  SHIP_SIZE,
 } from '../core/constants';
 import {
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
+  resolvePowerUpAtLevel,
   type PowerUpLevelStats,
 } from './powerUpLevels';
-import type { WeaponId } from '../utils/weapons';
+import { FRIGHTEN_DEFAULT_DURATION } from '../scenes/core/frightenedState';
+import type { AoEDescriptor, WeaponId } from '../utils/weapons';
 
 // Re-export the magnet tuning values for convenience.
 export {
@@ -197,6 +202,67 @@ export function magnetRadius(shipSize: number, stacks: number): number {
 /** Supplies the run-scoped level store the registry should consume. */
 export type PowerUpLevelStoreResolver = () => PowerUpLevelStore | null;
 
+// ── Automatic defence selection (AH-0MUZE4AIP009HZWC) ───────────────
+
+/** A defensive ability the automatic defence feed may spend. */
+export type AutoDefenceChoice = 'phase_shift' | 'teleport';
+
+/**
+ * Outcome of feeding one frame of the shared danger signal into
+ * {@link EffectsRegistry.updateDanger}:
+ *
+ * - `'phase_shift'` — the registry activated Phase Shift itself.
+ * - `'teleport'` — Teleport was selected; the scene must perform the warp
+ *   through its shared `triggerTeleport` path (which consumes one FIFO
+ *   stack and grants Phase Shift on arrival).
+ * - `null` — nothing should fire this frame.
+ */
+export type DangerDecision = AutoDefenceChoice | null;
+
+/**
+ * Picks the defensive ability to spend from the available stocks, using the
+ * producer's charge-count rule (AH-0MUZE4AIP009HZWC, AC2):
+ *
+ * - Neither available → `null`.
+ * - Only one available → that ability.
+ * - Both available → the ability with the **greater** available count.
+ * - Equal finite counts → a uniform 50/50 pick driven by `rng`.
+ * - A permanent Phase Shift is **unbounded** (count `Infinity`) and so
+ *   always outranks a finite Teleport stack, conserving Teleports while
+ *   unlimited Phase Shift is owned (documented assumption).
+ *
+ * Pure and engine-agnostic so the game and every gym share one rule and the
+ * tie-break is deterministically testable via an injectable `rng`.
+ *
+ * @param phaseCharges — stored Phase Shift auto-activation charges.
+ * @param phasePermanent — whether the Phase Shift reward is unlimited.
+ * @param teleportStacks — stored Teleport FIFO stacks.
+ * @param rng — random source in `[0, 1)`; only consulted for an exact tie
+ *   between two finite counts. Injectable/seeded for deterministic tests.
+ * @returns the ability to spend, or `null` when none is available.
+ */
+export function selectAutoDefence(
+  phaseCharges: number,
+  phasePermanent: boolean,
+  teleportStacks: number,
+  rng: () => number = Math.random,
+): AutoDefenceChoice | null {
+  const phaseCount = phasePermanent
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, phaseCharges);
+  const teleportCount = Math.max(0, teleportStacks);
+  const phaseAvailable = phaseCount > 0;
+  const teleportAvailable = teleportCount > 0;
+
+  if (!phaseAvailable && !teleportAvailable) return null;
+  if (phaseAvailable && !teleportAvailable) return 'phase_shift';
+  if (teleportAvailable && !phaseAvailable) return 'teleport';
+  if (phaseCount > teleportCount) return 'phase_shift';
+  if (teleportCount > phaseCount) return 'teleport';
+  // Both finite and equal — uniform 50/50 tie-break.
+  return rng() < 0.5 ? 'phase_shift' : 'teleport';
+}
+
 // ── Effects registry ────────────────────────────────────────────────
 
 interface TimedEffectState {
@@ -235,15 +301,22 @@ export class EffectsRegistry {
   /** Active timed weapons: each weapon has its own countdown. */
   private _weapons: Map<WeaponId, WeaponEffect> = new Map();
 
-  // ── Phase Shift auto-trigger timing state (Q2/Q3/Q6) ──────────────────────
+  // ── Shared automatic-defence timing state (Q2/Q3/Q6, AH-0MUZE4AIP009HZWC) ──
   /**
-   * Whether danger has cleared since the last auto-trigger. A fresh Phase Shift is
-   * armed (`true`); firing latches it off until danger drops below the
-   * threshold (Q2).
+   * Whether danger has cleared since the last auto-activation. A fresh
+   * defence is armed (`true`); firing latches it off until danger drops below
+   * the threshold (Q2). One governor covers both Phase Shift and Teleport, so
+   * at most one ability fires per danger episode (AC5).
    */
-  private _phaseDangerCleared = true;
-  /** Seconds of re-arm cooldown remaining after the last phase expired. */
-  private _phaseRearmCooldown = 0;
+  private _dangerCleared = true;
+  /** Seconds of shared re-arm cooldown remaining after the last phase expired. */
+  private _rearmCooldown = 0;
+  /**
+   * Random source for the Phase Shift/Teleport exact-tie pick (AC2).
+   * Injectable/seeded via the constructor or {@link setRng} so the tie-break
+   * is deterministically testable.
+   */
+  private _rng: () => number;
 
   // ── Shield shield remaining-absorptions state (AH-0MUVM9RAO004Y3LB) ──
   /**
@@ -269,6 +342,41 @@ export class EffectsRegistry {
    */
   private _bombPulsePending = false;
 
+  // ── Smart Bomb screen-pulse state (AH-0MV1BIWP9003EHRQ) ──────────────
+  /**
+   * True when a hold-full Smart Bomb granted a permanent pulse for the run:
+   * it never expires and pulses every {@link smartBombInterval} seconds.
+   * Cleared only by `reset()`.
+   */
+  private _smartBombPermanent = false;
+  /** Seconds until the next permanent smart-bomb pulse (unused when not permanent). */
+  private _smartBombPulseTimer = 0;
+  /**
+   * One-shot pulse request queued by a field pickup: the next
+   * {@link updateSmartBomb} fires exactly once and clears it. A field pickup
+   * stores no other persistent state (mirrors the Bomb).
+   */
+  private _smartBombPulsePending = false;
+
+  // ── Force Field reflect state (AH-0MV1BIX1W006XF95) ──────────────────
+  /**
+   * Enemy bullets the active Force Field can still reflect before it stops
+   * (resolved from the level store on every collection: base 3, cap 10).
+   * Run-scoped: reset() and bubble expiry clear it. Zero means "the bubble no
+   * longer reflects" (it may still be counting down).
+   */
+  private _forceFieldRemaining = 0;
+
+  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ───────────────
+  /**
+   * Pending Mystery UFO instant bounty: accumulated when a `mystery_ufo` drop
+   * is collected and drained by the scene via {@link consumeMysteryBonus}
+   * (minerals into the ship's hold, score into the run total). `null` when no
+   * pickup is pending; cleared by {@link reset}. Repeated collections before a
+   * drain accumulate, so no pickup is lost.
+   */
+  private _mysteryBonus: { minerals: number; score: number } | null = null;
+
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
   private _store: PowerUpLevelStore;
@@ -285,8 +393,17 @@ export class EffectsRegistry {
    *   scenes inject the player's store via {@link setStore} or
    *   {@link setStoreResolver}.
    */
-  constructor(store?: PowerUpLevelStore) {
+  constructor(store?: PowerUpLevelStore, rng: () => number = Math.random) {
     this._store = store ?? new PowerUpLevelStore();
+    this._rng = rng;
+  }
+
+  /**
+   * Injects the random source used for the Phase Shift/Teleport tie-break
+   * (AC2). Pass a seeded generator for deterministic tests.
+   */
+  setRng(rng: () => number): void {
+    this._rng = rng;
   }
 
   /** Binds the registry to a specific run-scoped level store instance. */
@@ -387,6 +504,18 @@ export class EffectsRegistry {
           this._startOrRefreshTimed(id, id, P10_SCOOP_DURATION, false);
         }
         break;
+      case 'power_pellet':
+        // Power Pellet: a timed window the shared combat core reads to make
+        // enemies flee and suppress fire (Pac-Man adaptation). The window is
+        // the item's timed window, so a field pickup opens a temporary one
+        // and the hold-full reward makes the state permanent.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.frightenDuration ?? FRIGHTEN_DEFAULT_DURATION,
+          permanent,
+        );
+        break;
       case 'bomb':
         // bomb: a field pickup queues one ranged explosion; the hold-full
         // reward additionally makes it permanent and pulses immediately
@@ -397,11 +526,61 @@ export class EffectsRegistry {
           this._bombPulseTimer = this.bombInterval();
         }
         break;
+      case 'smart_bomb':
+        // smart_bomb: a field pickup queues one screen-wide pulse; the
+        // hold-full reward additionally makes it permanent and pulses
+        // immediately (mirrors the Bomb; AH-0MV1BIWP9003EHRQ).
+        this._smartBombPulsePending = true;
+        if (permanent) {
+          this._smartBombPermanent = true;
+          this._smartBombPulseTimer = this.smartBombInterval();
+        }
+        break;
+      case 'force_field':
+        // force_field: a timed reflect bubble (Gradius homage,
+        // AH-0MV1BIX1W006XF95). Re-collecting refreshes the bubble to the
+        // newly resolved duration and reflect budget (never additive); the
+        // shared combat core consumes the budget as bullets meet the bubble.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.forceFieldDuration ?? 8,
+          permanent,
+        );
+        this._forceFieldRemaining = Math.max(
+          0,
+          Math.floor(stats.forceFieldReflects ?? 3),
+        );
+        break;
+      case 'mystery_ufo':
+        // mystery_ufo: an instant mineral + score bounty (Space Invaders
+        // homage, AH-0MV1BIXFO006Z1I7). There is no timed window and no
+        // consumable state — the level-resolved burst is queued for the scene
+        // to grant immediately (minerals into the hold, score into the run
+        // total) via consumeMysteryBonus().
+        this._queueMysteryBonus(stats);
+        break;
       default:
         // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
         // the level store owns charges/stacks/lives.
         break;
     }
+  }
+
+  /**
+   * Accumulates the level-resolved Mystery UFO instant bounty (minerals +
+   * score) for the scene to drain via {@link consumeMysteryBonus}. Both
+   * components are rounded to whole numbers and clamped non-negative, so the
+   * hold and the score total only ever receive whole values.
+   */
+  private _queueMysteryBonus(stats: PowerUpLevelStats): void {
+    const minerals = Math.max(0, Math.round(stats.mysteryUfoMinerals ?? 0));
+    const score = Math.max(0, Math.round(stats.mysteryUfoScore ?? 0));
+    if (minerals === 0 && score === 0) return;
+    this._mysteryBonus = {
+      minerals: (this._mysteryBonus?.minerals ?? 0) + minerals,
+      score: (this._mysteryBonus?.score ?? 0) + score,
+    };
   }
 
   /** Starts a timed effect or refreshes it to the (possibly new) duration. */
@@ -491,14 +670,21 @@ export class EffectsRegistry {
     effect.remaining = 0;
     if (effect.permanent) return;
     this._timed.delete(id);
-    // Start the Phase Shift re-arm cooldown the moment a phase expires (Q2).
+    // Start the shared re-arm cooldown the moment an auto-triggered phase
+    // expires (Q2) — this covers both a Phase Shift activation and the Phase
+    // Shift granted on a Teleport arrival (AC5).
     if (id === 'phase_shift') {
-      this._phaseRearmCooldown = PHASE_REARM_COOLDOWN;
+      this._rearmCooldown = PHASE_REARM_COOLDOWN;
     }
     // The shield's remaining absorptions end with its bubble; the temporary
     // level is cleared above and the permanent level persists (AC3).
     if (id === 'shield') {
       this._shieldRemaining = 0;
+    }
+    // The Force Field stops reflecting when its bubble expires, whether the
+    // window was temporary or permanent (AH-0MV1BIX1W006XF95).
+    if (id === 'force_field') {
+      this._forceFieldRemaining = 0;
     }
   }
 
@@ -550,6 +736,94 @@ export class EffectsRegistry {
    */
   shieldAbsorptionsRemaining(): number {
     return this._shieldRemaining;
+  }
+
+  // ── Force Field reflector (AH-0MV1BIX1W006XF95) ──────────────────────
+
+  /**
+   * Whether the Force Field reflect bubble is active. While true an enemy
+   * bullet that meets the bubble is bounced back as a player-owned bullet
+   * (until the reflect budget is spent).
+   */
+  isForceFieldActive(): boolean {
+    return this._timed.has('force_field');
+  }
+
+  /**
+   * Enemy bullets the active Force Field can still reflect (0 when inactive
+   * or exhausted). Surfaced for the HUD's `Force Field ×N` row and consumed
+   * by the shared combat core's reflect branch.
+   */
+  forceFieldRemaining(): number {
+    return this._forceFieldRemaining;
+  }
+
+  /**
+   * The reflect bubble radius in px (`SHIP_SIZE × FORCE_FIELD_RADIUS_FACTOR`).
+   * The shared bubble visual and the combat-core reflect branch use the same
+   * value, so the drawn boundary and the gameplay boundary cannot diverge.
+   */
+  forceFieldRadius(): number {
+    return SHIP_SIZE * FORCE_FIELD_RADIUS_FACTOR;
+  }
+
+  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+
+  /**
+   * Drains and returns the accumulated Mystery UFO instant bounty
+   * (`{ minerals, score }`), or `null` when no pickup is pending.
+   *
+   * The scene applies the minerals to its hold and the score to its run total;
+   * the registry itself owns no hold or score, so the same code serves the
+   * game and every gym. The bounty is drained (not merely read) so a pickup is
+   * granted exactly once.
+   */
+  consumeMysteryBonus(): { minerals: number; score: number } | null {
+    const bonus = this._mysteryBonus;
+    this._mysteryBonus = null;
+    return bonus;
+  }
+
+  /**
+   * The level-resolved mineral bounty the next Mystery UFO pickup grants
+   * (whole minerals, non-negative). Surfaced for help/tests.
+   */
+  mysteryUfoMinerals(): number {
+    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
+    return Math.max(
+      0,
+      Math.round(
+        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoMinerals ??
+          0,
+      ),
+    );
+  }
+
+  /**
+   * The level-resolved score bounty the next Mystery UFO pickup grants
+   * (whole points, non-negative). Surfaced for help/tests.
+   */
+  mysteryUfoScore(): number {
+    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
+    return Math.max(
+      0,
+      Math.round(
+        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoScore ?? 0,
+      ),
+    );
+  }
+
+  /**
+   * Consumes one reflect from the active Force Field. Returns true when a
+   * reflection is available (bubble active and budget remaining) and
+   * decrements the budget; false when there is no bubble or it has spent its
+   * reflect budget. Once false, enemy bullets damage the ship normally again.
+   */
+  tryConsumeForceFieldReflect(): boolean {
+    if (!this._timed.has('force_field')) return false;
+    if (this._forceFieldRemaining <= 0) return false;
+    this._forceFieldRemaining -= 1;
+    return true;
   }
 
   // ── Bomb bomb pulse (AH-0MUVM9RAO004Y3LB) ────────────────────────────
@@ -608,6 +882,85 @@ export class EffectsRegistry {
     return false;
   }
 
+  // ── Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ) ────────────────────
+
+  /** Whether a permanent (hold-full) Smart Bomb is active for the run. */
+  isSmartBombPermanent(): boolean {
+    return this._smartBombPermanent;
+  }
+
+  /**
+   * The resolved Smart Bomb pulse rate in pulses per second at the current
+   * level. Resolved live, so a level-up mid-run quickens every subsequent
+   * pulse.
+   */
+  smartBombFrequency(): number {
+    return this._levelStore.stats('smart_bomb').smartBombFrequency ?? 0.2;
+  }
+
+  /**
+   * The resolved Smart Bomb pulse interval in seconds (`1 / frequency`). The
+   * model stores a monotonic pulses/second rate; the effect inverts it.
+   */
+  smartBombInterval(): number {
+    const frequency = this.smartBombFrequency();
+    return frequency > 0 ? 1 / frequency : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * The shared {@link AoEDescriptor} describing one Smart Bomb pulse: a
+   * screen-wide (`aoeRadius`) area that damages every enemy once for the
+   * level-resolved `smartBombDamage` and clears every enemy bullet.
+   *
+   * Building the descriptor here (rather than hand-rolling an area effect in
+   * the scene) means the pulse resolves through the **same** AOE seam as the
+   * Nova/Mortar/Arc weapons — one target-selection and damage implementation,
+   * shared by the game and every gym (AC5). The `'screenPulse'` trigger marks
+   * it as a non-weapon, once-per-activation resolution.
+   */
+  smartBombAoe(): AoEDescriptor {
+    const stats = this._levelStore.stats('smart_bomb');
+    return {
+      trigger: 'screenPulse',
+      radius: stats.aoeRadius ?? 1200,
+      damagesEnemies: true,
+      clearsEnemyBullets: true,
+      damage: Math.max(1, Math.floor(stats.smartBombDamage ?? 1)),
+    };
+  }
+
+  /**
+   * Advances the Smart Bomb pulse state by `dt` and reports whether a pulse
+   * is due this frame.
+   *
+   * - A field-pickup request fires exactly once and is then gone.
+   * - A permanent smart bomb fires immediately on grant and then once per
+   *   {@link smartBombInterval} seconds for the rest of the run.
+   *
+   * The registry owns the decision; the shared combat core performs the
+   * screen-wide clear/damage through {@link smartBombAoe} so the game and
+   * every gym run the same code.
+   *
+   * @param dt - Frame delta in seconds.
+   * @returns True when a pulse should be applied this frame.
+   */
+  updateSmartBomb(dt: number): boolean {
+    if (this._smartBombPulsePending) {
+      this._smartBombPulsePending = false;
+      if (this._smartBombPermanent) {
+        this._smartBombPulseTimer = this.smartBombInterval();
+      }
+      return true;
+    }
+    if (!this._smartBombPermanent) return false;
+    this._smartBombPulseTimer -= dt;
+    if (this._smartBombPulseTimer <= 0) {
+      this._smartBombPulseTimer = this.smartBombInterval();
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
    * e.g. on Teleport teleport arrival. Refreshes if already active — never
@@ -637,40 +990,57 @@ export class EffectsRegistry {
   }
 
   /**
-   * Feeds the shared per-frame danger signal into the Phase Shift auto-trigger model
-   * (Q1/Q2/Q3). Call once per frame after {@link tick}.
+   * Feeds the shared per-frame danger signal into the automatic-defence model
+   * (Q1/Q2/Q3; AH-0MUZE4AIP009HZWC). Call once per frame after {@link tick}.
    *
-   * When `inDanger` is true, the player is not already phased, a charge is
-   * available (or the reward is permanent), danger has cleared since the
-   * last trigger and the re-arm cooldown has elapsed, this activates Phase
-   * Shift for the level-resolved `phaseDuration` and consumes one charge
-   * (permanent rewards do not consume).
+   * When `inDanger` is true, the player is not already phased, danger has
+   * cleared since the last activation and the shared re-arm cooldown has
+   * elapsed, this selects which defensive ability to spend via
+   * {@link selectAutoDefence} (greater charge count wins; an exact tie is a
+   * seeded 50/50) and, for Phase Shift, activates the level-resolved
+   * `phaseDuration` and consumes one charge (permanent rewards do not
+   * consume). Teleport is **not** consumed here — the registry has no player
+   * or warp — so the scene performs the warp on the returned decision. Either
+   * way the danger episode is latched so at most one ability fires per
+   * episode (AC5).
    *
    * @param inDanger — whether the danger helper reports the ship surrounded.
-   * @param dt — frame delta in seconds (advances the re-arm cooldown).
-   * @returns whether Phase Shift was auto-activated this frame.
+   * @param dt — frame delta in seconds (advances the shared re-arm cooldown).
+   * @returns the ability fired/selected this frame, or `null` for none.
    */
-  updateDanger(inDanger: boolean, dt: number): boolean {
-    if (this._phaseRearmCooldown > 0) {
-      this._phaseRearmCooldown = Math.max(0, this._phaseRearmCooldown - dt);
+  updateDanger(inDanger: boolean, dt: number): DangerDecision {
+    if (this._rearmCooldown > 0) {
+      this._rearmCooldown = Math.max(0, this._rearmCooldown - dt);
     }
     if (!inDanger) {
       // Danger has cleared — re-arm for the next episode.
-      this._phaseDangerCleared = true;
-      return false;
+      this._dangerCleared = true;
+      return null;
     }
-    if (this._timed.has('phase_shift')) return false;
-    if (!this._phaseDangerCleared) return false;
-    if (this._phaseRearmCooldown > 0) return false;
+    if (this._timed.has('phase_shift')) return null;
+    if (!this._dangerCleared) return null;
+    if (this._rearmCooldown > 0) return null;
 
     const store = this._levelStore;
-    // `consumePhaseCharge` returns false only when neither a real charge nor
-    // the permanent reward is available (AC3: one derived charge model).
-    if (!store.consumePhaseCharge()) return false;
+    const choice = selectAutoDefence(
+      store.phaseCharges(),
+      store.isPhasePermanent(),
+      store.teleportStacks(),
+      this._rng,
+    );
+    if (choice === null) return null;
 
-    this._activatePhase(store.stats('phase_shift').phaseDuration ?? 1.5);
-    this._phaseDangerCleared = false;
-    return true;
+    // Latch the episode regardless of which ability is spent, so a failed or
+    // interrupted scene-side Teleport does not retry every frame (AC5).
+    this._dangerCleared = false;
+
+    if (choice === 'phase_shift') {
+      // `consumePhaseCharge` returns false only when neither a real charge
+      // nor the permanent reward is available (AC3: one derived model).
+      if (!store.consumePhaseCharge()) return null;
+      this._activatePhase(store.stats('phase_shift').phaseDuration ?? 1.5);
+    }
+    return choice;
   }
 
   /** Stored Phase Shift auto-activation charges (0 for a permanent reward). */
@@ -788,6 +1158,40 @@ export class EffectsRegistry {
     return this._timed.has('mineral_scoop') ? 1 : 0;
   }
 
+  // ── Frightened enemy status (Power Pellet, AH-0MV1BIW95004POSX) ─────
+
+  /**
+   * Whether the Power Pellet fright window is active — every live enemy
+   * flees the ship and suppresses fire while true. A permanent (hold-full)
+   * reward keeps the state active for the rest of the run.
+   */
+  isFrightened(): boolean {
+    const effect = this._timed.get('power_pellet');
+    if (!effect) return false;
+    if (effect.permanent && !effect.tempWindow) return true;
+    return effect.remaining > 0;
+  }
+
+  /**
+   * Seconds the fright window has been active (0 when inactive). The shared
+   * flee-offset maths uses this to retreat enemies further the longer the
+   * window has been open; a permanent window saturates at the default
+   * duration (the offset is capped regardless).
+   */
+  frightenElapsed(): number {
+    const effect = this._timed.get('power_pellet');
+    if (!effect) return 0;
+    if (effect.permanent && !effect.tempWindow) {
+      return FRIGHTEN_DEFAULT_DURATION;
+    }
+    return Math.max(0, effect.duration - effect.remaining);
+  }
+
+  /** The level-resolved flee-speed multiplier for the active Power Pellet. */
+  frightenSpeedMultiplier(): number {
+    return this._levelStore.stats('power_pellet').frightenSpeedMultiplier ?? 1;
+  }
+
   // ── Weapon accessors ──────────────────────────────────────────────
 
   /** Current active timed weapons (id → remaining seconds). */
@@ -884,7 +1288,11 @@ export class EffectsRegistry {
       // Shield carries its remaining absorptions so the HUD renders `Shield xN`
       // and updates as hits are absorbed (AC6).
       const stacks =
-        effect.id === 'shield' ? this._shieldRemaining : undefined;
+        effect.id === 'shield'
+          ? this._shieldRemaining
+          : effect.id === 'force_field'
+            ? this._forceFieldRemaining
+            : undefined;
       // A permanent base with no active temporary window shows its full
       // duration (it never counts down); an active temporary window shows
       // the window remaining (AC1/AC2).
@@ -931,6 +1339,15 @@ export class EffectsRegistry {
         permanent: true,
       });
     }
+    // A permanent Smart Bomb likewise renders one run-scoped row; a field
+    // pickup leaves no row (AH-0MV1BIWP9003EHRQ).
+    if (this._smartBombPermanent) {
+      result.push({
+        id: 'smart_bomb' as PowerUpId,
+        type: 'smart_bomb',
+        permanent: true,
+      });
+    }
     const teleportStacks = this._levelStore.teleportStacks();
     if (teleportStacks > 0) {
       result.push({
@@ -969,12 +1386,17 @@ export class EffectsRegistry {
   reset(): void {
     this._timed.clear();
     this._weapons.clear();
-    this._phaseDangerCleared = true;
-    this._phaseRearmCooldown = 0;
+    this._dangerCleared = true;
+    this._rearmCooldown = 0;
     this._shieldRemaining = 0;
     this._bombPermanent = false;
     this._bombPulseTimer = 0;
     this._bombPulsePending = false;
+    this._smartBombPermanent = false;
+    this._smartBombPulseTimer = 0;
+    this._smartBombPulsePending = false;
+    this._forceFieldRemaining = 0;
+    this._mysteryBonus = null;
     this._levelStore.reset();
   }
 }

@@ -6,6 +6,7 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { PLAYER_BULLET_SPEED } from '../../core/constants';
+import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
@@ -13,7 +14,7 @@ import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { GymPowerUpsCombat } from '../gym/GymPowerUpsCombat';
-import { GymEnemies } from '../gym/GymEnemies';
+import { GymFodderEnemies } from '../gym/GymFodderEnemies';
 import { GymPowerUpsUtility } from '../gym/GymPowerUpsUtility';
 import { GymWeapons } from '../gym/GymWeapons';
 import {
@@ -31,7 +32,15 @@ import {
   definesMethod,
 } from '../../test/duplicateBodyGuard';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
-import type { Boss } from '../../entities/Boss';
+import { advanceAndCull } from '../../entities/PlayerBullet';
+import {
+  Boss,
+  BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_MOVE_AMPLITUDE_X,
+  BOSS_MOVE_AMPLITUDE_Y,
+  BOSS_MOVE_PERIOD_MS,
+} from '../../entities/Boss';
+import { minionCountForPhase } from '../../waves/BossMinions';
 import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
@@ -53,10 +62,9 @@ const SHARED_METHODS = [
   '_collectDrop',
   '_spawnPlayerExplosion',
   '_clearEnemyBullets',
-  '_handleTeleport',
+  '_updateAutoDefence',
   '_readPlayerInput',
   '_tickPlayer',
-  '_updatePhaseShiftAutoTrigger',
 ] as const;
 
 /**
@@ -227,6 +235,45 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
     expect(definers).toEqual([]);
   });
 
+  it('AH-0MV4BXUWT005MWAJ — the frightened flee helper is defined once and inherited by every consumer (AC3)', () => {
+    // The captured-heading flee maths (and the per-enemy heading cache it
+    // consumes) must live in the shared core so the game and the gyms cannot
+    // diverge — the fix for the "enemies arc around the moving player" bug.
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(
+          fs.readFileSync(file, 'utf8'),
+          '_frightenedFleeOffset',
+        ),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+
+    const helper = (
+      CombatCoreScene.prototype as unknown as Record<string, unknown>
+    )['_frightenedFleeOffset'];
+    expect(typeof helper).toBe('function');
+    for (const prototype of [
+      PlayScene.prototype,
+      GymFormationScene.prototype,
+      GymPowerUpsCombat.prototype,
+    ]) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          prototype,
+          '_frightenedFleeOffset',
+        ),
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)[
+          '_frightenedFleeOffset'
+        ],
+      ).toBe(helper);
+    }
+  });
+
   it('P3/P6 gating resolves to the same shared hooks on all three scenes (no own overrides)', () => {
     for (const [name, prototype] of GATING_SCENE_PROTOTYPES) {
       for (const method of SHARED_GATING_METHODS) {
@@ -304,6 +351,21 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
     games.push(play, gym);
     return { play: play.scene as PlayScene, gym: gym.scene as EquivGymScene };
   }
+
+  it('AC5 — the game and every gym register the same shared explosion-accent seam', async () => {
+    const register = vi.spyOn(effectsModule, 'setExplosionBeatClock');
+    try {
+      const { play, gym } = await bootBoth();
+
+      // Both scenes register their own shared beat clock with the single
+      // audio seam (defined once in `CombatCoreScene.resetRunState`), so the
+      // accent grid is never a per-scene copy.
+      expect(register).toHaveBeenCalledWith(play.getBeatClock());
+      expect(register).toHaveBeenCalledWith(gym.getBeatClock());
+    } finally {
+      register.mockRestore();
+    }
+  });
 
   it('auto-fire produces bullets at the shared PLAYER_BULLET_SPEED in both scenes', async () => {
     const { play, gym } = await bootBoth();
@@ -477,7 +539,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
       '_clearEnemyBullets',
       '_spawnPlayerExplosion',
       '_readPlayerInput',
-      '_handleTeleport',
+      '_updateAutoDefence',
     ] as const) {
       expect(
         (PlayScene.prototype as unknown as Record<string, unknown>)[method],
@@ -857,7 +919,7 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
     expect(definers).toEqual([FIRE_HELPER_FILE]);
   });
 
-  it('PlayScene and GymEnemies consume the dispatcher and keep no local switch', () => {
+  it('PlayScene and GymFodderEnemies consume the dispatcher and keep no local switch', () => {
     // The game's private archetype switch (`_fireFor`) is deleted entirely.
     expect(
       Object.prototype.hasOwnProperty.call(PlayScene.prototype, '_fireFor'),
@@ -865,7 +927,7 @@ describe('CombatScene — shared enemy-fire dispatcher is defined once', () => {
 
     for (const file of [
       'src/scenes/PlayScene.ts',
-      'src/scenes/gym/GymEnemies.ts',
+      'src/scenes/gym/GymFodderEnemies.ts',
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
       expect(source, `${file} must consume the shared dispatcher`).toContain(
@@ -1792,6 +1854,208 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
   });
 });
 
+// ── Boss encounter game↔gym parity (AH-0MUZMTU3Y001Y8XZ) ────────────
+
+/**
+ * End-to-end parity checks for the parent boss-encounter epic
+ * (AH-0MUY3X4NS007JR8X, AC6/AC8). The health bar must be screen-fixed, the
+ * figure-of-eight motion must be the single shared `Boss` lemniscate, every
+ * hit must run through the one `Boss.takeDamage` feedback path, and the
+ * per-phase minion counts must come from the shared `planMinionSpawns`
+ * planner — all verified against **both** `PlayScene` and `GymBoss`.
+ */
+describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    localStorage.clear();
+  });
+
+  /** Boots PlayScene past the static campaign and walks it to the boss. */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    // Deterministic static campaign: the default sequenced campaign can
+    // include un-accounted asteroid groups that stall the walk (see the
+    // shared boss integration suite above).
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'boss-parity-play-host',
+    );
+    games.push(play);
+    const scene = play.scene as PlayScene;
+    reachPlayBoss(scene);
+    return scene;
+  }
+
+  async function bootBossGym(): Promise<GymBoss> {
+    const gym = await bootScene([GymBoss], 'boss-parity-gym-host');
+    games.push(gym);
+    return gym.scene as GymBoss;
+  }
+
+  /** Zeroes the boss's figure-of-eight clock (test seam). */
+  function resetMotionClock(boss: Boss): void {
+    (boss as unknown as { _moveElapsedMs: number })._moveElapsedMs = 0;
+  }
+
+  /** The boss's offset from its figure-of-eight anchor. */
+  function motionOffset(boss: Boss): { x: number; y: number } {
+    return {
+      x: boss.x - boss.getMoveAnchorX(),
+      y: boss.y - boss.getMoveAnchorY(),
+    };
+  }
+
+  it('AC2 — the boss health bar is screen-fixed and position-independent in both scenes', async () => {
+    const play = await bootPlayAtBoss();
+    const gym = await bootBossGym();
+    const playBoss = play.getBoss()!;
+    const gymBoss = gym.formationBoss;
+
+    const playBar = playBoss.getHealthBarGraphics();
+    const gymBar = gymBoss.getHealthBarGraphics();
+
+    // Both are camera-fixed scene children (never boss-container children),
+    // so the bar never rides the figure-of-eight motion.
+    for (const [scene, bar] of [
+      [play, playBar],
+      [gym, gymBar],
+    ] as const) {
+      expect(bar.parentContainer).toBeNull();
+      expect(bar.scrollFactorX).toBe(0);
+      expect(bar.scrollFactorY).toBe(0);
+      expect(bar.depth).toBe(100);
+      expect(scene.children.list).toContain(bar);
+    }
+
+    const playBefore = [...(playBar.commandBuffer as number[])];
+    const gymBefore = [...(gymBar.commandBuffer as number[])];
+
+    // Move each boss far from its own anchor; the drawn screen coordinates
+    // must be byte-for-byte unchanged (the bar is not transformed by the
+    // boss container).
+    playBoss.setPosition(40, 500);
+    gymBoss.setPosition(920, 40);
+
+    expect([...(playBar.commandBuffer as number[])]).toEqual(playBefore);
+    expect([...(gymBar.commandBuffer as number[])]).toEqual(gymBefore);
+
+    // The game and the gym draw the identical screen-space bar.
+    expect(playBefore).toEqual(gymBefore);
+  });
+
+  it('AC3 — the figure-of-eight trace matches in the game and the gym for the same delta', async () => {
+    const play = await bootPlayAtBoss();
+    const gym = await bootBossGym();
+    const playBoss = play.getBoss()!;
+    const gymBoss = gym.formationBoss;
+
+    // Both scenes host the one shared `Boss` implementation, and the gym does
+    // not re-implement the motion.
+    expect(Object.getPrototypeOf(playBoss)).toBe(Boss.prototype);
+    expect(Object.getPrototypeOf(gymBoss)).toBe(Boss.prototype);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        GymBoss.prototype,
+        '_advanceFigureEight',
+      ),
+    ).toBe(false);
+
+    // Compare the same delta from a common clock origin.
+    resetMotionClock(playBoss);
+    resetMotionClock(gymBoss);
+    const delta = 0.25;
+    play.tick(delta);
+    gym.tick(delta);
+
+    expect(playBoss.getMoveElapsedMs()).toBeCloseTo(250, 6);
+    expect(gymBoss.getMoveElapsedMs()).toBeCloseTo(250, 6);
+
+    const playOffset = motionOffset(playBoss);
+    const gymOffset = motionOffset(gymBoss);
+    expect(playOffset.x).toBeCloseTo(gymOffset.x, 6);
+    expect(playOffset.y).toBeCloseTo(gymOffset.y, 6);
+
+    // ... and both equal the shared Gerono-lemniscate position for that delta.
+    const theta = (2 * Math.PI * 250) / BOSS_MOVE_PERIOD_MS;
+    expect(playOffset.x).toBeCloseTo(
+      BOSS_MOVE_AMPLITUDE_X * Math.sin(theta),
+      6,
+    );
+    expect(playOffset.y).toBeCloseTo(
+      BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta),
+      6,
+    );
+  });
+
+  it('AC3 — no production scene re-implements the shared boss motion', () => {
+    const definers = productionSceneFiles()
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), '_advanceFigureEight'),
+      )
+      .map((file) => path.relative(process.cwd(), file));
+    expect(definers).toEqual([]);
+  });
+
+  it('AC5 — every boss hit uses the shared per-hit feedback path in both scenes', async () => {
+    const play = await bootPlayAtBoss();
+    const gym = await bootBossGym();
+    const playBoss = play.getBoss()!;
+    const gymBoss = gym.formationBoss;
+
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    try {
+      expect(playBoss.getHitEffects()).toHaveLength(0);
+      expect(gymBoss.getHitEffects()).toHaveLength(0);
+
+      // The same shared `Boss.takeDamage()` entry point with the same hit
+      // point yields the same per-hit feedback in both scenes.
+      playBoss.takeDamage(123, 45);
+      gymBoss.takeDamage(123, 45);
+
+      for (const boss of [playBoss, gymBoss]) {
+        const effects = boss.getHitEffects();
+        expect(effects).toHaveLength(1);
+        expect(effects[0].x).toBeCloseTo(123, 1);
+        expect(effects[0].y).toBeCloseTo(45, 1);
+      }
+      expect(cue).toHaveBeenCalledTimes(2);
+    } finally {
+      cue.mockRestore();
+    }
+  });
+
+  it('parent AC6 — per-phase minion counts are driven by the shared planner in both scenes', async () => {
+    // Both scene sources consume the single shared planner, so the per-phase
+    // counts cannot diverge between the game and the gym.
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/GymBoss.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(source, `${file} must use the shared minion planner`).toContain(
+        'planMinionSpawns(',
+      );
+    }
+
+    // Runtime: the gym opens on the shared phase-1 count, and depleting the
+    // phase adds exactly the shared phase-2 count.
+    const gym = await bootBossGym();
+    expect(gym.getMinions()).toHaveLength(minionCountForPhase(1));
+    for (let hit = 0; hit < BOSS_HIT_POINTS_PER_PHASE; hit++) {
+      gym.damageBoss();
+    }
+    expect(gym.formationBoss.getPhaseNumber()).toBe(2);
+    expect(gym.getMinions()).toHaveLength(
+      minionCountForPhase(1) + minionCountForPhase(2),
+    );
+  });
+});
+
 // ── Consolidated epic parity guard (AH-0MUII3GOO001XEBB, AC1) ───────
 
 /**
@@ -1840,7 +2104,7 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
   ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
-  ['_handleTeleport', 'src/scenes/core/CombatScene.ts'],
+  ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
   ['triggerTeleport', 'src/scenes/core/CombatScene.ts'],
   ['_advanceBoss', 'src/scenes/core/CombatScene.ts'],
   ['getAdditionalTeleportBodies', 'src/scenes/core/CombatScene.ts'],
@@ -1848,6 +2112,11 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   // finalisation (destruction audio + `onEnemyDestroyed`) is defined once in
   // the shared core; a scene must not re-implement it.
   ['finaliseEnemyKill', 'src/scenes/core/CombatScene.ts'],
+  // Reverse-thruster engine selection (AH-0MV13LYCL006LB6J /
+  // AH-0MV13LZO2007ANRP): the engine the Asteroids scheme fires — including
+  // the nose retro-thruster while reversing — is selected by the shared
+  // movement model, so a scene can never re-implement the reverse VFX wiring.
+  ['getEngineActivity', 'src/utils/movementModel.ts'],
   ['setPlayerEnabled', 'src/scenes/gym/core/GymFormationScene.ts'],
   ['registerDynamicEntity', 'src/scenes/gym/core/GymFormationScene.ts'],
 ];
@@ -1951,7 +2220,7 @@ describe('shared enemy fire — cross-scene equivalence for every archetype (AC2
       [PlayScene, GameOverScene, MenuScene],
       'fire-equiv-play-host',
     );
-    const gym = await bootScene([GymEnemies], 'fire-equiv-gym-host');
+    const gym = await bootScene([GymFodderEnemies], 'fire-equiv-gym-host');
     games.push(play, gym);
     const playScene = play.scene;
     const gymScene = gym.scene;
@@ -2017,15 +2286,15 @@ describe('shared mineral-seek seam — game/gym parity for the Harvester (F4)', 
     for (const game of games.splice(0)) game.game.destroy(true);
   });
 
-  it('the Harvester seeks and absorbs identically in PlayScene and GymEnemies', async () => {
+  it('the Harvester seeks and absorbs identically in PlayScene and GymFodderEnemies', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'seek-equiv-play-host',
     );
-    const gym = await bootScene([GymEnemies], 'seek-equiv-gym-host');
+    const gym = await bootScene([GymFodderEnemies], 'seek-equiv-gym-host');
     games.push(play, gym);
     const playScene = play.scene as PlayScene;
-    const gymScene = gym.scene as GymEnemies;
+    const gymScene = gym.scene as GymFodderEnemies;
 
     // Place a deterministic mineral field and a Harvester in each scene.
     // Start the Harvester within absorption reach of the nearest mineral so
@@ -2247,5 +2516,544 @@ describe('CombatScene — shared AOE dispatch/effect is defined once (F6 AC1)', 
         );
       }
     }
+  });
+});
+
+// ── R-Type wave-laser piercing parity (AH-0MV1BIUSJ0090W92) ──────────
+
+describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  /** Creates a real game enemy on the shared structural contract. */
+  function makeGameEnemy(
+    scene: Phaser.Scene,
+    key: string,
+    x: number,
+    y: number,
+  ): ReturnType<typeof createEnemyFromConfig> {
+    return createEnemyFromConfig(scene, loadEnemyConfig(key), x, y, {
+      row: 0,
+      col: 0,
+    });
+  }
+
+  it('a piercing beam passes through a line of enemies identically in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'piercing-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'piercing-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Clear any auto-fired bullets so only the injected beam collides.
+    (playScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+    (gymScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+
+    // Game: two stationary enemies overlapping the injection point.
+    const gameEnemies = [
+      makeGameEnemy(playScene, 'scout', 700, 400),
+      makeGameEnemy(playScene, 'scout', 706, 400),
+    ];
+    for (const enemy of gameEnemies) playScene.registerEnemy(enemy, 'scout');
+
+    // Gym: reposition its two formation enemies onto the same points.
+    const gymEnemies = (
+      gymScene as unknown as { getEnemyEntities(): EquivEnemy[] }
+    ).getEnemyEntities();
+    expect(gymEnemies).toHaveLength(2);
+    gymEnemies[0].setPosition(700, 400);
+    gymEnemies[1].setPosition(706, 400);
+
+    // Park both ships far away so ram/player-hit passes stay inert.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+
+    const spawnBeam = (owner: PlayScene | EquivGymScene) =>
+      owner.spawnPlayerBullet(
+        703,
+        400,
+        PLAYER_BULLET_SPEED,
+        0,
+        0x3366ff,
+        2,
+        3,
+        WEAPON_CATALOGUE.wave_laser.piercing,
+      );
+    const gameBeam = spawnBeam(playScene);
+    const gymBeam = spawnBeam(gymScene);
+
+    // Run the shared collision pass directly in both scenes.
+    (playScene as unknown as { _handleCollisions(): void })._handleCollisions();
+    (gymScene as unknown as { _handleCollisions(): void })._handleCollisions();
+
+    // The same shared code leaves the same outcome in both scenes.
+    expect(gameEnemies.every((enemy) => !enemy.alive)).toBe(true);
+    expect(gymEnemies.every((enemy) => !enemy.alive)).toBe(true);
+    // Base pierce 3 survived both overlapping enemies (budget 3 → 1) in each.
+    expect(gameBeam.piercing).toBe(1);
+    expect(gymBeam.piercing).toBe(1);
+    expect(playScene.getPlayerBullets()).toContain(gameBeam);
+    expect(gymScene.getPlayerBullets()).toContain(gymBeam);
+  });
+
+  it('the game and GymWeapons both resolve piercing through the shared CombatScene hook', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, 'onPlayerBulletHitsEnemy'),
+        `${name}.prototype must not define onPlayerBulletHitsEnemy`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)
+          .onPlayerBulletHitsEnemy,
+        `${name}.prototype.onPlayerBulletHitsEnemy must be the shared hook`,
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)
+          .onPlayerBulletHitsEnemy,
+      );
+    }
+  });
+});
+
+// ── Centipede ricochet bounce parity (AH-0MV1BIV5L005NJAI) ────────────
+
+describe('CombatScene — ricochet bounce parity (AH-0MV1BIV5L005NJAI)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and GymWeapons share the single spawnPlayerBullet path', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, 'spawnPlayerBullet'),
+        `${name}.prototype must not define spawnPlayerBullet`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>).spawnPlayerBullet,
+        `${name}.prototype.spawnPlayerBullet must be the shared core method`,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)
+          .spawnPlayerBullet,
+      );
+    }
+  });
+
+  it('a ricochet bullet bounces identically in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'ricochet-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'ricochet-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Park both ships far away so ram/player-hit passes stay inert, and clear
+    // any auto-fired bullets so only the injected pellet is advanced.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+    (playScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+    (gymScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
+
+    const spawn = (owner: PlayScene | EquivGymScene) =>
+      owner.spawnPlayerBullet(
+        100,
+        400,
+        -PLAYER_BULLET_SPEED,
+        0,
+        WEAPON_CATALOGUE.ricochet.bulletColor,
+        5,
+        3,
+        0,
+        WEAPON_CATALOGUE.ricochet.bounce,
+      );
+    const gameBullet = spawn(playScene);
+    const gymBullet = spawn(gymScene);
+
+    // Both scenes' bullets advance through the same shared entity step.
+    expect(advanceAndCull(gameBullet, 0.3)).toBe(true);
+    expect(advanceAndCull(gymBullet, 0.3)).toBe(true);
+
+    // The same reflected velocity, position and remaining budget in each.
+    expect(gameBullet.vx).toBeCloseTo(PLAYER_BULLET_SPEED, 5);
+    expect(gymBullet.vx).toBeCloseTo(PLAYER_BULLET_SPEED, 5);
+    expect(gameBullet.bounces).toBe(1);
+    expect(gymBullet.bounces).toBe(1);
+    expect(gameBullet.x).toBeCloseTo(gymBullet.x, 5);
+  });
+});
+
+// ── Force Field reflect parity (AH-0MV1BIX1W006XF95) ──────────────────
+
+describe('CombatScene — Force Field reflect parity (AH-0MV1BIX1W006XF95)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and a gym share the single _reflectEnemyBullet seam', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['EquivGymScene', EquivGymScene.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, '_reflectEnemyBullet'),
+        `${name}.prototype must not define _reflectEnemyBullet`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)._reflectEnemyBullet,
+        `${name}.prototype._reflectEnemyBullet must be the shared core method`,
+      ).toBe(
+        (CombatScene.prototype as unknown as Record<string, unknown>)
+          ._reflectEnemyBullet,
+      );
+    }
+  });
+
+  it('reflects an enemy bullet identically in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'forcefield-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'forcefield-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+    const owners: EnemyBulletOwner[] = [playScene, gymScene];
+
+    for (const owner of owners) {
+      owner.getPlayer()!.setPosition(200, 270);
+      // Clear any auto-fired bullets so only the reflected shot remains.
+      (
+        owner as unknown as { playerBullets: unknown[] }
+      ).playerBullets.length = 0;
+      owner.getEffectsRegistry().applyCollect('force_field');
+      pushEnemyBullet(owner, {
+        x: 230,
+        y: 270,
+        vx: -120,
+        vy: 40,
+        lifetime: 5,
+      });
+      (
+        owner as unknown as { _handleCollisions(): void }
+      )._handleCollisions();
+    }
+
+    // The enemy bullet is consumed in both scenes.
+    expect(enemyBulletGraphics(playScene)).toHaveLength(0);
+    expect(enemyBulletGraphics(gymScene)).toHaveLength(0);
+
+    // Each scene owns exactly one reflected player bullet with the same
+    // reversed velocity at the same position — the shared seam does the work.
+    const playBullets = (
+      playScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets;
+    const gymBullets = (
+      gymScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets;
+    expect(playBullets).toHaveLength(1);
+    expect(gymBullets).toHaveLength(1);
+    const gameBullet = playBullets[0];
+    const gymBullet = gymBullets[0];
+    expect(gameBullet.vx).toBeCloseTo(120, 5);
+    expect(gymBullet.vx).toBeCloseTo(120, 5);
+    expect(gameBullet.vy).toBeCloseTo(-40, 5);
+    expect(gymBullet.vy).toBeCloseTo(-40, 5);
+    expect(gameBullet.x).toBeCloseTo(gymBullet.x, 5);
+    expect(gameBullet.y).toBeCloseTo(gymBullet.y, 5);
+    expect(playScene.getEffectsRegistry().forceFieldRemaining()).toBe(
+      gymScene.getEffectsRegistry().forceFieldRemaining(),
+    );
+  });
+});
+
+// ── Missile Command cluster split parity (AH-0MV1BIVIJ007KYXU) ────────
+
+describe('CombatScene — cluster-missile split parity (AH-0MV1BIVIJ007KYXU)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and GymWeapons share the single splitProjectile seam', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(prototype, 'splitProjectile'),
+        `${name}.prototype must not define splitProjectile`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>).splitProjectile,
+        `${name}.prototype.splitProjectile must be the shared core method`,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)
+          .splitProjectile,
+      );
+    }
+  });
+
+  it('a cluster missile splits into identical warheads in the game and a gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'cluster-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'cluster-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Park both ships and clear any auto-fired bullets so only the injected
+    // cluster missiles are split and counted.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+    const clear = (owner: PlayScene | EquivGymScene) => {
+      (owner as unknown as { playerBullets: PlayerBullet[] }).playerBullets.length = 0;
+    };
+    clear(playScene);
+    clear(gymScene);
+
+    const spawn = (owner: PlayScene | EquivGymScene): PlayerBullet => {
+      const bullet = owner.spawnPlayerBullet(
+        200,
+        200,
+        PLAYER_BULLET_SPEED,
+        0,
+        WEAPON_CATALOGUE.cluster.bulletColor,
+        2,
+        3,
+      );
+      bullet.splitWeapon = WEAPON_CATALOGUE.cluster;
+      return bullet;
+    };
+    const gameBullet = spawn(playScene);
+    const gymBullet = spawn(gymScene);
+
+    // Both scenes split through the same shared core method.
+    const split = (owner: PlayScene | EquivGymScene, bullet: PlayerBullet) => {
+      (
+        owner as unknown as { splitProjectile(b: PlayerBullet): void }
+      ).splitProjectile(bullet);
+      (
+        owner as unknown as { flushPendingSplitWarheads(): void }
+      ).flushPendingSplitWarheads();
+      return (owner as unknown as { playerBullets: PlayerBullet[] })
+        .playerBullets;
+    };
+    const gameWarheads = split(playScene, gameBullet).filter(
+      (b) => b.splitWeapon === undefined,
+    );
+    const gymWarheads = split(gymScene, gymBullet).filter(
+      (b) => b.splitWeapon === undefined,
+    );
+
+    expect(gameWarheads).toHaveLength(WEAPON_CATALOGUE.cluster.splits!);
+    expect(gymWarheads).toHaveLength(gameWarheads.length);
+    // Identical radial spray: same velocity magnitude and colour.
+    for (let i = 0; i < gameWarheads.length; i++) {
+      expect(gymWarheads[i].vx).toBeCloseTo(gameWarheads[i].vx, 5);
+      expect(gymWarheads[i].vy).toBeCloseTo(gameWarheads[i].vy, 5);
+      expect(gymWarheads[i].color).toBe(gameWarheads[i].color);
+    }
+  });
+});
+
+// ── Gradius Options orbit-emitter parity (AH-0MV1BIVVK0043TEM) ────────
+
+describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('the game and GymWeapons share the single fireOptionsPods seam', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymWeapons', GymWeapons.prototype],
+    ] as const) {
+      for (const method of ['fireOptionsPods', '_updateOptionsEscort'] as const) {
+        expect(
+          Object.prototype.hasOwnProperty.call(prototype, method),
+          `${name}.prototype must not define ${method}`,
+        ).toBe(false);
+        expect(
+          (prototype as unknown as Record<string, unknown>)[method],
+          `${name}.prototype.${method} must be the shared core method`,
+        ).toBe(
+          (CombatCoreScene.prototype as unknown as Record<string, unknown>)[
+            method
+          ],
+        );
+      }
+    }
+  });
+
+  it('the game and a gym spawn identical pod bullets from the shared seam', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'options-play-host',
+    );
+    const gym = await bootScene([EquivGymScene], 'options-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as EquivGymScene;
+
+    // Park both ships at the same point and clear any auto-fired bullets.
+    playScene.getPlayer()!.setPosition(50, 50);
+    gymScene.getPlayer()!.setPosition(50, 50);
+    (
+      playScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets.length = 0;
+    (
+      gymScene as unknown as { playerBullets: PlayerBullet[] }
+    ).playerBullets.length = 0;
+
+    const fire = (owner: PlayScene | EquivGymScene): PlayerBullet[] => {
+      (
+        owner as unknown as {
+          fireOptionsPods(
+            def: typeof WEAPON_CATALOGUE.options,
+            player: NonNullable<ReturnType<PlayScene['getPlayer']>>,
+          ): void;
+        }
+      ).fireOptionsPods(WEAPON_CATALOGUE.options, owner.getPlayer()!);
+      return (
+        owner as unknown as { playerBullets: PlayerBullet[] }
+      ).playerBullets.filter(
+        (b) => b.color === WEAPON_CATALOGUE.options.bulletColor,
+      );
+    };
+    const gamePods = fire(playScene);
+    const gymPods = fire(gymScene);
+
+    expect(gamePods).toHaveLength(WEAPON_CATALOGUE.options.orbit!.pods);
+    expect(gymPods).toHaveLength(gamePods.length);
+    // Identical escort geometry and pod-shot speed (phase starts at 0 in both).
+    for (let i = 0; i < gamePods.length; i++) {
+      expect(gymPods[i].x).toBeCloseTo(gamePods[i].x, 5);
+      expect(gymPods[i].y).toBeCloseTo(gamePods[i].y, 5);
+      expect(Math.hypot(gymPods[i].vx, gymPods[i].vy)).toBeCloseTo(
+        Math.hypot(gamePods[i].vx, gamePods[i].vy),
+        5,
+      );
+      // Each pod fires along its own scene's ship heading.
+      const heading = (owner: PlayScene | EquivGymScene) =>
+        owner.getPlayer()!.getHeading();
+      expect(Math.atan2(gymPods[i].vy, gymPods[i].vx)).toBeCloseTo(
+        heading(gymScene),
+        5,
+      );
+      expect(Math.atan2(gamePods[i].vy, gamePods[i].vx)).toBeCloseTo(
+        heading(playScene),
+        5,
+      );
+    }
+  });
+});
+
+// ── Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7) ───────────
+
+describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  it('shares the single _applyPendingMysteryBonus drain across the game and the gym', () => {
+    for (const [name, prototype] of [
+      ['PlayScene', PlayScene.prototype],
+      ['GymPowerUpsUtility', GymPowerUpsUtility.prototype],
+    ] as const) {
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          prototype,
+          '_applyPendingMysteryBonus',
+        ),
+        `${name} must not define its own mystery-bonus drain`,
+      ).toBe(false);
+      expect(
+        (prototype as unknown as Record<string, unknown>)
+          ._applyPendingMysteryBonus,
+      ).toBe(
+        (CombatCoreScene.prototype as unknown as Record<string, unknown>)
+          ._applyPendingMysteryBonus,
+      );
+    }
+  });
+
+  it('grants the same instant mineral bounty in the game and the utility gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'mystery-play-host',
+    );
+    const gym = await bootScene([GymPowerUpsUtility], 'mystery-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as GymPowerUpsUtility;
+
+    // Clear the gym's random mineral field so only the mystery burst lands.
+    const gymMinerals = (gymScene as unknown as { minerals: Mineral[] })
+      .minerals;
+    for (const mineral of gymMinerals) mineral.destroy();
+    gymMinerals.length = 0;
+
+    const playBefore = playScene.getGameState().minerals;
+    const gymBefore = gymScene.getMineralHold().store;
+
+    const playDrop = playScene.spawnPowerUpDrop('mystery_ufo', 480, 270)!;
+    for (let i = 0; i < 40; i++) playDrop.powerUp.advance(0.05);
+    // Park the ship on the (possibly nudged) drop so the overlap is exact. The
+    // shared player step reads `_movementState` (not the display position), so
+    // both must agree, as the teleport parity tests above do.
+    const playPlayer = playScene.getPlayer()!;
+    playPlayer.setPosition(playDrop.x, playDrop.y);
+    const playState = playPlayer.getMovementState();
+    (
+      playPlayer as unknown as { _movementState: Record<string, unknown> }
+    )._movementState = {
+      ...playState,
+      x: playDrop.x,
+      y: playDrop.y,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+    };
+    playScene.tick(0.016);
+
+    gymScene.spawnDrop('mystery_ufo', 480, 270);
+    gymScene.advanceDrops(0.5);
+    gymScene.getPlayer()!.setPosition(480, 270);
+    gymScene.tick(1 / 60);
+
+    // Both grant the same base bounty (+2 minerals) and level up once.
+    expect(playScene.getGameState().minerals).toBe(playBefore + 2);
+    expect(gymScene.getMineralHold().store).toBe(gymBefore + 2);
+    expect(playScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
+    expect(gymScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
+    expect(playScene.getEffectsRegistry().mysteryUfoMinerals()).toBe(
+      gymScene.getEffectsRegistry().mysteryUfoMinerals(),
+    );
+    expect(playScene.getEffectsRegistry().mysteryUfoScore()).toBe(
+      gymScene.getEffectsRegistry().mysteryUfoScore(),
+    );
   });
 });

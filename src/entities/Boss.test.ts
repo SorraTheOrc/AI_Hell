@@ -13,9 +13,16 @@ import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
 import * as effectsModule from '../audio/effects';
+import * as bulletImpactModule from '../vfx/bulletImpact';
 import {
   BOSS_ATTACK_INTERVAL,
+  BOSS_HEALTH_BAR_WIDTH,
+  BOSS_HEALTH_SEGMENTS,
   BOSS_HIT_POINTS_PER_PHASE,
+  BOSS_IMPACT_COLOR,
+  BOSS_MOVE_AMPLITUDE_X,
+  BOSS_MOVE_AMPLITUDE_Y,
+  BOSS_MOVE_PERIOD_MS,
   BOSS_PHASE_COUNT,
   Boss,
   playBossSpawnSound,
@@ -252,7 +259,7 @@ describe('Boss audio shares the effects.ts AudioContext (AH-0MU4KPQHR008WX4R)', 
   });
 });
 
-// ── Per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9) ──────
+// ── Per-phase HP model: 50 hits per phase, 200 total (AH-0MUZMTRJM003ISD5) ──
 
 interface TakeDamageResult {
   destroyed: boolean;
@@ -261,7 +268,7 @@ interface TakeDamageResult {
   hpRemaining: number;
 }
 
-describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)', () => {
+describe('Boss — per-phase HP model: 50 hits per phase (AH-0MUWTS07L008KVP9)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -278,14 +285,14 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
     });
   }
 
-  // AC1: 100 hits per phase; total HP derives from the phase constants.
+  // AC1: 50 hits per phase; total HP derives from the phase constants.
   it('AC1 — total hits to destroy = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE', async () => {
     booted = await bootScene([HarnessScene]);
     const boss = makeBoss();
     const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
 
-    // AC1 metric: the exported constants compose to exactly 400 hits.
-    expect(totalHits).toBe(400);
+    // AC1 metric: the exported constants compose to exactly 200 hits.
+    expect(totalHits).toBe(200);
 
     for (let i = 0; i < totalHits - 1; i++) {
       const result = boss.takeDamage() as TakeDamageResult;
@@ -298,7 +305,7 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
     expect(boss.alive).toBe(false);
   });
 
-  // AC1: 100 hits per phase
+  // AC1: 50 hits per phase
   it('after BOSS_HIT_POINTS_PER_PHASE - 1 hits the boss remains in phase 1', async () => {
     booted = await bootScene([HarnessScene]);
     const boss = makeBoss();
@@ -476,6 +483,195 @@ describe('Boss — per-phase HP model: 100 hits per phase (AH-0MUWTS07L008KVP9)'
   });
 });
 
+// ── 200-hit retune + screen-fixed health bar (AH-0MUZMTRJM003ISD5) ─
+
+// Phaser Graphics `commandBuffer` opcodes (mirrors src/powerups/icons.test.ts).
+const Cmd = {
+  FILL_RECT: 3,
+  LINE_TO: 4,
+  MOVE_TO: 5,
+  LINE_STYLE: 6,
+  FILL_STYLE: 7,
+  FILL_PATH: 8,
+  STROKE_PATH: 9,
+  BEGIN_PATH: 1,
+  CLOSE_PATH: 2,
+} as const;
+
+interface ParsedGraphics {
+  fillRects: number[][];
+  lineStyles: number[][];
+}
+
+/** Walks the flat command buffer, extracting FILL_RECT and LINE_STYLE commands. */
+function parseGraphics(buf: number[]): ParsedGraphics {
+  const fillRects: number[][] = [];
+  const lineStyles: number[][] = [];
+  let i = 0;
+  while (i < buf.length) {
+    switch (buf[i]) {
+      case Cmd.FILL_RECT:
+        fillRects.push(buf.slice(i + 1, i + 5));
+        i += 5;
+        break;
+      case Cmd.LINE_TO:
+      case Cmd.MOVE_TO:
+        i += 3;
+        break;
+      case Cmd.LINE_STYLE:
+        lineStyles.push(buf.slice(i + 1, i + 4));
+        i += 4;
+        break;
+      case Cmd.FILL_STYLE:
+        i += 3;
+        break;
+      case Cmd.BEGIN_PATH:
+      case Cmd.CLOSE_PATH:
+      case Cmd.FILL_PATH:
+      case Cmd.STROKE_PATH:
+        i += 1;
+        break;
+      default:
+        i += 1;
+        break;
+    }
+  }
+  return { fillRects, lineStyles };
+}
+
+describe('Boss — 200-hit retune + screen-fixed health bar (AH-0MUZMTRJM003ISD5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(x = 480, y = 200): Boss {
+    return new Boss(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('AC1 — BOSS_HIT_POINTS_PER_PHASE is 50 and total HP is 200', async () => {
+    booted = await bootScene([HarnessScene]);
+    expect(BOSS_HIT_POINTS_PER_PHASE).toBe(50);
+    expect(BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE).toBe(200);
+  });
+
+  it('AC1 — hit 49 keeps phase 1, hit 50 advances to phase 2, hit 200 destroys', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    for (let hit = 1; hit <= 49; hit++) {
+      const result = boss.takeDamage() as TakeDamageResult;
+      expect(result.destroyed).toBe(false);
+      expect(result.phaseAdvanced).toBe(false);
+    }
+    expect(boss.getPhaseNumber()).toBe(1);
+    expect(boss.alive).toBe(true);
+
+    const fiftieth = boss.takeDamage() as TakeDamageResult;
+    expect(fiftieth.phaseAdvanced).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(2);
+
+    // Hits 51..199 leave the boss alive on its final phase.
+    for (let hit = 51; hit <= 199; hit++) boss.takeDamage();
+    expect(boss.alive).toBe(true);
+    expect(boss.getPhaseNumber()).toBe(BOSS_PHASE_COUNT);
+
+    const twoHundredth = boss.takeDamage() as TakeDamageResult;
+    expect(twoHundredth.destroyed).toBe(true);
+    expect(twoHundredth.hpRemaining).toBe(0);
+    expect(boss.alive).toBe(false);
+  });
+
+  it('AC3 — getHpFraction decreases monotonically with every hit', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    let previous = boss.getHpFraction();
+    expect(previous).toBeCloseTo(1.0);
+    for (let hit = 1; hit <= 199; hit++) {
+      boss.takeDamage();
+      const next = boss.getHpFraction();
+      expect(next).toBeLessThan(previous);
+      previous = next;
+    }
+    expect(previous).toBeGreaterThan(0);
+  });
+
+  it('AC2 — the health bar Graphics is a scene child, not a boss-container child', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const bar = boss.getHealthBarGraphics();
+
+    expect(boss.list).not.toContain(bar);
+    expect(bar.parentContainer).toBeNull();
+    // Camera-fixed at the top of the screen.
+    expect(bar.scrollFactorX).toBe(0);
+    expect(bar.scrollFactorY).toBe(0);
+    expect(bar.depth).toBe(100);
+  });
+
+  it('AC2 — the bar’s drawn screen position is unchanged when the boss moves', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    const bar = boss.getHealthBarGraphics();
+
+    const before = parseGraphics(bar.commandBuffer as number[]).fillRects;
+    const expectedX =
+      (booted!.scene.scale.width - BOSS_HEALTH_BAR_WIDTH) / 2;
+    // Drawn at the absolute screen centre, not at the boss position.
+    expect(before[0][0]).toBeCloseTo(expectedX);
+    expect(before[0][0]).not.toBeCloseTo(boss.x);
+
+    // Move the boss far from its spawn anchor (as figure-8 motion will).
+    boss.setPosition(120, 460);
+
+    // A scene child is not transformed by the boss container, so the drawn
+    // screen coordinates are byte-for-byte unchanged.
+    const after = parseGraphics(bar.commandBuffer as number[]).fillRects;
+    expect(after).toEqual(before);
+    expect(boss.x).toBe(120);
+    expect(boss.y).toBe(460);
+  });
+
+  it('AC4 — the proportional fill halves after 100 hits and the four dividers remain', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const bar = boss.getHealthBarGraphics();
+
+    const full = parseGraphics(bar.commandBuffer as number[]);
+    // Two FILL_RECTs: full-width background and the proportional health fill.
+    expect(full.fillRects).toHaveLength(2);
+    expect(full.fillRects[1][2]).toBeCloseTo(BOSS_HEALTH_BAR_WIDTH);
+
+    for (let hit = 0; hit < 100; hit++) boss.takeDamage();
+    expect(boss.getHpFraction()).toBeCloseTo(0.5);
+
+    const half = parseGraphics(bar.commandBuffer as number[]);
+    expect(half.fillRects[1][2]).toBeCloseTo(BOSS_HEALTH_BAR_WIDTH * 0.5);
+    // The divider line style is still emitted (4 segments → 3 dividers).
+    expect(BOSS_HEALTH_SEGMENTS).toBe(4);
+    expect(half.lineStyles.some((s) => s[1] === 0x666666)).toBe(true);
+  });
+
+  it('AC4 — destroy() explicitly destroys the health-bar Graphics', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const bar = boss.getHealthBarGraphics();
+
+    boss.destroy();
+
+    expect(bar.active).toBe(false);
+    expect(bar.scene).toBeUndefined();
+  });
+});
+
 describe('Boss — dev scenario starting health (AH-0MUWZ5HCV0034H44)', () => {
   let booted: BootedGame | null = null;
 
@@ -536,5 +732,273 @@ describe('Boss — dev scenario starting health (AH-0MUWZ5HCV0034H44)', () => {
     const boss = makeBoss({ initialHp: 0, initialPhase: -3 });
     expect(boss.getPhaseNumber()).toBe(1);
     expect(boss.takeDamage().destroyed).toBe(true);
+  });
+});
+
+// ── Figure-of-eight movement (AH-0MUZMTS8J0029FSS) ──────────────────
+
+describe('Boss — figure-of-eight movement in shared core (AH-0MUZMTS8J0029FSS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(x = 480, y = 200): Boss {
+    return new Boss(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('exposes the documented movement constants', async () => {
+    booted = await bootScene([HarnessScene]);
+    expect(BOSS_MOVE_AMPLITUDE_X).toBe(120);
+    expect(BOSS_MOVE_AMPLITUDE_Y).toBe(60);
+    expect(BOSS_MOVE_PERIOD_MS).toBe(8000);
+  });
+
+  it('starts on its anchor at elapsed time zero', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, 0, 960, 540);
+
+    expect(boss.x).toBeCloseTo(480);
+    expect(boss.y).toBeCloseTo(200);
+    expect(boss.getMoveAnchorX()).toBe(480);
+    expect(boss.getMoveAnchorY()).toBe(200);
+  });
+
+  it('reaches its horizontal peak a quarter of the way through the cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 4, 960, 540);
+
+    // theta = PI/2: x at +amplitude, y at the anchor (sin(PI) = 0).
+    expect(boss.x).toBeCloseTo(480 + BOSS_MOVE_AMPLITUDE_X);
+    expect(boss.y).toBeCloseTo(200);
+  });
+
+  it('reaches its vertical peak an eighth of the way through the cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+
+    // theta = PI/4: y at +amplitude (sin(PI/2) = 1).
+    expect(boss.y).toBeCloseTo(200 + BOSS_MOVE_AMPLITUDE_Y);
+  });
+
+  it('returns to its anchor after a full cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    boss.update(0, BOSS_MOVE_PERIOD_MS, 960, 540);
+
+    expect(boss.x).toBeCloseTo(480);
+    expect(boss.y).toBeCloseTo(200);
+  });
+
+  it('traces close to the configured horizontal and vertical amplitudes over a cycle', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    let peakX = 0;
+    let peakY = 0;
+    const step = 100;
+    for (let elapsed = 0; elapsed <= BOSS_MOVE_PERIOD_MS; elapsed += step) {
+      boss.update(0, step, 960, 540);
+      peakX = Math.max(peakX, Math.abs(boss.x - 480));
+      peakY = Math.max(peakY, Math.abs(boss.y - 200));
+    }
+
+    expect(peakX).toBeCloseTo(BOSS_MOVE_AMPLITUDE_X, 1);
+    expect(peakY).toBeCloseTo(BOSS_MOVE_AMPLITUDE_Y, 1);
+  });
+
+  it('clamps the traced position so the boss body stays within the playfield', async () => {
+    booted = await bootScene([HarnessScene]);
+    // Anchor hard against the top-left corner: without clamping the path
+    // would leave the screen on both axes.
+    const boss = makeBoss(30, 30);
+
+    const step = 50;
+    for (let elapsed = 0; elapsed <= BOSS_MOVE_PERIOD_MS; elapsed += step) {
+      boss.update(0, step, 960, 540);
+      expect(boss.x).toBeGreaterThanOrEqual(0);
+      expect(boss.x).toBeLessThanOrEqual(960);
+      expect(boss.y).toBeGreaterThanOrEqual(0);
+      expect(boss.y).toBeLessThanOrEqual(540);
+    }
+  });
+
+  it('applyFormationPosition sets the anchor without overriding the live position', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+
+    // Move the boss off its anchor first.
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+    const liveX = boss.x;
+    const liveY = boss.y;
+    expect(liveX).not.toBeCloseTo(480);
+
+    boss.applyFormationPosition(300, 150, 0.016, 0, 0);
+
+    // The live figure-of-eight position is untouched; only the anchor moved.
+    expect(boss.x).toBe(liveX);
+    expect(boss.y).toBe(liveY);
+    expect(boss.getMoveAnchorX()).toBe(300);
+    expect(boss.getMoveAnchorY()).toBe(150);
+
+    // The next full cycle now traces about the new anchor (the motion phase
+    // continues, so advance to the next full-cycle boundary).
+    boss.update(0, BOSS_MOVE_PERIOD_MS - BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+    expect(boss.x).toBeCloseTo(300);
+    expect(boss.y).toBeCloseTo(150);
+  });
+
+  it('does not move a destroyed boss', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 8, 960, 540);
+    const liveX = boss.x;
+    const liveY = boss.y;
+
+    boss.destroySelf();
+    boss.update(0, BOSS_MOVE_PERIOD_MS / 4, 960, 540);
+
+    expect(boss.x).toBe(liveX);
+    expect(boss.y).toBe(liveY);
+  });
+});
+
+// ── Per-hit impact VFX & SFX on the shared feedback path (AH-0MUZMTTPE0074X59) ──
+
+describe('Boss — per-hit impact VFX & SFX (AH-0MUZMTTPE0074X59)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(x = 480, y = 200): Boss {
+    return new Boss(booted!.scene, {
+      x,
+      y,
+      formationOffset: { row: 0, col: 0 },
+    });
+  }
+
+  it('AC1 — every landed hit plays the boss-hit cue and registers exactly one impact VFX', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+
+    boss.takeDamage(100, 120);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(impact).toHaveBeenCalledTimes(1);
+    expect(boss.getHitEffects()).toHaveLength(1);
+
+    boss.takeDamage(140, 160);
+    expect(cue).toHaveBeenCalledTimes(2);
+    expect(impact).toHaveBeenCalledTimes(2);
+    expect(boss.getHitEffects()).toHaveLength(2);
+  });
+
+  it('AC1 — the impact is spawned at the supplied hit point with the hot boss colour', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+
+    boss.takeDamage(123, 145);
+
+    expect(impact).toHaveBeenCalledWith(
+      booted.scene,
+      123,
+      145,
+      expect.objectContaining({ color: BOSS_IMPACT_COLOR }),
+    );
+  });
+
+  it('AC1 — the impact falls back to the boss centre when no hit point is supplied', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss(480, 200);
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+
+    boss.takeDamage();
+
+    expect(impact).toHaveBeenCalledWith(
+      booted.scene,
+      480,
+      200,
+      expect.objectContaining({ color: BOSS_IMPACT_COLOR }),
+    );
+  });
+
+  it('AC2 — a depleting hit still plays the phase-transition cue alongside the per-hit cue', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const hitCue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const phaseCue = vi.spyOn(effectsModule, 'playBossPhaseTransitionSound');
+
+    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) boss.takeDamage();
+    expect(phaseCue).not.toHaveBeenCalled();
+    expect(hitCue).toHaveBeenCalledTimes(BOSS_HIT_POINTS_PER_PHASE - 1);
+
+    boss.takeDamage();
+    expect(phaseCue).toHaveBeenCalledTimes(1);
+    expect(hitCue).toHaveBeenCalledTimes(BOSS_HIT_POINTS_PER_PHASE);
+  });
+
+  it('AC1 — the destroying hit also plays the per-hit cue and spawns an impact', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const totalHits = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+
+    for (let i = 0; i < totalHits - 1; i++) boss.takeDamage();
+    expect(cue).toHaveBeenCalledTimes(totalHits - 1);
+    const effectsBefore = boss.getHitEffects().length;
+
+    boss.takeDamage(50, 60);
+    expect(cue).toHaveBeenCalledTimes(totalHits);
+    // The destroying hit still registers exactly one per-hit impact.
+    expect(boss.getHitEffects()).toHaveLength(effectsBefore + 1);
+  });
+
+  it('AC4 — the registry is emptied when an impact flash tween completes', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+    const tweenSpy = vi.spyOn(booted.scene.tweens, 'add');
+
+    boss.takeDamage(10, 20);
+    expect(boss.getHitEffects()).toHaveLength(1);
+
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    (config.onComplete as () => void)();
+
+    expect(boss.getHitEffects()).toHaveLength(0);
+  });
+
+  it('AC4 — destroy() empties the registry and destroys live impact flashes', async () => {
+    booted = await bootScene([HarnessScene]);
+    const boss = makeBoss();
+
+    boss.takeDamage(10, 20);
+    const [flash] = boss.getHitEffects();
+    expect(flash.active).toBe(true);
+
+    boss.destroy();
+
+    expect(boss.getHitEffects()).toHaveLength(0);
+    expect(flash.active).toBe(false);
   });
 });

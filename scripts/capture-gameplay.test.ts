@@ -13,6 +13,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 
 import {
   AUDIO_SILENCE_PEAK_FLOOR,
@@ -37,9 +40,11 @@ import {
   setupHint,
 } from './capture-progress.mjs';
 import {
+  DEFAULT_CAPTURE_COUNT,
   RUN_ENDED_EVENT,
   RUN_ENDED_STATE_KEY,
   RUN_ENDED_STORE_KEY,
+  buildIterationRecord,
   buildRunEndedListenerPlan,
   captureExitCode,
   captureStartKeys,
@@ -47,14 +52,20 @@ import {
   captureUrl,
   installRunEndedListener,
   parseCaptureArgs,
+  parseCaptureCount,
   readRunEndedSignal,
   resolveCaptureMode,
+  resolveOutputPaths,
+  runCaptureIterations,
+  summariseCaptureBatch,
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
 import {
+  CAPTURE_STARTED_EVENT,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   DEMO_GAME_OVER_DWELL_MS,
+  buildCaptureStartedMarker,
   buildRunEndedDetail,
   capWasReachedWithoutSignal,
   computeStopTimeMs,
@@ -65,6 +76,21 @@ import {
   summariseCaptureRun,
   waitForRunEnd,
 } from './capture-run-lifecycle.mjs';
+
+describe('buildCaptureStartedMarker (AH-0MUZQG13S006KL8K)', () => {
+  it('emits the epoch-ms marker at recording start', () => {
+    expect(buildCaptureStartedMarker(1_700_000_000_000)).toEqual({
+      event: CAPTURE_STARTED_EVENT,
+      atEpochMs: 1_700_000_000_000,
+    });
+  });
+
+  it('is dev-gated and rejects non-finite epochs', () => {
+    expect(buildCaptureStartedMarker(1_700_000_000_000, false)).toBeNull();
+    expect(buildCaptureStartedMarker(Number.NaN)).toBeNull();
+    expect(buildCaptureStartedMarker(undefined)).toBeNull();
+  });
+});
 
 describe('buildScriptedPlan', () => {
   it('covers the requested duration exactly and uses only movement keys', () => {
@@ -1332,5 +1358,263 @@ describe('full-run capture integration (AH-0MUXZ4D0M001IWW1)', () => {
     expect(
       shouldDemoReturnToMenu(capturedTailMs, resolveDemoGameOverDwellMs()),
     ).toBe(true);
+  });
+});
+
+describe('--count parsing and multi-output naming (AH-0MUYTK941005E2M4)', () => {
+  it('defaults count to 1 so a single clip is unchanged', () => {
+    expect(DEFAULT_CAPTURE_COUNT).toBe(1);
+    expect(parseCaptureArgs([]).count).toBe(1);
+  });
+
+  it('parses --count and the -n alias as positive integers', () => {
+    expect(parseCaptureArgs(['--count', '3']).count).toBe(3);
+    expect(parseCaptureArgs(['-n', '5']).count).toBe(5);
+    // Last flag wins, matching the parser's last-write-wins behaviour.
+    expect(parseCaptureArgs(['--count', '2', '-n', '4']).count).toBe(4);
+  });
+
+  it('rejects non-positive and non-numeric counts with a clear message', () => {
+    for (const value of ['0', '-2', 'abc', '', '1.5']) {
+      expect(() => parseCaptureCount(value)).toThrow(/Invalid --count value/);
+      expect(() => parseCaptureArgs(['--count', value])).toThrow(
+        /Invalid --count value/,
+      );
+      expect(() => parseCaptureArgs(['-n', value])).toThrow(
+        /Invalid --count value/,
+      );
+    }
+  });
+
+  it('fails fast when --count has no value', () => {
+    expect(() => parseCaptureArgs(['--count'])).toThrow(/Missing value/);
+    expect(() => parseCaptureArgs(['-n'])).toThrow(/Missing value/);
+  });
+
+  it('keeps the default single-clip output path unchanged', () => {
+    const [single] = resolveOutputPaths(null, 1);
+    const [omitted] = resolveOutputPaths(null);
+
+    expect(basename(single)).toMatch(/^gameplay-.*\.webm$/);
+    expect(basename(single)).not.toMatch(/-\d+\.webm$/);
+    // An omitted count resolves to the same single-clip shape.
+    expect(basename(omitted)).toMatch(/^gameplay-.*\.webm$/);
+    expect(basename(omitted)).not.toMatch(/-\d+\.webm$/);
+  });
+
+  it('honours an explicit --output for a single clip', () => {
+    const [single] = resolveOutputPaths('clips/demo.webm', 1);
+    expect(single).toBe(resolve(process.cwd(), 'clips/demo.webm'));
+  });
+
+  it('infers an indexed suffix before the extension for --output with --count > 1', () => {
+    const paths = resolveOutputPaths('clips/demo.webm', 3);
+
+    expect(paths).toHaveLength(3);
+    expect(paths.map((path) => basename(path))).toEqual([
+      'demo-1.webm',
+      'demo-2.webm',
+      'demo-3.webm',
+    ]);
+    // Distinct paths guarantee no two iterations collide.
+    expect(new Set(paths).size).toBe(3);
+  });
+
+  it('appends the iteration index to default names for --count > 1', () => {
+    const names = resolveOutputPaths(null, 2).map((path) => basename(path));
+
+    expect(names).toHaveLength(2);
+    expect(names[0]).toMatch(/^gameplay-.*-1\.webm$/);
+    expect(names[1]).toMatch(/^gameplay-.*-2\.webm$/);
+    expect(new Set(names).size).toBe(2);
+  });
+
+  it('indexes an --output path that carries no extension', () => {
+    const names = resolveOutputPaths('clips/demo', 2).map((path) =>
+      basename(path),
+    );
+    expect(names).toEqual(['demo-1', 'demo-2']);
+  });
+});
+
+describe('multi-iteration capture loop and batch JSON (AH-0MUYTK941005E2M4)', () => {
+  const clip = (overrides = {}) => ({
+    output: '/tmp/demo-1.webm',
+    bytes: 1000,
+    durationMs: 5000,
+    nonTrivial: true,
+    capHit: false,
+    complete: true,
+    reasons: [],
+    pageErrors: [],
+    ...overrides,
+  });
+
+  it('records one clip per output path, in order, from a single loop', async () => {
+    const seen: Array<{ index: number; outputPath: string }> = [];
+    const batch = await runCaptureIterations({
+      outputPaths: ['/tmp/a-1.webm', '/tmp/a-2.webm', '/tmp/a-3.webm'],
+      captureOne: async ({ index, outputPath }) => {
+        seen.push({ index, outputPath });
+        return clip({ output: outputPath });
+      },
+    });
+
+    expect(seen).toEqual([
+      { index: 1, outputPath: '/tmp/a-1.webm' },
+      { index: 2, outputPath: '/tmp/a-2.webm' },
+      { index: 3, outputPath: '/tmp/a-3.webm' },
+    ]);
+    expect(batch).toMatchObject({ count: 3, succeeded: 3, failed: 0 });
+    expect(batch.iterations.map((it) => it.output)).toEqual([
+      '/tmp/a-1.webm',
+      '/tmp/a-2.webm',
+      '/tmp/a-3.webm',
+    ]);
+    expect(batch.iterations.every((it) => it.ok)).toBe(true);
+  });
+
+  it('continues after a failed iteration and attributes the failure', async () => {
+    const calls: number[] = [];
+    const batch = await runCaptureIterations({
+      outputPaths: ['/tmp/b-1.webm', '/tmp/b-2.webm', '/tmp/b-3.webm'],
+      captureOne: async ({ index, outputPath }) => {
+        calls.push(index);
+        if (index === 2) throw new Error('codec exploded');
+        return clip({ output: outputPath });
+      },
+    });
+
+    // The iteration after the failure still ran (continue-on-failure).
+    expect(calls).toEqual([1, 2, 3]);
+    expect(batch).toMatchObject({ count: 3, succeeded: 2, failed: 1 });
+    expect(batch.iterations[1]).toMatchObject({
+      index: 2,
+      output: '/tmp/b-2.webm',
+      ok: false,
+      error: 'codec exploded',
+    });
+    // Any failed iteration makes the batch exit non-zero.
+    expect(captureExitCode(batch)).toBe(1);
+  });
+
+  it('marks a trivial clip iteration as not ok and fails the batch', async () => {
+    const batch = await runCaptureIterations({
+      outputPaths: ['/tmp/c-1.webm', '/tmp/c-2.webm'],
+      captureOne: async ({ index, outputPath }) =>
+        clip({
+          output: outputPath,
+          nonTrivial: index === 1,
+          reasons: index === 1 ? [] : ['static'],
+        }),
+    });
+
+    expect(batch.succeeded).toBe(1);
+    expect(batch.failed).toBe(1);
+    expect(batch.iterations[1]).toMatchObject({ ok: false, nonTrivial: false });
+    expect(captureExitCode(batch)).toBe(1);
+  });
+
+  it('surfaces per-iteration results through the onIteration hook', async () => {
+    const observed: Array<{ index: number; ok: boolean }> = [];
+    await runCaptureIterations({
+      outputPaths: ['/tmp/d-1.webm', '/tmp/d-2.webm'],
+      captureOne: async ({ index, outputPath }) =>
+        clip({ output: outputPath, nonTrivial: index !== 2 }),
+      onIteration: (record) => observed.push(record),
+    });
+
+    expect(observed.map((record) => [record.index, record.ok])).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+  });
+
+  it('summariseCaptureBatch tallies records and preserves them in order', () => {
+    const summary = summariseCaptureBatch([
+      { index: 1, output: 'a', ok: true },
+      { index: 2, output: 'b', ok: false, error: 'x' },
+      { index: 3, output: 'c', ok: true },
+    ]);
+
+    expect(summary).toMatchObject({ count: 3, succeeded: 2, failed: 1 });
+    expect(summary.iterations.map((it) => it.output)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('buildIterationRecord carries index, path and ok/error status', () => {
+    expect(buildIterationRecord(2, clip({ output: '/tmp/x-2.webm' }))).toMatchObject(
+      {
+        index: 2,
+        output: '/tmp/x-2.webm',
+        ok: true,
+        exitCode: 0,
+      },
+    );
+  });
+
+  it('captureExitCode is 0 for a clean batch and 1 when any iteration fails', () => {
+    expect(
+      captureExitCode(
+        summariseCaptureBatch([{ index: 1, output: 'a', ok: true }]),
+      ),
+    ).toBe(0);
+    expect(captureExitCode({ iterations: [] })).toBe(0);
+    expect(captureExitCode({ iterations: [{ ok: true }, { ok: false }] })).toBe(
+      1,
+    );
+  });
+});
+
+describe('--count batch end-to-end pure pipeline (AH-0MV1CVDA50028H2A)', () => {
+  it('resolves, writes and reports a 3-clip batch with distinct indexed files', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aihell-capture-batch-'));
+    try {
+      const outputPaths = resolveOutputPaths(join(dir, 'demo.webm'), 3);
+
+      const batch = await runCaptureIterations({
+        outputPaths,
+        captureOne: async ({ outputPath }) => {
+          writeFileSync(outputPath, Buffer.alloc(2048, 7));
+          return {
+            output: outputPath,
+            bytes: 2048,
+            durationMs: 2000,
+            nonTrivial: true,
+            capHit: false,
+            complete: true,
+            reasons: [],
+            pageErrors: [],
+          };
+        },
+      });
+
+      // 3 distinct, index-ordered files actually exist on disk.
+      expect(outputPaths.map((path) => basename(path))).toEqual([
+        'demo-1.webm',
+        'demo-2.webm',
+        'demo-3.webm',
+      ]);
+      expect(new Set(outputPaths).size).toBe(3);
+      for (const outputPath of outputPaths) {
+        expect(existsSync(outputPath)).toBe(true);
+      }
+
+      // The aggregate reports one entry per iteration with its path and status.
+      expect(batch).toMatchObject({ count: 3, succeeded: 3, failed: 0 });
+      expect(batch.iterations.map((it) => it.output)).toEqual(outputPaths);
+      expect(batch.iterations.map((it) => it.index)).toEqual([1, 2, 3]);
+      expect(batch.iterations.every((it) => it.ok)).toBe(true);
+      expect(captureExitCode(batch)).toBe(0);
+
+      // The aggregate round-trips through JSON (the --json contract).
+      const payload = JSON.parse(JSON.stringify(batch));
+      expect(payload.iterations[2]).toMatchObject({
+        index: 3,
+        output: outputPaths[2],
+        ok: true,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -17,8 +17,13 @@ import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { Asteroid } from '../entities/Asteroid';
+import { Ghost } from '../entities/Ghost';
+import { Centipede } from '../entities/Centipede';
+import { Grunt } from '../entities/Grunt';
+import { Raider } from '../entities/Raider';
+import { LaneTraffic } from '../entities/LaneTraffic';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
@@ -37,11 +42,11 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
-  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
 import { DEFAULT_CONFIG } from '../core/config';
+import { DEFAULT_ENEMY_CONFIGS } from '../core/configDefaults';
 import { RUN_ENDED_EVENT } from '../core/runEndedSignal';
 import {
   LEVELS as CAMPAIGN_LEVELS,
@@ -49,6 +54,12 @@ import {
 } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
 import { computeSpawns } from '../waves/AsteroidSpawner';
+import {
+  computeSpawns as computeStrikeSpawns,
+  STRIKE_SPAWN_START_WAVE,
+} from '../waves/StrikeSpawner';
+import { OrbitalStrike } from '../entities/OrbitalStrike';
+import { CENTIPEDE_SEGMENT_COUNT } from '../waves/CentipedeSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
@@ -227,6 +238,29 @@ function damageBossPhase(
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
   }
+}
+
+/**
+ * Restricts a scene to a single enemy and disables auto-fire, so a spawned
+ * test bullet can only hit the intended target. Returns a restore function.
+ *
+ * Without this the player's auto-fire and other overlapping enemies can
+ * absorb or add kills, making wave-accounting assertions non-deterministic
+ * (AH-0MV1EN1NS000QLBK).
+ */
+function isolateEnemyForKill(scene: PlayScene, enemy: unknown): () => void {
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [enemy];
+  isolated.autoFireEnabled = () => false;
+  return () => {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  };
 }
 
 /**
@@ -626,6 +660,37 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(deathSound).not.toHaveBeenCalled();
     expect(juiceSpy).not.toHaveBeenCalled();
     expect(scene.getPlayerDeathEffects()).toHaveLength(0);
+  });
+
+  it('AC5 — a kill defers only the cue: the boom lands on the beat grid while the death VFX stays immediate', async () => {
+    vi.restoreAllMocks();
+    const plays: Array<{ url: string; delay: number }> = [];
+    effectsModule.setSfxSoundProvider({
+      getAudioContext: () => null,
+      useAudioContext: () => {},
+      play: (url, options) => {
+        plays.push({ url, delay: options?.delay ?? 0 });
+        return { stop: () => {} };
+      },
+      setVolume: () => {},
+      setMuted: () => {},
+      reset: () => {},
+    });
+    const scene = await bootPlay();
+    const clock = scene.getBeatClock();
+    plays.length = 0; // drop any boot-time cues
+    clock.reset();
+    clock.advance(100); // 87.5 ms to the 187.5 ms 16th-note tick
+
+    (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
+
+    // Only the cue is deferred: it is scheduled 87.5 ms out...
+    expect(plays).toHaveLength(1);
+    expect(plays[0].delay).toBeCloseTo(0.0875, 6);
+    // ...while the player-death VFX spawns synchronously on the death frame.
+    expect(scene.getPlayerDeathEffects().length).toBeGreaterThan(0);
+
+    effectsModule._resetAudioContextForTests();
   });
 
   it('F7 — SHUTDOWN clears the juice registry (no leak across restart)', async () => {
@@ -1599,7 +1664,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (400 total).
+    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -1609,10 +1674,38 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(scene.getGameState().score - scoreBefore).toBe(11000);
 
     // The transition is delayed by the victory fireworks hold
-    // (VICTORY_TRANSITION_HOLD_MS); wait past it.
-    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
-    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    // (VICTORY_TRANSITION_HOLD_MS). Advance the Phaser clock deterministically
+    // (stop the live loop and pump `game.step`) rather than awaiting a
+    // wall-clock `setTimeout`, so the delayed `GameOverScene` transition is
+    // reached even under full-suite load (AH-0MUYALJ9S0002XXZ).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → GameOverScene',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  it('AC5 — a player bullet hit registers a per-hit impact VFX at the hit point', async () => {
+    const cue = vi.spyOn(effectsModule, 'playBossHitSound');
+    const scene = await bootPlay();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    vi.clearAllMocks();
+    expect(boss.getHitEffects()).toHaveLength(0);
+
+    const hitX = boss.x;
+    const hitY = boss.y;
+    scene.spawnPlayerBullet(hitX, hitY, 0, 0);
+    scene.tick(0.016);
+
+    // The hit is fed through the shared `Boss.takeDamage()` path: one impact
+    // VFX at the bullet's hit point and one dedicated boss-hit cue.
+    const effects = boss.getHitEffects();
+    expect(effects).toHaveLength(1);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(effects[0].x).toBeCloseTo(hitX, 1);
+    expect(effects[0].y).toBeCloseTo(hitY, 1);
   });
 
   // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
@@ -1710,7 +1803,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(boss.alive).toBe(true);
   });
 
-  it('AC6 — a fully levelled weapon still requires 400 hits to destroy the boss', async () => {
+  it('AC6 — a fully levelled weapon still requires 200 hits to destroy the boss', async () => {
     const scene = await bootPlay();
     reachBoss(scene);
     const boss = scene.getBoss()!;
@@ -2760,12 +2853,10 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
   function inputState(scene: PlayScene): {
     cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
     wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
-    teleportKey: Phaser.Input.Keyboard.Key | null;
   } {
     return scene as unknown as {
       cursors: Record<'up' | 'down' | 'left' | 'right', KeyLike>;
       wasd: Record<'W' | 'A' | 'S' | 'D', KeyLike>;
-      teleportKey: Phaser.Input.Keyboard.Key | null;
     };
   }
 
@@ -2815,7 +2906,7 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     expect(scene.getPlayerBullets().length).toBeGreaterThan(before);
   });
 
-  it('AC1 — the S/↓ layer-drop key triggers a P7 teleport', async () => {
+  it('AC1 — automatic Teleport fires on danger with no key press', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
@@ -2827,17 +2918,21 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
     scene.tick(0.016);
     expect(registry.teleportStacks()).toBe(1);
 
-    // Move off-centre, then simulate the layer-drop key being just-pressed.
-    player.setPosition(300, 400);
+    // Move, then place three hostile bullets within DANGER_RADIUS (40 px) so
+    // the shared danger feed selects the stored Teleport — no key input.
+    // `respawn` syncs the internal movement state so the next tick keeps the
+    // ship here (a bare `setPosition` is overwritten by `physicsTick`).
+    player.respawn(300, 400);
+    for (let i = 0; i < 3; i++) {
+      scene.spawnEnemyBullet(300 + i * 8, 400, 0, 0, 0xff4444, 10);
+    }
     const beforeX = player.x;
     const beforeY = player.y;
-    const { teleportKey } = inputState(scene);
-    expect(teleportKey).not.toBeNull();
-    (teleportKey as unknown as { _justDown: boolean })._justDown = true;
     scene.tick(0.016);
 
     // The warp consumed the stack and moved the ship.
     expect(registry.teleportStacks()).toBe(0);
+    expect(registry.isPhased).toBe(true);
     expect(Math.hypot(player.x - beforeX, player.y - beforeY)).toBeGreaterThan(0);
   });
 
@@ -3615,11 +3710,17 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
       expect(found[0].y).toBeLessThanOrEqual(GAME_HEIGHT);
 
       // Killing it (five player bullets through the shared collision path)
-      // advances wave accounting exactly once.
+      // advances wave accounting exactly once. Isolate the kill so neither
+      // auto-fire nor an overlapping Scout can absorb a bullet.
       const aliveBeforeKill = wm.enemiesAlive;
-      for (let hit = 0; hit < 5; hit++) {
-        scene.spawnPlayerBullet(found[0].x, found[0].y, 0, 0);
-        scene.tick(0.016);
+      const restoreKill = isolateEnemyForKill(scene, found[0]);
+      try {
+        for (let hit = 0; hit < 5; hit++) {
+          scene.spawnPlayerBullet(found[0].x, found[0].y, 0, 0);
+          scene.tick(0.016);
+        }
+      } finally {
+        restoreKill();
       }
       expect(found[0].alive).toBe(false);
       expect(wm.enemiesAlive).toBe(aliveBeforeKill - 1);
@@ -3801,7 +3902,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
   /**
    * Drives the boss through all four phases so the run is won
-   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 400 total).
+   * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 200 total).
    */
   function defeatBoss(scene: PlayScene): void {
     const boss = scene.getBoss()!;
@@ -3918,9 +4019,16 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     const effects = scene.getVictoryEffects();
     expect(effects.length).toBeGreaterThan(0);
 
-    // Wait for the victory fireworks hold, then the GameOverScene transition
-    // fires SHUTDOWN on PlayScene.
-    await new Promise((r) => setTimeout(r, VICTORY_TRANSITION_HOLD_MS + 500));
+    // Advance the Phaser clock deterministically past the victory fireworks
+    // hold; the `GameOverScene` transition then fires SHUTDOWN on PlayScene,
+    // tearing down the celebration. No wall-clock wait, so the assertion
+    // cannot race the delayed transition under full-suite load
+    // (AH-0MUYALJ9S0002XXZ).
+    stepGameUntil(
+      booted!.game,
+      'victory hold → SHUTDOWN teardown',
+      () => booted!.game.scene.isActive('GameOverScene'),
+    );
 
     expect(scene.getVictoryEffects()).toHaveLength(0);
     for (const effect of effects) {
@@ -4297,6 +4405,32 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(details).toEqual([{ won: false, score: gs.score }]);
     });
 
+    it('AC1 — the defeat dev scenario emits the defeat signal on release', async () => {
+      const scene = await bootPlay();
+      scene.startDevDefeatScenario();
+
+      // Frozen until the recorder releases it, with the shared page-side
+      // handle exposed so `npm run capture -- --scenario defeat` is
+      // deterministic.
+      expect(scene.isPaused()).toBe(true);
+      expect(window.__aiHellScenario?.hitsRemaining).toBe(0);
+
+      const details = withRunEndedEvents(() => {
+        window.__aiHellScenario?.resume();
+      });
+
+      expect(scene.isPaused()).toBe(false);
+      expect(scene.getGameState().lives).toBe(0);
+      expect(window.__aiHellRunState).toEqual({
+        ended: true,
+        won: false,
+        score: scene.getGameState().score,
+      });
+      expect(details).toEqual([
+        { won: false, score: scene.getGameState().score },
+      ]);
+    });
+
     it('AC2 — the signal is dev-gated: a production build emits nothing', async () => {
       const scene = await bootPlay();
       vi.stubEnv('DEV', false);
@@ -4313,5 +4447,939 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       await new Promise((r) => setTimeout(r, 50));
       expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     });
+  });
+});
+
+// ── Space Invaders marching block (AH-0MV01EDZS0005R20) ─────────────
+
+describe('PlayScene — Space Invaders marching block (AH-0MV01EDZS0005R20)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A single non-firing march block, matching the shipped CSV seed shape. */
+  const MARCH_LEVEL: LevelDefinition = {
+    level: 1,
+    name: 'March Test',
+    waves: [
+      {
+        groups: [
+          {
+            enemyKey: 'march',
+            formation: 'march',
+            count: 11,
+            spacingX: 26,
+            spacingY: 24,
+            startX: GAME_WIDTH * 0.5,
+            startY: GAME_HEIGHT * 0.25,
+          },
+        ],
+        shootEnabled: false,
+      },
+    ],
+  };
+
+  interface MarchProbe {
+    marchState: { x: number; y: number; dir: number } | null;
+    marchOptions: unknown;
+  }
+
+  async function bootMarch(): Promise<PlayScene> {
+    const result = await bootSceneWithLevels([MARCH_LEVEL]);
+    booted = result.booted;
+    return result.scene;
+  }
+
+  it('positions the block from the shared march state (step, reverse, drop)', async () => {
+    // `create()` already begins and spawns the injected wave, so the shared
+    // march state is live here.
+    const scene = await bootMarch();
+
+    const probe = scene as unknown as MarchProbe;
+    expect(probe.marchState).not.toBeNull();
+    const startX = probe.marchState!.x;
+    const startY = probe.marchState!.y;
+
+    // marchStep / driftSpeed = 1 s per step at full strength.
+    scene.tick(1.0);
+    expect(probe.marchState!.x).toBeCloseTo(startX + 20, 5);
+
+    // Keep stepping until the block hits the right edge, reverses and drops.
+    let dropped = false;
+    for (let i = 0; i < 60 && !dropped; i++) {
+      scene.tick(1.0);
+      dropped = probe.marchState!.y > startY;
+    }
+    expect(dropped).toBe(true);
+  });
+
+  it('never fires in a non-firing level (L1–3)', async () => {
+    const scene = await bootMarch();
+    for (let i = 0; i < 200; i++) scene.tick(0.1);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+});
+
+// ── Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q) ─────────
+
+describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single empty wave so ghost accounting is
+   * isolated from any formation kills. `ghosts` toggles the wave's opt-in.
+   */
+  async function bootWithGhostWave(ghosts: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Ghost Test',
+        waves: [{ groups: [], shootEnabled: false, ghosts }],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setGhostSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveGhosts(scene: PlayScene): Ghost[] {
+    return scene.getEnemies().filter((e): e is Ghost => e instanceof Ghost && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window in one tick, then
+   * ticks once more to release every planned ghost. Collisions run *before*
+   * the release step, so the freshly released ghosts are still all alive when
+   * this returns (deterministic — no auto-fire window between release and the
+   * assertions).
+   */
+  function releaseGhosts(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  it('spawns one ghost per personality as a wave-accounted group', async () => {
+    const scene = await bootWithGhostWave(true);
+    const wm = scene.getWaveManager();
+    expect(wm.enemiesAlive).toBe(0);
+
+    releaseGhosts(scene);
+
+    const ghosts = liveGhosts(scene);
+    expect(ghosts).toHaveLength(4);
+    // One pursuer per personality, all inside the arena (reachable).
+    expect(new Set(ghosts.map((g) => g.personality))).toEqual(
+      new Set(['chase', 'ambush', 'flank', 'wander']),
+    );
+    for (const g of ghosts) {
+      expect(g.x).toBeGreaterThanOrEqual(0);
+      expect(g.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(g.y).toBeGreaterThanOrEqual(0);
+      expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    }
+    // Every spawned pursuer is registered with the wave accounting.
+    expect(wm.enemiesAlive).toBe(4);
+  });
+
+  it('pursuers never fire at any level (no enemy bullets)', async () => {
+    const scene = await bootWithGhostWave(true);
+    releaseGhosts(scene);
+    const ghosts = liveGhosts(scene);
+    expect(ghosts).toHaveLength(4);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const g of ghosts) {
+      expect(g.effectiveShotPattern).toBe('none');
+      expect(g.shootEnabled).toBe(false);
+    }
+  });
+
+  it('killing a pursuer advances wave accounting exactly once', async () => {
+    const scene = await bootWithGhostWave(true);
+    const wm = scene.getWaveManager();
+    releaseGhosts(scene);
+    expect(wm.enemiesAlive).toBe(4);
+
+    const victim = liveGhosts(scene)[0];
+    const before = wm.enemiesAlive;
+    // Isolate the kill so auto-fire or an overlapping pursuer cannot add a
+    // second kill and double-decrement the wave accounting (AH-0MV1EN1NS000QLBK).
+    const restoreKill = isolateEnemyForKill(scene, victim);
+    try {
+      scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+      scene.tick(0.001);
+    } finally {
+      restoreKill();
+    }
+    expect(victim.alive).toBe(false);
+    expect(wm.enemiesAlive).toBe(before - 1);
+  });
+
+  it('does not spawn pursuers for a wave without the ghosts opt-in', async () => {
+    const scene = await bootWithGhostWave(false);
+    releaseGhosts(scene);
+    expect(liveGhosts(scene)).toHaveLength(0);
+    expect(scene.getWaveManager().enemiesAlive).toBe(0);
+  });
+
+  it('the ghost spawner disable seam suppresses the group', async () => {
+    const scene = await bootWithGhostWave(true);
+    scene.setGhostSpawnerEnabled(false);
+    releaseGhosts(scene);
+    expect(liveGhosts(scene)).toHaveLength(0);
+  });
+});
+
+// ── Centipede linked chain (AH-0MV01EJ92008ZZ86) ──────────────────────
+
+describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single empty wave so centipede accounting is
+   * isolated from any formation kills. `centipede` toggles the wave opt-in.
+   */
+  async function bootWithCentipedeWave(centipede: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Centipede Test',
+        waves: [{ groups: [], shootEnabled: false, centipede }],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setCentipedeSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveSegments(scene: PlayScene): Centipede[] {
+    return scene.getEnemies().filter((e): e is Centipede => e instanceof Centipede && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window in one tick, then
+   * ticks once more to position the freshly released chain. Collisions run
+   * before the release step, so the chain is alive when this returns.
+   */
+  function releaseCentipede(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  it('spawns the linked chain as a wave-accounted group', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    const wm = scene.getWaveManager();
+    expect(wm.enemiesAlive).toBe(0);
+
+    releaseCentipede(scene);
+
+    const segments = liveSegments(scene);
+    expect(segments).toHaveLength(CENTIPEDE_SEGMENT_COUNT);
+    for (const segment of segments) {
+      expect(segment.x).toBeGreaterThanOrEqual(0);
+      expect(segment.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(segment.y).toBeGreaterThanOrEqual(0);
+      expect(segment.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    }
+    // Every spawned segment is registered with the wave accounting.
+    expect(wm.enemiesAlive).toBe(CENTIPEDE_SEGMENT_COUNT);
+  });
+
+  it('segments never fire at any level (no enemy bullets)', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    releaseCentipede(scene);
+    const segments = liveSegments(scene);
+    expect(segments).toHaveLength(CENTIPEDE_SEGMENT_COUNT);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const segment of segments) {
+      expect(segment.effectiveShotPattern).toBe('none');
+      expect(segment.shootEnabled).toBe(false);
+    }
+  });
+
+  it('killing a middle segment splits the chain into two sub-chains and advances accounting once', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    const wm = scene.getWaveManager();
+    releaseCentipede(scene);
+    expect(wm.enemiesAlive).toBe(CENTIPEDE_SEGMENT_COUNT);
+
+    const segments = liveSegments(scene);
+    const chain = segments[0].chain;
+    expect(chain.subChainCount()).toBe(1);
+
+    const victim = segments[2];
+    const before = wm.enemiesAlive;
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+
+    expect(victim.alive).toBe(false);
+    expect(chain.aliveCount()).toBe(CENTIPEDE_SEGMENT_COUNT - 1);
+    expect(chain.subChainCount()).toBe(2);
+    expect(chain.runs()).toEqual([
+      [0, 1],
+      [3, 4, 5],
+    ]);
+    expect(wm.enemiesAlive).toBe(before - 1);
+  });
+
+  it('does not spawn the chain for a wave without the opt-in', async () => {
+    const scene = await bootWithCentipedeWave(false);
+    releaseCentipede(scene);
+    expect(liveSegments(scene)).toHaveLength(0);
+    expect(scene.getWaveManager().enemiesAlive).toBe(0);
+  });
+
+  it('the centipede spawner disable seam suppresses the chain', async () => {
+    const scene = await bootWithCentipedeWave(true);
+    scene.setCentipedeSpawnerEnabled(false);
+    releaseCentipede(scene);
+    expect(liveSegments(scene)).toHaveLength(0);
+  });
+});
+
+// ── Robotron homing horde (AH-0MV01EKTL001NRE6) ───────────────────────
+
+describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single empty wave so horde accounting is
+   * isolated from any formation kills. `horde` toggles the wave's opt-in.
+   */
+  async function bootWithHordeWave(horde: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Horde Test',
+        waves: [{ groups: [], shootEnabled: false, horde }],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setHordeSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return scene;
+  }
+
+  function liveGrunts(scene: PlayScene): Grunt[] {
+    return scene.getEnemies().filter((e): e is Grunt => e instanceof Grunt && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window in one tick, then
+   * ticks once more to release every planned grunt. Collisions run *before*
+   * the release step, so the freshly released grunts are still all alive when
+   * this returns (deterministic — no auto-fire window between release and the
+   * assertions).
+   */
+  function releaseHorde(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  it('spawns the configured horde as a wave-accounted group', async () => {
+    const scene = await bootWithHordeWave(true);
+    const wm = scene.getWaveManager();
+    expect(wm.enemiesAlive).toBe(0);
+
+    releaseHorde(scene);
+
+    const grunts = liveGrunts(scene);
+    expect(grunts).toHaveLength(DEFAULT_ENEMY_CONFIGS.grunt.count);
+    // Every grunt spawns inside the arena (reachable).
+    for (const g of grunts) {
+      expect(g.x).toBeGreaterThanOrEqual(0);
+      expect(g.x).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(g.y).toBeGreaterThanOrEqual(0);
+      expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
+    }
+    // Every spawned grunt is registered with the wave accounting.
+    expect(wm.enemiesAlive).toBe(DEFAULT_ENEMY_CONFIGS.grunt.count);
+  });
+
+  it('grunts never fire at any level (no enemy bullets)', async () => {
+    const scene = await bootWithHordeWave(true);
+    releaseHorde(scene);
+    const grunts = liveGrunts(scene);
+    expect(grunts.length).toBeGreaterThan(0);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const g of grunts) {
+      expect(g.effectiveShotPattern).toBe('none');
+      expect(g.shootEnabled).toBe(false);
+    }
+  });
+
+  it('homes the grunts toward the player over successive frames', async () => {
+    const scene = await bootWithHordeWave(true);
+    releaseHorde(scene);
+    const grunts = liveGrunts(scene);
+    const g = grunts[0];
+    const before = { x: g.x, y: g.y };
+    for (let i = 0; i < 5; i++) scene.tick(0.05);
+    // The shared homing step moved the grunt (never frozen on its slot).
+    expect(g.x !== before.x || g.y !== before.y).toBe(true);
+    // Still inside the arena after moving.
+    expect(g.x).toBeGreaterThanOrEqual(0);
+    expect(g.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(g.y).toBeGreaterThanOrEqual(0);
+    expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+
+  it('killing a grunt advances wave accounting exactly once', async () => {
+    const scene = await bootWithHordeWave(true);
+    const wm = scene.getWaveManager();
+    releaseHorde(scene);
+    const total = DEFAULT_ENEMY_CONFIGS.grunt.count;
+    expect(wm.enemiesAlive).toBe(total);
+
+    const victim = liveGrunts(scene)[0];
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+    expect(victim.alive).toBe(false);
+    expect(wm.enemiesAlive).toBe(total - 1);
+  });
+
+  it('does not spawn a horde for a wave without the opt-in', async () => {
+    const scene = await bootWithHordeWave(false);
+    releaseHorde(scene);
+    expect(liveGrunts(scene)).toHaveLength(0);
+    expect(scene.getWaveManager().enemiesAlive).toBe(0);
+  });
+
+  it('the horde spawner disable seam suppresses the horde', async () => {
+    const scene = await bootWithHordeWave(true);
+    scene.setHordeSpawnerEnabled(false);
+    releaseHorde(scene);
+    expect(liveGrunts(scene)).toHaveLength(0);
+  });
+});
+
+// ── Defender patrol-and-attack raider (AH-0MV01EM7U0033W7L) ──────────
+
+describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with a single raider group and the given per-wave
+   * fire rule, so the raider's wave accounting and fire gating are isolated.
+   */
+  async function bootWithRaiderWave(shootEnabled: boolean): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Raider Test',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'raider',
+                formation: 'single',
+                count: 1,
+                spacingX: 0,
+                spacingY: 0,
+                startX: 480,
+                startY: 135,
+              },
+            ],
+            shootEnabled,
+          },
+        ],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Complete the wormhole spawn so the raider is collision-active immediately
+    // (the spawn animation protects spawning enemies).
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  function liveRaiders(scene: PlayScene): Raider[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is Raider => e instanceof Raider && e.alive);
+  }
+
+  it('spawns the raider as a wave-accounted group', async () => {
+    const scene = await bootWithRaiderWave(false);
+    const wm = scene.getWaveManager();
+    const raiders = liveRaiders(scene);
+    expect(raiders).toHaveLength(1);
+    expect(wm.enemiesAlive).toBe(1);
+    // Spawns inside the arena (reachable).
+    const r = raiders[0];
+    expect(r.x).toBeGreaterThanOrEqual(0);
+    expect(r.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(r.y).toBeGreaterThanOrEqual(0);
+    expect(r.y).toBeLessThanOrEqual(GAME_HEIGHT);
+  });
+
+  it('killing the raider advances wave accounting exactly once', async () => {
+    const scene = await bootWithRaiderWave(false);
+    const wm = scene.getWaveManager();
+    const victim = liveRaiders(scene)[0];
+    expect(victim.health).toBe(2);
+
+    // Two hits: the first leaves the 2 HP raider alive. A second point-blank
+    // bullet (matching the entity's own position) finishes it.
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.001);
+
+    expect(victim.alive).toBe(false);
+    expect(wm.enemiesAlive).toBe(0);
+  });
+
+  it('never fires in Levels 1–3 (fire rule off), even during an attack run', async () => {
+    const scene = await bootWithRaiderWave(false);
+    const raider = liveRaiders(scene)[0];
+    // The player sits within commit range, so the raider commits to an attack
+    // run; the level fire rule (shootEnabled false) still suppresses all fire.
+    for (let i = 0; i < 20; i++) scene.tick(0.05);
+    expect(raider.mode).toBe('attack');
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+  });
+
+  // ── Missile Command telegraphed orbital strike (AH-0MV01ENX00055CG1) ──
+
+  describe('Missile Command telegraphed orbital strike (AH-0MV01ENX00055CG1)', () => {
+    const STRIKE_SEED = 424242;
+
+    /** Single-scout waves so the campaign advances quickly to a strike wave. */
+    function strikeCampaign(waveCount: number): LevelDefinition[] {
+      return [
+        {
+          level: 1,
+          name: 'Strike Test',
+          waves: Array.from({ length: waveCount }, () => ({
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v' as const,
+                count: 1,
+                spacingX: 20,
+                spacingY: 20,
+                startX: 200,
+                startY: 200,
+              },
+            ],
+            shootEnabled: false,
+          })),
+        },
+      ];
+    }
+
+    /** Boots a campaign long enough to reach the first strike wave. */
+    async function bootStrikeScene(
+      waveCount: number,
+    ): Promise<{ scene: PlayScene; plan: ReturnType<typeof computeStrikeSpawns> }> {
+      const { booted: game, scene } = await bootSceneWithLevels(strikeCampaign(waveCount));
+      booted = game;
+      // Isolate the strike hazard from the random asteroid spawner.
+      scene.setAsteroidSpawnerEnabled(false);
+      scene.setOrbitalStrikeSpawnerEnabled(true);
+      // Advance to the first strike wave by clearing the earlier ones.
+      const wm = scene.getWaveManager();
+      let guard = 0;
+      while (wm.globalWaveIndex < STRIKE_SPAWN_START_WAVE && guard++ < waveCount + 5) {
+        killAllEnemies(scene);
+        finishTransition(scene);
+      }
+      expect(wm.globalWaveIndex).toBeGreaterThanOrEqual(STRIKE_SPAWN_START_WAVE);
+      // Re-plan deterministically with a known seed so the plan is predictable.
+      scene.setRng(createSeededRng(STRIKE_SEED));
+      scene.planStrikeSpawns();
+      const plan = computeStrikeSpawns(
+        wm.globalWaveIndex,
+        GAME_WIDTH,
+        GAME_HEIGHT,
+        WAVE_TIME_LIMIT_SECONDS,
+        scene.getPlayer()?.x ?? GAME_WIDTH / 2,
+        scene.getPlayer()?.y ?? GAME_HEIGHT / 2,
+        createSeededRng(STRIKE_SEED),
+      );
+      return { scene, plan };
+    }
+
+    it('releases a planned strike that does not gate wave completion', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      const wm = scene.getWaveManager();
+      const aliveBefore = wm.enemiesAlive;
+      const before = new Set(scene.getEnemies());
+
+      // Advance the wave clock to the first strike's due time.
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strikes = scene
+        .getEnemies()
+        .filter((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive);
+      expect(strikes).toHaveLength(1);
+      expect(strikes[0].archetype).toBe('orbital-strike');
+      expect(strikes[0].tellDuration).toBeGreaterThanOrEqual(500);
+      // Released strikes are NOT registered with the WaveManager — they are
+      // non-blocking world hazards (matching the asteroid accounting).
+      expect(wm.enemiesAlive).toBe(aliveBefore);
+      expect(scene.getEnemies().length).toBe(before.size + 1);
+
+      // The wave still clears while the strike is mid-telegraph.
+      killAllEnemies(scene);
+      finishTransition(scene);
+      expect(scene.isTransitioning()).toBe(false);
+    });
+
+    it('telegraphs ≥500 ms before the projectile falls and detonates', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strike = scene
+        .getEnemies()
+        .find((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive)!;
+      expect(strike).toBeDefined();
+      expect(strike.isTelling).toBe(true);
+      expect(strike.phase).toBe('telegraph');
+      // No enemy bullets until detonation.
+      expect(scene.getEnemyBullets()).toHaveLength(0);
+
+      // After the tell elapses the strike is falling, not yet detonated.
+      scene.tick(strike.tellDuration / 1000 + 0.05);
+      expect(strike.phase).toBe('falling');
+
+      // The radial detonation burst reuses the shared enemy-bullet path, so it
+      // can damage the player; it never touches other enemies.
+      let guard = 0;
+      while (strike.alive && guard++ < 200) scene.tick(0.05);
+      expect(strike.alive).toBe(false);
+      expect(scene.getEnemyBullets().length).toBeGreaterThan(0);
+    });
+
+    it('the detonation burst damages the player through the shared enemy-bullet path', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strike = scene
+        .getEnemies()
+        .find((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive)!;
+      // Detonate the strike.
+      let guard = 0;
+      while (strike.alive && guard++ < 200) scene.tick(0.05);
+      expect(strike.alive).toBe(false);
+      const burst = scene.getEnemyBullets();
+      expect(burst.length).toBeGreaterThan(0);
+
+      // Place every shrapnel bullet on the live player and advance one frame:
+      // the shared enemy-bullet collision path must damage the player.
+      const player = scene.getPlayer()!;
+      const livesBefore = scene.getGameState().lives;
+      for (const bullet of burst) {
+        bullet.graphics.x = player.x;
+        bullet.graphics.y = player.y;
+        bullet.vx = 0;
+        bullet.vy = 0;
+      }
+      scene.tick(0.016);
+      expect(scene.getGameState().lives).toBeLessThan(livesBefore);
+    });
+
+    it('the detonation burst never collides with or damages other enemies', async () => {
+      const { scene, plan } = await bootStrikeScene(STRIKE_SPAWN_START_WAVE + 1);
+      expect(plan.length).toBeGreaterThan(0);
+
+      scene.setWaveTimerRemaining(WAVE_TIME_LIMIT_SECONDS - (plan[0].timeSeconds + 1e-6));
+      scene.tick(0.001);
+
+      const strike = scene
+        .getEnemies()
+        .find((e): e is OrbitalStrike => e instanceof OrbitalStrike && e.alive)!;
+      let guard = 0;
+      while (strike.alive && guard++ < 200) scene.tick(0.05);
+      expect(strike.alive).toBe(false);
+
+      // Move every shrapnel bullet onto a live, non-strike enemy and advance:
+      // the strike must never damage another enemy (GDD §2.6).
+      const other = scene
+        .getEnemies()
+        .find((e) => !(e instanceof OrbitalStrike) && e.alive);
+      expect(other).toBeDefined();
+      const healthBefore = (other as unknown as { health: number }).health;
+      for (const bullet of scene.getEnemyBullets()) {
+        bullet.graphics.x = other!.x;
+        bullet.graphics.y = other!.y;
+        bullet.vx = 0;
+        bullet.vy = 0;
+      }
+      scene.tick(0.016);
+      expect(other!.alive).toBe(true);
+      expect((other as unknown as { health: number }).health).toBe(healthBefore);
+    });
+  });
+});
+
+// ── Frogger lane traffic (AH-0MV01EPM40008N8T) ───────────────────────
+
+describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the PlayScene with one wave-accounted Scout and the random asteroid
+   * spawner disabled, so lane traffic can be isolated from other dynamic
+   * hazards. `shootEnabled` is false so no formation enemy fires.
+   */
+  async function bootWithLaneTrafficWave(): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Lane Traffic Test',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 1,
+                spacingX: 26,
+                spacingY: 22,
+                startX: 240,
+                startY: 135,
+              },
+            ],
+            shootEnabled: false,
+            laneTraffic: true,
+          },
+        ],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.setLaneTrafficSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  function liveTraffic(scene: PlayScene): LaneTraffic[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is LaneTraffic => e instanceof LaneTraffic && e.alive);
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window, then ticks once more
+   * so every planned lane is released (the release runs before the timer
+   * advances, matching the horde/asteroid planners).
+   */
+  function releaseLaneTraffic(scene: PlayScene): void {
+    scene.tick(20);
+    scene.tick(0.001);
+  }
+
+  const config = DEFAULT_ENEMY_CONFIGS['lane-traffic'];
+  const expectedCount = config.count * (config.laneCount ?? 1);
+
+  it('spawns lane traffic as a non-blocking world hazard', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    const wm = scene.getWaveManager();
+    const baseline = wm.enemiesAlive;
+    expect(baseline).toBe(1);
+
+    releaseLaneTraffic(scene);
+
+    const traffic = liveTraffic(scene);
+    expect(traffic).toHaveLength(expectedCount);
+    for (const t of traffic) {
+      expect(t.archetype).toBe('lane-traffic');
+      // The hazards are NOT registered with the WaveManager, so the wave
+      // accounting is unchanged (the lone Scout is still counted).
+      expect(wm.enemiesAlive).toBe(baseline);
+    }
+  });
+
+  it('crosses the arena at a constant speed and wraps at the edges', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const t = liveTraffic(scene)[0];
+    const laneY = t.y;
+    // Place the hazard away from the edge so the measurement is wrap-free.
+    t.x = GAME_WIDTH / 2;
+    const startX = t.x;
+    scene.tick(0.25);
+    expect(t.y).toBeCloseTo(laneY, 5);
+    expect(t.x - startX).toBeCloseTo(t.vx * 0.25, 1);
+
+    // Over a long run the wrap keeps it inside the arena and in its lane.
+    for (let i = 0; i < 200; i++) scene.tick(0.05);
+    expect(t.x).toBeGreaterThanOrEqual(0);
+    expect(t.x).toBeLessThanOrEqual(GAME_WIDTH);
+    expect(t.y).toBeCloseTo(laneY, 5);
+  });
+
+  it('is destroyed by a single player bullet without advancing the wave', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const wm = scene.getWaveManager();
+    const baseline = wm.enemiesAlive;
+    const target = liveTraffic(scene)[0];
+    target.x = GAME_WIDTH / 2;
+    target.y = 200;
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0.001);
+    expect(target.alive).toBe(false);
+    // Non-blocking: destroying a hazard does not change wave accounting.
+    expect(wm.enemiesAlive).toBe(baseline);
+  });
+
+  it('never fires at any level (no enemy bullets)', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const traffic = liveTraffic(scene);
+    expect(traffic.length).toBeGreaterThan(0);
+    for (let i = 0; i < 40; i++) scene.tick(0.1);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+    for (const t of traffic) {
+      expect(t.shootEnabled).toBe(false);
+      expect(t.effectiveShotPattern).toBe('none');
+    }
+  });
+
+  it('passes through other enemies (no enemy-enemy collision)', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    releaseLaneTraffic(scene);
+    const traffic = liveTraffic(scene)[0];
+    const scout = scene
+      .getEnemies()
+      .find((e): e is Scout => e instanceof Scout && e.alive)!;
+    expect(scout).toBeDefined();
+    // Overlap the hazard with the Scout: neither may be destroyed by the
+    // other (the shared collision pass is player-bullet vs enemy only).
+    traffic.x = scout.x;
+    traffic.y = scout.y;
+    scene.tick(0.001);
+    expect(traffic.alive).toBe(true);
+    expect(scout.alive).toBe(true);
+  });
+
+  it('the lane-traffic spawner disable seam suppresses the hazard', async () => {
+    const scene = await bootWithLaneTrafficWave();
+    scene.setLaneTrafficSpawnerEnabled(false);
+    releaseLaneTraffic(scene);
+    expect(liveTraffic(scene)).toHaveLength(0);
+  });
+
+  it('does not spawn lane traffic for a wave without the opt-in', async () => {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'No lane traffic',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 1,
+                spacingX: 26,
+                spacingY: 22,
+                startX: 240,
+                startY: 135,
+              },
+            ],
+            shootEnabled: false,
+          },
+        ],
+      },
+    ];
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.setLaneTrafficSpawnerEnabled(true);
+    scene.scene.restart();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    scene.finishSpawnAnimations();
+
+    releaseLaneTraffic(scene);
+    expect(liveTraffic(scene)).toHaveLength(0);
   });
 });

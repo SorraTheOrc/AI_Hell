@@ -16,8 +16,8 @@
  * Each attack phase begins with a clear telegraph (glow + audio cue) at
  * least 500 ms before the visual event fires.
  *
- * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (100)
- * player hits, so the Boss is destroyed only after 400 hits total. A hit
+ * 4-phase health — each phase requires `BOSS_HIT_POINTS_PER_PHASE` (50)
+ * player hits, so the Boss is destroyed only after 200 hits total. A hit
  * that does not deplete the current phase leaves the phase unchanged and
  * only reduces the health-bar fill; a depleting hit advances the phase
  * (or destroys the Boss after phase 4). `takeDamage()` returns
@@ -27,8 +27,8 @@
  * remain. The gym scene provides a damage button for testing phase
  * transitions.
  *
- * Audio cues: spawn, phase transition, each phase's unique attack cue,
- * and destruction.
+ * Audio cues: spawn, per-hit impact, phase transition, each phase's
+ * unique attack cue, and destruction.
  */
 
 import Phaser from 'phaser';
@@ -39,6 +39,7 @@ import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import {
   playBossDestructionSound,
   playBossFireSound,
+  playBossHitSound,
   playBossPhaseCue,
   playBossPhaseTransitionSound,
   playBossSpawnSound,
@@ -48,6 +49,7 @@ import {
   spawnExplosionParticles,
   type ExplosionHandle,
 } from '../vfx/explosionParticles';
+import { spawnBulletImpact } from '../vfx/bulletImpact';
 
 
 // ── Visual / behaviour tuning (per GDD §4.3) ────────────────────────
@@ -67,6 +69,28 @@ export const BOSS_RADIUS = 50;
 export const BOSS_CORE_RADIUS = 16;
 /** Core glow radius in px. */
 export const BOSS_CORE_GLOW_RADIUS = 30;
+/** Hot yellow colour for per-hit boss impact VFX. */
+export const BOSS_IMPACT_COLOR = 0xffee44;
+
+// ── Figure-of-eight movement tuning (GDD §4.3, AH-0MUZMTS8J0029FSS) ──
+
+/**
+ * Horizontal amplitude of the figure-of-eight about the boss anchor (px).
+ * The boss traces a Gerono lemniscate centred on its spawn anchor:
+ * `x = anchorX + BOSS_MOVE_AMPLITUDE_X * sin(theta)`.
+ */
+export const BOSS_MOVE_AMPLITUDE_X = 120;
+/**
+ * Vertical amplitude of the figure-of-eight about the boss anchor (px).
+ * `y = anchorY + BOSS_MOVE_AMPLITUDE_Y * sin(2 * theta)`.
+ */
+export const BOSS_MOVE_AMPLITUDE_Y = 60;
+/**
+ * Duration of one full figure-of-eight cycle (ms). `theta` advances as
+ * `2 * PI * elapsedMs / BOSS_MOVE_PERIOD_MS`, so the boss completes one
+ * lemniscate every 8 s.
+ */
+export const BOSS_MOVE_PERIOD_MS = 8000;
 
 /** Bullet colour for Boss attacks (bright white/cyan). */
 export const BOSS_BULLET_COLOR = 0xffffff;
@@ -119,7 +143,7 @@ export enum BossPhase {
 /** Total number of health phases. */
 export const BOSS_PHASE_COUNT = 4;
 /** Number of hits required to deplete one boss phase. */
-export const BOSS_HIT_POINTS_PER_PHASE = 100;
+export const BOSS_HIT_POINTS_PER_PHASE = 50;
 
 /**
  * Resolves the boss's starting HP: the full pool by default, else the
@@ -168,7 +192,7 @@ export interface BossConfig {
   rng?: () => number;
   /**
    * Optional starting health: how many further hits the boss can take.
-   * Defaults to the full 4-phase pool (400). The dev boss scenario
+   * Defaults to the full 4-phase pool (200). The dev boss scenario
    * (AH-0MUWZ5HCV0034H44) uses a small value so the run can be won quickly;
    * clamped to `[1, BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE]`.
    */
@@ -235,12 +259,19 @@ export class Boss extends Phaser.GameObjects.Container {
   private readonly _rng: () => number;
   private _currentPhase = BossPhase.Spread;
   private _currentPhaseNumber = 1;
-  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 400 total hits
+  private _totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;  // 200 total hits
   private _currentHp!: number;
   private _telegraphState: TelegraphState = TelegraphState.Idle;
   private _telegraphStartTime = 0;
   private _lastAttackTime = 0;
   private _attackAngle = 0; // for spiral pattern rotation
+
+  // Figure-of-eight movement state (AH-0MUZMTS8J0029FSS). `_moveElapsedMs`
+  // accumulates frame deltas; the anchor is the lemniscate centre the boss is
+  // spawned at (and re-anchored to by `applyFormationPosition`).
+  private _anchorX: number;
+  private _anchorY: number;
+  private _moveElapsedMs = 0;
 
   // Pulse wave state
   private _pulseWaveGraphics: Phaser.GameObjects.Graphics | null = null;
@@ -255,6 +286,11 @@ export class Boss extends Phaser.GameObjects.Container {
   private _playerTargetX = 480;
   private _playerTargetY = 500;
 
+  // Per-hit VFX registry (AH-0MUZMTTPE0074X59). Tracks live impact flashes
+  // for test observability; each entry is removed when the tween completes
+  // and the array is cleared in `destroy()` to prevent leaks.
+  private _hitEffects: Phaser.GameObjects.Graphics[] = [];
+
   // ── Construction ────────────────────────────────────────────────
 
   constructor(scene: Phaser.Scene, config: BossConfig) {
@@ -263,6 +299,12 @@ export class Boss extends Phaser.GameObjects.Container {
     this.formationOffset = config.formationOffset;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._rng = config.rng ?? Math.random;
+
+    // The figure-of-eight anchor starts at the spawn point; `update()` traces
+    // the lemniscate about it in the shared core, so `PlayScene` and every
+    // boss gym get identical motion (AH-0MUZMTS8J0029FSS).
+    this._anchorX = config.x;
+    this._anchorY = config.y;
 
     // Body — a hexagonal/geometric shape in neon red.
     this.bodyGraphics = scene.add.graphics();
@@ -284,7 +326,9 @@ export class Boss extends Phaser.GameObjects.Container {
     this.explosionGraphics.setDepth(3);
     this.add(this.explosionGraphics);
 
-    // Health bar — rendered at screen top, positioned in create().
+    // Health bar — a SCENE child (NOT a boss-container child) so it renders
+    // at the absolute screen coordinates drawn by `_drawHealthBar()` and is
+    // never offset by the boss position (AH-0MUZMTRJM003ISD5).
     this.healthBarGraphics = scene.add.graphics();
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
@@ -292,7 +336,6 @@ export class Boss extends Phaser.GameObjects.Container {
     this._currentHp = resolveInitialHp(config.initialHp, this._totalHp);
     this._currentPhaseNumber = resolveInitialPhase(config.initialPhase);
     this._currentPhase = this._currentPhaseNumber as BossPhase;
-    this.add(this.healthBarGraphics);
 
     this._drawBody();
     this._drawHealthBar();
@@ -700,11 +743,29 @@ export class Boss extends Phaser.GameObjects.Container {
    * `{ destroyed: false, phaseAdvanced: false }`.
    * A depleting hit advances the phase (or destroys the boss after phase 4)
    * and returns `{ phaseAdvanced: true }` or `{ destroyed: true }`.
+   *
+   * On **every** hit the boss plays a dedicated SFX cue and spawns a brief
+   * impact flash at the supplied hit point (or the boss centre when omitted).
+   *
+   * @param hitX — optional world-space X of the hit (for per-hit VFX).
+   * @param hitY — optional world-space Y of the hit (for per-hit VFX).
    */
-  takeDamage(): { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number } {
+  takeDamage(
+    hitX?: number,
+    hitY?: number,
+  ): { destroyed: boolean; phaseAdvanced: boolean; phase: number; hpRemaining: number } {
     if (!this._alive) return { destroyed: false, phaseAdvanced: false, phase: this._currentPhaseNumber, hpRemaining: 0 };
 
     this._currentHp--;
+
+    // Play per-hit SFX and spawn per-hit VFX (shared path — both game and gym).
+    playBossHitSound();
+    const hitXPos = hitX ?? this.x;
+    const hitYPos = hitY ?? this.y;
+    spawnBulletImpact(this.scene as Phaser.Scene, hitXPos, hitYPos, {
+      color: BOSS_IMPACT_COLOR,
+      registry: this._hitEffects,
+    });
 
     if (this._currentHp <= 0) {
       // Boss destroyed.
@@ -763,6 +824,15 @@ export class Boss extends Phaser.GameObjects.Container {
    */
   getHpFraction(): number {
     return this._alive ? this._currentHp / this._totalHp : 0;
+  }
+
+  /**
+   * Returns the health-bar `Graphics` object. It is a scene child (not a
+   * boss-container child) so its drawn screen position is independent of the
+   * boss position; exposed for tests and teardown assertions.
+   */
+  getHealthBarGraphics(): Phaser.GameObjects.Graphics {
+    return this.healthBarGraphics;
   }
 
   /** Returns true if in desperation phase. */
@@ -833,8 +903,11 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Applies the formation position — keeps the Boss centered on screen.
-   * The Boss does not drift; it stays at its spawn position.
+   * Applies the formation position — records the boss's spawn **anchor** (the
+   * centre of its figure-of-eight) without teleporting the container. The
+   * live position is driven solely by `update()`'s lemniscate, so the gym's
+   * per-frame formation call can never fight the shared movement
+   * (AH-0MUZMTS8J0029FSS).
    */
   applyFormationPosition(
     baseX: number,
@@ -844,7 +917,58 @@ export class Boss extends Phaser.GameObjects.Container {
     _spacingY: number,
   ): void {
     if (!this._alive) return;
-    this.setPosition(baseX, baseY);
+    this._anchorX = baseX;
+    this._anchorY = baseY;
+  }
+
+  // ── Figure-of-eight movement (AH-0MUZMTS8J0029FSS) ──────────────
+
+  /**
+   * Advances the figure-of-eight (Gerono lemniscate) by `deltaMs` and
+   * repositions the boss about its current anchor. The boss completes one
+   * cycle every {@link BOSS_MOVE_PERIOD_MS}; the traced point is clamped to
+   * the playfield so the boss never leaves the screen. Called from the shared
+   * `update()` so `CombatScene._advanceBoss` drives both scenes identically.
+   */
+  private _advanceFigureEight(
+    deltaMs: number,
+    sceneWidth: number,
+    sceneHeight: number,
+  ): void {
+    this._moveElapsedMs += deltaMs;
+    const theta = (2 * Math.PI * this._moveElapsedMs) / BOSS_MOVE_PERIOD_MS;
+    const x = this._anchorX + BOSS_MOVE_AMPLITUDE_X * Math.sin(theta);
+    const y = this._anchorY + BOSS_MOVE_AMPLITUDE_Y * Math.sin(2 * theta);
+    this.setPosition(
+      this._clampToPlayfield(x, sceneWidth),
+      this._clampToPlayfield(y, sceneHeight),
+    );
+  }
+
+  /**
+   * Clamps one axis to the playfield bounds, leaving room for the boss body so
+   * its centre can never sit such that the body leaves the screen. The clamp
+   * range never inverts on a degenerate (sub-body) extent.
+   */
+  private _clampToPlayfield(value: number, extent: number): number {
+    const min = Math.min(BOSS_RADIUS, extent / 2);
+    const max = Math.max(extent - BOSS_RADIUS, extent / 2);
+    return Phaser.Math.Clamp(value, min, max);
+  }
+
+  /** World-space x of the figure-of-eight anchor (test seam). */
+  getMoveAnchorX(): number {
+    return this._anchorX;
+  }
+
+  /** World-space y of the figure-of-eight anchor (test seam). */
+  getMoveAnchorY(): number {
+    return this._anchorY;
+  }
+
+  /** Accumulated figure-of-eight motion time in ms (test seam). */
+  getMoveElapsedMs(): number {
+    return this._moveElapsedMs;
   }
 
   // ── Animation ───────────────────────────────────────────────────
@@ -863,7 +987,7 @@ export class Boss extends Phaser.GameObjects.Container {
       this.y,
       BOSS_COLOR,
       BOSS_RADIUS,
-      { patterns: resolvePatterns('boss') },
+      { patterns: resolvePatterns('boss'), kind: 'boss' },
     );
     if (handle) this.explosionHandles.push(handle);
   }
@@ -871,6 +995,15 @@ export class Boss extends Phaser.GameObjects.Container {
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */
   getExplosionHandles(): ExplosionHandle[] {
     return this.explosionHandles.slice();
+  }
+
+  /**
+   * Live per-hit impact-VFX flashes (copy — for tests/SHUTDOWN checks).
+   * Each entry is removed from the registry when its tween completes, and
+   * all entries are destroyed in `destroy()` (AH-0MUZMTTPE0074X59).
+   */
+  getHitEffects(): Phaser.GameObjects.Graphics[] {
+    return this._hitEffects.slice();
   }
 
   /**
@@ -882,6 +1015,11 @@ export class Boss extends Phaser.GameObjects.Container {
     const bullets: BossBullet[] = [];
 
     if (!this._alive) return bullets;
+
+    // Figure-of-eight movement (shared core): advance and reposition before
+    // drawing/attacking so the live `x`/`y` is used by firing and hit
+    // detection in both scenes (AH-0MUZMTS8J0029FSS).
+    this._advanceFigureEight(delta, sceneWidth, sceneHeight);
 
     // Update core pulse.
     this._corePulsePhase += dt;
@@ -956,6 +1094,11 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._pulseWaveGraphics) {
       this._pulseWaveGraphics.destroy();
     }
+    // Scene-level per-hit impact flashes are NOT display-list children of
+    // this container — destroy them explicitly and empty the registry so
+    // SHUTDOWN/stop→restart leaks nothing (AH-0MUZMTTPE0074X59).
+    for (const flash of this._hitEffects) flash.destroy();
+    this._hitEffects.length = 0;
     // Scene-level particle Graphics are NOT display-list children —
     // destroy them explicitly so SHUTDOWN/stop→restart leaks nothing.
     for (const handle of this.explosionHandles) handle.destroy();

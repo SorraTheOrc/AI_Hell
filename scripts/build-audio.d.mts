@@ -87,7 +87,12 @@ export function assetFsPath(repoRoot: string, assetPath: string): string;
 export function resolveToneForge(options?: {
   repoRoot?: string;
   env?: NodeJS.ProcessEnv;
+  spawn?: typeof import('node:child_process').spawnSync;
 }): ToneForgeCli | null;
+export function resolveMainCheckout(options?: {
+  repoRoot?: string;
+  spawn?: typeof import('node:child_process').spawnSync;
+}): string | null;
 export function createToneForgeRenderer(
   options: RenderOptions,
 ): (job: RenderJob) => Buffer;

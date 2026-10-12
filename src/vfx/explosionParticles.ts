@@ -508,6 +508,43 @@ export function resolvePatterns(type: string): Pattern[] {
  */
 export const EXPLOSION_IMPLOSION_MS = 100;
 
+/** The kind of entity a burst belongs to, for the shared live-counter registry. */
+export type ExplosionVfxKind = 'enemy' | 'boss' | 'player';
+
+/** Live per-kind explosion-VFX counts (the single registry of §8.5). */
+export interface ExplosionVfxCounts {
+  readonly enemy: number;
+  readonly boss: number;
+  readonly player: number;
+}
+
+/** Module-level live counts, shared by the game and every gym. */
+const EXPLOSION_VFX_COUNTS: { enemy: number; boss: number; player: number } = {
+  enemy: 0,
+  boss: 0,
+  player: 0,
+};
+
+/**
+ * Returns a snapshot of the live per-kind explosion-VFX counts.
+ *
+ * This is the **single** count-able registry for enemy/boss/player explosion
+ * VFX (§8.5): every burst spawned through {@link spawnExplosionParticles} with
+ * a `kind` increments the matching counter and decrements it when the burst
+ * finishes, so a category can never be double-counted. Consumers (the
+ * action-intensity metric) read it instead of re-counting VFX objects.
+ */
+export function getExplosionVfxCounts(): ExplosionVfxCounts {
+  return { ...EXPLOSION_VFX_COUNTS };
+}
+
+/** Resets the shared explosion-VFX counts (run-scope reset / test seam). */
+export function resetExplosionVfxCounts(): void {
+  EXPLOSION_VFX_COUNTS.enemy = 0;
+  EXPLOSION_VFX_COUNTS.boss = 0;
+  EXPLOSION_VFX_COUNTS.player = 0;
+}
+
 /** Optional overrides for `spawnExplosionParticles`. */
 export interface SpawnExplosionOptions {
   /** Which patterns to emit (default `['radial']`). */
@@ -538,6 +575,13 @@ export interface SpawnExplosionOptions {
    * burst can sit behind a screen's UI (negative) or below its HUD.
    */
   depth?: number;
+  /**
+   * Optional entity kind for the shared per-kind explosion-VFX counter
+   * (§8.5). When set, the burst increments the matching counter on spawn and
+   * decrements it on completion, so the metric reads a single source rather
+   * than re-counting VFX objects.
+   */
+  kind?: ExplosionVfxKind;
   /**
    * Optional Graphics registry (e.g. `playerExplosions`) — the handle's
    * Graphics is pushed here on spawn and spliced on completion, so a
@@ -608,6 +652,9 @@ export function spawnExplosionParticles(
 ): ExplosionHandle | null {
   if (!scene) return null;
 
+  const kind = opts.kind;
+  if (kind) EXPLOSION_VFX_COUNTS[kind] += 1;
+
   const patterns = opts.patterns ?? ['radial'];
   const scale = opts.scale ?? 1;
   const effSize = size * scale;
@@ -673,6 +720,9 @@ export function spawnExplosionParticles(
     if (opts.registry) {
       const idx = opts.registry.indexOf(gfx);
       if (idx >= 0) opts.registry.splice(idx, 1);
+    }
+    if (kind && EXPLOSION_VFX_COUNTS[kind] > 0) {
+      EXPLOSION_VFX_COUNTS[kind] -= 1;
     }
   };
 

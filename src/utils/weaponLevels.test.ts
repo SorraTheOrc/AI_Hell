@@ -34,7 +34,13 @@ import {
   type WeaponLevelStats,
   type WeaponUpgradeVariable,
 } from './weaponLevels';
-import { WEAPON_CATALOGUE, isOnBeatGrid, type WeaponId } from './weapons';
+import {
+  WEAPON_CATALOGUE,
+  isOnBeatGrid,
+  OPTIONS_BASE_PODS,
+  OPTIONS_MAX_PODS,
+  type WeaponId,
+} from './weapons';
 import { beatPeriodMs, createBeatClock, isOnGrid } from './beat';
 
 const WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
@@ -461,6 +467,12 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     for (const weaponId of WEAPON_IDS) {
       const base = WEAPON_CATALOGUE[weaponId];
       const leveled = resolveWeaponDefinition(weaponId, 6);
+      // Orbit weapons (Options) grow their pod count instead of an angular
+      // offsets pattern, so their offsets never expand.
+      if (base.orbit) {
+        expect(leveled.offsets).toEqual([...base.offsets]);
+        continue;
+      }
       expect(leveled.offsets.length).toBeGreaterThan(base.offsets.length);
       // An expanded pattern is angular, so base side offsets are dropped.
       expect(leveled.sideOffsets).toBeUndefined();
@@ -490,6 +502,10 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     spread: 1.4,
     dual: 1.4,
     rapid: 0.75,
+    wave_laser: 2.0,
+    ricochet: 3.2,
+    cluster: 1.8,
+    options: 1.4,
     nova: 0.5,
     mortar: 2.0,
     arc: 0.5,
@@ -631,5 +647,191 @@ describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
     expect(
       formatDelta('Projectiles', Number.POSITIVE_INFINITY, 1, false),
     ).toBe('');
+  });
+});
+
+// ── R-Type wave-laser pierce budget (AH-0MV1BIUSJ0090W92) ───────────
+
+describe('wave-laser piercing budget (AH-0MV1BIUSJ0090W92)', () => {
+  test('the base definition supplies a pierce budget of 3', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.piercing).toBe(3);
+    expect(resolveWeaponDefinition('wave_laser', 0).piercing).toBe(3);
+  });
+
+  test('the level-resolved piercing variable grows monotonically within its spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.piercing.cap;
+    let previous = resolveWeaponAtLevel('wave_laser', 0).piercing;
+    expect(previous).toBe(0);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponAtLevel('wave_laser', level).piercing;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The first level is responsive: it grants a pierce immediately.
+    expect(resolveWeaponAtLevel('wave_laser', 1).piercing).toBeGreaterThan(0);
+  });
+
+  test('the resolved pierce budget grows monotonically and never exceeds the spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.piercing.cap;
+    let previous = resolveWeaponDefinition('wave_laser', 0).piercing!;
+    expect(previous).toBe(3);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponDefinition('wave_laser', level).piercing!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The budget saturates at the finite spec cap.
+    expect(resolveWeaponDefinition('wave_laser', 100).piercing).toBe(cap);
+  });
+
+  test('weapons without a base piercing budget never gain one', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'wave_laser') continue;
+      expect(resolveWeaponDefinition(id, 50).piercing).toBeUndefined();
+    }
+  });
+});
+
+// ── Centipede ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI) ──────
+
+describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
+  test('the base definition supplies a bounce budget of 2', () => {
+    expect(WEAPON_CATALOGUE.ricochet.bounce).toBe(2);
+    expect(resolveWeaponDefinition('ricochet', 0).bounce).toBe(2);
+  });
+
+  test('the level-resolved bounce variable grows monotonically within its spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.bounce.cap;
+    let previous = resolveWeaponAtLevel('ricochet', 0).bounce;
+    expect(previous).toBe(0);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponAtLevel('ricochet', level).bounce;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The first level is responsive: it grants an extra bounce immediately.
+    expect(resolveWeaponAtLevel('ricochet', 1).bounce).toBeGreaterThan(0);
+  });
+
+  test('the resolved bounce budget grows monotonically and never exceeds the spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.bounce.cap;
+    let previous = resolveWeaponDefinition('ricochet', 0).bounce!;
+    expect(previous).toBe(2);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponDefinition('ricochet', level).bounce!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The budget saturates at the finite spec cap.
+    expect(resolveWeaponDefinition('ricochet', 100).bounce).toBe(cap);
+  });
+
+  test('weapons without a base bounce budget never gain one (they keep wrapping)', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'ricochet') continue;
+      expect(resolveWeaponDefinition(id, 50).bounce).toBeUndefined();
+    }
+  });
+});
+
+// ── Missile Command cluster split budget (AH-0MV1BIVIJ007KYXU) ───────
+
+describe('cluster-missile split budget (AH-0MV1BIVIJ007KYXU)', () => {
+  test('the base definition supplies a split warhead count of 2', () => {
+    expect(WEAPON_CATALOGUE.cluster.splits).toBe(2);
+    expect(resolveWeaponDefinition('cluster', 0).splits).toBe(2);
+  });
+
+  test('the level-resolved splitCount variable grows monotonically within its spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.splitCount.cap;
+    let previous = resolveWeaponAtLevel('cluster', 0).splitCount;
+    expect(previous).toBe(0);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponAtLevel('cluster', level).splitCount;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The first level is responsive: it grants an extra split immediately.
+    expect(resolveWeaponAtLevel('cluster', 1).splitCount).toBeGreaterThan(0);
+  });
+
+  test('the resolved warhead count grows monotonically and never exceeds the spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.splitCount.cap;
+    let previous = resolveWeaponDefinition('cluster', 0).splits!;
+    expect(previous).toBe(2);
+    for (let level = 1; level <= 100; level++) {
+      const value = resolveWeaponDefinition('cluster', level).splits!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(cap);
+      previous = value;
+    }
+    // The warhead count saturates at the finite spec cap.
+    expect(resolveWeaponDefinition('cluster', 100).splits).toBe(cap);
+  });
+
+  test('weapons without a base split count never gain one', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'cluster') continue;
+      expect(resolveWeaponDefinition(id, 50).splits).toBeUndefined();
+    }
+  });
+});
+
+// ── Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM) ───────
+
+describe('Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM)', () => {
+  test('the base definition carries the base two-pod escort', () => {
+    expect(WEAPON_CATALOGUE.options.orbit?.pods).toBe(OPTIONS_BASE_PODS);
+    expect(OPTIONS_BASE_PODS).toBe(2);
+    expect(resolveWeaponDefinition('options', 0).orbit?.pods).toBe(
+      OPTIONS_BASE_PODS,
+    );
+  });
+
+  test('projectileCount and fireRate resolve within their spec caps', () => {
+    const projectileCap = WEAPON_UPGRADE_SPECS.projectileCount.cap;
+    const fireRateCap = WEAPON_UPGRADE_SPECS.fireRate.cap;
+    for (let level = 0; level <= 100; level++) {
+      const stats = resolveWeaponAtLevel('options', level);
+      expect(stats.projectileCount).toBeLessThanOrEqual(projectileCap);
+      expect(stats.fireRate).toBeLessThanOrEqual(fireRateCap);
+    }
+    // The pod count is bounded by its own legibility cap, independent of the
+    // (larger) projectileCount spec cap.
+    expect(OPTIONS_MAX_PODS).toBeLessThanOrEqual(projectileCap + OPTIONS_BASE_PODS);
+  });
+
+  test('the resolved pod count grows monotonically and saturates at the cap', () => {
+    let previous = resolveWeaponDefinition('options', 0).orbit!.pods;
+    expect(previous).toBe(OPTIONS_BASE_PODS);
+    for (let level = 1; level <= 100; level++) {
+      const pods = resolveWeaponDefinition('options', level).orbit!.pods;
+      expect(pods).toBeGreaterThanOrEqual(previous);
+      expect(pods).toBeLessThanOrEqual(OPTIONS_MAX_PODS);
+      previous = pods;
+    }
+    expect(resolveWeaponDefinition('options', 100).orbit!.pods).toBe(
+      OPTIONS_MAX_PODS,
+    );
+  });
+
+  test('weapons without a base orbit descriptor never gain pods', () => {
+    for (const id of WEAPON_IDS) {
+      if (id === 'options') continue;
+      expect(resolveWeaponDefinition(id, 50).orbit).toBeUndefined();
+    }
+  });
+
+  test('the Options fire rate stays on the beat grid at every level', () => {
+    for (let level = 0; level <= 100; level++) {
+      expect(
+        isOnBeatGrid(resolveWeaponDefinition('options', level).fireRateMs),
+      ).toBe(true);
+    }
   });
 });

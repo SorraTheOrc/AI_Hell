@@ -54,6 +54,7 @@
  */
 
 import { WEAPON_CATALOGUE, getWeaponById, type WeaponId, type WeaponDefinition } from './weapons';
+import { resolveOptionsPodCount } from '../scenes/core/optionsEscort';
 import { DEFAULT_BPM, beatPeriodMs, beatSubdivisionMs } from './beat';
 import { curveValue, formatDelta, type CurveSpec, type UpgradeCurve } from './curve';
 
@@ -605,6 +606,18 @@ export function expandWeaponPattern(
  * - `offsets` — expanded by `projectileCount`/`spreadAngle`,
  * - `bulletLifetime` — range multiplier,
  * - `levelBulletSize` — bullet-radius upgrade multiplier,
+ * - `piercing` — the base pass-through budget grown by the level's
+ *   `piercing` upgrade and clamped to its spec cap (weapons with a base
+ *   `piercing` only, e.g. the wave laser; AH-0MV1BIUSJ0090W92),
+ * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
+ *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
+ *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
+ * - `splits` — the base split warhead count grown by the level's `splitCount`
+ *   upgrade and clamped to its spec cap (weapons with a base `splits` only,
+ *   e.g. the cluster missile; AH-0MV1BIVIJ007KYXU),
+ * - `orbit.pods` — the base pod count grown by the level's `projectileCount`
+ *   upgrade and clamped to `OPTIONS_MAX_PODS` (weapons with a base `orbit`
+ *   only, e.g. the Gradius Options escort; AH-0MV1BIVVK0043TEM),
  * - `aoe.radius` — area multiplier for AOE weapons.
  *
  * `bulletColor`, `bulletShape` and `sideOffsets` are carried through from the
@@ -627,10 +640,56 @@ export function resolveWeaponDefinition(
   const leveled: WeaponDefinition = {
     ...base,
     fireRateMs: stats.fireRateMs,
-    offsets: expandWeaponPattern(base, stats).offsets,
+    // Orbit weapons (the Gradius Options escort) fire from their pods, not
+    // from an angular `offsets` fan, so the pattern is never expanded by
+    // `projectileCount` (the level variable grows the pod count instead).
+    offsets: base.orbit
+      ? [...base.offsets]
+      : expandWeaponPattern(base, stats).offsets,
     bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
     levelBulletSize: stats.bulletSize,
   };
+  // Piercing weapons (the R-Type wave laser) opt in with a base budget. Their
+  // effective pass-through grows with the level-resolved `piercing` upgrade,
+  // clamped to the variable's finite spec cap so the budget stays within it
+  // (AH-0MV1BIUSJ0090W92). Weapons without a base budget never gain one.
+  if (base.piercing !== undefined) {
+    leveled.piercing = Math.min(
+      WEAPON_UPGRADE_SPECS.piercing.cap,
+      base.piercing + stats.piercing,
+    );
+  }
+  // Ricochet-style weapons opt in with a base wall-bounce budget. Their
+  // effective budget grows with the level-resolved `bounce` upgrade, clamped
+  // to the variable's finite spec cap so it stays bounded (AH-0MV1BIV5L005NJAI).
+  // Weapons without a base budget never gain one (they keep wrapping).
+  if (base.bounce !== undefined) {
+    leveled.bounce = Math.min(
+      WEAPON_UPGRADE_SPECS.bounce.cap,
+      base.bounce + stats.bounce,
+    );
+  }
+  // Split weapons (the Missile Command cluster missile) opt in with a base
+  // warhead count. Their effective count grows with the level-resolved
+  // `splitCount` upgrade, clamped to that variable's finite spec cap so the
+  // radial spray (and per-frame cost) stays bounded (AH-0MV1BIVIJ007KYXU).
+  // Weapons without a base count never split.
+  if (base.splits !== undefined) {
+    leveled.splits = Math.min(
+      WEAPON_UPGRADE_SPECS.splitCount.cap,
+      base.splits + stats.splitCount,
+    );
+  }
+  // Orbit weapons (the Gradius Options escort) grow their pod count with the
+  // level-resolved `projectileCount` upgrade, clamped to the legibility cap so
+  // the escort cannot fill the arena (AH-0MV1BIVVK0043TEM). Weapons without a
+  // base orbit descriptor never gain pods.
+  if (base.orbit) {
+    leveled.orbit = {
+      ...base.orbit,
+      pods: resolveOptionsPodCount(base.orbit.pods, stats.projectileCount),
+    };
+  }
   // An expanded pattern is an angular fan; the base parallel offsets no
   // longer line up with the new bullet count.
   delete leveled.sideOffsets;

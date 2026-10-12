@@ -3,7 +3,7 @@
  *
  * Covers the two protected seams `GymFormationScene` exposes —
  * `respawnFormation()` and `setPlayerEnabled(enabled)` — and the repo-wide
- * source guard that proves `GymEnemies` consumes them instead of
+ * source guard that proves `GymFodderEnemies` consumes them instead of
  * re-implementing the respawn and reaching into base privates with
  * `as unknown as` casts.
  */
@@ -179,15 +179,15 @@ describe('GymFormationScene — protected seams guard (AC2)', () => {
     expect(definesMethod(base, 'setPlayerEnabled')).toBe(true);
   });
 
-  it('GymEnemies consumes the shared respawn and player-enable seams', () => {
-    const gymEnemies = read('src/scenes/gym/GymEnemies.ts');
+  it('GymFodderEnemies consumes the shared respawn and player-enable seams', () => {
+    const gymEnemies = read('src/scenes/gym/GymFodderEnemies.ts');
     expect(gymEnemies).toContain('this.respawnFormation(');
     expect(gymEnemies).toContain('this.setPlayerEnabled(');
   });
 
   it('the gym subclasses contain no `as unknown as` casts into base privates', () => {
     for (const file of [
-      'src/scenes/gym/GymEnemies.ts',
+      'src/scenes/gym/GymFodderEnemies.ts',
       'src/scenes/gym/GymMinerals.ts',
     ]) {
       const source = read(file);

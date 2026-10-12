@@ -12,15 +12,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEV_BOSS_DEFAULT_HITS,
   DEV_SCENARIO_BOSS,
+  DEV_SCENARIO_DEFEAT,
   clearDevScenarioHandle,
   installDevScenarioHandle,
   resolveDevScenario,
+  resolveDevSeed,
 } from './devScenario';
 
 afterEach(() => {
   vi.unstubAllEnvs();
   clearDevScenarioHandle();
 });
+
+/** Narrows a resolved scenario to its boss hit count, or `undefined`. */
+function bossHits(search: string): number | undefined {
+  const scenario = resolveDevScenario(search);
+  return scenario?.kind === 'boss' ? scenario.bossHitsRemaining : undefined;
+}
 
 describe('resolveDevScenario', () => {
   it('resolves the recorded four-hit boss scenario', () => {
@@ -52,18 +60,18 @@ describe('resolveDevScenario', () => {
   });
 
   it('floors a fractional hit count', () => {
-    expect(resolveDevScenario('?scenario=boss&bossHits=3.9')?.bossHitsRemaining).toBe(3);
+    expect(bossHits('?scenario=boss&bossHits=3.9')).toBe(3);
   });
 
   it('clamps a non-positive hit count to one', () => {
-    expect(resolveDevScenario('?scenario=boss&bossHits=0')?.bossHitsRemaining).toBe(1);
-    expect(resolveDevScenario('?scenario=boss&bossHits=-40')?.bossHitsRemaining).toBe(1);
+    expect(bossHits('?scenario=boss&bossHits=0')).toBe(1);
+    expect(bossHits('?scenario=boss&bossHits=-40')).toBe(1);
   });
 
   it('falls back to the default for a non-numeric hit count', () => {
-    expect(
-      resolveDevScenario('?scenario=boss&bossHits=soon')?.bossHitsRemaining,
-    ).toBe(DEV_BOSS_DEFAULT_HITS);
+    expect(bossHits('?scenario=boss&bossHits=soon')).toBe(
+      DEV_BOSS_DEFAULT_HITS,
+    );
   });
 
   it('is case- and whitespace-insensitive on the scenario name', () => {
@@ -72,6 +80,22 @@ describe('resolveDevScenario', () => {
       bossHitsRemaining: DEV_BOSS_DEFAULT_HITS,
     });
     expect(resolveDevScenario('?scenario=%20boss-four-hits%20')?.kind).toBe('boss');
+  });
+
+  it('resolves the recorded defeat scenario', () => {
+    expect(resolveDevScenario(`?scenario=${DEV_SCENARIO_DEFEAT}`)).toEqual({
+      kind: 'defeat',
+    });
+  });
+
+  it('is case-insensitive on the defeat scenario name', () => {
+    expect(resolveDevScenario('?scenario=DEFEAT')).toEqual({ kind: 'defeat' });
+  });
+
+  it('ignores boss-only tuning on the defeat scenario', () => {
+    expect(resolveDevScenario('?scenario=defeat&bossHits=99')).toEqual({
+      kind: 'defeat',
+    });
   });
 
   it('returns null when no scenario is requested', () => {
@@ -87,6 +111,29 @@ describe('resolveDevScenario', () => {
 
   it('does not confuse a different parameter carrying the same value', () => {
     expect(resolveDevScenario(`?other=${DEV_SCENARIO_BOSS}`)).toBeNull();
+  });
+});
+
+describe('resolveDevSeed', () => {
+  it('resolves a deterministic seed with or without a leading question mark', () => {
+    expect(resolveDevSeed('?seed=12345')).toBe(12345);
+    expect(resolveDevSeed('seed=12345')).toBe(12345);
+  });
+
+  it('returns null when no seed is requested', () => {
+    expect(resolveDevSeed('')).toBeNull();
+    expect(resolveDevSeed('?scenario=boss')).toBeNull();
+  });
+
+  it('returns null for blank or non-numeric values', () => {
+    expect(resolveDevSeed('?seed=')).toBeNull();
+    expect(resolveDevSeed('?seed=abc')).toBeNull();
+  });
+
+  it('normalises to a 32-bit unsigned integer', () => {
+    expect(resolveDevSeed('?seed=-1')).toBe(0xffffffff);
+    expect(resolveDevSeed('?seed=1.9')).toBe(1);
+    expect(resolveDevSeed('?seed=4294967296')).toBe(0);
   });
 });
 

@@ -24,10 +24,10 @@ describe('enemy-configs.csv seed data', () => {
     expect(csv).toMatch(/^# /);
   });
 
-  it('contains exactly 8 enemy rows matching the seed keys', () => {
+  it('contains exactly one enemy row per seed key', () => {
     const csv = readCsvFile('enemy-configs.csv');
     const rows = parseCsvRows(csv);
-    expect(rows.length).toBe(8);
+    expect(rows.length).toBe(DEFAULT_ENEMY_KEYS.length);
     const keys = rows.map((r) => r.key).sort();
     expect(keys).toEqual(DEFAULT_ENEMY_KEYS.slice().sort());
   });
@@ -69,6 +69,25 @@ describe('ship-config.csv seed data', () => {
     expect(coerced.shipSize).toBe(DEFAULT_CONFIG.shipSize);
     expect(coerced.shipColor).toBe(DEFAULT_CONFIG.shipColor);
     expect(coerced.controlScheme).toBe(DEFAULT_CONFIG.controlScheme);
+  });
+
+  it('ship row carries the reverse-thruster columns matching DEFAULT_CONFIG', async () => {
+    const csv = readCsvFile('ship-config.csv');
+    expect(csv).toContain('asteroidsReverseEnabled');
+    expect(csv).toContain('asteroidsReverseThrustAcceleration');
+    expect(csv).toContain('asteroidsReverseMaxSpeed');
+    const rows = parseCsvRows(csv);
+    const m = await import('../core/csv');
+    const coerced = m.coerceShipConfig(rows[0], DEFAULT_CONFIG);
+    expect(coerced.asteroidsReverseEnabled).toBe(
+      DEFAULT_CONFIG.asteroidsReverseEnabled,
+    );
+    expect(coerced.asteroidsReverseThrustAcceleration).toBe(
+      DEFAULT_CONFIG.asteroidsReverseThrustAcceleration,
+    );
+    expect(coerced.asteroidsReverseMaxSpeed).toBe(
+      DEFAULT_CONFIG.asteroidsReverseMaxSpeed,
+    );
   });
 });
 
