@@ -263,7 +263,7 @@ export abstract class CombatScene<
   }
 
   /**
-   * The scene's boss, or null (game: spawned after Level 5; `GymBoss`: its
+   * The scene's boss, or null (game: spawned after the final level; `GymBoss`: its
    * single formation entity). The shared boss hooks below use this accessor
    * so boss advancement and teleport avoidance are defined once for both
    * scenes (AH-0MUII3E5E006A93F, gap 6).

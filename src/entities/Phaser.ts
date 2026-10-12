@@ -1,5 +1,5 @@
 /**
- * Phaser enemy entity (GDD §4.1 — E4 Phaser, Level 5 exclusive).
+ * Phaser enemy entity (GDD §4.1 — E4 Phaser, Level 5 and later).
  *
  * Renders as a circular neon ring (magenta `#ff00ff`) with a central core.
  * Moves in fixed orbital paths around the formation centre. Fires in

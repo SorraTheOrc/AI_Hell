@@ -1,7 +1,7 @@
 /**
  * Playable game scene (GDD §3 — Level structure, §4 — Boss).
  *
- * Owns the playable run: the `WaveManager` drives Level 1–5 progression
+ * Owns the playable run: the `WaveManager` drives Level 1–10 progression
  * and the boss trigger; this scene spawns the wave's enemies in their
  * formations, integrates the player ship (auto-fire, weapons, effects),
  * resolves collisions, applies power-up collection, and advances levels
@@ -479,7 +479,7 @@ export class PlayScene extends CombatScene<
   /** Pluggable policy that selects the offered options. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
 
-  /** The Central AI boss, spawned after Level 5 (null until then). */
+  /** The Central AI boss, spawned after the final level (null until then). */
   private boss: Boss | null = null;
 
   /** Resolved DOM key name that toggles pause (from the bindings). */
@@ -606,7 +606,7 @@ export class PlayScene extends CombatScene<
   private pendingAsteroidSpawns: SpawnEvent[] = [];
 
   /**
-   * Planned Harvester spawns for the active regular wave (Levels 4–5 only),
+   * Planned Harvester spawns for the active regular wave (Levels 4–10 only),
    * computed once per wave by `planHarvesterSpawns()`. Each released spawn is
    * registered with the WaveManager (they gate wave completion — unlike
    * asteroids).
@@ -1059,7 +1059,7 @@ export class PlayScene extends CombatScene<
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
       this._releaseDueAsteroidSpawns();
-      // Release any planned Harvester spawns (Levels 4–5 only) whose time
+      // Release any planned Harvester spawns (Levels 4–10 only) whose time
       // has passed; each is registered with the WaveManager so wave-clear
       // accounting stays correct (F6).
       this._releaseDueHarvesterSpawns();
@@ -1147,7 +1147,7 @@ export class PlayScene extends CombatScene<
     // Plan the random offscreen asteroid spawns for this wave. Empty during
     // the boss encounter (see `planAsteroidSpawns`).
     this.planAsteroidSpawns();
-    // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
+    // Plan the rare Harvester spawns (Levels 4–10 only; empty elsewhere).
     this.planHarvesterSpawns();
     // Plan the Pac-Man ghost-pursuer group for waves that opted in
     // (AH-0MV01EH2U008XT3Q); empty for every other wave.
@@ -1427,7 +1427,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * Plans the rare Harvester spawns for the active regular wave. Only
-   * Levels 4–5 are eligible; Levels 1–3 and the boss encounter produce no
+   * Levels 4–10 are eligible; Levels 1–3 and the boss encounter produce no
    * plan. Called once per wave from `spawnWave()` so the scene rng stream
    * advances only at wave boundaries (F6).
    */
@@ -2067,7 +2067,7 @@ export class PlayScene extends CombatScene<
    * (`WaveManager.levelName` → `LevelDefinition.name`); with static
    * `LEVELS` it is the `LevelDefinition.name` property. When the name is
    * empty the label falls back to a name-free numeric form
-   * (`Level N of 5, Wave M of K`) so no blank label or crash occurs.
+   * (`Level N of 10, Wave M of K`) so no blank label or crash occurs.
    */
   private _progressLabel(): string {
     const wm = this.waveManager;
@@ -3641,7 +3641,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * The persistent level/wave progress readout text, e.g.
-   * `Level 1 of 5, Wave 1 of 2` (or `Boss` during the boss encounter).
+   * `Level 1 of 10, Wave 1 of 2` (or `Boss` during the boss encounter).
    */
   getLevelText(): string {
     return this.levelText?.text ?? '';

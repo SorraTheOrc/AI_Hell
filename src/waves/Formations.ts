@@ -81,7 +81,7 @@ export interface WaveDefinition {
   groups: WaveGroup[];
   /**
    * Whether enemies in this wave fire projectiles. `false` for Levels 1–3
-   * ("enemies are the bullets", GDD §2.4); `true` for Levels 4–5
+   * ("enemies are the bullets", GDD §2.4); `true` for Levels 4–10
    * (GDD §2.5).
    */
   shootEnabled: boolean;
