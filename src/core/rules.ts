@@ -135,18 +135,10 @@ export const DEFAULT_STANDARD_POWER_UP_WEIGHT = 4;
 export const DEFAULT_EXTRA_LIFE_WEIGHT = 3;
 
 /**
- * Default relative weight for the Power Pellet (AH-0MV1BIW95004POSX). Rarer
- * than a standard drop (3 vs 4) because the fright window is a strong
- * defensive tool, without being as rare as Extra Life (which is also 3 but
- * competes with the standard pool at the same weight).
- */
-export const DEFAULT_POWER_PELLET_WEIGHT = 3;
-
-/**
  * Default relative weight for the Smart Bomb (AH-0MV1BIWP9003EHRQ). The
  * rarest defensive pickup (2): its screen-wide once-per-activation pulse is
  * the strongest panic button in the catalogue, so it drops half as often as
- * a standard power-up and rarer than the Power Pellet.
+ * a standard power-up.
  */
 export const DEFAULT_SMART_BOMB_WEIGHT = 2;
 
@@ -171,7 +163,6 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
-  'power_pellet',
   'smart_bomb',
   'force_field',
   'mystery_ufo',
@@ -251,8 +242,6 @@ export function defaultPowerUpWeights(): PowerUpWeights {
   for (const id of POWER_UP_WEIGHT_IDS) {
     if (id === 'extra_life') {
       weights[id] = DEFAULT_EXTRA_LIFE_WEIGHT;
-    } else if (id === 'power_pellet') {
-      weights[id] = DEFAULT_POWER_PELLET_WEIGHT;
     } else if (id === 'smart_bomb') {
       weights[id] = DEFAULT_SMART_BOMB_WEIGHT;
     } else if (id === 'mystery_ufo') {

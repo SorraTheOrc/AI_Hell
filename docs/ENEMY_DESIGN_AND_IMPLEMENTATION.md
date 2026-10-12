@@ -895,8 +895,7 @@ The classic-arcade power-up and weapon roster
 epic AH-0MV14SO0G0095IJ4) follows the same rule: every behaviour it adds runs
 in shared code — the shared piercing-collision, bullet-bounce and
 missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
-`src/scenes/core/optionsEscort.ts` orbit geometry, the pure
-`src/scenes/core/frightenedState.ts` flee policy, the screen-wide
+`src/scenes/core/optionsEscort.ts` orbit geometry, the screen-wide
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
 Force Field seam — so the game and every gym (`GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.

@@ -20,7 +20,6 @@ import {
   type CombatDrop,
   type CombatEnemyBullet,
 } from './CombatCoreScene';
-import { FRIGHTEN_DEFAULT_DURATION } from './frightenedState';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
 // These base tests exercise the fourDirectional input mapping; the app
@@ -133,12 +132,6 @@ class BareCoreScene extends CombatCoreScene {
   }
   runReadInput() {
     return this._readPlayerInput();
-  }
-  runFrightenedFleeOffset(enemy: { x: number; y: number }): {
-    x: number;
-    y: number;
-  } {
-    return this._frightenedFleeOffset(enemy);
   }
   runGetBotInput(): ControlInput | null {
     return this.getBotInput();
@@ -745,127 +738,5 @@ describe('CombatCoreScene — shared base class', () => {
     }
     const scene = new ShortInvulnScene();
     expect(scene.runGetInvulnerabilityDuration()).toBe(0.8);
-  });
-});
-
-describe('CombatCoreScene — captured flee heading (AH-0MV4BXUWT005MWAJ)', () => {
-  const games: BootedGame[] = [];
-
-  afterEach(() => {
-    for (const game of games.splice(0)) game.game.destroy(true);
-  });
-
-  async function bootFlee(): Promise<BareCoreScene> {
-    const booted = await bootScene([BareCoreScene]);
-    games.push(booted);
-    return booted.scene as unknown as BareCoreScene;
-  }
-
-  /** Opens the Power Pellet window with one frame of elapsed time. */
-  function openFright(scene: BareCoreScene): void {
-    scene.effects.applyCollect('power_pellet');
-    scene.effects.tick(1 / 60);
-  }
-
-  it('AC1 — captures the flee heading once and does not rotate it as the ship moves', async () => {
-    const scene = await bootFlee();
-    const player = scene.addPlayer({ x: 0, y: 0 });
-    openFright(scene);
-    const enemy = { x: 100, y: 0 };
-
-    scene.effects.tick(0.5);
-    const before = scene.runFrightenedFleeOffset(enemy);
-    expect(before.x).toBeGreaterThan(0);
-    expect(before.y).toBeCloseTo(0, 6);
-
-    // Move the ship perpendicular to the escape bearing. A radial
-    // implementation would re-aim the offset at the new ship position and
-    // sweep the enemy around; the captured heading must stay put.
-    player.setPosition(0, 500);
-    const after = scene.runFrightenedFleeOffset(enemy);
-    expect(after.x).toBeCloseTo(before.x, 10);
-    expect(after.y).toBeCloseTo(before.y, 10);
-  });
-
-  it('AC1 — enemies retreat in a straight line as the window ages', async () => {
-    const scene = await bootFlee();
-    scene.addPlayer({ x: 0, y: 0 });
-    openFright(scene);
-    const enemy = { x: 50, y: 20 };
-
-    const samples: Array<{ x: number; y: number }> = [];
-    for (let i = 0; i < 5; i++) {
-      scene.effects.tick(0.1);
-      const offset = scene.runFrightenedFleeOffset(enemy);
-      samples.push({ x: offset.x, y: offset.y });
-    }
-
-    // Every sample lies on the same ray (zero cross product) and the
-    // displacement grows monotonically up to the cap.
-    const first = samples[0];
-    let previous = Math.hypot(first.x, first.y);
-    for (const sample of samples) {
-      expect(first.x * sample.y - first.y * sample.x).toBeCloseTo(0, 6);
-      const length = Math.hypot(sample.x, sample.y);
-      expect(length).toBeGreaterThanOrEqual(previous - 1e-9);
-      previous = length;
-    }
-    expect(previous).toBeGreaterThan(0);
-  });
-
-  it('AC4 — a ship teleport leaves the enemy offset (and so its position) unchanged', async () => {
-    const scene = await bootFlee();
-    const player = scene.addPlayer({ x: 0, y: 0 });
-    openFright(scene);
-    const enemy = { x: 100, y: 40 };
-    scene.effects.tick(0.4);
-    const before = scene.runFrightenedFleeOffset(enemy);
-
-    // Teleport without advancing the window: bearing and magnitude must be
-    // untouched, so the enemy does not jump to a new offset.
-    player.setPosition(-2000, 1200);
-    const after = scene.runFrightenedFleeOffset(enemy);
-
-    expect(after.x).toBeCloseTo(before.x, 10);
-    expect(after.y).toBeCloseTo(before.y, 10);
-  });
-
-  it('AC2 — the offset snaps back to zero on expiry and a later pellet re-captures a fresh heading', async () => {
-    const scene = await bootFlee();
-    const player = scene.addPlayer({ x: 0, y: 0 });
-    openFright(scene);
-    const enemy = { x: 100, y: 0 };
-    scene.effects.tick(0.5);
-    const during = scene.runFrightenedFleeOffset(enemy);
-    expect(during.x).toBeGreaterThan(0);
-
-    // Expire the window: the enemy returns exactly to its formation slot.
-    scene.effects.tick(FRIGHTEN_DEFAULT_DURATION);
-    expect(scene.effects.isFrightened()).toBe(false);
-    expect(scene.runFrightenedFleeOffset(enemy)).toEqual({ x: 0, y: 0 });
-
-    // A fresh pellet re-captures a heading from the ship's *new* side.
-    player.setPosition(0, 500);
-    openFright(scene);
-    scene.effects.tick(0.5);
-    const recaptured = scene.runFrightenedFleeOffset(enemy);
-    expect(recaptured.y).toBeLessThan(0);
-  });
-
-  it('AC1 — each enemy keeps its own captured heading', async () => {
-    const scene = await bootFlee();
-    scene.addPlayer({ x: 0, y: 0 });
-    openFright(scene);
-    scene.effects.tick(0.5);
-
-    const right = scene.runFrightenedFleeOffset({ x: 100, y: 0 });
-    const left = scene.runFrightenedFleeOffset({ x: -100, y: 0 });
-
-    expect(right.x).toBeGreaterThan(0);
-    expect(left.x).toBeLessThan(0);
-    expect(Math.hypot(right.x, right.y)).toBeCloseTo(
-      Math.hypot(left.x, left.y),
-      10,
-    );
   });
 });

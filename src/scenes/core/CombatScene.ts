@@ -1106,11 +1106,7 @@ export abstract class CombatScene<
     }
     this.setEnemyBullets(keptEnemy2);
 
-    // 4. Player body vs enemy body — both are hit, except a frightened
-    // enemy (Power Pellet, AH-0MV1BIW95004POSX): ramming it destroys the
-    // enemy and leaves the ship unharmed (the Pac-Man "eat the ghost"
-    // adaptation). Frightened enemies never damage the ship on contact, so
-    // the scan continues in case a non-frightened body also overlaps.
+    // 4. Player body vs enemy body — both are hit.
     if (this.invulnerable <= 0) {
       for (const enemy of this.getEnemyEntities()) {
         if (!enemy.alive) continue;
@@ -1127,10 +1123,6 @@ export abstract class CombatScene<
           )
         ) {
           this.onPlayerRamsEnemy(enemy);
-          if (this.isEnemyFrightened()) {
-            // Destroyed the frightened enemy; the ship takes no damage.
-            continue;
-          }
           this._hitPlayer();
           break;
         }

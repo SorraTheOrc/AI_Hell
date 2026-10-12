@@ -238,7 +238,7 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     booted = null;
   });
 
-  it('spawns drops in P3 → P4 → P6 → P7 → Power Pellet order, one every 12.5 s', async () => {
+  it('spawns drops in the COMBAT_POWER_UP_IDS round-robin order, one every 12.5 s', async () => {
     const scene = await bootCombat();
 
     // First frame: a drop spawns immediately.
@@ -247,7 +247,7 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     expect(drops.length).toBeGreaterThanOrEqual(1);
     expect(drops[0].powerUp.id).toBe('shield'); // first in COMBAT_ORDER
 
-    // Advance through one full cycle (Shield despawn → Bomb spawn → Phase Shift → Teleport → Power Pellet).
+    // Advance through one full cycle (Shield despawn → Bomb spawn → Phase Shift → Teleport → Smart Bomb → Force Field).
     // Each drop has POWER_UP_LIFETIME seconds of life.
     for (let i = 0; i < 750; i++) {
       scene.tick(1 / 60);
@@ -275,15 +275,7 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     }
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
-    // Fifth in cycle: the Pac-Man Power Pellet (AH-0MV1BIW95004POSX).
-    expect(drops[0].powerUp.id).toBe('power_pellet');
-
-    for (let i = 0; i < 750; i++) {
-      scene.tick(1 / 60);
-    }
-    drops = scene.getDrops();
-    expect(drops).toHaveLength(1);
-    // Sixth in cycle: the Defender Smart Bomb (AH-0MV1BIWP9003EHRQ).
+    // Fifth in cycle: the Defender Smart Bomb (AH-0MV1BIWP9003EHRQ).
     expect(drops[0].powerUp.id).toBe('smart_bomb');
 
     for (let i = 0; i < 750; i++) {
@@ -291,41 +283,12 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
     }
     drops = scene.getDrops();
     expect(drops).toHaveLength(1);
-    // Seventh in cycle: the Gradius Force Field (AH-0MV1BIX1W006XF95).
+    // Sixth in cycle: the Gradius Force Field (AH-0MV1BIX1W006XF95).
     expect(drops[0].powerUp.id).toBe('force_field');
   });
 
   it('drops spawn at the configured size (16 px)', () => {
     expect(POWER_UP_DROP_SIZE).toBe(16);
-  });
-});
-
-// ── Power Pellet fright (AH-0MV1BIW95004POSX) ─────────────────────────
-
-describe('GymPowerUpsCombat — Power Pellet fright (AH-0MV1BIW95004POSX)', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
-  it('collecting the Power Pellet opens the fright window and retreats a scout from the ship', async () => {
-    const scene = await bootCombat();
-    const player = scene.getPlayer()!;
-    player.setPosition(480, 270);
-    const scout = scene.getScouts()[0];
-    const startY = scout.y;
-
-    scene.spawnDrop('power_pellet', 480, 270);
-    scene.advanceDrops(0.5); // grow to full size (collectible)
-    scene.tick(1 / 60); // one frame — overlap collection runs
-
-    expect(scene.getEffectsRegistry().isFrightened()).toBe(true);
-    // Advance ~0.5 s so the accumulated shared flee offset is visible. The
-    // scout starts above the ship, so fleeing moves it further up.
-    for (let i = 0; i < 30; i++) scene.tick(1 / 60);
-    expect(scout.y).toBeLessThan(startY);
   });
 });
 
@@ -940,7 +903,6 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'bomb',
       'phase_shift',
       'teleport',
-      'power_pellet',
       'smart_bomb',
       'force_field',
     ]);

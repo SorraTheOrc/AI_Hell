@@ -38,7 +38,6 @@ describe('power-up choice strategy', () => {
         'extra_life',
         'magnet',
         'mineral_scoop',
-        'power_pellet',
         'smart_bomb',
         'force_field',
         'mystery_ufo',
@@ -60,10 +59,6 @@ describe('power-up choice strategy', () => {
 
   it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {
     expect(CHOICE_POOL).toContain('mineral_scoop');
-  });
-
-  it('includes the Power Pellet in the hold-full choice pool (AH-0MV1BIW95004POSX)', () => {
-    expect(CHOICE_POOL).toContain('power_pellet');
   });
 
   it('includes the Smart Bomb in the hold-full choice pool (AH-0MV1BIWP9003EHRQ)', () => {

@@ -48,7 +48,6 @@ export const CHOICE_POOL: readonly DropId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
-  'power_pellet',
   'smart_bomb',
   'force_field',
   'mystery_ufo',

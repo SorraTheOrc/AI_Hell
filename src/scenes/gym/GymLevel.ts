@@ -216,13 +216,12 @@ export function spawnWave(
 export function fireLiveEnemies(
   spawned: readonly LevelSpawn[],
   now: number,
-  suppressed = false,
 ): GymLevelBullet[] {
   const bullets: GymLevelBullet[] = [];
   for (const spawn of spawned) {
     if (!spawn.entity.alive) continue;
     bullets.push(
-      ...fireForEnemy<GymLevelBullet>(spawn.entity, spawn.key, now, suppressed),
+      ...fireForEnemy<GymLevelBullet>(spawn.entity, spawn.key, now),
     );
   }
   return bullets;
@@ -714,7 +713,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
     // Live enemies fire through the shared dispatcher (firing waves only).
     this.enemyBullets.push(
-      ...fireLiveEnemies(this.spawned, this.time.now, this.isEnemyFrightened()),
+      ...fireLiveEnemies(this.spawned, this.time.now),
     );
 
     // Shared input → timers → multipliers → physics → auto-fire step.
