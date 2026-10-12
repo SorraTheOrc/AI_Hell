@@ -2057,7 +2057,28 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['resolveMineralKillDrops', 'src/scenes/core/mineralKillDrops.ts'],
   ['mapControlInput', 'src/utils/movementModel.ts'],
   ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
+  // Live-aim / live-mineral-seek seam (AH-0MV5SDM6G003A0US). The shared
+  // helper is created by the follow-up implementation item
+  // AH-0MV5SDN24006SD2B and consumed by PlayScene, GymFormationScene and
+  // GymLevel in AH-0MV5SDNI2008RWQ2; registering it here means the moment a
+  // scene re-introduces a copy the repo-wide duplicate-body guard fails.
+  ['pushAimTargets', 'src/scenes/core/enemyTargeting.ts'],
+  ['pushSeekTargets', 'src/scenes/core/enemyTargeting.ts'],
 ];
+
+/**
+ * Entries in `EPIC_SHARED_HELPERS` whose canonical module is created by a
+ * later child of the live-aim parity epic (AH-0MV4XFQ0J0082BN6). Their
+ * single-definer assertion is guarded by the expected-failure test below
+ * (red before the helper lands, green after) so the suite stays green while
+ * the test-first guard is red. The adoption item AH-0MV5SDNI2008RWQ2 removes
+ * this set together with the `.fails` wrapper once the helper and its
+ * consumers land.
+ */
+const PENDING_LIVE_AIM_HELPERS: ReadonlySet<string> = new Set([
+  'pushAimTargets',
+  'pushSeekTargets',
+]);
 
 /**
  * Every shared template method the epic introduced or touched, with the one
@@ -2111,12 +2132,32 @@ function relativeProductionDefiners(
 describe('epic parity guard — every shared helper is defined exactly once (AC1)', () => {
   it('defines every shared pure helper exactly once, in its canonical module', () => {
     for (const [helper, expected] of EPIC_SHARED_HELPERS) {
+      // Pending live-aim helpers are asserted by the intended-to-fail guard
+      // below until the shared helper module lands.
+      if (PENDING_LIVE_AIM_HELPERS.has(helper)) continue;
       const definers = relativeProductionDefiners((source) =>
         definesFunction(source, helper),
       );
       expect(definers, helper).toEqual([expected]);
     }
   });
+
+  it.fails(
+    'defines the pending live-aim helpers exactly once, in their canonical module (AH-0MV5SDM6G003A0US red-first)',
+    () => {
+      // Red today: `src/scenes/core/enemyTargeting.ts` does not exist yet.
+      // Green once AH-0MV5SDN24006SD2B lands; the adoption item
+      // AH-0MV5SDNI2008RWQ2 then removes `PENDING_LIVE_AIM_HELPERS` and this
+      // `.fails` wrapper so the hard single-definer test above covers them.
+      for (const [helper, expected] of EPIC_SHARED_HELPERS) {
+        if (!PENDING_LIVE_AIM_HELPERS.has(helper)) continue;
+        const definers = relativeProductionDefiners((source) =>
+          definesFunction(source, helper),
+        );
+        expect(definers, helper).toEqual([expected]);
+      }
+    },
+  );
 
   it('defines every shared template method exactly once, in its canonical core', () => {
     for (const [method, expected] of EPIC_SHARED_METHODS) {
@@ -2619,6 +2660,121 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
     expect(gymTarget.x).toBeCloseTo(playTarget.x, 5);
     expect(gymTarget.y).toBeCloseTo(playTarget.y, 5);
   });
+});
+
+// ── Live-aim source parity guard (AH-0MV5SDM6G003A0US) ──────────────
+
+/**
+ * Source parity guard for the live-aim seam (child AH-0MV5SDM6G003A0US of the
+ * live-aim parity epic AH-0MV4XFQ0J0082BN6).
+ *
+ * The runtime equivalence suite above proves the *current* behaviour; this
+ * guard protects the *seam itself* against future omission: every
+ * player-bearing enemy base scene must push the live player (and the live
+ * mineral field) into its enemies through the single shared helper in
+ * `src/scenes/core/enemyTargeting.ts`. A scene that stops calling the helper
+ * fails the suite instead of silently reverting to the constructor's
+ * bottom-centre stand-in target.
+ *
+ * A scene may opt out only by carrying an explicit documented-divergence
+ * marker with a reason, mirroring the gym-parity convention
+ * (AGENTS.md § Game Architecture Conventions).
+ */
+
+/** Player-bearing enemy base scenes that must consume the shared helper. */
+const LIVE_AIM_SCENES = [
+  'src/scenes/PlayScene.ts',
+  'src/scenes/gym/core/GymFormationScene.ts',
+  'src/scenes/gym/GymLevel.ts',
+] as const;
+
+/** The shared live-aim helper call every player-bearing scene must make. */
+const LIVE_AIM_HELPER_CALL = 'pushAimTargets(';
+
+/** The shared live-mineral-seek helper call every player-bearing scene must make. */
+const LIVE_MINERAL_HELPER_CALL = 'pushSeekTargets(';
+
+/**
+ * Explicit marker a scene may carry to record a legitimate divergence from
+ * the shared live-aim seam. It must be followed by a non-empty reason on the
+ * same line, e.g.
+ * `// @gym-parity-divergence: this gym has no player ship`.
+ */
+const DIVERGENCE_MARKER = '@gym-parity-divergence:';
+
+/** True when `source` pushes the live-aim seam through the shared helper. */
+function pushesAimSeam(source: string): boolean {
+  return source.includes(LIVE_AIM_HELPER_CALL);
+}
+
+/** True when `source` pushes live minerals through the shared helper. */
+function pushesMineralSeekSeam(source: string): boolean {
+  return source.includes(LIVE_MINERAL_HELPER_CALL);
+}
+
+/** True when `source` documents a divergence with a non-empty reason. */
+function documentsDivergence(source: string): boolean {
+  const at = source.indexOf(DIVERGENCE_MARKER);
+  if (at === -1) return false;
+  const reason = source
+    .slice(at + DIVERGENCE_MARKER.length)
+    .split('\n')[0]
+    .trim();
+  return reason.length > 0;
+}
+
+/** True when `source` satisfies the aim-seam requirement (divergence allowed). */
+function satisfiesAimSeam(source: string): boolean {
+  return pushesAimSeam(source) || documentsDivergence(source);
+}
+
+describe('live-aim source parity guard — every player-bearing base scene pushes the seam (AH-0MV5SDM6G003A0US)', () => {
+  it('permits an explicit documented-divergence marker with a reason (AC3)', () => {
+    // An unmarked scene that never calls the helper would be flagged ...
+    expect(satisfiesAimSeam('export class Bare {}')).toBe(false);
+    // ... while a shared-helper call satisfies the guard ...
+    expect(satisfiesAimSeam('pushAimTargets(this.spawned, this.player);')).toBe(
+      true,
+    );
+    // ... and an explicit marker with a reason documents a legitimate divergence.
+    expect(
+      satisfiesAimSeam('// @gym-parity-divergence: this gym has no player ship'),
+    ).toBe(true);
+    // A bare marker with no reason is not a documented divergence.
+    expect(satisfiesAimSeam('// @gym-parity-divergence:')).toBe(false);
+  });
+
+  it.fails(
+    'every player-bearing enemy base scene pushes the shared live-aim seam (AC1/AC2)',
+    () => {
+      // Red today: the helper module and its consumers land in
+      // AH-0MV5SDN24006SD2B / AH-0MV5SDNI2008RWQ2. Green after.
+      const missing = LIVE_AIM_SCENES.filter((file) => {
+        const source = fs.readFileSync(
+          path.resolve(process.cwd(), file),
+          'utf8',
+        );
+        return !satisfiesAimSeam(source);
+      });
+      expect(missing).toEqual([]);
+    },
+  );
+
+  it.fails(
+    'every player-bearing enemy base scene pushes the shared live-mineral-seek seam (AC2)',
+    () => {
+      // Same red-before/green-after contract as the aim guard above; GymLevel
+      // currently pushes an empty array instead of the live mineral field.
+      const missing = LIVE_AIM_SCENES.filter((file) => {
+        const source = fs.readFileSync(
+          path.resolve(process.cwd(), file),
+          'utf8',
+        );
+        return !pushesMineralSeekSeam(source) && !documentsDivergence(source);
+      });
+      expect(missing).toEqual([]);
+    },
+  );
 });
 
 // ── Shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223) ─
