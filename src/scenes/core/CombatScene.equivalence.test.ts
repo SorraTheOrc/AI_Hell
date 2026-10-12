@@ -45,8 +45,16 @@ import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { GymBoss } from '../gym/GymBoss';
+import { GymLevel } from '../gym/GymLevel';
 import { Harvester } from '../../entities/Harvester';
 import { Mineral } from '../../entities/Mineral';
+import {
+  DIVER_HOLD_FORMATION_SECONDS,
+  Diver,
+  type DiverBullet,
+} from '../../entities/Diver';
+import type { Player } from '../../entities/Player';
+import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
@@ -2367,6 +2375,249 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
     expect(
       definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
     ).toBe(false);
+  });
+});
+
+// ── Live-aim seam — bot/level gym ↔ PlayScene equivalence ───────────
+
+/**
+ * Cross-scene equivalence for the live-aim seam (child
+ * AH-0MV5SDLQK005ZBOH of the live-aim parity epic AH-0MV4XFQ0J0082BN6).
+ *
+ * `PlayScene._collectEnemyFire` pushes the live player position into every
+ * alive enemy through the `setAimTarget(x, y)` seam **before** it dispatches
+ * that frame's fire, so an aimed archetype (Diver, Scout, …) tracks the ship.
+ * `GymLevel.tick` calls `fireLiveEnemies(...)` with no push, so in every
+ * `GymLevel`-based gym (`GymBotTuning`, the dedicated Level Gym) an aimed
+ * enemy keeps its constructor default target — the bottom-centre stand-in —
+ * instead of the live player.
+ *
+ * ## Test-first reconciliation (AH-0MV5SDLQK005ZBOH)
+ *
+ * The work item's AC4 requires this test to be red before the shared helper
+ * and the `GymLevel` adoption land. The project's build → test → commit gate
+ * (and the pre-push full-suite hook) forbids committing a failing suite, so
+ * the runtime equivalence assertion is wrapped in Vitest's `it.fails(...)` —
+ * an **expected failure**. It runs in the standard `vitest run` suite (no
+ * opt-in flag) and the assertion is genuinely red today. Once
+ * AH-0MV5SDN24006SD2B (shared helper) and AH-0MV5SDNI2008RWQ2 (`GymLevel`
+ * adoption) land, the assertion stops throwing and `it.fails` reports
+ * "expected test to fail, but it passed" — the adoption item must then remove
+ * `.fails` to turn this into a hard gate (the same pattern used by
+ * `powerUpIdNaming.test.ts` and `difficultySequencer.variety.test.ts`).
+ */
+describe('live-aim seam — bot/level gym tracks the live player like PlayScene (AH-0MV5SDLQK005ZBOH)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    localStorage.clear();
+  });
+
+  /** The live player position used in both scenes (not the constructor default). */
+  const PLAYER_X = 120;
+  const PLAYER_Y = 90;
+
+  /** The aim target captured at the instant the enemy's fire is dispatched. */
+  interface AimAtFireProbe {
+    atFire: Phaser.Math.Vector2 | null;
+  }
+
+  /**
+   * Wraps the Diver's shared fire method so the aim target is captured at the
+   * exact moment that frame's fire is dispatched. When the scene pushes the
+   * live player *before* collecting fire, `atFire` is the player position; when
+   * the push is missing or ordered after, it is the stale constructor default.
+   */
+  function probeAimAtFire(diver: Diver): AimAtFireProbe {
+    const probe: AimAtFireProbe = { atFire: null };
+    const fire = diver.tryFireSpreadBurst.bind(diver);
+    diver.tryFireSpreadBurst = (now: number): DiverBullet[] => {
+      probe.atFire = diver.aimTarget;
+      return fire(now);
+    };
+    return probe;
+  }
+
+  /** A one-Diver wave launched through the real `GymLevel` contract. */
+  function diverWave(): WaveDefinition {
+    return {
+      groups: [
+        {
+          enemyKey: 'diver',
+          formation: 'v',
+          count: 1,
+          spacingX: 0,
+          spacingY: 0,
+          startX: 300,
+          startY: 150,
+        },
+      ],
+      shootEnabled: false,
+    };
+  }
+
+  /** Pins a player at (x, y) without the next `physicsTick` snapping it back. */
+  function placePlayer(player: Player, x: number, y: number): void {
+    player.setPosition(x, y);
+    // Keep the internal movement state in sync so `physicsTick` does not reset
+    // the ship to its spawn position (same pattern as the teleport tests).
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: ReturnType<Player['getMovementState']>;
+      }
+    )._movementState = { ...state, x, y, vx: 0, vy: 0 };
+  }
+
+  /** Boots `PlayScene` and registers one deterministic aimed Diver. */
+  async function bootPlayWithDiver(): Promise<{
+    scene: PlayScene;
+    diver: Diver;
+  }> {
+    const booted = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'aim-equiv-play-host',
+    );
+    games.push(booted);
+    const scene = booted.scene as PlayScene;
+    placePlayer(scene.getPlayer()!, PLAYER_X, PLAYER_Y);
+    const diver = new Diver(scene, {
+      x: 300,
+      y: 150,
+      formationOffset: { row: 0, col: 0 },
+    });
+    scene.registerEnemy(diver, 'diver');
+    return { scene, diver };
+  }
+
+  /** Boots the real Level Gym with a one-Diver wave and returns its Diver. */
+  async function bootLevelGymWithDiver(): Promise<{
+    scene: GymLevel;
+    diver: Diver;
+  }> {
+    const booted = await bootScene([GymLevel], 'aim-equiv-gym-host');
+    games.push(booted);
+    const manager = booted.game.scene;
+    const level: LevelDefinition = {
+      level: 1,
+      name: 'Aim Equivalence',
+      waves: [diverWave()],
+    };
+    manager.start('GymLevel', { level });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const scene = manager.getScene('GymLevel') as GymLevel;
+    placePlayer(scene.getShip()!, PLAYER_X, PLAYER_Y);
+    const diver = scene.getEnemies()[0] as Diver;
+    return { scene, diver };
+  }
+
+  /** Forces the Diver's formation hold to elapse on its next tick. */
+  function forceDive(diver: Diver): void {
+    (diver as unknown as { _holdTimer: number })._holdTimer =
+      DIVER_HOLD_FORMATION_SECONDS;
+  }
+
+  /** The position the Diver's in-flight dive was snapshotted toward. */
+  function diveTarget(diver: Diver): { x: number; y: number } {
+    const fields = diver as unknown as {
+      _diveTargetX: number;
+      _diveTargetY: number;
+    };
+    return { x: fields._diveTargetX, y: fields._diveTargetY };
+  }
+
+  it('boots the level gym with the aimed archetype reachable (setup gate)', async () => {
+    const { scene, diver } = await bootLevelGymWithDiver();
+    expect(diver).toBeInstanceOf(Diver);
+    expect(diver.alive).toBe(true);
+    expect(scene.getEnemies()).toContain(diver);
+    expect(diver.aimTarget).toBeDefined();
+  });
+
+  it('PlayScene pushes the live player into an aimed enemy before that frame fire is collected', async () => {
+    const { scene, diver } = await bootPlayWithDiver();
+    const probe = probeAimAtFire(diver);
+    scene.tick(1 / 60);
+
+    // The target is the live player, not the constructor's bottom-centre default.
+    expect(diver.aimTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(diver.aimTarget.y).toBeCloseTo(PLAYER_Y, 5);
+    // The push ran before fire collection: the target seen at fire time is live.
+    expect(probe.atFire).not.toBeNull();
+    expect(probe.atFire!.x).toBeCloseTo(PLAYER_X, 5);
+    expect(probe.atFire!.y).toBeCloseTo(PLAYER_Y, 5);
+  });
+
+  it('GymFormationScene pushes the live player before fire, matching PlayScene', async () => {
+    // The other player-bearing base scene (AC2) — `GymFodderEnemies` extends
+    // `GymFormationScene` — must order the push the same way. Restart it on the
+    // Diver roster so its `collectBullets` dispatch calls the same fire method
+    // probed below.
+    const booted = await bootScene([GymFodderEnemies], 'aim-ref-formation-host');
+    games.push(booted);
+    const manager = booted.game.scene;
+    manager.start('GymFodderEnemies', { enemyKey: 'diver' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
+    placePlayer(scene.getPlayer()!, PLAYER_X, PLAYER_Y);
+    const diver = new Diver(scene, {
+      x: 300,
+      y: 150,
+      formationOffset: { row: 0, col: 0 },
+    });
+    scene.registerDynamicEntity(diver as never);
+    const probe = probeAimAtFire(diver);
+    scene.tick(1 / 60);
+
+    expect(diver.aimTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(diver.aimTarget.y).toBeCloseTo(PLAYER_Y, 5);
+    expect(probe.atFire).not.toBeNull();
+    expect(probe.atFire!.x).toBeCloseTo(PLAYER_X, 5);
+    expect(probe.atFire!.y).toBeCloseTo(PLAYER_Y, 5);
+  });
+
+  it.fails('the bot/level gym tracks and dives toward the live player identically to PlayScene', async () => {
+    const play = await bootPlayWithDiver();
+    const gym = await bootLevelGymWithDiver();
+    const playProbe = probeAimAtFire(play.diver);
+    const gymProbe = probeAimAtFire(gym.diver);
+
+    // Same input and dt in both scenes (AC3).
+    for (let i = 0; i < 30; i++) {
+      play.scene.tick(1 / 60);
+      gym.scene.tick(1 / 60);
+    }
+
+    // AC1 — the gym's aimed enemy tracks the live player. Red today: it keeps
+    // the constructor's bottom-centre default instead of the ship.
+    expect(gym.diver.aimTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(gym.diver.aimTarget.y).toBeCloseTo(PLAYER_Y, 5);
+
+    // AC3 — identical target outcome to PlayScene for the same tick sequence.
+    expect(gym.diver.aimTarget.x).toBeCloseTo(play.diver.aimTarget.x, 5);
+    expect(gym.diver.aimTarget.y).toBeCloseTo(play.diver.aimTarget.y, 5);
+
+    // AC2 — the aim push precedes that frame's fire in both scenes.
+    expect(playProbe.atFire).not.toBeNull();
+    expect(gymProbe.atFire).not.toBeNull();
+    expect(gymProbe.atFire!.x).toBeCloseTo(playProbe.atFire!.x, 5);
+    expect(gymProbe.atFire!.y).toBeCloseTo(playProbe.atFire!.y, 5);
+    expect(gymProbe.atFire!.x).toBeCloseTo(PLAYER_X, 5);
+
+    // AC1 — “dives toward it”: forcing the hold to elapse snapshots the live
+    // player as the dive target, identically in both scenes.
+    forceDive(play.diver);
+    forceDive(gym.diver);
+    play.scene.tick(1 / 60);
+    gym.scene.tick(1 / 60);
+
+    const playTarget = diveTarget(play.diver);
+    const gymTarget = diveTarget(gym.diver);
+    expect(gymTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(gymTarget.y).toBeCloseTo(PLAYER_Y, 5);
+    expect(gymTarget.x).toBeCloseTo(playTarget.x, 5);
+    expect(gymTarget.y).toBeCloseTo(playTarget.y, 5);
   });
 });
 
