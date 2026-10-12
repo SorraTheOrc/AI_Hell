@@ -11,7 +11,7 @@
 | **Working Title** | AI_Hell |
 | **Genre** | 2D top-down bullet hell |
 | **Inspirations** | Galaxians, classic arcade shoot-'em-ups |
-| **One-Sentence Pitch** | Pilot a ship through an AI-generated hellscape of formation waves and bullet patterns, surviving 5 levels of increasingly lethal encounters before facing the final boss. |
+| **One-Sentence Pitch** | Pilot a ship through an AI-generated hellscape of formation waves and bullet patterns, surviving 10 levels of increasingly lethal encounters before facing the final boss. |
 | **Target Audience** | Technical users following an AI-framework tutorial; players who enjoy pattern-based bullet hell games |
 | **Visual Aesthetic** | Neon vector, Tron-inspired — dark background with glowing neon outlines, minimal fill, crisp geometric shapes |
 | **Fictional Context** | The player pilots a resistance ship through a digital underworld ruled by rogue/berserk AI constructs. Enemies are literal AI manifestations — waves of code given form. |
@@ -264,10 +264,11 @@ In the first levels, enemies move in coordinated formation patterns across the s
 
 This creates a unique gameplay tension: the player must manage both their own ship's position relative to the formations and their auto-fire trajectory against enemies.
 
-### 2.5 Enemy-Fired Projectiles (Levels 4–5 and Boss)
+### 2.5 Enemy-Fired Projectiles (Levels 4–10 and Boss)
 
 - Starting in **Level 4**, enemies begin firing bullets in recognizable patterns.
-- **Level 5 (the final pre-boss level)**: Contains a **smaller number of enemies** than earlier levels, but these enemies fire bullets in **predictable, repeating patterns**. This level tests the player's ability to learn and memorize patterns before the boss encounter.
+- **Level 5 (Predictable Death)**: Contains a **smaller number of enemies** than earlier levels, but these enemies fire bullets in **predictable, repeating patterns**. This level tests the player's ability to learn and memorize patterns.
+- **Levels 6–10** showcase the classic-arcade roster — the Space-Invaders `march`, the Galaga `capturer`, the Pac-Man `ghosts`, the Centipede chain, the Robotron `grunt` horde, the Defender `raider`, the Missile-Command `orbital-strike` and the Frogger `lane-traffic` — interleaved with the existing archetypes. Every wave that fields a player-targeting archetype (`capturer`, `ghost-*`, `grunt`, `raider`) also fields at least one non-player-targeting kind, and adjacent levels differ in their dominant movement/attack style (see §3.2 and `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9.4).
 - Bullet patterns include radial bursts, sweeping arcs, and aimed shots.
 - The predictability of patterns is intentional — players should be able to learn and exploit them through practice.
 
@@ -345,8 +346,8 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Element | Value | Notes |
 |---------|-------|-------|
-| **Levels** | 5 | Levels 1–3: enemies-as-bullets formations; Level 4: enemies fire bullets; Level 5: fewer enemies, predictable bullet patterns |
-| **Boss encounters** | 1 | Final boss after Level 5 |
+| **Levels** | 10 | Levels 1–3: enemies-as-bullets formations; Levels 4–5: enemies fire bullets (Level 5 predictable patterns); Levels 6–10: the classic-arcade roster in curated, mixed encounters |
+| **Boss encounters** | 1 | Final boss after Level 10 |
 | **Lives** | 3 (up to 5 with Extra Life) | Per-run; no continue mechanic. Extra Life grants +1 life, capped at 5. |
 | **Power-up types** | ≥ 9 | Distinct types (see §4.4) |
 | **Leaderboard** | Local storage | localStorage-based, single-machine |
@@ -361,7 +362,12 @@ The following rules govern how enemy entities interact with each other and with 
 | 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
 | 3 | The Core | Large | No | Dense formations; maximum positional threat |
 | 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
-| 5 | Predictable Death | Smaller | Yes (predictable) | Fewer enemies with highly structured, memorizable bullet patterns — final test before boss |
+| 5 | Predictable Death | Smaller | Yes (predictable) | Fewer enemies with highly structured, memorizable bullet patterns — the memorisation test before the classic-arcade finale |
+| 6 | Invasion | Large | Yes | The classic-arcade debut: stepping Space-Invaders `march` formations plus the Galaga `capturer` tractor pull |
+| 7 | Segmented Assault | Large | Yes | The winding Centipede `centipede` chain plus Pac-Man `ghosts` pursuing the live player |
+| 8 | Gridlock | Large | Yes | Frogger `laneTraffic` lanes, the Robotron `horde` rush and the Defender `raider` patrol-and-dive |
+| 9 | Orbital Siege | Large | Yes | Missile-Command telegraphed `orbital-strike` arcs among orbital Phasers with pursuing `ghosts` |
+| 10 | The Gauntlet | Large | Yes (full mix) | Dense mixed finale pairing every player-targeter with non-targeting archetypes before the boss |
 | Boss | AI Throne | N/A | Yes (complex) | Final boss encounter with multi-phase attack patterns |
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
@@ -376,14 +382,16 @@ The following rules govern how enemy entities interact with each other and with 
 > shipped default campaign mixes all three modes: the first four campaign waves
 > (L1W1, L1W2, L2W1, L2W2) are `dynamic` and open on a curated, varied,
 > non-firing mix; the remaining levels 1–3 waves are `fixed`; levels 4–5 are
-> `curve` with a final `dynamic` wave (AH-0MUOCJM0N000RW2B). A **per-level
+> `curve` with a final `dynamic` wave (AH-0MUOCJM0N000RW2B); levels 6–10 mix
+> hand-authored `fixed` showcase waves (each new archetype debuts on a fixed
+> wave so its showcase is guaranteed for a run seed) with `curve` tail waves. A **per-level
 > archetype variety cap** (`MAX_ARCHETYPE_PER_LEVEL`, default **1** in
 > `src/core/difficultySequencer.ts`) keeps any single archetype — in particular
 > the orbital Phaser — to at most one wave per level, so the generated campaign
 > escalates through varied movement styles instead of repeating one formation
 > once the target passes ~30 (AH-0MV2SGIX5005PFJT); authored `fixed` waves and
 > the gyms are not constrained. The static skeleton
-> (levels 1–5) is always present; the static campaign is the fallback, and the
+> (levels 1–10) is always present; the static campaign is the fallback, and the
 > boss still triggers after the final level.
 
 > **Level-name progress label (AH-0MUMMBRCC0093MGV).** The shared
@@ -396,7 +404,7 @@ The following rules govern how enemy entities interact with each other and with 
 > `LevelDefinition.name` in the static `LEVELS` when the
 > `sequencedWavesEnabled` rule is off. The name is shown on **every** wave of
 > the level, not just the first, and the label falls back to the name-free
-> numeric form (`Level N of 5, Wave M of K`) when a level has no name. The
+> numeric form (`Level N of 10, Wave M of K`) when a level has no name. The
 > boss encounter keeps its literal `Boss` label. Both surfaces read the single
 > `PlayScene._progressLabel()` helper so they cannot diverge.
 
@@ -427,7 +435,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Threat level**: Medium–High (acts as an immovable obstacle in formations).
 - **Fires**: No (Levels 1–3); yes, radial burst (Level 4+).
 
-#### E4 — Phaser (Level 5 exclusive)
+#### E4 — Phaser (Level 5+)
 - **Behavior**: Moves slowly in a fixed orbital path; fires in predictable, repeating cycles.
 - **Appearance**: Circular neon ring with a central core.
 - **Health**: 1 HP — destroyed by a single player bullet.
@@ -553,7 +561,7 @@ on entry (AH-0MUJM746P000QAEO).
 | **Circle** | Enemies form a rotating circle, occasionally breaking out | 2, 3 |
 | **Wall** | Dense horizontal line of enemies that advances slowly; a density challenge — each enemy consumes one bullet (see §2.6) | 3 |
 | **Dive Bomb** | Enemies alternate between formation flight and diving toward the player | 3, 4 |
-| **Orbital** | Enemies in fixed orbital paths around a central point (Level 5) | 5 |
+| **Orbital** | Enemies in fixed orbital paths around a central point (Level 5+) | 5, 7, 8, 9, 10 |
 | **Boss Phases** | The boss cycles through 3–4 distinct attack patterns | Boss |
 
 > **Asteroids are not a wave structure.** Since the random offscreen spawner
@@ -1444,8 +1452,8 @@ Key events are announced by an **advance audio cue** with a minimum 500 ms lead 
 
 - **Boss entrance** — Low rumble before boss appears
 - **Boss phase transitions** — Rising tone before new attack pattern
-- **Level 4–5 enemy fire** — Short warning tone before bullets fire
-- **Level 5 Phaser firing cycles** — Ascending beep before each cycle (see §4.1)
+- **Levels 4–10 enemy fire** — Short warning tone before bullets fire
+- **Level 5+ Phaser firing cycles** — Ascending beep before each cycle (see §4.1)
 - **Wave spawns** — Subtle chime before enemies appear
 - **Power-up spawns** — Brief chime before power-up appears
 
@@ -1507,8 +1515,8 @@ not selected" section.
 All clarifying questions and their answers from the intake process are captured in the parent work item (AH-0MT7O8KCY0059RA5). This GDD incorporates the following key decisions:
 
 1. **Full 2D movement** — Not lane-based. The player has free movement in all directions.
-2. **5 levels** — Expanded from the initial 3; Levels 1–3 are formation-based, Level 4 adds enemy fire, Level 5 has fewer enemies with predictable bullet patterns.
-3. **Pre-boss wave** — Level 5 is explicitly an enemy-fired-projectile level with fewer enemies and predictable patterns.
+2. **10 levels** — Expanded from the initial 3; Levels 1–3 are formation-based, Levels 4–10 add enemy fire, and Levels 6–10 interleave the classic-arcade roster (Level 5 remains the sparse, predictable-pattern level).
+3. **Pre-boss wave** — Level 5 is explicitly an enemy-fired-projectile level with fewer enemies and predictable patterns; it is no longer the final level — Levels 6–10 showcase the classic-arcade roster before the boss.
 4. **Engine selected** — Phaser (TypeScript/HTML5) is the locked engine choice. The engine policy bans UI-heavy engines (Godot/Unity); Phaser satisfies the code-first constraint.
 5. **Living document** — The GDD is not rigid; it may be edited during development with worklog-tracked changes.
 6. **Local leaderboard** — Simple `localStorage` for the MVP; no backend required.
@@ -1530,7 +1538,7 @@ All clarifying questions and their answers from the intake process are captured 
 | **AC1** — Document exists at `docs/Game Design Document.md` | ✅ | This document |
 | **AC2** — Game identity section (title, genre, pitch, audience, aesthetic) | ✅ | §1 |
 | **AC3** — Core gameplay loop (formation waves, 2D movement, auto-fire, power-up, pre-boss wave) | ✅ | §2 |
-| **AC4** — MVP content (5 levels, 1 boss, 3 lives, 9+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
+| **AC4** — MVP content (10 levels, 1 boss, 3 lives, 9+ power-ups, local leaderboard, no difficulty scaling) | ✅ | §3 |
 | **AC5** — Content catalogs (enemies, waves, boss, power-ups, scoring, progression) | ✅ | §4 |
 | **AC6** — Technical architecture (selected engine, module breakdown, data model, save design, risks) | ✅ | §6 |
 

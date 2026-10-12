@@ -1492,7 +1492,10 @@ campaign ordering, and a regression test pins the intended progression.
   `shotPattern === 'none'` independence, health factor (monotonicity and
   non-firing independence), Asteroid split chain, wave mix).
 - **Calibration test:** `src/waves/enemyDifficulty.campaign.test.ts` (pins the
-  non-decreasing ordering of the five built-in `LEVELS`).
+  non-decreasing ten-level configured curve and the real `LEVELS`), plus
+  `src/waves/campaignInvariants.test.ts` (style variety, difficulty continuity,
+  authoring mix) and `src/waves/campaignRoster.test.ts` (roster coverage and
+  player-targeter pairing).
 
 ### 9.1 The three functions
 
@@ -1565,16 +1568,28 @@ archetype or wave whose firing is suppressed.
 ### 9.4 Recomputed campaign table (GDD §3.2)
 
 Scores computed from the real `LEVELS` in `src/waves/Formations.ts`. The
-ordering is **non-decreasing** and enforced by
-`src/waves/enemyDifficulty.campaign.test.ts` (AC4):
+campaign is **ten levels**: Levels 1–3 are the no-fire onboarding section,
+Levels 4–5 introduce enemy fire, and Levels 6–10 interleave the classic-arcade
+roster as hand-authored showcase waves. The **configured target curve**
+(`defaultDifficultyCurves()`) is non-decreasing across all ten levels and is
+enforced by `src/waves/enemyDifficulty.campaign.test.ts` and
+`src/waves/campaignInvariants.test.ts`. The **computed** `levelDifficulty` mean
+below is a composition property, not the calibrated guarantee: a `fixed`
+showcase wave can deliberately feature a weaker archetype, so the computed means
+are not strictly monotonic across Levels 6–10.
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
 | 1 | Entry | 6.01 |
 | 2 | Descent | 10.95 |
 | 3 | The Core | 12.30 |
-| 4 | Firestorm | 21.57 |
-| 5 | Predictable Death | 29.26 |
+| 4 | Firestorm | 20.87 |
+| 5 | Predictable Death | 28.56 |
+| 6 | Invasion | 19.36 |
+| 7 | Segmented Assault | 22.43 |
+| 8 | Gridlock | 19.80 |
+| 9 | Orbital Siege | 23.15 |
+| 10 | The Gauntlet | 22.12 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
 fires): Scout 13.57, Diver 21.46, Tank 27.08, Phaser 29.20, Swarm 18.87,
@@ -1587,6 +1602,44 @@ Asteroid's split-chain contribution).
 > and *monotonicity*, not the magic numbers. Any weight change must be
 > re-checked against both the per-axis monotonicity tests and the campaign
 > calibration test.
+
+#### Campaign structure and design rules (10 levels)
+
+The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2) interleaves the
+classic-arcade roster with the existing archetypes:
+
+| Level | Theme | Featured showcase |
+|-------|-------|-------------------|
+| 1 | Entry | V-formation drift (no fire) |
+| 2 | Descent | Diver/swarm drift (no fire) |
+| 3 | The Core | Rect + V pairs (no fire) |
+| 4 | Firestorm | First enemy fire (aimed/spread/radial) |
+| 5 | Predictable Death | Fixed orbital Phasers (memorisable radial) |
+| 6 | Invasion | Space-Invaders `march` + Galaga `capturer` tractor pull |
+| 7 | Segmented Assault | Centipede `centipede` chain + Pac-Man `ghosts` pursuit |
+| 8 | Gridlock | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
+| 9 | Orbital Siege | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
+| 10 | The Gauntlet | Dense mixed finale of the remaining roster |
+
+Three design rules are enforced by tests:
+
+1. **Roster coverage** — every classic-arcade archetype appears at least once
+   across the merged campaign (`src/waves/campaignRoster.test.ts`). `march`,
+   `capturer` and `raider` ship as wave groups; `ghosts`, `centipede`, `horde`
+   and `laneTraffic` are spawner-delivered via per-wave opt-in flags;
+   `orbital-strike` is the campaign-wide telegraphed hazard armed by the strike
+   planner from global wave index 3.
+2. **Player-targeter pairing** — every wave that fields a player-targeting
+   archetype (`capturer`, `ghost-*`, `grunt`, `raider`) also fields at least one
+   non-player-targeting kind, so a targeter is never the sole threat in a wave
+   (`src/waves/campaignRoster.test.ts`).
+3. **Style variety** — adjacent levels differ in their dominant movement/attack
+   style, and the configured target curve is non-decreasing
+   (`src/waves/campaignInvariants.test.ts`).
+
+Levels 1–3 stay `shootEnabled: false` (GDD §2.4); Levels 4–10 fire (GDD §2.5).
+Each featured archetype debuts on a hand-authored `fixed` wave so its showcase
+is guaranteed for a given run seed; the remaining waves are generated (`curve`).
 
 ### 9.5 Where it surfaces
 

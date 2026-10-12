@@ -353,12 +353,12 @@ wl create -t "Gym index scene" -d "Create an index scene for the Gym Scenes. Thi
 
 #### The Playable Game (primary entry point)
 
-The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): five progressively harder levels (Levels 1–3 are formation-only, Level 4 introduces enemy fire, Level 5 is fewer enemies with predictable patterns) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. The menu also offers **👁 Watch Demo**, which starts the game's own **attract/demo mode** — the survival-first bot plays a run — and after 15 s of menu inactivity the demo starts on its own. On game over the **GameOverScene** shows the final score, accepts 3-letter initials when the score qualifies, renders the full ranked leaderboard with a live highlighted **prospective row** showing where the score will land, and persists to `localStorage` under `ai_hell_leaderboard` (see [Leaderboard](#leaderboard)); **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
+The game boots into the **main menu** (`src/scenes/MenuScene.ts`, key `MenuScene`) — the first scene registered in `src/core/gameConfig.ts`. From the menu, **▶ Play Game** starts a full playthrough (`PlayScene`): ten progressively harder levels (Levels 1–3 are formation-only; Levels 4–5 introduce enemy fire, with Level 5 the sparse predictable-pattern level; Levels 6–10 showcase the classic-arcade roster in curated, mixed encounters) followed by the **Central AI boss** (4-phase health bar, minions per phase), with lives (3, up to 5 via Extra Life), a running score (GDD §4.5), power-up drops, and the shared HUD. The menu also offers **👁 Watch Demo**, which starts the game's own **attract/demo mode** — the survival-first bot plays a run — and after 15 s of menu inactivity the demo starts on its own. On game over the **GameOverScene** shows the final score, accepts 3-letter initials when the score qualifies, renders the full ranked leaderboard with a live highlighted **prospective row** showing where the score will land, and persists to `localStorage` under `ai_hell_leaderboard` (see [Leaderboard](#leaderboard)); **Return to Menu** loops back to the menu (`MenuScene → PlayScene → GameOverScene → MenuScene`).
 
 Flow / scene keys:
 
 - `MenuScene` — boot scene; **Play Game** → `PlayScene`, **👁 Watch Demo** → `PlayScene` in **demo mode** (the bot plays), **Settings** → `SettingsScene` (origin `MenuScene`), **Leaderboard** → `LeaderboardScene` (full ranked table), **Gym Scene Index (dev)** → `GymIndex` (relocated to the bottom-right). **Play Game** is focused by default; **Tab**/arrow keys cycle focus, **Enter**/**Space** activate. A 15 s idle-attract timer (reset by any input) also starts the demo.
-- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the five level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score. Gameplay is fully keyboard-driven (WASD/arrows move, **S**/**↓** drops a layer, auto-fire is continuous) — no mouse is required.
+- `PlayScene` — run owner: `WaveManager` (`src/waves/WaveManager.ts`) drives level/wave progression, `Formations.ts` holds the ten level definitions (GDD §3.2), `BossMinions.ts` the boss phase minions; `GameState` (`src/core/GameState.ts`) tracks lives/score/level; on win/lose it starts `GameOverScene` with the final score. Gameplay is fully keyboard-driven (WASD/arrows move, **S**/**↓** drops a layer, auto-fire is continuous) — no mouse is required.
 
 > **Attract / demo mode (AH-0MUX2NENC008AHOQ)** — the game ships an opt-in **attract/demo mode**: the menu's **👁 Watch Demo** control (or 15 s of menu inactivity — `ATTRACT_IDLE_TIMEOUT_MS` in `src/scenes/MenuScene.ts`) starts `PlayScene` with `{ demo: true }`. The survival-first bot in `src/ai/` (`buildBotSnapshot` → `decideBotIntent`) then steers the ship through the **same shared `CombatCoreScene._tickPlayer` input path** as a human using a **utility/willingness model**: **survive** → **clear the wave** (destroy the live enemies before the wave timer carries survivors over) → **opportunistic diversions** to a mineral **cluster** or an upgrade that earns the detour (a lone scattered mineral never does; willingness falls off with distance; upgrades are a little more diverting) → **shoot asteroids**. Best-effort fire-pattern avoidance bounds every choice. The demo drives the ship's **own** control scheme (the shipped default is the **asteroids** controls): the bot's steering intent carries the **precise bearing to its chosen target**, so the governor aims the hull straight at it (`toAsteroidsInput`) and thrusts **forward** with **W**, turning with **A/Left** and **D/Right** — it never uses a reverse/S key and its committed input changes no faster than a human reaction cadence (`BotInputGovernor` / `BOT_HUMAN_INPUT_TUNABLES` in `src/ai/botHumanLike.ts`, ~250 ms). The held intent is re-resolved against the ship's **current** facing every tick. The bot also plans its own **stopping distance** (a forward model of its momentum): when continuing to thrust would carry it past the target it coasts to a controlled stop instead, so it no longer overshoots collection targets or the engagement standoff (AC10). Each forward-thrust press is held for a human-like burst — **200–225 ms**, extended to **400 ms** on a long-travel leg, drawn per press from the run seed, then gently shortened by a per-press random **1–5 %** (`thrustPressGentleMinPct`/`thrustPressGentleMaxPct`, AH-0MUYRJQE50021T4A) — so the braking reflex cannot flip the key every tick (AC15/AC16). The governor also flies the ship's **real rotation physics**: it holds a turn until the hull's **predicted stop heading** reaches the target bearing (braking with the opposite turn when the coast would overshoot) instead of releasing on the instantaneous error, and it **leads** a moving target by aiming at the iterated intercept (AH-0MV1DUSM2005HL98). A single `skill` slider (default 1.0) adds a seeded, bounded aim error as it is lowered for a more fallible demo pilot, without ever degrading collision avoidance; the `skill`/lead knobs are tunable live in the Bot Tuning gym. When the mineral hold fills, the choice overlay auto-selects a power-up after a short delay (`BOT_MINERAL_CHOICE_DELAY_MS`) so the demo never stalls. Pressing a **movement key** (W/A/S/D per the configured bindings, or an arrow key) **takes over** in place (`setDemoMode(false)`) with no restart; **ESC** leaves the demo and returns to the main menu, and every other key and the pointer are ignored so a stray press cannot drop an unattended attract loop into human control. A demo run is **non-scoring** — on death or victory it shows the shared `GameOverScene` in **demo mode** (VICTORY/DEFEAT + final score, no leaderboard qualification or initials) and holds it for `DEMO_GAME_OVER_DWELL_MS` (single-source, **>= the capture tail**) before returning to the menu, writing no leaderboard or session state (AH-0MUXZ4CAE008QRFZ); the dwell is what lets a full-run capture's tail show the outcome. Demo mode is **opt-in and `PlayScene`-only**: the bot never runs in a normal session, and the gyms inherit the default `getBotInput() === null`, so gym↔game parity is preserved (the shared input seam in `CombatCoreScene` is exercised by both). **Start-data contract (AH-0MUY4881P007FJ8R):** Phaser reuses the `PlayScene` instance and only rewrites `settings.data` for a truthy payload, so every normal Play Game start passes an explicit `{ demo: false }` (a no-argument start would reuse the prior `{ demo: true }` and leave the bot in control); `PlayScene.init()` treats absent/`undefined`/non-`true` data as non-demo. Tunables live in one place (`BOT_DECISION_TUNABLES` in `src/ai/botDecision.ts`); the read-only snapshot contract is documented in `src/ai/botSnapshot.ts`, and the bot framework core (world model, goal/behaviour registry, committed policy) in [docs/BOT_FRAMEWORK.md](docs/BOT_FRAMEWORK.md).
 
@@ -460,7 +460,7 @@ load, which makes assertions taken right after boot flaky.
   `setTimeout` that can be missed under full-suite parallel load
   (AH-0MUYALJ9S0002XXZ).
 - **Isolate deterministic suites from the random asteroid spawner.** The
-  offscreen asteroid (and Level 4–5 Harvester) spawner plans its releases from
+  offscreen asteroid (and Levels 4–10 Harvester) spawner plans its releases from
   `Math.random()` and releases them by elapsed wave time, so a `scene.tick(dt)`
   mid-test can add an entity to `getEnemies()` and desync a `before`/`after`
   snapshot. Suites that snapshot the entity list opt out after boot with the
@@ -660,9 +660,20 @@ instead.
 - **Fire rule:** `curve`/`dynamic` levels 1–3 do not fire; levels 4+ do
   (GDD §2.4/§2.5); `fixed` waves keep `LEVELS`' own per-wave `shootEnabled`
   flags.
+- **Ten-level showcase campaign:** the shipped default curve defines ten
+  levels. Levels 1–3 stay the no-fire onboarding section; Level 4 introduces
+  fire and Level 5 is the sparse predictable-pattern level; Levels 6–10 debut
+  the classic-arcade roster, each archetype appearing first on a hand-authored
+  `fixed` showcase wave so it is guaranteed for a given run seed. The campaign
+  invariant tests pin the design rules: every classic archetype appears at
+  least once (`src/waves/campaignRoster.test.ts`), every wave that fields a
+  player-targeting archetype (`capturer`, `ghost-*`, `grunt`, `raider`) also
+  fields a non-player-targeting kind (same file), and adjacent levels differ in
+  their dominant movement/attack style with a non-decreasing target curve
+  (`src/waves/campaignInvariants.test.ts`).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
-  skeleton, so levels 1–5 are always present. A configured level overrides its
-  static counterpart (and a configured level numbered beyond the static five is
+  skeleton, so levels 1–10 are always present. A configured level overrides its
+  static counterpart (and a configured level numbered beyond the static ten is
   appended, ascending); an all-`fixed` level whose row count matches the static
   level is taken byte-for-byte from `LEVELS`. This lets a designer hand-tune
   onboarding and set-piece waves while the sequencer ramps the rest
@@ -670,7 +681,7 @@ instead.
 - **Fallback:** per level — a level with an empty/malformed curve (or a
   sequencer error) keeps its static `LEVELS` definition when one exists and is
   skipped otherwise; a `fixed` wave with no static counterpart (a level beyond
-  the static five, or an out-of-range wave index) falls back to `curve`
+  the static ten, or an out-of-range wave index) falls back to `curve`
   generation for that wave. The whole campaign falls back to static `LEVELS`
   only when the curve config or candidate pool is empty, or the result would be
   empty. With the toggle off, static `LEVELS` is used unchanged. See
@@ -693,8 +704,9 @@ Full schema/architecture docs: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.
 **Difficulty scoring:** `src/core/enemyDifficulty.ts` computes an absolute,
 deterministic 0–100 difficulty index for an enemy archetype (`enemyDifficulty`),
 a wave (`waveDifficulty`) and a level (`levelDifficulty`), with a per-factor
-breakdown. The five built-in levels' non-decreasing difficulty ordering is
-pinned by `src/waves/enemyDifficulty.campaign.test.ts`. Model, weights, ranges
+breakdown. The ten-level configured difficulty curve's non-decreasing ordering
+is pinned by `src/waves/enemyDifficulty.campaign.test.ts` and
+`src/waves/campaignInvariants.test.ts`. Model, weights, ranges
 and the recomputed campaign table: `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §9.
 
 #### Explosion VFX (particle bursts)
