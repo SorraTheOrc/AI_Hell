@@ -2553,7 +2553,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   it('P4 blast does not damage enemies (bullets cleared only)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    const aliveBefore = scene.getAliveCount();
+    // Capture the enemies that must survive the blast. The default campaign
+    // is sequenced from a fresh per-run seed and the asteroid spawner can
+    // release a scheduled offscreen asteroid during the blast ticks, so the
+    // raw live count is not a stable probe; assert on the enemies present
+    // before the blast instead.
+    const enemiesBefore = scene.getEnemies().filter((e) => e.alive);
+    expect(enemiesBefore.length).toBeGreaterThan(0);
 
     // Collect a Bomb bomb.
     const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
@@ -2563,7 +2569,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.016);
 
     // No enemies harmed by the bomb.
-    expect(scene.getAliveCount()).toBe(aliveBefore);
+    expect(enemiesBefore.every((enemy) => enemy.alive)).toBe(true);
   });
 
   // ── Per-weapon fire audio (AH-0MU8QVQQV006T0KI) ──────────────────
