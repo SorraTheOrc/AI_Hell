@@ -30,6 +30,31 @@ import {
   resetBotTuningStore,
 } from '../../core/botTuningStore';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
+import { GYM_LEVEL_MINERAL_SEED_COUNT } from './GymLevel';
+import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+
+/** A single-group, non-firing scout wave. */
+function scoutWave(count: number): WaveDefinition {
+  return {
+    groups: [
+      {
+        enemyKey: 'scout',
+        formation: 'v',
+        count,
+        spacingX: 30,
+        spacingY: 26,
+        startX: 200,
+        startY: 150,
+      },
+    ],
+    shootEnabled: false,
+  };
+}
+
+/** Wraps waves in a level definition. */
+function makeLevel(name: string, waves: WaveDefinition[]): LevelDefinition {
+  return { level: 1, name, waves };
+}
 
 /** Waits for Phaser scene transitions to settle. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -148,5 +173,77 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     select.dispatchEvent(new Event('change'));
 
     expect(input.value).toBe('750');
+  });
+
+  // ── AC11 — shared supply layer (producer-audit fix) ─────────────
+
+  it('seeds the shared mineral field and exposes the live supplies to the bot snapshot', async () => {
+    const scene = await bootTuning({ seed: 2024 });
+    booted!.game.loop.stop();
+
+    // The inherited `GymLevel` supply layer seeded the game's mineral field.
+    expect(scene.getSeededMineralCount()).toBe(GYM_LEVEL_MINERAL_SEED_COUNT);
+    expect(scene.getMinerals().length).toBeGreaterThan(0);
+
+    // The bot snapshot sees the live minerals and drops, so its
+    // `collect-mineral` / `collect-powerup` / `secure-life` goals can fire.
+    const snapshot = scene.getBotSnapshot();
+    expect(snapshot.minerals.length).toBeGreaterThan(0);
+    expect(snapshot.drops.length).toBeGreaterThan(0);
+  });
+
+  it('leaves minerals behind when an enemy is destroyed through the shared combat path', async () => {
+    const scene = await bootTuning({
+      seed: 5,
+      level: makeLevel('Single', [scoutWave(1)]),
+    });
+    booted!.game.loop.stop();
+
+    const enemies = scene.getEnemies();
+    expect(enemies).toHaveLength(1);
+    const before = new Set(scene.getMinerals());
+
+    // Force the shared kill-drop rule to draw its additive bonus so the
+    // non-asteroid enemy deterministically leaves one mineral; then kill it
+    // through the shared collision path (a player bullet).
+    scene.setSupplyRng(() => 0.99);
+    scene.getShip()!.respawn(20, 20);
+    scene.spawnPlayerBullet(enemies[0].x, enemies[0].y, 0, 0, 0x00ffff, 10);
+    scene.tick(1 / 60);
+
+    expect(scene.getEnemies().filter((enemy) => enemy.alive)).toHaveLength(0);
+    const added = scene.getMinerals().filter((mineral) => !before.has(mineral));
+    expect(added.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('spawns and collects a weapon drop through the shared drop layer', async () => {
+    const scene = await bootTuning({ seed: 11 });
+    booted!.game.loop.stop();
+
+    const ship = scene.getShip()!;
+    expect(ship.hasWeapon('rapid')).toBe(false);
+
+    ship.respawn(300, 300);
+    const drop = scene.spawnSupplyDrop('rapid', 300, 300);
+    expect(scene.getDrops()).toContain(drop);
+
+    scene.tick(1 / 60);
+    // The shared `_collectDrop` path equipped the weapon.
+    expect(ship.hasWeapon('rapid')).toBe(true);
+  });
+
+  it('collects a mineral into the shared hold', async () => {
+    const scene = await bootTuning({ seed: 3 });
+    booted!.game.loop.stop();
+
+    const ship = scene.getShip()!;
+    const mineral = scene.getMinerals()[0];
+    const before = new Set(scene.getMinerals());
+
+    ship.respawn(mineral.x, mineral.y);
+    scene.tick(1 / 60);
+
+    const after = scene.getMinerals();
+    expect(after.length).toBeLessThan(before.size);
   });
 });

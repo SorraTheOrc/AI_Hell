@@ -555,8 +555,19 @@ and adjust its parameters in real time.
 - **Shared bot behaviour.** The gym drives the player through the shared
   `CombatCoreScene.getBotInput()` seam with the same
   `createCompetentBotBrain()` policy and `BotInputGovernor` that `PlayScene`
-  uses — no divergent copy. The only gym-specific state is the scenario
-  (random waves, no boss/minerals/power-ups).
+  uses — no divergent copy. The only gym-specific state is the scenario (the
+  tuning UI; the inherited supply layer below).
+- **Shared supply layer.** `GymLevel` plays every level with the game's
+  supply mechanics: a mineral field is seeded, a destroyed enemy leaves
+  minerals via the shared `resolveMineralKillDrops` rule, and power-up/weapon
+  drops appear on the field on the shared `buildDefaultDropSpawner` +
+  `RandomAvoidingPlacement` cadence. Minerals and drops are collected through
+  the shared `collectMinerals` / `_updateDropLayer` paths, so the bot's
+  `collect-mineral`, `collect-powerup` and `secure-life` goals are exercised
+  exactly as they are in the game. The live drops and minerals are exposed in
+  the bot snapshot (`getBotSnapshot()`); a full mineral hold resolves through
+  the shared `applyMineralChoiceReward` **without** the modal choice scene, so
+  an autonomous run never pauses (the single documented gym-only divergence).
 - **Live sliders.** The collapsible panel exposes one slider per entry in
   `BOT_TUNING_NUMERIC_FIELDS` (`src/ai/tuningFields.ts`) plus boolean toggles:
   the utility bands, seek ranges, standoff/danger/wall margins, prediction
@@ -574,7 +585,8 @@ The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
 `BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested
 `commitment.*` and `world.*` overrides the brain expects. Tests live in
 `src/ai/tuningFields.test.ts`, `src/core/botTuningStore.test.ts`,
-`src/utils/randomLevel.test.ts` and `src/scenes/gym/GymBotTuning.test.ts`.
+`src/utils/randomLevel.test.ts` and `src/scenes/gym/GymBotTuning.test.ts`
+(the latter covers the mineral/drop supply layer end to end).
 
 ## References
 

@@ -32,8 +32,11 @@
  *
  * The scene is a gym-only dev tool: it is reached from the gym index only and
  * never shipped in normal play. The bot's *behaviour* is the shared code; only
- * the scenario (random waves with no boss/minerals/power-ups) and the tuning
- * UI are gym-specific.
+ * the scenario (random waves with the shared mineral/power-up/weapon supply
+ * layer, no boss) and the tuning UI are gym-specific. The supply behaviour
+ * itself is shared (inherited from `GymLevel`), so the bot sees and reacts to
+ * minerals, power-ups and weapons exactly as it does in the game
+ * (AH-0MV4D7LAD009XYR0 producer-audit fix).
  *
  * @module src/scenes/gym/GymBotTuning
  */
@@ -64,7 +67,7 @@ import {
   saveBotTuningCurrent,
   selectBotTuning,
 } from '../../core/botTuningStore';
-import { normaliseSeed, randomSeed } from '../../core/rng';
+import { normaliseSeed, randomSeed, createSeededRng } from '../../core/rng';
 import { makeCollapsible } from '../../utils/gymPanel';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
@@ -147,6 +150,9 @@ export class GymBotTuning extends GymLevel {
    */
   override init(data?: GymBotTuningData): void {
     this.seed = normaliseSeed(data?.seed ?? randomSeed());
+    // Seed the inherited supply layer (minerals + drop placement) from the
+    // same seed, so a seed reproduces the mineral field and drop sequence too.
+    this.supplyRng = createSeededRng(this.seed);
     this.tuningValues = coerceTuningValues(getCurrentBotTuningConfig().values);
     this.completionDwell = 0;
     const level = data?.level ?? generateRandomLevel({ seed: this.seed });
@@ -194,9 +200,11 @@ export class GymBotTuning extends GymLevel {
   }
 
   /**
-   * Builds the bot snapshot from the gym's live state. The gym has no boss,
-   * drops, minerals or timed waves, so those read as empty/inactive; the bot
-   * core handles the empty collections unchanged.
+   * Builds the bot snapshot from the gym's live state. The supply layer
+   * inherits from `GymLevel`, so the bot sees the live power-up/weapon drops
+   * and minerals (the `collect-powerup`, `collect-mineral` and `secure-life`
+   * goals). The gym has no boss and no timed waves, so those read as
+   * null/inactive; the bot core handles the empty collections unchanged.
    */
   private _buildSnapshot(): BotSnapshot {
     const source: BotSnapshotScene = {
@@ -206,8 +214,8 @@ export class GymBotTuning extends GymLevel {
       getEnemies: () => this.getEnemies(),
       getEnemyBullets: () => this.getEnemyBullets(),
       getPlayerBullets: () => this.getPlayerBullets(),
-      getDrops: () => [],
-      getMinerals: () => [],
+      getDrops: () => this.getDrops(),
+      getMinerals: () => this.getMinerals(),
       getAliveCount: () => this.getEnemies().filter((enemy) => enemy.alive).length,
       getWaveState: () => inactiveWaveState(),
       getRunSeed: () => this.seed,
@@ -215,6 +223,14 @@ export class GymBotTuning extends GymLevel {
       getLivesCap: () => BOT_TUNING_LIVES_CAP,
     };
     return buildBotSnapshot(source);
+  }
+
+  /**
+   * Read-only snapshot of the state the bot decides from — the live supply
+   * layer included. Exposed for tests to assert the bot sees drops/minerals.
+   */
+  getBotSnapshot(): BotSnapshot {
+    return this._buildSnapshot();
   }
 
   // ── Tick / level cycling ─────────────────────────────────────────
