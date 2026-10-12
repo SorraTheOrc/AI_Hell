@@ -69,7 +69,7 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 // is too tight and the heaviest boss-encounter test reports a spurious
 // timeout (AH-0MUIPP1UU000UT88). Give the file headroom so a slow parallel
 // run does not fail on timing alone.
-vi.setConfig({ testTimeout: 20000 });
+vi.setConfig({ testTimeout: 60000 });
 
 // These gameplay tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -277,7 +277,7 @@ function isolateEnemyForKill(scene: PlayScene, enemy: unknown): () => void {
 function timeOutToBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
   gs.lives = 99; // absorb incidental enemy fire while timeouts advance the run.
-  for (let guard = 0; guard < 200; guard++) {
+  for (let guard = 0; guard < 1000; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
     if (scene.isTransitioning()) {
@@ -295,8 +295,10 @@ function timeOutToBoss(scene: PlayScene): void {
   if (!boss) {
     const wm = scene.getWaveManager();
     throw new Error(
-      `Failed to reach boss encounter via timeout after 200 iterations: ` +
-        `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive}`,
+      `Failed to reach boss encounter via timeout after 1000 iterations: ` +
+        `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive} ` +
+        `level=${wm.level} wave=${wm.waveNumber} ` +
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()}`,
     );
   }
 }
@@ -933,7 +935,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     scene.setAsteroidSpawnerEnabled(false);
 
     const wm = scene.getWaveManager();
-    const expected = `Level 1 of 5, Wave 1 of ${wm.waveCount}`;
+    const expected = `Level 1 of 10, Wave 1 of ${wm.waveCount}`;
     expect(wm.levelName).toBe('');
     expect(scene.getLevelText()).toBe(expected);
     expect(scene.getBannerText()).toBe(expected);
@@ -4689,12 +4691,16 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
   }
 
   /**
-   * Advances the wave timer past the whole spawn window in one tick, then
-   * ticks once more to position the freshly released chain. Collisions run
-   * before the release step, so the chain is alive when this returns.
+   * Advances the wave timer past the whole spawn window, then ticks once more
+   * to position the freshly released chain. Collisions run before the release
+   * step, so the chain is alive when this returns.
+   *
+   * Stepped in small increments: a single giant `tick(20)` integrates the
+   * chain's weave over the whole window in one frame, which can overshoot the
+   * arena bounds and make this test flaky (AH-0MV396OK0001FX14).
    */
   function releaseCentipede(scene: PlayScene): void {
-    scene.tick(20);
+    for (let elapsed = 0; elapsed < 20; elapsed += 0.05) scene.tick(0.05);
     scene.tick(0.001);
   }
 

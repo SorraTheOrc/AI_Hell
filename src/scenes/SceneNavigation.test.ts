@@ -27,11 +27,12 @@ import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
-// The heaviest walk-to-the-boss test boots a real Phaser game; keep a
-// generous timeout so a slow parallel run does not fail on timing alone
-// (AH-0MUINWNPI000G6MU). Deterministic stepping removes the wall-clock
-// flake, but booting still costs real time.
-vi.setConfig({ testTimeout: 20000 });
+// The heaviest walk-to-the-boss test boots a real Phaser game and walks the
+// full ten-level campaign; keep a generous timeout so a slow parallel run
+// does not fail on timing alone (AH-0MUINWNPI000G6MU, extended for the
+// AH-0MV396OK0001FX14 ten-level campaign). Deterministic stepping removes the
+// wall-clock flake, but booting still costs real time.
+vi.setConfig({ testTimeout: 60000 });
 
 /** Fixed simulation step (~60 fps) used for deterministic scene stepping. */
 const STEP_MS = 1000 / 60;

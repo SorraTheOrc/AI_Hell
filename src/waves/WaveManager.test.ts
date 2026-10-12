@@ -82,12 +82,13 @@ function level(
 }
 
 describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () => {
-  it('AC1 — defines exactly 5 sequential levels', () => {
-    expect(LEVEL_COUNT).toBe(5);
-    expect(LEVELS.map((l) => l.level)).toEqual([1, 2, 3, 4, 5]);
+  it('AC1 — defines exactly 10 sequential levels', () => {
+    expect(LEVEL_COUNT).toBe(10);
+    expect(LEVELS.map((l) => l.level)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(getLevelDefinition(1)?.name).toBe('Entry');
     expect(getLevelDefinition(5)?.name).toBe('Predictable Death');
-    expect(getLevelDefinition(6)).toBeNull();
+    expect(getLevelDefinition(10)?.name).toBe('The Gauntlet');
+    expect(getLevelDefinition(11)).toBeNull();
   });
 
   it('AC1 — Level 1 uses Scout V-formations with no enemy fire', () => {
@@ -125,12 +126,12 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
     }
   });
 
-  it('AC1 — Levels 1–3 never arm enemy fire; Levels 4–5 always do', () => {
+  it('AC1 — Levels 1–3 never arm enemy fire; Levels 4–10 always do', () => {
     for (const n of [1, 2, 3]) {
       const def = getLevelDefinition(n)!;
       expect(def.waves.every((w) => w.shootEnabled === false)).toBe(true);
     }
-    for (const n of [4, 5]) {
+    for (const n of [4, 5, 6, 7, 8, 9, 10]) {
       const def = getLevelDefinition(n)!;
       expect(def.waves.length).toBeGreaterThan(0);
       expect(def.waves.every((w) => w.shootEnabled === true)).toBe(true);
@@ -145,9 +146,9 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
 
   it('boundary — unknown levels report zero enemies and no definition', () => {
     expect(getLevelDefinition(0)).toBeNull();
-    expect(getLevelDefinition(6)).toBeNull();
+    expect(getLevelDefinition(LEVEL_COUNT + 1)).toBeNull();
     expect(enemyCountForLevel(0)).toBe(0);
-    expect(enemyCountForLevel(6)).toBe(0);
+    expect(enemyCountForLevel(LEVEL_COUNT + 1)).toBe(0);
   });
 });
 
@@ -272,14 +273,14 @@ describe('WaveManager — progression (AH-0MU72ZK3P006CH9G)', () => {
     expect(wm.enemiesAlive).toBe(4);
   });
 
-  it('AC2 — the full campaign auto-advances through all 5 levels', () => {
+  it('AC2 — the full campaign auto-advances through all 10 levels', () => {
     const wm = new WaveManager();
     wm.beginGame();
 
-    for (let n = 1; n <= 5; n++) {
+    for (let n = 1; n <= LEVEL_COUNT; n++) {
       expect(wm.level).toBe(n);
       const event = clearLevel(wm);
-      if (n < 5) {
+      if (n < LEVEL_COUNT) {
         expect(event).toBe('levelCleared');
         expect(wm.level).toBe(n + 1);
       } else {
@@ -381,23 +382,23 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
     expect(wm.globalWaveIndex).toBe(5);
   });
 
-  it('globalWaveIndex for the full campaign — last regular wave is index 12', () => {
+  it('globalWaveIndex for the full campaign — last regular wave is index 28', () => {
     const wm = new WaveManager();
     wm.beginGame();
-    // Clear all 5 levels (wave counts: 2+3+3+3+2 = 13 regular waves).
-    for (let level = 1; level <= 5; level++) {
+    // Clear all 10 levels (wave counts: 2+3+3+3+2+4+4+3+3+2 = 29 regular waves).
+    for (let level = 1; level <= LEVEL_COUNT; level++) {
       const levelStartGWI = wm.globalWaveIndex;
       const waveCount = wm.waveCount;
       for (let w = 0; w < waveCount; w++) {
-        if (level < 5) {
+        if (level < LEVEL_COUNT) {
           expect(wm.globalWaveIndex).toBe(levelStartGWI + w);
         }
         clearWave(wm);
       }
     }
-    // After clearing Level 5 Wave 2, boss should trigger.
+    // After clearing Level 10's final wave, the boss should trigger.
     expect(wm.bossTriggered).toBe(true);
-    expect(wm.globalWaveIndex).toBe(12);
+    expect(wm.globalWaveIndex).toBe(28);
   });
 
   it('globalWaveIndex is 0 during a boss encounter', () => {

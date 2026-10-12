@@ -52,7 +52,7 @@ import { Mineral } from '../../entities/Mineral';
 // boss encounter; under full-suite parallel load the Vitest default 5 s
 // timeout is too tight (AH-0MUIPP1UU000UT88). Give the file headroom so a
 // slow parallel run does not fail on timing alone (AH-0MUII3GOO001XEBB).
-vi.setConfig({ testTimeout: 20000 });
+vi.setConfig({ testTimeout: 60000 });
 
 /** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
 const SHARED_METHODS = [
@@ -1749,24 +1749,32 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
 // ── Shared boss integration (AH-0MUII3E5E006A93F, gap 6) ───────────
 
 /**
- * Walks the PlayScene run to the boss encounter (Level 5 cleared) by
- * destroying every enemy deterministically.
+ * Walks the PlayScene run to the boss encounter (the final level cleared) by
+ * destroying every enemy deterministically. Robust to the ten-level campaign:
+ * it advances spawned enemies past their spawn animation, and ticks the scene
+ * to release any dynamically scheduled enemies (horde/ghosts) when nothing is
+ * currently alive but the wave still has accounted enemies.
  */
 function reachPlayBoss(play: PlayScene): void {
   play.getGameState().lives = 99;
-  for (let guard = 0; guard < 300; guard++) {
+  for (let guard = 0; guard < 1200; guard++) {
     const wm = play.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
-    for (let inner = 0; inner < 500 && play.getAliveCount() > 0; inner++) {
+    play.finishSpawnAnimations();
+    for (let inner = 0; inner < 500; inner++) {
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
       play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
       play.tick(0.016);
     }
+    // Nothing alive but the wave still has accounted enemies: advance the
+    // scene so pending dynamic spawns are released and the wave timer runs.
+    if (wm.enemiesAlive > 0 && play.getAliveCount() === 0) play.tick(0.25);
     if (play.isTransitioning()) play.tick(3.0);
   }
   // The boss entity only exists once the transition completes.
   if (play.isTransitioning()) play.tick(3.0);
+  play.finishSpawnAnimations();
   if (!play.getBoss()) {
     const wm = play.getWaveManager();
     throw new Error(
