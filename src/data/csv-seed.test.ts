@@ -162,6 +162,22 @@ describe('difficulty-curves.csv seed data', () => {
     expect(parseDifficultyCurves(csv)).toEqual(defaultDifficultyCurves());
   });
 
+  it('covers all ten campaign levels, including the levels 6–10 extension (AH-0MV395QHS004SCOR)', () => {
+    const rows = parseDifficultyCurves(readCsvFile('difficulty-curves.csv'));
+    const levels = [...new Set(rows.map((row) => row.level))].sort(
+      (a, b) => a - b,
+    );
+    expect(levels).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // The extended levels exist in the CSV and name-match the campaign table.
+    const names = new Map<number, string>();
+    for (const row of rows) names.set(row.level, row.levelName);
+    expect(names.get(6)).toBe('Invasion');
+    expect(names.get(7)).toBe('Segmented Assault');
+    expect(names.get(8)).toBe('Gridlock');
+    expect(names.get(9)).toBe('Orbital Siege');
+    expect(names.get(10)).toBe('The Gauntlet');
+  });
+
   it('has no malformed rows (parse count equals raw row count)', () => {
     const csv = readCsvFile('difficulty-curves.csv');
     expect(parseDifficultyCurves(csv).length).toBe(parseCsvRows(csv).length);

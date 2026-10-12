@@ -328,10 +328,12 @@ describe('End-to-end acceptance — CSV to spawn plan (AH-0MUITRWLO001Y4Y5)', ()
   it('uses the baked-in default curve when the CSV file is missing', async () => {
     await loadStoreWithNoConfig();
     const levels = buildSequencedLevels();
-    // The default curve is derived from LEVELS, so a usable five-level
-    // campaign is produced rather than an empty/broken one.
-    expect(levels.length).toBe(LEVELS.length);
+    // The baked-in default curve now spans the full ten-level campaign
+    // (AH-0MV395QHS004SCOR), so a usable campaign is produced rather than an
+    // empty/broken one.
+    expect(levels.length).toBe(10);
     expect(levels[0].name).toBe(LEVELS[0].name);
+    expect(levels[levels.length - 1].name).toBe('The Gauntlet');
   });
 
   it('stays playable when the CSV is malformed (no crash, usable campaign)', async () => {

@@ -24,9 +24,12 @@
 # existing archetypes; the remaining onboarding waves stay `fixed` (the
 # hand-authored static LEVELS waves byte-for-byte). Levels 4–5 are
 # curve-generated from the targets below, with level 5 wave 2 (`dynamic`)
-# regenerated per run from its curve and the run seed. The targets are
-# non-decreasing within and across levels (see `defaultDifficultyCurves()` in
-# `src/core/configStore.ts`).
+# regenerated per run from its curve and the run seed. Levels 6–10 continue
+# the campaign: each new classic-arcade archetype debuts on a `fixed` showcase
+# wave (guaranteeing its presence) and the level tail is `curve`-generated from
+# the targets below (AH-0MV395QHS004SCOR). The targets are non-decreasing
+# within and across all ten levels, peaking at level 10 wave 4 (see
+# `defaultDifficultyCurves()` in `src/core/configStore.ts`).
 level,levelName,wave,targetDifficulty,generation
 1,Entry,1,6,dynamic
 1,Entry,2,8,dynamic
@@ -41,3 +44,19 @@ level,levelName,wave,targetDifficulty,generation
 4,Firestorm,3,27.5,curve
 5,Predictable Death,1,43.5,curve
 5,Predictable Death,2,62,dynamic
+6,Invasion,1,71,fixed
+6,Invasion,2,74,fixed
+6,Invasion,3,77,curve
+6,Invasion,4,80,curve
+7,Segmented Assault,1,80,fixed
+7,Segmented Assault,2,82,fixed
+7,Segmented Assault,3,84,curve
+7,Segmented Assault,4,86,curve
+8,Gridlock,1,87,fixed
+8,Gridlock,2,89,fixed
+8,Gridlock,3,91,fixed
+9,Orbital Siege,1,91,fixed
+9,Orbital Siege,2,93,fixed
+9,Orbital Siege,3,95,curve
+10,The Gauntlet,1,95,fixed
+10,The Gauntlet,2,97,curve

@@ -3587,9 +3587,10 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     const scene = await bootToggleScene();
     const wm = scene.getWaveManager();
     expect(wm.started).toBe(true);
-    // The shipped default campaign keeps the static skeleton, so the level
-    // count matches and level 1 is the fixed onboarding static wave.
-    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
+    // The shipped default campaign now spans the full ten-level campaign
+    // (AH-0MV395QHS004SCOR): the five static levels plus the five configured
+    // extensions. Level 1 is the fixed onboarding static wave.
+    expect(wm.levelCount).toBe(10);
     expect(wm.currentLevel()?.name).toBe('Entry');
     expect(wm.currentWave()!.groups.length).toBeGreaterThan(0);
   });
