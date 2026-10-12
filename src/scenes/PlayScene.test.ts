@@ -172,6 +172,25 @@ function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
 }
 
 /**
+ * Resolves an open hold-full power-up choice, if any.
+ *
+ * Long deterministic boss walks tick the auto-fire through many waves; the
+ * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
+ * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
+ * A paused scene ignores `tick()` entirely, so a walk would stall in its
+ * iteration guard. Selecting the first option resumes play, exactly as a
+ * player would (AH-0MV5L6BVN005DP4I).
+ *
+ * @returns `true` when a choice was open and has been resolved so the caller
+ *   can retry the step.
+ */
+function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
+  if (!scene.isMineralChoiceOpen()) return false;
+  scene.selectMineralChoice(0);
+  return true;
+}
+
+/**
  * Walks the run to the boss encounter (Level 5 cleared).
  *
  * Exit condition uses `bossActive` / `bossTriggered` on the WaveManager
@@ -186,12 +205,18 @@ function reachBoss(scene: PlayScene): void {
   for (let guard = 0; guard < 200; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
+    // A hold-full pause freezes `tick()`; resolve it before walking on
+    // (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
     killAllEnemies(scene);
     finishTransition(scene);
   }
   // If the loop exited because `bossTriggered` was detected but the
   // transition hasn't been advanced yet (e.g. the boss was triggered
-  // between iterations), complete the transition so the entity spawns.
+  // between iterations), resolve any hold-full pause that opened on that
+  // tick and complete the transition so the entity spawns
+  // (AH-0MV5L6BVN005DP4I).
+  resolveMineralChoiceIfOpen(scene);
   if (scene.isTransitioning()) finishTransition(scene);
   // Hard assertion — if we exhausted the guard the boss was never reached.
   const boss = scene.getBoss();
@@ -280,6 +305,10 @@ function timeOutToBoss(scene: PlayScene): void {
   for (let guard = 0; guard < 1000; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
+    // A hold-full pause freezes `tick()`; resolve it before the transition
+    // check so `finishTransition` never ticks against a paused scene
+    // (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
     if (scene.isTransitioning()) {
       finishTransition(scene);
       continue;
@@ -289,7 +318,10 @@ function timeOutToBoss(scene: PlayScene): void {
   }
   // Boss entity is only created when the transition timer elapses.
   // If the boss was triggered via timeout we still need to complete
-  // the transition so that _onTransitionComplete() spawns it.
+  // the transition so that _onTransitionComplete() spawns it. Resolve any
+  // hold-full pause that opened on the trigger tick first, otherwise the
+  // transition would tick against a paused scene (AH-0MV5L6BVN005DP4I).
+  resolveMineralChoiceIfOpen(scene);
   if (scene.isTransitioning()) finishTransition(scene);
   const boss = scene.getBoss();
   if (!boss) {
@@ -1888,6 +1920,33 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // The asteroid carried over into the next wave.
     expect(findAsteroids(scene).length).toBe(asteroidsBefore.length);
     expect(scene.getWaveManager().bossActive).toBe(false);
+  });
+
+  // ── Hold-full pause resilience for the boss-walk helpers (AH-0MV5L6BVN005DP4I) ──
+
+  it('AH-0MV5L6BVN005DP4I — timeOutToBoss resolves an open hold-full choice', async () => {
+    const scene = await bootPlay();
+    // The carried-over pile generates enough mineral drops that the hold
+    // fills mid-walk; open the overlay here to pin the regression
+    // deterministically (it pauses the simulation exactly as real play does).
+    scene.openMineralChoice();
+    expect(scene.isMineralChoiceOpen()).toBe(true);
+
+    timeOutToBoss(scene);
+
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getWaveManager().bossActive).toBe(true);
+  });
+
+  it('AH-0MV5L6BVN005DP4I — reachBoss resolves an open hold-full choice', async () => {
+    const scene = await bootPlay();
+    scene.openMineralChoice();
+    expect(scene.isMineralChoiceOpen()).toBe(true);
+
+    reachBoss(scene);
+
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getWaveManager().bossActive).toBe(true);
   });
 });
 
