@@ -17,7 +17,7 @@
  * @vitest-environment node
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -46,6 +46,14 @@ import {
   verifyAssets,
   verifyPinnedDependency,
 } from './build-audio.mjs';
+
+// The end-to-end CLI/wrapper tests spawn real `node` subprocesses (the shell
+// wrapper adds a `bash` + `node` layer on top). Under full-suite parallel
+// load that process startup can exceed the Vitest default 5 s timeout and
+// report a spurious timeout for `scripts/build-audio.sh` even though the
+// pipeline itself is fast (AH-0MV5L6CP4007HQP3). Give the whole file
+// headroom so a slow parallel run does not fail on timing alone.
+vi.setConfig({ testTimeout: 30000 });
 
 const SCRIPT_PATH = fileURLToPath(new URL('./build-audio.sh', import.meta.url));
 

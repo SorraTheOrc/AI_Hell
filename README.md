@@ -487,6 +487,13 @@ load, which makes assertions taken right after boot flaky.
   wave/accounting state if the boss was never reached, so a regression fails at
   the helper instead of as an unrelated assertion later
   (AH-0MUNVVWWC0015JTM).
+- **Bump the file-level `testTimeout` for subprocess-spawning E2E suites.**
+  `scripts/build-audio.test.ts` drives the documented shell/CLI entry points by
+  spawning real `bash` + `node` subprocesses; under full-suite parallel load
+  that process startup can exceed the Vitest default 5 s and report a spurious
+  timeout even though the pipeline is fast. Such suites opt in with
+  `vi.setConfig({ testTimeout: 30000 })` (the full-game suites use 60000)
+  rather than weakening assertions (AH-0MV5L6CP4007HQP3).
 
 #### Automated gameplay capture (dev tooling)
 
