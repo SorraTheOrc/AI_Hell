@@ -2058,27 +2058,15 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['mapControlInput', 'src/utils/movementModel.ts'],
   ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
   // Live-aim / live-mineral-seek seam (AH-0MV5SDM6G003A0US). The shared
-  // helper is created by the follow-up implementation item
-  // AH-0MV5SDN24006SD2B and consumed by PlayScene, GymFormationScene and
+  // helper lives in `src/scenes/core/enemyTargeting.ts` (created by
+  // AH-0MV5SDN24006SD2B) and is consumed by PlayScene, GymFormationScene and
   // GymLevel in AH-0MV5SDNI2008RWQ2; registering it here means the moment a
   // scene re-introduces a copy the repo-wide duplicate-body guard fails.
+  // The module now exists, so the single-definer guard below is a hard gate
+  // and the temporary PENDING red-first wrapper has been removed.
   ['pushAimTargets', 'src/scenes/core/enemyTargeting.ts'],
   ['pushSeekTargets', 'src/scenes/core/enemyTargeting.ts'],
 ];
-
-/**
- * Entries in `EPIC_SHARED_HELPERS` whose canonical module is created by a
- * later child of the live-aim parity epic (AH-0MV4XFQ0J0082BN6). Their
- * single-definer assertion is guarded by the expected-failure test below
- * (red before the helper lands, green after) so the suite stays green while
- * the test-first guard is red. The adoption item AH-0MV5SDNI2008RWQ2 removes
- * this set together with the `.fails` wrapper once the helper and its
- * consumers land.
- */
-const PENDING_LIVE_AIM_HELPERS: ReadonlySet<string> = new Set([
-  'pushAimTargets',
-  'pushSeekTargets',
-]);
 
 /**
  * Every shared template method the epic introduced or touched, with the one
@@ -2132,32 +2120,12 @@ function relativeProductionDefiners(
 describe('epic parity guard — every shared helper is defined exactly once (AC1)', () => {
   it('defines every shared pure helper exactly once, in its canonical module', () => {
     for (const [helper, expected] of EPIC_SHARED_HELPERS) {
-      // Pending live-aim helpers are asserted by the intended-to-fail guard
-      // below until the shared helper module lands.
-      if (PENDING_LIVE_AIM_HELPERS.has(helper)) continue;
       const definers = relativeProductionDefiners((source) =>
         definesFunction(source, helper),
       );
       expect(definers, helper).toEqual([expected]);
     }
   });
-
-  it.fails(
-    'defines the pending live-aim helpers exactly once, in their canonical module (AH-0MV5SDM6G003A0US red-first)',
-    () => {
-      // Red today: `src/scenes/core/enemyTargeting.ts` does not exist yet.
-      // Green once AH-0MV5SDN24006SD2B lands; the adoption item
-      // AH-0MV5SDNI2008RWQ2 then removes `PENDING_LIVE_AIM_HELPERS` and this
-      // `.fails` wrapper so the hard single-definer test above covers them.
-      for (const [helper, expected] of EPIC_SHARED_HELPERS) {
-        if (!PENDING_LIVE_AIM_HELPERS.has(helper)) continue;
-        const definers = relativeProductionDefiners((source) =>
-          definesFunction(source, helper),
-        );
-        expect(definers, helper).toEqual([expected]);
-      }
-    },
-  );
 
   it('defines every shared template method exactly once, in its canonical core', () => {
     for (const [method, expected] of EPIC_SHARED_METHODS) {
