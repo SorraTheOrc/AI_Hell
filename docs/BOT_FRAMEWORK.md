@@ -400,6 +400,25 @@ seeded run pins the regression: the restricted model cuts reverse presses over
 an integration demo window from 38 to 9 (528 → 138 reverse ticks) versus the
 pre-change baseline.
 
+#### Observing the retro-thruster
+
+Because reverse is deliberately reserved for trouble, it is easy to miss. On
+screen it reads as the **nose (front) engine flame** — the full-size
+forward-pointing flame at the hull front, while the forward engines fire at
+the rear — and it fires in only two situations: the final
+`reverseImminentOvershootGap` (36 px) of an approach (imminent-overshoot
+brake) and a threat escape inside `reverseRetreatRange` (90 px) while the nose
+stays on the aim target (kiting). A deterministic 60 Hz run with the shipped
+ship physics and seed `0x0b16` measures it directly in
+`src/ai/framework/competent/competentBot.integration.test.ts` ("reverse
+overuse regression bound"); the individual gates are covered by the
+calm-vs-threat unit tests in `behaviours.test.ts` and `steering.test.ts`.
+
+> History: the parent feature AH-0MV1J0OHP0072XA5 introduced reverse; the
+> producer's review follow-up AH-0MV2WJSY70070HK2 restricted it to
+> trouble/correction. See that item's RCA for why the original, more frequent
+> reverse was replaced.
+
 ## 10. Testing
 
 The framework's unit tests live beside it:
