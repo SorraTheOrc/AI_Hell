@@ -318,3 +318,29 @@ describe('buildBotSnapshot — live entity archetypes (AC1/AC2)', () => {
     for (const entity of entities) entity.destroy(true);
   });
 });
+
+describe('buildBotSnapshot — enemy velocity seam (AH-0MV1DUSM2005HL98 AC2)', () => {
+  it('carries enemy velocity when the source exposes a physics body', () => {
+    const scene = makeScene({
+      getEnemies: () => [
+        { x: 100, y: 200, alive: true, archetype: 'asteroid', vx: 12, vy: -34 },
+        { x: 300, y: 400, alive: true, archetype: 'lane-traffic', vx: -5, vy: 0 },
+      ],
+    });
+    const snapshot = buildBotSnapshot(scene);
+    expect(snapshot.enemies[0]).toMatchObject({ vx: 12, vy: -34 });
+    expect(snapshot.enemies[1]).toMatchObject({ vx: -5, vy: 0 });
+  });
+
+  it('omits velocity for sources without a physics body and defaults to zero for lead', () => {
+    const scene = makeScene({
+      getEnemies: () => [{ x: 100, y: 200, alive: true, archetype: 'scout' }],
+    });
+    const enemyEntry = buildBotSnapshot(scene).enemies[0];
+    expect(enemyEntry.vx).toBeUndefined();
+    expect(enemyEntry.vy).toBeUndefined();
+    // The lead consumer treats an absent velocity as stationary.
+    expect(enemyEntry.vx ?? 0).toBe(0);
+    expect(enemyEntry.vy ?? 0).toBe(0);
+  });
+});

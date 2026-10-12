@@ -305,7 +305,10 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
 - **`engage`** (enemy/asteroid): line the target up inside `engagementRange`,
   then hold the **aim axis** and coast so the forward-firing weapon stays on
   target (aim/fire reasoning, AC3) instead of aiming only by accident of
-  travel. Inside `reverseRetreatRange` it retreats under reverse thrust while
+  travel. A target whose velocity is exposed is **led** — the objective is the
+  iterated intercept rather than the current position
+  (AH-0MV1DUSM2005HL98 · AC2, [section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)).
+  Inside `reverseRetreatRange` it retreats under reverse thrust while
   keeping its nose on the target (kiting) **only when a genuine threat is
   present** — an incoming threatening shot or an imminent hazard collision —
   never merely because the target is close (AH-0MV2WJSY70070HK2 · AC3).
@@ -328,19 +331,23 @@ property therefore holds regardless of which goal is committed.
 
 All competent-bot numbers live in `COMPETENT_BOT_TUNABLES`
 (`src/ai/framework/competent/tunables.ts`): the priority bands, ranges,
-safety margins, steering-fan/scoring weights, playfield size and the
-commitment/world-model overrides. The human-like input cadence itself is the
-governor's `reactionTimeMs` ([section 5](#5-brain--policy)); the competent
-tunables set a compatible `minCommitSeconds` so a goal cannot be re-picked
-faster than a human can change input. Reverse-thrust gating and timing live in
-the same two sources — see [section 9.7](#97-reverse-thrust-ah-0mv1j0ohp0072xa5).
+safety margins, steering-fan/scoring weights, playfield size, aim-lead
+parameters and the commitment/world-model overrides. The human-like input
+cadence itself is the governor's `reactionTimeMs`
+([section 5](#5-brain--policy)); the competent tunables set a compatible
+`minCommitSeconds` so a goal cannot be re-picked faster than a human can
+change input. The rotation-skill knobs — `skill`, `maxAimErrorRad`,
+`aimLeadEnabled`, `aimLeadAlignSeconds`, `aimLeadIterations` — live in the
+same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)).
+Reverse-thrust gating and timing live in the same two sources — see
+[section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).
 
 ### 9.5 Module layout
 
 | Module | Responsibility |
 |---|---|
 | `competent/tunables.ts` | Single source of tuning + `resolveCompetentTunables`. |
-| `competent/steering.ts` | Pure bearing fan, safety evaluation, forward model. |
+| `competent/steering.ts` | Pure bearing fan, safety evaluation, forward model, intercept solve. |
 | `competent/goals.ts` | The six registered goals and their utility bands. |
 | `competent/behaviours.ts` | collect / engage / evade / reposition. |
 | `competent/index.ts` | `createCompetentBotBrain()` factory. |
@@ -418,6 +425,58 @@ calm-vs-threat unit tests in `behaviours.test.ts` and `steering.test.ts`.
 > producer's review follow-up AH-0MV2WJSY70070HK2 restricted it to
 > trouble/correction. See that item's RCA for why the original, more frequent
 > reverse was replaced.
+
+### 9.8 Rotation skills (AH-0MV1DUSM2005HL98)
+
+The Asteroids turn now ramps angular velocity (`asteroidsRotationAcceleration`
+/ `asteroidsRotationDeceleration`, [section 2.2 of the
+game-design document](Game%20Design%20Document.md#22-movement)), so a release
+chosen on the **instantaneous** heading error leaves the hull coasting a few
+degrees past (or short of) the target and the forward-firing weapon misses.
+This feature makes the demo bot aim with that inertia and lead moving targets.
+It lives entirely in the shared `src/ai/` code, so `PlayScene` and the
+bot-tuning gym fly identically.
+
+- **Inertia-aware turn hold (AC1).** `toAsteroidsInput`
+  (`src/ai/botHumanLike.ts`) resolves the turn from the ship's **predicted stop
+  heading** = live facing + `angularStopDisplacement(angularVelocity,
+  rotationDeceleration)` (`src/utils/movementModel.ts`) instead of the raw
+  error: it keeps turning while the predicted stop is outside
+  `alignmentToleranceRad`, and applies the **opposite** turn when the coast
+  would overshoot (braking the spin). The governor threads the ship's live
+  `angularVelocity` and rotation config through `BotControlContext`, so no
+  rotation constant is hard-coded in the bot layer. With `angularVelocity = 0`
+  the predicted stop equals the current heading and the result is
+  byte-for-byte the legacy release.
+- **Lead prediction (AC2).** The `BotSnapshot` enemy seam carries optional
+  `vx`/`vy` (sourced from entities that expose a physics body — `Asteroid`,
+  `LaneTraffic` — and defaulting to zero for formation-positioned enemies).
+  `enemyTargets` threads it into the `ContentTarget`, and `engage` solves the
+  **iterated intercept** with the pure `interceptPoint` helper: the target
+  advances over the estimated `aimLeadAlignSeconds` plus the projectile's
+  time of flight (`assumedBulletSpeed`), refined for `aimLeadIterations`
+  passes. A zero/absent velocity reduces exactly to the current position.
+- **`skill` aim error (AC3).** A single normalised `skill` tunable in
+  `BOT_HUMAN_INPUT_TUNABLES` (default **1.0**) perturbs the committed aim
+  bearing by a seeded error whose bound is
+  `maxAimErrorRad × (1 − skill)` (default **0.35 rad**). The draw lives in a
+  dedicated governor RNG stream, so the press-length sequences are unchanged;
+  `skill = 1` returns the decision untouched and consumes no draw. Only
+  intents flagged as **aim** (`SteeredIntent.aim`, set by `engage` when it
+  holds its weapon axis) are perturbed, so the survival/evade tier is never
+  degraded.
+- **Live tuning (AC4).** `skill`, `maxAimErrorRad`, `aimLeadAlignSeconds` and
+  `aimLeadIterations` are sliders and `aimLeadEnabled` a toggle in
+  `BOT_TUNING_NUMERIC_FIELDS` / `BOT_TUNING_TOGGLES`
+  ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)), applied live by
+  `GymBotTuning` exactly like the existing knobs.
+- **Validation (AC5).** `src/ai/botHumanLike.test.ts` covers the turn hold and
+  the skill error, `src/ai/framework/competent/steering.test.ts` and
+  `behaviours.test.ts` cover the intercept solve and the engage aim, and
+  `src/ai/botRotationSkills.integration.test.ts` wires the shared
+  competent brain + governor + shipped `AsteroidsModel` into a deterministic
+  60 Hz run that tracks an off-axis moving enemy with a settled bearing error
+  ≤ **0.05 rad**.
 
 ## 10. Testing
 
@@ -572,8 +631,11 @@ and adjust its parameters in real time.
   `BOT_TUNING_NUMERIC_FIELDS` (`src/ai/tuningFields.ts`) plus boolean toggles:
   the utility bands, seek ranges, standoff/danger/wall margins, prediction
   horizons and speeds, steering weights, commitment hysteresis, the world
-  model and the human-input reaction/press cadence. Moving a slider rebuilds
-  the live brain and governor immediately.
+  model, the human-input reaction/press cadence, and the rotation-skill
+  knobs `skill` / `maxAimErrorRad` / `aimLeadAlignSeconds` /
+  `aimLeadIterations` (`aimLeadEnabled` toggle)
+  (AH-0MV1DUSM2005HL98 · AC4). Moving a slider rebuilds the live brain and
+  governor immediately.
 - **Named configurations.** **Save** overwrites the current configuration,
   **Save As…** creates a named one, and the selector loads any saved
   configuration. Presets are persisted by `src/core/botTuningStore.ts` as a

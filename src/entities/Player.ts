@@ -644,6 +644,22 @@ export class Player extends Phaser.GameObjects.Graphics {
     return this._config.reverseEnabled;
   }
 
+  /**
+   * The ship's live rotation tuning (Asteroids scheme): top speed, spin-up and
+   * spin-down rates. Exposed so the demo bot can predict its **stop heading**
+   * with the ship's actual physics instead of hard-coding rotation constants
+   * (AH-0MV1DUSM2005HL98 · AC1).
+   */
+  getRotationConfig(): {
+    rotationSpeed: number;
+    rotationAcceleration: number;
+    rotationDeceleration: number;
+  } {
+    const { rotationSpeed, rotationAcceleration, rotationDeceleration } =
+      this._config;
+    return { rotationSpeed, rotationAcceleration, rotationDeceleration };
+  }
+
   private _applySpeedMultiplier(): void {
     this._config = {
       thrust: this._baseConfig.thrust * this._speedMultiplier,

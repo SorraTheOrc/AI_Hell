@@ -2463,12 +2463,21 @@ export class PlayScene extends CombatScene<
   private _advanceDemoBot(dt: number): void {
     if (!this.demoMode) return;
     const player = this.getPlayer();
+    const movement = player?.getMovementState();
+    const rotation = player?.getRotationConfig();
     this.botGovernor.update(
       this.botBrain.decide(buildBotSnapshot(this), dt),
       dt,
       {
         scheme: player?.getScheme() ?? 'asteroids',
-        facing: player?.getMovementState().facing ?? 0,
+        facing: movement?.facing ?? 0,
+        // Inertia-aware turn release (AH-0MV1DUSM2005HL98 · AC1): the bot
+        // needs the ship's live spin and rotation config to predict the
+        // heading it will coast to once the turn input is released.
+        angularVelocity: movement?.angularVelocity ?? 0,
+        rotationSpeed: rotation?.rotationSpeed,
+        rotationAcceleration: rotation?.rotationAcceleration,
+        rotationDeceleration: rotation?.rotationDeceleration,
         // Respect the player's reverse-thruster configuration: when the
         // player switched it off, the demo bot emits `reverse: false` on
         // every input (AH-0MV1J0OHP0072XA5 · AC4).

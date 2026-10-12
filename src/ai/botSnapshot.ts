@@ -59,6 +59,14 @@ export interface BotEnemy {
    * fire-pattern avoidance).
    */
   readonly isTelling?: boolean;
+  /**
+   * Enemy velocity (px/s) when the source exposes a physics body, used for
+   * the competent bot's aim-lead prediction (AH-0MV1DUSM2005HL98 · AC2).
+   * Absent for formation-positioned entities with no velocity; the bot
+   * consumer treats an absent or zero velocity as "stationary" (no lead).
+   */
+  readonly vx?: number;
+  readonly vy?: number;
 }
 
 /** An in-flight projectile with position and velocity. */
@@ -179,6 +187,13 @@ export interface BotEnemySource {
   readonly archetype: string;
   /** Present on tell-using archetypes (Scout, Phaser); see {@link BotEnemy.isTelling}. */
   readonly isTelling?: boolean;
+  /**
+   * Velocity (px/s) when the entity exposes a physics body (e.g. `Asteroid`,
+   * `LaneTraffic`); see {@link BotEnemy.vx}. Absent for formation-positioned
+   * enemies and other velocity-less sources.
+   */
+  readonly vx?: number;
+  readonly vy?: number;
 }
 
 /** Minimal enemy-bullet source: position lives on the drawn `graphics`. */
@@ -283,6 +298,11 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
       // Carry the tell flag only when the source exposes it, so snapshots
       // from non-tell archetypes keep their original shape.
       ...(enemy.isTelling !== undefined ? { isTelling: enemy.isTelling } : {}),
+      // Carry velocity only when the source exposes a physics body; the
+      // lead-prediction consumer treats an absent velocity as zero (AC2).
+      ...(typeof enemy.vx === 'number' && typeof enemy.vy === 'number'
+        ? { vx: enemy.vx, vy: enemy.vy }
+        : {}),
     })),
     enemyBullets: scene.getEnemyBullets().map((bullet) => ({
       x: bullet.graphics.x,

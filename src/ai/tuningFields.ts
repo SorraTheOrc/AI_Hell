@@ -95,6 +95,10 @@ export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
   { group: 'competent', key: 'frictionDeceleration', label: 'frictionDeceleration', min: 0, max: 500, step: 5 },
   { group: 'competent', key: 'survivalUrgencyHorizon', label: 'survivalUrgencyHorizon', min: 0, max: 3, step: 0.05 },
 
+  // Aim lead prediction (AH-0MV1DUSM2005HL98).
+  { group: 'competent', key: 'aimLeadAlignSeconds', label: 'aimLeadAlignSeconds', min: 0, max: 2, step: 0.05 },
+  { group: 'competent', key: 'aimLeadIterations', label: 'aimLeadIterations', min: 1, max: 8, step: 1 },
+
   // Reverse thruster.
   { group: 'competent', key: 'reverseImminentOvershootGap', label: 'reverseImminentOvershootGap', min: 0, max: 200, step: 2 },
   { group: 'competent', key: 'reverseRetreatRange', label: 'reverseRetreatRange', min: 0, max: 400, step: 5 },
@@ -117,6 +121,8 @@ export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
   // Human-like input cadence.
   { group: 'human', key: 'reactionTimeMs', label: 'reactionTimeMs', min: 0, max: 1000, step: 10 },
   { group: 'human', key: 'alignmentToleranceRad', label: 'alignmentToleranceRad', min: 0, max: 1, step: 0.01 },
+  { group: 'human', key: 'skill', label: 'skill', min: 0, max: 1, step: 0.01 },
+  { group: 'human', key: 'maxAimErrorRad', label: 'maxAimErrorRad', min: 0, max: 1.5, step: 0.01 },
   { group: 'human', key: 'thrustPressMinMs', label: 'thrustPressMinMs', min: 0, max: 1000, step: 5 },
   { group: 'human', key: 'thrustPressMaxMs', label: 'thrustPressMaxMs', min: 0, max: 1000, step: 5 },
   { group: 'human', key: 'thrustPressMaxMsLong', label: 'thrustPressMaxMsLong', min: 0, max: 1500, step: 5 },
@@ -131,6 +137,7 @@ export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
 /** Boolean toggles, in panel order. */
 export const BOT_TUNING_TOGGLES: readonly BotTuningToggleSpec[] = [
   { group: 'competent', key: 'reverseBrakeEnabled', label: 'reverseBrakeEnabled' },
+  { group: 'competent', key: 'aimLeadEnabled', label: 'aimLeadEnabled' },
   { group: 'human', key: 'allowDown', label: 'allowDown' },
 ];
 

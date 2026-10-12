@@ -161,6 +161,38 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   `PlayScene` never forces a scheme, so the demo ship looks and handles like
   the player's ship. The governor advances by the frame `dt`, so demo
   behaviour stays deterministic.
+- **Rotation skills (AH-0MV1DUSM2005HL98):** the demo bot aims with the
+  ship's real rotation physics rather than a fixed error band, so its
+  forward-firing shots actually land on moving enemies.
+  - **Inertia-aware turn hold (AC1):** the governor holds the turn input
+    until the ship's **predicted stop heading** — current facing plus the
+    closed-form coast to zero spin at the ship's live
+    `asteroidsRotationDeceleration` — is within `alignmentToleranceRad` of the
+    target bearing, instead of releasing on the instantaneous error. When the
+    coast would overshoot, the opposite turn brakes the spin. The check is
+    re-resolved every tick against the live facing and reads the ship's live
+    rotation config, so it stays closed-loop and never hard-codes a rotation
+    constant; with no angular velocity it reduces exactly to the previous
+    release.
+  - **Lead prediction (AC2):** when engaging a target whose velocity is
+    known, the aim objective is the **iterated intercept** — the enemy's
+    position advanced by its velocity over the estimated turn time plus the
+    shot's time of flight — rather than its current position. A stationary
+    target (or one whose velocity is not exposed) reduces exactly to the
+    previous aim.
+  - **`skill` tunable (AC3):** a single normalised **0..1** knob (default
+    **1.0**) perturbs the committed **aim** bearing by a seeded random error
+    that scales with `(1 − skill)` and is capped at `maxAimErrorRad` (default
+    **0.35 rad**). It is zero at `skill = 1`, grows as skill falls, and is
+    reproducible for a run seed; survival/evade intents are never perturbed,
+    so lowering skill degrades aim but never collision avoidance.
+
+  All the new values (`skill`, `maxAimErrorRad`, `aimLeadAlignSeconds`,
+  `aimLeadIterations`, plus the `aimLeadEnabled` toggle) are exposed as live
+  sliders/toggles in the bot-tuning gym (see
+  [docs/BOT_FRAMEWORK.md](BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym))
+  and live in the shared `src/ai/` code, so the game and the gym fly
+  identically (gym↔game parity).
 - **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
   the modal hold-full choice overlay auto-selects its first option after
   `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run

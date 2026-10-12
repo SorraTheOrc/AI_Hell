@@ -188,12 +188,21 @@ export class GymBotTuning extends GymLevel {
   private _advanceBot(dt: number): void {
     const player = this.getPlayer();
     if (!player) return;
+    const movement = player.getMovementState();
+    const rotation = player.getRotationConfig();
     this.botGovernor.update(
       this.botBrain.decide(this._buildSnapshot(), dt),
       dt,
       {
         scheme: player.getScheme() ?? 'asteroids',
-        facing: player.getMovementState().facing ?? 0,
+        facing: movement.facing ?? 0,
+        // Same inertia-aware turn config the shipped PlayScene demo supplies,
+        // so the gym and the game fly the bot identically
+        // (AH-0MV1DUSM2005HL98 · AC1).
+        angularVelocity: movement.angularVelocity ?? 0,
+        rotationSpeed: rotation.rotationSpeed,
+        rotationAcceleration: rotation.rotationAcceleration,
+        rotationDeceleration: rotation.rotationDeceleration,
         reverseEnabled: player.isReverseEnabled() ?? true,
       },
     );
