@@ -4746,6 +4746,10 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.setCentipedeSpawnerEnabled(true);
+    // Isolate the centipede accounting from the random asteroid spawner (the
+    // same isolation `bootSceneWithLevels` applies for the asteroid suite): a
+    // released asteroid can absorb a player bullet meant for a segment.
+    scene.setAsteroidSpawnerEnabled(false);
     scene.scene.restart();
     await new Promise((resolve) => setTimeout(resolve, 200));
     return scene;
@@ -4753,6 +4757,26 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
 
   function liveSegments(scene: PlayScene): Centipede[] {
     return scene.getEnemies().filter((e): e is Centipede => e instanceof Centipede && e.alive);
+  }
+
+  /**
+   * Smallest clearance (px) between `victim` and every other live enemy:
+   * `distance - victimRadius - otherRadius`. A player bullet overlaps an
+   * enemy when this is `<= PLAYER_BULLET_RADIUS`. The weave folds
+   * neighbouring segments close together at direction reversals, so a kill
+   * test must wait for a clear gap before firing (AH-0MV5SZRI4001WK89).
+   */
+  function nearestClearance(scene: PlayScene, victim: Centipede): number {
+    let min = Infinity;
+    for (const enemy of scene.getEnemies()) {
+      if (!enemy.alive || enemy === victim) continue;
+      const gap =
+        Math.hypot(enemy.x - victim.x, enemy.y - victim.y) -
+        victim.getHitRadius() -
+        enemy.getHitRadius();
+      min = Math.min(min, gap);
+    }
+    return min;
   }
 
   /**
@@ -4811,6 +4835,16 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     expect(chain.subChainCount()).toBe(1);
 
     const victim = segments[2];
+    // Wait until segment #2 is clear of every other segment by more than the
+    // bullet radius. The chain weave folds neighbours close together at
+    // direction reversals; without this the shot can be absorbed by a folded
+    // neighbour (the flake in AH-0MV5SZRI4001WK89). Bounded so a broken chain
+    // fails loudly instead of looping.
+    for (let guard = 0; guard < 100 && nearestClearance(scene, victim) <= 6; guard++) {
+      scene.tick(0.05);
+    }
+    expect(nearestClearance(scene, victim)).toBeGreaterThan(6);
+
     const before = wm.enemiesAlive;
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
     scene.tick(0.001);
